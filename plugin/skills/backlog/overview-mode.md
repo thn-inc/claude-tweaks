@@ -106,14 +106,27 @@ Critical/Risk-Value/Cleanup tables** (those remain one lens away). Template:
 captured ▶ scored ▶ shaped ▶ granted ▶ dispatchable ▶ in flight
   {captured.length}   {scored.length}   {shaped.length}   {granted.length}   {dispatchable.length}   {inFlight.length}
 
-captured      {n} → /claude-tweaks:backlog refine (score them)
-scored        {n} → /claude-tweaks:specify #N (shape them)
-shaped        {n} → /claude-tweaks:backlog grant (or dispatch here with the human gate)
-granted       {n}   (no pointer — waiting on blockers; the blocker itself appears in the dispatch hand-off)
-dispatchable  {n} → /claude-tweaks:dispatch / /claude-tweaks:flow #N
-in flight     {n}   (no pointer — informational; claims honored)
+# captured {n} — score them
+/claude-tweaks:backlog refine
+
+# scored {n} — shape them (#N is a placeholder — substitute the real record number)
+/claude-tweaks:specify #N
+
+# shaped {n} — grant them, or dispatch here with the human gate
+/claude-tweaks:backlog grant
+
+# granted {n} — no pointer; waiting on blockers, which appear in the dispatch hand-off
+
+# dispatchable {n} — dispatch the queue, or flow one record (#N is a placeholder)
+/claude-tweaks:dispatch
+/claude-tweaks:flow #N
+
+# in flight {n} — no pointer; informational, claims honored
+
 └─ needs you: {n}   (human-owed — the one lane no agent can drain)
 ```
+
+Every category line above stands alone as a `#`-comment — no command text on it. A category with a pointer command (captured, scored, shaped, dispatchable) puts that command on its own following line, with nothing else on the line, so copying just that row yields a runnable command. A category with no pointer (granted, in flight) renders its comment line alone, with no command line beneath it.
 
 The branch line is fed from `funnelBuckets`' `needsYou` overlay; rendered only when non-zero
 (dormant repos never render it).
