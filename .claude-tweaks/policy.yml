@@ -5,3 +5,4 @@ work-links: native
 autonomy: unattended
 grant-origination-enabled: true
 fleet-daily-grant-cap: 3
+specify-auto-continue: true
