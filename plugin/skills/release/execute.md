@@ -43,11 +43,13 @@ PARTIAL: PR #{n} merged but no shipped version could be read from its title ({th
   AUTO {HH:MM:SS} — Step 5: gating version v{gating} ≠ shipped version v{shipped} — the engine decided; v{shipped} is verified and booked. Reversibility: n/a.
   ```
 
-- Different, and `--as` **was** given → the override did not take. Stop before Step 6; the outcome is `failed`, and nothing is booked:
+- Different, and `--as` **was** given → the override did not take, but the release did. This comparison only ever runs **after** the merge landed, so the outcome is `PARTIAL`, never `failed` — `failed` asserts nothing landed, and a tag now exists. The named state is `override did not take — the engine shipped v{shipped}, not v{gating}`; Step 6 verifies and Step 7 books **v{shipped}**, because that is the number the tag carries and the number the records actually shipped in. Step 8's summary names both versions alongside the state:
 
   ```
-  --as {gating} did not take — the engine shipped v{shipped}; recover: check the Release-As: commit reached {branch}, then re-run /claude-tweaks:release
+  PARTIAL: override did not take — the engine shipped v{shipped}, not v{gating}; recover: check the Release-As: commit reached {branch}; if v{gating} is still the number you meant, ship it as a follow-up release (a fresh Release-As: commit, then /claude-tweaks:release --as {gating}) and correct the notes with gh release edit v{shipped} --repo {owner}/{repo} — never by re-tagging v{shipped}
   ```
+
+  A follow-up release, never a re-tag: v{shipped} is published, and moving a tag a consumer may already have fetched rewrites a release that has shipped rather than superseding it.
 
 Every `{version}` in Step 6, Step 7 and Step 8 below is the **shipped** version.
 

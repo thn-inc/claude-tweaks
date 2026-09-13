@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
+const { CEILING_BYTES } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'skill-audit', 'context-cost'));
 const NEW_CONTRACT = path.join(ROOT, 'plugin/skills/_shared/fork-worktree-isolation.md');
 const SUBAGENT_CONTRACT = path.join(ROOT, 'plugin/skills/_shared/subagent-output-contract.md');
 const DONTS = path.join(ROOT, 'docs/donts.md');
@@ -27,11 +28,11 @@ test('fork-worktree-isolation.md stays well clear of the _shared ceiling', () =>
   assert.ok(bytes < 8000, `expected < 8000 bytes, got ${bytes}`);
 });
 
-test('subagent-output-contract.md cites the new file and stays under the 40 KB ceiling', () => {
+test('subagent-output-contract.md cites the new file and stays under the CEILING_BYTES ceiling', () => {
   const text = collapsed(SUBAGENT_CONTRACT);
   assert.match(text, /_shared\/fork-worktree-isolation\.md/);
   const bytes = fs.statSync(SUBAGENT_CONTRACT).size;
-  assert.ok(bytes <= 40960, `expected <= 40960 bytes (CEILING_BYTES), got ${bytes}`);
+  assert.ok(bytes <= CEILING_BYTES, `expected <= ${CEILING_BYTES} bytes (CEILING_BYTES), got ${bytes}`);
 });
 
 test('subagent-output-contract.md no longer restates the old fork clause verbatim', () => {

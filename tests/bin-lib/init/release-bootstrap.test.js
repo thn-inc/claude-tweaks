@@ -253,7 +253,80 @@ test('bootstrapRelease: a bootstrap-shaped config surviving a manifest-missing r
   assert.equal(fs.existsSync(path.join(root, '.release-please-manifest.json')), true);
   const configAfter = JSON.parse(read(root, 'release-please-config.json'));
   assert.equal(configAfter['extra-option'], true);
-  assert.deepEqual(second.written, ['.release-please-manifest.json', '.github/workflows/release-please.yml']);
+  // The workflow already exists untouched from the first run (never deleted
+  // here) and — per ledger row 35's never-overwrite rule — is no longer
+  // blindly rewritten; only the file actually missing (the manifest) is.
+  assert.deepEqual(second.written, ['.release-please-manifest.json']);
+});
+
+test('bootstrapRelease: a pre-existing hand-written workflow with no config is a partial-files conflict, and the file is left byte-identical (ledger row 35)', () => {
+  const root = tmp(); write(root, 'package.json', '{"name":"x"}');
+  const handWritten = 'name: my-own-workflow\n';
+  write(root, '.github/workflows/release-please.yml', handWritten);
+  const r = rb.bootstrapRelease({ root, integrationModel: 'pr-first', branch: 'main', listTags: () => [] });
+  assert.equal(r.verdict, 'conflict');
+  assert.equal(r.tool, 'release-please (partial files)');
+  assert.equal(r.evidence, '.github/workflows/release-please.yml');
+  assert.deepEqual(r.written, []);
+  assert.equal(fs.existsSync(path.join(root, 'release-please-config.json')), false);
+  assert.equal(read(root, '.github/workflows/release-please.yml'), handWritten);
+});
+
+test('bootstrapRelease: a pre-existing manifest with no config is the same partial-files conflict, byte-identical after (ledger row 35)', () => {
+  const root = tmp(); write(root, 'package.json', '{"name":"x"}');
+  const handWritten = '{".":"9.9.9"}';
+  write(root, '.release-please-manifest.json', handWritten);
+  const r = rb.bootstrapRelease({ root, integrationModel: 'pr-first', branch: 'main', listTags: () => [] });
+  assert.equal(r.verdict, 'conflict');
+  assert.equal(r.tool, 'release-please (partial files)');
+  assert.equal(r.evidence, '.release-please-manifest.json');
+  assert.deepEqual(r.written, []);
+  assert.equal(fs.existsSync(path.join(root, 'release-please-config.json')), false);
+  assert.equal(read(root, '.release-please-manifest.json'), handWritten);
+});
+
+test('bootstrapRelease: a symlinked .github refuses to write through it; nothing lands outside root (ledger row 36)', () => {
+  const root = tmp(); write(root, 'package.json', '{"name":"x"}');
+  const outside = tmp();
+  fs.symlinkSync(outside, path.join(root, '.github'), 'dir');
+  assert.throws(
+    () => rb.bootstrapRelease({ root, integrationModel: 'pr-first', branch: 'main', listTags: () => [] }),
+    /refusing to write through a symlink: \.github\/workflows\/release-please\.yml/,
+  );
+  assert.deepEqual(fs.readdirSync(outside), []);
+});
+
+test('bootstrapRelease: a local-merge bootstrap followed by a pr-first re-run writes only the missing workflow — config/manifest untouched (ledger row 37)', () => {
+  const root = tmp(); write(root, 'package.json', '{"name":"x"}');
+  const first = rb.bootstrapRelease({ root, integrationModel: 'local-merge', listTags: () => ['v2.0.0'] });
+  assert.equal(first.verdict, 'fresh');
+  assert.equal(fs.existsSync(path.join(root, '.github/workflows/release-please.yml')), false);
+  const configBefore = read(root, 'release-please-config.json');
+  const manifestBefore = read(root, '.release-please-manifest.json');
+  const second = rb.bootstrapRelease({ root, integrationModel: 'pr-first', branch: 'main', listTags: () => ['v2.0.0'] });
+  assert.equal(second.verdict, 'fresh');
+  assert.deepEqual(second.written, ['.github/workflows/release-please.yml']);
+  assert.equal(read(root, 'release-please-config.json'), configBefore);
+  assert.equal(read(root, '.release-please-manifest.json'), manifestBefore);
+  assert.match(read(root, '.github/workflows/release-please.yml'), /release-please-action@v4/);
+});
+
+test('bootstrapRelease: a pr-first bootstrap followed by a pr-first re-run is already-bootstrapped (ledger row 37)', () => {
+  const root = tmp(); write(root, 'package.json', '{"name":"x"}');
+  const first = rb.bootstrapRelease({ root, integrationModel: 'pr-first', branch: 'main', listTags: () => ['v2.0.0'] });
+  assert.equal(first.verdict, 'fresh');
+  const r = rb.bootstrapRelease({ root, integrationModel: 'pr-first', branch: 'main', listTags: () => ['v9.9.9'] });
+  assert.equal(r.verdict, 'already-bootstrapped');
+  assert.deepEqual(r.written, []);
+});
+
+test('detectReleaseProcess: shaped config + manifest + missing workflow under pr-first is "fresh" with partial "workflow"; the same state under no model or local-merge is already-bootstrapped (ledger row 37)', () => {
+  const root = tmp(); write(root, 'release-please-config.json', SHAPED); write(root, '.release-please-manifest.json', '{".":"1.0.0"}');
+  assert.deepEqual(rb.detectReleaseProcess(root, { integrationModel: 'pr-first' }), { verdict: 'fresh', partial: 'workflow' });
+  assert.deepEqual(rb.detectReleaseProcess(root), { verdict: 'already-bootstrapped' });
+  assert.deepEqual(rb.detectReleaseProcess(root, { integrationModel: 'local-merge' }), { verdict: 'already-bootstrapped' });
+  write(root, '.github/workflows/release-please.yml', 'name: x\n');
+  assert.deepEqual(rb.detectReleaseProcess(root, { integrationModel: 'pr-first' }), { verdict: 'already-bootstrapped' });
 });
 
 test('bootstrapRelease: a missing or non-directory root throws before any detection and creates nothing (F2)', () => {
