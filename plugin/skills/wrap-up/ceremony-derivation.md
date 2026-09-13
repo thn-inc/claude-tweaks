@@ -29,7 +29,16 @@ computation), so there is nothing here to clobber:
 1. Compute this run's diff facts via `node "${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/ceremony-derive.js"`'s
    `computeDiffFacts` over `git diff --numstat` against the run's own merge-base (the same facts
    shape `blast-radius-cli.js`'s `computeBlastRadius` already derives for the merge-check verdict —
-   reuse `classifyDiffFiles`/`blastRadiusSummary`, don't re-derive).
+   reuse `classifyDiffFiles`/`blastRadiusSummary`, don't re-derive). Both functions take a
+   pre-parsed `files: [{path, additions, deletions}]` array, not raw numstat text or `(base,
+   branch)` refs — parse the raw `git diff --numstat` output with `blast-radius-cli.js`'s own
+   `parseNumstat` first, a different module than `ceremony-derive.js`:
+   ```js
+   const { parseNumstat } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/blast-radius-cli.js');
+   const { deriveCeremonyProfile } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/ceremony-derive.js');
+   const files = parseNumstat(execSync('git diff --numstat {merge-base}').toString());
+   const profile = deriveCeremonyProfile(files); // 'standard' | 'fast-lane'
+   ```
 2. When the diff touches zero production/implementation files — any mix of test and/or docs files
    only (`deriveCeremonyProfile`'s `lowSurface` classification; a test file plus a small amount of
    production code stays disqualified — a real behavioral change riding along with its own
