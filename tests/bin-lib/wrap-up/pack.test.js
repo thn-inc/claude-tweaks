@@ -245,6 +245,61 @@ test('gatherPack: every probe ok → eight envelopes with ok:true, plus inputs/g
   assert.ok(!('mergeSize' in pack), 'the mergeSize probe was removed (#1930 fix round 4)');
 });
 
+// #2332: recordLabels' Promise.all fan-out is deliberately all-or-nothing —
+// this probe is an audit-only snapshot (auto-merge-short-circuit.md /
+// review-console.md never substitute it for a live label read, and both
+// treat `ok:false` as "omit the snapshot line entirely"), so a mid-list `gh`
+// failure degrading the WHOLE field rather than silently returning a partial
+// label set is the intended, documented behavior — not a bug to paper over.
+test('recordLabels: a mid-list gh failure fails the whole probe field, not just that record (#2332)', async () => {
+  const records = [100, 200, 300, 400, 500];
+  const seen = [];
+  const deps = okDeps({
+    execFile: async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') {
+        const n = Number(args[2]);
+        seen.push(n);
+        if (n === 300) throw new Error('gh issue view 300 failed: rate limited');
+        return { stdout: JSON.stringify({ labels: [{ name: `label-${n}` }] }), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir({ records }), cwd: '/w/tree', only: ['recordLabels'], deps });
+  assert.strictEqual(pack.recordLabels.ok, false, 'a single failing record fails the whole field');
+  assert.match(pack.recordLabels.error, /rate limited/, 'the underlying gh failure surfaces, not a swallowed/generic message');
+  assert.ok(seen.includes(300), 'the failing record was actually attempted');
+  // Every other record was still attempted (in-flight calls are not aborted
+  // just because one rejected) — proves this is Promise.all-style
+  // all-or-nothing propagation, not a swallow of the whole batch.
+  for (const n of records) assert.ok(seen.includes(n), `record ${n} should still have been attempted`);
+});
+
+// #2332: an unbounded Promise.all fan-out fires every record's `gh issue
+// view` simultaneously — a large multi-spec record list risks gh's own rate
+// limiting. Assert peak concurrency is capped rather than unbounded.
+test('recordLabels: gh issue view calls are concurrency-capped, not fired all at once (#2332)', async () => {
+  const records = Array.from({ length: 12 }, (_, i) => 1000 + i);
+  let inFlight = 0;
+  let peak = 0;
+  const deps = okDeps({
+    execFile: async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 10));
+        inFlight -= 1;
+        return { stdout: JSON.stringify({ labels: [] }), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir({ records }), cwd: '/w/tree', only: ['recordLabels'], deps });
+  assert.strictEqual(pack.recordLabels.ok, true);
+  assert.ok(peak < records.length, `peak concurrency (${peak}) should be bounded below the full record count (${records.length})`);
+  assert.ok(peak > 0, 'sanity: calls actually happened');
+});
+
 // The two assertions above compare a probe's value against the fake's own
 // return, so a fake that has drifted from the real module's output shape makes
 // them green against a shape the pack never actually produces. Each fake's key

@@ -16,6 +16,7 @@ const { promisify } = require('util');
 const { resolvePolicyConfig } = require('../policy-schema');
 const { parseManifestYaml } = require('../flow/manifest');
 const { parseDependencies } = require('../issues/record');
+const { runWithConcurrency } = require('../reconcile/gh-pool');
 
 const PROBE_NAMES = ['residue', 'state', 'blastRadius', 'pr', 'recordLabels', 'claim', 'ledger', 'unblocked'];
 const BIN = path.join(__dirname, '..', '..');
@@ -391,13 +392,28 @@ function buildProbes(inputs, deps) {
       const { stdout } = await gh(['pr', 'view', String(inputs.pr), '--json', 'state,isDraft,mergeStateStatus,headRefOid,statusCheckRollup,reviewDecision']);
       return JSON.parse(stdout);
     },
+    // Concurrency-capped (gh-pool.js's DEFAULT_CONCURRENCY) rather than a
+    // raw unbounded Promise.all fan-out, so a large multi-spec record list
+    // never fires more than a handful of simultaneous `gh issue view` calls
+    // at once (`gh`'s own rate limiting). Failure propagation is otherwise
+    // unchanged from the old Promise.all: this probe is an audit-only
+    // snapshot (`auto-merge-short-circuit.md`/`review-console.md` both
+    // render it beside a live label read and never substitute it), so a
+    // mid-list `gh` failure aborting the WHOLE field to `ok:false` is the
+    // deliberate, correct behavior — the console already treats an
+    // `ok:false` recordLabels field as "omit the snapshot line entirely"
+    // rather than showing a partial, possibly-misleading label set.
     recordLabels: async () => {
       backendOrThrow(); forgeOrThrow(); recordsOrThrow();
-      const out = {};
-      await Promise.all(inputs.records.map(async (n) => {
+      const results = await runWithConcurrency(inputs.records, async (n) => {
         const { stdout } = await gh(['issue', 'view', String(n), '--json', 'labels']);
-        out[n] = JSON.parse(stdout).labels.map((l) => l.name);
-      }));
+        return { n, labels: JSON.parse(stdout).labels.map((l) => l.name) };
+      });
+      const out = {};
+      for (const r of results) {
+        if (r instanceof Error) throw r;
+        out[r.n] = r.labels;
+      }
       return out;
     },
     claim: async () => {
