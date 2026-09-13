@@ -213,6 +213,38 @@ test('AC3: Bash `git worktree remove <abs-path>` on an active run\'s worktree is
   assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
 });
 
+// #2351: previously this deny logged nothing at all, regardless of whether
+// the caller owned a run dir — checkTeardownGate's deny branch never called
+// appendEvent. A standalone main-checkout session (e.g. /claude-tweaks:wrap-up
+// doing post-dispatch cleanup, no worktree of its own) denied here lost the
+// event entirely, even though the friction genuinely occurred. The deny now
+// logs a `wd-deny` event to the CALLER's own run dir (stamped ad-hoc via
+// context.js's stampAdHocRunDirForDenial when the caller owns none yet) —
+// never to the unrelated TARGET run (`wt`'s own run dir) being torn down.
+test('#2351: Bash `git worktree remove <abs-path>` from the main checkout with no owned run dir logs a wd-deny event to a newly stamped ad-hoc run', () => {
+  const root = fixtureRoot();
+  const wt = addWorktree(root);
+  const targetRunDir = makeRun(root, JSON.stringify({ status: 'active', worktree: wt }));
+  const payload = JSON.stringify({
+    tool_name: 'Bash', tool_input: { command: `git worktree remove ${wt}` }, cwd: root, session_id: 'wrap-up-caller',
+  });
+  const r = runHook(['pre-tool-use'], { input: payload, cwd: root });
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
+
+  const pipelinesDir = path.join(root, '.claude-tweaks', 'pipelines');
+  const runDirs = fs.readdirSync(pipelinesDir).map((n) => path.join(pipelinesDir, n));
+  const stampedRun = runDirs.find((d) => d !== targetRunDir);
+  assert.ok(stampedRun, 'an ad-hoc run dir distinct from the target worktree\'s own run must be minted');
+  const events = fs.readFileSync(path.join(stampedRun, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.strictEqual(events.length, 1);
+  assert.strictEqual(events[0].type, 'wd-deny');
+  assert.strictEqual(events[0].path, wt);
+  // The target run's own events.jsonl must stay untouched — this is the
+  // caller's friction, not the target run's.
+  assert.strictEqual(fs.existsSync(path.join(targetRunDir, 'events.jsonl')), false);
+});
+
 test('AC3: Bash `git worktree remove <relative-path>` resolving to the same worktree is denied', () => {
   const root = fixtureRoot();
   const wt = addWorktree(root);
