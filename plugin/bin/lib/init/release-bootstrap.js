@@ -70,6 +70,19 @@ function isDirectory(root) {
   }
 }
 
+// lstat, not stat/existsSync — a symlink counts as "existing" here even
+// though it may point at nothing, because the question this answers is
+// "is there already something at this path we must not clobber", not
+// "does a regular file resolve here".
+function lexists(file) {
+  try {
+    fs.lstatSync(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // { parsed } on success ({ parsed: undefined } for a missing file — ENOENT is
 // "absent", not a failure); { error: 'unparseable' } on a JSON parse failure;
 // { error: <e.code> } on any other read failure (e.g. EACCES) — callers that
@@ -102,7 +115,12 @@ function isBootstrapShaped(parsed) {
 // state is a half-written bootstrap, not a done one — it must re-run to
 // completion (idempotently, since the config content is unchanged) rather
 // than be read as finished and have the missing files hidden forever.
-function detectReleaseProcess(root) {
+// `integrationModel` only ever narrows the already-bootstrapped check: an
+// undefined model (every caller that predates #2253's model-switch support,
+// and every direct detectReleaseProcess(root) call) is treated as
+// local-merge for the workflow question — i.e. the workflow's presence is
+// never asked about, matching this function's pre-model-switch behavior.
+function detectReleaseProcess(root, { integrationModel } = {}) {
   const entries = rootEntries(root);
   for (const { name, isDir } of entries) {
     for (const marker of CONFLICT_MARKERS) {
@@ -116,7 +134,18 @@ function detectReleaseProcess(root) {
     }
     if (!isBootstrapShaped(result.parsed)) return { verdict: 'conflict', tool: 'release-please (foreign config)', evidence: CONFIG_FILE };
     const manifestExists = entries.some((e) => !e.isDir && e.name === MANIFEST_FILE);
-    if (manifestExists) return { verdict: 'already-bootstrapped' };
+    if (manifestExists) {
+      // A local-merge bootstrap re-run under pr-first: config and manifest
+      // are already correct, only the workflow is missing — that is a
+      // completion, not a done state, so it must still route through
+      // `fresh` (bootstrapRelease's write-only-missing-files logic is what
+      // actually completes it) rather than report already-bootstrapped and
+      // leave the workflow permanently missing.
+      if (integrationModel === 'pr-first' && !lexists(path.join(root, WORKFLOW_FILE))) {
+        return { verdict: 'fresh', partial: 'workflow' };
+      }
+      return { verdict: 'already-bootstrapped' };
+    }
   }
   return { verdict: 'fresh' };
 }
@@ -284,7 +313,7 @@ function bootstrapRelease({ root, integrationModel, branch, dryRun = false, list
   if (integrationModel === 'pr-first' && !isValidBranchName(branch)) {
     throw new Error(`invalid branch name: ${JSON.stringify(branch)}`);
   }
-  const detected = detectReleaseProcess(root);
+  const detected = detectReleaseProcess(root, { integrationModel });
   if (detected.verdict !== 'fresh') return { ...detected, ...empty };
   const { releaseType, extraFiles } = resolveReleaseType(root);
   const { tags, failure: tagsFailure } = normalizeListTagsResult((listTags || defaultListTags)(root));
@@ -298,11 +327,31 @@ function bootstrapRelease({ root, integrationModel, branch, dryRun = false, list
   if (!configShaped) files.push([CONFIG_FILE, renderConfig({ releaseType, extraFiles })]);
   files.push([MANIFEST_FILE, renderManifest(version)]);
   if (integrationModel === 'pr-first') files.push([WORKFLOW_FILE, renderWorkflowYaml({ branch })]);
+  // Never overwrite a file this run did not itself create. When the config
+  // is genuinely absent (not merely shaped-but-incomplete — detection above
+  // already turned a foreign, differently-shaped config into its own
+  // conflict before we ever get here), any of the other files already
+  // existing on disk is somebody else's file wearing this step's filename,
+  // not a partial bootstrap of ours to complete — refuse rather than
+  // clobber it. A shaped config with a missing manifest/workflow is the one
+  // exception: that IS this step's own partial bootstrap, completed below
+  // by writing only what's actually missing.
+  const existing = files.filter(([rel]) => lexists(path.join(root, rel)));
+  if (!configShaped && existing.length > 0) {
+    return { verdict: 'conflict', tool: 'release-please (partial files)', evidence: existing[0][0], ...empty };
+  }
+  const toWrite = configShaped ? files.filter(([rel]) => !lexists(path.join(root, rel))) : files;
+  const realRoot = fs.realpathSync(root);
   const written = [];
-  for (const [rel, content] of files) {
+  for (const [rel, content] of toWrite) {
+    const full = path.join(root, rel);
     if (!dryRun) {
-      const full = path.join(root, rel);
+      assertSafeWriteTarget(root, rel);
       fs.mkdirSync(path.dirname(full), { recursive: true });
+      const resolvedDir = fs.realpathSync(path.dirname(full));
+      if (resolvedDir !== realRoot && !resolvedDir.startsWith(realRoot + path.sep)) {
+        throw new Error(`refusing to write through a symlink: ${rel}`);
+      }
       fs.writeFileSync(full, content);
     }
     written.push(rel);
@@ -310,6 +359,29 @@ function bootstrapRelease({ root, integrationModel, branch, dryRun = false, list
   const envelope = { verdict: 'fresh', releaseType, version, written, policyRows: renderPolicyRows() };
   if (tagsFailure) envelope.tagsFailure = tagsFailure;
   return envelope;
+}
+
+// Refuses to write through a symlink anywhere between root and the target:
+// any existing path segment between root and the file's own directory that
+// is itself a symlink, or the target file path itself being a symlink. The
+// realpath boundary check after mkdirSync (in the caller) is the second,
+// belt-and-suspenders half of this — a TOCTOU between this check and the
+// write is still closed because mkdirSync/writeFileSync never themselves
+// follow a symlink into existence.
+function assertSafeWriteTarget(root, rel) {
+  const dirRel = path.dirname(rel);
+  const segments = dirRel === '.' ? [] : dirRel.split(path.sep);
+  let cur = root;
+  for (const seg of segments) {
+    cur = path.join(cur, seg);
+    let st;
+    try { st = fs.lstatSync(cur); } catch { continue; } // doesn't exist yet — mkdirSync will create a real directory
+    if (st.isSymbolicLink()) throw new Error(`refusing to write through a symlink: ${rel}`);
+  }
+  const full = path.join(root, rel);
+  let targetStat;
+  try { targetStat = fs.lstatSync(full); } catch { targetStat = null; }
+  if (targetStat && targetStat.isSymbolicLink()) throw new Error(`refusing to write through a symlink: ${rel}`);
 }
 
 module.exports = {
