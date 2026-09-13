@@ -353,7 +353,7 @@ Runs **at most once** per review, after Steps 6, 6.5, and 6.6 have all completed
 | `UI / Visual` (from Step 6) | `/claude-tweaks:visual-review`'s own report classification |
 | `Security Hardening` (from Step 6.6) | `criteria-security-hardening.md`'s Severity calibration section |
 
-2. Apply the routing rules from `step3-routing.md` to the combined table — severity-based auto routing when a pipeline run directory exists (low → AUTO, medium → STAGED, high → STAGED, critical → KEPT-PROMPT), or the interactive batch-table flow (one `AskUserQuestion` for apply-all/override) otherwise.
+2. Apply the routing rules from `step3-routing.md` to the combined table — when a pipeline run directory exists, resolve `review-auto-apply-ceiling` exactly as Step 3 Routing's own "Auto mode" section does, and route each finding per that file's ceiling-keyed table (`none`/`low`/`medium` columns) under the resolved ceiling — never hardcode the `low`-ceiling mapping (low → AUTO, medium → STAGED, high → STAGED, critical → KEPT-PROMPT) as if it applied under every ceiling. Otherwise (no run directory), use the interactive batch-table flow (one `AskUserQuestion` for apply-all/override).
 3. After resolution, fold each finding back into its own Step 7 summary section ("Design Quality" / "Visual Review" / "Security Hardening"), noting its final status (fixed / deferred / accepted).
 
 This pass never replays Step 3.5 (each source's findings have no peers to debate against) and never re-dispatches reproduction pairs — both sources' output is already filtered/classified before it reaches this routing. Step 3 Routing itself is untouched by this consolidation: code findings still resolve before Steps 4-5, because fixes must land before hindsight and simplification run.
