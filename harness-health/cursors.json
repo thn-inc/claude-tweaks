@@ -126,5 +126,9 @@
   "skill:run-directory-fact-packs": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1789229478889
+  },
+  "skill:driver-skill-outcome-taxonomy": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1789276368093
   }
 }
