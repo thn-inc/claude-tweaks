@@ -8,7 +8,7 @@
 
 **Tech Stack:** Plain Node.js (`node:test`, no external deps), matching the rest of `plugin/bin/lib/plan-audit/`.
 
-**Spec:** GitHub issue #1594 ("plan-audit: Check C needs a \"Step 2 present but unparseable\" diagnostic signal") — materialized at `.claude-tweaks/pipelines/2026-09-05T155335-record-1594/work/1594-spec.md` in this worktree.
+**Spec:** GitHub issue #1594 ("plan-audit: Check C needs a \"Step 2 present but unparseable\" diagnostic signal") — materialized at `.claude-tweaks/pipelines/archive/2026-09-05T155335-record-1594/work/1594-spec.md` (archived) in this worktree.
 
 ## Global Constraints
 
