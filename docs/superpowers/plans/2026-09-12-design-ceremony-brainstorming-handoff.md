@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node.js (`node --test`), no new runtime dependencies.
 
-**Spec:** `.claude-tweaks/pipelines/2026-09-12T165655-record-1886/work/1886-spec.md` (materialized from GitHub issue #1886)
+**Spec:** `.claude-tweaks/pipelines/archive/2026-09-12T165655-record-1886/work/1886-spec.md` (archived; materialized from GitHub issue #1886)
 
 ## Global Constraints
 
