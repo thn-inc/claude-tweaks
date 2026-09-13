@@ -39,6 +39,10 @@ Three conventions follow from how this repo works, and all are visible below:
   contained, not contemporaneous release notes, and they are thinner than the
   entries written since.
 
+## v6.123.1 — Post-v6.123.0 batch: release-bootstrap write-time TOCTOU fix from this batch's own whole-branch review (#2369); escalate-residue.js reopen-branch comment correction (#2370); reconcile archival + stale issue-claim release sweep (#2360, #2352, #2353, #2361, #2368)
+
+Post-v6.123.0 batch: release-bootstrap write-time TOCTOU fix from this batch's own whole-branch review (#2369); escalate-residue.js reopen-branch comment correction (#2370); reconcile archival + stale issue-claim release sweep (#2360, #2352, #2353, #2361, #2368).
+
 ## v6.123.0 — Health-core library functions return exit codes instead of calling process.exit() (#2053); design-ceremony policy key propagates ceremony-profile into /specify's brainstorming/writing-plans handoff (#1886); merge-time conventional subject + breaking label, and the /claude-tweaks:release skill family for consumer projects (#2251-#2258)
 
 Health-core library functions return exit codes instead of calling process.exit() (#2053); design-ceremony policy key propagates ceremony-profile into /specify's brainstorming/writing-plans handoff (#1886); merge-time conventional subject + breaking label, and the /claude-tweaks:release skill family for consumer projects (#2251-#2258).
