@@ -39,6 +39,10 @@ Three conventions follow from how this repo works, and all are visible below:
   contained, not contemporaneous release notes, and they are thinner than the
   entries written since.
 
+## v6.123.2 — Post-v6.123.1 batch: ad-hoc run dir stamp for a PreToolUse gate denial with no owned run dir (#2374); contract-violation over-counting fix migrating qa-prompts.md/qa-agent.md to the canonical trailing STATUS line (#2373); build's Common Step 7 bookkeeping assertion for continuous /flow sessions (#2372); qa-agent default viewport for below-the-fold controls (#2371).
+
+Post-v6.123.1 batch: ad-hoc run dir stamp for a PreToolUse gate denial with no owned run dir (#2374); contract-violation over-counting fix migrating qa-prompts.md/qa-agent.md to the canonical trailing STATUS line (#2373); build's Common Step 7 bookkeeping assertion for continuous /flow sessions (#2372); qa-agent default viewport for below-the-fold controls (#2371)..
+
 ## v6.123.1 — Post-v6.123.0 batch: release-bootstrap write-time TOCTOU fix from this batch's own whole-branch review (#2369); escalate-residue.js reopen-branch comment correction (#2370); reconcile archival + stale issue-claim release sweep (#2360, #2352, #2353, #2361, #2368)
 
 Post-v6.123.0 batch: release-bootstrap write-time TOCTOU fix from this batch's own whole-branch review (#2369); escalate-residue.js reopen-branch comment correction (#2370); reconcile archival + stale issue-claim release sweep (#2360, #2352, #2353, #2361, #2368).
