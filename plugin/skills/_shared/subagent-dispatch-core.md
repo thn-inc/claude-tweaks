@@ -1,4 +1,4 @@
-# Subagent Dispatch Core — Working Directory, Model Selection, Template A, Retrieval, Fan-Out
+# Subagent Dispatch Core — Working Directory, Foreground Execution, Model Selection, Template A, Retrieval, Fan-Out
 
 Extracted from `_shared/subagent-output-contract.md` (#2019) — the dispatch-facing sections a
 review/test call site actually needs to compose under the 40 KB ceiling, without also paying for
@@ -7,8 +7,10 @@ Dispatched Agents, Implementer Status Protocol, Templates B/C, the third-party e
 re-prompt-on-violation, and Anti-Patterns), none of which any of this file's call sites cite.
 `subagent-output-contract.md` remains the canonical parent contract and single source of truth
 for everything not reproduced here — cited from there, never restated independently; a change to
-one of the five sections below lands here first, exactly as `subagent-output-contract.md` itself
-states at its own top ("This file is the single source of truth").
+one of the sections below lands here first, exactly as `subagent-output-contract.md` itself
+states at its own top ("This file is the single source of truth"). The Foreground Execution
+Discipline section below is the one exception to "extracted" — it originates here, directly
+(#2271), since no equivalent content exists in the parent file to move from.
 
 ## Working Directory Discipline
 
@@ -34,6 +36,32 @@ During worktree-mode pipeline runs this rule is mechanically enforced — the pl
 **When the implementer's own isolation is `EnterWorktree`-based, its shell is restricted too.** A dispatched implementer that enters its assigned worktree via the native `EnterWorktree` tool (rather than merely `cd`-ing into a path a Bash call already sees) runs the rest of its session under a harder constraint than anything above: `&&` chains and heredocs are refused by shape, not just discouraged by convention. The dispatch prompt must say so explicitly — one plain command per Bash call, `Edit`/`Write` instead of a heredoc append, and no reliance on a shell variable surviving between calls. The mechanical detail and its rationale are documented once, canonically, in `skills/_shared/scratch-worktree.md`'s "## 7. Shell constraint" — cite it rather than restating it here. Observed across five implementer dispatches on the skill-invocation-ledger build: every dispatch that baked this constraint into its prompt up front avoided the failure; none that omitted it did.
 
 **Never run `git stash` in any form.** A dispatched agent shares its worktree with the dispatcher and possibly sibling agents, and `git stash` (worse, `--include-untracked`) sweeps *their* in-flight state — staged edits, untracked files it never saw created — into a stash entry nothing else knows exists; an agent that finishes without restoring it has silently deleted sibling work, and the loss surfaces only when the dispatcher next looks for those files. The stash stack is also shared repo-wide across every worktree, so even a restore can collide with another session's entries. To compare against a clean baseline, read it without mutating the tree: `git show HEAD:<path>` for file contents, `git diff HEAD -- <path>` for what changed. To set your own work aside, make a WIP commit on the branch instead.
+
+## Foreground Execution Discipline
+
+**A dispatched agent (`Agent`/`Task`-invoked) does not receive `Monitor` or background-task
+completion notifications the way a top-level interactive session does.** Instructing it to start
+a background verification loop (a backgrounded `Bash` call, a `Monitor` watch) or a child
+`Agent`/`Task` dispatch and then end its own turn to "wait for the notification" hangs that
+agent indefinitely — nothing external ever arrives to resume a dispatched agent's turn the way a
+completion notification resumes a top-level session, so the run stalls silently until an outside
+caller intervenes. Observed as a harness-level `contract-violation` pattern: 13+ occurrences of
+an agent narrating "waiting for the background task/Monitor notification" and stopping mid-turn
+across a single build phase, plus 2 more in a separate review/wrap-up session, corrected only by
+an external coordinator (#1965, #2271).
+
+Run a verification loop, a full test suite, or any other long-running command in the
+**foreground** of the current turn instead — a generous timeout, output redirected to a file if
+it's long — never `run_in_background`, and never end a turn hoping a later notification will
+re-wake it. `test/verification.md`'s Foreground rule and `dispatch/task-prompt.md`'s
+foreground-execution instruction are the concrete pattern already applied at those call sites;
+point a new dispatch site at the same pattern rather than re-deriving it.
+
+This is distinct from a dispatcher waiting, within its own single turn, on the `Agent`/`Task`
+children it just dispatched in that same turn — the valid pattern `_shared/dispatch-waiting.md`
+documents. The rule above is about what a dispatched agent may instruct *itself* (or an agent it
+dispatches) to do; it never restricts the dispatcher's own read of the notifications its
+children's completions already send.
 
 ## Model Selection
 
