@@ -85,13 +85,12 @@ function residueBody({ reason, targetPath, count, firstFailedAt, lastError }) {
 // writeCache here).
 //
 // #1892 Deliverable 4: a marker match that is already CLOSED means this same
-// path escalated before, got resolved, and is now failing again — the old
-// per-path record closed (this file's own escalateResidue used to search
-// open issues only, before the `--state all` widening above), so a fresh
-// still-failing streak used to file a brand-new duplicate rather than
-// reopening the one record that already carries this path's history. Comment
-// + reopen instead — one record per path, across its whole open/closed/
-// reopened lifetime, not one per escalation streak.
+// path escalated before, got resolved, and is now failing again. Reopen the
+// existing record instead of filing a fresh duplicate — a deliberate choice
+// to keep one issue per path across its whole open/closed/reopened lifetime,
+// not one per escalation streak. (`--state all` above mirrors the shared
+// `findDuplicate`'s own already-`--state all` behavior, not a widening from
+// an open-only search bug — see #2334.)
 function escalateResidue({ repo, reason, targetPath, count, firstFailedAt, lastError, runner = defaultRunner }) {
   if (!repo) return { status: 'escalation-failed', reason: 'no-repo-slug' };
   const { body, marker } = residueBody({ reason, targetPath, count, firstFailedAt, lastError });
