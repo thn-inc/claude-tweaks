@@ -1,6 +1,7 @@
 {
-  "released": true,
-  "runId": "2026-09-12T060915-record-1936",
-  "reason": "deferred: no-subagent-dispatch-policy (Task 0 empirical premise-check requires ≥3 live Task-tool dispatches, disallowed in this unattended multi-record run)",
-  "releasedAt": "2026-09-12T06:37:26.259Z"
+  "runId": "2026-09-13T190500-record-1936-1996-2008-2063-2080-2282-2332-2344-2345",
+  "sessionId": "e5f829f5-55fd-473d-a389-af738185ce2f",
+  "claimedAt": "2026-09-13T19:08:28.669Z",
+  "ttlHours": 72,
+  "host": "Thomass-MacBook-Pro-3376.local"
 }
