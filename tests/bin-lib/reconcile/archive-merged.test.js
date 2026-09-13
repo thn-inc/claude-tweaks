@@ -1745,6 +1745,105 @@ test('archiveMerged: same shape as above, but the PR-by-number probe reports OPE
   assert.equal(fs.existsSync(runDir), true);
 });
 
+// #2226: a stamped worktree that's confirmably gone AND whose branch has
+// since been deleted used to fall through to the plain 'no-branch' skip
+// forever once its by-number-probed PR came back MERGED rather than
+// CLOSED (GitHub's 3-value enum never satisfies a CLOSED-only check). The
+// fallback now also recognizes MERGED, gated by the same localHasMerge
+// check the general merged-PR path below already applies.
+test('archiveMerged: a run dir whose stamped worktree is gone and branch is unrecoverable is archived once its merged PR is confirmed by number and the merge commit is locally reachable', () => {
+  const { root, featureSha } = mergedFeatureBranchRepo('feat-1962-merged');
+  git(root, 'branch', '-D', 'feat-1962-merged'); // branch ref itself is gone too — nothing left for fallbackBranch
+  const runId = '2026-08-01T090000-record-1962-nobranch-mergedpr';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', 'gone-record-1962-merged'), // stamped, but never created here
+    pr: { number: 1965, branch: 'feat-1962-merged' }, // branch no longer exists
+  }));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
+
+  const wrapper = installGhWrapper({
+    number: 1965, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    mergeCommit: { oid: featureSha },
+  });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), false, 'original run dir must have been archived away');
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  assert.equal(fs.existsSync(archiveDir), true);
+});
+
+test('archiveMerged: same shape as above, but the merge commit is not yet locally reachable — skips local-behind-merge, never archives ahead of the local checkout', () => {
+  const root = fs.realpathSync(makeRepo());
+  const runId = '2026-08-01T090000-record-1962-nobranch-mergedpr-behind';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', 'gone-record-1962-behind'),
+    pr: { number: 1966, branch: 'feat-1962-behind-gone' }, // branch does not exist in this repo
+  }));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
+
+  // Well-formed 40-hex sha, but not actually an ancestor of (or present in)
+  // this repo's history — the local checkout hasn't caught up on the merge.
+  const unreachableSha = 'a'.repeat(40);
+  const wrapper = installGhWrapper({
+    number: 1966, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    mergeCommit: { oid: unreachableSha },
+  });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(!result.archived.includes(runDir));
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'local-behind-merge');
+  assert.equal(fs.existsSync(runDir), true);
+});
+
+// #2228: the #1962 fallback's outer gate used to require `stampedWorktree`
+// truthy, so a run dir whose worktree was never stamped in the first place
+// (the #1684 gap — e.g. a two-Task-call /flow run whose record-worktree
+// write landed foreign) never reached the by-number probe at all, and was
+// permanently stuck at 'no-worktree' even though its PR is knowable by
+// number. The gate now fires whenever `state.pr.number` exists, regardless
+// of whether a worktree was ever stamped.
+test('archiveMerged: a run dir with no worktree stamp at all (never set) still reaches the #1962 by-number fallback and archives once its closed PR is confirmed', () => {
+  const root = fs.realpathSync(makeRepo());
+  const runId = '2026-08-01T090000-record-1962-noworktree-closedpr';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    // no `worktree` key at all — never stamped, distinct from a stamped-then-torn-down worktree
+    pr: { number: 1967, branch: 'feat-1962-noworktree-gone' }, // branch does not exist in this repo
+  }));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
+
+  const wrapper = installGhWrapper({ number: 1967, state: 'CLOSED', mergedAt: null, updatedAt: '2026-08-01T00:00:00Z', mergeCommit: null });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), false, 'original run dir must have been archived away');
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  assert.equal(fs.existsSync(archiveDir), true);
+});
+
 test('isAbandonedInterrupted: false for a non-interrupted status', () => {
   assert.equal(isAbandonedInterrupted('/x', { status: 'active' }, 'sess-1', Date.now()), false);
 });

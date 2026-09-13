@@ -1284,17 +1284,30 @@ function archiveMerged({ cwd, dryRun = false, sessionId = process.env.CLAUDE_COD
     const branch = (wtEntry && wtEntry.branch) || fallbackBranch(root, dir, state);
     if (!branch) {
       const reason = stampedWorktree ? 'no-branch' : 'no-worktree';
-      // #1962: a stamped worktree that's confirmably gone AND whose branch
-      // has since been deleted (fallbackBranch above already tried and
-      // failed) leaves nothing to derive a branch from — but run-state.json's
-      // `pr.number` (stamped once at PR-early lifecycle time, never cleared)
-      // still names the PR. Probe it directly by number instead of skipping
-      // 'no-branch' forever: a closed-unmerged PR here has nothing to wait
-      // for (no merge commit to catch up on, unlike the merged path below),
-      // so it can archive immediately once its console (if any) is resolved.
-      if (stampedWorktree && state && state.pr && state.pr.number) {
+      // #1962: a run dir whose branch can't be derived at all (fallbackBranch
+      // above already tried and failed) has nothing to query `resolvePrState`
+      // with — but run-state.json's `pr.number` (stamped once at PR-early
+      // lifecycle time, never cleared) still names the PR. Probe it directly
+      // by number instead of skipping 'no-branch'/'no-worktree' forever.
+      // #2228: this fires whenever `state.pr.number` exists, regardless of
+      // whether `stampedWorktree` was ever set — a run whose worktree was
+      // never stamped in the first place (the #1684 gap) deserves the same
+      // by-number probe as one whose stamped worktree just got torn down.
+      // #2226: a closed-unmerged PR has nothing to wait for (no merge commit
+      // to catch up on) and archives immediately once its console (if any)
+      // is resolved; a MERGED PR reaches the same archive path, but only
+      // once `localHasMerge` confirms the local checkout has actually caught
+      // up on its merge commit — mirroring the general merged-PR path below.
+      if (state && state.pr && state.pr.number) {
         const byNumber = resolvePrStateByNumber(root, state.pr.number);
-        if (byNumber && typeof byNumber === 'object' && byNumber.state === 'CLOSED') {
+        if (byNumber && typeof byNumber === 'object' && (byNumber.state === 'CLOSED' || byNumber.state === 'MERGED')) {
+          if (byNumber.state === 'MERGED') {
+            const hasMerge = localHasMerge(root, byNumber.mergeCommit);
+            if (hasMerge !== true) {
+              skipped.push({ runDir: dir, reason: hasMerge === false ? 'local-behind-merge' : 'merge-commit-unknown' });
+              continue;
+            }
+          }
           const consoleState = readConsoleState(dir);
           if (consoleState === 'unresolved') {
             skipped.push({ runDir: dir, reason: 'console-unresolved' });
