@@ -182,5 +182,9 @@
   "plugin/bin/lib/ports": {
     "lastSweptMs": 1789182905401,
     "lastHash": "94df18699df4105ee1c690144573f2ff97f24450"
+  },
+  "plugin/bin/lib/preflight-records": {
+    "lastSweptMs": 1789269160473,
+    "lastHash": "868a28ef124c8e5703a284423a589567b8d9fae6"
   }
 }
