@@ -27,7 +27,7 @@ files:
 - **URL:** the tool call's own denial message (`hookSpecificOutput.permissionDecisionReason`)
 - **Action:** read which stamp is missing and the exact remediation command the message names — `record-worktree --run "{run-dir}" "{worktree}"` for the worktree stamp, or a pointer to log the PR-early degrade line via `bin/log-decision.js` for the PR stamp.
 - **Should feel:** diagnosed, not stonewalled — the message names the specific non-skippable step (`build/worktree-setup.md` Step 4.5 or the PR-early lifecycle) and cites `[IL-131]`, not a generic "denied."
-- **Should understand:** this is the same incident the bolded prose in `build/SKILL.md` already warned about — the message exists precisely because that prose alone had already been silently skipped twice.
+- **Should understand:** this is the same incident the bolded prose in `build/SKILL.md` already warned about — the message exists precisely because that prose alone had already been silently skipped twice. Since #1798, the message (and the matching `bookkeeping-stamp-deny` `events.jsonl` entry) also carries `ownerSessionId`/`callerSessionId` — the two session ids `isForeignSessionCall` actually compared — plus `ownedRunMatchesThisRun`; when that last one is true, the message states outright "you ARE its owning session; this deny is expected until the missing stamp lands, not an identity misfire," answering Step 3's question inline instead of leaving it to a separate warning-vs-deny read.
 - **Red flags:** a deny with no remediation command; a remediation command that doesn't match either sanctioned stamp-writing path.
 
 ### 3. Check whether this is genuinely your own run — same terminal
