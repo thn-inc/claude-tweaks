@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-13T18:41:22.440Z",
+  "computedAt": "2026-09-13T19:51:18.015Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -20,12 +20,12 @@
       },
       {
         "number": 2345,
-        "updatedAt": "2026-09-13T13:32:29Z",
+        "updatedAt": "2026-09-13T19:09:14Z",
         "state": "OPEN"
       },
       {
         "number": 2344,
-        "updatedAt": "2026-09-13T13:31:01Z",
+        "updatedAt": "2026-09-13T19:09:08Z",
         "state": "OPEN"
       },
       {
@@ -65,7 +65,7 @@
       },
       {
         "number": 2332,
-        "updatedAt": "2026-09-13T13:31:19Z",
+        "updatedAt": "2026-09-13T19:09:01Z",
         "state": "OPEN"
       },
       {
@@ -165,7 +165,7 @@
       },
       {
         "number": 2282,
-        "updatedAt": "2026-09-13T13:33:15Z",
+        "updatedAt": "2026-09-13T19:19:17Z",
         "state": "OPEN"
       },
       {
@@ -230,12 +230,12 @@
       },
       {
         "number": 2080,
-        "updatedAt": "2026-09-12T16:55:21Z",
+        "updatedAt": "2026-09-13T19:08:48Z",
         "state": "OPEN"
       },
       {
         "number": 2063,
-        "updatedAt": "2026-09-12T16:53:12Z",
+        "updatedAt": "2026-09-13T19:36:33Z",
         "state": "OPEN"
       },
       {
@@ -245,12 +245,12 @@
       },
       {
         "number": 2008,
-        "updatedAt": "2026-09-12T06:38:03Z",
+        "updatedAt": "2026-09-13T19:32:35Z",
         "state": "OPEN"
       },
       {
         "number": 1996,
-        "updatedAt": "2026-09-13T13:23:23Z",
+        "updatedAt": "2026-09-13T19:30:03Z",
         "state": "OPEN"
       },
       {
@@ -260,7 +260,7 @@
       },
       {
         "number": 1936,
-        "updatedAt": "2026-09-12T06:37:50Z",
+        "updatedAt": "2026-09-13T19:36:13Z",
         "state": "OPEN"
       },
       {
@@ -544,1010 +544,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`_shared/subagent-output-contract.md` is the dispatch-correctness contract: minimal input, the\nfour-word status line, the A/B/C output templates, model-profile selection, and the third-party\nexemption. Every mechanical check it defines is a check on the **shape** of the reply.\n\nIn one seven-spec run, a review lens agent (lens 3f, first dispatch) returned six findings, each\nciting a file and line numbers, after **zero tool calls** — it read nothing. Its status line was\nwell-formed and its output template was filled in correctly, so every check the contract defines\npassed. It was caught only because the orchestrator happened to inspect the agent's tool-use count\nby hand, and re-dispatched a fresh agent (3f-B). The contract that exists specifically to make N\nagents independent evidence rather than N echoes has no rule that would have caught it.\n\nThe principle is already stated elsewhere in the project, just not where dispatch correctness is\ndefined: CLAUDE.md's test-count rule (\"never accept a subagent's self-reported pass/fail numbers as\na run … a fabricated report is indistinguishable from load here\"), and a standing memory entry\nrecording that agents fabricate fix reports with zero diff. Neither reaches a dispatch site, because\nevery dispatch site inherits its discipline from the contract file, not from CLAUDE.md's prose.\n\n`subagent-stop.js` already reads the dispatched agent's own transcript (`agent_transcript_path`) to\ngrade the status line, so the tool-use count for a final reply is derivable at the same seam — this\ncheck need not stay a manual orchestrator habit.\n\n## Deliverables\n\n- State the rule in `_shared/subagent-output-contract.md`: a verdict, findings list, or\n  pass/fail claim from an agent whose transcript contains zero tool calls is a **failed\n  dispatch**, never evidence. The caller re-dispatches a fresh agent (never resumes the same\n  one — the 529/stall precedent: 0/5 resumes succeeded) and never aggregates the reply.\n- Put it in the contract's aggregation guidance so every dispatch site enumerated in CLAUDE.md's\n  Subagent Contract section inherits it by citation, with no site restating it (CLAUDE.md's\n  cross-reference rule). Extend the Exemption section's caller-side normalization sentence to\n  name it explicitly: a third-party agent is exempt from the contract, but the caller still\n  rejects a zero-tool-use verdict at the boundary.\n- Add the mechanical assist at the `subagent-stop.js` seam: count tool calls in the graded\n  agent transcript and log a distinct event kind (e.g. `zero-tool-use-verdict`) when a final\n  reply carries a verdict shape with no tool call behind it, so the failure is visible in\n  `events.jsonl` rather than depending on an orchestrator noticing. Add the kind to\n  `bin/friction-events.js` and `reflect/full-mode.md`'s Friction lens vocabulary block.\n\n## Acceptance Criteria\n\n1. `_shared/subagent-output-contract.md` states the zero-tool-use rule, what makes it a failed\n   dispatch, and that the remedy is a fresh dispatch rather than a resume.\n2. Every dispatch site listed in CLAUDE.md's Subagent Contract section reaches the rule by citation;\n   a repo-wide grep finds no site restating it inline.\n3. A fixture transcript whose final assistant turn carries a well-formed status line and a findings\n   table, with zero tool-use blocks, logs a `zero-tool-use-verdict` event; an otherwise identical\n   transcript with one tool-use block logs nothing. Both directions asserted in\n   `tests/bin-lib/hooks/`.\n4. `node --test tests/reflect-friction-lens-vocab.test.js` passes with the new kind, and `npm test`\n   passes.\n\n## Non-Goals\n\n- Grading intermediate turns. The rule applies to the reply the caller consumes, not to every turn a\n  long-running dispatch produces (that scoping question is #2041's).\n- Any judgment about *how much* tool use is enough. Zero is the only threshold this record sets.\n\n## Technical Approach\n\nTwo coupled changes, per the Deliverables above:\n\n1. **Contract text.** Add the zero-tool-use rule to `_shared/subagent-output-contract.md`'s\n   aggregation guidance — worded as a hard rule (a zero-tool-use verdict is a failed dispatch,\n   never evidence; remedy is a fresh dispatch, never a resume of the same agent). Extend the\n   Exemption section's existing caller-side normalization sentence to state explicitly that this\n   check applies at the boundary even to a third-party agent otherwise exempt from the contract's\n   other structural requirements.\n2. **Mechanical assist.** In `bin/lib/hooks/subagent-stop.js`, at the same seam that already reads\n   `agent_transcript_path` to grade the status line, count tool-use blocks in the final graded\n   turn. When the count is zero and the reply shape carries a verdict/findings/pass-fail claim,\n   log a `zero-tool-use-verdict` event (distinct kind, alongside the existing `contract-violation`\n   kind) rather than silently passing shape-only checks. Wire the new kind through\n   `bin/friction-events.js`'s aggregation and `reflect/full-mode.md`'s Friction lens vocabulary\n   block, mirroring how the existing `contract-violation`/`variant` kinds are already wired.\n\n### Key Files\n\n- `plugin/skills/_shared/subagent-output-contract.md` — add the zero-tool-use rule to the\n  aggregation guidance and the Exemption section\n- `plugin/bin/lib/hooks/subagent-stop.js` — count tool-use blocks in the graded transcript, log\n  `zero-tool-use-verdict`\n- `plugin/bin/friction-events.js` — aggregate the new event kind\n- `plugin/skills/reflect/full-mode.md` — Friction lens vocabulary block, new kind name\n- `tests/bin-lib/hooks/` — new fixture-transcript test (zero-tool-use vs. one-tool-use cases)\n- `tests/reflect-friction-lens-vocab.test.js` — cover the new kind name\n\n## Gotchas\n\n- This rule targets the *final* reply the caller consumes — do not apply it to intermediate\n  turns of a long-running dispatch (explicitly out of scope per Non-Goals; #2041 owns that\n  broader scoping question).\n- Don't invent a nonzero tool-use threshold (\"at least N calls\") — this record sets a strict\n  zero/nonzero line only; anything more nuanced is future scope, not this record's.\n- The contract-text change and the mechanical-assist change are both required by the Acceptance\n  Criteria — landing only the mechanical assist without updating the contract text leaves every\n  dispatch site's own prompt-level discipline unchanged, and landing only the contract text\n  without the hook change leaves the failure mode dependent on manual orchestrator vigilance\n  again, the exact gap this record exists to close.\n\n## Original request\n\n## Current State\n\n`_shared/subagent-output-contract.md` is the dispatch-correctness contract: minimal input, the\nfour-word status line, the A/B/C output templates, model-profile selection, and the third-party\nexemption. Every mechanical check it defines is a check on the **shape** of the reply.\n\nIn one seven-spec run, a review lens agent (lens 3f, first dispatch) returned six findings, each\nciting a file and line numbers, after **zero tool calls** — it read nothing. Its status line was\nwell-formed and its output template was filled in correctly, so every check the contract defines\npassed. It was caught only because the orchestrator happened to inspect the agent's tool-use count\nby hand, and re-dispatched a fresh agent (3f-B). The contract that exists specifically to make N\nagents independent evidence rather than N echoes has no rule that would have caught it.\n\nThe principle is already stated elsewhere in the project, just not where dispatch correctness is\ndefined: CLAUDE.md's test-count rule (\"never accept a subagent's self-reported pass/fail numbers as\na run … a fabricated report is indistinguishable from load here\"), and a standing memory entry\nrecording that agents fabricate fix reports with zero diff. Neither reaches a dispatch site, because\nevery dispatch site inherits its discipline from the contract file, not from CLAUDE.md's prose.\n\n`subagent-stop.js` already reads the dispatched agent's own transcript (`agent_transcript_path`) to\ngrade the status line, so the tool-use count for a final reply is derivable at the same seam — this\ncheck need not stay a manual orchestrator habit.\n\n## Deliverables\n\n- [ ] State the rule in `_shared/subagent-output-contract.md`: a verdict, findings list, or\n      pass/fail claim from an agent whose transcript contains zero tool calls is a **failed\n      dispatch**, never evidence. The caller re-dispatches a fresh agent (never resumes the same\n      one — the 529/stall precedent: 0/5 resumes succeeded) and never aggregates the reply.\n- [ ] Put it in the contract's aggregation guidance so every dispatch site enumerated in CLAUDE.md's\n      Subagent Contract section inherits it by citation, with no site restating it (CLAUDE.md's\n      cross-reference rule). Extend the Exemption section's caller-side normalization sentence to\n      name it explicitly: a third-party agent is exempt from the contract, but the caller still\n      rejects a zero-tool-use verdict at the boundary.\n- [ ] Add the mechanical assist at the `subagent-stop.js` seam: count tool calls in the graded\n      agent transcript and log a distinct event kind (e.g. `zero-tool-use-verdict`) when a final\n      reply carries a verdict shape with no tool call behind it, so the failure is visible in\n      `events.jsonl` rather than depending on an orchestrator noticing. Add the kind to\n      `bin/friction-events.js` and `reflect/full-mode.md`'s Friction lens vocabulary block.\n\n## Acceptance Criteria\n\n1. `_shared/subagent-output-contract.md` states the zero-tool-use rule, what makes it a failed\n   dispatch, and that the remedy is a fresh dispatch rather than a resume.\n2. Every dispatch site listed in CLAUDE.md's Subagent Contract section reaches the rule by citation;\n   a repo-wide grep finds no site restating it inline.\n3. A fixture transcript whose final assistant turn carries a well-formed status line and a findings\n   table, with zero tool-use blocks, logs a `zero-tool-use-verdict` event; an otherwise identical\n   transcript with one tool-use block logs nothing. Both directions asserted in\n   `tests/bin-lib/hooks/`.\n4. `node --test tests/reflect-friction-lens-vocab.test.js` passes with the new kind, and `npm test`\n   passes.\n\n## Non-Goals\n\n- Grading intermediate turns. The rule applies to the reply the caller consumes, not to every turn a\n  long-running dispatch produces (that scoping question is #2041's).\n- Any judgment about *how much* tool use is enough. Zero is the only threshold this record sets.\n\n\n---\nFiled by the multi-spec wrap-up of run `2026-09-11T204239-spec-2251-2252-2253-2254-2255-2256-2258` (upstream feedback, self-referenced as a local record; source `staged/wrap-up-upstream-2.md`; consoleAutoResolve at `autonomy: unattended`).\n\nhttps://claude.ai/code/session_018rz67jb18j1RLSqhjEdYWH\n",
-        "createdAt": "2026-09-12T17:44:56Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxTu0eA",
-            "name": "by:reflect",
-            "description": "Origin: filed via /reflect (wrap-up Phase 1)",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2345,
-        "state": "OPEN",
-        "title": "Subagent Contract: a verdict or findings list from an agent that made zero tool calls is a failed dispatch, not evidence",
-        "updatedAt": "2026-09-13T13:32:29Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`bin/lib/hooks/subagent-stop.js` logs one `contract-violation` event per graded reply that fails its\nthree-tier status detection. `bin/friction-events.js` returns that kind unweighted, and\n`reflect/full-mode.md`'s Friction lens judges a run's proportionality from the aggregate count.\n\nOne seven-spec multi-record pipeline run produced **82** `contract-violation` events (0 carrying\n`variant: 'lenient'`). Classifying every event by its own recorded `firstLine`:\n\n| Population | Count | Shape |\n|---|---|---|\n| Foreign status contract | 21 (26%) | `firstLine` is exactly a verdict word from a *different* declared contract — `APPROVED`, `NEEDS_FIXES`, `ADDRESSED`, `VERIFIED` — from reviewer and fix-verification dispatches whose own prompt template declares that vocabulary |\n| Non-final / mid-turn narration | 55 (67%) | `\"Let me finalize the review.\"`, `\"### Spec Compliance\"`, `\"Working tree clean, commit created successfully.\"` — turns that were never the dispatch's final reply |\n| Genuine contract violation | 6 (7%) | The narration-before-the-status-word shape the contract's two `WRONG:` examples target |\n\nSo the lens reported \"82 contract violations\" for a run whose real contract-compliance failure count\nwas at most 6, against 2 `ask-user-question` stops over 201 first-parent commits.\n\nThe foreign-contract population is already named in `subagent-stop.js`'s own header as **known\nfalse-positive source #1** — \"a dispatch whose own template specifies a different status contract …\nis logged here even though nothing was actually violated — the detector has no way to know a\ndispatch declared a different contract\" — with no record tracking it and no mechanism proposed.\n#750 (closed) fixed only the literal `- **Status:** WORD` bullet shape via `LENIENT_RE`; #2265's\ntier-2 lenient window matches only a contract word at the **start** of a line, so neither reaches a\nreply whose first token is a verdict word belonging to another contract.\n\nThe original reflect finding read the 82 as one shape (narration before the status word) and\nproposed widening detection to the first five lines. That premise does not survive measurement:\nwidening the window would move 6 events, not 82, and #2265's first-or-last-3-line window already\ncovers most of that shape. The defect is population conflation, not detector tolerance.\n\n## Deliverables\n\n- Let a dispatcher declare that its agents answer under a different status contract, so\n  `subagent-stop.js` skips grading them — keyed off state the dispatch already writes (the\n  run-dir dispatch record) rather than a new prompt convention — and stop logging known\n  false-positive source #1 as a violation at all.\n- Where grading still applies, separate the populations **at the event**: carry\n  `variant: 'foreign-contract' | 'non-final' | 'violation'` on the logged event (alongside the\n  existing `'lenient'`), so the count a reader sees is not a sum of three unrelated things.\n- `bin/friction-events.js` reports the genuine violation count distinctly from the other\n  variants; `reflect/full-mode.md`'s Friction lens text names the genuine count as the number it\n  judges aggregate volume on, and `tests/reflect-friction-lens-vocab.test.js` covers any new\n  variant names.\n- Remove the resolved half of known-false-positive source #1 from `subagent-stop.js`'s header\n  comment, with a recorded removal condition for anything deliberately left as a shim (CLAUDE.md's\n  no-indefinite-compatibility-shim rule).\n\n## Acceptance Criteria\n\n1. A final reply whose first line is a verdict word from a dispatcher-declared alternate contract\n   logs no `contract-violation`, or logs one carrying `variant: 'foreign-contract'` — proven by a\n   unit test feeding `detectStatus`/the hook a reply beginning `APPROVED` under a declared alternate\n   contract, and by an orthogonal case (an unrelated third vocabulary present) that still grades.\n2. Replaying this run's 82 recorded `firstLine` values through the classifier yields a genuine\n   (`variant: 'violation'`) count of at most 6; the foreign-contract and non-final variants account\n   for the rest.\n3. `friction-events.js --run <dir>` reports the genuine count separately, and\n   `reflect/full-mode.md`'s Friction lens reads that number rather than the conflated total.\n4. `node --test tests/reflect-friction-lens-vocab.test.js` passes with the new variant names, and\n   `npm test` passes.\n\n## Non-Goals\n\n- The non-final/mid-turn population's own fix — #2041 owns scoping the check to a dispatch's\n  terminal reply. This record's `variant` separation makes that population *visible*; it does not\n  pre-empt #2041's mechanism.\n- Widening the status-word detection window further. #2265 already covers the off-position\n  line-start shape, and the measurement above shows the remaining tolerance gap is 6 events.\n\n## Technical Approach\n\nTwo independent mechanisms, per the Deliverables above:\n\n1. **Declared-contract skip.** Identify what state a dispatch already writes to the run\n   directory that names its agents' declared status vocabulary (the dispatch record\n   `subagent-output-contract.md`-following skills already write per-dispatch metadata for).\n   `subagent-stop.js` reads that state for the dispatch a graded reply belongs to and skips\n   grading entirely when the declared contract differs from the harness's own three-tier\n   vocabulary — this is a detection-time skip, not a post-hoc reclassification, so it also stops\n   the event from being logged at all (cleaner than tagging it `foreign-contract` after the\n   fact, per the Deliverables' own \"stop logging ... as a violation at all\" wording).\n2. **Variant tagging for the remainder.** For replies that do get graded, extend the logged\n   event shape with `variant: 'foreign-contract' | 'non-final' | 'violation'` (alongside the\n   existing `'lenient'` value from #2265/#750) — this variant reflects the classification\n   observed in this record's own measurement table, applied going forward. `friction-events.js`\n   aggregates and reports the `'violation'` count separately from the others;\n   `reflect/full-mode.md`'s Friction lens text is updated to read that field instead of the\n   conflated total.\n\n### Key Files\n\n- `bin/lib/hooks/subagent-stop.js` — declared-contract skip logic, `variant` field on the logged\n  event, header-comment update removing the resolved half of known false-positive source #1\n- `bin/friction-events.js` — report the `'violation'` variant count distinctly from the others\n- `reflect/full-mode.md` — Friction lens reads the genuine-violation count, not the conflated\n  total\n- `tests/reflect-friction-lens-vocab.test.js` — cover the new variant names\n\n## Gotchas\n\n- Do not conflate this record's `variant` separation with #2041's own fix (scoping the\n  three-tier check to a dispatch's terminal reply only) — they are complementary, not\n  overlapping: this record makes the non-final population *visible and separately counted*; it\n  does not stop it from being logged as a distinct variant.\n- The declared-contract skip must be keyed off state the dispatch itself already writes, not a\n  new prompt-authoring convention — inventing a new declaration mechanism here would mean every\n  existing dispatch template needs updating just to keep working correctly.\n- When removing the resolved half of `subagent-stop.js`'s header-comment note about known\n  false-positive source #1, keep whatever part (if any) still applies after this fix — don't\n  delete the whole comment if only part of the false-positive source is actually resolved.\n\n## Original request\n\n## Current State\n\n`bin/lib/hooks/subagent-stop.js` logs one `contract-violation` event per graded reply that fails its\nthree-tier status detection. `bin/friction-events.js` returns that kind unweighted, and\n`reflect/full-mode.md`'s Friction lens judges a run's proportionality from the aggregate count.\n\nOne seven-spec multi-record pipeline run produced **82** `contract-violation` events (0 carrying\n`variant: 'lenient'`). Classifying every event by its own recorded `firstLine`:\n\n| Population | Count | Shape |\n|---|---|---|\n| Foreign status contract | 21 (26%) | `firstLine` is exactly a verdict word from a *different* declared contract — `APPROVED`, `NEEDS_FIXES`, `ADDRESSED`, `VERIFIED` — from reviewer and fix-verification dispatches whose own prompt template declares that vocabulary |\n| Non-final / mid-turn narration | 55 (67%) | `\"Let me finalize the review.\"`, `\"### Spec Compliance\"`, `\"Working tree clean, commit created successfully.\"` — turns that were never the dispatch's final reply |\n| Genuine contract violation | 6 (7%) | The narration-before-the-status-word shape the contract's two `WRONG:` examples target |\n\nSo the lens reported \"82 contract violations\" for a run whose real contract-compliance failure count\nwas at most 6, against 2 `ask-user-question` stops over 201 first-parent commits.\n\nThe foreign-contract population is already named in `subagent-stop.js`'s own header as **known\nfalse-positive source #1** — \"a dispatch whose own template specifies a different status contract …\nis logged here even though nothing was actually violated — the detector has no way to know a\ndispatch declared a different contract\" — with no record tracking it and no mechanism proposed.\n#750 (closed) fixed only the literal `- **Status:** WORD` bullet shape via `LENIENT_RE`; #2265's\ntier-2 lenient window matches only a contract word at the **start** of a line, so neither reaches a\nreply whose first token is a verdict word belonging to another contract.\n\nThe original reflect finding read the 82 as one shape (narration before the status word) and\nproposed widening detection to the first five lines. That premise does not survive measurement:\nwidening the window would move 6 events, not 82, and #2265's first-or-last-3-line window already\ncovers most of that shape. The defect is population conflation, not detector tolerance.\n\n## Deliverables\n\n- [ ] Let a dispatcher declare that its agents answer under a different status contract, so\n      `subagent-stop.js` skips grading them — keyed off state the dispatch already writes (the\n      run-dir dispatch record) rather than a new prompt convention — and stop logging known\n      false-positive source #1 as a violation at all.\n- [ ] Where grading still applies, separate the populations **at the event**: carry\n      `variant: 'foreign-contract' | 'non-final' | 'violation'` on the logged event (alongside the\n      existing `'lenient'`), so the count a reader sees is not a sum of three unrelated things.\n- [ ] `bin/friction-events.js` reports the genuine violation count distinctly from the other\n      variants; `reflect/full-mode.md`'s Friction lens text names the genuine count as the number it\n      judges aggregate volume on, and `tests/reflect-friction-lens-vocab.test.js` covers any new\n      variant names.\n- [ ] Remove the resolved half of known-false-positive source #1 from `subagent-stop.js`'s header\n      comment, with a recorded removal condition for anything deliberately left as a shim (CLAUDE.md's\n      no-indefinite-compatibility-shim rule).\n\n## Acceptance Criteria\n\n1. A final reply whose first line is a verdict word from a dispatcher-declared alternate contract\n   logs no `contract-violation`, or logs one carrying `variant: 'foreign-contract'` — proven by a\n   unit test feeding `detectStatus`/the hook a reply beginning `APPROVED` under a declared alternate\n   contract, and by an orthogonal case (an unrelated third vocabulary present) that still grades.\n2. Replaying this run's 82 recorded `firstLine` values through the classifier yields a genuine\n   (`variant: 'violation'`) count of at most 6; the foreign-contract and non-final variants account\n   for the rest.\n3. `friction-events.js --run <dir>` reports the genuine count separately, and\n   `reflect/full-mode.md`'s Friction lens reads that number rather than the conflated total.\n4. `node --test tests/reflect-friction-lens-vocab.test.js` passes with the new variant names, and\n   `npm test` passes.\n\n## Non-Goals\n\n- The non-final/mid-turn population's own fix — #2041 owns scoping the check to a dispatch's\n  terminal reply. This record's `variant` separation makes that population *visible*; it does not\n  pre-empt #2041's mechanism.\n- Widening the status-word detection window further. #2265 already covers the off-position\n  line-start shape, and the measurement above shows the remaining tolerance gap is 6 events.\n\n\n---\nFiled by the multi-spec wrap-up of run `2026-09-11T204239-spec-2251-2252-2253-2254-2255-2256-2258` (upstream feedback, self-referenced as a local record; source `staged/wrap-up-upstream-1.md`; consoleAutoResolve at `autonomy: unattended`).\n\nhttps://claude.ai/code/session_018rz67jb18j1RLSqhjEdYWH\n",
-        "createdAt": "2026-09-12T17:44:52Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxTu0eA",
-            "name": "by:reflect",
-            "description": "Origin: filed via /reflect (wrap-up Phase 1)",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2344,
-        "state": "OPEN",
-        "title": "subagent-stop.js: `contract-violation` conflates foreign-contract and non-final replies with real violations, so the Friction lens judges on a number that is ~93% noise",
-        "updatedAt": "2026-09-13T13:31:01Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review of `plugin/bin/lib/wrap-up/pack.js`. `recordLabels`\n(confirmed, line 397) changed from a sequential loop to an unbounded `Promise.all` fan-out of\n`gh issue view` calls, with no test added for the concurrency or partial-failure semantics.\n\n`tests/bin-lib/wrap-up/pack.test.js`'s only addition in this range is a\n`resolveRecords`/`headerRecords` export check — nothing pins that a mid-list `gh` failure still\nsurfaces correctly, or that N is bounded (an unbounded fan-out over a large record list could hit\n`gh`'s own rate limiting).\n\n## Deliverables\n\n- Add a test covering a mid-list `gh issue view` failure in the `Promise.all` fan-out — confirm\n  the failure surfaces (doesn't get silently swallowed) and confirm what happens to the other\n  in-flight calls.\n- Consider whether the fan-out needs a concurrency bound for large record lists.\n\n## Acceptance Criteria\n\nA test exists that fails a middle call in the fan-out and asserts the overall behavior (error\npropagation or partial-result handling, whichever is intended) explicitly.\n\n## Technical Approach\n\nRead `recordLabels`'s actual current behavior first (line 397's surrounding function) to\ndetermine what it's *supposed* to do on a partial failure — `Promise.all` itself rejects the\nwhole batch on the first rejection, so unless the mapped callback already catches per-record\nerrors internally, a single `gh issue view` failure currently aborts the entire `recordLabels`\ncall for every record, not just the failing one. Write a test with a fake `gh` runner that fails\non (e.g.) the third of five record lookups and assert whichever behavior is actually intended:\neither the whole call rejects (document that this is deliberate, given the caller's own\nerror-handling expectations) or partial results are still usable (in which case the current code\nneeds an `allSettled`-style fix, not just a test). For the concurrency-bound question: check\nwhether this codebase's existing gh-api-module-pattern convention or a sibling call site already\nestablishes a bound for similar fan-outs (e.g. a `concurrency` option, or a batch-size cap) and\napply the same convention here if large record lists are a realistic scenario for `wrap-up`'s own\ncallers (multi-spec runs with many records).\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/pack.js` — `recordLabels` (line 397), possibly needs an\n  `allSettled`-style rewrite or a concurrency bound depending on the investigation above\n- `tests/bin-lib/wrap-up/pack.test.js` — add the mid-list-failure test\n\n## Gotchas\n\n- Don't assume `Promise.all`'s all-or-nothing rejection semantics are a bug — they may be the\n  deliberate, correct behavior for this call site (a wrap-up pack build that can't tolerate a\n  partial label set). Read the surrounding code and its caller's own error handling before\n  concluding a fix (vs. just documenting+testing the existing all-or-nothing behavior) is needed.\n- If a concurrency bound is added, verify it doesn't reintroduce the sequential-loop performance\n  regression this `Promise.all` change was presumably meant to fix in the first place — a bound\n  should cap peak concurrency, not collapse back to strictly sequential.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review of `plugin/bin/lib/wrap-up/pack.js`. `recordLabels` (~line 397) changed from a sequential loop to an unbounded `Promise.all` fan-out of `gh issue view` calls, with no test added for the concurrency or partial-failure semantics.\n\ntests/bin-lib/wrap-up/pack.test.js's only addition in this range is a `resolveRecords`/`headerRecords` export check — nothing pins that a mid-list `gh` failure still surfaces correctly, or that N is bounded (an unbounded fan-out over a large record list could hit gh's own rate limiting).\n\n## Deliverables\n- Add a test covering a mid-list `gh issue view` failure in the `Promise.all` fan-out — confirm the failure surfaces (doesn't get silently swallowed) and confirm what happens to the other in-flight calls.\n- Consider whether the fan-out needs a concurrency bound for large record lists.\n\n## Acceptance Criteria\nA test exists that fails a middle call in the fan-out and asserts the overall behavior (error propagation or partial-result handling, whichever is intended) explicitly.\n",
-        "createdAt": "2026-09-12T16:44:48Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2332,
-        "state": "OPEN",
-        "title": "wrap-up/pack.js recordLabels: unbounded concurrent gh fan-out, untested for partial failure",
-        "updatedAt": "2026-09-13T13:31:19Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\nThe PreToolUse worktree-isolation guard (`bin/lib/hooks/pre-tool-use.js`'s `checkWorktreeRequired`\nand its supporting compound-Bash-shape detection) refuses Bash commands it cannot prove are\nnon-git (runtime-computed paths, heredocs mentioning commits, compound commands) when\n`worktree-always: true`. `bin/friction-events.js` recognizes five event kinds (comment at line\n~26: `wd-deny`, `gate-denial`, `bookkeeping-stamp-deny`, and others) but this specific refusal\nclass is not one of them — confirmed still true: no `wd-guard-refusal`-shaped kind exists in\neither `friction-events.js` or `pre-tool-use.js` as of this shaping pass. `checkWorktreeRequired`\ndoes call `appendEvent(..., 'gate-denial', ...)` at one point in its own logic, but that call is\nscoped to a resolved \"owned run\" context (per the surrounding comment: \"an owned run dir records\nnothing here\" for the foreign-owned case) — it is not a general log-every-refusal call, which is\nconsistent with the reporter's direct empirical observation below.\n\nA real run (worktree-always: true, plugin 6.118.0) over one build → test → review → wrap-up cycle\nhad roughly eight commands refused by this guard — a `sed -n` reading a run-dir path from a shell\nvariable, a `for` loop over `gh issue list --json` calls, and heredocs mentioning commit hashes —\neach rewritten by hand into a plain command or moved to the Write tool. At wrap-up,\n`/claude-tweaks:reflect`'s Friction lens ran `friction-events.js --run <run-dir>` and saw 1\n`bookkeeping-stamp-deny` and 13 `contract-violation` events, and zero `wd-deny`/`gate-denial` —\nthe eight guard refusals left no trace, so the lens reported the run as proportionate when the\nguard refusals were the operator's most frequent actual stop. The refusal mechanism itself is\nalready tracked separately (#1798); this record is only about its observability.\n\n## Deliverables\n\n- Log each worktree-isolation guard refusal (the \"cannot prove non-git\" compound/heredoc/\n  runtime-path case, distinct from `checkWorktreeRequired`'s own narrower `gate-denial` path) as\n  a new friction event kind — e.g. `wd-guard-refusal` — carrying the refused command's executable\n  and the refusal reason.\n- Add the new kind to `bin/friction-events.js`'s recognized-kinds list and its aggregation logic.\n- Add the new kind to `skills/reflect/full-mode.md`'s Friction lens vocabulary block, so the\n  pinned vocabulary test (`tests/reflect-friction-lens-vocab.test.js`) covers it.\n\n## Acceptance Criteria\n\n- A worktree-isolation guard refusal of the \"cannot prove non-git\" shape (a compound command, a\n  heredoc mentioning a commit, or a runtime-computed path) appends a `wd-guard-refusal` event\n  (or equivalent new kind) to the active run's `events.jsonl`, distinct from `gate-denial` and\n  `wd-deny`.\n- `friction-events.js --run <dir>` reports the new kind's count in its aggregate output.\n- `reflect/full-mode.md`'s Friction lens vocabulary block names the new kind, and\n  `node --test tests/reflect-friction-lens-vocab.test.js` passes.\n- Replaying this record's own described run (8 guard refusals, 1 `bookkeeping-stamp-deny`, 13\n  `contract-violation`) with the fix applied would show 8 `wd-guard-refusal` events, making the\n  Friction lens's proportionality judgment reflect the operator's actual experience.\n- `npm test` passes.\n\n## Technical Approach\n\nLocate every return point in `checkWorktreeRequired` (and any sibling function in\n`pre-tool-use.js` handling the same \"cannot prove non-git, fails closed\" compound-Bash refusal\nclass — per that file's own comment at ~line 135, \"Fails CLOSED, deliberately: anything this\ncannot prove sits under the repo's [isolation boundary]\") that produces a deny decision for this\nspecific refusal shape, as opposed to the already-logged `gate-denial`/`wd-deny` paths. Add an\n`appendEvent(runDir, 'wd-guard-refusal', { command: command.slice(0, 200), reason })` call at\neach such point, following the exact pattern the existing `gate-denial` call\n(`appendEvent(ownedRun.dir, 'gate-denial', { tool: toolName, path: targetPath, ...testTag },\nownedRun.attribution)`) already uses — including its run-dir resolution and any test-tag\nhandling needed to avoid the test suite's own exercise of this gate polluting a real run's\nfriction counts (mirroring `friction-events.js`'s existing `gate-denial`+`test===true` skip at\nline ~93). Then wire the new kind through `friction-events.js`'s aggregation and\n`reflect/full-mode.md`'s vocabulary block the same way the existing five kinds are already wired.\n\n### Key Files\n\n- `plugin/bin/lib/hooks/pre-tool-use.js` — add the `wd-guard-refusal` event append at the\n  compound/heredoc/runtime-path refusal point(s) in `checkWorktreeRequired`\n- `plugin/bin/friction-events.js` — recognize and aggregate the new kind (mirror the existing\n  `gate-denial` test-tag skip if the same test-pollution risk applies)\n- `plugin/skills/reflect/full-mode.md` — Friction lens vocabulary block, new kind name\n- `tests/reflect-friction-lens-vocab.test.js` — cover the new kind name\n\n## Gotchas\n\n- Do not conflate this new kind with the existing `gate-denial` event `checkWorktreeRequired`\n  already logs for its own narrower, owned-run-scoped case — they're different refusal shapes;\n  changing `gate-denial`'s existing meaning would break whatever currently reads it.\n- Mirror the test-pollution guard the existing `gate-denial` kind already has\n  (`friction-events.js`'s `parsed.test === true` skip) if this guard's own test suite exercises\n  the same refusal path — otherwise this repo's own hook tests would inflate a real run's\n  friction count.\n- This record is scoped to observability only — the refusal mechanism's own correctness (whether\n  it should refuse a given command at all) is #1798's territory, not this record's.\n\n## Original request\n\n**Summary:** The PreToolUse worktree-isolation guard refuses Bash commands it cannot prove are non-git (runtime-computed paths, heredocs mentioning commits, compound commands), but those refusals are not one of the five friction event kinds `bin/friction-events.js` returns, so `/claude-tweaks:reflect`'s Friction lens under-counts the single most frequent stop a worktree session experiences.\n**Kind:** Gap\n**Affected component:** `bin/lib/hooks/pre-tool-use.js` (worktree-isolation guard) / `bin/friction-events.js` / `skills/reflect/full-mode.md` Friction lens\n**Use case:**\nRunning `/claude-tweaks:flow` on a record inside a worktree (worktree-always: true), plugin 6.118.0. Over one build → test → review → wrap-up run, the guard refused roughly eight commands that were not version-control operations: `sed -n '...' \"$R/decisions.md\"` with `R` a shell variable holding the run-dir path, a `for` loop over `gh issue list --json` calls, and heredocs writing staged reflect files whose body text mentioned commit hashes. Each refusal was rewritten into a plain command with a literal path, or moved to the Write tool. At wrap-up, the Friction lens ran `friction-events.js --run <run-dir>` and saw 1 `bookkeeping-stamp-deny` and 13 `contract-violation` events, and zero `wd-deny`/`gate-denial` — the eight guard refusals left no trace, so the lens reported the run as proportionate when the operator's actual experience was dominated by them. The refusal itself is tracked in #1798; this report is about its observability.\n**Definition:** Clear — log each guard refusal as a friction event (a new kind, e.g. `wd-guard-refusal`, carrying the refused command's executable and the refusal reason) and add it to `full-mode.md`'s friction-lens vocabulary block so the pinned vocabulary test covers it.\n**Plugin version:** 6.118.0\n\n---\nFiled via /claude-tweaks:feedback.\n",
-        "createdAt": "2026-09-12T04:02:59Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2282,
-        "state": "OPEN",
-        "title": "friction-events: the worktree-isolation guard's refusals are not a logged friction event kind, so the Friction lens cannot see them",
-        "updatedAt": "2026-09-13T13:33:15Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: backend\n\n## Overview\n\nThe Subagent Contract (`plugin/skills/_shared/subagent-output-contract.md`) currently requires\nevery dispatched subagent's reply to open with one of `DONE` / `DONE_WITH_CONCERNS` /\n`NEEDS_CONTEXT` / `BLOCKED` as the literal first line. This has failed in production three\nseparate times (`#606`, `#1653`, `#1868`) despite explicit `WRONG:` examples at every dispatch\nsite — models reliably produce a clear concluding verdict but are unreliable at *opening* with one\nbefore any reasoning. This unit is the keystone of a 5-unit decomposition (parent #2264): it moves\nthe canonical status signal to a labeled trailing line and makes the mechanical checker in\n`plugin/bin/lib/hooks/subagent-stop.js` lenient about exact position. Every other unit in this\ndecomposition (WU2-WU5, each `Blocked by` this one) edits inline dispatch-prompt copies of the\nsame rule, and each of those edits must match the canonical text this unit establishes — so this\nunit lands first.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Changing `subagent-stop.js`'s best-effort, non-blocking posture — it remains a diagnostic log,\n  never a gate. This migration adds no new enforcement mechanism.\n- Retrofitting `plugin/skills/harness-health/judge-procedure.md` (~228) or\n  `plugin/skills/harness-health/SKILL.md` (~69) — their entire reply *is* the status line\n  (\"reply with nothing but a single status line\"), so the narration-creeps-in-before-it failure\n  mode this migration targets cannot occur there. Left as a follow-up for a later record.\n- Changing the four status words themselves, their routing meaning, or the Template A/B/C content\n  that follows the status line.\n- Editing any of the other 21 dispatch-site files that carry an inline copy of the old\n  position-asserting instruction — those are WU2 through WU5 in this same decomposition, each\n  `Blocked by` this unit.\n- Hook-side reply rewriting (stripping narration before the check runs) — rejected in the design\n  doc's Rationale: it silently edits the audit trail, so the logged reply no longer matches what\n  the subagent actually said.\n\n## Current State\n\n- Canonical rule: `plugin/skills/_shared/subagent-output-contract.md` states or depends on the\n  \"first line\" position requirement at approximately lines 80, 93, 256, 278, and 286 — including\n  the Implementer Status Protocol table's framing sentence, the \"Check the status word's position,\n  not merely its presence\" paragraph (which cites the `#606`/`#1653` incidents by name), and the\n  fan-out dispatch-shape example block.\n- Detection code: `plugin/bin/lib/hooks/subagent-stop.js` exports `STATUS_RE =\n  /^(?:-\\s+)?(?:\\*\\*Status:\\*\\*\\s+)?(DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED)\\b/` and applies\n  it to the first line of the last assistant turn only (`lastAssistantText`). The file's header\n  comment documents this as an \"E3: Subagent Contract status-line check (warn tier)\" — best-effort,\n  never blocking, with two documented false-positive sources already carved out (a dispatch\n  declaring a different contract; an absent `agent_transcript_path`).\n- Test coverage: zero. No `tests/hooks-subagent-stop*.test.js` file exists, and no existing test\n  anywhere exercises `STATUS_RE`'s actual matching behavior — `contract-violation` appears in a\n  handful of other test files only as an event-name string in unrelated contexts (dispatcher\n  registration, friction-events consumption).\n\n## Deliverables\n\n- [ ] Rewrite `plugin/skills/_shared/subagent-output-contract.md`'s canonical status-line rule (all\n      5 cited locations: ~80, ~93, ~256, ~278, ~286) so the reply's **last non-empty line** must\n      read exactly `STATUS: DONE` (or `STATUS: DONE_WITH_CONCERNS` / `STATUS: NEEDS_CONTEXT` /\n      `STATUS: BLOCKED`) — a labeled line, never a bare trailing word. Update the Implementer\n      Status Protocol table's framing sentence and the \"Check the status word's position\" paragraph\n      to describe the new trailing-line convention instead of the retired first-line one. For\n      review-style agents (Template A), the trailing status line follows the findings table\n      (reversing the current \"status line, then table\" order); for search/scout-style (B/C), the\n      trailing status line follows whatever the template's own content is.\n- [ ] Update the file's `WRONG:` examples (and the fan-out dispatch-shape example block) to show\n      the *new* failure modes worth warning about — a bare trailing word instead of the labeled\n      `STATUS:` line, and a status line that isn't truly the last non-empty line of the reply —\n      rather than the retired first-line-narration example (`\"Based on my review, DONE\"`).\n- [ ] Replace `subagent-stop.js`'s `STATUS_RE`-based first-line-only check with a two-tier\n      canonical/lenient detection function: (1) canonical — does the last non-empty line match\n      `^STATUS: (DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED)$` exactly? Compliant, no event\n      logged. (2) lenient fallback — does the bare status word appear as the first token of any of\n      the first 3 lines, or the last 3 lines? Compliant, but log an informational\n      `contract-violation` event variant noting the non-canonical position (distinguishable from a\n      hard violation in the logged event's fields — see Data / API Surface below). (3) neither —\n      genuine violation, log `contract-violation` exactly as today, unchanged behavior.\n- [ ] Update `subagent-stop.js`'s header comment (currently documents the first-line contract and\n      its two known false-positive sources) to describe the new two-tier detection shape.\n- [ ] Create `tests/hooks-subagent-stop.test.js` (new file — no test currently exercises this\n      hook's detection logic at all) covering all four cases in Acceptance Criteria below.\n\n## Acceptance Criteria\n\n1. `tests/hooks-subagent-stop.test.js` includes a canonical-format detection test: a reply whose\n   last non-empty line is exactly `STATUS: DONE` (and separately, one for each of\n   `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, `BLOCKED`) is detected as compliant with no\n   `contract-violation` event logged.\n2. The same test file includes a lenient-fallback detection test: a reply whose status word\n   appears as the first token of one of the first-or-last 3 lines (but not as the canonical\n   trailing `STATUS:` line) is detected as compliant, AND the test asserts the informational\n   log variant fires — not the hard-violation `contract-violation` event.\n3. The same test file includes a genuine-violation detection test: a reply where the status word\n   appears nowhere in the first-or-last 3 lines (or not at all) is detected as non-compliant and\n   logs `contract-violation` exactly as today's behavior — unchanged from the pre-migration\n   detection.\n4. The same test file includes a migration-safety test proving the design doc's rollout-safety\n   claim directly: an old-format reply (the bare status word as the literal first line, with no\n   trailing `STATUS:` line anywhere in the reply) is STILL accepted as compliant by the new\n   lenient fallback — this is what makes the format migration itself safe with no explicit\n   transition period.\n5. `plugin/skills/_shared/subagent-output-contract.md`'s `WRONG:` examples (all instances) show the\n   new failure modes — a bare trailing word instead of the labeled `STATUS:` line, and a status\n   line that isn't truly the last non-empty line — and no longer show the retired\n   first-line-narration example as the primary illustration.\n6. `npm test` passes with no regressions after all edits in this unit land.\n7. The two-tier detection function excludes markdown table-row lines (lines starting with `|`\n   after trimming) from the tier-2 lenient-fallback candidate window, with a test proving a\n   findings-table row containing a matching word does not itself trigger a false\n   lenient-compliant match when the reply's actual trailing status line is missing.\n\n## Technical Approach\n\nExactly the design doc's Decision section (New canonical format + Checker leniency subsections) —\nreproduced here since the design doc is deleted once this decomposition lands:\n\n**New canonical format.** The reply's last non-empty line must read exactly `STATUS: {WORD}`. A\nlabeled line, not a bare trailing word, because a bare trailing word risks colliding with prose\nthat happens to end in a matching token (\"...the tests are done\" reads as ambiguous;\n\"...the tests are done\\nSTATUS: DONE\" does not). The label makes the line unambiguous and\ntrivially greppable: `grep -E '^STATUS: (DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED)$'` against\nthe last non-empty line of a reply.\n\n**Checker leniency (subsumes rollout safety).** `subagent-stop.js`'s detection changes from \"does\nthe first line match `STATUS_RE`\" to the three-tier check in Deliverables above. This single\nfallback rule does double duty: it is the mechanical leniency that tolerates ordinary model drift\n(the status word landing one line off from where the contract technically wants it), and it is\nalso what makes the format migration itself safe with no explicit transition period to manage — a\ndispatch's full round-trip (prompt sent, subagent replies, reply checked) happens within one Task\ncall, using whichever plugin version is loaded when the *check* runs, not when the *prompt* was\nsent. An in-flight dispatch given an old-format prompt (status word first) whose reply is checked\nafter this migration ships is still accepted by the lenient fallback's first-K-lines check.\n\n### Data / API Surface\n\nThe informational log variant from Deliverable 3 must be distinguishable from a hard\n`contract-violation` in the logged event's own fields (e.g. an added `variant: 'lenient'` /\n`variant: 'canonical'` / absent-for-hard-violation field, or equivalent) — the design doc's own\nwording is \"log an informational `contract-violation` event variant... visible for someone to\nnotice a dispatch site is still using the old shape, but never a hard failure.\" Name the exact\nfield/shape chosen in this deliverable's own commit; downstream consumers of the friction-events\nlog (`bin/lib/hooks/friction-events` or equivalent) are out of this unit's scope to update, per\nNon-Goals — a consumer keying on the `contract-violation` event name alone (with no `variant`\ncheck) will keep treating the informational variant as a hard violation until it is separately\nupdated; this is an accepted, intentional boundary of this unit's scope, not an oversight.\n\n### Detection Boundary Rules (resolved during Step 5 red-team review)\n\n- **Tier-2 match shape.** The lenient fallback matches either the bare status word OR a labeled\n  `STATUS: {WORD}` line (tier-1's own exact pattern, just off-position) as the first token of a\n  candidate line — after stripping the same optional `- ` / `**Status:**` prefixes the existing\n  `STATUS_RE` already strips. Either form landing in the candidate window is lenient-compliant.\n- **Window counts non-empty lines only**, matching tier-1's own \"last non-empty line\" convention —\n  blank lines never count toward the first-3/last-3 window, and the two windows may overlap for a\n  short reply (≤6 non-empty lines total); checked as a union, not a strict partition.\n- **Canonical exact-match is on the trimmed line** (trailing whitespace ignored) and is\n  case-sensitive — `STATUS: done` does not match tier 1 (it may still match tier 2's bare-word\n  check if `done` itself were a valid word, which it isn't, so an all-lowercase reply always falls\n  through to genuine-violation, unchanged from today's case-sensitive behavior).\n- **Table-row exclusion.** A candidate line that is a markdown table row (starts with `|` after\n  trimming) is excluded from the tier-2 window — this prevents a Template A findings table's own\n  cell content (which may itself contain a matching word) from producing a false lenient-compliant\n  match when the reply's real trailing status line is missing or malformed.\n- **Decorated variants are an accepted gap, not a blocking one.** A bolded canonical line (e.g.\n  `**STATUS: DONE**`) matches neither tier 1 exactly nor the existing prefix carve-outs (which\n  target a different contract's bold `**Status:**` bullet shape, not this new line) — left\n  unhandled by design, consistent with the checker's best-effort, non-blocking posture.\n- The two existing false-positive carve-outs (a dispatch declaring a different contract; an absent\n  `agent_transcript_path`) and `isExemptAgentType` are unaffected and still evaluated before either\n  detection tier runs.\n- **Template B/C placement.** The trailing status line is the reply's absolute last non-empty line,\n  after all of that template's own required content — identical to every other site's rule, just\n  with no findings table to follow it.\n\n### Key Files\n\n- `plugin/skills/_shared/subagent-output-contract.md` — canonical rule text at ~80, ~93, ~256,\n  ~278, ~286; `WRONG:` examples and the fan-out dispatch-shape example block.\n- `plugin/bin/lib/hooks/subagent-stop.js` — replace `STATUS_RE`'s first-line-only check with the\n  two-tier canonical/lenient detection function; update the header comment.\n- `tests/hooks-subagent-stop.test.js` — new file, zero prior coverage of this hook's detection\n  logic.\n\n## Gotchas\n\n- **Related:** #2036 — \"SubagentStop hook misattributes contract-violation to main-session\n  narration.\" Cross-link only, not a dependency: #2036 is a genuinely separate bug (the hook reads\n  the wrong transcript source, attributing a violation to main-session narration instead of the\n  actual subagent reply) in the same function this unit touches. Do not fold #2036's proposed\n  exemption into this unit's scope — leave its own resolution to its own record.\n- `STATUS_RE` already carries two documented false-positive carve-outs (a dispatch declaring a\n  different contract shape, e.g. `superpowers:subagent-driven-development`'s bold `**Status:**`\n  bullet; an absent `agent_transcript_path`) — preserve both when rewriting the detection function,\n  they are orthogonal to the position-leniency change this unit makes.\n- `isExemptAgentType` (third-party plugin agent exemption, `#1596`) is untouched by this migration\n  — it gates whether the check runs at all, not how the status line is located within a reply that\n  does get checked.\n- The two structurally-immune harness-health files (Non-Goals above) already comply with the *old*\n  first-line rule by construction (\"nothing but a single status line\") and will also comply with\n  the *new* trailing-line rule by the same construction (their one line is simultaneously first and\n  last) — no migration risk there, which is exactly why they're a low-priority follow-up rather\n  than in-scope here.\n- Keep `subagent-stop.js`'s best-effort, non-blocking posture completely unchanged — this is a\n  detection-shape change only, never a new gate.\n- **Accepted duplication tradeoff (raised in Step 5 red-team).** This decomposition's other 4\n  units (WU2-WU5) each carry their own inline dispatch-prompt copy of the same canonical rule\n  rather than a single centralized reference — consistent with how every dispatch site in this\n  plugin already works today (agents only see their own prompt; a shared-file reference would not\n  reach them, per the Subagent Contract's own \"Letting agents read sibling files\" anti-pattern).\n  Centralizing the canonical *text* into one file the *human maintainer* edits once (as opposed to\n  what each dispatched *agent* sees) is a real architectural question worth its own record, but is\n  out of scope for a status-line migration and not required for this unit's acceptance.\n\n## Manual Steps\n\nNone — every deliverable has a direct CLI/code path (file edits, a new test file, `npm test`).\n\n\n<!-- work-fingerprint: subagent-status-line-trailing-migration:canonical-contract-and-hook -->\nwork-fingerprint: subagent-status-line-trailing-migration:canonical-contract-and-hook",
-        "createdAt": "2026-09-11T21:56:38Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          }
-        ],
-        "number": 2265,
-        "state": "OPEN",
-        "title": "Migrate Subagent Contract canonical status-line rule and subagent-stop.js detection",
-        "updatedAt": "2026-09-13T13:32:12Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      },
-      {
-        "body": "Surface: backend\n\n## Overview\n\n`plugin/bin/lib/wrap-up/pack.js`'s `parseLedger` (~line 269) classifies a ledger row as blocking via `status === 'open'` alone — any other value (a typo, a synonym, an out-of-enum write) falls through as silently terminal. `_shared/ledger-format.md` already documents this exact gap in prose (line 49: \"Writing an out-of-enum value does not fail loudly — `parseLedger`... counts only `open` as blocking, so anything it does not recognize is silently treated as terminal\"), but nothing mechanically detects it. Seven out-of-enum rows already exist in two historical ledger files.\n\n**Design resolved before shaping (the record's own Open Question):** traced `pack.ledger`'s consumers directly — it is `ledgerProbe`'s return value verbatim, and `wrap-up/SKILL.md` line 208 already gates the Resolve Gate on `pack.ledger.total > 0`. The record's three candidate surfaces aren't real alternatives: a fact-pack `unrecognizedStatus` count is the necessary data-plumbing fix (nothing else can exist without it first), and a warning line in the nothing-left-behind gate is simply how that count reaches a human — both are needed together. A repo-wide `harness-health`/`docs-health` mechanical check (the third candidate) is disproportionate here: it would exist to catch *future* drift across the whole historical ledger corpus, but the actual violation set is fixed and small (7 rows, 2 files) — cheaper and more honest to correct them directly as a deliverable than to stand up new scanning infrastructure for a closed, finite backlog.\n\n**Complexity:** Low\n**Estimated tasks:** 2-3\n\n## Non-Goals\n\n- A new `harness-health`/`docs-health` mechanical check sweeping the live ledger corpus repo-wide — rejected above as disproportionate; the fact-pack fix covers every future wrap-up run's own ledger, and the 7 known historical violations are fixed directly instead.\n- Any change to the status enum itself (`_shared/ledger-format.md`'s five terminal values plus `open`) — this spec detects and reports drift from the existing enum, it does not expand it.\n\n## Current State\n\n- `plugin/bin/lib/wrap-up/pack.js` `parseLedger` (~line 269): `if (status === 'open') { open += 1; byPhase[phase].open += 1; }` — no `else` branch; an unrecognized status contributes to `total` only, silently.\n- `plugin/bin/lib/wrap-up/pack.js` `ledgerProbe` (~line 292): aggregates `parseLedger`'s per-file `{open, total, byPhase}` into run-level `totals` — same shape, same silent gap.\n- `plugin/bin/lib/wrap-up/pack.js` (~line 374): `ledger: () => { recordsOrThrow(); return ledgerProbe(inputs, deps); }` — `pack.ledger` is `ledgerProbe`'s return value directly.\n- `plugin/skills/wrap-up/SKILL.md` (~line 208): \"Gate the read... `pack.ledger` `total > 0` opens it\" — the sole consumer of `pack.ledger`'s shape that this spec must not break.\n- `plugin/skills/_shared/ledger-format.md` line 49: already documents the bug in prose; needs updating once the mechanical fix lands (the sentence \"so anything it does not recognize is silently treated as terminal\" becomes false).\n- The 5 known enum values: `fixed`, `deferred`, `accepted`, `acknowledged`, `observation` (terminal) plus `open` (blocking) — `_shared/ledger-format.md` line 45/49.\n- Seven existing out-of-enum rows (verified live):\n  - `docs/plans/2026-09-05-record-1634-ledger.md` row 1 (`resolved`) — describes an intentional decision (a Q# resolved at the Review Console under `consoleAutoResolve`) → correct value: `accepted`.\n  - Same file, row 2 (`resolved`) — describes resolution via Phase 4's Auto-merge short-circuit, an intentional path, no code fix → `accepted`.\n  - `docs/plans/2026-09-05-spec-1921-...-ledger.md` row 57 (`staged`) — \"close as satisfied... follow-up candidate for the sweep pre-check\", a staged record proposal → `deferred`.\n  - Same file, row 62 (`resolved`) — \"nothing to route\", an explicit no-action-needed disposition → `accepted`.\n  - Same file, row 68 (`staged`) — staged as `parent staged/reflect-2.md` → `deferred`.\n  - Same file, row 69 (`staged`) — staged as `parent staged/wrap-up-memory-1.md` → `deferred`.\n  - Same file, row 70 (`staged`) — staged artifacts resolving at the consolidated console → `deferred`.\n\n## Deliverables\n\n- [ ] `parseLedger`: track an `unrecognized` count (rows whose status is neither `open` nor one of the five terminal values) alongside `open`/`total`, per-phase in `byPhase` too (e.g. `byPhase[phase].unrecognized`), and collect the distinct unrecognized string values seen (for diagnosability — a human fixing this needs to know what strings appeared, not just a count).\n- [ ] `ledgerProbe`: aggregate the new `unrecognized` count and the distinct-values set across every file into `totals`.\n- [ ] `wrap-up/SKILL.md`'s ledger-gate section (~line 208): when `pack.ledger.unrecognized > 0`, render a warning line before the Resolve Gate table naming the count and the distinct unrecognized values found, so a human sees it even though the row itself never appears in the `open`-only \"Unresolved Open Items\" table. This does not block or change the gate's existing `total > 0` open condition — it's an additive, non-blocking notice.\n- [ ] Correct the 7 known historical rows per the mapping in Current State above (`staged` → `deferred`, `resolved` → `accepted`) in the two named `docs/plans/*.md` files — mechanical text edits, no other content in those rows changes.\n- [ ] Update `_shared/ledger-format.md` line 49's prose: replace \"so anything it does not recognize is silently treated as terminal\" with a sentence describing the new behavior (counted separately as `unrecognized` and surfaced as a gate warning).\n\n## Acceptance Criteria\n\n1. `parseLedger` (and `ledgerProbe`) return a distinguishable `unrecognized` count (and the set of distinct unrecognized values) for rows whose status is neither `open` nor a terminal enum value — verified by a fixture ledger containing an out-of-enum row.\n2. A fixture wrap-up run whose ledger carries an out-of-enum status row renders the new warning line; a ledger with zero out-of-enum rows renders no such line.\n3. `pack.ledger.total`/`.open`/`.byPhase` shapes are unchanged for existing consumers (`wrap-up/SKILL.md`'s `total > 0` gate condition) — no regression to the existing gate-open condition.\n4. `grep -c \"| staged |\\|| resolved |\"` (or equivalent) over the two named ledger files returns 0 after the fix; the corrected rows retain their original Item/Resolution text unchanged, only the Status cell is corrected.\n5. `_shared/ledger-format.md` line 49's prose no longer claims the unrecognized case is silently treated as terminal.\n6. `npm test` passes in full, no regressions.\n\n## Technical Approach\n\nExtend `parseLedger`'s existing per-row loop with an `else` branch on the same `status` check already there — no new parsing pass, no new file reads. The warning line is additive prose in an already-existing gate section, not a new gate or a new blocking condition (an out-of-enum status was never `open`, so it was never blocking before, and this spec doesn't change that — it only makes the previously-invisible case visible). The 7 historical corrections are plain text edits to already-known row/file locations, requiring no further lookup.\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/pack.js` — `parseLedger` (~line 269), `ledgerProbe` (~line 292)\n- `plugin/skills/wrap-up/SKILL.md` — ledger-gate section (~line 208)\n- `plugin/skills/_shared/ledger-format.md` — line 49 prose update\n- `docs/plans/2026-09-05-record-1634-ledger.md`, `docs/plans/2026-09-05-spec-1921-...-ledger.md` — the 7 row corrections\n- Existing test coverage for `pack.js`'s ledger functions (locate via `grep -rl \"parseLedger\\|ledgerProbe\" tests/`) — extend with the new fixture case\n\n## Gotchas\n\n- Do not conflate \"unrecognized\" with \"blocking\" — an out-of-enum row must remain non-blocking (it was never `open`), only newly *visible* as a data-quality warning. Changing it to block the gate would be a behavior change well beyond this record's scope.\n- The 7 row corrections only touch the Status cell — do not alter Item/Resolution text, which is historical record of what actually happened and is independently valuable.\n- `docs/` is maintainer-side, not part of the shipped plugin payload (per this repo's CLAUDE.md Structure section) — the 7-row correction has no effect on the plugin's runtime behavior; it's data hygiene only. Do not let this fact become a reason to skip the mechanical fix in `pack.js`/`SKILL.md`, which *does* ship and *does* affect every future wrap-up run's own ledger.\n\n## Original request\n\nFiled by wrap-up Skills curation (record #1971's run, refs #1971) — a code observation surfaced\nwhile gathering evidence for the ledger-status-enum drift the same run's Skills row fixed on the\nwriter side (`plugin/skills/_shared/ledger-format.md`, commit a944810bc).\n\n## Current State\n\n`plugin/bin/lib/wrap-up/pack.js`'s `parseLedger` (~line 269) classifies a ledger row as blocking\nvia `status === 'open'` alone:\n\n```js\nconst status = (cells[3] || '').toLowerCase();\nbyPhase[phase] = byPhase[phase] || { open: 0, total: 0 };\nbyPhase[phase].total += 1;\nif (status === 'open') { open += 1; byPhase[phase].open += 1; }\n```\n\nAny other cell value — including a typo, a synonym, or an out-of-enum write — falls through as\nterminal with no signal. This is the exact failure shape `parse-signal-discipline` exists to\nprevent: the unparseable/unrecognized case must be distinguishable from the legitimately-resolved\ncase, not silently folded into it.\n\nLive tally across this repo's `docs/plans/*ledger*.md` Status columns (at the time of filing):\n\n| Value | Count | In `_shared/ledger-format.md`'s enum? |\n|---|---|---|\n| `fixed` | 57 | yes |\n| `observation` | 18 | yes |\n| `open` | 16 | yes |\n| `deferred` | 16 | yes |\n| `accepted` | 15 | yes |\n| `staged` | 4 | **no** |\n| `resolved` | 3 | **no** |\n\nSeven out-of-enum writes already exist, across `2026-09-05-record-1634-ledger.md` and\n`2026-09-05-spec-1921-...-ledger.md`; an eighth was proposed (and caught at review) in record\n#1971's own materialized spec. None were flagged by any mechanism — `parseLedger` treated them all\nas non-blocking.\n\n## Open Question\n\nWhere should the unrecognized-status signal surface, and what does it owe under\n`run-directory-fact-packs`'s location/freshness/phase-trace rule? Candidates: a new\n`unrecognizedStatus` count alongside `open`/`total` in the fact pack's per-phase breakdown; a\nwarning line in the wrap-up nothing-left-behind gate; a `harness-health`/`docs-health` mechanical\ncheck against the live ledger corpus. This needs a design call on where the count surfaces before\nit can be scoped as agent-sized work — not guessed at inside a curation dispatch.\n\n## Suggested acceptance criterion (once scoped)\n\n`parseLedger` distinguishes a recognized terminal status from an unrecognized one, and the\nwrap-up fact pack surfaces a non-zero unrecognized-status count rather than folding those rows\ninto the terminal set silently.\n\nDefer-reason: genuinely-larger\n",
-        "createdAt": "2026-09-08T12:42:19Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          }
-        ],
-        "number": 2080,
-        "state": "OPEN",
-        "title": "parseLedger silently counts an unrecognized Status value as terminal",
-        "updatedAt": "2026-09-12T16:55:21Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      },
-      {
-        "body": "Origin: capture (deferred from #1909's own build, run 2026-09-08T062146-record-1909)\nDefer-reason: genuinely-larger\n\n## Current State\n\n#1909 (\"Instruction-prose diet: operative skill text states the rule and the IL tag, provenance narrative moves out, per-pipeline-step loaded-bytes budget\") shipped three of its six deliverables in its build: the authoring rule in `docs/skill-authoring.md`, the Interaction-style-directive dedup (36 `SKILL.md` copies → one SessionStart-hook injection, ~17 KB removed from the whole corpus), and a new `harness-health` composed-bytes-per-step report (`plugin/bin/context-cost-report.js` wired into `harness-health/SKILL.md`). That build's own materialized spec (`.claude-tweaks/pipelines/2026-09-08T062146-record-1909/work/1909-spec.md`) documents why the remaining scope did not fit in the same pass: a real trimming pass over provenance narrative is prose-judgment work, not a mechanical grep-and-replace like the directive dedup was, and each trim needs its own conformance-test pin update — the interactive-style dedup alone touched 7 test files for one mechanically-identical string; the remaining work touches dozens of non-identical passages across a much larger corpus.\n\nMeasured in that build: the directive dedup did **not** move `context-cost.js`'s `composedBytesReport()` numbers for any pipeline step (`worktree-setup`, `manifesto`, `claims`, `pr-scan`, `merge` all unchanged) — none of those compose bundles include a `SKILL.md` file as a source. AC2 (\"the five pipeline skills' default-path loaded bytes drop by at least 25%\") is about the fuller per-step footprint #1909's own Current State describes (a skill directory's total bytes touched across a `/flow` step — `wrap-up/` alone is ~408 KB, `flow/` ~348 KB), not the narrower compose-call-site measurement #1990 built. Reaching 25% needs the trimming pass itself, done for real.\n\n## Deliverables\n\n- [ ] A first trimming pass over the five pipeline skills (`plugin/skills/flow/`, `plugin/skills/build/`, `plugin/skills/test/`, `plugin/skills/review/`, `plugin/skills/wrap-up/`) plus the `plugin/skills/_shared/*.md` files they cite: move provenance narrative (which record moved a paragraph, which commit deleted a design doc, retold incident narratives already in `docs/incident-log.md`) out per `docs/skill-authoring.md`'s \"Instruction-prose diet\" rule — operative text keeps the rule + an `[IL-nn]`/record citation, the narrative moves to `docs/incident-log.md`/`docs/decisions/` (already there in most cases — the fix is deleting the redundant inline retelling, not writing new incident-log content).\n- [ ] Update every conformance test that pins the moved/trimmed prose in the same change per file — this is the bulk of the cost, not a follow-up step (the #1909 build's own experience: one mechanically-identical string touched 7 test files; a corpus of non-identical passages will touch more, spread across more files, each needing individual judgment about what moved where).\n- [ ] Audit the per-skill `## Input` / `## Anti-Patterns` / `## Component-Skill Contract` / `## Next Actions` scaffolding (~260 KB of the 888 KB `SKILL.md` payload as of the #1909 build) using `plugin/bin/lib/skill-audit/bloat.js`'s existing provenance signals, and trim author-facing narration found there.\n- [ ] Before/after bytes per pipeline step recorded in the PR description, using `plugin/bin/context-cost-report.js` (shipped by #1909) for the compose-call-site measurement, plus a directory-bytes total per skill (`measureSkills`/`measureSubFiles` in `context-cost.js`) for the fuller footprint AC2 actually means.\n\n## Acceptance Criteria\n\n- [ ] The five pipeline skills' default-path loaded bytes (SKILL.md + every sub-file its default step sequence actually reads — not just `compose-context.js` bundles) drop by at least 25% from the #1909-build baseline (905,973 B → 888,988 B whole-corpus `SKILL.md` total; see that build's PR #2060 for full before/after numbers), with no change to which steps execute, verified by every existing conformance suite passing after pin updates.\n- [ ] No `[IL-nn]` narrative is lost: every trimmed retelling still resolves to its incident-log entry by tag — spot-checked, not just asserted.\n- [ ] `npm test` passes in full (excluding the pre-existing, environment-dependent failures already present at this record's filing time — permission-simulation tests that don't hold under a root-run sandbox, the Impeccable plugin-contract pins, and the shallow-clone-dependent `session-limit-degrade-conformance` pins).\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/flow/SKILL.md`, `plugin/skills/flow/steps-and-gates.md`, and its other sub-files\n- `plugin/skills/build/SKILL.md` and its sub-files\n- `plugin/skills/test/SKILL.md`, `plugin/skills/test/verification.md`\n- `plugin/skills/review/SKILL.md`, `plugin/skills/review/code-mode-steps.md`\n- `plugin/skills/wrap-up/SKILL.md` and its sub-files\n- `plugin/skills/_shared/*.md` (1.3 MB total — the files the five pipeline skills actually cite, not the whole directory)\n- `plugin/bin/lib/skill-audit/bloat.js`\n- `plugin/bin/context-cost-report.js` (measurement, shipped by #1909)\n- `tests/` (every prose conformance suite pinning content in the files above)\n\n### Suggested decomposition\n\nGiven the scope, `/claude-tweaks:specify` should likely decompose this into one sub-issue per pipeline skill (5) plus one for the scaffolding audit, rather than building it as a single record — each skill's trim is independently testable and the conformance-test fallout is scoped per file.",
-        "createdAt": "2026-09-08T07:01:09Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
-            "name": "size:high",
-            "description": "Scoring: large change — consider decomposition before building",
-            "color": "BFD4F2"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          }
-        ],
-        "number": 2063,
-        "state": "OPEN",
-        "title": "Instruction-prose diet: full trimming pass across the five pipeline skills (deferred from #1909)",
-        "updatedAt": "2026-09-12T16:53:12Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "high",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      },
-      {
-        "body": "Surface: backend\n\n## Overview\n\nPure empirical verification: `plugin/bin/lib/hooks/subagent-stop.js`'s status-line contract check (E3) reads `ctx.input.agent_transcript_path` only, with no fallback to the parent session's `transcript_path` (confirmed live in the shipped code — the fallback removal from #1928 has already landed). Nothing in this repo's history proves the harness ever actually populates `agent_transcript_path` on a real `SubagentStop` event. If it doesn't, this check silently never fires again, and the `contract-violation` event payload (`{ firstLine }`, no transcript-source field) makes that indistinguishable from \"every dispatched agent complied.\"\n\n**Status update from filing time:** the original record's own blocker (\"the probe cannot run inside this build — its own subagents are dispatched under the pre-change installed plugin, 6.116.0\") is now stale. This session's own read of `subagent-stop.js` confirms the fallback-removal fix has already shipped in the currently installed build (6.118.0). The empirical probe below can run now, in an ordinary `/claude-tweaks:dispatch` or any Task-tool dispatch under the current plugin.\n\n**Complexity:** Low\n**Estimated tasks:** 2 (a single blocking empirical Task 0, plus its conditional follow-up)\n\n## Non-Goals\n\n- Speculative code changes to `subagent-stop.js` before the probe result is known — the record's own \"Why no code change\" section already states correctly that a `source` field reading `agent_transcript_path` alone (the only value it could ever hold post-#1928) proves nothing about harness behavior. Do not add one as a substitute for the actual observation.\n- Investigating or fixing `claude-code#27755` (SubagentStop firing unreliably for Task dispatches) directly — it's a harness issue, not this plugin's code; this spec only accounts for it methodologically in Task 0's dispatch count (below), it doesn't attempt to fix it.\n\n## Current State\n\n- `plugin/bin/lib/hooks/subagent-stop.js` (~line 12, ~line 110): `const transcriptPath = ctx.input.agent_transcript_path;` — no fallback. The file's own header comment confirms the fallback removal already shipped as part of #1928.\n- `plugin/bin/lib/hooks/subagent-stop.js` (~line 26): `STATUS_RE` — the exact regex a dispatched agent's first reply line must match to be considered compliant: an optional `- ` bullet prefix, an optional bold `**Status:** ` label, then one of `DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, `BLOCKED`. Task 0's probe subagent must reply with a first line that matches NONE of these shapes, to deliberately trigger a contract violation if the check is actually live.\n- `plugin/bin/lib/hooks/subagent-stop.js` (~line 116): `ctxLib.appendEvent(ownedRun.dir, 'contract-violation', { firstLine: trimmedText.split('\\n')[0].slice(0, 120) }, ownedRun.attribution)` — the event this Task 0 checks for, written to the owning run's `events.jsonl`.\n- The file's own header cites `claude-code#27755`: SubagentStop fires unreliably for Task dispatches — a confound Task 0's dispatch count must account for (a single non-firing dispatch is ambiguous between \"hook didn't fire at all\" and \"hook fired, `agent_transcript_path` absent, check no-op'd\").\n\n## Deliverables\n\n- [ ] **Task 0 (blocking, empirical):** dispatch at least 3 independent Task-tool subagents (mitigating the `claude-code#27755` firing-unreliability confound — a single dispatch's silence is ambiguous, three independent silences are stronger evidence), each instructed to reply with a first line that clearly violates `STATUS_RE` (e.g. plain prose with no status word, or a status word buried mid-sentence rather than at the start). Immediately after each dispatch completes, read that run's `events.jsonl` and check for a `contract-violation` event.\n- [ ] Record the literal observed result verbatim in this spec's own `## Gotchas` before considering this closed: how many of the 3+ dispatches produced a `contract-violation` event, and (if any did) whether the event's `firstLine` matches the deliberately-violating reply — confirming the check fired for the right reason, not a coincidental unrelated log line.\n- [ ] **Conditional on zero violations detected across all dispatches:** file this as a new, separate finding (not fixed inline in this spec) — `agent_transcript_path` is not delivered by the harness in this environment, and `subagent-stop.js`'s E3 check needs a different input signal entirely. Do not guess at what that signal should be here; that's a new design question for a follow-up record.\n- [ ] **Conditional on at least one violation detected:** close this spec as confirmed-working — the check is live, no code change needed. State this plainly rather than treating \"we found nothing wrong\" as an unsatisfying result; a clean confirmation is exactly what this spec exists to produce.\n\n## Acceptance Criteria\n\n1. At least 3 independent Task-tool dispatches were made, each with a reply deliberately violating `STATUS_RE`.\n2. Each dispatch's owning run's `events.jsonl` was checked for a `contract-violation` event, and the count of dispatches that did/did not produce one is stated exactly (e.g. \"3 of 3\", \"0 of 3\", \"1 of 3\") — not rounded to \"some\"/\"most\".\n3. The literal observed result is recorded in this spec's `## Gotchas` (or, once resolved, in the closing PR/commit description) before this record closes.\n4. If zero violations were detected, a new record is filed via `/claude-tweaks:capture` naming the confirmed gap and proposing the next investigation step (what alternative input signal might work) — not fixed inline here.\n\n## Technical Approach\n\nNo code changes are anticipated unless Task 0 confirms the check is inert, in which case the conditional deliverable routes to a new record rather than expanding this spec's own scope. This keeps the empirical result and any resulting design work cleanly separated — this spec's only job is to produce the observation.\n\n### Key Files\n\n- `plugin/bin/lib/hooks/subagent-stop.js` — read-only reference for `STATUS_RE` and the `contract-violation` event shape; no edits anticipated here\n- `{owning run directory}/events.jsonl` — read target for Task 0's check, path varies per dispatch\n\n## Gotchas\n\n- {Task 0's literal observed result goes here once run: N of 3+ dispatches produced a contract-violation event, and whether each event's firstLine matched the deliberately-violating reply.}\n- Do not add a `source` field to the `contract-violation` event as a substitute for running Task 0 — the record's own original analysis (preserved below) already explains why that would prove nothing under the current code.\n- `claude-code#27755` means a single non-firing dispatch is not conclusive on its own — Task 0's 3+ dispatch count exists specifically to distinguish \"harness didn't fire the hook this one time\" from \"hook fired but the field was absent.\"\n\n## Original request\n\n# #1928 leftover — is the SubagentStop status-line check now silently inert?\n\n**What changed:** `plugin/bin/lib/hooks/subagent-stop.js` no longer falls back to the parent session's `transcript_path` when `agent_transcript_path` is absent (spec Deliverable 5, AC5). The whole-branch review sampled 1,887 archived `contract-violation` events — every one was orchestrator narration graded through that fallback; none carried an agent-scoped transcript.\n\n**What is not proven:** nothing in the corpus shows `agent_transcript_path` ever being populated by the harness. If it is not, the check is now a no-op and nobody would notice — the event payload records no transcript source, so absence of events is indistinguishable from \"every agent complied\".\n\n**Why no code change in this run:** a `source` field on the event would only ever read `agent_transcript_path` now (the fallback is gone), so it proves nothing about the harness; the only evidence is one observed true positive after this ships.\n\n**Proposed console action:** file a follow-up record via `/claude-tweaks:capture` — \"After #1928 ships, dispatch one subagent whose reply deliberately omits the status line and confirm a `contract-violation` event lands in the owning run's `events.jsonl`; if none does, `agent_transcript_path` is not delivered by the harness and the check needs a different input.\" `Defer-reason: needs-live-observation` — the probe cannot run inside this build (its own subagents are dispatched under the pre-change installed plugin, 6.116.0).\n\n\n_Created by the consolidated Review Console of multi-spec run 2026-09-05T193518 (auto-resolved under the unattended ceiling; proposal: `spec-1928/staged/leftover-contract-violation-inertness.md`)._\n\nhttps://claude.ai/code/session_01L9hhTyzis8dqW87Qhy96DB\n",
-        "createdAt": "2026-09-06T21:24:45Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          }
-        ],
-        "number": 2008,
-        "state": "OPEN",
-        "title": "Confirm the SubagentStop status-line check still fires after the parent-transcript fallback removal (#1928)",
-        "updatedAt": "2026-09-12T06:38:03Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      },
-      {
-        "body": "Surface: backend\n\n## Overview\n\nAdd a new deny gate in `plugin/bin/lib/hooks/pre-tool-use.js` that denies a subagent's `Read` (or a Bash `cat`/`sed`/`head` invocation) of a `plugin/skills/_shared/**/*.md` path when the current run's `{run}/context/` directory already holds a composed bundle for the specific step currently in progress (the per-step condition governs everywhere in this record — Deliverables/AC below use \"current run\" loosely in a couple of places; read every such instance as \"for the current step,\" since a run can have multiple steps and multiple bundles, and the gate must key off the one the current tool call's step actually needs, not merely \"some bundle exists somewhere in this run\") — enforcement for the boundary U8 established by convention alone. The first deliverable is explicitly a go/no-go check against U8 (#1995)'s own before/after measurement (reported in #1995's own last Deliverable and PR description): if U8 already achieved the ≥10× subagent-read reduction it targets, this record closes as not-needed, with the numbers quoted in the closing comment, rather than shipping an enforcement gate nothing further requires. That close is a snapshot judgment against U8's measured sessions, not a permanent guarantee — a later regression in subagent behavior that reintroduces heavy `_shared/` reads is a new record, evaluated fresh against then-current numbers, not an automatic reopening of this one.\n\n**Complexity:** Low\n**Estimated tasks:** 4\n\n## Non-Goals\n\n- Building the measurement this record's go/no-go decision consumes — that measurement is U8's own Deliverable, already produced before this record starts (Blocked by U8).\n- Denying any Read/Bash access outside the exact shape described below — a subagent's Read of any other path, or a main-agent's Read of anything, is never touched by this gate.\n- Fixing #1894, #1501, or #1441 — all three also edit `pre-tool-use.js`; this record's gate is additive and must not collide with any of them, but resolving those records is out of scope here.\n\n## Current State\n\n- `plugin/bin/lib/hooks/pre-tool-use.js` already carries a family of scoping exemptions on its deny gates (`isPipelineBookkeeping`, `isPolicyFile`/`realTarget`, `isPolicyOnlyCommit`, `isDeleteOnlyPush`, `isStampsGateExemptTarget`, the Bash foreign-repos branch, `checkBookkeepingStampsGate`'s file-tool foreign-target branch) — this record's new gate must follow the same discipline every existing exemption in this file already obeys (absolute-path-only guard, resolve the leaf symlink before deciding, fail closed on every unprovable answer, a Bash-shaped exemption matches the entire command string against a grammar, every new exemption needs a regression test proven to fail on revert).\n- This record's `Blocked by` link is U8 (#1995) — verify it has actually merged (e.g. `gh pr list --search \"1995\" --state merged`) before starting; once merged, its PR description carries the before/after subagent-read measurement for the switched dispatch prompts — this record's first real deliverable is reading that number, not writing code, before anything else here happens.\n- No existing check in `pre-tool-use.js` currently reads a subagent-vs-main-agent discriminator field from the PreToolUse hook payload (a `grep -n \"transcript\\|isSubagent\" plugin/bin/lib/hooks/pre-tool-use.js` at spec time returns nothing) — the only confirmed subagent-identifying field in this codebase's hooks lives on the separate `SubagentStop` event, not `PreToolUse`. Treat \"the calling context is a subagent\" as an empirical Task-0 question, not a settled fact: at implementation time, inspect the actual PreToolUse hook payload shape (dump it from a real subagent-originated tool call) to confirm whether a usable field exists; if none does, this record's first code task is adding one to the hook dispatcher (`plugin/bin/hooks.js`) before the gate itself can be written, and that added-field work becomes part of this record's own scope, not a silent assumption.\n- `docs/hooks.md` documents the existing gate family; this record adds this gate's own entry there.\n- #1894, #1501, and #1441 are open, unscored/`needs:decision` records that also edit `pre-tool-use.js` — check each one's current state (`gh issue view` / `gh pr list`) before starting, and rebase this record's new gate onto whichever of them lands first, per the same rebase discipline U2 established.\n\n## Deliverables\n\n- [ ] **Go/no-go read (do this first, before any code):** read U8's reported before/after subagent-read numbers for the switched shared-contract files. If U8 already achieved a ≥10× reduction (its own stated target), close this record as not-needed: post a closing comment quoting U8's exact before/after numbers and the reasoning that the enforcement gate is not required, and stop — none of the deliverables below are built.\n- [ ] (If the go/no-go above says \"still needed\") A new deny gate, `checkSharedSkillReadGate` (or the sibling-check naming convention this file already uses), firing only when: (a) the tool is `Read`, or a Bash invocation whose ENTIRE command string is exactly one of `cat <path>`, `sed ... <path>`, or `head ... <path>` against a single `plugin/skills/_shared/**/*.md` path (no pipe, `&&`/`;` chaining, redirection, or multi-file argument — any of those shapes falls through ungated as an accepted, documented limitation of this gate's first version, not silently swallowed); (b) the calling context is a subagent, confirmed via whatever field the Task-0 payload inspection above establishes (fail CLOSED on this condition specifically: a call this gate cannot conclusively classify as subagent-originated — including the fork case, which inherits the orchestrator's own session id and identity — is treated as NOT a subagent and is never denied, per this file's existing indeterminate-fails-closed discipline; a fixture test proves the fork case passes through ungated); and (c) `{run}/context/{step}.md` exists for the specific step the current tool call belongs to (the bundle filename pattern U1 (#1988) defines — not merely \"some file exists under `{run}/context/`\").\n- [ ] Deny message names the specific bundle path the subagent should read instead.\n- [ ] Enumerate, at plan time, every sanctioned caller of a `_shared/**` Read from a subagent context and every non-destructive/safe mode of the gated tool (per `spec-template.md`'s Gate-Authoring Deliverables) — confirm none is denied by the proposed condition before implementation begins. Record this enumerated list durably in `docs/hooks.md` itself (a roster table alongside the gate's own entry), not only in a plan file that may not survive past this record's own PR merging.\n- [ ] Apply the absolute-path-only guard, leaf-symlink resolution (mirroring `realTarget()`), and fail-closed-on-indeterminate discipline this file's existing gates already establish — reuse the existing helpers, don't reimplement them.\n- [ ] Fixture regression tests for each sanctioned caller enumerated above, proving they pass through the gate untouched, plus a test proving the gate denies the exact shape it targets and nothing broader — every new test proven to fail on revert (`git checkout -- {file}` on the implementation only, confirm only the new test goes red, then restore).\n- [ ] `docs/hooks.md` gains this gate's entry, following the existing documentation convention for the gate family.\n\n## Acceptance Criteria\n\n1. If the go/no-go read finds U8 already achieved its target: this record closes with a comment quoting the numbers, and no code ships.\n2. If the gate ships: it denies the enumerated shape (subagent + `_shared/**` Read/single-file cat-sed-head + an existing bundle for the current step) and only that shape — proven by fixture tests for each sanctioned caller passing through untouched, plus a fixture proving a piped/chained/multi-file Bash invocation of the same three verbs passes through ungated (the documented first-version limitation).\n3. The gate never fires in the main agent, never fires on a fork (which is treated as indeterminate-subagent-status and fails closed, per the fail-closed discipline), and never fires when no bundle exists for the current step — proven by fixture tests for all three cases.\n4. `docs/hooks.md` documents the gate.\n5. `npm test` passes, including every new fixture test, each shown to fail on revert of the implementation alone.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/hooks/pre-tool-use.js` — edit (only if the gate ships): add the new deny gate following the existing exemption discipline.\n- `tests/hooks-pre-tool-use.test.js` (or the sibling suite that already covers this gate family — confirm the exact file at plan time rather than assuming this name) — edit: add fixture tests for the gate and every sanctioned caller.\n- `docs/hooks.md` — edit (only if the gate ships): document the new gate.\n\n## Gotchas\n\n- Read U8's numbers before writing any code — this record's very first deliverable can end the record entirely; do not start on the gate implementation until that read has actually happened and the decision is recorded.\n- Every unprovable answer in this file fails CLOSED, and a conclusive exemption must never be gated on an unrelated inconclusive one (`[IL-149]`) — `wtDetect.repoInfo()`/`mainCheckoutRoot()` returning `indeterminate: true` or `null` is a different fact from a definitive negative, never read as \"not applicable.\"\n- Resolve the leaf symlink before deciding, mirroring `realTarget()` (`[IL-150]`) — a path-based decision made on the raw literal target can be defeated by a symlink whose target resolves outside the intended scope; never call a path-answering function on a literal path without checking for a leaf symlink first.\n- A Bash-shaped exemption (or, here, a Bash-shaped deny condition) must match the ENTIRE command string against a grammar — no partial match on a flag or filename lets a differently-shaped command slip past. Prove the staged set with `git diff --name-status`, never `--name-only`, when verifying the fix's own diff.\n- #1894, #1501, and #1441 all edit `pre-tool-use.js` — rebase this record's new gate onto whichever lands first, and re-run the sanctioned-caller enumeration against the current file state at implementation time, not against a stale read from spec time.\n- Every new exemption/gate needs a regression test proven to fail on revert — a green suite alone is not evidence the test discriminates; this is the same discipline the pre-tool-use-gate-exemptions skill documents for every existing gate in this file.\n\n\n<!-- work-fingerprint: 2026-09-06-skill-context-composer-design:subagent-skill-tree-read-gate-pre-tool-use-denies-a-subagent -->\nwork-fingerprint: 2026-09-06-skill-context-composer-design:subagent-skill-tree-read-gate-pre-tool-use-denies-a-subagent\n\n**Trigger:** #1995 posts its committed post-release before/after subagent-read measurement (per #1995's own PR #1998 body: \"The same count will be taken over the ten sessions after release and posted on #1995 with the ratio; #1996 (the enforcement gate) consumes it.\")\n",
-        "createdAt": "2026-09-06T10:11:08Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACrPGSMQ",
-            "name": "parked",
-            "description": "Deliberately shelved pending an external trigger condition",
-            "color": "d4c5f9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          }
-        ],
-        "number": 1996,
-        "state": "OPEN",
-        "title": "Subagent skill-tree read gate: pre-tool-use denies a subagent's Read of plugin/skills/_shared when the step's composed bundle exists — go/no-go on U8's measurement",
-        "updatedAt": "2026-09-13T13:23:23Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "parked",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`plugin/bin/lib/hooks/subagent-stop.js` (E3, warn tier) reads the stopping subagent's transcript, exempts third-party `agent_type`s (#1596), and on a missing status line appends one `contract-violation` event to the owning run's `events.jsonl`; its header states \"Never blocks\" and that the event fires unreliably for Task dispatches (claude-code#27755). On a violation it returns a warn-tier `systemMessage` naming the missing status line; on every other path it returns `{}`. `plugin/hooks/hooks.json` registers it under `SubagentStop`. `_shared/subagent-output-contract.md` documents the hook as best-effort logging and tells the dispatcher to re-prompt by hand. #1596 (closed) shipped the exemption and a stronger dispatch template and deferred in-run enforcement because two lookups of the Claude Code hooks reference disagreed on whether `SubagentStop` accepts a blocking decision.\n\nLead, not yet the answer: the hooks reference (`https://code.claude.com/docs/en/hooks`, read 2026-09-09) lists `SubagentStop` in its exit-code-2 table as \"Prevents the subagent from stopping\" and describes a `hookSpecificOutput` block with a `blockSubagentStop`-style flag and reason field; `permissionDecision` is documented for the tool events only, so the field names #1596 tested were the wrong ones. The exact field names and whether the blocked subagent actually continues must be captured from a live run, not from a summary. #1868 (open, `needs:definition`) holds the wider \"which enforcement point\" question for status-word violations; this record is the mechanical probe that decides whether the hook-side option is available at all.\n\nTests: `tests/subagent-contract-clauses.test.js` pins the contract prose; `subagent-stop.js`'s exemption logic is tested with fake `ctx` objects in `tests/hooks-log-modules.test.js`.\n\n## Deliverables\n\n- [ ] **Task 0 — empirical premise check (blocking).** Dispatch one throwaway Task subagent whose prompt makes its first line deliberately narrative, with a temporary `subagent-stop.js` variant that returns the documented blocking output (try, in order, `hookSpecificOutput: { hookEventName: 'SubagentStop', blockSubagentStop: true, blockSubagentStopReason: … }`, then the `decision: 'block'` + `reason` shape, then exit code 2). Capture verbatim: the hook's stdin payload field names, the output that worked, and the subagent's transcript showing whether it continued and re-replied. Mandatory teardown: restore `subagent-stop.js` unconditionally, delete the throwaway transcript, and confirm no `contract-violation` event from the probe remains in any live run dir. Record the literal captured behavior in `subagent-stop.js`'s header comment and in this issue.\n- [ ] **If supported: forced retry with a one-retry cap.** On a violation from a non-exempt `agent_type`, return the blocking output with a reason that quotes the contract's status-line rule and the offending first line; count retries per `(session_id, agent_id)` in `${os.tmpdir()}/ct-contract-retries-${sessionId}.json` (the `resolve-profile.js` blacklist-file convention); on the second violation of the same agent, log the event as today and let it stop. A failed counter write counts as \"already retried\" so a broken tmp dir can never loop. Update the header comment's \"Never blocks\" sentence and `_shared/subagent-output-contract.md`'s E3 paragraph and Anti-Patterns to describe the one forced retry; `docs/hooks.md` gains one sentence naming the tier change (warn → one-shot block).\n- [ ] **If unsupported: close with the limitation recorded**, and file one follow-up under #1868 proposing the dispatcher-facing alternative (surfacing `contract-violation` via `hookSpecificOutput.additionalContext` on a dispatcher-side event) so the definition there has the evidence.\n- [ ] **Tests (supported branch).** Fake-`ctx` cases beside the existing exemption tests: first violation → blocking output with the reason; second violation same `(session_id, agent_id)` → `{}` plus the logged event; exempt `agent_type` → `{}` with no counter write; counter write throwing → treated as already retried; a compliant reply → `{}` and no counter file. `tests/subagent-contract-clauses.test.js` updated for the revised E3 clause.\n\n## Acceptance Criteria\n\n1. `subagent-stop.js`'s header comment and this issue carry the Task 0 capture: the exact input field names observed, the exact output shape that blocked (or the evidence that none did), and the transcript excerpt showing the subagent's behavior after the block.\n2. Supported branch: a non-exempt violating subagent is blocked exactly once per `(session_id, agent_id)`; the second violation stops normally with the event logged; exempt agents are never blocked; the probe's teardown left no plugin file modified (`git status` clean on `plugin/`).\n3. Unsupported branch: this record is closed with the captured evidence and one follow-up record exists under #1868 naming the dispatcher-facing alternative.\n4. `npm test` green; the existing exemption tests pass unchanged.\n5. `_shared/subagent-output-contract.md`, `docs/hooks.md`, and the hook's header agree on the tier (one forced retry, or warn-only with the limitation named).\n\n## Technical Approach\n\nProbe before code, per `spec-template.md`'s Empirical Premise-Check Deliverables: the doc lead above is a hypothesis with field names from a summary, and the hook's own history (#1928, claude-code#27755) shows this event's behavior drifts. Keep the block one-shot and counter-backed so the never-break-a-session invariant holds even when the harness re-fires the event; keep the exemption check first so third-party agents never see a block. The wider enforcement-point decision stays with #1868; this record only settles whether the hook-side option exists and, if so, ships its minimal form.\n\n### Key Files\n\n- `plugin/bin/lib/hooks/subagent-stop.js` — Task 0 capture in the header; blocking output; retry counter\n- `plugin/skills/_shared/subagent-output-contract.md` — E3 paragraph and Anti-Patterns\n- `docs/hooks.md` — tier sentence\n- `tests/hooks-log-modules.test.js` (fake-`ctx` hook cases) and `tests/subagent-contract-clauses.test.js` — new cases\n\n## Gotchas\n\n- The probe mutates a hook that fires for every subagent in the session; run it in an isolated worktree session with the plugin loaded from that checkout (`claude --plugin-dir ./plugin`), never against the installed build.\n- `SubagentStop` \"fires unreliably for Task dispatches\" (claude-code#27755): a probe that sees no event at all is inconclusive, not \"unsupported\"; repeat once before concluding.\n- The counter file is per session; a blocked subagent that is re-dispatched with a new `agent_id` is a new agent by design.\n- Never block on an absent `agent_transcript_path` (#1928's fix): no transcript means no evidence, and the hook must still return `{}` there.\n\n## Original request\n\n# In-run enforcement follow-up from #1596\n\n**Origin:** #1596 build (deferred, scope-down decision — see that record's Blocked / Future Work section and its materialized spec at `.claude-tweaks/pipelines/2026-09-05T174526-record-1596/work/1596-spec.md`)\n\n## Current State\n\n#1596 shipped an `agent_type` exemption fix to `plugin/bin/lib/hooks/subagent-stop.js` and a\nstrengthened dispatch template in `plugin/skills/_shared/subagent-output-contract.md`, but did not\nimplement forcing a violating subagent to retry in-run via the `SubagentStop` hook's own\ndecision-control output. Whether `SubagentStop`'s JSON output actually supports\n`permissionDecision: \"block\"` / `permissionDecisionReason` (the way `Stop`'s documented decision\ncontrol does) was not confirmed within that build's investigation budget — two lookups against\nClaude Code's own hooks reference (`https://code.claude.com/docs/en/hooks`) disagreed, and the\nsession hit a rate limit before a third, decisive lookup could run.\n\n## Deliverables\n\n- Resolve the platform-support question definitively: a live probe (dispatch one throwaway Task\n  subagent whose reply is deliberately malformed, have `subagent-stop.js` attempt the\n  `permissionDecision: 'block'` response, and confirm from the subagent's own transcript/behavior\n  whether it was actually forced to continue rather than stopping) before implementing the\n  forced-retry mechanism either way.\n- If confirmed supported: implement the forced-retry mechanism in `subagent-stop.js`, scoped to\n  non-exempt `agent_type`s only (reuse #1596's exemption check), with a one-retry cap per\n  `(session_id, agent_id)` — mirror `resolve-profile.js`'s session-scoped model-failure-blacklist\n  convention (`${os.tmpdir()}/ct-model-failures-${sessionId}.json`) for the retry-count file\n  (`${os.tmpdir()}/ct-contract-retries-${sessionId}.json`), to avoid an infinite retry loop if the\n  write itself fails.\n- If confirmed unsupported: close this record noting the platform limitation, and consider\n  whether `friction-events.js`'s existing `contract-violation` detection could instead be surfaced\n  back to the *dispatching* agent in-run some other way (e.g. via `hookSpecificOutput.additionalContext`\n  on a different, dispatcher-facing hook event) rather than acting on the violating subagent itself.\n\n## Acceptance Criteria\n\n1. A definitive, sourced answer to \"does `SubagentStop`'s JSON output support a blocking decision\n   field,\" recorded in this issue or in `subagent-stop.js`'s own comments.\n2. If yes: a working forced-retry implementation with a one-retry cap, tested the same way\n   #1596's `tests/hooks-subagent-stop.test.js` tests its exemption logic (fake `ctx` objects, no\n   live harness dependency).\n\n",
-        "createdAt": "2026-09-05T19:05:05Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1936,
-        "state": "OPEN",
-        "title": "Resolve SubagentStop blocking-decision platform support and implement forced in-run retry (follow-up from #1596)",
-        "updatedAt": "2026-09-12T06:37:50Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Origin: brainstorm on #1904 (docs/superpowers/specs/2026-09-05-pipeline-ceremony-cost-design.md, \"Filed separately\")\nDefer-reason: genuinely-larger\n\n**Related:** #1987\n\n## Current State\n\nA `/claude-tweaks:flow` second call (`review,polish,wrap-up`) loads several hundred KB of skill prose before doing any work: `plugin/skills/_shared/` is 1.3 MB, `wrap-up/` alone is 408 KB, `flow/` 348 KB, and each 40 KB file is roughly 10k tokens. Reading the operative files shows that roughly half of most of them is provenance rather than procedure: which record moved a paragraph (\"extracted for #887\", \"split out per #635\"), which commit deleted a design doc (\"deleted `70849915`\"), and retold incident narratives that `docs/incident-log.md` already holds under their `[IL-nn]` tag. The context-cost test (`bin/lib/skill-audit/tests/context-cost.test.js`) caps bytes per file but nothing measures bytes loaded per pipeline step, so the procedure-vs-provenance ratio is invisible. #1765 (fast-lane digest) addresses the same waste for the fast-lane path only; this record is the general case. Tokens, not minutes: prose loading costs money and context headroom (compaction pressure), not wall-clock.\n\nThis record is Phase 5 of #1987 (Skill context composer — per-run bundles composed by resolved condition, not per-file ceilings): #1987's Phases 1-4 ship the composer mechanism and its per-step measurement; this record consumes that measurement and does the prose-diet and scaffolding-dedupe pass on top of it.\n\n## Deliverables\n\n- [ ] A stated authoring rule in `docs/skill-authoring.md`: operative text (`## Step N` bodies, gate tables, Next Actions) states the rule and cites the `[IL-nn]` tag or record number; the narrative of why lives in `docs/incident-log.md` or `docs/decisions/`, never restated inline. One sentence of rationale per rule is allowed; a paragraph is not.\n- [ ] Per-step composed-bytes measurement is delivered by #1990 (Per-step composed-bytes measurement in context-cost.js) — this record consumes that measurement, not builds it.\n- [ ] A first trimming pass over the five pipeline skills plus the `_shared` files they cite, moving provenance out per the rule, with the conformance tests that pin the moved prose updated in the same change (the real cost of this record — every trim moves pins).\n- [ ] Before/after bytes per step recorded in the PR description.\n- [ ] Inject the Interaction-style directive once from the `SessionStart` hook (`plugin/bin/lib/hooks/session-start.js`) and delete the 35 verbatim copies (501 B each) from every SKILL.md, with the conformance tests that pin that paragraph retargeted to the hook output.\n- [ ] Audit the per-skill `## Input`/`## Anti-Patterns`/`## Component-Skill Contract`/`## Next Actions` scaffolding (~260 KB of the 888 KB SKILL.md payload) with `bloat.js`'s existing provenance signals and trim author-facing narration.\n\n## Acceptance Criteria\n\n- [ ] `docs/skill-authoring.md` carries the rule and `harness-health` reports loaded bytes per pipeline step.\n- [ ] The five pipeline skills' default-path loaded bytes drop by at least 25% with no change to which steps execute, verified by the existing conformance suites passing after pin updates.\n- [ ] No `[IL-nn]` narrative is lost: every trimmed retelling still resolves to its incident-log entry by tag.\n\n## Technical Approach\n\n### Key Files\n\n- `docs/skill-authoring.md`\n- `plugin/bin/lib/skill-audit/`\n- `plugin/skills/flow/SKILL.md`, `plugin/skills/flow/steps-and-gates.md`\n- `plugin/skills/build/SKILL.md`\n- `plugin/skills/review/SKILL.md`, `plugin/skills/review/code-mode-steps.md`\n- `plugin/skills/wrap-up/SKILL.md`\n- `plugin/skills/test/verification.md`\n- `plugin/skills/_shared/subagent-output-contract.md`, `plugin/skills/_shared/pipeline-run-dir.md`\n- `plugin/bin/lib/hooks/session-start.js`\n- `plugin/bin/lib/skill-audit/bloat.js`\n- `tests/` (prose conformance suites pinning the trimmed text)\n",
-        "createdAt": "2026-09-05T16:43:07Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
-            "name": "size:high",
-            "description": "Scoring: large change — consider decomposition before building",
-            "color": "BFD4F2"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXTZ8w",
-            "name": "demo:pending",
-            "description": "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo",
-            "color": "1D76DB"
-          }
-        ],
-        "number": 1909,
-        "state": "OPEN",
-        "title": "Instruction-prose diet: operative skill text states the rule and the IL tag, provenance narrative moves out, per-pipeline-step loaded-bytes budget",
-        "updatedAt": "2026-09-13T13:14:52Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "high",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": "pending",
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      },
-      {
-        "body": "Surface: backend\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule\nsentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`,\n18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its\npersonas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent`\ntool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a\nstatic `node --test` assertion; it can only be confirmed by observing an actual future `/specify`\ndecomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that\npersona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s\nfan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the\nobservation (transcript excerpt or note) against this item, or file a defect against\n`red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use\ncalls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of\nsub-issues) assistant messages.\n\n## Technical Approach\n\nWait for (or trigger) a `/claude-tweaks:specify` decomposition-mode run that produces 2 or more\n`ceremony:standard` sub-issue records — `ceremony-check` (`assess-agent-autonomy/ceremony-check.md`)\nresolves the tier per sub-issue during that run's own Step 3, so the tier isn't knowable until the\nrun happens. Once such a run occurs, inspect that session's stored transcript for the Step 5\nred-team dispatch (`specify/red-team.md`'s Parallel dispatch section): locate the `Agent` tool_use\nblocks for each dispatched persona and group them by the assistant message id each block belongs\nto. Confirm the number of distinct assistant message ids covering all persona dispatches for a\ngiven sub-issue is ≤ the number of sub-issues in that batch. Use the same read-only transcript\ninspection method `transcript-payload-verification` documents for reading this session's own\nlocally-stored transcript, rather than instrumenting or modifying `red-team.md` itself.\n\nIf the count exceeds the bound, file a defect issue against `red-team.md`'s dispatch prose\n(quoting the transcript grouping that violates the rule) instead of editing the file directly from\nthis record — this record's own deliverable is the observation, not the fix.\n\n### Key Files\n\n- `plugin/skills/specify/red-team.md` — the per-sub-issue persona dispatch procedure being observed\n- `plugin/skills/_shared/subagent-output-contract.md` — the fan-out single-assistant-message rule this observation verifies compliance with\n- `tests/subagent-contract-clauses.test.js` — AC1's existing static test coverage (unaffected by this record)\n\n## Gotchas\n\n- This record's acceptance criterion depends on an external event (a live `/specify` decomposition\n  run over 2+ `ceremony:standard` sub-issues happening) that this record cannot itself trigger on a\n  fixed schedule — it may sit open for some time until a qualifying run occurs naturally, or until\n  someone deliberately runs one to close it out.\n- A qualifying run must be observed via its own transcript at the time it happens; this record\n  cannot be resolved from historical data if no already-completed run's transcript is still\n  available.\n\n## Original request\n\nVerify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)\n\nOrigin: ledger resolve gate\n\nDefer-reason: needs-human-decision\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule sentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`, 18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its personas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent` tool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a static `node --test` assertion; it can only be confirmed by observing an actual future `/specify` decomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that persona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s fan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the observation (transcript excerpt or note) against this item, or file a defect against `red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use calls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of sub-issues) assistant messages.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
-        "createdAt": "2026-08-24T03:21:25Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAAC0IWj4w",
-            "name": "fix-on-worktree-worktree-dispatch-record-1350",
-            "description": "Fixed on worktree-worktree-dispatch-record-1350, not yet on the default branch",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 1350,
-        "state": "OPEN",
-        "title": "Verify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)",
-        "updatedAt": "2026-09-13T13:14:34Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
         }
       }
     ],
@@ -3456,6 +2452,254 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: backend\n\n## Overview\n\nThe Subagent Contract (`plugin/skills/_shared/subagent-output-contract.md`) currently requires\nevery dispatched subagent's reply to open with one of `DONE` / `DONE_WITH_CONCERNS` /\n`NEEDS_CONTEXT` / `BLOCKED` as the literal first line. This has failed in production three\nseparate times (`#606`, `#1653`, `#1868`) despite explicit `WRONG:` examples at every dispatch\nsite — models reliably produce a clear concluding verdict but are unreliable at *opening* with one\nbefore any reasoning. This unit is the keystone of a 5-unit decomposition (parent #2264): it moves\nthe canonical status signal to a labeled trailing line and makes the mechanical checker in\n`plugin/bin/lib/hooks/subagent-stop.js` lenient about exact position. Every other unit in this\ndecomposition (WU2-WU5, each `Blocked by` this one) edits inline dispatch-prompt copies of the\nsame rule, and each of those edits must match the canonical text this unit establishes — so this\nunit lands first.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Changing `subagent-stop.js`'s best-effort, non-blocking posture — it remains a diagnostic log,\n  never a gate. This migration adds no new enforcement mechanism.\n- Retrofitting `plugin/skills/harness-health/judge-procedure.md` (~228) or\n  `plugin/skills/harness-health/SKILL.md` (~69) — their entire reply *is* the status line\n  (\"reply with nothing but a single status line\"), so the narration-creeps-in-before-it failure\n  mode this migration targets cannot occur there. Left as a follow-up for a later record.\n- Changing the four status words themselves, their routing meaning, or the Template A/B/C content\n  that follows the status line.\n- Editing any of the other 21 dispatch-site files that carry an inline copy of the old\n  position-asserting instruction — those are WU2 through WU5 in this same decomposition, each\n  `Blocked by` this unit.\n- Hook-side reply rewriting (stripping narration before the check runs) — rejected in the design\n  doc's Rationale: it silently edits the audit trail, so the logged reply no longer matches what\n  the subagent actually said.\n\n## Current State\n\n- Canonical rule: `plugin/skills/_shared/subagent-output-contract.md` states or depends on the\n  \"first line\" position requirement at approximately lines 80, 93, 256, 278, and 286 — including\n  the Implementer Status Protocol table's framing sentence, the \"Check the status word's position,\n  not merely its presence\" paragraph (which cites the `#606`/`#1653` incidents by name), and the\n  fan-out dispatch-shape example block.\n- Detection code: `plugin/bin/lib/hooks/subagent-stop.js` exports `STATUS_RE =\n  /^(?:-\\s+)?(?:\\*\\*Status:\\*\\*\\s+)?(DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED)\\b/` and applies\n  it to the first line of the last assistant turn only (`lastAssistantText`). The file's header\n  comment documents this as an \"E3: Subagent Contract status-line check (warn tier)\" — best-effort,\n  never blocking, with two documented false-positive sources already carved out (a dispatch\n  declaring a different contract; an absent `agent_transcript_path`).\n- Test coverage: zero. No `tests/hooks-subagent-stop*.test.js` file exists, and no existing test\n  anywhere exercises `STATUS_RE`'s actual matching behavior — `contract-violation` appears in a\n  handful of other test files only as an event-name string in unrelated contexts (dispatcher\n  registration, friction-events consumption).\n\n## Deliverables\n\n- [ ] Rewrite `plugin/skills/_shared/subagent-output-contract.md`'s canonical status-line rule (all\n      5 cited locations: ~80, ~93, ~256, ~278, ~286) so the reply's **last non-empty line** must\n      read exactly `STATUS: DONE` (or `STATUS: DONE_WITH_CONCERNS` / `STATUS: NEEDS_CONTEXT` /\n      `STATUS: BLOCKED`) — a labeled line, never a bare trailing word. Update the Implementer\n      Status Protocol table's framing sentence and the \"Check the status word's position\" paragraph\n      to describe the new trailing-line convention instead of the retired first-line one. For\n      review-style agents (Template A), the trailing status line follows the findings table\n      (reversing the current \"status line, then table\" order); for search/scout-style (B/C), the\n      trailing status line follows whatever the template's own content is.\n- [ ] Update the file's `WRONG:` examples (and the fan-out dispatch-shape example block) to show\n      the *new* failure modes worth warning about — a bare trailing word instead of the labeled\n      `STATUS:` line, and a status line that isn't truly the last non-empty line of the reply —\n      rather than the retired first-line-narration example (`\"Based on my review, DONE\"`).\n- [ ] Replace `subagent-stop.js`'s `STATUS_RE`-based first-line-only check with a two-tier\n      canonical/lenient detection function: (1) canonical — does the last non-empty line match\n      `^STATUS: (DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED)$` exactly? Compliant, no event\n      logged. (2) lenient fallback — does the bare status word appear as the first token of any of\n      the first 3 lines, or the last 3 lines? Compliant, but log an informational\n      `contract-violation` event variant noting the non-canonical position (distinguishable from a\n      hard violation in the logged event's fields — see Data / API Surface below). (3) neither —\n      genuine violation, log `contract-violation` exactly as today, unchanged behavior.\n- [ ] Update `subagent-stop.js`'s header comment (currently documents the first-line contract and\n      its two known false-positive sources) to describe the new two-tier detection shape.\n- [ ] Create `tests/hooks-subagent-stop.test.js` (new file — no test currently exercises this\n      hook's detection logic at all) covering all four cases in Acceptance Criteria below.\n\n## Acceptance Criteria\n\n1. `tests/hooks-subagent-stop.test.js` includes a canonical-format detection test: a reply whose\n   last non-empty line is exactly `STATUS: DONE` (and separately, one for each of\n   `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, `BLOCKED`) is detected as compliant with no\n   `contract-violation` event logged.\n2. The same test file includes a lenient-fallback detection test: a reply whose status word\n   appears as the first token of one of the first-or-last 3 lines (but not as the canonical\n   trailing `STATUS:` line) is detected as compliant, AND the test asserts the informational\n   log variant fires — not the hard-violation `contract-violation` event.\n3. The same test file includes a genuine-violation detection test: a reply where the status word\n   appears nowhere in the first-or-last 3 lines (or not at all) is detected as non-compliant and\n   logs `contract-violation` exactly as today's behavior — unchanged from the pre-migration\n   detection.\n4. The same test file includes a migration-safety test proving the design doc's rollout-safety\n   claim directly: an old-format reply (the bare status word as the literal first line, with no\n   trailing `STATUS:` line anywhere in the reply) is STILL accepted as compliant by the new\n   lenient fallback — this is what makes the format migration itself safe with no explicit\n   transition period.\n5. `plugin/skills/_shared/subagent-output-contract.md`'s `WRONG:` examples (all instances) show the\n   new failure modes — a bare trailing word instead of the labeled `STATUS:` line, and a status\n   line that isn't truly the last non-empty line — and no longer show the retired\n   first-line-narration example as the primary illustration.\n6. `npm test` passes with no regressions after all edits in this unit land.\n7. The two-tier detection function excludes markdown table-row lines (lines starting with `|`\n   after trimming) from the tier-2 lenient-fallback candidate window, with a test proving a\n   findings-table row containing a matching word does not itself trigger a false\n   lenient-compliant match when the reply's actual trailing status line is missing.\n\n## Technical Approach\n\nExactly the design doc's Decision section (New canonical format + Checker leniency subsections) —\nreproduced here since the design doc is deleted once this decomposition lands:\n\n**New canonical format.** The reply's last non-empty line must read exactly `STATUS: {WORD}`. A\nlabeled line, not a bare trailing word, because a bare trailing word risks colliding with prose\nthat happens to end in a matching token (\"...the tests are done\" reads as ambiguous;\n\"...the tests are done\\nSTATUS: DONE\" does not). The label makes the line unambiguous and\ntrivially greppable: `grep -E '^STATUS: (DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED)$'` against\nthe last non-empty line of a reply.\n\n**Checker leniency (subsumes rollout safety).** `subagent-stop.js`'s detection changes from \"does\nthe first line match `STATUS_RE`\" to the three-tier check in Deliverables above. This single\nfallback rule does double duty: it is the mechanical leniency that tolerates ordinary model drift\n(the status word landing one line off from where the contract technically wants it), and it is\nalso what makes the format migration itself safe with no explicit transition period to manage — a\ndispatch's full round-trip (prompt sent, subagent replies, reply checked) happens within one Task\ncall, using whichever plugin version is loaded when the *check* runs, not when the *prompt* was\nsent. An in-flight dispatch given an old-format prompt (status word first) whose reply is checked\nafter this migration ships is still accepted by the lenient fallback's first-K-lines check.\n\n### Data / API Surface\n\nThe informational log variant from Deliverable 3 must be distinguishable from a hard\n`contract-violation` in the logged event's own fields (e.g. an added `variant: 'lenient'` /\n`variant: 'canonical'` / absent-for-hard-violation field, or equivalent) — the design doc's own\nwording is \"log an informational `contract-violation` event variant... visible for someone to\nnotice a dispatch site is still using the old shape, but never a hard failure.\" Name the exact\nfield/shape chosen in this deliverable's own commit; downstream consumers of the friction-events\nlog (`bin/lib/hooks/friction-events` or equivalent) are out of this unit's scope to update, per\nNon-Goals — a consumer keying on the `contract-violation` event name alone (with no `variant`\ncheck) will keep treating the informational variant as a hard violation until it is separately\nupdated; this is an accepted, intentional boundary of this unit's scope, not an oversight.\n\n### Detection Boundary Rules (resolved during Step 5 red-team review)\n\n- **Tier-2 match shape.** The lenient fallback matches either the bare status word OR a labeled\n  `STATUS: {WORD}` line (tier-1's own exact pattern, just off-position) as the first token of a\n  candidate line — after stripping the same optional `- ` / `**Status:**` prefixes the existing\n  `STATUS_RE` already strips. Either form landing in the candidate window is lenient-compliant.\n- **Window counts non-empty lines only**, matching tier-1's own \"last non-empty line\" convention —\n  blank lines never count toward the first-3/last-3 window, and the two windows may overlap for a\n  short reply (≤6 non-empty lines total); checked as a union, not a strict partition.\n- **Canonical exact-match is on the trimmed line** (trailing whitespace ignored) and is\n  case-sensitive — `STATUS: done` does not match tier 1 (it may still match tier 2's bare-word\n  check if `done` itself were a valid word, which it isn't, so an all-lowercase reply always falls\n  through to genuine-violation, unchanged from today's case-sensitive behavior).\n- **Table-row exclusion.** A candidate line that is a markdown table row (starts with `|` after\n  trimming) is excluded from the tier-2 window — this prevents a Template A findings table's own\n  cell content (which may itself contain a matching word) from producing a false lenient-compliant\n  match when the reply's real trailing status line is missing or malformed.\n- **Decorated variants are an accepted gap, not a blocking one.** A bolded canonical line (e.g.\n  `**STATUS: DONE**`) matches neither tier 1 exactly nor the existing prefix carve-outs (which\n  target a different contract's bold `**Status:**` bullet shape, not this new line) — left\n  unhandled by design, consistent with the checker's best-effort, non-blocking posture.\n- The two existing false-positive carve-outs (a dispatch declaring a different contract; an absent\n  `agent_transcript_path`) and `isExemptAgentType` are unaffected and still evaluated before either\n  detection tier runs.\n- **Template B/C placement.** The trailing status line is the reply's absolute last non-empty line,\n  after all of that template's own required content — identical to every other site's rule, just\n  with no findings table to follow it.\n\n### Key Files\n\n- `plugin/skills/_shared/subagent-output-contract.md` — canonical rule text at ~80, ~93, ~256,\n  ~278, ~286; `WRONG:` examples and the fan-out dispatch-shape example block.\n- `plugin/bin/lib/hooks/subagent-stop.js` — replace `STATUS_RE`'s first-line-only check with the\n  two-tier canonical/lenient detection function; update the header comment.\n- `tests/hooks-subagent-stop.test.js` — new file, zero prior coverage of this hook's detection\n  logic.\n\n## Gotchas\n\n- **Related:** #2036 — \"SubagentStop hook misattributes contract-violation to main-session\n  narration.\" Cross-link only, not a dependency: #2036 is a genuinely separate bug (the hook reads\n  the wrong transcript source, attributing a violation to main-session narration instead of the\n  actual subagent reply) in the same function this unit touches. Do not fold #2036's proposed\n  exemption into this unit's scope — leave its own resolution to its own record.\n- `STATUS_RE` already carries two documented false-positive carve-outs (a dispatch declaring a\n  different contract shape, e.g. `superpowers:subagent-driven-development`'s bold `**Status:**`\n  bullet; an absent `agent_transcript_path`) — preserve both when rewriting the detection function,\n  they are orthogonal to the position-leniency change this unit makes.\n- `isExemptAgentType` (third-party plugin agent exemption, `#1596`) is untouched by this migration\n  — it gates whether the check runs at all, not how the status line is located within a reply that\n  does get checked.\n- The two structurally-immune harness-health files (Non-Goals above) already comply with the *old*\n  first-line rule by construction (\"nothing but a single status line\") and will also comply with\n  the *new* trailing-line rule by the same construction (their one line is simultaneously first and\n  last) — no migration risk there, which is exactly why they're a low-priority follow-up rather\n  than in-scope here.\n- Keep `subagent-stop.js`'s best-effort, non-blocking posture completely unchanged — this is a\n  detection-shape change only, never a new gate.\n- **Accepted duplication tradeoff (raised in Step 5 red-team).** This decomposition's other 4\n  units (WU2-WU5) each carry their own inline dispatch-prompt copy of the same canonical rule\n  rather than a single centralized reference — consistent with how every dispatch site in this\n  plugin already works today (agents only see their own prompt; a shared-file reference would not\n  reach them, per the Subagent Contract's own \"Letting agents read sibling files\" anti-pattern).\n  Centralizing the canonical *text* into one file the *human maintainer* edits once (as opposed to\n  what each dispatched *agent* sees) is a real architectural question worth its own record, but is\n  out of scope for a status-line migration and not required for this unit's acceptance.\n\n## Manual Steps\n\nNone — every deliverable has a direct CLI/code path (file edits, a new test file, `npm test`).\n\n\n<!-- work-fingerprint: subagent-status-line-trailing-migration:canonical-contract-and-hook -->\nwork-fingerprint: subagent-status-line-trailing-migration:canonical-contract-and-hook",
+        "createdAt": "2026-09-11T21:56:38Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Size: medium effort",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Risk: medium blast radius",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: standard review",
+            "color": "c5def5"
+          }
+        ],
+        "number": 2265,
+        "state": "OPEN",
+        "title": "Migrate Subagent Contract canonical status-line rule and subagent-stop.js detection",
+        "updatedAt": "2026-09-13T13:32:12Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      },
+      {
+        "body": "Origin: brainstorm on #1904 (docs/superpowers/specs/2026-09-05-pipeline-ceremony-cost-design.md, \"Filed separately\")\nDefer-reason: genuinely-larger\n\n**Related:** #1987\n\n## Current State\n\nA `/claude-tweaks:flow` second call (`review,polish,wrap-up`) loads several hundred KB of skill prose before doing any work: `plugin/skills/_shared/` is 1.3 MB, `wrap-up/` alone is 408 KB, `flow/` 348 KB, and each 40 KB file is roughly 10k tokens. Reading the operative files shows that roughly half of most of them is provenance rather than procedure: which record moved a paragraph (\"extracted for #887\", \"split out per #635\"), which commit deleted a design doc (\"deleted `70849915`\"), and retold incident narratives that `docs/incident-log.md` already holds under their `[IL-nn]` tag. The context-cost test (`bin/lib/skill-audit/tests/context-cost.test.js`) caps bytes per file but nothing measures bytes loaded per pipeline step, so the procedure-vs-provenance ratio is invisible. #1765 (fast-lane digest) addresses the same waste for the fast-lane path only; this record is the general case. Tokens, not minutes: prose loading costs money and context headroom (compaction pressure), not wall-clock.\n\nThis record is Phase 5 of #1987 (Skill context composer — per-run bundles composed by resolved condition, not per-file ceilings): #1987's Phases 1-4 ship the composer mechanism and its per-step measurement; this record consumes that measurement and does the prose-diet and scaffolding-dedupe pass on top of it.\n\n## Deliverables\n\n- [ ] A stated authoring rule in `docs/skill-authoring.md`: operative text (`## Step N` bodies, gate tables, Next Actions) states the rule and cites the `[IL-nn]` tag or record number; the narrative of why lives in `docs/incident-log.md` or `docs/decisions/`, never restated inline. One sentence of rationale per rule is allowed; a paragraph is not.\n- [ ] Per-step composed-bytes measurement is delivered by #1990 (Per-step composed-bytes measurement in context-cost.js) — this record consumes that measurement, not builds it.\n- [ ] A first trimming pass over the five pipeline skills plus the `_shared` files they cite, moving provenance out per the rule, with the conformance tests that pin the moved prose updated in the same change (the real cost of this record — every trim moves pins).\n- [ ] Before/after bytes per step recorded in the PR description.\n- [ ] Inject the Interaction-style directive once from the `SessionStart` hook (`plugin/bin/lib/hooks/session-start.js`) and delete the 35 verbatim copies (501 B each) from every SKILL.md, with the conformance tests that pin that paragraph retargeted to the hook output.\n- [ ] Audit the per-skill `## Input`/`## Anti-Patterns`/`## Component-Skill Contract`/`## Next Actions` scaffolding (~260 KB of the 888 KB SKILL.md payload) with `bloat.js`'s existing provenance signals and trim author-facing narration.\n\n## Acceptance Criteria\n\n- [ ] `docs/skill-authoring.md` carries the rule and `harness-health` reports loaded bytes per pipeline step.\n- [ ] The five pipeline skills' default-path loaded bytes drop by at least 25% with no change to which steps execute, verified by the existing conformance suites passing after pin updates.\n- [ ] No `[IL-nn]` narrative is lost: every trimmed retelling still resolves to its incident-log entry by tag.\n\n## Technical Approach\n\n### Key Files\n\n- `docs/skill-authoring.md`\n- `plugin/bin/lib/skill-audit/`\n- `plugin/skills/flow/SKILL.md`, `plugin/skills/flow/steps-and-gates.md`\n- `plugin/skills/build/SKILL.md`\n- `plugin/skills/review/SKILL.md`, `plugin/skills/review/code-mode-steps.md`\n- `plugin/skills/wrap-up/SKILL.md`\n- `plugin/skills/test/verification.md`\n- `plugin/skills/_shared/subagent-output-contract.md`, `plugin/skills/_shared/pipeline-run-dir.md`\n- `plugin/bin/lib/hooks/session-start.js`\n- `plugin/bin/lib/skill-audit/bloat.js`\n- `tests/` (prose conformance suites pinning the trimmed text)\n",
+        "createdAt": "2026-09-05T16:43:07Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
+            "name": "size:high",
+            "description": "Scoring: large change — consider decomposition before building",
+            "color": "BFD4F2"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXTZ8w",
+            "name": "demo:pending",
+            "description": "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo",
+            "color": "1D76DB"
+          }
+        ],
+        "number": 1909,
+        "state": "OPEN",
+        "title": "Instruction-prose diet: operative skill text states the rule and the IL tag, provenance narrative moves out, per-pipeline-step loaded-bytes budget",
+        "updatedAt": "2026-09-13T13:14:52Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "low",
+          "size": "high",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": "pending",
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      },
+      {
+        "body": "Surface: backend\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule\nsentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`,\n18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its\npersonas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent`\ntool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a\nstatic `node --test` assertion; it can only be confirmed by observing an actual future `/specify`\ndecomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that\npersona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s\nfan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the\nobservation (transcript excerpt or note) against this item, or file a defect against\n`red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use\ncalls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of\nsub-issues) assistant messages.\n\n## Technical Approach\n\nWait for (or trigger) a `/claude-tweaks:specify` decomposition-mode run that produces 2 or more\n`ceremony:standard` sub-issue records — `ceremony-check` (`assess-agent-autonomy/ceremony-check.md`)\nresolves the tier per sub-issue during that run's own Step 3, so the tier isn't knowable until the\nrun happens. Once such a run occurs, inspect that session's stored transcript for the Step 5\nred-team dispatch (`specify/red-team.md`'s Parallel dispatch section): locate the `Agent` tool_use\nblocks for each dispatched persona and group them by the assistant message id each block belongs\nto. Confirm the number of distinct assistant message ids covering all persona dispatches for a\ngiven sub-issue is ≤ the number of sub-issues in that batch. Use the same read-only transcript\ninspection method `transcript-payload-verification` documents for reading this session's own\nlocally-stored transcript, rather than instrumenting or modifying `red-team.md` itself.\n\nIf the count exceeds the bound, file a defect issue against `red-team.md`'s dispatch prose\n(quoting the transcript grouping that violates the rule) instead of editing the file directly from\nthis record — this record's own deliverable is the observation, not the fix.\n\n### Key Files\n\n- `plugin/skills/specify/red-team.md` — the per-sub-issue persona dispatch procedure being observed\n- `plugin/skills/_shared/subagent-output-contract.md` — the fan-out single-assistant-message rule this observation verifies compliance with\n- `tests/subagent-contract-clauses.test.js` — AC1's existing static test coverage (unaffected by this record)\n\n## Gotchas\n\n- This record's acceptance criterion depends on an external event (a live `/specify` decomposition\n  run over 2+ `ceremony:standard` sub-issues happening) that this record cannot itself trigger on a\n  fixed schedule — it may sit open for some time until a qualifying run occurs naturally, or until\n  someone deliberately runs one to close it out.\n- A qualifying run must be observed via its own transcript at the time it happens; this record\n  cannot be resolved from historical data if no already-completed run's transcript is still\n  available.\n\n## Original request\n\nVerify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)\n\nOrigin: ledger resolve gate\n\nDefer-reason: needs-human-decision\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule sentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`, 18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its personas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent` tool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a static `node --test` assertion; it can only be confirmed by observing an actual future `/specify` decomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that persona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s fan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the observation (transcript excerpt or note) against this item, or file a defect against `red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use calls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of sub-issues) assistant messages.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
+        "createdAt": "2026-08-24T03:21:25Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAAC0IWj4w",
+            "name": "fix-on-worktree-worktree-dispatch-record-1350",
+            "description": "Fixed on worktree-worktree-dispatch-record-1350, not yet on the default branch",
+            "color": "FBCA04"
+          }
+        ],
+        "number": 1350,
+        "state": "OPEN",
+        "title": "Verify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)",
+        "updatedAt": "2026-09-13T13:14:34Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
         }
       }
     ],
