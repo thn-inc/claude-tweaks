@@ -16,11 +16,29 @@
 //      word first) is still accepted here.
 //   3. Neither — genuine violation, logged exactly as before.
 // Known false-positive sources:
-// 1. A dispatch whose own template specifies a different status contract
-//    (e.g. superpowers:subagent-driven-development's task-reviewer, which
-//    begins with a spec-compliance verdict) is logged here even though
-//    nothing was actually violated — the detector has no way to know a
-//    dispatch declared a different contract.
+// 1. (partially addressed, #2344) A dispatch whose own template specifies a
+//    different status contract (e.g. superpowers:subagent-driven-development's
+//    task-reviewer, which begins with a spec-compliance verdict, or this
+//    plugin's own review-lens/fix-verification dispatches which reply
+//    APPROVED/NEEDS_FIXES/ADDRESSED/VERIFIED) used to be logged here even
+//    though nothing was actually violated — the detector has no way to know a
+//    dispatch declared a different contract. #2344's measurement found this
+//    was 26% of one run's contract-violation volume. Addressed by tagging: a
+//    reply whose first line is EXACTLY one of the curated FOREIGN_CONTRACT_WORDS
+//    below still logs an event (never silently skipped — the aggregation
+//    layer, not the detector, is what decides "friction or not"), but tagged
+//    `variant: 'foreign-contract'` instead of the genuine `'violation'` tag,
+//    and bin/friction-events.js drops that variant from its aggregate the
+//    same way it already drops `'lenient'` (#2350). Removal condition for the
+//    word list itself: it is a closed, curated set (not a general heuristic)
+//    — widen it only when a NEW dispatch site's own declared vocabulary is
+//    observed causing the same false-positive shape, never speculatively.
+//    A detection-TIME skip (never logging the event at all, keyed off a
+//    dispatcher's own pre-declared contract) was considered and deferred —
+//    see #2344's own Deliverables for the shape — since the read-time
+//    variant tag already satisfies the same downstream goal (the Friction
+//    lens's aggregate no longer counts this population) with no new
+//    run-dir-state contract for every dispatch site to adopt.
 // 2. (fixed, #1928) The parent session's own transcript used to be graded
 //    whenever agent_transcript_path was absent, so an orchestrator's interim
 //    narration turns were logged as violations. Absent agent_transcript_path
@@ -81,6 +99,52 @@ function detectStatus(text) {
   const window = candidates.slice(0, 3).concat(candidates.slice(-3));
   if (window.some((l) => LENIENT_RE.test(l))) return { compliant: true, variant: 'lenient' };
   return { compliant: false, variant: null };
+}
+
+// #2344: verdict words belonging to OTHER dispatch-site contracts (this
+// plugin's own review-lens/fix-verification dispatch templates, whose own
+// prompt declares this vocabulary) — a reply whose first line is EXACTLY one
+// of these is not evidence of a Subagent Contract violation, but the
+// detector has no way to know a dispatch declared a different contract
+// without reading that dispatch's own prompt. Deliberately a closed, curated
+// list (not a general heuristic): an unrelated third vocabulary NOT in this
+// list still grades as a genuine violation (see the header comment's
+// removal-condition note on widening it).
+const FOREIGN_CONTRACT_WORDS = new Set(['APPROVED', 'NEEDS_FIXES', 'ADDRESSED', 'VERIFIED']);
+
+// Classifies a NON-compliant reply's `variant` for the logged event (#2344).
+// `trimmedText` is the same already-trimmed text detectStatus was run
+// against. Only ever called when detectStatus already returned
+// `compliant: false` — i.e. this decides "foreign-contract" vs. the default
+// "violation", never "lenient" (that variant comes from detectStatus itself).
+function classifyViolationVariant(trimmedText) {
+  const firstLine = trimmedText.split('\n')[0].trim();
+  if (FOREIGN_CONTRACT_WORDS.has(firstLine)) return 'foreign-contract';
+  return 'violation';
+}
+
+// #2345: total tool-use content blocks across the ENTIRE graded transcript
+// (every assistant turn, not just the final one — lastAssistantText already
+// guarantees the final graded turn itself never carries a tool_use block
+// alongside its text, per its own #1329 handling, so this necessarily counts
+// only earlier turns). A verdict/findings/pass-fail claim from an agent whose
+// transcript contains zero tool calls read nothing and is a failed dispatch,
+// never evidence (`_shared/subagent-output-contract.md`). Returns `null` when
+// the transcript can't be read (best-effort no-op, matching this file's own
+// posture elsewhere) rather than a count.
+function countToolUseBlocks(transcriptPath) {
+  let raw;
+  try { raw = fs.readFileSync(transcriptPath, 'utf8'); } catch { return null; }
+  let count = 0;
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let entry;
+    try { entry = JSON.parse(line); } catch { continue; }
+    const msg = entry && entry.message;
+    if (!msg || msg.role !== 'assistant' || !Array.isArray(msg.content)) continue;
+    for (const c of msg.content) { if (c && c.type === 'tool_use') count += 1; }
+  }
+  return count;
 }
 
 // This plugin's own name (plugin/.claude-plugin/plugin.json's "name" field) —
@@ -176,6 +240,18 @@ function run(ctx) {
   if (typeof text !== 'string') return {}; // unreadable -> best-effort no-op
   const trimmedText = text.trim();
   const firstLine = trimmedText.split('\n')[0].slice(0, 120);
+  // #2345: a graded reply (any final text that reached this point IS, by
+  // construction, the exact population the Subagent Contract targets — a
+  // dispatched agent's terminal reply) whose transcript carries zero tool-use
+  // blocks anywhere is a failed dispatch, never evidence — regardless of
+  // whether its status line is otherwise well-formed. Logged independently of
+  // the contract-violation check below; a `null` count (unreadable transcript,
+  // which can't actually happen here since lastAssistantText already read it
+  // successfully) never logs.
+  const toolUseCount = countToolUseBlocks(transcriptPath);
+  if (toolUseCount === 0) {
+    ctxLib.appendEvent(ownedRun.dir, 'zero-tool-use-verdict', { firstLine }, ownedRun.attribution);
+  }
   const detection = detectStatus(trimmedText);
   if (detection.compliant) {
     // Lenient (off-position/bare-word) compliance is still logged — an
@@ -187,8 +263,14 @@ function run(ctx) {
     }
     return {};
   }
-  ctxLib.appendEvent(ownedRun.dir, 'contract-violation', { firstLine }, ownedRun.attribution);
+  // #2344: a genuine violation vs. a reply belonging to another dispatch
+  // site's own declared verdict contract are logged with distinct `variant`
+  // tags — see FOREIGN_CONTRACT_WORDS' header comment. Both still log (the
+  // aggregation layer, bin/friction-events.js, is what decides "friction or
+  // not" — see #2350's identical precedent for the 'lenient' variant).
+  const variant = classifyViolationVariant(trimmedText);
+  ctxLib.appendEvent(ownedRun.dir, 'contract-violation', { firstLine, variant }, ownedRun.attribution);
   return { json: { systemMessage: 'claude-tweaks: a subagent reply is missing the Subagent Contract status line (STATUS: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, as the last non-empty line). Logged to events.jsonl.' } };
 }
 
-module.exports = { run, isExemptAgentType };
+module.exports = { run, isExemptAgentType, detectStatus, classifyViolationVariant, countToolUseBlocks };

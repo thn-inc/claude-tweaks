@@ -63,12 +63,22 @@ test('post-tool-use without run dir or without git targets is a no-op', () => {
   assert.ok(!fs.existsSync(path.join(run, 'events.jsonl')));
 });
 
-function transcript(lastText) {
+// A preceding tool_use turn is included by default so these fixtures (which
+// exist to exercise the status-line detector, not #2345's own
+// zero-tool-use-verdict check) never also trip that unrelated check — see
+// tests/hooks-subagent-stop.test.js for the dedicated zero-tool-use-verdict
+// coverage. Pass `{ toolUse: false }` for a fixture that specifically wants
+// a zero-tool-use transcript.
+function transcript(lastText, { toolUse = true } = {}) {
   const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e3-')), 'agent.jsonl');
   const lines = [
     JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'task' }] } }),
-    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: lastText }] } }),
   ];
+  if (toolUse) {
+    lines.push(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'x', name: 'Read', input: {} }] } }));
+    lines.push(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] } }));
+  }
+  lines.push(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: lastText }] } }));
   fs.writeFileSync(f, lines.join('\n') + '\n');
   return f;
 }
@@ -95,9 +105,15 @@ test('subagent-stop accepts an old-format (bare-word-first) status line lenientl
   assert.strictEqual(ev[0].variant, 'lenient', 'old-format first-line is lenient, not a hard violation');
 });
 
-function multiTurnTranscript(texts) {
+// A leading tool_use turn is included by default — same rationale as
+// transcript()'s own comment above.
+function multiTurnTranscript(texts, { toolUse = true } = {}) {
   const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e3-multi-')), 'agent.jsonl');
   const lines = [];
+  if (toolUse) {
+    lines.push(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'x', name: 'Read', input: {} }] } }));
+    lines.push(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] } }));
+  }
   for (const t of texts) {
     lines.push(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'go' }] } }));
     lines.push(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: t }] } }));
@@ -317,7 +333,7 @@ test('subagent-stop still flags a status word buried outside the first-or-last-3
   assert.match(out.json.systemMessage, /status line/i);
   const ev = readEvents(run)[0];
   assert.strictEqual(ev.type, 'contract-violation');
-  assert.strictEqual(ev.variant, undefined, 'a genuine violation carries no lenient variant field');
+  assert.strictEqual(ev.variant, 'violation', 'a genuine violation carries variant: violation (#2344)');
 });
 
 // A bold label that is NOT "Status:" (e.g. a differently-shaped report) must
