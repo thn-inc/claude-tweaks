@@ -204,6 +204,28 @@ test('#1402: readEvents drops a primary fallback-attributed event but keeps a re
   assert.equal(adhoc.length, 2, 'the adhoc source is unaffected — already worktree-validated by findRunsByWorktreePath');
 });
 
+// #2350: a lenient-variant contract-violation event is subagent-stop.js's
+// own COMPLIANT case (an old-shape dispatch template, tracked for migration
+// visibility only) — it must never inflate the Friction lens's count the
+// same way a genuine violation does.
+test('#2350: readEvents drops a lenient-variant contract-violation event but keeps a genuine violation', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { readEvents } = require('../plugin/bin/friction-events');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-events-'));
+  fs.writeFileSync(
+    path.join(dir, 'events.jsonl'),
+    [
+      '{"type":"contract-violation","ts":"t1","firstLine":"- **Status:** DONE","variant":"lenient"}',
+      '{"type":"contract-violation","ts":"t2","firstLine":"The call site is compatible."}',
+    ].join('\n') + '\n',
+  );
+  const events = readEvents(dir, 'primary');
+  assert.equal(events.length, 1, 'the lenient-variant event must be dropped, the genuine violation kept');
+  assert.equal(events[0].firstLine, 'The call site is compatible.');
+});
+
 // --- friction-lens vocabulary filter (#2016) --------------------------------
 //
 // readEvents itself stays general-purpose (the #1337/#1402 filters above are

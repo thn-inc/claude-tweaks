@@ -234,6 +234,8 @@ Return the structured report as detailed in the "Report" section below. If `reco
 
 ## Report
 
+**Status line (required, the true last line of your reply, after the `REPORT_JSON` comment):** `STATUS: {word}`, one of `DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED` (`bin/lib/hooks/subagent-stop.js`'s canonical format, #2265; #2350) — this is the Subagent Contract's own status word, distinct from this report's `PASS`/`PASS_WITH_CAVEATS`/`FAIL` vocabulary above it. Mapping: `PASS` → `DONE`; `PASS_WITH_CAVEATS` → `DONE_WITH_CONCERNS`; `FAIL` → `DONE_WITH_CONCERNS` (execution completed normally — `FAIL` is a real finding the dispatcher must act on); a `BLOCKED`/`NEEDS_CONTEXT` verdict per `qa-prompts.md`'s own criteria (infrastructure failure vs. missing required input) overrides this mapping when Setup itself never reached a PASS/FAIL judgment at all.
+
 **Canonical schema.** The nested `page_inventories` shape shown in the `REPORT_JSON` examples below (`interactive_elements`/`forms`/`navigation`/`accessibility`/`layout`) is the canonical schema for that structure. `skills/test/qa-prompts.md`'s dispatch prompt templates and `skills/test/qa-reporting.md`'s aggregated `report.json` schema both re-specify this same nested shape (required by `qa-prompts.md`'s own no-sibling-file-references contract, since each template is copied verbatim into a dispatched Task agent's prompt and that agent never sees this file) — any future change to the `page_inventories` shape must be mirrored byte-for-byte across all three locations: both `qa-prompts.md` templates and `qa-reporting.md`. The rest of the `REPORT_JSON` envelope shown in the examples below (`id`/`status`/`steps_passed`/`steps_total`/`error`/`trace`) illustrates this agent's full internal state, not a separate cross-file contract: the `REPORT_JSON` comment actually emitted by the dispatch templates in `qa-prompts.md` carries only `caveats`/`recovered_locators`/`page_inventories`, since `id`/`status`/`steps_passed`/`steps_total`/`error`/`trace` are already carried by the separate `RESULT:`/`TRACE:` lines that `qa-reporting.md`'s Phase 4 parses independently.
 
 ### On success
@@ -261,6 +263,8 @@ PASS
 RESULT: PASS | ID: <story-id> | Steps: N/N
 
 <!-- REPORT_JSON {"id":"<story-id>","status":"PASS","steps_passed":2,"steps_total":2,"error":null,"caveats":[],"recovered_locators":[],"trace":null,"page_inventories":[{"url":"...","interactive_elements":{"buttons":3,"links":12,"inputs":0,"selects":0,"checkboxes":0},"forms":{"count":0,"fields_per_form":[]},"navigation":{"nav_elements":1,"breadcrumbs":false,"tabs":0},"accessibility":{"aria_landmarks":2,"heading_levels":[1,2],"missing_labels":0},"layout":{"viewport_overflow":false,"scroll_height":900}}]} -->
+
+STATUS: DONE
 ```
 
 ### On success with caveats
@@ -293,6 +297,8 @@ PASS_WITH_CAVEATS
 RESULT: PASS_WITH_CAVEATS | ID: <story-id> | Steps: N/N
 
 <!-- REPORT_JSON {"id":"<story-id>","status":"PASS_WITH_CAVEATS","steps_passed":2,"steps_total":2,"error":null,"caveats":["Missing aria-label on 3 interactive element(s)","Page load took 4.2s"],"recovered_locators":[],"trace":null,"page_inventories":[{"url":"...","interactive_elements":{"buttons":5,"links":8,"inputs":2,"selects":1,"checkboxes":0},"forms":{"count":1,"fields_per_form":[3]},"navigation":{"nav_elements":1,"breadcrumbs":true,"tabs":3},"accessibility":{"aria_landmarks":3,"heading_levels":[1,2,3],"missing_labels":3},"layout":{"viewport_overflow":false,"scroll_height":1200}}]} -->
+
+STATUS: DONE_WITH_CONCERNS
 ```
 
 ### On failure
@@ -328,6 +334,8 @@ RESULT: FAIL | ID: <story-id> | Steps: X/N
 TRACE: {TRACES_BASE}/<story-id>/<timestamp>.zip
 
 <!-- REPORT_JSON {"id":"<story-id>","status":"FAIL","steps_passed":1,"steps_total":3,"error":"Step 2: <brief error>","caveats":[],"recovered_locators":[],"trace":".claude-tweaks/artifacts/traces/<story-id>/<timestamp>.zip","page_inventories":[{"url":"...","interactive_elements":{"buttons":2,"links":5,"inputs":1,"selects":0,"checkboxes":0},"forms":{"count":1,"fields_per_form":[2]},"navigation":{"nav_elements":1,"breadcrumbs":false,"tabs":0},"accessibility":{"aria_landmarks":1,"heading_levels":[1,2],"missing_labels":1},"layout":{"viewport_overflow":false,"scroll_height":800}}]} -->
+
+STATUS: DONE_WITH_CONCERNS
 ```
 
 The orchestrator's Phase 4 collector reads the `RESULT:` and `TRACE:` lines and the `REPORT_JSON` comment to assemble the run report. Use these exact line formats.
