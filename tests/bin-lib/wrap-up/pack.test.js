@@ -369,7 +369,58 @@ test('gatherPack: the ledger probe counts rows by status and phase from the work
   state.worktree = tree;
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(state));
   const pack = await gatherPack({ runDir, cwd: tree, only: ['ledger'], deps: okDeps() });
-  assert.deepStrictEqual(pack.ledger.value, { open: 1, total: 3, byPhase: { review: { open: 1, total: 2 }, build: { open: 0, total: 1 } }, files: ['docs/plans/2026-09-05-spec-1535-ledger.md'] });
+  assert.deepStrictEqual(pack.ledger.value, {
+    open: 1,
+    total: 3,
+    byPhase: { review: { open: 1, total: 2, unrecognized: 0 }, build: { open: 0, total: 1, unrecognized: 0 } },
+    files: ['docs/plans/2026-09-05-spec-1535-ledger.md'],
+    unrecognized: 0,
+    unrecognizedValues: [],
+  });
+});
+
+// #2080: an out-of-enum Status cell (a typo, a retired synonym like `staged`/
+// `resolved`) must be counted as `unrecognized` — distinguishable from both
+// `open` (blocking) and a legitimate terminal status — never silently folded
+// into "terminal" the way it was before this fix.
+test('gatherPack: the ledger probe counts an out-of-enum status as unrecognized, not silently terminal (#2080)', async () => {
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
+  fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-spec-1535-ledger.md'), [
+    '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
+    '| 1 | review | a | open | — |',
+    '| 2 | review | b | fixed | x |',
+    '| 3 | build | c | staged | parent staged/x.md |',
+    '| 4 | build | d | resolved | n/a |',
+  ].join('\n'));
+  const runDir = fixtureRunDir();
+  const state = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+  state.worktree = tree;
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(state));
+  const pack = await gatherPack({ runDir, cwd: tree, only: ['ledger'], deps: okDeps() });
+  assert.strictEqual(pack.ledger.value.unrecognized, 2);
+  assert.deepStrictEqual(pack.ledger.value.unrecognizedValues.sort(), ['resolved', 'staged']);
+  assert.strictEqual(pack.ledger.value.byPhase.build.unrecognized, 2);
+  assert.strictEqual(pack.ledger.value.byPhase.review.unrecognized, 0);
+  // Unrecognized rows were never `open` and must not become blocking now.
+  assert.strictEqual(pack.ledger.value.open, 1);
+  assert.strictEqual(pack.ledger.value.total, 4);
+});
+
+test('gatherPack: the ledger probe reports zero unrecognized rows when every status is in the closed enum (#2080)', async () => {
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
+  fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-spec-1535-ledger.md'), [
+    '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
+    '| 1 | review | a | open | — |', '| 2 | review | b | fixed | x |',
+  ].join('\n'));
+  const runDir = fixtureRunDir();
+  const state = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+  state.worktree = tree;
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(state));
+  const pack = await gatherPack({ runDir, cwd: tree, only: ['ledger'], deps: okDeps() });
+  assert.strictEqual(pack.ledger.value.unrecognized, 0);
+  assert.deepStrictEqual(pack.ledger.value.unrecognizedValues, []);
 });
 
 test('gatherPack: a ledger whose DATE prefix contains the record number is not this record\'s ledger (#1930 review M5)', async () => {
