@@ -142,8 +142,7 @@ test('recordResidueFailure: independent counters for the same path under differe
 // on every failure, and dropped entirely once the streak resets on success.
 test('recordResidueFailure: dirtyFiles is persisted and replaced per failure, cleared on success', () => {
   const root = tmpRoot();
-  const first = recordResidueFailure(root, 'removal-failed', '/x/wt', { now: 1, dirtyFiles: ['?? a.txt'] });
-  void first;
+  recordResidueFailure(root, 'removal-failed', '/x/wt', { now: 1, dirtyFiles: ['?? a.txt'] });
   let [entry] = listResidueFailures(root);
   assert.deepEqual(entry.dirtyFiles, ['?? a.txt']);
 

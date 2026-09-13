@@ -98,9 +98,8 @@ const IS_DIRTY_TIMEOUT_MS = 10000;
 function readPorcelainStatus(worktreePath) {
   try {
     const out = execFileSync('git', ['-C', worktreePath, 'status', '--porcelain'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: IS_DIRTY_TIMEOUT_MS });
-    if (out.length === 0) return [];
     const lines = out.split('\n');
-    if (lines[lines.length - 1] === '') lines.pop(); // trailing newline's empty tail entry
+    if (lines[lines.length - 1] === '') lines.pop(); // trailing newline's empty tail entry (and the empty-output case)
     return lines;
   } catch {
     return null;

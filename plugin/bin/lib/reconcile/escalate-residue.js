@@ -112,8 +112,7 @@ function capDirtyFiles(lines, cap = DIRTY_FILES_CAP) {
   if (!Array.isArray(lines)) return lines;
   if (lines.length <= cap) return lines;
   if (lines.length === cap + 1 && DIRTY_FILES_TAIL_RE.test(lines[lines.length - 1])) return lines;
-  const rest = lines.length - cap;
-  return [...lines.slice(0, cap), `… and ${rest} more`];
+  return [...lines.slice(0, cap), `… and ${lines.length - cap} more`];
 }
 
 // #1796 Deliverable 3 — the reaper never gains `--force`; this is advice for
@@ -131,11 +130,10 @@ function dirtyFilesDispositionHint(targetPath) {
 // "nothing to report").
 function dirtyFilesBlock(dirtyFiles, targetPath) {
   const header = '**Dirty files (`git status --porcelain` at the last failed pass):**';
-  if (dirtyFiles == null) {
-    return [header, '', 'could not read — git status failed', '', dirtyFilesDispositionHint(targetPath)];
-  }
-  const capped = capDirtyFiles(dirtyFiles);
-  return [header, '```', ...capped, '```', '', dirtyFilesDispositionHint(targetPath)];
+  const evidence = dirtyFiles == null
+    ? ['', 'could not read — git status failed']
+    : ['```', ...capDirtyFiles(dirtyFiles), '```'];
+  return [header, ...evidence, '', dirtyFilesDispositionHint(targetPath)];
 }
 
 // { repo, marker, runner } -> matching issue { number, title, body,
