@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-13T20:59:39.712Z",
+  "computedAt": "2026-09-13T22:12:20.985Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -405,7 +405,7 @@
       },
       {
         "number": 1796,
-        "updatedAt": "2026-09-13T20:09:47Z",
+        "updatedAt": "2026-09-13T21:39:48Z",
         "state": "OPEN"
       },
       {
@@ -4351,100 +4351,6 @@
       }
     ],
     [
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`residueBody` (`plugin/bin/lib/reconcile/escalate-residue.js`) composes every reconcile escalation issue — `removal-failed`, `structurally-stuck`, `move-failed` — from `{reason, targetPath, count, firstFailedAt, lastError}` and ends with the literal line ``Filed automatically by `bin/lib/reconcile` — see #644.``. In a consumer project that line reads as a repo-relative path and a local issue number: neither exists there, and `/claude-tweaks:specify`'s shaping sanity check has no way to know the path belongs to the plugin. Three consumer records were shaped with `bin/lib/reconcile/` as their Key File and each failed a headless build on \"named location does not exist\" before being closed as upstream.\n\nFor `removal-failed`, `reap-merged.js`'s failure branch (`if (rm.failure)`) forwards only `rm.stderr || rm.failure` as `lastError` (#1341) into `trackReapResidue` → `cache.js`'s `trackResidue`/`recordResidueFailure` (which persists `{count, firstFailedAt, lastError, escalated}` per `reason:path`) → `escalateResidue`. Git's refusal text (\"contains modified or untracked files, use --force to delete it\") says the worktree is dirty but not *with what*; the reader cannot tell a leftover untracked ledger from real uncommitted work without shelling into the host. `bin/lib/residue/probes/worktrees.js`'s `defaultIsDirty` already runs `git -C {path} status --porcelain` (10 s timeout, `null` on read failure), but reduces the output to a boolean and is not called from the reaper.\n\nTests: `tests/bin-lib/reconcile/escalate-residue.test.js` (six cases; \"residueBody: embeds the path, reason, and the fingerprint marker\"), `reap-merged.test.js`, `cache.test.js`. Related, distinct: #1424 (tidy path: never classify a dirty worktree as deletable), #1341 (the human handoff this body implements), #1811 and #1892 (this sweep's consolidated `structurally-stuck`/`move-failed` records for this repo's own residue; both keep `bin/lib/reconcile/` as a correct Key File *here*).\n\n## Deliverables\n\n- [ ] **Attribution line that survives a consumer repo.** Replace the closing line in `residueBody` with one that names the code owner and the record's purpose for all three reasons: filed by the claude-tweaks plugin's reconcile pass; the logic lives in the plugin source (`bin/lib/reconcile/` of `thomasholknielsen/claude-tweaks`, not a path in this repository); a fix to the reconcile logic belongs upstream (`thomasholknielsen/claude-tweaks#644` as the tracking reference, fully qualified); this record is the human handoff for the path named above. Keep the fingerprint marker and its basis unchanged so existing dedup keeps matching.\n- [ ] **Carry the dirty-file list on `removal-failed`.** In `reap-merged.js`'s failure branch, read `git -C {real} status --porcelain` (extract `worktrees.js`'s porcelain read into a small exported helper that returns the raw lines or `null`, and have `defaultIsDirty` call it, so there is one implementation) and pass `dirtyFiles` (array of porcelain lines, capped at 50 with a `… and N more` tail line) through `trackReapResidue` → `trackResidue` → `recordResidueFailure` (persist `dirtyFiles` next to `lastError`, refreshed on every failure, dropped with the streak on success) → `escalateResidue` → `residueBody`, which renders a `**Dirty files (\\`git status --porcelain\\` at the last failed pass):**` fenced block. When the read returned `null`, render `could not read — git status failed` in that block rather than omitting it (a check that did not run must not look like a clean worktree).\n- [ ] **Disposition hint, no behavior change to the reaper.** Below the block, one line: only `??` (untracked) entries that are plainly disposable make `git worktree remove --force {path}` safe; any modified tracked entry means inspect first. The reaper itself never gains `--force` (the original request's explicit non-goal).\n- [ ] **Tests.** `escalate-residue.test.js`: attribution line names the plugin and the qualified upstream ref, no bare `bin/lib/reconcile` path; `dirtyFiles` block rendered, capped, and the `null` case rendered as unreadable; non-`removal-failed` reasons render no block. `reap-merged.test.js`: on `rm.failure` the porcelain read runs against the worktree path and its lines reach the injected `escalate`. `cache.test.js`: `dirtyFiles` persisted and replaced per failure, cleared on success. `tests/bin-lib/residue/*`: `defaultIsDirty` still returns `true`/`false`/`null` through the shared helper.\n- [ ] Update `docs/reconcile-checks.md` if it quotes the body's closing line or the cache entry shape (grep first; edit only the quoted text).\n\n## Acceptance Criteria\n\n1. `residueBody({reason: 'structurally-stuck', …}).body` contains the plugin attribution with `thomasholknielsen/claude-tweaks#644` and does not contain the bare line ``Filed automatically by `bin/lib/reconcile` ``; the fingerprint marker is byte-identical to today's for the same `(reason, path)`.\n2. `residueBody({reason: 'removal-failed', dirtyFiles: ['?? docs/plans/x-ledger.md']}).body` contains a fenced block with that line and the disposition hint; with `dirtyFiles: null` it contains the unreadable sentence; with 60 lines it renders 50 plus a `… and 10 more` tail.\n3. In `reap-merged.test.js`, a failed `git worktree remove` results in exactly one `status --porcelain` invocation against the worktree path and the lines appear on the escalation call's arguments; a successful removal performs no status read.\n4. `cache.json`'s `residueFailures[reason:path]` entry carries `dirtyFiles` after a failure and the entry is deleted on success, pinned in `cache.test.js`.\n5. `npm test` green; every pre-existing case in the three reconcile test files and in `tests/bin-lib/residue/` passes unchanged.\n6. A record filed by this code in a consumer repo, shaped by `/claude-tweaks:specify`, would not name `bin/lib/reconcile/` as a Key File — demonstrated in the PR description by quoting the new body text and stating which sentence carries the upstream pointer.\n\n## Technical Approach\n\nAdditive: a new optional `dirtyFiles` field on the cache entry and the escalation call, `null`/absent for the two other reasons, so no existing consumer changes shape. One porcelain reader shared between the residue probe and the reaper, with the same 10 s timeout and `null`-on-failure contract. The attribution rewrite is text only; keep the marker line last so `tidy-residue-markers` style consumers that locate the fingerprint keep working. Cap the list in the reaper, not in the body composer, so the cache never stores an unbounded array.\n\n### Key Files\n\n- `plugin/bin/lib/reconcile/escalate-residue.js` — attribution line; `dirtyFiles` block + hint in `residueBody`; pass-through in `escalateResidue`\n- `plugin/bin/lib/reconcile/reap-merged.js` — porcelain read on `rm.failure`; `dirtyFiles` into `trackReapResidue`\n- `plugin/bin/lib/reconcile/cache.js` — persist `dirtyFiles` in `recordResidueFailure`; forward it in `trackResidue`'s `escalate` call\n- `plugin/bin/lib/residue/probes/worktrees.js` — export the porcelain reader `defaultIsDirty` now delegates to\n- `tests/bin-lib/reconcile/escalate-residue.test.js`, `reap-merged.test.js`, `cache.test.js` — new cases\n- `docs/reconcile-checks.md` — only if it quotes the closing line or the cache entry shape\n\n## Gotchas\n\n- The reconcile pass runs in the background on every session (`reconcile-background.lock`); a status read on a dirty worktree is one more spawn per failed reap — bounded by the 10 s timeout and only on the failure branch, so acceptable, but do not add it to the success path.\n- Porcelain lines can contain paths with spaces and renames (`R  old -> new`); store them verbatim, never split.\n- Do not change the fingerprint basis: an attribution change must not re-file already-escalated paths.\n- Records this code already filed in this repo (the `structurally-stuck`/`move-failed` instances absorbed into #1811 and #1892 by this sweep) keep their old body text; nothing here rewrites filed issues.\n\n## Original request\n\n**Summary:** A `removal-failed` escalation issue filed by `bin/lib/reconcile/escalate-residue.js` reads, in the consumer project, as an in-repo bug (\"Filed automatically by `bin/lib/reconcile` — see #644\") and carries git's stderr but not the dirty worktree's `git status --porcelain` output — so a human cannot tell a disposable untracked ledger from real uncommitted work without visiting the host, and a downstream `/specify` shapes the record with `bin/lib/reconcile/` as its Key File even though that directory does not exist in the consumer repo.\n\n**Kind:** Defect\n\n**Affected component:** `bin/lib/reconcile/escalate-residue.js` (`residueBody`), with `bin/lib/reconcile/reap-merged.js`'s `removal-failed` tracking as the producer\n\n**Repro steps:**\n1. In a consumer project (not claude-tweaks itself), let a merged-PR worktree accumulate one untracked file (e.g. a leftover `docs/plans/*-ledger.md`) so `git worktree remove` refuses with `contains modified or untracked files, use --force to delete it`.\n2. Let reconcile's reap pass hit `removal-failed` on that path three times so `cache.js`'s escalation latch trips and `escalateResidue` files the issue.\n3. Read the filed issue body, then run `/claude-tweaks:specify #N` on it.\n\n**Expected vs. actual:**\nExpected: the body says the removal logic lives in the claude-tweaks plugin (a fix, if any, belongs upstream — and a maintainer reading the consumer's issue should not be pointed at a repo-relative `bin/lib/reconcile/`), and it lists the worktree's porcelain lines so the reader can decide between \"disposable residue — `git worktree remove --force` is safe\" and \"real uncommitted work — inspect first\" without shelling into the host. `bin/lib/residue/probes/worktrees.js` already has `isDirty(worktreePath)` running `git status --porcelain`; `residueBody` only needs the porcelain text, not just the boolean.\nActual: the body's fix-site line reads as a consumer-repo path (three reconcile-filed records were shaped by `/specify` with `bin/lib/reconcile/` as Key File and each failed a headless build on \"named location does not exist\" before being closed as unreproducible/upstream), and the body's only diagnostic is git's one-line stderr. This is the escalation-path half of what claude-tweaks #1424 fixed for the `/tidy` path (never classify a dirty worktree as deletable, never offer bare `--force`) and the human handoff #1341 designed — the handoff works, it just does not carry the one fact the human needs. Not a request to add `--force` to the reaper.\n\n**Definition:** Clear\n\n**Plugin version:** 6.114.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-50767ae5 -->\n\n",
-        "createdAt": "2026-09-02T15:36:15Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1796,
-        "state": "OPEN",
-        "title": "escalate-residue: removal-failed escalation body names the plugin's own path as the fix site and omits the worktree's dirty-file list",
-        "updatedAt": "2026-09-13T20:09:47Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
       {
         "body": "Surface: backend\n\n**Related:** #1235\n\n## Overview\n\nMakes each terminal show its own ports and stops leases from outliving their worktrees. A statusline segment renders the block base for the current cwd; both worktree reapers and the two skill-driven removal sites release the lease after a successful `git worktree remove`. Release failure is logged, never fatal — Unit 1's gc is the backstop.\n\n**Complexity:** Medium\n**Estimated tasks:** 6\n\n## Non-Goals\n\n- SessionStart/ensure (Unit 2)\n- `/init`\n- dev-url-detection\n- Changing any reaper eligibility predicate (release runs only after a removal the existing predicate already approved)\n\n## Current State\n\n- `plugin/bin/claude-tweaks-statusline.js` builds `segments = [renderProject, renderModel, renderContext, renderEffort, renderGit, renderRateLimit×2, findActiveSpec, findOpenLedger, renderAccount].filter(...)` joined by `SEPARATOR`; each renderer returns `''`/null when inapplicable; tests in `tests/statusline.test.js` and `tests/install-statusline-wrapper.test.js` (the wrapper source `plugin/bin/lib/statusline-wrapper-source.js` is byte-pinned — do not touch it).\n- Reapers: `plugin/bin/lib/hooks/worktree-reap.js` `reapWorktrees()` calls `runGit(['worktree','remove', real], root)` (~line 284) and `plugin/bin/lib/reconcile/reap-merged.js` `reapMerged()` does the same (~line 133); both fail closed and are tested by `tests/hooks-worktree-reap.test.js` and `tests/bin-lib/reconcile/reap-merged.test.js` with frozen fixtures.\n- Skill-side removal: `plugin/skills/tidy/scan-procedures.md` line ~154 and `plugin/skills/tidy/SKILL.md` line ~165 (`git -C \"{REPO_ROOT}\" worktree remove {path}`), and `plugin/skills/wrap-up/cleanup-procedures-execution.md` Section C (worktree teardown, `ExitWorktree` for own cwd).\n\n## Deliverables\n\n- [ ] `renderPorts(cwd, {home})` in `claude-tweaks-statusline.js`: reads the registry degrade-open, finds the lease whose `path` equals the realpath of the git toplevel of `cwd` (walk up to the nearest `.git` file/dir rather than spawning git — the statusline must stay spawn-free beyond what it already does; for a linked worktree the nearest `.git` is a *file* pointing at the real gitdir, not a directory — the toplevel is still the directory containing that `.git` file, not a path derived from the gitdir it points to, and the result must be realpath'd with the exact same normalization Unit 1's `registry.allocate`/`registryPath` uses for `path` — same casing, same symlink resolution — or a leased worktree's segment silently never matches), renders `:{base}` (e.g. `:20010`), `''` when none; inserted after `renderGit`. The registry read (including a present-but-malformed/throwing `readRegistry`, not just a missing `ports` module) is wrapped in one try/catch that degrades to `''` — AC1's \"unreadable registry ⇒ byte-identical output\" covers both the missing-module and the bad-data case, not just the require.\n- [ ] `release(real, {home})` — imported from Unit 1's `plugin/bin/lib/ports/registry.js` (#1791) — call in both reapers immediately after a successful `worktree remove` (rm exit 0), wrapped so a throw is recorded in the result as `portsRelease: 'failed: {msg}'` and never changes the reap outcome. `release` on a path with no lease (not every worktree acquires one — Unit 2/`ensure` is out of scope here) is a no-op that reports nothing, matching #1791 AC6's release contract — this is the common case, not the exceptional one. Use one consistent identifier for the seam across the Deliverable and Technical Approach — the injectable option key is `releasePorts`, defaulting to `release` from `registry.js`; a test's injected spy binds to `releasePorts`, never to a separately-named `release`.\n- [ ] `plugin/skills/tidy/scan-procedures.md` + `plugin/skills/tidy/SKILL.md`: one added line each after the `worktree remove` instruction: `node \"${CLAUDE_PLUGIN_ROOT}/bin/ports.js\" release --path {path}` (best-effort: on failure, print to stderr only — never blocks the finding, and no other visibility surface exists for the skill-side call, unlike the reaper's structured `portsRelease` field).\n- [ ] `plugin/skills/wrap-up/cleanup-procedures-execution.md` Section C: the same release line as the step after removal, always with an explicit `--path {path}` flag rather than relying on the CLI's cwd-based default — `release(path)` only needs the path string, not a live process cwd, but the CLI's automatic `--path` default (`git rev-parse --show-toplevel` of cwd) stops resolving once the worktree directory is gone or the session has `cd`'d out of it. Passing `--path` explicitly removes the ordering dependency: for the own-cwd path, release the captured worktree path either just before or just after `ExitWorktree` — the explicit flag makes both orders equally correct.\n- [ ] Tests for each of the above.\n\n## Acceptance Criteria\n\n1. Statusline with a registry leasing the test cwd's toplevel renders a `:20010` segment between the git and rate-limit segments; with no registry, no lease, or an unreadable registry, output is byte-identical to today. Includes a linked-worktree fixture (a `.git` file, not directory) proving the toplevel resolution matches the registry's own realpath normalization.\n2. `reapWorktrees` on a fixture where removal succeeds calls the injected `releasePorts` spy with the removed realpath; when removal fails, it is not called; when it throws, the reap result is unchanged except for the `portsRelease` note; when the removed path had no lease, it returns its no-op success with no note.\n3. Same four cases for `reapMerged`.\n4. Prose conformance tests (per the repo's `skill-prose-conformance-tests` skill): the release line is present after each of the three skill-side `worktree remove` sites, and the wrap-up own-cwd ordering (release before `ExitWorktree`) is stated.\n5. `tests/install-statusline-wrapper.test.js` still passes unchanged.\n\n## Technical Approach\n\nStatusline reads `registry.readRegistry({home})` from Unit 1 (require the module lazily inside `renderPorts` so a missing module — older wrapper install — degrades to `''`). Reapers import `release` from `plugin/bin/lib/ports/registry.js` with an injectable seam `{ releasePorts = release }` in their options object, mirroring how `runGit` is injected today.\n\n### Key Files\n\n- `plugin/bin/claude-tweaks-statusline.js` — renderPorts + segment\n- `tests/statusline.test.js`\n- `plugin/bin/lib/hooks/worktree-reap.js` — release after remove\n- `plugin/bin/lib/reconcile/reap-merged.js` — release after remove\n- `tests/hooks-worktree-reap.test.js`\n- `tests/bin-lib/reconcile/reap-merged.test.js`\n- `plugin/skills/tidy/scan-procedures.md` — one line\n- `plugin/skills/tidy/SKILL.md` — one line\n- `plugin/skills/wrap-up/cleanup-procedures-execution.md` — Section C step\n- `tests/ports-release-sites-conformance.test.js` — new prose test\n\n### Package Dependencies\n\n- none\n\n## Gotchas\n\n- `tidy/SKILL.md` (41,216 B) and `tidy/scan-procedures.md` (41,232 B) are already over the 40 KB ceiling `tests/bin-lib/skill-audit/context-cost.test.js` enforces — check how that test currently treats them (allowance or exemption) before adding; if the addition trips it, add the one line and trim an equal number of bytes of redundant prose in the same file rather than skipping the line.\n- Reapers fail CLOSED on every predicate — release must sit strictly after the successful removal and must not introduce a new predicate.\n- `reap-merged.js` overlaps open #1235 (Related, `needs:decision`); keep the edit to the lines strictly after the successful `worktree remove` call — that scoping is what makes this edit resilient to #1235's own eventual, still-undecided change landing before or after this one.\n- The statusline runs on every prompt render — no `execFileSync` for git, no lock acquisition, degrade-open reads only.\n\n## Decision Rationale\n\nSee #1791 Decision Rationale.\n\n\n<!-- work-fingerprint: port-isolation:ports-statusline-segment-and-lease-release-at-every-worktree -->\n\n**Trigger:** #1791 lands on main (provides the `release` export from `plugin/bin/lib/ports/registry.js` this unit's Technical Approach imports)\n",
         "createdAt": "2026-09-02T15:25:17Z",
