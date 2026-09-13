@@ -352,7 +352,19 @@ function bootstrapRelease({ root, integrationModel, branch, dryRun = false, list
       if (resolvedDir !== realRoot && !resolvedDir.startsWith(realRoot + path.sep)) {
         throw new Error(`refusing to write through a symlink: ${rel}`);
       }
-      fs.writeFileSync(full, content);
+      try {
+        fs.writeFileSync(full, content, { flag: 'wx' });
+      } catch (err) {
+        // A sibling process created this exact path in the window between
+        // the lexists() check above and this write — the same "never
+        // overwrite a file this run did not itself create" invariant the
+        // pre-write check exists for, closed here at the write itself
+        // rather than left as a TOCTOU gap.
+        if (err.code === 'EEXIST') {
+          return { verdict: 'conflict', tool: 'release-please (partial files)', evidence: rel, written, policyRows: [] };
+        }
+        throw err;
+      }
     }
     written.push(rel);
   }

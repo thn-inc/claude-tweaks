@@ -285,6 +285,35 @@ test('bootstrapRelease: a pre-existing manifest with no config is the same parti
   assert.equal(read(root, '.release-please-manifest.json'), handWritten);
 });
 
+test('bootstrapRelease: a sibling process creating a target file between the lexists() check and the write is a conflict, not a silent clobber (write-time TOCTOU — /claude-tweaks:release whole-branch review finding)', () => {
+  const root = tmp(); write(root, 'package.json', '{"name":"x"}');
+  const manifestPath = path.join(root, '.release-please-manifest.json');
+  const original = fs.writeFileSync;
+  let calls = 0;
+  fs.writeFileSync = function (target, content, opts) {
+    calls += 1;
+    if (target === manifestPath && calls === 2) {
+      // Simulate a sibling process landing this exact file first, in the
+      // window between bootstrapRelease's lexists() check and this write.
+      original(target, 'sibling-written');
+    }
+    return original(target, content, opts);
+  };
+  try {
+    const r = rb.bootstrapRelease({ root, integrationModel: 'pr-first', branch: 'main', listTags: () => [] });
+    assert.equal(r.verdict, 'conflict');
+    assert.equal(r.tool, 'release-please (partial files)');
+    assert.equal(r.evidence, '.release-please-manifest.json');
+    // The racer's file must survive untouched — the invariant the fix
+    // protects, not merely that some conflict verdict came back.
+    assert.equal(fs.readFileSync(manifestPath, 'utf8'), 'sibling-written');
+    // The file written before the race (config) is real, not rolled back.
+    assert.deepEqual(r.written, ['release-please-config.json']);
+  } finally {
+    fs.writeFileSync = original;
+  }
+});
+
 test('bootstrapRelease: a symlinked .github refuses to write through it; nothing lands outside root (ledger row 36)', () => {
   const root = tmp(); write(root, 'package.json', '{"name":"x"}');
   const outside = tmp();
