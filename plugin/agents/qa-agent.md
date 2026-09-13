@@ -50,7 +50,7 @@ Extract from the prompt:
 - **Auth (legacy)** — from `**Auth (legacy):**` (optional, resolved url/username/password from a legacy `auth.yml`; only present when no vault is configured)
 - **Setup block** — from `**Setup:**` (YAML, optional)
 - **Teardown block** — from `**Teardown:**` (YAML, optional)
-- **Viewport** — from `**Viewport:**` (optional, e.g. `1440x900`)
+- **Viewport** — from `**Viewport:**` (optional, e.g. `1440x900`; defaults to `1440x1600` when absent — see Setup step 2d)
 - **Steps** — the YAML step array from `**Steps:**`
 - **SCREENSHOT_PATH** — from `**SCREENSHOT_PATH:**` (the directory to write screenshots to for this run)
 
@@ -67,7 +67,7 @@ agent-browser --session <story-id> trace start
 ```
 Recording must start here, before any step runs — `trace stop <path>` (Section 6 Step 1) can only save what was recorded, and a failure with no recording started yields no trace.
 
-d. **Set viewport** (if specified). The flag is cross-platform — no shell-specific env-var workarounds needed.
+d. **Set viewport.** Use the story's `**Viewport:**` value when specified; otherwise default to `1440x1600` — a below-the-fold control (e.g. a form's conditional fields expanding the page) is otherwise unreachable, since `click`/`find ... click` never auto-scrolls a target into view (`skills/browse/agent-browser-reference.md`'s Operation vocabulary note). The flag is cross-platform — no shell-specific env-var workarounds needed.
 ```
 agent-browser --session <story-id> set viewport <width> <height>
 ```
@@ -221,7 +221,7 @@ Return the structured report as detailed in the "Report" section below. If `reco
 ## Workflow — Legacy Format
 
 1. **Parse** the user story into discrete, sequential steps (support all legacy formats in the Examples section). Also parse `**Auth (vault):**` and `**Auth (legacy):**` if present.
-2. **Setup:** create the screenshot directory and the trace directory (`{TRACES_BASE}/<story-id>`); open the session at the story URL and start trace recording (`trace start`) immediately after `open`; if a viewport is set, apply it via `set viewport`; apply auth (vault preferred, legacy fallback) — see Structured Format Step 2.
+2. **Setup:** create the screenshot directory and the trace directory (`{TRACES_BASE}/<story-id>`); open the session at the story URL and start trace recording (`trace start`) immediately after `open`; apply viewport via `set viewport` (the story's value if set, else the `1440x1600` default); apply auth (vault preferred, legacy fallback) — see Structured Format Step 2.
 3. **Execute each step sequentially** (maintain a `caveats` array, initially empty):
    a. Resolve the target via `find` using a semantic locator inferred from the free-text step.
    b. Execute the action via the appropriate `agent-browser` command. Free-text-derived values (the story's narrative/checklist/BDD text) are spliced into double-quoted Bash arguments the same way structured-format `<value>`/`<text>` fields are — apply the escaping rule from "Escaping story-supplied strings" (Structured Format, Section 4 Step 1) before splicing any such string into a command.
