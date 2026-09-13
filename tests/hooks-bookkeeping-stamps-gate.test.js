@@ -681,9 +681,18 @@ test('#1798: bookkeeping-stamp-deny event and message carry the two compared ses
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /callerSessionId=owner-abc/);
   const event = readEvents(run).find((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'record-pr');
   assert.ok(event, 'expected a bookkeeping-stamp-deny event for record-pr');
-  assert.strictEqual(event.ownerSessionId, 'owner-abc');
-  assert.strictEqual(event.callerSessionId, 'owner-abc');
-  assert.strictEqual(event.ownedRunMatchesThisRun, false);
+  // Exact payload shape (`ts` excluded — a derived timestamp, not part of the
+  // shape this fix adds) — pins the full field set, not just a subset, per
+  // AC2's "verified by a test asserting the event's exact JSON payload shape".
+  const { ts, ...rest } = event;
+  assert.deepStrictEqual(rest, {
+    stamp: 'record-pr',
+    worktree: wt,
+    ownerSessionId: 'owner-abc',
+    callerSessionId: 'owner-abc',
+    ownedRunMatchesThisRun: false,
+    type: 'bookkeeping-stamp-deny',
+  });
 });
 
 test('#1798 (finding-specific fix): bookkeeping-stamp-deny flags ownedRunMatchesThisRun when ctx.ownedRun resolves to this same run, even with no sessionId stamped on either side', () => {
