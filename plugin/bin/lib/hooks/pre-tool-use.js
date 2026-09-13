@@ -1162,6 +1162,11 @@ function isForeignSessionCall(ctx) {
 // belongs to a live sibling that hasn't stamped ownership yet than to the caller
 // itself. Deliberately NOT folded into isForeignSessionCall — the PR-stamp branch
 // keeps its existing, already-effective guard unchanged (see checkBookkeepingStampsGate).
+// #1798 revisited this deliberately, on an empirical finding rather than the
+// hypothesis alone (see stampCheckOutcome below): the PR-stamp branch's deny
+// of a genuinely-owning session is CORRECT (the PR doesn't exist yet) and
+// unaffected by whether sessionId or ownedRun identifies that ownership, so
+// no fold-in was warranted — only the deny's diagnostics were missing.
 function hasDistinctOwnedRun(ctx) {
   const owned = ctx.ownedRun && typeof ctx.ownedRun.dir === 'string' ? ctx.ownedRun.dir : '';
   return Boolean(owned && ctx.runDir && owned !== ctx.runDir);
@@ -1212,14 +1217,47 @@ function isStampsGateExemptTarget(ctx) {
 // 'fallback' arm guessing at an UNRELATED run with no worktree binding at
 // all — ctx.runDir here is never that: it's the run this checkout's own
 // binding names).
+// #1798: a deny here was reported as a "false positive on the owning
+// session" (three denies in a row before the PR-early lifecycle's own
+// `record-pr` stamp eventually landed). Task 0's empirical finding
+// (tests/hooks-bookkeeping-stamps-gate.test.js, "#1798 Task 0") REFUTED the
+// filed hypothesis that CLAUDE_CODE_SESSION_ID non-propagation was the root
+// cause: `isForeignSessionCall` only ever downgrades a deny to an allow when
+// the owner and caller session ids are BOTH present AND DIFFERENT — it was
+// never designed to rescue the genuinely-owning session's own call, so
+// whether `runState.sessionId` got stamped makes no difference to this
+// branch's outcome for an owning caller. The deny in that shape is CORRECT
+// (the PR genuinely doesn't exist yet) — the actual gap was diagnosability:
+// neither the two compared session ids nor a same-run-ownership signal were
+// visible from `events.jsonl` or the deny message, so a legitimate
+// deny-until-PR-exists read exactly like an identity misfire. Both are now
+// captured: `ownerSessionId`/`callerSessionId` are the values
+// `isForeignSessionCall` itself compares; `ownedRunMatchesThisRun` is the
+// #1259 `ctx.ownedRun` signal (this call's own session-scoped resolved run),
+// which — unlike `sessionId` — is populated independently of the
+// `record-worktree` env-var stamp and so stays reliable even when that stamp
+// never landed. None of this changes the allow/deny decision on either
+// branch.
 function stampCheckOutcome(ctx, stamp, wtRoot, warnings, warnText, denyText, isForeign) {
   if (isForeign) {
     ctxLib.appendEvent(ctx.runDir, 'wd-foreign-session', { stamp, worktree: wtRoot });
     warnings.push(warnText);
     return {};
   }
-  ctxLib.appendEvent(ctx.runDir, 'bookkeeping-stamp-deny', { stamp, worktree: wtRoot });
-  return denyResult(denyText);
+  const ownerSessionId = (ctx.runState && typeof ctx.runState.sessionId === 'string' && ctx.runState.sessionId) || null;
+  const callerSessionId = (ctx.input && typeof ctx.input.session_id === 'string' && ctx.input.session_id) || null;
+  const ownedRunMatchesThisRun = Boolean(
+    ctx.ownedRun && typeof ctx.ownedRun.dir === 'string' && ctx.ownedRun.dir === ctx.runDir,
+  );
+  ctxLib.appendEvent(ctx.runDir, 'bookkeeping-stamp-deny', {
+    stamp, worktree: wtRoot, ownerSessionId, callerSessionId, ownedRunMatchesThisRun,
+  });
+  const diagnostics = `ownerSessionId=${ownerSessionId === null ? 'null' : ownerSessionId}, ` +
+    `callerSessionId=${callerSessionId === null ? 'null' : callerSessionId}` +
+    (ownedRunMatchesThisRun
+      ? ', ownedRun matches this run — you ARE its owning session; this deny is expected until the missing stamp lands, not an identity misfire'
+      : '');
+  return denyResult(`${denyText} (diagnostics: ${diagnostics})`);
 }
 
 // Bookkeeping-stamps gate: build/SKILL.md Spec Step 1 marks record-worktree

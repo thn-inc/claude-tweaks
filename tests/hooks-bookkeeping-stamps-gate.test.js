@@ -548,6 +548,172 @@ test('bookkeeping-stamps gate (#1259): a distinct ownedRun does NOT loosen the P
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-pr|PR-early/);
 });
 
+// --- #1798: empirical check of the CLAUDE_CODE_SESSION_ID-propagation
+// hypothesis, plus the diagnostics it justified ---
+//
+// Filed hypothesis: `record-worktree` omits `sessionId` from its
+// `writeRunState` patch when `CLAUDE_CODE_SESSION_ID` is falsy at that
+// moment, so on a platform where that env var doesn't reliably propagate
+// into a dispatched Task's Bash subprocess, `runState.sessionId` never gets
+// set — and since `isForeignSessionCall` returns `false` whenever `owner` is
+// empty, it can never resolve `true` for the rest of that run, "meaning it
+// can never rescue a genuinely-owning call either" on the record-pr branch
+// (the record-pr branch's sole exemption, unlike record-worktree's, which
+// also falls back to `hasDistinctOwnedRun`).
+
+// Task 0 (empirical, per this repo's Empirical Premise-Check convention):
+// reproduces the env-less stamp via the REAL `record-worktree` CLI (the
+// platform-specific Windows/Git Bash propagation gap itself isn't
+// reproducible in this test environment, so this is the fallback fixture the
+// spec's own Task 0 text names), then compares the record-pr branch's
+// outcome for the SAME genuinely-owning caller with and without a matching
+// `runState.sessionId`.
+//
+// FINDING (recorded verbatim in #1798's own `## Gotchas`): REFUTED.
+// `isForeignSessionCall` only ever downgrades a deny to an allow when the
+// owner and caller session ids are BOTH present AND DIFFERENT — it was never
+// designed to rescue a MATCHING (genuinely-owning) session's call in the
+// first place, so whether `runState.sessionId` got stamped makes NO
+// difference to this branch's outcome for an owning caller: case A (env-less
+// stamp) and case B (env present, sessionId matches the caller) both deny,
+// identically. The three-denies-in-a-row report is fully explained by the
+// deny-until-PR-exists behavior firing repeatedly during genuine
+// network-retry churn while `gh pr create` kept failing transiently —
+// expected, correct behavior, not an identity misfire. No fold-in of
+// `hasDistinctOwnedRun` into the record-pr branch is warranted (the (a)/(b)
+// conditional deliverables do not apply); the finding-specific fix instead
+// closes the actual gap this exposed — the deny carried no signal letting a
+// reader tell "expected, PR genuinely doesn't exist yet" apart from "identity
+// misfire" — by threading a reliable, sessionId-independent ownership signal
+// (`ownedRunMatchesThisRun`, the #1259 `ctx.ownedRun` comparison) alongside
+// the two session ids into both the deny event and the deny message.
+test('#1798 Task 0: CLAUDE_CODE_SESSION_ID unset at record-worktree time does NOT change the record-pr branch\'s deny for the genuinely-owning session', () => {
+  const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
+  const OWNER_SESSION = 'owning-session-1798';
+
+  function gitProjectDir() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-anchor-'));
+    execFileSync('git', ['-C', dir, 'init', '-q']);
+    return dir;
+  }
+
+  function recordWorktree(project, run, wt, { withSessionEnv }) {
+    const env = { ...process.env, PIPELINE_RUN_DIR: '' };
+    if (withSessionEnv) env.CLAUDE_CODE_SESSION_ID = OWNER_SESSION;
+    else delete env.CLAUDE_CODE_SESSION_ID;
+    execFileSync('node', [HOOKS, 'record-worktree', '--run', run, wt], { cwd: project, encoding: 'utf8', env });
+  }
+
+  // Case A: CLAUDE_CODE_SESSION_ID unset when record-worktree runs (the
+  // reported Windows/Git Bash propagation gap).
+  const mainA = gitRepo();
+  const wtA = linkedWorktreeOf(mainA);
+  commitMaterializedSpec(wtA, path.join('work', '991-spec.md'));
+  const projectA = gitProjectDir();
+  const runA = path.join(projectA, '.claude-tweaks', 'pipelines', RUN_ID);
+  fs.mkdirSync(runA, { recursive: true });
+  recordWorktree(projectA, runA, wtA, { withSessionEnv: false });
+  const stateA = JSON.parse(fs.readFileSync(path.join(runA, 'run-state.json'), 'utf8'));
+  assert.strictEqual(stateA.worktree, wtA);
+  assert.strictEqual(stateA.sessionId, undefined, 'fixture sanity: env-less record-worktree must not stamp sessionId');
+  const outA = pre.run(
+    {
+      input: { ...editInput(path.join(wtA, 'src', 'x.js')), session_id: OWNER_SESSION },
+      runDir: runA,
+      runState: stateA,
+      cwd: wtA,
+    },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  assert.ok(outA.json, 'expected a deny — no PR recorded yet');
+  assert.strictEqual(outA.json.hookSpecificOutput.permissionDecision, 'deny');
+
+  // Case B (control): identical setup, except CLAUDE_CODE_SESSION_ID IS
+  // present and matches the caller's own session_id when record-worktree
+  // runs — runState.sessionId now stamps to the SAME value as the caller.
+  const mainB = gitRepo();
+  const wtB = linkedWorktreeOf(mainB);
+  commitMaterializedSpec(wtB, path.join('work', '991-spec.md'));
+  const projectB = gitProjectDir();
+  const runB = path.join(projectB, '.claude-tweaks', 'pipelines', RUN_ID);
+  fs.mkdirSync(runB, { recursive: true });
+  recordWorktree(projectB, runB, wtB, { withSessionEnv: true });
+  const stateB = JSON.parse(fs.readFileSync(path.join(runB, 'run-state.json'), 'utf8'));
+  assert.strictEqual(stateB.sessionId, OWNER_SESSION, 'fixture sanity: env-present record-worktree must stamp sessionId');
+  const outB = pre.run(
+    {
+      input: { ...editInput(path.join(wtB, 'src', 'x.js')), session_id: OWNER_SESSION },
+      runDir: runB,
+      runState: stateB,
+      cwd: wtB,
+    },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  assert.ok(outB.json, 'expected a deny — no PR recorded yet, identical to case A');
+  assert.strictEqual(outB.json.hookSpecificOutput.permissionDecision, 'deny');
+
+  // The hypothesis predicted A and B would differ (A wrongly denied, B
+  // correctly rescued). They do not — refuting it.
+  assert.strictEqual(
+    outA.json.hookSpecificOutput.permissionDecision,
+    outB.json.hookSpecificOutput.permissionDecision,
+    'sessionId presence/absence must not change the record-pr branch outcome for a genuinely-owning caller',
+  );
+});
+
+test('#1798: bookkeeping-stamp-deny event and message carry the two compared session ids', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), wt, 'owner-abc');
+  const out = pre.run(
+    {
+      input: { ...editInput(path.join(wt, 'src', 'x.js')), session_id: 'owner-abc' },
+      runDir: run,
+      runState: { status: 'active', worktree: wt, sessionId: 'owner-abc' },
+      cwd: wt,
+    },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  assert.ok(out.json);
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /ownerSessionId=owner-abc/);
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /callerSessionId=owner-abc/);
+  const event = readEvents(run).find((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'record-pr');
+  assert.ok(event, 'expected a bookkeeping-stamp-deny event for record-pr');
+  assert.strictEqual(event.ownerSessionId, 'owner-abc');
+  assert.strictEqual(event.callerSessionId, 'owner-abc');
+  assert.strictEqual(event.ownedRunMatchesThisRun, false);
+});
+
+test('#1798 (finding-specific fix): bookkeeping-stamp-deny flags ownedRunMatchesThisRun when ctx.ownedRun resolves to this same run, even with no sessionId stamped on either side', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), wt, undefined); // no sessionId stamped at all
+  const out = pre.run(
+    {
+      input: editInput(path.join(wt, 'src', 'x.js')), // no session_id on the caller either
+      runDir: run,
+      runState: { status: 'active', worktree: wt },
+      ownedRun: { dir: run, attribution: 'session' }, // this call's OWN resolved run IS this run
+      cwd: wt,
+    },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  assert.ok(out.json);
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(
+    out.json.hookSpecificOutput.permissionDecisionReason,
+    /ownedRun matches this run — you ARE its owning session/,
+  );
+  const event = readEvents(run).find((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'record-pr');
+  assert.ok(event);
+  assert.strictEqual(event.ownedRunMatchesThisRun, true);
+  assert.strictEqual(event.ownerSessionId, null);
+  assert.strictEqual(event.callerSessionId, null);
+});
+
 // --- #1520: end-to-end reproduction of #815's build-phase gap ---
 //
 // #815's build landed a materialize commit and a second commit in its own
