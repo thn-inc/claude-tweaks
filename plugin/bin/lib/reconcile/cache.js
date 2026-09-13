@@ -156,7 +156,16 @@ function commitCacheBatch(batch) {
 // `recordResidueSuccess` resets the entry — this is what keeps escalation a
 // one-shot event rather than a re-trigger on every pass past the threshold
 // (#644 Acceptance Criteria).
-function recordResidueFailure(target, reason, targetPath, { lastError, now = Date.now(), threshold = RESIDUE_ESCALATE_THRESHOLD } = {}) {
+// #1796: `dirtyFiles` (removal-failed only — every other reason's caller
+// omits it) is REFRESHED on every failure, unlike `lastError`'s
+// keep-the-previous-value-if-falsy fallback above — a `null` this call
+// (this pass's porcelain read failed) must overwrite a real list from a
+// PRIOR pass, not silently keep showing stale dirty-file evidence next to a
+// fresh failure. Dropped along with the rest of the entry on
+// `recordResidueSuccess` below — nothing extra to do there.
+function recordResidueFailure(target, reason, targetPath, {
+  lastError, dirtyFiles = null, now = Date.now(), threshold = RESIDUE_ESCALATE_THRESHOLD,
+} = {}) {
   const batch = isCacheBatch(target);
   const cache = batch ? target.cache : readCache(target);
   const failures = { ...cache.residueFailures };
@@ -170,6 +179,7 @@ function recordResidueFailure(target, reason, targetPath, { lastError, now = Dat
     count,
     firstFailedAt,
     lastError: lastError || (existing && existing.lastError) || null,
+    dirtyFiles,
     escalated: alreadyEscalated || shouldEscalate,
   };
   const nextCache = { ...cache, residueFailures: failures };
@@ -201,17 +211,17 @@ function recordResidueSuccess(target, reason, targetPath) {
 // archive-merged.js's `result.reason !== 'move-failed'` early-return guard
 // in particular stays there, not here, since it's archive-specific and
 // unrelated to this branching.
-function trackResidue(target, repoSlug, reason, targetPath, { failed, lastError }, { escalate = escalateResidue, runner } = {}) {
+function trackResidue(target, repoSlug, reason, targetPath, { failed, lastError, dirtyFiles }, { escalate = escalateResidue, runner } = {}) {
   if (!failed) {
     recordResidueSuccess(target, reason, targetPath);
     return;
   }
-  const streak = recordResidueFailure(target, reason, targetPath, { lastError });
+  const streak = recordResidueFailure(target, reason, targetPath, { lastError, dirtyFiles });
   if (!streak.shouldEscalate) return;
   try {
     escalate({
       repo: repoSlug, reason, targetPath,
-      count: streak.count, firstFailedAt: streak.firstFailedAt, lastError, runner,
+      count: streak.count, firstFailedAt: streak.firstFailedAt, lastError, dirtyFiles, runner,
     });
   } catch { /* best-effort — never let escalation turn a residue-tracking call into a thrown error */ }
 }

@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { probeWorktrees, extractPid, defaultIsDirty } = require('../../../plugin/bin/lib/residue/probes/worktrees');
+const { probeWorktrees, extractPid, defaultIsDirty, readPorcelainStatus } = require('../../../plugin/bin/lib/residue/probes/worktrees');
 const { probeBranches } = require('../../../plugin/bin/lib/residue/probes/branches');
 const { filterResultsByScope } = require('../../../plugin/bin/lib/residue/scope-filter');
 const { validateFinding } = require('../../../plugin/bin/lib/residue/finding');
@@ -372,4 +372,23 @@ test('defaultIsDirty: a clean fixture worktree reads dirty: false', () => {
 
 test('defaultIsDirty: a nonexistent path reads null (could not confirm), not false', () => {
   assert.strictEqual(defaultIsDirty('/does/not/exist/anywhere'), null);
+});
+
+// #1796 — readPorcelainStatus is the shared reader defaultIsDirty above now
+// delegates to; reap-merged.js's removal-failed branch needs the raw lines
+// themselves (not just the boolean) to carry a dirty-file list on the
+// escalation issue.
+test('readPorcelainStatus: an untracked file reads back as one raw porcelain line', () => {
+  const dir = tmpGitRepo();
+  fs.writeFileSync(path.join(dir, 'untracked.txt'), 'x');
+  assert.deepEqual(readPorcelainStatus(dir), ['?? untracked.txt']);
+});
+
+test('readPorcelainStatus: a clean fixture worktree reads an empty array, not null', () => {
+  const dir = tmpGitRepo();
+  assert.deepEqual(readPorcelainStatus(dir), []);
+});
+
+test('readPorcelainStatus: a nonexistent path reads null (could not confirm), not an empty array', () => {
+  assert.strictEqual(readPorcelainStatus('/does/not/exist/anywhere'), null);
 });

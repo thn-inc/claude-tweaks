@@ -32,6 +32,30 @@ function installGhWrapper(prsJson) {
   return { restore: () => { process.env.PATH = originalPath; } };
 }
 
+// #1796 — readPorcelainStatus (worktrees.js) is not injectable, same
+// caveat as resolvePrState above (bound at require time). Intercept at the
+// process-spawn boundary: a `git` wrapper that logs every invocation's args
+// then execs the real binary, so the fixture's own `git worktree
+// add`/`lock`/`remove` calls keep working while the test can count exactly
+// how many of those invocations were a `status --porcelain` read.
+function installGitPorcelainSpy() {
+  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-gitspy-'));
+  const wrapperPath = path.join(wrapperDir, 'git');
+  const logPath = path.join(wrapperDir, 'calls.log');
+  fs.writeFileSync(wrapperPath, `#!/bin/sh\necho "$@" >> "${logPath}"\nexec "${realGit}" "$@"\n`);
+  fs.chmodSync(wrapperPath, 0o755);
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  return {
+    countPorcelainCalls: () => {
+      if (!fs.existsSync(logPath)) return 0;
+      return fs.readFileSync(logPath, 'utf8').split('\n').filter((l) => l.includes('status --porcelain')).length;
+    },
+    restore: () => { process.env.PATH = originalPath; },
+  };
+}
+
 // Main checkout + a linked worktree under the harness domain (.claude/worktrees/,
 // the only domain reapMerged ever considers), plus a pipeline run dir whose
 // run-state.json names that worktree — the join reapMerged's own audit-trail
@@ -320,6 +344,46 @@ test('reapMerged: a pass processing 2 removal-failed worktrees reads and writes 
 
   const stuck = listResidueFailures(root);
   assert.equal(stuck.length, 2, `expected two independently tracked residue entries, got: ${JSON.stringify(stuck)}`);
+});
+
+// #1796 Deliverable 2 — on rm.failure, the porcelain read runs exactly once
+// against the worktree path and its lines reach the residue cache (and, at
+// threshold, the escalation call — pinned separately at the cache.js/
+// escalate-residue.js unit level; here we confirm the read actually happens
+// and its content flows through this integration point).
+test('reapMerged: removal-failed reads git status --porcelain exactly once, and the lines reach the residue cache', () => {
+  const { root, wtPath } = buildReapableFixture();
+  const ghWrapper = installGhWrapper([{ number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
+  execFileSync('git', ['worktree', 'lock', wtPath, '--reason', 'stuck'], { cwd: root, stdio: 'ignore' });
+  fs.writeFileSync(path.join(wtPath, 'stray.txt'), 'x\n');
+  const gitSpy = installGitPorcelainSpy();
+  try {
+    const result = reapMerged({ cwd: root });
+    assert.equal(result.skipped[0].reason, 'removal-failed', `expected removal-failed, got: ${JSON.stringify(result)}`);
+    assert.equal(gitSpy.countPorcelainCalls(), 1, 'expected exactly one status --porcelain invocation');
+
+    const [entry] = listResidueFailures(root);
+    assert.ok(Array.isArray(entry.dirtyFiles), `expected a dirtyFiles array, got: ${JSON.stringify(entry)}`);
+    assert.ok(entry.dirtyFiles.some((l) => l.includes('stray.txt')), `expected stray.txt in dirtyFiles, got: ${JSON.stringify(entry.dirtyFiles)}`);
+  } finally {
+    gitSpy.restore();
+    ghWrapper.restore();
+  }
+});
+
+test('reapMerged: a successful removal performs no git status --porcelain read', () => {
+  const { root } = buildReapableFixture();
+  const ghWrapper = installGhWrapper([{ number: 42, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
+  const gitSpy = installGitPorcelainSpy();
+  let result;
+  try {
+    result = reapMerged({ cwd: root });
+  } finally {
+    gitSpy.restore();
+    ghWrapper.restore();
+  }
+  assert.equal(result.reaped.length, 1, `expected exactly one reaped worktree, got: ${JSON.stringify(result)}`);
+  assert.equal(gitSpy.countPorcelainCalls(), 0, 'a successful removal must never read git status --porcelain');
 });
 
 test('trackReapResidue: escalates exactly once at the threshold via an injected escalate, never on later still-failing calls', () => {

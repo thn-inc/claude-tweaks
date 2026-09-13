@@ -86,13 +86,31 @@ function lockedEvidence(wt, isPidAlive) {
 // block the whole residue sweep indefinitely.
 const IS_DIRTY_TIMEOUT_MS = 10000;
 
-function defaultIsDirty(worktreePath) {
+// #1796: the shared `git status --porcelain` reader — `defaultIsDirty`
+// (below) reduces this to a boolean; `reap-merged.js`'s `removal-failed`
+// branch needs the raw lines themselves (to carry a dirty-file list on the
+// escalation issue, per that record's Deliverable 2), so this is pulled out
+// once rather than each caller running its own `execFileSync` against the
+// same command. Returns the raw porcelain lines verbatim (never split a
+// rename's ` -> ` or trim a status prefix's leading space — both are
+// significant), or `null` on a read failure — same fail-toward-"could not
+// confirm" contract `defaultIsDirty` already documented before this split.
+function readPorcelainStatus(worktreePath) {
   try {
     const out = execFileSync('git', ['-C', worktreePath, 'status', '--porcelain'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: IS_DIRTY_TIMEOUT_MS });
-    return out.trim().length > 0;
+    if (out.length === 0) return [];
+    const lines = out.split('\n');
+    if (lines[lines.length - 1] === '') lines.pop(); // trailing newline's empty tail entry
+    return lines;
   } catch {
     return null;
   }
+}
+
+function defaultIsDirty(worktreePath) {
+  const lines = readPorcelainStatus(worktreePath);
+  if (lines === null) return null;
+  return lines.length > 0;
 }
 
 function probeWorktrees({ scope, isPidAlive = defaultIsPidAlive, isDirty = defaultIsDirty } = {}) {
@@ -153,4 +171,6 @@ function probeWorktrees({ scope, isPidAlive = defaultIsPidAlive, isDirty = defau
   return { ran: true, reason: null, findings };
 }
 
-module.exports = { probeWorktrees, REAPER_DOMAIN, extractPid, defaultIsPidAlive, defaultIsDirty, lockedEvidence };
+module.exports = {
+  probeWorktrees, REAPER_DOMAIN, extractPid, defaultIsPidAlive, defaultIsDirty, readPorcelainStatus, lockedEvidence,
+};

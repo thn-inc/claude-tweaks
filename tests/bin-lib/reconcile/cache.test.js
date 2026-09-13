@@ -138,6 +138,29 @@ test('recordResidueFailure: independent counters for the same path under differe
   assert.equal(entries.length, 2);
 });
 
+// #1796 Deliverable 2 — dirtyFiles is refreshed (never merged/accumulated)
+// on every failure, and dropped entirely once the streak resets on success.
+test('recordResidueFailure: dirtyFiles is persisted and replaced per failure, cleared on success', () => {
+  const root = tmpRoot();
+  const first = recordResidueFailure(root, 'removal-failed', '/x/wt', { now: 1, dirtyFiles: ['?? a.txt'] });
+  void first;
+  let [entry] = listResidueFailures(root);
+  assert.deepEqual(entry.dirtyFiles, ['?? a.txt']);
+
+  // A later failure with a DIFFERENT (or null) dirtyFiles value overwrites,
+  // it never merges with the prior list.
+  recordResidueFailure(root, 'removal-failed', '/x/wt', { now: 2, dirtyFiles: null });
+  [entry] = listResidueFailures(root);
+  assert.equal(entry.dirtyFiles, null, 'a fresh null read must overwrite the prior list, not keep it');
+
+  recordResidueFailure(root, 'removal-failed', '/x/wt', { now: 3, dirtyFiles: ['?? b.txt', '?? c.txt'] });
+  [entry] = listResidueFailures(root);
+  assert.deepEqual(entry.dirtyFiles, ['?? b.txt', '?? c.txt']);
+
+  recordResidueSuccess(root, 'removal-failed', '/x/wt');
+  assert.deepEqual(listResidueFailures(root), [], 'success clears the whole entry, dirtyFiles included');
+});
+
 // #1233 — trackResidue is the shared success/fail branch-into-cache-helpers
 // helper both reap-merged.js's trackReapResidue and archive-merged.js's
 // trackArchiveResult now call instead of duplicating it. Covers escalate-on-
@@ -157,6 +180,21 @@ test('trackResidue: escalates exactly once at the threshold via an injected esca
 
   trackResidue(root, 'o/r', 'removal-failed', '/x/wt', { failed: true, lastError: 'x' }, { escalate });
   assert.equal(calls.length, 1, 'must not re-escalate on a later still-failing call');
+});
+
+// #1796 — the escalate call at threshold must carry the most recent
+// dirtyFiles reading through, so the filed issue's body can render it.
+test('trackResidue: threads dirtyFiles through to the escalate call', () => {
+  const root = tmpRoot();
+  const calls = [];
+  const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
+
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD - 1; i++) {
+    trackResidue(root, 'o/r', 'removal-failed', '/x/wt', { failed: true, lastError: 'x', dirtyFiles: ['?? stale.txt'] }, { escalate });
+  }
+  trackResidue(root, 'o/r', 'removal-failed', '/x/wt', { failed: true, lastError: 'x', dirtyFiles: ['?? fresh.txt'] }, { escalate });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].dirtyFiles, ['?? fresh.txt']);
 });
 
 test('trackResidue: escalates exactly once at the threshold via an injected escalate, never on later still-failing calls (move-failed)', () => {
