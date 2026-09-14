@@ -96,7 +96,7 @@ step's own merge might still change):
    mtime heuristic, not a hash-based guarantee, and a false negative here is far cheaper than a
    false positive that nags on every adopt.
 4. **Report.** On missing or `STALE`, detect the project's install command the same
-   lockfile-driven way `dev-url-detection.md`'s Step 2 detects a dev command:
+   lockfile-driven way `_shared/dev-url-detection.md`'s Step 2 detects a dev command:
    `package-lock.json` → `npm ci`, `yarn.lock` → `yarn install --frozen-lockfile`,
    `pnpm-lock.yaml` → `pnpm install --frozen-lockfile`. Surface a clear, actionable message naming
    the gap and the detected command before the caller proceeds to any build/test step — never a
