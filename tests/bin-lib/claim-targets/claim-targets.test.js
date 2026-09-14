@@ -147,7 +147,14 @@ function baseDeps({ ghApi, gh, hostname = 'host1', sessionId = 'sess1' }) {
   const io = makeStdio();
   return {
     deps: {
-      ghApi, gh, now: () => NOW, stdout: io.stdout, stderr: io.stderr, hostname, sessionId,
+      // #2329: a no-op default so the post-write-verification retry (which
+      // waits between attempts via `deps.sleep || claimStore.defaultSleep`)
+      // never falls through to a real, blocking `Atomics.wait` in a test that
+      // doesn't care about backoff timing — the same convention
+      // claim-store.test.js already uses for every git-CAS retry test.
+      // Overridable per test (e.g. to record/assert calls) by reassigning
+      // `deps.sleep` after destructuring this return value.
+      ghApi, gh, now: () => NOW, stdout: io.stdout, stderr: io.stderr, hostname, sessionId, sleep: () => {},
     },
     io,
   };
@@ -823,13 +830,14 @@ test('(m3) #2073 under --keep-going: unverified target recorded in skipped, not 
   assert.deepEqual(body.skipped, [{ issue: 772, reason: 'unverified' }]);
 });
 
-test('(m4) #2073: one target unverified, a second already confirmed-claimed -> abort releases only the confirmed one', () => {
+test('(m4) #2073/#2329: one target unverified, a second already confirmed-claimed -> abort releases the confirmed target and attempts (but cannot confirm) release of the unverified one', () => {
   const { ghApi, calls } = makeGhApi({
     // 720 claims and verifies cleanly FIRST; 721's write "succeeds" but its
-    // read-back never confirms it, triggering the default all-or-abort.
+    // read-back never confirms it — not even across the #2329 retry window —
+    // triggering the default all-or-abort.
     reads: {
       720: [readAbsent, confirmRead(), readOk('irrelevant', 'sha720-release')], // 2nd = its own verification, 3rd = release's fresh read
-      721: [readAbsent], // read-back repeats the same (still-absent) entry
+      721: [readAbsent], // every read-back (verify retries AND the release fresh read) repeats this same still-absent entry
     },
     writes: {
       720: [writeOk, writeOk], // 1st = claim, 2nd = abort-release tombstone
@@ -845,8 +853,99 @@ test('(m4) #2073: one target unverified, a second already confirmed-claimed -> a
   const body = JSON.parse(io.out[0]);
   assert.deepEqual(body.unverified, [{ issue: 721 }]);
   assert.deepEqual(body.released, [720], '720 was confirmed claimed by this run, so the all-or-abort release covers it');
-  assert.equal(calls.filter((a) => isWrite(a, '721')).length, 1, '721 itself is never tombstoned (no second write) — its write outcome is genuinely unknown, not a confirmed claim to release');
+  // #2329: 721's own (unconfirmed) write is now ALSO named in the release
+  // attempt — abort() no longer releases claimedThisRun alone (the claim-leak
+  // fix). Its fresh read still finds the target absent, so it lands in
+  // releaseFailed (visible on stdout) rather than silently riding out its
+  // TTL unreleased with no bot:in-progress marker pointing at it.
+  assert.deepEqual(body.releaseFailed, [{ issue: 721, error: 'absent' }], "721's unverified write is named, not silently dropped, even though the release attempt itself can't confirm it landed");
+  assert.equal(calls.filter((a) => isWrite(a, '721')).length, 1, '721 is never tombstoned — the release fresh read still sees it absent, so writeClaimBlob is never called for it (nothing there to safely overwrite)');
   assert.ok(ghCalls.some((a) => a[0] === 'issue' && a[1] === 'edit' && a[2] === '720' && a.includes('--remove-label')));
+});
+
+test('(m5) #2329: an unverified target that a later fresh read confirms DID land gets released, not left claimed', () => {
+  const { ghApi, calls } = makeGhApi({
+    // The post-write verification (and its two retries) all still see the
+    // pre-write blob — the eventually-consistent race never resolves within
+    // the retry window — but by the time abort()'s own fresh read runs
+    // (moments later, a separate read call), the write has finally
+    // propagated: a live blob under this run's own identity.
+    reads: { 775: [readAbsent, readAbsent, readAbsent, readAbsent, confirmRead('r1', 'sha775-release')] },
+    writes: { 775: [writeOk, writeOk] }, // 1st = claim, 2nd = abort-release tombstone
+  });
+  const { gh, calls: ghCalls } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '775'], deps);
+
+  assert.equal(code, 5, 'still reported unverified — the retry window genuinely expired without confirming it');
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.unverified, [{ issue: 775 }]);
+  assert.deepEqual(body.released, [775], "a claim that genuinely landed must be released so a later run can reclaim it — never left silently held under this run's identity");
+  assert.deepEqual(body.releaseFailed, []);
+  assert.equal(calls.filter((a) => isWrite(a, '775')).length, 2, 'the original claim write, plus exactly one release/tombstone write once the fresh read confirmed it landed');
+  assert.ok(ghCalls.some((a) => a[0] === 'issue' && a[1] === 'edit' && a[2] === '775' && a.includes('--remove-label')));
+});
+
+test('(m6) #2329: read-back retry recovers from a transient stale read on the contents-API path -> claimed, exit 0', () => {
+  const sleepCalls = [];
+  const { ghApi } = makeGhApi({
+    // index0 = initial pre-write read (absent); index1 = first verification
+    // attempt still sees the stale pre-write blob (the eventually-consistent
+    // race this record fixes); index2 = second attempt finally sees it live.
+    reads: { 776: [readAbsent, readAbsent, confirmRead()] },
+    writes: { 776: [writeOk] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.sleep = (ms) => sleepCalls.push(ms);
+
+  const code = run(['--run-id', 'r1', '--targets', '776'], deps);
+
+  assert.equal(code, 0, 'a claim that reads back consistent on retry must never report unverified');
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.claimed, [776]);
+  assert.equal(body.unverified, undefined);
+  assert.equal(sleepCalls.length, 1, 'exactly one backoff wait — between the stale first attempt and the confirming second attempt');
+  assert.ok(sleepCalls[0] > 0, 'the wait must be a positive duration, not a busy-loop');
+});
+
+test('(m7) #2329: the git-CAS read-back path never retries — one check even when it never confirms, since knownTip already pins it to the exact commit just pushed', () => {
+  const showCalls = [];
+  const gitRunner = (args) => {
+    if (args[0] === 'fetch') return '';
+    if (args[0] === 'rev-parse' && args[1] !== 'FETCH_HEAD') return `${'a'.repeat(40)}\n`;
+    if (args[0] === 'update-ref' && args[1] === '-d') return '';
+    if (args[0] === 'show') {
+      showCalls.push(args);
+      // Neither the pre-write read (against the fetched tip) nor the
+      // post-write verification (against the just-pushed 'newcommit') ever
+      // finds a live blob here — this write's outcome genuinely never
+      // confirms, on the transport whose read is already pinned to an exact
+      // commit and therefore cannot be "eventually" anything.
+      throw new Error(`fatal: path 'claims/issue-777.json' does not exist in '${args[1].split(':')[0]}'`);
+    }
+    if (args[0] === 'hash-object') return 'deadbeef\n';
+    if (args[0] === 'read-tree' || args[0] === 'update-index') return '';
+    if (args[0] === 'write-tree') return 'newtree\n';
+    if (args[0] === 'commit-tree') return 'newcommit\n';
+    if (args[0] === 'push') return '';
+    throw new Error(`unexpected git call: ${args.join(' ')}`);
+  };
+  const ghApi = (args) => { throw new Error(`contents-API must not be called when git-CAS works: ${args.join(' ')}`); };
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.gitRunner = gitRunner;
+  const sleepCalls = [];
+  deps.sleep = (ms) => sleepCalls.push(ms);
+
+  const code = run(['--run-id', 'r1', '--targets', '777'], deps);
+
+  assert.equal(code, 5, 'a git-CAS write whose own commit never shows a live blob must report unverified');
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.unverified, [{ issue: 777 }]);
+  assert.equal(showCalls.filter((a) => a[1] === 'newcommit:claims/issue-777.json').length, 1, 'exactly one post-write read-back check on the git-CAS path — a retry could never see anything different since knownTip already pins the read to the exact commit it just pushed');
+  assert.equal(sleepCalls.length, 0, 'the git-CAS path never waits between attempts — there is only ever the one check');
 });
 
 // Write-time rejection (lost race) vs write-time transient failure — the
