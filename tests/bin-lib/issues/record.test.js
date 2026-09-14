@@ -99,11 +99,12 @@ test('recordPayload emits parked and priority labels', () => {
   assert.deepStrictEqual(result.labels, ['parked', 'priority:high']);
 });
 
-test('TYPE_LABELS has exactly 3 pairs naming type:bug|feature|task with descriptions <= 100 chars', () => {
+test('TYPE_LABELS has exactly 3 triples naming type:bug|feature|task with descriptions <= 100 chars and valid colors (#1873)', () => {
   assert.strictEqual(TYPE_LABELS.length, 3);
   assert.deepStrictEqual(TYPE_LABELS.map(([name]) => name), ['type:bug', 'type:feature', 'type:task']);
-  for (const [, description] of TYPE_LABELS) {
+  for (const [, description, color] of TYPE_LABELS) {
     assert.ok(description.length <= 100, `description too long: "${description}"`);
+    assert.match(color, /^[0-9A-Fa-f]{6}$/, `color must be six hex digits, no leading #: "${color}"`);
   }
 });
 

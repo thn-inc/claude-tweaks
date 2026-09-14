@@ -26,6 +26,10 @@ const { tombstoneInFlightPr } = claimStore;
 
 const BOT_IN_PROGRESS = 'bot:in-progress';
 const BOT_IN_PROGRESS_DESC = 'Bot state: an agent currently holds the claim on this record';
+// #1873: the Bot state family's color — matches _shared/label-bootstrap.md's
+// canonical LABELS_JSON entry for this same label, since this call site
+// bootstraps it independently rather than going through the shared loop.
+const BOT_IN_PROGRESS_COLOR = '6A737D';
 const ABORT_REASON = 'never-started: file-overlap group partial claim';
 
 const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--help]\n'
@@ -88,11 +92,11 @@ function repoSlugOf(gh) {
 // `_shared/label-bootstrap.md`'s check-then-create convention. Throws are the
 // caller's problem to catch (per contract, this never aborts a claim).
 function ensureAndAddLabel(gh, issue) {
-  const payload = ensureLabelPayload(BOT_IN_PROGRESS, BOT_IN_PROGRESS_DESC);
+  const payload = ensureLabelPayload(BOT_IN_PROGRESS, BOT_IN_PROGRESS_DESC, BOT_IN_PROGRESS_COLOR);
   const existing = String(gh(['label', 'list', '--search', payload.name, '--json', 'name', '-q', '.[].name']) || '')
     .split('\n').map((s) => s.trim()).filter(Boolean);
   if (!existing.includes(payload.name)) {
-    gh(['label', 'create', payload.name, '--description', payload.description]);
+    gh(['label', 'create', payload.name, '--color', payload.color, '--description', payload.description]);
   }
   gh(['issue', 'edit', String(issue), '--add-label', payload.name]);
 }

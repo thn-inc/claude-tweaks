@@ -172,14 +172,14 @@ toward the grant.
 
    ```bash
    # Bootstrap per _shared/label-bootstrap.md, LABELS_JSON =
-   # [["by:capture", "Origin: filed via /capture"]]
+   # [["by:capture", "Origin: filed via /capture", "BFD4F2"]]
    ```
 
-   When the project's `work-types` key reads `labels`, also bootstrap the guessed `type:{t}` label the same way — its pair lives in `record.js`'s `TYPE_LABELS` (e.g. `['type:bug', 'Type: a defect in existing behavior']` when the guess is `bug`).
+   When the project's `work-types` key reads `labels`, also bootstrap the guessed `type:{t}` label the same way — its triple lives in `record.js`'s `TYPE_LABELS` (e.g. `['type:bug', 'Type: a defect in existing behavior', 'D73A4A']` when the guess is `bug`).
 
-   When `$NEEDS_DEFINITION` is `true`, also bootstrap `needs:definition` the same way — its pair
+   When `$NEEDS_DEFINITION` is `true`, also bootstrap `needs:definition` the same way — its triple
    lives in `_shared/label-bootstrap.md`'s `LABELS_JSON` (`["needs:definition", "Undecided idea —
-   must go through /specify's brainstorm redirect before reaching ready"]`).
+   must go through /specify's brainstorm redirect before reaching ready", "7057FF"]`).
 
 2. Build the payload and write the body file via `bin/compose-record.js` (#686/#800's CLI precedent — replaces the hand-rolled compose-then-extract `node -e` pair). The temp payload path keys off `$CLAUDE_CODE_SESSION_ID` (the same session identity `_shared/issue-claims.md` stamps on a claim) rather than a fixed name — a concurrent `/capture` invocation against the same checkout gets its own path, never this session's:
 

@@ -97,6 +97,11 @@ function generateWorkflowYaml() {
     '          # Branch-scoped marker embedded in the comment body for dedup -- survives amend+force-push',
     '          # of the same logical fix, unlike matching the exact (unstable) commit SHA text.',
     '          MARKER="<!-- track-issue-fixes:${BRANCH} -->"',
+    // #1873: fix-on-{branch} is a dynamic, per-branch label, not a member of
+    // _shared/label-bootstrap.md's canonical LABELS_JSON — its own
+    // pre-existing --color FBCA04 is left as is (not migrated into that
+    // array), noted here so a reader doesn't mistake the coincidental amber
+    // for a mid-migration gap.
     '          gh label create "$LABEL" --color FBCA04 \\',
     '            --description "Fixed on ${BRANCH}, not yet on the default branch" \\',
     '            --repo "$REPO" || true',

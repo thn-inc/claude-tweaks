@@ -57,10 +57,13 @@ const LABELS = {
 
 // F8 from the program promise register — type:* label descriptions home
 // (each <= 100 chars; used only when work-types: labels is configured).
+// #1873: colors reuse GitHub's own defaults for bug/enhancement/chore, so
+// the convention reads without a legend for anyone used to GitHub's stock
+// palette — stated once in _shared/work-record.md's label-family table.
 const TYPE_LABELS = [
-  ['type:bug', 'Type: a defect in existing behavior'],
-  ['type:feature', 'Type: new capability or enhancement'],
-  ['type:task', 'Type: maintenance, refactor, docs, or chore work'],
+  ['type:bug', 'Type: a defect in existing behavior', 'D73A4A'],
+  ['type:feature', 'Type: new capability or enhancement', 'A2EEEF'],
+  ['type:task', 'Type: maintenance, refactor, docs, or chore work', 'EDEDED'],
 ];
 
 // Dual-write fingerprint markers: FP_RE_WORK is the current marker written by

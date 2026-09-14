@@ -77,29 +77,41 @@ cover at all.
 
 The core label families below, plus an optional `priority:*` family (see the table for the
 current per-family and total counts). The canonical `LABELS_JSON` (names + ≤100-char
-descriptions) lives in `_shared/label-bootstrap.md`; consumers bootstrap only the labels they
-are about to apply.
+descriptions + colors) lives in `_shared/label-bootstrap.md`; consumers bootstrap only the labels
+they are about to apply.
 
-| Family | Labels | Axis |
-|---|---|---|
-| Origin (6) | `by:code-health`, `by:harness-health`, `by:journey-health`, `by:docs-health`, `by:capture`, `by:dispatch` | Origin |
-| Risk (3) | `risk:low`, `risk:medium`, `risk:high` | Scoring |
-| Size (3) | `size:low`, `size:medium`, `size:high` | Scoring |
-| Ceremony (2) | `ceremony:fast-lane`, `ceremony:standard` | Ceremony depth — cross-cutting, not one of the axes; stamped by `/specify` alongside Scoring, always explicit (no unscored state) |
-| Stage (2) | `parked`, `ready` | Stage |
-| Grants (3) | `auto:build`, `auto:merge`, `auto:merge-pending` | Authorization |
-| Bot state (3) | `bot:in-progress`, `bot:blocked`, `bot:parked` | Bot state |
-| Acceptance (3) | `demo:pending`, `demo:approved`, `demo:changes-requested` | Acceptance |
-| Acceptance provenance (1) | `demo:approved-batch` | Modifier stacked alongside `demo:approved` — batch-invocation-sourced vs. single-record-backed (absent) |
-| Closure (1) | `wontfix` | re-filing suppression |
-| Upstream (1) | `upstream-candidate` | marks a record whose real destination is the claude-tweaks plugin, filed locally only because a headless run could not clear `/claude-tweaks:feedback`'s confirmation gate |
-| Structure (1) | `parent-issue` | Structure: parent issue — carries the acceptance gate for its sub-issues. Marks a `/claude-tweaks:specify` decomposition parent — the only thing that makes it enumerable for `/claude-tweaks:tidy`'s `parent-gate` sweep (`_shared/github-pr-scan-acceptance.md`); never carried by a sub-issue |
-| Justification (1) | `solution:unjustified` | Marks a record whose stated problem names a solution that was never traded off; stamped by `/specify` via `/claude-tweaks:challenge`'s `framing-check`, absent means the framing read clean. Non-gating: the remedy is a one-line human call — `/claude-tweaks:challenge #{n}` resolves it in one step (supply evidence or accept the risk); re-running `/specify #N` also clears it, but only if the re-shape changes the framing itself. Pre-rename spelling `framing:baked` stays readable forever (`[IL-85]`), never emitted |
-| Compatibility (1) | `breaking` | Presence-only, like `solution:unjustified`: the record's Acceptance Criteria name a contract change (CLAUDE.md's expand-contract discipline). Stamped by `/specify` shaping mode from that AC language, or by hand — never inferred from a diff; absent means "not breaking". Read by `bin/lib/release/subject.js`'s merge-subject composer (`!` suffix + `BREAKING CHANGE:` footer sourced from the record's `## Breaking Change` section) |
-| Definition (2) | `needs:definition`, `needs:decision` | Marks a record naming a genuine open choice with no tradeoff made yet (`needs:definition`, stamped by `/capture`/`/feedback` at filing time — a content judgment), or a record where a headless unit proposed an action it may not take alone (`needs:decision` — the proposal and its command are in the record's newest unresolved decision comment; stamped by `/backlog refine`'s Grant lane, in either posture — interactively, or the headless posture's gate-4 refusal, see `backlog/grant-lane-decision.md`) |
-| Provenance (1) | `shaped:headless` | Marks a record shaped by `/specify`'s headless `next` unit with no human review of the resulting spec body — absent means either a human shaped it, or it predates this feature. Writer: `/specify` `next` mode only, applied in the same call as `ready` — never on an interactively-shaped record. Readers: the grant gate (`evaluateGrantGate`, #969), `/backlog attention`, and `/assess-agent-autonomy`'s `grant-check.md` Step 2 Judge (weighs this provenance toward a conservative verdict, #969). Never blocks an interactive human grant. |
-| Priority (3, optional) | `priority:high`, `priority:medium`, `priority:low` | dispatch ordering |
-| Container (1) | `digest` | marks the rolling digest issue container for below-materiality-floor deferred findings, per `_shared/materiality-floor.md` |
+**Color convention (#1873).** Stated once here; the values themselves live in
+`_shared/label-bootstrap.md`'s `LABELS_JSON` array, and `ensureLabelPayload`
+(`bin/lib/issues/labels.js`) rejects a missing or malformed color at construction. Severity
+dimensions grade red → amber → green: `risk:high` `D93F0B`, `risk:medium` `FBCA04`, `risk:low`
+`0E8A16`; `priority:high` `B60205`, `priority:medium` `FBCA04` (shares the exact amber with
+`risk:medium` — a deliberate cross-family reuse for the "medium" semantic), `priority:low`
+`C2E0C6`. `size:*` grades on one neutral (violet) hue by lightness: `size:high` `5319E7`,
+`size:medium` `8B5CF6`, `size:low` `D4C5F9`. `type:*` (`record.js`'s `TYPE_LABELS`, used only
+under `work-types: labels`) reuses GitHub's own stock palette: `type:bug` `D73A4A`, `type:feature`
+`A2EEEF`, `type:task` `EDEDED`. Every other family gets one hue for the whole family (not graded
+per-member), visually distinct from the graded dimensions above — see the Color column below.
+
+| Family | Labels | Color | Axis |
+|---|---|---|---|
+| Origin (6) | `by:code-health`, `by:harness-health`, `by:journey-health`, `by:docs-health`, `by:capture`, `by:dispatch` | `BFD4F2` | Origin |
+| Risk (3) | `risk:low`, `risk:medium`, `risk:high` | `0E8A16` / `FBCA04` / `D93F0B` | Scoring |
+| Size (3) | `size:low`, `size:medium`, `size:high` | `D4C5F9` / `8B5CF6` / `5319E7` | Scoring |
+| Ceremony (2) | `ceremony:fast-lane`, `ceremony:standard` | `FEF2C0` | Ceremony depth — cross-cutting, not one of the axes; stamped by `/specify` alongside Scoring, always explicit (no unscored state) |
+| Stage (2) | `parked`, `ready` | `2EA44F` | Stage |
+| Grants (3) | `auto:build`, `auto:merge`, `auto:merge-pending` | `1D76DB` | Authorization |
+| Bot state (3) | `bot:in-progress`, `bot:blocked`, `bot:parked` | `6A737D` | Bot state |
+| Acceptance (3) | `demo:pending`, `demo:approved`, `demo:changes-requested` | `006B75` | Acceptance |
+| Acceptance provenance (1) | `demo:approved-batch` | `006B75` | Modifier stacked alongside `demo:approved` — batch-invocation-sourced vs. single-record-backed (absent) |
+| Closure (1) | `wontfix` | `CCCCCC` | re-filing suppression |
+| Upstream (1) | `upstream-candidate` | `0052CC` | marks a record whose real destination is the claude-tweaks plugin, filed locally only because a headless run could not clear `/claude-tweaks:feedback`'s confirmation gate |
+| Structure (1) | `parent-issue` | `E99695` | Structure: parent issue — carries the acceptance gate for its sub-issues. Marks a `/claude-tweaks:specify` decomposition parent — the only thing that makes it enumerable for `/claude-tweaks:tidy`'s `parent-gate` sweep (`_shared/github-pr-scan-acceptance.md`); never carried by a sub-issue |
+| Justification (1) | `solution:unjustified` | `F9D0C4` | Marks a record whose stated problem names a solution that was never traded off; stamped by `/specify` via `/claude-tweaks:challenge`'s `framing-check`, absent means the framing read clean. Non-gating: the remedy is a one-line human call — `/claude-tweaks:challenge #{n}` resolves it in one step (supply evidence or accept the risk); re-running `/specify #N` also clears it, but only if the re-shape changes the framing itself. Pre-rename spelling `framing:baked` stays readable forever (`[IL-85]`), never emitted |
+| Compatibility (1) | `breaking` | `8B0000` | Presence-only, like `solution:unjustified`: the record's Acceptance Criteria name a contract change (CLAUDE.md's expand-contract discipline). Stamped by `/specify` shaping mode from that AC language, or by hand — never inferred from a diff; absent means "not breaking". Read by `bin/lib/release/subject.js`'s merge-subject composer (`!` suffix + `BREAKING CHANGE:` footer sourced from the record's `## Breaking Change` section) |
+| Definition (2) | `needs:definition`, `needs:decision` | `7057FF` | Marks a record naming a genuine open choice with no tradeoff made yet (`needs:definition`, stamped by `/capture`/`/feedback` at filing time — a content judgment), or a record where a headless unit proposed an action it may not take alone (`needs:decision` — the proposal and its command are in the record's newest unresolved decision comment; stamped by `/backlog refine`'s Grant lane, in either posture — interactively, or the headless posture's gate-4 refusal, see `backlog/grant-lane-decision.md`) |
+| Provenance (1) | `shaped:headless` | `CFD3D7` | Marks a record shaped by `/specify`'s headless `next` unit with no human review of the resulting spec body — absent means either a human shaped it, or it predates this feature. Writer: `/specify` `next` mode only, applied in the same call as `ready` — never on an interactively-shaped record. Readers: the grant gate (`evaluateGrantGate`, #969), `/backlog attention`, and `/assess-agent-autonomy`'s `grant-check.md` Step 2 Judge (weighs this provenance toward a conservative verdict, #969). Never blocks an interactive human grant. |
+| Priority (3, optional) | `priority:high`, `priority:medium`, `priority:low` | `B60205` / `FBCA04` / `C2E0C6` | dispatch ordering |
+| Container (1) | `digest` | `EEEEEE` | marks the rolling digest issue container for below-materiality-floor deferred findings, per `_shared/materiality-floor.md` |
 
 Retired names: `family:parent`, `framing:baked` (now `solution:unjustified`) — [IL-85] PERMANENT read-side support remains for adopter repos; removable only at a major version that drops pre-rename repo support.
 

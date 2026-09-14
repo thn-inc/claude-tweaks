@@ -381,7 +381,7 @@ checks 1 or 3 fail.
    directly; per the step above, the file is never deleted before this point) carries
    `parked-at-shaping: true` (`materialize.md`'s field for exactly this restore-on-abandon case):
    restore `parked` — bootstrap the label if missing (per _shared/label-bootstrap.md, LABELS_JSON =
-   [['parked', 'Deferred backlog entry, waiting on a trigger condition']]), then
+   [['parked', 'Deferred backlog entry, waiting on a trigger condition', '2EA44F']]), then
    `gh issue edit "$ISSUE" --add-label parked`. Skip restoration silently when no materialized
    header exists or `parked-at-shaping` is absent, or when the outcome was `merged:`/`pr-opened:`
    (the record shipped or is under review — it should stay unparked). Best-effort — on failure, log

@@ -54,13 +54,15 @@ test('label-bootstrap.md carries needs:decision in the canonical LABELS_JSON lis
   assert.ok(LABEL_BOOTSTRAP_FLAT.includes('a headless unit proposed an action it may not take alone — see the newest decision comment'), 'needs:decision description text missing or altered');
 });
 
-test('label-bootstrap.md bumps LABEL_BOOTSTRAP_VERSION from 6 to 7 (#605 adds bot:parked)', () => {
-  assert.ok(LABEL_BOOTSTRAP_FLAT.includes('current value: `7`'), 'LABEL_BOOTSTRAP_VERSION must read current value: 7');
+test('label-bootstrap.md has bumped LABEL_BOOTSTRAP_VERSION past its #605 value of 7 (a later bump, e.g. #1873, is expected)', () => {
   assert.ok(!LABEL_BOOTSTRAP_FLAT.includes('current value: `6`'), 'stale current value: 6 must be gone');
+  const m = LABEL_BOOTSTRAP_FLAT.match(/current value: `(\d+)`/);
+  assert.ok(m, 'LABEL_BOOTSTRAP_VERSION current-value literal not found');
+  assert.ok(Number(m[1]) >= 7, `expected LABEL_BOOTSTRAP_VERSION >= 7 (this record's own bump), got ${m[1]}`);
 });
 
 test('needs:decision description fits GitHub\'s 100-char label description cap', () => {
-  assert.doesNotThrow(() => ensureLabelPayload('needs:decision', 'a headless unit proposed an action it may not take alone — see the newest decision comment'));
+  assert.doesNotThrow(() => ensureLabelPayload('needs:decision', 'a headless unit proposed an action it may not take alone — see the newest decision comment', '7057FF'));
 });
 
 const AUTONOMY_CEILING_FLAT = readFlat('plugin/skills/_shared/autonomy-ceiling.md');
