@@ -20,6 +20,7 @@
 
 const releaseLib = require('../release-claim/release');
 const { classifyClaimBlob, releasePayload, claimPayload } = require('../issues/claims');
+const { repoSlug } = require('../repo-resolve');
 
 // -> { outcome: 'repaired'|'refused'|'cas-rejected'|'failed', state, calls,
 //      commentPosted, note, error }
@@ -35,8 +36,12 @@ const { classifyClaimBlob, releasePayload, claimPayload } = require('../issues/c
 // `writeTombstone` is injectable (defaults to release.js's) so a CAS
 // rejection can be modeled without needing a real gh 409/422 round trip
 // through the fake runner.
+// `ghHost` (optional; GitHub Enterprise Server host, #2240) is distinct from
+// `host` below (the claiming machine's os.hostname(), per
+// _shared/issue-claims.md's claimPayload `host` field) — the two are
+// unrelated concepts that happen to share a name in that payload's shape.
 function repairClaim({
-  owner, repo, issueNumber, runId, mode, reason, link, sessionId = '', host = '',
+  owner, repo, ghHost, issueNumber, runId, mode, reason, link, sessionId = '', host = '',
   runner = releaseLib.defaultRunner, gitRunner, now = Date.now(),
   writeTombstone = releaseLib.writeTombstone,
 }) {
@@ -46,7 +51,7 @@ function repairClaim({
   let blob;
   try {
     blob = releaseLib.readClaimBlob({
-      owner, repo, issueNumber, runner, gitRunner,
+      owner, repo, host: ghHost, issueNumber, runner, gitRunner,
     });
   } catch (err) {
     result.error = releaseLib.errorText(err);
@@ -71,6 +76,7 @@ function repairClaim({
     writeTombstone({
       owner,
       repo,
+      host: ghHost,
       issueNumber,
       sha: blob.sha,
       tombstoneContent: content,
@@ -88,7 +94,7 @@ function repairClaim({
   }
   try {
     postRepairComment({
-      owner, repo, issueNumber, body: payload.commentBody, runner,
+      owner, repo, host: ghHost, issueNumber, body: payload.commentBody, runner,
     });
     result.calls.push('comment');
     result.commentPosted = true;
@@ -101,9 +107,9 @@ function repairClaim({
 // Best-effort human-visibility mirror, same posture as release.js's comment
 // (a failed comment post never changes the repair outcome).
 function postRepairComment({
-  owner, repo, issueNumber, body, runner = releaseLib.defaultRunner,
+  owner, repo, host, issueNumber, body, runner = releaseLib.defaultRunner,
 }) {
-  return runner(['issue', 'comment', String(issueNumber), '--repo', `${owner}/${repo}`, '--body', body]);
+  return runner(['issue', 'comment', String(issueNumber), '--repo', repoSlug({ host, owner, repo }), '--body', body]);
 }
 
 module.exports = { repairClaim, postRepairComment, defaultRunner: releaseLib.defaultRunner };

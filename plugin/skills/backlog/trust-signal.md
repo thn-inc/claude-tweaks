@@ -47,7 +47,7 @@ node -e "
   const root = '${CLAUDE_PLUGIN_ROOT}';
   const { trustRows, riskBand, parseGitLog } = require(root + '/bin/lib/issues/trust.js');
   const { resolveProvenance } = require(root + '/bin/lib/issues/provenance.js');
-  const { resolveCeiling, permittedGrants } = require(root + '/bin/lib/issues/autonomy.js');
+  const { resolveCeiling } = require(root + '/bin/lib/issues/autonomy.js');
   const issues = require('$TT_RECORDS').map((i) => ({ ...i, labels: i.labels.map((l) => l.name) }));
   const gitLog = parseGitLog(fs.readFileSync('$TT_GIT_LOG', 'utf8'));
   const policy = { 'trust-revert-window-days': process.argv[1] };
@@ -57,19 +57,12 @@ node -e "
   for (const issue of issues.filter((i) => i.state === 'OPEN')) {
     const { kind, source } = resolveProvenance({ labels: issue.labels, body: issue.body });
     const row = rows.get(kind + ':' + source + '|' + riskBand(issue.labels));
-    const permitted = permittedGrants({ ceiling, row });
-    // Fallback to the flat keys: repo-HEAD skill text can run against an older
-    // installed build's autonomy.js (no grants key yet). Remove with #647's
-    // transitional twin (see bin/lib/issues/autonomy.js module header).
-    const gBornReady = (permitted.grants || {}).bornReady || { granted: permitted.bornReady, reason: permitted.reason };
     out[issue.number] = {
       ceiling,
       provenance: row ? row.provenance : kind + ':' + source,
       band: riskBand(issue.labels),
       verdict: row ? row.verdict : 'no-cell',
       coverage: row ? row.coverage : null,
-      bornReady: gBornReady.granted,
-      reason: gBornReady.reason,
     };
   }
   console.log(JSON.stringify(out));

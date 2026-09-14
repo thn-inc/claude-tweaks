@@ -183,6 +183,31 @@ test('#2002: pr-checklist-refresh.md carries the Phase-checklist update, Pre-mer
   assert.doesNotMatch(LIFECYCLE, /## Pre-merge title\/description refresh/);
 });
 
+test('#1712: the polish-row creation rule names the every-record condition and manifest.yml specs[]', () => {
+  assert.match(LIFECYCLE, /omit the `polish` row only when \*\*every\*\* record|Omit a `polish` row only when \*\*every\*\* record/);
+  assert.match(LIFECYCLE, /parent `manifest\.yml`'s `specs\[\]` list/);
+  assert.match(LIFECYCLE, /An\s+absent `surface:` facet counts as "can run\s+polish"/);
+});
+
+test('#1712: the skip rule names the multi-spec deferral to the pre-merge refresh', () => {
+  assert.match(LIFECYCLE, /In\s+a\s+\*\*multi-spec\*\*\s+run.*never removes the row on its\s+own/s);
+  assert.match(LIFECYCLE, /`_shared\/pr-checklist-refresh\.md`'s Pre-merge title\/description\s+refresh removes it once/);
+});
+
+test('#1712: pr-checklist-refresh.md carries the deferred multi-spec polish-row removal at pre-merge', () => {
+  assert.match(CHECKLIST_REFRESH, /Multi-spec\s+deferred polish-row removal/);
+  assert.match(CHECKLIST_REFRESH, /A single-record run never reaches this branch/);
+});
+
+test('#1712: multispec-pr-checklist.md carries the run-level polish-row paragraph', () => {
+  const MULTISPEC_PR_CHECKLIST = read('plugin', 'skills', 'flow', 'multispec-pr-checklist.md');
+  assert.match(MULTISPEC_PR_CHECKLIST, /The `polish` row is a run-level, not first-spec, decision \(#1712\)/);
+});
+
+test('#1712: steps-and-gates.md phase-exit paragraph uses the every-record wording for the polish-row omission', () => {
+  assert.match(STEPS_AND_GATES, /omitted at PR creation only when every record in the run has a backend `surface:`/);
+});
+
 test('bin/hooks.js record-pr verb writes run-state.json.pr through writeRunState, mirroring record-worktree', () => {
   assert.match(HOOKS_JS, /if \(cmd === 'record-pr'\)/);
   // Anchored on the property this test is named for — run-state reaches disk

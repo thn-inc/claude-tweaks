@@ -27,5 +27,5 @@
 | docs/plans/*.md | Per-run pipeline ledgers (spec/record scoping, resolve-gate state) | *(no auto-detect — generated per pipeline run by `/claude-tweaks:ledger`)* |
 | docs/superpowers/plans/*.md, docs/superpowers/specs/*.md | Execution plans and design docs produced and consumed by the pipeline (`/superpowers:writing-plans`, `/superpowers:brainstorming`) | *(no auto-detect — generated per run; consumed artifacts are deleted at wrap-up)* |
 | docs/skill-authoring.md | Skill-file authoring conventions — structure, frontmatter, interaction patterns, CSC | `plugin/skills/**/*.md` |
-| docs/releasing.md | Release procedure + judgment calls | `plugin/bin/release.js`, `plugin/bin/lib/release/**` |
+| docs/releasing.md | Release procedure + judgment calls | `plugin/bin/release.js`, `plugin/bin/release-*.js`, `plugin/bin/lib/release/**`, `plugin/bin/lib/release-preflight/**`, `plugin/bin/lib/release-local/**` |
 | docs/demo-evidence/*.md | Per-record demo verification evidence produced by `/claude-tweaks:demo` | *(no auto-detect — generated per record by `/claude-tweaks:demo`)* |

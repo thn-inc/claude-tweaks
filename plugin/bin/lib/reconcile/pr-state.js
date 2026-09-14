@@ -109,16 +109,21 @@ function resolvePrState(repoRoot, branch, opts) {
 // left to derive — `gh pr list --head {branch}` has nothing to query.
 // `run-state.json`'s `pr.number` (stamped once at PR-early lifecycle time,
 // never cleared) survives that branch deletion, so probe by number directly
-// instead of giving up. Same JSON shape as `resolvePrState`'s governing PR
-// (`{number, state, mergedAt, updatedAt, mergeCommit}`) — no tie-break
-// needed, since a PR number resolves to at most one PR.
+// instead of giving up. Same JSON shape as `resolvePrState`'s governing PR,
+// widened by `mergeable`/`mergeStateStatus` (#2367 — the pending-review
+// staleness check reuses this function rather than adding a third
+// PR-state-reading code path; archive-merged.js's own caller ignores the two
+// added fields, since JSON.parse keeps every key regardless of which ones a
+// given caller reads): `{number, state, mergedAt, updatedAt, mergeCommit,
+// mergeable, mergeStateStatus}` — no tie-break needed, since a PR number
+// resolves to at most one PR.
 function resolvePrStateByNumber(repoRoot, number) {
   if (!number) return null;
   return runClassified(
     () => {
       const stdout = execFileSync(
         'gh',
-        ['pr', 'view', String(number), '--json', 'number,state,mergedAt,updatedAt,mergeCommit'],
+        ['pr', 'view', String(number), '--json', 'number,state,mergedAt,updatedAt,mergeCommit,mergeable,mergeStateStatus'],
         { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true },
       );
       return JSON.parse(stdout);

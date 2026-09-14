@@ -360,7 +360,7 @@ function installPushWrapper(failMultiBranch) {
     wrapperPath,
     `#!/bin/sh\nif [ "$3" = "push" ]; then\n  echo "$@" >> "${logFile}"${failClause}\nfi\nexec "${realGit}" "$@"\n`,
   );
-  fs.chmodSync(wrapperPath, 0o755);
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   const originalPath = process.env.PATH;
   process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
   return {
@@ -450,7 +450,7 @@ function installAlwaysFailWrapper(branchToFail) {
     `fi\n` +
     `exec "${realGit}" "$@"\n`,
   );
-  fs.chmodSync(wrapperPath, 0o755);
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   const originalPath = process.env.PATH;
   process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
   return { logFile, restore: () => { process.env.PATH = originalPath; } };

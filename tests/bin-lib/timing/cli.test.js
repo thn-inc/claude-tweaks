@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { skipUnderRoot } = require('../../helpers/root');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'phase-timing.js');
 const FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'record-1535');
@@ -154,7 +155,7 @@ test('#1929 whole-branch review fix 8: a run with a transcript but no minutes/ve
   assert.match(r.stdout, /^\| total \| 0 \| 0 run\(s\) \| 3\/4 \| 0\.0 \| 0 \|$/m);
 });
 
-test('#1929 whole-branch review fix 2: a --transcript file whose stat succeeds but whose read fails (mode 000) degrades to a note, exit 0', { skip: process.getuid && process.getuid() === 0 }, () => {
+test('#1929 whole-branch review fix 2: a --transcript file whose stat succeeds but whose read fails (mode 000) degrades to a note, exit 0', skipUnderRoot('root ignores file permissions'), () => {
   const dir = tmpRun(true);
   const unreadable = path.join(os.tmpdir(), 'ct-timing-unreadable-transcript.jsonl');
   fs.writeFileSync(unreadable, '{}\n');

@@ -245,6 +245,67 @@ test('gatherPack: every probe ok → eight envelopes with ok:true, plus inputs/g
   assert.ok(!('mergeSize' in pack), 'the mergeSize probe was removed (#1930 fix round 4)');
 });
 
+test('#2425: unblocked (work-links: native) passes --repo, resolved from `origin`, to resolve-blockers.js — including on a GitHub Enterprise remote', async () => {
+  const calls = [];
+  const deps = okDeps({
+    git: (args) => (args[0] === 'remote' ? 'git@ghe.example.com:acme/widgets.git\n' : okDeps().git(args)),
+    execFile: async (cmd, args) => {
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) {
+        calls.push(args);
+        return { stdout: JSON.stringify({ 1600: { blockedBy: [1535], openBlocker: false } }), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+  assert.strictEqual(calls.length, 1);
+  const repoIdx = calls[0].indexOf('--repo');
+  assert.notStrictEqual(repoIdx, -1, `resolve-blockers.js must be called with --repo: ${JSON.stringify(calls[0])}`);
+  // Host-qualified, not bare owner/repo — a bare slug here silently drops
+  // which GHE host to query, which is the whole point of this fix (see the
+  // review finding this replaced: passing bare 'acme/widgets' for a GHE
+  // remote made resolve-blockers.js/number-list-cli.js re-resolve against
+  // github.com instead of the real host).
+  assert.strictEqual(calls[0][repoIdx + 1], 'ghe.example.com/acme/widgets');
+});
+
+test('#2425 AC 2: on a plain github.com remote, --repo is still passed (additive) with the same owner/repo shape, and unblocked\'s value is unchanged', async () => {
+  const calls = [];
+  const deps = okDeps({
+    git: (args) => (args[0] === 'remote' ? 'https://github.com/acme/widgets.git\n' : okDeps().git(args)),
+    execFile: async (cmd, args) => {
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) {
+        calls.push(args);
+        return { stdout: JSON.stringify({ 1600: { blockedBy: [1535], openBlocker: false } }), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+  const repoIdx = calls[0].indexOf('--repo');
+  assert.strictEqual(calls[0][repoIdx + 1], 'acme/widgets');
+});
+
+test('#2425: no resolvable `origin` remote falls back to calling resolve-blockers.js without --repo (additive, never a hard failure)', async () => {
+  const calls = [];
+  const deps = okDeps({
+    git: (args) => { if (args[0] === 'remote') throw new Error('fatal: No such remote \'origin\''); return okDeps().git(args); },
+    execFile: async (cmd, args) => {
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) {
+        calls.push(args);
+        return { stdout: JSON.stringify({ 1600: { blockedBy: [1535], openBlocker: false } }), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.ok(!calls[0].includes('--repo'), `must not pass --repo when origin can't be resolved: ${JSON.stringify(calls[0])}`);
+});
+
 // The two assertions above compare a probe's value against the fake's own
 // return, so a fake that has drifted from the real module's output shape makes
 // them green against a shape the pack never actually produces. Each fake's key
@@ -554,6 +615,32 @@ test('gatherPack: residue probe refuses to run with an unresolved merge-base rat
   assert.strictEqual(pack.residue.ok, false);
   assert.match(pack.residue.error, /base unresolved/);
   assert.strictEqual(calls.length, 0);
+});
+
+// #1781: the residue probe passes --own-pr {inputs.pr} only when run-state.json
+// carries a pr.number — a local-merge run (no recorded pr) invokes residue.js
+// with the same argv as before this change.
+test('gatherPack: residue probe appends --own-pr when run-state.json carries a pr.number (#1781)', async () => {
+  const calls = [];
+  const deps = okDeps({
+    execFile: async (cmd, args) => { if (String(args[0]).endsWith('residue.js')) { calls.push(args); } return okDeps().execFile(cmd, args); },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir({ withPr: true }), cwd: '/w/tree', only: ['residue'], deps });
+  assert.strictEqual(pack.residue.ok, true);
+  assert.strictEqual(calls.length, 1);
+  assert.ok(calls[0].includes('--own-pr'), JSON.stringify(calls[0]));
+  assert.strictEqual(calls[0][calls[0].indexOf('--own-pr') + 1], '1901');
+});
+
+test('gatherPack: residue probe omits --own-pr when run-state.json carries no pr (local-merge, #1781)', async () => {
+  const calls = [];
+  const deps = okDeps({
+    execFile: async (cmd, args) => { if (String(args[0]).endsWith('residue.js')) { calls.push(args); } return okDeps().execFile(cmd, args); },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir({ withPr: false }), cwd: '/w/tree', only: ['residue'], deps });
+  assert.strictEqual(pack.residue.ok, true);
+  assert.strictEqual(calls.length, 1);
+  assert.ok(!calls[0].includes('--own-pr'), JSON.stringify(calls[0]));
 });
 
 test('gatherPack: state probe refuses to run with an unresolved merge-base rather than passing the literal "null" (#1930 fix)', async () => {

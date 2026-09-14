@@ -21,12 +21,28 @@ const { normalizeLabelNames } = require('./record');
 // threshold, is the title-similarity signal (#2 below). A screen, not a
 // merge decision (memory: similarity scores are normalization-sensitive) —
 // ship the tokenizer with fixtures rather than tuning this in prose.
+//
+// #2331: distinct from coordination.js's SUBSTANCE_SIMILARITY_MIN by design,
+// not oversight — same Jaccard-over-tokens primitive, but tuned against a
+// different input domain (short imperative record titles here vs. free-text
+// finding descriptions there), each threshold calibrated for its own
+// domain's false-positive rate. Consolidating the constants would risk
+// silently shifting one or both call sites' behavior; see tokenizeTitle
+// below vs. coordination.js's tokenizeSubstance for the matching
+// preprocessing difference (#N record-ref stripping vs. path:line
+// stripping).
 const DEFAULT_TITLE_SIMILARITY_THRESHOLD = 0.5;
 
 // Common function words plus this repo's own generic record-vocabulary
 // filler — stripped before tokenizing a title so two titles that only share
 // scaffolding words ("Add a check for X" / "Add a check for Y") don't
 // spuriously clear the Jaccard threshold on scaffolding alone.
+//
+// #2331: kept separate from coordination.js's SUBSTANCE_STOP_WORDS — this
+// list is tuned for short imperative titles (needs filler words like
+// "should"/"will"/"again" that rarely appear in finding text), not the
+// longer free-text finding descriptions that list targets. Merging the
+// lists risks changing which words get filtered for either caller.
 const STOP_WORDS = new Set([
   'a', 'an', 'the', 'and', 'or', 'but', 'for', 'of', 'to', 'in', 'on', 'at', 'by', 'with',
   'from', 'into', 'onto', 'over', 'under', 'is', 'are', 'was', 'were', 'be', 'been', 'being',

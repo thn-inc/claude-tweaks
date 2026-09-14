@@ -135,6 +135,37 @@ function policyString(entry) {
   return typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
 }
 
+// _shared/integration-branch.md's rank 5 (git-inference), for this consumer's
+// fallback when rank 3 (the `integration-branch` policy key) is unset: the
+// remote-tracking symbolic ref set up by an ordinary clone, then `git remote
+// show origin`'s "HEAD branch:" line as a second try when the symbolic ref
+// was never set locally. Never a literal `'main'` (#2422) — an unresolved
+// result here is a real preamble failure, not a guess.
+function resolveDefaultBranch(deps) {
+  try {
+    const ref = deps.git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).trim();
+    const name = ref.replace(/^origin\//, '');
+    if (name) return name;
+  } catch { /* not set locally — try the next source */ }
+  try {
+    const out = deps.git(['remote', 'show', 'origin']);
+    const m = /HEAD branch:\s*(\S+)/.exec(out);
+    if (m && m[1] && m[1] !== '(unknown)') return m[1];
+  } catch { /* no remote, or offline — try the last resort below */ }
+  // Last resort only, never tried ahead of the two origin-derived reads above:
+  // integration-branch.md's own anti-pattern warning against trusting "the
+  // branch the main checkout currently has checked out" (a concurrent session
+  // can switch it underfoot) applies with full force here, so this is reached
+  // only when there is no `origin` at all to read instead — a repo with no
+  // remote has no other signal, and the rank-5 ladder's own rule for that case
+  // ("only one resolves → use it") sanctions falling through to it.
+  try {
+    const name = deps.git(['branch', '--show-current']).trim();
+    if (name) return name;
+  } catch { /* not even a branch to fall back to */ }
+  return null;
+}
+
 function memo(fn) {
   let p;
   return () => { if (p === undefined) p = Promise.resolve().then(fn); return p; };
@@ -156,7 +187,8 @@ function prepare({ deps, rootArg, runDir }) {
     ? (args) => (args.join(' ') === 'rev-parse --show-toplevel' ? `${rootArg}\n` : deps.git(args))
     : deps.git;
   const { root, result: policy } = resolvePolicyConfig({ git: gitForPolicy, readFile: deps.readFile, runDir, keys: ['integration-model', 'integration-branch', 'release-hook'] });
-  const branch = policyString(policy['integration-branch']) || 'main';
+  const branch = policyString(policy['integration-branch']) || resolveDefaultBranch(deps);
+  if (!branch) throw new Error('integration branch unresolved: no integration-branch policy key, and origin/HEAD could not be determined');
   let tipRef = `refs/heads/${branch}`;
   try { deps.git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`]); tipRef = `origin/${branch}`; } catch { /* no remote-tracking ref: read the local branch */ }
 

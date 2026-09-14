@@ -122,7 +122,7 @@ function run(argv, deps = realDeps) {
     }
   }
   const r = deps.repair({
-    owner: repoSpec.owner, repo: repoSpec.repo, issueNumber: issue, runId, mode: o.mode, reason, link: o.link || undefined,
+    owner: repoSpec.owner, repo: repoSpec.repo, ghHost: repoSpec.host, issueNumber: issue, runId, mode: o.mode, reason, link: o.link || undefined,
     sessionId: deps.sessionId(), host: deps.host(), runner: deps.runner, gitRunner: deps.gitRunner, now: deps.now(),
   });
   let logged = false;

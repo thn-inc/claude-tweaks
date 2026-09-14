@@ -295,19 +295,14 @@ therefore no verdict, and the budget would ship permanently inert.
 ### Reading the result
 
 `permittedGrants` returns one `{ granted, reason }` object per grant, under `grants.bornReady` and
-`grants.bornAuthorized` — read those, never the flat top-level `bornReady` / `bornAuthorized` /
-`reason` keys beside them. The flat `reason` is a single string covering both decisions, so a
-*granted* `bornReady` could carry the withheld `bornAuthorized`'s denial text; the per-grant pair is
-what fixes that (refs #647). A granted decision's `reason` is the empty string — render nothing
-rather than a placeholder.
-
-The flat keys stay on as a dated transitional twin, because a skill's `node -e` block loads
-`$CLAUDE_PLUGIN_ROOT`'s modules — the *installed* build — while the skill text around it is the
-checkout's, so repo-HEAD prose can meet an older `autonomy.js` that has no `grants` key yet. That is
-why `capture/SKILL.md` and `backlog/refine-mode.md` each guard the read with a
-`(permitted.grants || {})` fallback. Removal condition: delete the flat keys, and those fallbacks
-with them, at the first release on or after **2026-11-16** — `bin/lib/issues/autonomy.js`'s module
-header carries the same condition.
+`grants.bornAuthorized`. A withheld grant's `reason` is always non-empty; a *partially* granted
+result (`bornReady` granted, `bornAuthorized` still withheld) leaves the granted grant's `reason`
+empty — render nothing rather than a placeholder. The one case where a *granted* grant's `reason`
+is non-empty is the full grant (both `bornReady` and `bornAuthorized` granted): both carry the same
+positive rationale text, since nothing else would explain *why* once `#666` removed the flat
+top-level `reason` key that used to carry it (refs #647 for why the per-grant shape exists at all:
+the old flat `reason` was a single string covering both decisions, so a *granted* `bornReady` could
+carry the withheld `bornAuthorized`'s denial text).
 
 ## Why born-authorized is gated separately
 
