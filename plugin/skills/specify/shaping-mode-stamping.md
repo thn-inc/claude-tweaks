@@ -221,6 +221,12 @@ Assert, against the re-fetched result:
   (`facets.breaking === true` under local-files) **and** the re-fetched body carries a non-empty
   `## Breaking Change` section — a `breaking` record with no section fails
   `bin/compose-subject.js` at merge time, so catch it here.
+- When the re-fetched `## Current State`/`## Technical Approach` places the affected component
+  outside the plugin (names no `/claude-tweaks:*` skill, `skills/_shared/*` contract, or
+  `bin/*.js` behavior as affected — `shaping-mode.md`'s Feedback-filing deliverable check, same
+  classifier rule 1 test), the re-fetched `## Deliverables`/`## Acceptance Criteria` must not
+  direct `/claude-tweaks:feedback` to file against that component — the mechanical safety net for
+  a composition-time miss.
 
 A read-back failure does **not** roll back the write or stop the batch — it follows the same per-record failure-isolation posture as a write failure (above): note the specific assertion(s) that failed, keep shaping the rest of the batch, and surface every record's read-back failure together in Actions Performed below rather than stopping on the first one (`flow/materialize.md`'s Materialization hard gate uses the same all-at-once reporting convention for its own record-level failures).
 
