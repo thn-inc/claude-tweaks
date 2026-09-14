@@ -33,7 +33,18 @@ function toIssuePayload(finding, verifiedAsOf) {
   const categoryLabel = CATEGORY_LABELS[finding.category] || finding.category;
   const misleadsLabel = MISLEADS_LABELS[finding.misleads] || finding.misleads;
 
-  const kindLine = `**Doc:** ${finding.target} | **Section:** ${finding.section} | **Category:** ${finding.category} | **Misleads:** ${misleadsLabel} | **Classification:** ${finding.classification} | **Confidence:** ${finding.confidence}`;
+  // #1851: finding.target is the registry doc id — scope.js's listDocs sets
+  // it to the path relative to docs/ with the .md extension stripped — and
+  // stays the identity everywhere (fingerprint, --target, payload.target):
+  // rendering only ever derives a resolvable location for the header/title
+  // from it, never re-keys the finding. docsRoot is always `docs/` in this
+  // codebase today — scope.js's listDocs hardcodes it, and --dir only
+  // filters the candidate pool *within* docs/ (selectTarget's own dir
+  // option), it never walks a different root — so the prefix below is a
+  // fixed literal rather than a threaded value.
+  const docPath = `docs/${finding.target}.md`;
+
+  const kindLine = `**Doc:** ${docPath} | **Id:** ${finding.target} | **Section:** ${finding.section} | **Category:** ${finding.category} | **Misleads:** ${misleadsLabel} | **Classification:** ${finding.classification} | **Confidence:** ${finding.confidence}`;
 
   const deliverables = `**Current:**\n${fencedBlock(finding.oldString || '(N/A — new content)')}\n\n**Proposed:**\n${fencedBlock(finding.newString)}`;
 
@@ -55,7 +66,7 @@ function toIssuePayload(finding, verifiedAsOf) {
     verifiedAsOf,
   });
 
-  const title = `Doc ${categoryLabel}: ${finding.target} — ${finding.section}`;
+  const title = `Doc ${categoryLabel}: ${docPath} — ${finding.section}`;
   const diagnosticLabel = `docs-health:${finding.classification}`;
   // Guard with optional chaining, matching harness-health/issue-payload.js's
   // identical CLASSIFICATION_SCORING lookup — an unmapped classification
