@@ -17,6 +17,7 @@ const { archiveRunDir } = require('../reconcile/archive-merged');
 const { runGit } = require('./git-exec');
 const { parseWorktreeList, isWorktreeLocked, resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
 const { mainCheckoutRoot } = require('./worktree-detect');
+const { fallbackBranch, worktreePathForBranch } = require('./run-integrity');
 
 const GH_TIMEOUT_MS = 15000;
 
@@ -101,7 +102,24 @@ function teardownRun(runDir, opts = {}) {
   // and resolveIntegrationBranch both shell out to git with `root` as cwd, so a null root must
   // never reach them; falling back to the recorded state's own `branch` field (no git needed)
   // keeps the foreign-owner refusal check below meaningful even when root can't be resolved.
-  const branch = (root ? branchOfWorktree(root, worktreePath) : null) || (prevState && prevState.branch) || null;
+  // `worktreePath` is null exactly when #2362's gap fires — run-state.json never
+  // got a `worktree` field written (EnterWorktree entered the worktree, but the
+  // formal record-worktree stamp never landed). Recover the branch the same way
+  // run-integrity.js's shipped-unclosed check already does for a torn-down
+  // worktree: state.pr.branch first, then the PR-early-lifecycle log lines in
+  // decisions.md. `prevState.branch` is kept as a defensive first check even
+  // though nothing in this codebase writes that top-level field today — it
+  // costs nothing and protects a future writer that might.
+  const branch = (root ? branchOfWorktree(root, worktreePath) : null)
+    || (prevState && prevState.branch)
+    || (root ? fallbackBranch(root, runDir, prevState) : null)
+    || null;
+  // Fallback worktree-path recovery (#2362): only attempted when nothing was
+  // recorded at all. Never overrides a recorded (even if now-stale) worktree
+  // path — a caller that explicitly recorded one gets exactly that one's own
+  // skip/lock/removal handling, unchanged.
+  const recoveredWorktreePath = (!worktreePath && root && branch) ? worktreePathForBranch(root, branch) : null;
+  const effectiveWorktreePath = worktreePath || recoveredWorktreePath;
   // #1688: resolveIntegrationBranch's policy-configured path can now return
   // an `origin/{name}` remote-tracking ref (preferRemoteTrackingRef,
   // worktree-reap.js). `branch` above is always bare, so the equality check
@@ -171,14 +189,16 @@ function teardownRun(runDir, opts = {}) {
   // Step 3 (worktree removal) — never forced; a locked worktree means either a live session
   // (including this session's own ground, per [IL-58] — that removal path is ExitWorktree only)
   // or an unresolvable state, and worktree-reap.js's predicates fail CLOSED either way.
-  if (!worktreePath) {
+  if (!effectiveWorktreePath) {
     lines.push('worktree: skipped — no worktree recorded');
-  } else if (isWorktreeLocked(worktreePath, { cwd: root })) {
+  } else if (isWorktreeLocked(effectiveWorktreePath, { cwd: root })) {
     lines.push('worktree: skipped — worktree locked');
   } else {
-    const rm = runGit(['worktree', 'remove', worktreePath], root);
+    const rm = runGit(['worktree', 'remove', effectiveWorktreePath], root);
     if (rm.failure) lines.push('worktree: skipped — removal failed');
-    else lines.push(`worktree: removed ${worktreePath}`);
+    else {
+      lines.push(`worktree: removed ${effectiveWorktreePath}${recoveredWorktreePath ? ' (resolved via branch-name fallback — no worktree recorded in run-state.json)' : ''}`);
+    }
   }
 
   // Step 4 (local branch delete) — only under --merged.

@@ -187,3 +187,35 @@ test('AC7 (#1323): --run pointed at an already-archived path (4 levels below roo
   assert.match(result.lines.join('\n'), /archive: skipped —/);
   assert.ok(fs.existsSync(path.join(archivedRunDir, 'work', 'x.md')), 'original content must survive untouched');
 });
+
+test('AC8 (#2362): no worktree recorded, but a PR-early decisions.md line names the branch -> recovers and removes the live worktree via fallback', () => {
+  const { root, wt, runDir } = fixtureRepo();
+  // Simulate the exact gap #2362 describes: EnterWorktree entered `wt` on
+  // `feat-branch`, but run-state.json never got a `worktree` field written.
+  writeRunState(runDir, { status: 'active', worktree: null, sessionId: 'me' });
+  fs.writeFileSync(
+    path.join(runDir, 'decisions.md'),
+    '# log\n- AUTO 08:17:11 — Spec Step 1: PR-early run lifecycle: pushed feat-branch to origin. Reversibility: high.\n',
+  );
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  assert.match(result.lines.join('\n'), /worktree: removed .*\(resolved via branch-name fallback/);
+  assert.match(result.lines.join('\n'), /branch: deleted feat-branch/);
+  assert.match(result.lines.join('\n'), /remote ref: deleted refs\/heads\/feat-branch/);
+  assert.doesNotMatch(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.strictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
+});
+
+test('AC8b (#2362): no worktree recorded and no recoverable branch -> unchanged "no worktree recorded" message, nothing removed', () => {
+  const { root, wt, runDir } = fixtureRepo();
+  writeRunState(runDir, { status: 'active', worktree: null, sessionId: 'me' });
+  // decisions.md carries no PR-early lifecycle line and state.pr is absent —
+  // fallbackBranch has nothing to recover.
+  const result = teardownRun(runDir, { mode: 'merged', sessionId: 'me' });
+
+  assert.match(result.lines.join('\n'), /worktree: skipped — no worktree recorded/);
+  assert.match(git(root, 'worktree', 'list'), /feat-branch/, 'the unrelated live worktree must survive untouched');
+});
