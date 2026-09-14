@@ -21,7 +21,7 @@ dependencies:
       run: "npx --no-install impeccable --version"
       root: "npm root -g"
       root-suffix: "impeccable"
-    pinned: "3.6.0"
+    pinned: "4.1.0"
     # This is a shared dev host: other sessions running bare `npx impeccable`
     # (no --no-install, no version pin) periodically refresh npm's local npx
     # cache to whatever is then "latest" on the registry, and `npx --no-install`
@@ -34,26 +34,30 @@ dependencies:
     upstream:
       repo: "pbakaus/impeccable"
       tag-prefix: "cli-v"
+    # Between cli-v3.6.0 and cli-v4.0.0 the engine was rewritten from JS to
+    # Rust (`crates/` in the upstream repo) and is now distributed as a
+    # compiled, per-platform binary the npm shim downloads/execs — the npm
+    # package itself ships only `cli/bin/` + LICENSE (its own `files` field).
+    # `cli/engine/cli/main.mjs` and `cli/engine/registry/antipatterns.mjs`
+    # (#2314) no longer exist anywhere under the installed root, so the only
+    # file left that this contract can meaningfully name — one the installed
+    # package actually ships, with a real counterpart in the upstream tree —
+    # is the shim itself.
     contract-paths:
-      - "cli/engine/cli/main.mjs"
-      - "cli/engine/registry/antipatterns.mjs"
-    assertions:
-      - file: "plugin/skills/design-wrapper/impeccable-cli.md"
-        claims: "findings JSON is written to stdout, not stderr"
-        upstream-path: "cli/engine/cli/main.mjs"
-        must-match: "process.stdout.write(formatFindings"
-      - file: "plugin/skills/design-wrapper/impeccable-cli.md"
-        claims: "a clean scan prints an empty JSON array rather than nothing"
-        upstream-path: "cli/engine/cli/main.mjs"
-        must-match: "process.stdout.write('[]"
-    # Engine-download-failure fixture: accepted gap, not added (#2480).
-    # tools/upstream-drift/checks.js's checkOneFixture hard-requires the
-    # named expect.stream to parse as JSON; the shim's locate()/download()
-    # failure path (IMPECCABLE_BIN/HOME/DOWNLOAD_BASE all exhausted) writes a
-    # plain-text message to stderr, which this harness cannot express as a
-    # passing fixture today. Extending checkOneFixture with a text/substring
-    # assertion mode would make this fixture expressible — tracked as #2573,
-    # not folded into this decision-only change.
+      - "cli/bin/cli.js"
+    # The two claims below ("findings JSON on stdout, not stderr"; "a clean
+    # scan prints [] on stdout") are still true at 4.1.0 — traced live against
+    # crates/detect/src/cli.rs at cli-v4.1.0 (`ctx.io.out(&format!("{text}\n"))`
+    # under `if json_mode`; `ctx.io.out("[]\n")` for a clean scan) — but that
+    # Rust source is never installed locally; the shipped artifact is a
+    # compiled binary with no local text left to grep. `checkAssertions` only
+    # ever reads files under the installed root, so no upstream-path will ever
+    # resolve for this engine again — these assertions are retired, not
+    # relocated (#2314). Both claims stay independently verified end-to-end by
+    # the fixtures immediately below (a real `detect` run against a real
+    # binary is stronger evidence than a static grep ever was) and by
+    # tests/impeccable-cli-contract.test.js's own live `detect` calls.
+    assertions: []
     fixtures:
       - run: "npx --no-install impeccable detect --json --no-config --no-design-system tests/fixtures/impeccable-cli/warning.html"
         expect:
