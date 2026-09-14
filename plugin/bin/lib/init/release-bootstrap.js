@@ -41,6 +41,8 @@ const RELEASE_STACK_TABLE = [
   { releaseType: 'dotnet', markers: ['*.csproj', '*.sln'] },
 ];
 
+const RELEASE_TYPE_VALUES = new Set([...RELEASE_STACK_TABLE.map((row) => row.releaseType), 'simple']);
+
 const CONFLICT_MARKERS = [
   { tool: 'semantic-release', test: (name, isDir) => !isDir && /^\.releaserc(\..+)?$/.test(name) },
   { tool: 'semantic-release', test: (name, isDir) => !isDir && /^release\.config\..+$/.test(name) },
@@ -173,7 +175,16 @@ function findSimpleExtraFile(root, entries) {
   return [];
 }
 
-function resolveReleaseType(root) {
+function resolveReleaseType(root, override) {
+  if (override && override.releaseType !== undefined) {
+    if (!RELEASE_TYPE_VALUES.has(override.releaseType)) {
+      throw new Error(`invalid release-type override: ${override.releaseType}`);
+    }
+    const extraFiles = override.extraFile
+      ? [{ type: 'json', path: override.extraFile, jsonpath: '$.version' }]
+      : [];
+    return { releaseType: override.releaseType, extraFiles };
+  }
   const entries = rootEntries(root);
   const matched = RELEASE_STACK_TABLE.filter((row) => row.markers.some((m) => markerMatches(m, entries)));
   if (matched.length === 1) return { releaseType: matched[0].releaseType, extraFiles: [] };
@@ -297,7 +308,7 @@ function normalizeListTagsResult(result) {
 // the prose step to land through init/worktree-policy-finalization.md's
 // isolated-worktree write (a direct edit would be denied under
 // worktree-always, the same reason Step 6 defers its own row).
-function bootstrapRelease({ root, integrationModel, branch, dryRun = false, listTags } = {}) {
+function bootstrapRelease({ root, integrationModel, branch, dryRun = false, listTags, releaseType: releaseTypeOverride, extraFile } = {}) {
   const empty = { written: [], policyRows: [] };
   // A missing/non-directory root is a caller bug (a mistyped --root), never
   // a state this step should detect its way around — throw before any
@@ -315,9 +326,10 @@ function bootstrapRelease({ root, integrationModel, branch, dryRun = false, list
   }
   const detected = detectReleaseProcess(root, { integrationModel });
   if (detected.verdict !== 'fresh') return { ...detected, ...empty };
-  const { releaseType, extraFiles } = resolveReleaseType(root);
+  const { releaseType, extraFiles } = resolveReleaseType(root, { releaseType: releaseTypeOverride, extraFile });
   const { tags, failure: tagsFailure } = normalizeListTagsResult((listTags || defaultListTags)(root));
-  const version = seedManifestVersion({ tags, manifestVersion: readStackManifestVersion(root, releaseType) });
+  const seedSourceVersion = extraFile ? versionOfJson(path.join(root, extraFile)) : readStackManifestVersion(root, releaseType);
+  const version = seedManifestVersion({ tags, manifestVersion: seedSourceVersion });
   // A manifest-missing re-run (detectReleaseProcess still reports `fresh`
   // when the config already exists in this step's own shape) must not
   // rewrite an already-correct — possibly hand-edited — config; only the
@@ -397,7 +409,7 @@ function assertSafeWriteTarget(root, rel) {
 }
 
 module.exports = {
-  RELEASE_STACK_TABLE, CONFLICT_MARKERS, CONFIG_FILE, MANIFEST_FILE, WORKFLOW_FILE,
+  RELEASE_STACK_TABLE, RELEASE_TYPE_VALUES, CONFLICT_MARKERS, CONFIG_FILE, MANIFEST_FILE, WORKFLOW_FILE,
   isBootstrapShaped, detectReleaseProcess, resolveReleaseType, readStackManifestVersion, seedManifestVersion,
   isValidBranchName, renderWorkflowYaml, renderConfig, renderManifest, renderPolicyRows,
   defaultListTags, bootstrapRelease,

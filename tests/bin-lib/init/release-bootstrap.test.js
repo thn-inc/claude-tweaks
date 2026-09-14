@@ -66,6 +66,36 @@ test('resolveReleaseType: simple names the first version-bearing JSON manifest a
   assert.deepEqual(rb.resolveReleaseType(b).extraFiles, [{ type: 'json', path: 'thing.json', jsonpath: '$.version' }]);
 });
 
+test('resolveReleaseType: override releaseType + extraFile bypasses the stack scan entirely', () => {
+  const root = tmp();
+  write(root, 'package.json', '{"version":"1.0.0"}'); // would otherwise resolve to node
+  write(root, 'plugin/.claude-plugin/plugin.json', '{"version":"6.121.0"}');
+  const r = rb.resolveReleaseType(root, { releaseType: 'simple', extraFile: 'plugin/.claude-plugin/plugin.json' });
+  assert.deepEqual(r, { releaseType: 'simple', extraFiles: [{ type: 'json', path: 'plugin/.claude-plugin/plugin.json', jsonpath: '$.version' }] });
+});
+
+test('resolveReleaseType: override releaseType alone (no extraFile) still bypasses the scan, with no extra-files', () => {
+  const root = tmp();
+  write(root, 'go.mod', 'module x'); // would otherwise resolve to go
+  assert.deepEqual(rb.resolveReleaseType(root, { releaseType: 'node' }), { releaseType: 'node', extraFiles: [] });
+});
+
+test('resolveReleaseType: an unrecognized override releaseType throws', () => {
+  const root = tmp();
+  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'bogus' }), /invalid release-type/);
+});
+
+test('resolveReleaseType: no override -> unchanged single-row behavior (AC: "without the override the same fixture still resolves node")', () => {
+  const root = tmp();
+  write(root, 'package.json', '{"version":"1.0.0"}');
+  write(root, 'plugin/.claude-plugin/plugin.json', '{"version":"6.121.0"}');
+  assert.deepEqual(rb.resolveReleaseType(root), { releaseType: 'node', extraFiles: [] });
+});
+
+test('RELEASE_TYPE_VALUES: the eight stack types plus simple, nothing else', () => {
+  assert.deepEqual([...rb.RELEASE_TYPE_VALUES].sort(), ['dotnet', 'go', 'java', 'node', 'php', 'python', 'ruby', 'rust', 'simple'].sort());
+});
+
 test('readStackManifestVersion: node/php read JSON version, python/rust read the TOML version line, others null', () => {
   const node = tmp(); write(node, 'package.json', '{"version":"1.4.2"}');
   assert.equal(rb.readStackManifestVersion(node, 'node'), '1.4.2');
@@ -418,4 +448,30 @@ test('detectReleaseProcess: an unparseable config still reports "foreign config"
   const r = rb.detectReleaseProcess(root);
   assert.equal(r.verdict, 'conflict');
   assert.equal(r.tool, 'release-please (foreign config)');
+});
+
+test('bootstrapRelease: --release-type/--extra-file override seeds the manifest from the named file, not the 4-type stack lookup (AC1)', () => {
+  const root = tmp();
+  write(root, 'package.json', '{"version":"1.0.0"}');
+  write(root, 'plugin/.claude-plugin/plugin.json', '{"version":"6.121.0"}');
+  const r = rb.bootstrapRelease({
+    root, integrationModel: 'local-merge', releaseType: 'simple', extraFile: 'plugin/.claude-plugin/plugin.json', listTags: () => [],
+  });
+  assert.equal(r.verdict, 'fresh');
+  assert.equal(r.releaseType, 'simple');
+  assert.equal(r.version, '6.121.0');
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'release-please-config.json'), 'utf8'));
+  assert.equal(config.packages['.']['release-type'], 'simple');
+  assert.deepEqual(config.packages['.']['extra-files'], [{ type: 'json', path: 'plugin/.claude-plugin/plugin.json', jsonpath: '$.version' }]);
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, '.release-please-manifest.json'), 'utf8'));
+  assert.equal(manifest['.'], '6.121.0');
+});
+
+test('bootstrapRelease: without the override, the same fixture still resolves node (AC2)', () => {
+  const root = tmp();
+  write(root, 'package.json', '{"version":"1.0.0"}');
+  write(root, 'plugin/.claude-plugin/plugin.json', '{"version":"6.121.0"}');
+  const r = rb.bootstrapRelease({ root, integrationModel: 'local-merge', listTags: () => [] });
+  assert.equal(r.releaseType, 'node');
+  assert.equal(r.version, '1.0.0');
 });

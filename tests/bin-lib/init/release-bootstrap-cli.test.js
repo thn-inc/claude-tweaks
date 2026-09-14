@@ -80,3 +80,22 @@ test('CLI: --branch must be a valid git branch name — usage exit 2 naming the 
   assert.equal(r.status, 2);
   assert.match(r.stderr, /--branch/);
 });
+
+test('CLI: --release-type simple --extra-file <path> overrides detection and seeds the manifest from that file (AC1)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  fs.writeFileSync(path.join(root, 'package.json'), '{"version":"1.0.0"}');
+  fs.mkdirSync(path.join(root, 'plugin', '.claude-plugin'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'plugin', '.claude-plugin', 'plugin.json'), '{"version":"6.121.0"}');
+  const r = run(['--root', root, '--integration-model', 'local-merge', '--release-type', 'simple', '--extra-file', 'plugin/.claude-plugin/plugin.json']);
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.releaseType, 'simple');
+  assert.equal(out.version, '6.121.0');
+});
+
+test('CLI: an unrecognized --release-type is a usage error naming the flag', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  const r = run(['--root', root, '--integration-model', 'local-merge', '--release-type', 'bogus']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--release-type/);
+});
