@@ -18,9 +18,11 @@ function tmpLogDir() {
 // exit code on the next macrotask unless `manual` — then the test closes it.
 function makeFakeSpawn(script) {
   const spawned = [];
+  const spawnedOpts = [];
   const children = {};
-  function spawnImpl(command) {
+  function spawnImpl(command, opts) {
     spawned.push(command);
+    spawnedOpts.push(opts);
     const child = new EventEmitter();
     child.stdout = new PassThrough();
     child.stderr = new PassThrough();
@@ -34,7 +36,9 @@ function makeFakeSpawn(script) {
     if (plan.error) setImmediate(() => child.emit('error', new Error(plan.error)));
     return child;
   }
-  return { spawnImpl, spawned, children };
+  return {
+    spawnImpl, spawned, spawnedOpts, children,
+  };
 }
 
 test('types and lint spawn concurrently; tests waits for both (AC1)', async () => {
@@ -240,4 +244,33 @@ test('runOne is exported for retry spawns and records its log under logDir (#192
   assert.strictEqual(r.exitCode, 0);
   assert.strictEqual(path.basename(r.logPath), 'tests-retry-tests-a.test.js-1.log');
   assert.strictEqual(fs.readFileSync(r.logPath, 'utf8'), 'hi\n');
+});
+
+test('runOne passes cwd through to spawnImpl when given (#2376)', async () => {
+  const { spawnImpl, spawnedOpts } = makeFakeSpawn({ 'run-x': { exit: 0 } });
+  await runOne({
+    name: 'tests', command: 'run-x', logDir: tmpLogDir(), spawnImpl, now: Date.now, cwd: '/repo/packages/app',
+  });
+  assert.deepStrictEqual(spawnedOpts[0], { shell: true, cwd: '/repo/packages/app' });
+});
+
+test('runOne omits cwd from spawn options when not given, unchanged from before #2376', async () => {
+  const { spawnImpl, spawnedOpts } = makeFakeSpawn({ 'run-x': { exit: 0 } });
+  await runOne({
+    name: 'tests', command: 'run-x', logDir: tmpLogDir(), spawnImpl, now: Date.now,
+  });
+  assert.deepStrictEqual(spawnedOpts[0], { shell: true });
+});
+
+test('runChecks forwards cwd to every spawned check (#2376)', async () => {
+  const { spawnImpl, spawnedOpts } = makeFakeSpawn({ types: { exit: 0 }, lint: { exit: 0 }, tests: { exit: 0 } });
+  await runChecks({
+    cmds: [
+      { name: 'types', command: 'types' },
+      { name: 'lint', command: 'lint' },
+      { name: 'tests', command: 'tests' },
+    ],
+    logDir: tmpLogDir(), spawnImpl, cwd: '/repo/packages/app',
+  });
+  for (const opts of spawnedOpts) assert.deepStrictEqual(opts, { shell: true, cwd: '/repo/packages/app' });
 });
