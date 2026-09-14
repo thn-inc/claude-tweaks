@@ -151,7 +151,18 @@ function resolveDefaultBranch(deps) {
     const out = deps.git(['remote', 'show', 'origin']);
     const m = /HEAD branch:\s*(\S+)/.exec(out);
     if (m && m[1] && m[1] !== '(unknown)') return m[1];
-  } catch { /* no remote, or offline — nothing else to try */ }
+  } catch { /* no remote, or offline — try the last resort below */ }
+  // Last resort only, never tried ahead of the two origin-derived reads above:
+  // integration-branch.md's own anti-pattern warning against trusting "the
+  // branch the main checkout currently has checked out" (a concurrent session
+  // can switch it underfoot) applies with full force here, so this is reached
+  // only when there is no `origin` at all to read instead — a repo with no
+  // remote has no other signal, and the rank-5 ladder's own rule for that case
+  // ("only one resolves → use it") sanctions falling through to it.
+  try {
+    const name = deps.git(['branch', '--show-current']).trim();
+    if (name) return name;
+  } catch { /* not even a branch to fall back to */ }
   return null;
 }
 

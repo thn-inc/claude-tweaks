@@ -27,6 +27,10 @@ function fakeDeps(o = {}) {
           if (o.noRemoteShow) throw new Error('fatal: could not query remote');
           return `* remote origin\n  Fetch URL: git@github.com:o/r.git\n  HEAD branch: ${o.remoteShowHead === undefined ? 'main' : o.remoteShowHead}\n`;
         }
+        if (key === 'branch --show-current') {
+          if (o.noCurrentBranch) throw new Error('fatal: not a git repository');
+          return `${o.currentBranch === undefined ? 'main' : o.currentBranch}\n`;
+        }
         if (key.startsWith('rev-parse --verify --quiet refs/remotes/origin/')) { if (o.noOriginRef) throw new Error('fatal: Needed a single revision'); return `${SHA}\n`; }
         if (key.startsWith('rev-parse ')) return `${SHA}\n`;
         if (key.startsWith('describe')) { if (o.noTag) throw new Error('fatal: No names found, cannot describe anything.'); return 'v1.2.0\n'; }
@@ -130,8 +134,21 @@ test('#2422: symbolic-ref refs/remotes/origin/HEAD unset locally falls back to `
   assert.ok(calls.git.includes('remote show origin'));
 });
 
-test('#2422: no policy key and no resolvable origin/HEAD degrades every probe (preamble failure) rather than guessing "main"', async () => {
-  const { deps } = fakeDeps({ policy: 'integration-model: local-merge\n', noSymbolicRef: true, noRemoteShow: true });
+test('#2422: no `origin` remote at all falls back to the current checked-out branch, never a hardcoded "main" — a repo with no other signal (real-world: acceptance.test.js\'s no-origin fixture)', async () => {
+  const { deps, calls } = fakeDeps({ policy: 'integration-model: local-merge\n', noSymbolicRef: true, noRemoteShow: true, currentBranch: 'trunk' });
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps });
+  assert.strictEqual(pack.branch, 'trunk');
+  assert.ok(calls.git.includes('branch --show-current'));
+});
+
+test('#2422: origin-derived resolution wins over the current-branch fallback when both are available (the current branch can be switched underfoot by a concurrent session — integration-branch.md\'s anti-pattern)', async () => {
+  const { deps } = fakeDeps({ policy: 'integration-model: local-merge\n', originHead: 'origin/release', currentBranch: 'some-feature-branch' });
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps });
+  assert.strictEqual(pack.branch, 'release');
+});
+
+test('#2422: no policy key, no origin, and no current branch either degrades every probe (preamble failure) rather than guessing "main"', async () => {
+  const { deps } = fakeDeps({ policy: 'integration-model: local-merge\n', noSymbolicRef: true, noRemoteShow: true, noCurrentBranch: true });
   const pack = await gatherReleasePreflight({ cwd: ROOT, deps });
   assert.strictEqual(pack.branch, null);
   assert.match(pack.engine.error, /preamble failed: .*integration branch unresolved/);
