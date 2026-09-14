@@ -32,7 +32,26 @@ test('parses repeatable --cmd plus --json, --log-dir, and --count-stamp', () => 
     integrationBranch: null,
     changedFiles: false,
     run: null,
+    cwd: null,
   });
+});
+
+test('--cwd sets the cwd every --cmd spawns in (#2376)', () => {
+  const got = parseArgs(['--cmd', 'tests=npm test', '--cwd', '/repo/packages/app']);
+  assert.strictEqual(got.cwd, '/repo/packages/app');
+});
+
+test('cwd defaults to null when --cwd is omitted', () => {
+  const got = parseArgs(['--cmd', 'tests=npm test']);
+  assert.strictEqual(got.cwd, null);
+});
+
+test('--cwd with --stamp-status throws UsageError (read-only mode takes no run-scoped flags)', () => {
+  assert.throws(() => parseArgs(['--stamp-status', '--cwd', '/repo']), UsageError);
+});
+
+test('--cwd with --changed-files throws UsageError', () => {
+  assert.throws(() => parseArgs(['--changed-files', '--cwd', '/repo']), UsageError);
 });
 
 test('json, logDir, and countStamp default to null when omitted', () => {

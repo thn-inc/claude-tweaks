@@ -318,11 +318,13 @@ async function main() {
     if (!plan.retry) return { ...result, retryDecision: decision };
     const retried = await runRetries({
       check: result, plan, maxRetries: decl.flaky.maxRetries,
-      logDir: ctx.logDir, runOne, spawnImpl: ctx.spawnImpl, now: ctx.now,
+      logDir: ctx.logDir, runOne, spawnImpl: ctx.spawnImpl, now: ctx.now, cwd: ctx.cwd,
     });
     return { ...retried, retryDecision: decision };
   };
-  const results = sel && sel.mode === 'none' ? [] : (await runChecks({ cmds, logDir, retry: retryHook })).map(enrich);
+  const results = sel && sel.mode === 'none' ? [] : (await runChecks({
+    cmds, logDir, retry: retryHook, cwd: parsed.cwd,
+  })).map(enrich);
   const retriedFiles = [...new Set(results.flatMap((c) => c.flakyRetried || []))];
   const git = gitInfo();
 

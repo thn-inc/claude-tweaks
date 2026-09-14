@@ -7,11 +7,12 @@ class UsageError extends Error {}
 const USAGE =
   'usage: verify.js --cmd <name>=<command> [--cmd <name>=<command> ...] [--json <path>] '
   + '[--log-dir <dir>] [--count-stamp <path>] [--no-stamp] [--git-dir <dir>] [--run <dir>] '
+  + '[--cwd <dir>] '
   + '[--scope <path> [--base <ref>] [--integration-branch <name>]] '
   + '| verify.js --stamp-status [--git-dir <dir>] '
   + '| verify.js --changed-files [--base <ref>] [--integration-branch <name>]';
 
-const VALUE_FLAGS = new Set(['--cmd', '--json', '--log-dir', '--count-stamp', '--git-dir', '--scope', '--base', '--integration-branch', '--run']);
+const VALUE_FLAGS = new Set(['--cmd', '--json', '--log-dir', '--count-stamp', '--git-dir', '--scope', '--base', '--integration-branch', '--run', '--cwd']);
 
 // argv = process.argv.slice(2). Throws UsageError on any malformed input —
 // the CLI prints message + USAGE to stderr and exits non-zero (AC6).
@@ -29,6 +30,7 @@ function parseArgs(argv) {
   let integrationBranch = null;
   let changedFiles = false;
   let run = null;
+  let cwd = null;
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (flag === '--stamp-status') { stampStatus = true; continue; }
@@ -46,6 +48,7 @@ function parseArgs(argv) {
       if (flag === '--base') { base = value; continue; }
       if (flag === '--integration-branch') { integrationBranch = value; continue; }
       if (flag === '--run') { run = value; continue; }
+      if (flag === '--cwd') { cwd = value; continue; }
       const eq = value.indexOf('=');
       if (eq === -1) throw new UsageError(`--cmd value must be <name>=<command>, got: ${value}`);
       if (eq === 0) throw new UsageError(`--cmd value has an empty name: ${value}`);
@@ -80,8 +83,11 @@ function parseArgs(argv) {
   if (run !== null && (stampStatus || changedFiles)) {
     throw new UsageError('--run applies to a check run — not to --stamp-status or --changed-files');
   }
+  if (cwd !== null && (stampStatus || changedFiles)) {
+    throw new UsageError('--cwd applies to a check run — not to --stamp-status or --changed-files');
+  }
   return {
-    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles, run,
+    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles, run, cwd,
   };
 }
 
