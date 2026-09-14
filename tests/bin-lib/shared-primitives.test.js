@@ -1,7 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { runClassified, runClassifiedAsync } = require('../../plugin/bin/lib/shared-primitives');
+const { runClassified, runClassifiedAsync, isPathContained } = require('../../plugin/bin/lib/shared-primitives');
+const path = require('path');
 
 test('runClassified: returns fn()\'s value on success', () => {
   const result = runClassified(() => 'ok', () => 'unused');
@@ -41,4 +42,30 @@ test('runClassifiedAsync: mapError never runs on the success path', async () => 
   let mapErrorCalls = 0;
   await runClassifiedAsync(async () => 'ok', () => { mapErrorCalls += 1; return 'unused'; });
   assert.strictEqual(mapErrorCalls, 0);
+});
+
+test('isPathContained: a strict descendant is contained', () => {
+  const root = path.join('a', 'b');
+  assert.equal(isPathContained(path.join(root, 'c'), root), true);
+});
+
+test('isPathContained: an unrelated sibling path is not contained', () => {
+  const root = path.join('a', 'b');
+  assert.equal(isPathContained(path.join('a', 'bee'), root), false);
+});
+
+test('isPathContained: the root itself is NOT contained by default (orEqual defaults false)', () => {
+  const root = path.join('a', 'b');
+  assert.equal(isPathContained(root, root), false);
+});
+
+test('isPathContained: the root itself IS contained when orEqual is true', () => {
+  const root = path.join('a', 'b');
+  assert.equal(isPathContained(root, root), false);
+  assert.equal(isPathContained(root, root, { orEqual: true }), true);
+});
+
+test('isPathContained: a strict descendant is contained regardless of orEqual', () => {
+  const root = path.join('a', 'b');
+  assert.equal(isPathContained(path.join(root, 'c'), root, { orEqual: true }), true);
 });
