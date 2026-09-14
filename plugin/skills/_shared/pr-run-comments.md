@@ -31,7 +31,7 @@ etc.).
 | `brief` | `/claude-tweaks:wrap-up`, the Verification Brief | `<!-- run-comment: brief -->` |
 | `timing` | `/claude-tweaks:wrap-up`, right after the Verification Brief | `<!-- run-comment: timing -->` |
 | `failure` | `/claude-tweaks:dispatch`'s Settle step, on HARD-GATE failure | `<!-- run-comment: failure -->` |
-| `release-status` | `_shared/pr-first-merge-post-merge.md` Step 4.1, on outcome `merged` when a CHANGELOG backfill is needed | `<!-- run-comment: release-status -->` |
+| `release-status` | `_shared/pr-first-merge-post-merge.md` Step 4.1, on outcome `merged` under `pr-first` — either resolved value (a containing tag, or `unreleased`) | `<!-- run-comment: release-status -->` |
 
 Each kind's marker is the **first line** of its comment body, unconditionally — the same
 first-line-marker convention `_shared/pr-early-run-lifecycle.md`'s PR body uses for its own
@@ -93,7 +93,7 @@ call — never silently drop the content.
 | `/claude-tweaks:wrap-up` (`verification-brief.md` Step 4) | `brief` | Full brief posts to the PR; the issue gets a one-line pointer comment instead (unmarkered — it is not itself a `run-comment` kind, since nothing ever needs to find-and-update it by marker) |
 | `/claude-tweaks:wrap-up` (`verification-brief.md` Step 4, after the brief) | `timing` | The run's Timing table, `bin/phase-timing.js --run "$PIPELINE_RUN_DIR" --markdown --auto-transcript` verbatim under the same `pr`-object gate as the brief; find-or-update by marker, so a re-run replaces it (#1928) |
 | `/claude-tweaks:dispatch` (`settle-and-merge.md` Step 6, step 5) | `failure` | The full comment (`bin/lib/issues/retry.js`'s `attemptFailedCommentBody`, marker included) always posts to the **issue**, regardless of pr-first (`#1963`) — this is what `bin/lib/issues/trust.js`, which reads only the issue's comments and is not modified, already sees. Under pr-first, the PR gets a short pointer comment instead of the full narrative, and is closed. Retry-ceiling **counting** (`countFailedAttempts`) merges the issue's comments with every PR ever linked to the record, open or closed, so an attempt is found regardless of which source it originally posted to |
-| `_shared/pr-first-merge-post-merge.md` (Step 4.1) | `release-status` | Body: the human line, then the `--backfill` section, then one line pointing at `docs/releasing.md` "After the merge"; posted only on the backfill outcome, never on `not yet in a release` or `every record named` |
+| `_shared/pr-first-merge-post-merge.md` (Step 4.1) | `release-status` | Body: the resolved value (`v{tag}` or `unreleased`) from `git describe --tags --contains --first-parent {merge-sha}`; posted under `pr-first` on either outcome |
 
 ## Anti-Patterns
 

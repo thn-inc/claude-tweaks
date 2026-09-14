@@ -8,6 +8,8 @@ files:
   - plugin/bin/release-preflight.js
   - plugin/bin/release-local.js
   - plugin/skills/review/SKILL.md
+  - plugin/skills/wrap-up/SKILL.md
+  - plugin/skills/flow/summary-template.md
 ---
 
 # Release a Version
@@ -50,4 +52,5 @@ files:
 ## Origin
 - Created during build of #2256 (record: The `/claude-tweaks:release` skill)
 - Steps 1-4 built in this session
-- Related specs: #2254 (local engine), #2255 (preflight pack), #2257 (lifecycle wiring — will retire `release-a-plugin-version.md` in favour of this journey), #2258 (release train Routine), #2250 (design)
+- Renamed from `release-a-version-2256.md` and wired into `/claude-tweaks:wrap-up` and `/claude-tweaks:flow`'s Next Actions by #2257 (lifecycle wiring). `docs/journeys/release-a-plugin-version.md` documents a different, still-separate procedure — this repo's own maintainer-only `plugin/bin/release.js` path — and is **not** retired here: migrating this repo onto the engine this journey documents is #2259, explicitly deferred (`docs/releasing.md`).
+- Related specs: #2254 (local engine), #2255 (preflight pack), #2258 (release train Routine), #2250 (design), #2259 (this repo's own eventual migration, not yet done)

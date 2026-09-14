@@ -145,6 +145,7 @@ Backlog record → Design Doc → Ready record(s) → Code → Stories → TEST_
 | `/claude-tweaks:review` | Review summary | — |
 | `/claude-tweaks:wrap-up` | Learnings (CLAUDE.md), Verification Brief | Spec, plans, ledger |
 | `/claude-tweaks:demo` | Follow-up record (on changes-requested) | — |
+| `/claude-tweaks:release` | Tag, CHANGELOG entry, GitHub Release, `Shipped in vX.Y.Z` comments (recommended by wrap-up/flow's Next Actions when unreleased work exists, #680) | — |
 
 Consumed artifacts are deleted — specs and code are the durable outputs.
 

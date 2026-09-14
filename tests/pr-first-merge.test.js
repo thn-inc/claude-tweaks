@@ -174,22 +174,21 @@ test('AC4: every remaining "ready-to-merge" mention across skills/ is local-merg
   assert.deepStrictEqual(offenders, [], `files mentioning ready-to-merge without local-merge scoping: ${offenders.join(', ')}`);
 });
 
-test('Step 4 runs the release-status check before reconcile and stages — never writes — the CHANGELOG backfill (#678)', () => {
+test('Step 4 runs the release-status check before reconcile via git describe --contains, never stages a CHANGELOG backfill (#2257)', () => {
   const step4 = MERGE_POST_MERGE.indexOf('## Step 4: Post-merge reconcile');
   const step5 = MERGE_POST_MERGE.indexOf('## Step 5: Delete the remote branch');
   assert.ok(step4 > 0 && step5 > step4, 'Step 4 must precede Step 5');
   const section = MERGE_POST_MERGE.slice(step4, step5);
   assert.match(section, /### Step 4\.1: Which release carried this\?/, 'Step 4.1 subheading exists');
   assert.match(section, /### Step 4\.2: Reconcile/, 'Step 4.2 subheading exists');
-  assert.match(section, /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/release\.js" status --merge/, 'Step 4.1 invokes the status subcommand');
-  assert.match(section, /--records/, 'record numbers are passed explicitly');
-  assert.match(section, /staged\/release-backfill-v\{version\}\.md/, 'the already-carried outcome stages the backfill artifact');
-  assert.match(section, /STAGED \{time\}/, 'the staged row is auto-decision-logged');
-  assert.match(section, /never edits `CHANGELOG\.md`/i, 'Step 4 never writes CHANGELOG.md directly');
-  const status = section.indexOf('node "${CLAUDE_PLUGIN_ROOT}/bin/release.js" status');
+  assert.match(section, /git describe --tags --contains --first-parent \{merge-sha\}/, 'Step 4.1 resolves via tag ancestry');
+  assert.doesNotMatch(section, /release-backfill/, 'the retired backfill-staging mechanism must not remain');
+  assert.doesNotMatch(section, /bin\/release\.js" status/, 'Step 4.1 no longer shells out to the bump-commit-walk subcommand');
+  assert.match(section, /literal[\s\S]*string `unreleased`/, 'a non-zero exit reads as the literal string unreleased');
+  const describeIdx = section.indexOf('git describe --tags --contains');
   const reconcile = section.indexOf('bin/hooks.js" reconcile');
-  assert.ok(status >= 0 && reconcile >= 0, 'both calls must be present within Step 4');
-  assert.ok(status < reconcile, 'the status check now runs before the reconcile call');
+  assert.ok(describeIdx >= 0 && reconcile >= 0, 'both calls must be present within Step 4');
+  assert.ok(describeIdx < reconcile, 'the status check now runs before the reconcile call');
 });
 
 test('the three local-merge fallback sections route the post-merge release-status check to Step 4.1 (#678)', () => {
@@ -253,6 +252,6 @@ test('/flow closing reports carry the release-status line verbatim (#678)', () =
   const comments = read('plugin', 'skills', '_shared', 'pr-run-comments.md');
   assert.match(summary, /\*\*Release status:\*\* \{/, 'single-spec summary renders the release-status line');
   assert.match(multi, /\*\*Release status:\*\* \{/, 'multi-spec summary template renders the release-status line');
-  assert.match(summary, /not yet in a release — bump pending/, 'the human form is quoted verbatim');
+  assert.match(summary, /`unreleased`/, 'the human form is quoted verbatim');
   assert.match(comments, /`release-status`/, 'pr-run-comments.md lists the release-status comment kind');
 });

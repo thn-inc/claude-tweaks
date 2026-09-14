@@ -17,81 +17,43 @@ CHANGELOG line of its own — three records shipped that way under v6.87.1 (#603
 behind #678). Reconcile says nothing about *where* the merge landed relative to the version
 history, so ask, once, before it runs.
 
-This check applies only when the ref carries a plugin manifest and a changelog — `pr-first-merge.md`
-is canonical for every pr-first project, but the check is only meaningful for a plugin repo whose
-version of record is a `.claude-plugin/plugin.json`. Probe BOTH spellings of that manifest path:
-a payload-cutover repo carries it under `plugin/`, pre-cutover history carries it at the repo
-root, and probing only one spelling silently reports "no plugin manifest" for the other:
-
-```bash
-(git cat-file -e origin/{integration-branch}:plugin/.claude-plugin/plugin.json || git cat-file -e origin/{integration-branch}:.claude-plugin/plugin.json) && git cat-file -e origin/{integration-branch}:CHANGELOG.md
-```
-
-When either is absent, log `AUTO {time} — pr-first-merge Step 4.1: release status — n/a — no
-plugin manifest at origin/{integration-branch}. Reversibility: n/a.` and carry `n/a — no plugin
-manifest at {ref}` into the closing report; skip the rest of this step.
+Tag ancestry in the commit graph answers this directly — no plugin-manifest probe, no
+project-specific release tooling, and no per-project release-process knowledge required:
 
 ```bash
 git fetch origin {integration-branch}
-node "${CLAUDE_PLUGIN_ROOT}/bin/release.js" status --merge {merge-sha} --records {n}[,{m}...] --ref origin/{integration-branch} --json
+git describe --tags --contains --first-parent {merge-sha} 2>/dev/null
 ```
 
 `{merge-sha}` is the merge commit `gh pr view --json mergeCommit` reported for the confirmed
-merge; `{n},{m}` are the record numbers this run carried — the materialized header's `record:`
-(one per `spec-{N}/work/{N}-spec.md` for a bundle) or, identically, the PR body's `Fixes #{n}`
-lines. Pass them explicitly — the subcommand never guesses record numbers, and never calls `gh`
-(the same invocation applies under `local-merge` with the local merge commit and `--ref
-{integration-branch}`). Read the bump commit **after** the merge is confirmed and after the
-fetch above — the bump can land in a sibling session while this PR is being merged.
+merge (the same invocation applies under `local-merge` with the local merge commit). Read it
+**after** the merge is confirmed and after the fetch above — a release tag can land in a sibling
+session while this PR is being merged. Restricted to `--first-parent` ancestry, the command
+returns at most one tag name in the normal case — the nearest release tag reachable forward from
+the merge commit, resolved purely from ancestry, independent of that commit's own subject text or
+whether it was produced by a squash or a merge commit.
 
-Branch on the JSON:
+Branch on the exit code:
 
-- `{"shipped": false}` — log `AUTO {time} — pr-first-merge Step 4.1: release status — not yet in
-  a release — bump pending. Reversibility: n/a.` and carry that human line into the closing
-  report (`flow/summary-template.md`'s `**Release status:**` line).
-- `{"shipped": true, "missing": []}` — every record is already named under `v{version}`; log
-  `AUTO {time} — pr-first-merge Step 4.1: release status — already carried by v{version} — every
-  record named in CHANGELOG. Reversibility: n/a.` Stage nothing.
-- `{"shipped": true, "entryFound": false}` — the version has no CHANGELOG entry at all (a
-  release-process defect `tests/changelog-coverage.test.js` already fails the suite on); human
-  line `already carried by v{version} — CHANGELOG has no v{version} entry; backfill needed:
-  #{a}, #{b}`; stage the same file as the backfill case below, its Apply note prefixed `Create
-  the \`## v{version} — {summary}\` entry first (changelog-coverage enforces it), then append …`.
-- `{"shipped": true, "missing": [...]}` — the backfill case. Generate the subsection text with
-  `node "${CLAUDE_PLUGIN_ROOT}/bin/release.js" status --merge {merge-sha} --records {n},{m} --ref origin/{integration-branch} --backfill`
-  and **stage** it at `{run-dir}/staged/release-backfill-v{version}.md`. This run's own Review
-  Console has already closed by merge time (this step runs after the merge is confirmed), so the
-  staged file is this run's audit + revert artifact, not a live console row — Step 4.2's reconcile
-  archives it with the run dir. The surfaces that actually reach a human are (i) the closing
-  report's release-status line (`flow/summary-template.md`), and (ii) under pr-first, a
-  `release-status` PR comment posted per `_shared/pr-run-comments.md`'s post-or-update procedure
-  (kind `release-status`, marker `<!-- run-comment: release-status -->` as the first line, body =
-  the human line, then the `--backfill` section, then one line `Apply via a scratch-worktree PR —
-  see docs/releasing.md "After the merge".`) — posted on this outcome only, never the other two.
-  Failure to post follows `pr-run-comments.md`'s own retryable-failure posture. Under
-  `local-merge` (no PR), the staged file and the closing line are the only surfaces. This step
-  never edits `CHANGELOG.md` itself — the no-`git merge`/`git commit`/`git push`-in-the-main-checkout
-  rule stated at the top of `pr-first-merge.md` stands, so the staged row is applied later by a
-  worktree-based PR (`docs/releasing.md`'s "After the merge" section), never here. The staged file:
+- **Non-zero exit (no containing tag)** — the merge is not yet in any release; log `AUTO {time} —
+  pr-first-merge Step 4.1: release status — unreleased. Reversibility: n/a.` and carry the literal
+  string `unreleased` into the closing report (`flow/summary-template.md`'s `**Release status:**`
+  line).
+- **A tag name on stdout** — log `AUTO {time} — pr-first-merge Step 4.1: release status — v{tag}.
+  Reversibility: n/a.` and carry `v{tag}` into the closing report.
 
-  ```markdown
-  Apply: append the section below to CHANGELOG.md's `## v{version}` entry (before the next `## v` heading), through the ordinary pr-first path — scratch worktree, `tests/changelog-coverage.test.js` green, PR, merge. Never inline in the main checkout.
-  Merge: {merge-sha}
-  Records: #{a}, #{b}
+Under `pr-first`, post (or update) a `release-status` PR comment per `_shared/pr-run-comments.md`'s
+post-or-update procedure (kind `release-status`, marker `<!-- run-comment: release-status -->` as
+the first line, body = the resolved value) on either outcome above — this is bookkeeping, not a
+call to action; nothing is staged and nothing edits `CHANGELOG.md` (release-please, or
+`bin/release-local.js` under `local-merge`, own the changelog). Under `local-merge` (no PR), the
+closing report line is the only surface.
 
-  {the --backfill output, verbatim — it starts with its own `### also carried in this build` heading}
-  ```
-
-  Log `STAGED {time} — pr-first-merge Step 4.1: release status — already carried by v{version} —
-  CHANGELOG backfill needed: #{a}, #{b}. Reversibility: high; stage path:
-  staged/release-backfill-v{version}.md.` under the invoking merge site's own decisions.md heading
-  (`## /dispatch`, `## /wrap-up`, or `## /flow` — whichever skill entered this procedure) — and
-  carry the human line into the closing report.
-
-Like reconcile, this is convergent bookkeeping, not owed: a `git fetch` failure or a non-zero
-exit from the subcommand is logged (`AUTO {time} — pr-first-merge Step 4.1: release status
-unavailable ({reason}). Reversibility: n/a.`) and the closing report's line reads `release status
-unavailable — {reason}`; it is never a reason to report anything other than `merged`.
+Like reconcile, this is convergent bookkeeping, not owed: a `git fetch` failure or a `git describe`
+error unrelated to "no containing tag" (a corrupt shallow clone, for instance) is logged (`AUTO
+{time} — pr-first-merge Step 4.1: release status unavailable ({reason}). Reversibility: n/a.`) and
+the closing report's line reads `release status unavailable — {reason}`; it is never a reason to
+report anything other than `merged`.
 
 ### Step 4.2: Reconcile
 

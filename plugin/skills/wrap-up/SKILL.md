@@ -285,12 +285,14 @@ When invoked directly by a user (standalone wrap-up), resolve 2-4 lines based on
 |--------|--------|
 | Next spec exists (Phase 3's unblocked-records lookup) | `/claude-tweaks:flow {N}` — full pipeline on spec {N}: "{title}" **(Recommended)** |
 | Newly unblocked records (Phase 3's dependent check — this run's session-scoped `wrapup-unblocked.json`, `_shared/session-tmp-root.md`, one option per entry) | `/claude-tweaks:flow #{N}` — record #{N} "{title}" now unblocked by this closure (bare `{N}` under `work-backend: local-files`) |
+| `bin/release-preflight.js --run "$RUN_DIR"`'s `unreleased` shows commits (#680) | `/claude-tweaks:release` — cut the release |
 | Always | `/claude-tweaks:help` — full pipeline status |
 
 Once the signals are resolved, render as plain markdown (docs/skill-authoring.md's Skill handoffs convention) — when a next spec exists, its line renders first, bolded, suffixed `(recommended)`; otherwise the lines render in the table's order with no line marked recommended:
 
 **`/claude-tweaks:flow {N}`** — full pipeline on spec {N}: "{title}" (recommended, when a next spec exists)
 `/claude-tweaks:flow #{N}` — record #{N} "{title}" now unblocked by this closure (one line per entry in this run's session-scoped `wrapup-unblocked.json`, up to the tool's option cap; bare `{N}` under `work-backend: local-files`)
+`/claude-tweaks:release` — cut the release — when unreleased
 `/claude-tweaks:help` — full pipeline status
 
 ## Component-Skill Contract

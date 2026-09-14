@@ -97,33 +97,36 @@ test('probeRelease reads a >1 MiB CHANGELOG.md at HEAD without silently overflow
   execFileSync('git', ['-C', root, 'config', 'user.email', 'test@example.com']);
   execFileSync('git', ['-C', root, 'config', 'user.name', 'Test']);
 
-  // readProjectManifest (bin/residue.js) reads .claude-plugin/plugin.json —
-  // NOT package.json — per lib/manifest-path.js's MANIFEST_PATHS.
-  fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
-  fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'claude-tweaks', version: '9.9.9' }));
+  // #2257: probeRelease anchors on .release-please-manifest.json's
+  // introducing commit, not a plugin manifest — bootstrap it here so the
+  // probe actually runs (rather than degrading to not-applicable) and
+  // exercises the >1 MiB read this test is about.
+  fs.writeFileSync(path.join(root, '.release-please-manifest.json'), JSON.stringify({ '.': '9.9.9' }));
+  execFileSync('git', ['-C', root, 'add', '-A']);
+  execFileSync('git', ['-C', root, 'commit', '-q', '-m', 'bootstrap release-please']);
+
   // '# padding\n' is 10 bytes; 150,000 repeats is ~1.43 MiB, comfortably past
   // execFileSync's 1 MiB default so a real overflow (not a near-miss) is
   // what this fixture exercises.
-  const changelog = '# padding\n'.repeat(150000) + '## v9.9.9 — test release\n';
+  const changelog = '# padding\n'.repeat(150000) + '## v9.9.9\n- test release\n';
   fs.writeFileSync(path.join(root, 'CHANGELOG.md'), changelog);
   assert.ok(Buffer.byteLength(changelog) > 1024 * 1024, 'fixture CHANGELOG.md must actually exceed the 1 MiB default');
-  fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
-  fs.writeFileSync(path.join(root, 'docs', 'shipped-versions.tsv'), '9.9.9\t2026-08-29\trelease\n');
 
   execFileSync('git', ['-C', root, 'add', '-A']);
-  execFileSync('git', ['-C', root, 'commit', '-q', '-m', 'init']);
+  execFileSync('git', ['-C', root, 'commit', '-q', '-m', 'add changelog']);
+  execFileSync('git', ['-C', root, 'tag', 'v9.9.9']);
 
   const out = execFileSync('node', [CLI, '--base', 'HEAD', '--no-suite', '--json'], {
     cwd: root, encoding: 'utf8',
   });
   const parsed = JSON.parse(out);
-  const overflowReason = /could not read CHANGELOG\.md or docs\/shipped-versions\.tsv at HEAD/;
+  const overflowReason = /could not read CHANGELOG\.md at HEAD/;
   assert.ok(
     !parsed.results.some((r) => typeof r.reason === 'string' && overflowReason.test(r.reason)),
     `probeRelease must not silently fail to read a >1 MiB CHANGELOG.md, got results: ${JSON.stringify(parsed.results)}`,
   );
   assert.ok(
     !parsed.results.flatMap((r) => r.findings).some((f) => f.kind === 'release'),
-    'both the CHANGELOG heading and the shipped-versions line are present, so a successful read reports zero release findings',
+    'the tag and its CHANGELOG heading both exist, so a successful read reports zero release findings',
   );
 });

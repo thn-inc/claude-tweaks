@@ -15,6 +15,8 @@ One-stop reference and status dashboard for the workflow system. Combines comman
                                             ^^^^ YOU ARE HERE ^^^^
 ```
 
+`/claude-tweaks:release` runs anytime after `/claude-tweaks:wrap-up` — recommended by wrap-up's/flow's own Next Actions when the release-preflight pack shows unreleased work (#680), never a fixed position in the loop above.
+
 ## When to Use
 
 - You need a quick reference for available commands and their syntax

@@ -107,10 +107,12 @@ If the ledger doesn't exist, create it using the ledger skill's create operation
 
 **Micro-plan check first (#1911):** before invoking `/superpowers:writing-plans`, check the applicability gate in `micro-plan.md` in this skill's directory — a `ceremony: fast-lane` + `size: low` header whose `### Key Files` names at most one implementation file composes a one-task plan directly, skipping this skill and `plan-audit.md` entirely. Read that file for the full gate, the composed plan's exact shape, the skip-logging call, and the NEEDS_CONTEXT escape hatch. Any other header shape falls through to the normal path below unchanged.
 
+**Assumption verification (#1769).** Before invoking `/superpowers:writing-plans`, scan the spec's `## Gotchas` for every `ASSUMPTION — verify at build:` bullet (`_shared/premise-verification.md`'s marker) and re-verify each against this worktree with that file's probe forms (`git ls-files`/`git grep -n -F`). Log the outcome — confirmed, or reversed naming the probe that reversed it — as one `decisions.md` line per `_shared/auto-decision-log.md`. A reversed assumption is not silently dropped: fold the corrected fact into the context handed to `/superpowers:writing-plans` below in place of the original claim.
+
 Invoke the `/superpowers:writing-plans` skill. After it saves the plan file, **stop the skill and return here** — do not let it present an execution choice or invoke an execution skill. `/build` controls execution strategy.
 
 Context to provide to `/superpowers:writing-plans`:
-- The full spec content (including Current State, Gotchas, and acceptance criteria)
+- The full spec content (including Current State, Gotchas, and acceptance criteria) — with any reversed `ASSUMPTION — verify at build:` claim (above) replaced by its corrected fact
 - Any existing progress identified in Spec Step 2
 
 The plan will be written to `docs/superpowers/plans/YYYY-MM-DD-{feature}.md`.

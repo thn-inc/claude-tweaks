@@ -48,26 +48,22 @@ test('a buffer-overflowed suite run does not run, rather than reporting a fabric
   assert.match(r.reason, /capture buffer/);
 });
 
-test('the release probe is inert outside claude-tweaks', () => {
-  const r = probeRelease({ scope: SCOPE, manifest: { name: 'some-other-plugin', version: '1.0.0' }, run: () => null });
+// #2257 generalized probeRelease off the `manifest.name === 'claude-tweaks'`
+// gate to a project-agnostic tag/CHANGELOG check anchored on the version
+// `.release-please-manifest.json` held at the commit that introduced it —
+// see tests/bin-lib/residue/probes/release-generalized.test.js for the full
+// fixture-driven coverage (non-claude-tweaks project, AC5). These three
+// smoke tests just pin the "no manifest in history" degrade at this call
+// site, which every project without release-please hits, including this repo
+// today.
+function releaseRun(argv) {
+  const joined = argv.join(' ');
+  if (joined.includes('log --diff-filter=A')) return null;
+  return null;
+}
+
+test('the release probe is inert when release-please was never bootstrapped', () => {
+  const r = probeRelease({ scope: SCOPE, run: releaseRun });
   assert.strictEqual(r.ran, false);
   assert.match(r.reason, /not applicable/);
-});
-
-test('a version missing from the changelog is reported', () => {
-  const run = (argv) => (argv.join(' ').includes('CHANGELOG.md') ? '# Changelog\n\n## v6.64.0 — old\n' : '6.64.0\t2026-08-08\trelease\n');
-  const { findings } = probeRelease({ scope: SCOPE, manifest: { name: 'claude-tweaks', version: '6.68.1' }, run });
-  assert.ok(findings.some((f) => f.evidence.includes('CHANGELOG.md')), 'the missing changelog entry must be named');
-});
-
-test('a version missing from the shipped record is reported', () => {
-  const run = (argv) => (argv.join(' ').includes('CHANGELOG.md') ? '# Changelog\n\n## v6.68.1 — new\n' : '6.64.0\t2026-08-08\trelease\n');
-  const { findings } = probeRelease({ scope: SCOPE, manifest: { name: 'claude-tweaks', version: '6.68.1' }, run });
-  assert.ok(findings.some((f) => f.evidence.includes('shipped-versions.tsv')), 'the missing shipped line must be named');
-});
-
-test('a complete release triple produces no findings', () => {
-  const run = (argv) => (argv.join(' ').includes('CHANGELOG.md') ? '# Changelog\n\n## v6.68.1 — new\n' : '6.68.1\t2026-08-08\trelease\n');
-  const { findings } = probeRelease({ scope: SCOPE, manifest: { name: 'claude-tweaks', version: '6.68.1' }, run });
-  assert.deepStrictEqual(findings, []);
 });

@@ -49,6 +49,8 @@ Parent: {#N — decomposition-mode sub-issues under work-links: body-text only, 
 - UI: `{path}` — {what components exist}
 - Tests: `{path}` — {what test patterns to follow}
 
+Every existing-code claim above carries either an inline evidence citation (`path:line`, or the `git ls-files` hit) or the `ASSUMPTION — verify at build:` marker (`## Gotchas`) — never neither. Probe forms/caps: `_shared/premise-verification.md`.
+
 ## Deliverables
 
 - [ ] {Concrete deliverable 1}
@@ -102,6 +104,7 @@ When a deliverable documents a newly-discovered limitation or constraint of an e
 - {e.g., "The status enum values are exactly: draft, published, archived"}
 - {e.g., "This mutation needs a transaction — it modifies two tables atomically"}
 - {e.g., "Import shared types from the contracts package, don't redeclare inline"}
+- {e.g., "ASSUMPTION — verify at build: sibling unit N's module already exports `dequeue()` — confirm with `git grep -n -F dequeue {path}`"} — an unsettled Current State/Key Files claim (`_shared/premise-verification.md`) moves here in this literal form.
 
 ## Decision Rationale (optional)
 
@@ -153,6 +156,7 @@ Every spec section must contain content that `/superpowers:writing-plans` can ac
 - "Standard error handling" — name the error class, the user-facing message, the log format
 - Types, models, endpoints, or files referenced anywhere in the spec that aren't defined in `Data / API Surface` or `Key Files`
 - Gotchas that say "be careful" without saying what to do (`"watch out for races"` ≠ `"use upsert, not delete+insert"`)
+- A Current State/Key Files claim about existing code with neither an evidence citation nor the `ASSUMPTION — verify at build:` marker (`_shared/premise-verification.md`)
 - An AC asserting "styling/classes are unchanged" as literal string equality (`className === "flex p-4 text-sm"` ≠ class-*set* equivalence or a rendered/visual check) — a class-sorting formatter such as `prettier-plugin-tailwindcss` reorders class tokens on every commit, making literal-string equality structurally unenforceable
 
 If you would need `/superpowers:writing-plans` to guess, the spec is incomplete — finish it before handing off. Vagueness here compounds into plan failures downstream.

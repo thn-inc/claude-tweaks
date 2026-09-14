@@ -65,11 +65,12 @@ function runner(cwd) {
 }
 
 // Both spellings of this repo's own manifest, new path first (#418's payload
-// cutover moved it under `plugin/`). Reading only one spelling makes
-// probeRelease's `manifest.name === 'claude-tweaks'` guard trip forever and
-// report "not applicable" in the single repo the release triple exists for.
-// An absent — or unparseable — manifest stays normal: every other project this
-// CLI runs in has none.
+// cutover moved it under `plugin/`). No longer consulted by probeRelease
+// (#2257 dropped its `manifest.name === 'claude-tweaks'` gate in favor of a
+// project-agnostic tag/CHANGELOG check) — kept as a general-purpose reader
+// for callers that still need this repo's own manifest. An absent — or
+// unparseable — manifest stays normal: every other project this CLI runs in
+// has none.
 function readProjectManifest(cwd) {
   for (const manifestPath of MANIFEST_PATHS) {
     try {
@@ -90,8 +91,6 @@ function main() {
   const run = runner(cwd);
   const git = (args, execOpts) => run(['git', ...args], execOpts);
   const scope = resolveScope({ base: opts.base, run: git });
-
-  const manifest = readProjectManifest(cwd);
 
   const suiteRun = () => {
     try {
@@ -139,7 +138,7 @@ function main() {
     probeBranches({ scope, integrationBranch: opts.integrationBranch, run: git }),
     probeForge({ scope, run }),
     suiteResult,
-    probeRelease({ scope, manifest, run }),
+    probeRelease({ scope, run }),
     probePipelineRuns({
       cwd,
       // The invoking run's identity, when one is threaded (wrap-up runs

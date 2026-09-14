@@ -22,6 +22,17 @@ Deliverable-name-collisions section owns the check and the grep.
 
 **Body** — spec-shaped per `spec-template.md`'s record body template, prefixed with the metadata block (`Surface: {value}` and, when the unit is frontend-flavored, `Design-intent: {value}` and `Ui-stack: {value}`) — the identical per-record procedure Shaping mode's Metadata block subsection already documents (`shaping-mode.md` in this skill's directory), just run once per sub-issue instead of once per shaped record. When Step 2.5b-ii's variant exploration ran and the user accepted a scaffold direction for this sub-issue's surface, also prefix `Visual-reference: {scaffold path}` (`design-pre-steps.md` Step 2.5b-ii item 5) — omit the line entirely when Step 2.5b-ii was skipped, declined, or not offered (the canonical field reference lives in `spec-template.md`). Under `work-backend: github-issues` + `work-links: body-text`, and only when Step 2.6 kept the parent, also prefix `Parent: #$PARENT_NUM` — already known at this point (Parent record, above, runs first) and the only combination where nothing else records a sub-issue's own parent (`spec-template.md`). Under collapse, omit this line entirely — there is no `$PARENT_NUM` to reference.
 
+**Premise verification.** After composing `## Current State`/`### Key Files` above, run
+`_shared/premise-verification.md`'s check against that text — it probes every claim that a named
+file, module, subsystem, or symbol exists or is absent, or that a named module reads/writes/calls
+a named field or function, against this checkout (`git ls-files`/`git grep -n -F`, capped at 2
+probes per claim and 12 per sub-issue). A confirmed claim gains an inline citation; a contradicted
+claim is rewritten to what the tree shows; a claim the caps can't settle moves into a `## Gotchas`
+bullet prefixed `ASSUMPTION — verify at build:` instead of standing as an unverified fact. This
+runs once per sub-issue, before the Ceremony and Framing calls below — distinct from, and never a
+substitute for, `_shared/dependency-narration-check.md`'s check for a body that narrates another
+record's not-yet-merged work as settled fact.
+
 **Type** — when Step 2.6 kept a parent, matches it (`feature`). Under collapse there is no parent to match: derive the type from the unit itself (`feature` for a new capability or enhancement), and when shaping the origin in place (carve-out above), keep the origin record's existing type unless the unit's own content contradicts it. Either way, a unit that is clearly a defect fix (a bug report, a regression, broken behavior) overrides to `bug`.
 
 **Scoring** — judge each sub-issue's `risk` and `size` (low/medium/high each) from its own Deliverables and Acceptance Criteria — blast radius and reversibility for `risk`, estimated size and file spread for `size` — per `_shared/work-record.md`'s Scoring axis, run once per sub-issue. The tiers become `$SUB_ISSUE_RISK`/`$SUB_ISSUE_SIZE` below.

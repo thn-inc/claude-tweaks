@@ -20,8 +20,7 @@ On successful completion of all steps (`wrap-up` in the step list):
 | polish | {Invoked N commands ({list}); re-verify passed | Skipped — non-frontend | Skipped — no-polish | Skipped — fast-lane | Skipped — Impeccable not installed | No changes to apply | re-verify failed (see failure card)} |
 | wrap-up | Learnings captured, artifacts cleaned, ledger resolved |
 
-**Release status:** {the one-line human form from `_shared/pr-first-merge-post-merge.md` Step 4.1, verbatim — `not yet in a release — bump pending` | `already carried by vX.Y.Z — CHANGELOG backfill needed: #A, #B` | `already carried by vX.Y.Z — CHANGELOG has no vX.Y.Z entry; backfill needed: #A, #B` | `already carried by vX.Y.Z — every record named in CHANGELOG` | `n/a — no plugin manifest at {ref}` | `release status unavailable — {reason}` | `n/a — not merged in this run (outcome: {armed | pending-review})`}
-{On either backfill form, one more line: **Backfill:** staged at `staged/release-backfill-vX.Y.Z.md` (archived with the run); posted as PR #{n}'s `release-status` comment — drop the PR clause under local-merge.}
+**Release status:** {the one-line human form from `_shared/pr-first-merge-post-merge.md` Step 4.1, verbatim — `unreleased` | `vX.Y.Z` | `release status unavailable — {reason}` | `n/a — not merged in this run (outcome: {armed | pending-review})`}
 
 **Reconcile:** {one line from `node "{pluginRoot}/bin/hooks.js" reconcile-summary`, run once here and printed verbatim — `reconcile: {archived} archived, {stuck} stuck (oldest {age}), mirror ff {ok | declined — {reason} | anomaly — {state} | skipped — {reason} | failed — {reason} | n/a}`}
 
@@ -93,19 +92,15 @@ Close the template's fence above, then assemble the applicable lines (the base 2
 `/claude-tweaks:help` — full pipeline status
 `/claude-tweaks:build {N}` — spec {N} "{title}" now unblocked — when unblocked specs exist
 `/claude-tweaks:deepen {changed-paths}` — act on the {N} depth opportunit{y/ies} surfaced above — when the depth survey surfaced candidates
-`node plugin/bin/release.js {minor|patch} "{summary}"` — cut the release, this merge is not yet in a shipped version | `{backfill command}` — already shipped in vX.Y.Z, the CHANGELOG is missing this record — when this project has a documented release procedure
+`/claude-tweaks:release` — cut the release, {N} unreleased commit{s} since {lastTag or "the first commit"} — when this run's release-preflight pack shows unreleased work (see Release row below)
 `PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow "{target}" wrap-up` — resume to re-offer the merge decision, PR #{n} is ready — when this run's own outcome is armed/pending-review under pr-first
 
-**Release row.** Render only when the project has a documented release procedure (here: `docs/releasing.md` and `plugin/bin/release.js`) and the ancestry check that decides between the two forms actually ran and produced a result — never render a release row from an unverified premise, and never render one at all when the check couldn't run. This project already ran that check in `wrap-up` (`_shared/pr-first-merge-post-merge.md` Step 4.1) and printed its one-line result as the fenced template's **Release status:** field above — reuse that value verbatim rather than re-running the check:
+**Release row (#680).** Render `/claude-tweaks:release` only when this run produced a release-preflight pack (`node "${CLAUDE_PLUGIN_ROOT}/bin/release-preflight.js" --run "$PIPELINE_RUN_DIR"`, unit 5's fact pack) whose `unreleased` field is present and resolved (`{ok: true, value: {since, commits: [...]}}`) — never render from an unverified premise:
 
-- `not yet in a release — bump pending` → render **`node plugin/bin/release.js {minor|patch} "{summary}"`** — cut the release.
-- `already carried by vX.Y.Z — CHANGELOG backfill needed: …` or `…has no vX.Y.Z entry; backfill needed: …` → render `{apply the staged staged/release-backfill-vX.Y.Z.md content}` — already shipped in vX.Y.Z, backfill the CHANGELOG.
-- `already carried by vX.Y.Z — every record named in CHANGELOG` → nothing to do; omit the release row entirely.
-- `n/a — …` or `release status unavailable — …` → the check didn't resolve; omit the release row entirely.
+- `unreleased.ok === true` and `unreleased.value.commits` is non-empty → render **`/claude-tweaks:release`** — cut the release, naming `unreleased.value.commits.length` and `unreleased.value.since` (or "the first commit" when `since` is null).
+- `unreleased.ok === true` and `unreleased.value.commits` is empty, `unreleased.ok === false` (a degraded field), or the `unreleased` field is absent entirely (no pack produced for this run) → omit the release row entirely.
 
-A project with a release procedure but no `plugin/bin/release.js status`-shaped subcommand has no Release status field to reuse — render the row from the two inline git commands the check itself is: `git fetch origin && git merge-base --is-ancestor <merge> <newest-bump-commit>` (exit 0 = already shipped, use the "already shipped" form; non-zero = the "cut the release" form). Still omit the row if that check cannot be run (no merge commit resolvable, no prior release to compare against).
-
-**Recommended slot.** The release row is never marked `(recommended)` while `/claude-tweaks:flow {next spec}` is present — the next spec's pipeline is the standing default. When this run has no next spec (the last spec of a batch, or a standalone run), the "cut the release" form takes the `(recommended)` slot instead of `/claude-tweaks:help`; the "backfill the CHANGELOG" form is never marked `(recommended)` — it's housekeeping, not the primary next step, in either position.
+**Recommended slot.** The release row is never marked `(recommended)` while `/claude-tweaks:flow {next spec}` is present — the next spec's pipeline is the standing default. When this run has no next spec (the last spec of a batch, or a standalone run) and the release row renders, it takes the `(recommended)` slot instead of `/claude-tweaks:help`.
 
 **Resume-to-merge row.** Render only under `integration-model: pr-first` (`_shared/integration-model.md`), only when this run's own merge outcome is `armed` or `pending-review` (the run ended without a confirmed `merged` result — whether because the Auto-merge short-circuit never triggered, its content judgment declined, or the terminal Review Console's own merge option was answered "leave PR open" / the console was stopped). Never render this row when the outcome is `merged` (nothing left to resume) or under `local-merge` (no PR, no resume-to-merge shape — the branch-finish handoff already ran inline). The row:
 

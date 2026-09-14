@@ -23,22 +23,26 @@ test('skill-authoring.md: Next Actions convention names the premise-verification
   assert.match(AUTHORING, /the option is omitted entirely when that check didn't run/);
 });
 
-test('summary-template.md: the release row is conditional and mutually exclusive on the ancestry check result', () => {
-  assert.match(SUMMARY, /Render only when the project has a documented release procedure/);
-  assert.match(SUMMARY, /never render a release row from an unverified premise, and never render one at all when the check couldn't run/);
-  assert.match(SUMMARY, /not yet in a release — bump pending.*cut the release/s);
-  assert.match(SUMMARY, /already shipped in vX\.Y\.Z, backfill the CHANGELOG/);
+// #2257 generalized the release row from the old ancestry-check/backfill
+// shape to a single `/claude-tweaks:release` recommendation gated on the
+// release-preflight pack's `unreleased` field (the `#680` rule carries
+// forward unchanged: never recommend a state-changing command from an
+// unverified or absent premise) — see
+// tests/flow-release-row-680-gating-prose.test.js for the full pin.
+test('summary-template.md: the release row is conditional on the release-preflight pack, never rendered from an unverified premise', () => {
+  assert.match(SUMMARY, /Render `\/claude-tweaks:release` only when this run produced a release-preflight pack/);
+  assert.match(SUMMARY, /never render from an unverified premise/);
+  assert.match(SUMMARY, /omit the release row entirely/);
 });
 
-test('summary-template.md: the release row cites the #678 release-status subcommand as its source, falling back to inline git commands', () => {
-  assert.match(SUMMARY, /reuse that value verbatim rather than re-running the check/);
-  assert.match(SUMMARY, /no `plugin\/bin\/release\.js status`-shaped subcommand.*render the row from the two inline git commands/s);
-  assert.match(SUMMARY, /git merge-base --is-ancestor <merge> <newest-bump-commit>/);
+test('summary-template.md: the release row reads the release-preflight pack, never the retired release.js status subcommand', () => {
+  assert.match(SUMMARY, /bin\/release-preflight\.js/);
+  assert.doesNotMatch(SUMMARY, /release\.js" status/);
+  assert.doesNotMatch(SUMMARY, /git merge-base --is-ancestor/);
 });
 
-test('summary-template.md: neither release-row form is unconditionally Recommended', () => {
+test('summary-template.md: the release row is never unconditionally Recommended', () => {
   assert.match(SUMMARY, /is never marked `\(recommended\)` while `\/claude-tweaks:flow \{next spec\}` is present/);
-  assert.match(SUMMARY, /the "backfill the CHANGELOG" form is never marked `\(recommended\)`/);
 });
 
 test('summary-template.md: Next Actions still documents assembling only applicable lines, base 2 plus conditionals', () => {

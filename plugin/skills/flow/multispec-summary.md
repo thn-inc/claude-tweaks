@@ -16,8 +16,8 @@ After all specs complete (or one fails), present a consolidated summary:
 | {N} | passed | FAILED | — | — | — | Failed (test gate) — continued (keep-going) |
 | {N} | — | — | — | — | — | Not run (previous spec failed) |
 
-**Release status:** {one line for the run's single shared branch, from `_shared/pr-first-merge-post-merge.md` Step 4.1, verbatim — same vocabulary as `summary-template.md`'s line; `n/a — not merged in this run (outcome: {armed | pending-review})` when the bundle PR did not merge in this run}
-{On either backfill form, `summary-template.md`'s same **Backfill:** line}
+**Release status:** {one line for the run's single shared branch, from `_shared/pr-first-merge-post-merge.md` Step 4.1, verbatim — same vocabulary as `summary-template.md`'s line (`unreleased` | `vX.Y.Z` | `release status unavailable — {reason}`); `n/a — not merged in this run (outcome: {armed | pending-review})` when the bundle PR did not merge in this run}
+`/claude-tweaks:release` — cut the release, {N} unreleased commit{s} since {lastTag or "the first commit"} — same `#680` gating as `summary-template.md`'s Release row (this run's release-preflight pack, `unreleased` field non-empty)
 
 ### Timing
 

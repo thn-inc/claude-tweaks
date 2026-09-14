@@ -77,6 +77,8 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
      │
   ┈┈ /claude-tweaks:demo resolves demo:pending → approved/changes-requested (utility skill, no fixed position — run anytime, resolves one item per ref: a specific #N, a #N,#M list one at a time, or this session's own unrecorded work via session-recall) ┈┈
      │
+  ┈┈ /claude-tweaks:release cuts the release — recommended by wrap-up/flow's Next Actions when the preflight pack shows unreleased work (#680); on demand, suggested, or the release train (utility skill, no fixed position — run anytime) ┈┈
+     │
   ┈┈ /claude-tweaks:routine fleet status aggregates routine health + weekly counters, fleet off pauses (utility skill, no fixed position — run anytime) ┈┈
 ```
 

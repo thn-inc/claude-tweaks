@@ -62,7 +62,7 @@ test('classifyStagedItem maps every known prefix to its console section and unkn
     'review-unconfirmed-3.md': 'Low-confidence findings', 'review-contested-4.md': 'Contested findings', 'review-debate-1.md': 'Contested findings',
     'polish-suggestion-1.md': 'Pending review', 'visual-review-skipped.md': 'Pending review', 'design-decision-2.md': 'Pending review', 'build-deviation-1.md': 'Pending review',
     'wrap-up-skill-1.md': 'Skill updates', 'wrap-up-skill-new-auth.md': 'Skill updates', 'wrap-up-skill-restructure.md': 'Skill updates',
-    'wrap-up-doc-1.md': 'Documentation updates', 'release-backfill-v6.md': 'Documentation updates', 'tidy-doc-1.md': 'Documentation updates',
+    'wrap-up-doc-1.md': 'Documentation updates', 'tidy-doc-1.md': 'Documentation updates',
     'wrap-up-journey-1.md': 'Journey updates', 'journeys-convention.md': 'Journey updates',
     'tidy-claude-md-rule-1.md': 'Queue writes',
     'reflect-1.md': 'Queue writes', 'digest-promotion-1.md': 'Queue writes', 'leftover-add-oauth.md': 'Queue writes', 'ledger-record-1.md': 'Queue writes',
