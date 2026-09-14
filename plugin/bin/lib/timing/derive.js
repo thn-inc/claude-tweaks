@@ -21,7 +21,8 @@ const PHASES = ['call-1', 'call-2', 'build', 'plan', 'tasks', 'test', 'review', 
 const NESTED_PARENT = Object.freeze({
   simplify: 'enclosing', reflect: 'enclosing', 'visual-review': 'enclosing', capture: 'enclosing',
   'design-wrapper': 'enclosing', challenge: 'enclosing', 'assess-agent-autonomy': 'enclosing',
-  ledger: 'enclosing', journeys: 'enclosing',
+  ledger: 'enclosing', journeys: 'enclosing', stories: 'enclosing', deepen: 'enclosing',
+  feedback: 'enclosing',
 });
 
 const TERMINAL_TYPES = new Set(['session-end', 'close-run', 'worktree-reaped']);

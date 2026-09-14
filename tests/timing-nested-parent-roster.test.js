@@ -37,15 +37,6 @@ const ALLOWLIST = Object.freeze({
   'journey-health': 'cited only as the consumer of the shared _shared/journey-*.md helper files and in wrap-up\'s journey-curation.md judge-file prose reusing its criteria inline — never Skill-tool-invoked from within a phase',
   'docs-health': 'cited only as the consumer whose rotation/criteria wrap-up\'s docs-health-integration.md judge file reuses inline ("that\'s /claude-tweaks:docs-health\'s own rotation\'s job, not this sub-issue\'s") — never Skill-tool-invoked from within a phase',
   visualize: 'cited only in review\'s doc-freshness-lens.md as a suggested follow-up command, and in _shared/visual-html-output.md describing its own output convention — never Skill-tool-invoked from a phase',
-  // The three below ARE real nested Skill-tool invocations not yet covered by NESTED_PARENT/PHASES
-  // (flow/SKILL.md:80 "Run `/claude-tweaks:stories`"; flow/SKILL.md:195 "invoke `/claude-tweaks:deepen`";
-  // wrap-up/review-console.md:126 + flow/multispec-review-console.md:115 "invoke `/claude-tweaks:feedback --pre-confirmed`").
-  // This test's job is to catch and report such gaps, not to silently add roster entries for them
-  // (a semantic phase-attribution decision out of this record's scope) — filed as a follow-up:
-  // https://github.com/thomasholknielsen/claude-tweaks/issues/2249
-  deepen: 'real nested invocation (flow Step 5 Depth Opportunities survey) not yet in NESTED_PARENT — tracked as follow-up #2249, not silently rostered here',
-  stories: 'real nested invocation (flow\'s automatic story generation) not yet in NESTED_PARENT — tracked as follow-up #2249, not silently rostered here',
-  feedback: 'real nested invocation (wrap-up/flow Review Console upstream-feedback filing) not yet in NESTED_PARENT — tracked as follow-up #2249, not silently rostered here',
 });
 
 function walk(dir) {
