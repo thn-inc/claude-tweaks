@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T02:21:33.237Z",
+  "computedAt": "2026-09-14T02:42:29.985Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -146,11 +146,6 @@
       {
         "number": 2322,
         "updatedAt": "2026-09-13T13:33:00Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2321,
-        "updatedAt": "2026-09-13T13:33:02Z",
         "state": "OPEN"
       },
       {
@@ -3361,84 +3356,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "**Related:** #2314\n\nOrigin: ledger resolve gate\n\nDefer-reason: needs-human-decision\n\n## Current State\n\nDuring the #2251 run, `tests/impeccable-cli-contract.test.js` began failing mid-run: the installed Impeccable version resolved to 4.1.0 while the repo pins 3.6.0 (`tools/upstream-drift`). The same full suite passed twice earlier in the run (8234/0), so the install changed underneath the session — not a regression from any branch. Until resolved, every `npm test` on this machine reports one failure that has nothing to do with the diff under test.\n\n## Deliverables\n\nMaintainer decides: re-record the contract fixtures against the installed 4.x via the `upstream-drift` procedure and move the pin, or reinstall 3.6.0 (`npm install -g impeccable@3.6.0`).\n\nRecord the decision beside the pin (the test file header or the manifest).\n\nConfirm which install the test resolves on this machine (the global npm list is empty and no `impeccable` binary is on PATH, yet the test read 4.1.0) and note the resolution path in the test header.\n\n## Acceptance Criteria\n\n`node --test tests/impeccable-cli-contract.test.js` passes 6/6 on this machine.\n\nThe pin and the installed version agree, with the decision recorded.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n\n\n---\nFiled by the multi-spec wrap-up of run `2026-09-11T204239-spec-2251-2252-2253-2254-2255-2256-2258` (queue write from spec 2251; source `spec-2251/staged/ledger-record-impeccable-cli-contract-repin.md`; consoleAutoResolve at `autonomy: unattended`).\n\nhttps://claude.ai/code/session_018rz67jb18j1RLSqhjEdYWH\n\n",
-        "createdAt": "2026-09-12T16:21:26Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          }
-        ],
-        "number": 2321,
-        "state": "OPEN",
-        "title": "Re-pin tests/impeccable-cli-contract.test.js to the installed Impeccable (4.x) or reinstall the pinned 3.6.0",
-        "updatedAt": "2026-09-13T13:33:02Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
           "stage": "ready",
           "grants": {
             "build": true,
