@@ -18,6 +18,14 @@ The gate is already evaluated when you read this. The signals mean:
 
 Unlike the other four signals above, `claudeMdOverBudget` is not diff-scoped — it is a static check of the file's current size, not something introduced by this specific piece of work. This is intentional: once `CLAUDE.md` or a rule file goes over its tier's budget, this row's gate stays open on every subsequent wrap-up run until the file is trimmed back under budget, the same persistent-until-fixed treatment `harness-health-analysis.md` check 4 already gives an over-budget file. It is not a bug if this row keeps reopening across many runs on an over-budget project — that is the pressure the record exists to apply.
 
+**Stamping an over-budget filing (#1829).** A `claudeMdOverBudget`-triggered queue write — like every other queue write this row's `stagePath`/`action: "staged"` shape produces — is composed via `specShapedBody`, but this signal's finding names a **measured, mechanical claim** ("N lines vs the M-line budget"), and that claim can go stale between filing and the record's eventual build. Read `plugin/bin/lib/wrap-up/facts.js`'s `claudeMdBudgetTargets` (the sibling fact beside the `claudeMdOverBudget` boolean — `[{path, lines, budget}]` for every in-scope target) rather than re-measuring by hand, and compose the filing with:
+
+- `verifiedAsOf`: the current HEAD sha (`git rev-parse HEAD`) — the same freshness stamp the four health-sweep skills already thread through `specShapedBody`, so `flow/materialize.md`'s drift check has something to compare when this record is eventually built.
+- One Current State line per over-budget target, in the form `` `{path}`: {lines} lines vs the {budget}-line budget (`wc -l {path}` at {sha}) `` — `{lines}`/`{budget}` from `claudeMdBudgetTargets`, `{sha}` the same `verifiedAsOf` value.
+- `premiseCheck` (rendered as the body's `Premise-check: {command}` line — `extractPremiseCheck`'s own convention, same as `verifiedAsOf`/`Verified-as-of:`): for a single over-budget target, `test $(wc -l < {path}) -gt {budget}` — a command that exits 0 while the file is still over budget, non-zero once it no longer is. For multiple over-budget targets in one filing, join each target's own check with `&&` so the combined command exits 0 only while every named target is still over its own budget.
+
+This is the complementary mechanical case to #1769's `ASSUMPTION — verify at build` marker (for a claim the composer cannot settle): here the claim *is* a command, so `materialize.js` can re-run it directly (`flow/materialize.md`'s "Premise check" paragraph) instead of asking a build-time reader to re-derive it by eye.
+
 Do not re-evaluate them. They are context for what to look at first, not a gate to re-run.
 
 ## Step 1: Classify before collecting
