@@ -1,6 +1,7 @@
 {
-  "released": true,
-  "runId": "2026-09-07T131039-spec-1705-1611-1477-496-491-490-193-137-44",
-  "reason": "no forceable deliverable this run -- observational verification record, left open",
-  "releasedAt": "2026-09-07T14:11:38.582Z"
+  "runId": "2026-09-14T132656-record-2240",
+  "sessionId": "8cd6ed34-ee2c-406d-bfe8-280b7435a0d0",
+  "claimedAt": "2026-09-14T16:32:55.164Z",
+  "ttlHours": 72,
+  "host": "Thomass-MacBook-Pro-3376.local"
 }
