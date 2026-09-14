@@ -46,6 +46,24 @@ const UNSUPPORTED = new Set(['java', 'ruby', 'dotnet']);
 
 class ManifestError extends Error {}
 
+// #2327: `bump-minor-pre-major`/`bump-patch-for-minor-pre-major` — release-please's
+// own pre-major bump-softening keys (see bin/lib/release-local/bump.js's own
+// comment for the default rationale). Package-level (`packages['.']`) wins
+// over the top-level key, same precedence `release-type`/`extra-files` already
+// use above; a non-boolean or absent value falls through to the default.
+function readBumpFlag(cfg, pkg, key, defaultValue) {
+  if (typeof pkg[key] === 'boolean') return pkg[key];
+  if (typeof cfg[key] === 'boolean') return cfg[key];
+  return defaultValue;
+}
+
+function extractBumpFlags(cfg, pkg) {
+  return {
+    bumpMinorPreMajor: readBumpFlag(cfg, pkg, 'bump-minor-pre-major', true),
+    bumpPatchForMinorPreMajor: readBumpFlag(cfg, pkg, 'bump-patch-for-minor-pre-major', false),
+  };
+}
+
 function readConfig(readFile) {
   const text = readFile(CONFIG_FILE);
   if (text === null || text === undefined) return null;
@@ -55,7 +73,22 @@ function readConfig(readFile) {
   const releaseType = pkg['release-type'] || cfg['release-type'] || null;
   const extraFiles = pkg['extra-files'] || cfg['extra-files'] || [];
   if (!releaseType) throw new ManifestError(`${CONFIG_FILE} names no release-type for package "."`);
-  return { releaseType, extraFiles };
+  return { releaseType, extraFiles, ...extractBumpFlags(cfg, pkg) };
+}
+
+// Tolerant sibling of readConfig, for a caller that needs only the bump flags
+// and must never fail the wider probe over a release-type it doesn't need
+// (pack.js's proposedVersion, called on a config that may be absent,
+// malformed, or missing a release-type entirely) — every failure mode here
+// degrades to the same defaults extractBumpFlags({}, {}) already returns.
+function readBumpFlags(readFile) {
+  let text;
+  try { text = readFile(CONFIG_FILE); } catch { return extractBumpFlags({}, {}); }
+  if (text === null || text === undefined) return extractBumpFlags({}, {});
+  let cfg;
+  try { cfg = JSON.parse(text); } catch { return extractBumpFlags({}, {}); }
+  const pkg = (cfg.packages && cfg.packages['.']) || {};
+  return extractBumpFlags(cfg, pkg);
 }
 
 function extraFileTarget(entry) {
@@ -303,5 +336,5 @@ function applyVersion(targets, to, readFile, writeFile) {
 
 module.exports = {
   CONFIG_FILE, MANIFEST_FILE, STACK_TARGETS, ManifestError,
-  readConfig, resolveTargets, spliceVersion, currentVersion, versionAtRef, plannedWrites, applyVersion,
+  readConfig, readBumpFlags, resolveTargets, spliceVersion, currentVersion, versionAtRef, plannedWrites, applyVersion,
 };

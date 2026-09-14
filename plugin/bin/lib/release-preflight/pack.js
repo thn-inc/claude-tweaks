@@ -13,7 +13,7 @@ const { promisify } = require('util');
 const { conventionalHistory } = require('../release-local/commits.js');
 const { bumpPart } = require('../release-local/bump.js');
 const { nextVersion } = require('../release/compose.js');
-const { readConfig, resolveTargets, versionAtRef, MANIFEST_FILE } = require('../release-local/manifest.js');
+const { readConfig, readBumpFlags, resolveTargets, versionAtRef, MANIFEST_FILE } = require('../release-local/manifest.js');
 const { compareVersions } = require('../changelog.js');
 const { resolvePolicyConfig } = require('../policy-schema.js');
 const { wrapProbe, withTimeout } = require('../wrap-up/pack.js');
@@ -246,10 +246,19 @@ function prepare({ deps, rootArg, runDir }) {
     },
     proposedVersion: async () => {
       const { lastTag, commits } = await historyOf();
-      const part = bumpPart(commits);
-      if (part === 'none') throw new Error(`nothing to release: ${commits.length} commit(s) since ${lastTag || 'the first commit'}, none feat/fix/breaking`);
+      // The none/not-none question never depends on the pre-major bump flags
+      // below (breaking/feat/fix presence alone decides it) — check it first,
+      // bare, so a malformed release-please-config.json never shadows a
+      // correct "nothing to release" with a manifest-read error instead.
+      if (bumpPart(commits) === 'none') throw new Error(`nothing to release: ${commits.length} commit(s) since ${lastTag || 'the first commit'}, none feat/fix/breaking`);
       const { base, baseSource } = versionBase(lastTag);
-      return { version: nextVersion(base, part), part, base, baseSource, tipRef };
+      // #2327: preMajor + the config's own bump-minor-pre-major/
+      // bump-patch-for-minor-pre-major flags soften the precedence while the
+      // base is still 0.x — see bin/lib/release-local/bump.js's own comment.
+      const preMajor = /^0\./.test(base);
+      const { bumpMinorPreMajor, bumpPatchForMinorPreMajor } = readBumpFlags(showAtTip);
+      const part = bumpPart(commits, { preMajor, bumpMinorPreMajor, bumpPatchForMinorPreMajor });
+      return { version: nextVersion(base, part), part, base, baseSource, preMajor, tipRef };
     },
     releasePr,
     // Ruling 11: GitHub is asked for the BRANCH by name, so it resolves its own
