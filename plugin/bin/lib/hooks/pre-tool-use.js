@@ -33,7 +33,7 @@ const wtDetect = require('./worktree-detect');
 const { resolveIntegrationBranch, preferRemoteTrackingRef, bareIntegrationName } = require('./worktree-reap');
 const { runGit, FAILURE } = require('./git-exec');
 const { detectIntegrationModel, resolvePolicyConfig } = require('../policy-schema');
-const { isPathContained } = require('../shared-primitives');
+const { isPathContained, escapeRegExp } = require('../shared-primitives');
 
 function pluginRoot() {
   return process.env.CLAUDE_PLUGIN_ROOT || '${CLAUDE_PLUGIN_ROOT}';
@@ -1174,6 +1174,34 @@ function hasLoggedPrDegrade(runDir) {
   }
 }
 
+// #1800: closes the #989 exemption's chicken-and-egg gap — that exemption
+// (hasNoUpstreamYet below) let ANY first publish push through unconditionally,
+// with no check that pr-early-run-lifecycle.md's Step 1 (the `gh pr list
+// --head {branch} --state all` reuse/reopen check) actually ran first. #903's
+// stale-PR collision fell through exactly this hole: Step 1 was skipped, the
+// exemption let the push through anyway, and it collided with a leftover PR
+// Step 1 would have found and reused/reopened. Step 1 always logs one of
+// three outcome lines before Step 2's push (no-match / reuse-open / reopen —
+// pr-early-run-lifecycle.md's Step 1) — this reads decisions.md for any of
+// them, scoped to THIS branch so a Step 1 line from a *previous* attempt
+// (decisions.md is reused across retries on the same branch name) can't
+// satisfy a fresh attempt's precondition. Read-only, best-effort: a missing
+// or unreadable decisions.md resolves to false (no Step 1 line found), never
+// throws — same posture as hasLoggedPrDegrade above.
+function hasLoggedPrEarlyStep1(runDir, branch) {
+  try {
+    const body = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+    const b = escapeRegExp(branch);
+    const re = new RegExp(
+      `PR-early run lifecycle: (?:no existing PR for|reusing open PR #\\d+ for|reopened PR #\\d+ for) ${b}\\b`,
+      'i',
+    );
+    return re.test(body);
+  } catch {
+    return false;
+  }
+}
+
 // #2526: this run's own materialized record numbers, read straight off the
 // live worktree filesystem (work/{n}-spec.md, or its multi-record
 // spec-{slug}/work/{n}-spec.md form — the same two shapes
@@ -1247,6 +1275,18 @@ function readWorkBackendValue(worktreeRoot) {
   } catch {
     return null;
   }
+}
+
+// The branch a push target's `dir` is currently on — used only to scope
+// hasLoggedPrEarlyStep1's decisions.md read to THIS attempt's branch name.
+// Ambiguity (detached HEAD, spawn failure) resolves to null, never throws;
+// the #1800 exemption check below treats a null branch as NOT exempt (fail
+// closed), matching this file's stated posture for the #989 exemption's own
+// ambiguous cases (see hasNoUpstreamYet's comment above).
+function currentBranchName(dir) {
+  const res = runGit(['symbolic-ref', '--short', 'HEAD'], dir);
+  if (res.failure || !res.stdout) return null;
+  return res.stdout.trim() || null;
 }
 
 // Chicken-and-egg escape hatch for the PR-stamp branch below (#989): a push
@@ -1689,19 +1729,11 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   }
 
   if (!runState.pr) {
-    // #989: exempt an in-flight initial publish (see hasNoUpstreamYet above)
-    // before doing anything else in this branch — this is a narrow, one-shot
-    // allowance for THIS call only, never persisted as `prExempt`, so a push
-    // to an already-tracked branch (Step 2 already ran once, `gh pr create`
-    // never followed it) still falls through to the deny below, preserving
-    // the "keep pushing forever, never open the PR" case IL-131 exists to
-    // close. Applies only to the Bash/git branch (`commandGitTargets`) — an
-    // Edit/Write/NotebookEdit call (`commandGitTargets` null) is never a
-    // push and always continues past this check.
-    if (Array.isArray(commandGitTargets) && commandGitTargets.length > 0
-      && commandGitTargets.every((t) => t.action === 'push' && hasNoUpstreamYet(t.dir))) {
-      return {};
-    }
+    // Model resolution moved ahead of the #989 exemption below (#1800) — the
+    // exemption's own precondition now depends on `model` (a resolved
+    // `local-merge` run never runs pr-early-run-lifecycle.md's Step 1 at all,
+    // so it must stay exempt on hasNoUpstreamYet alone; only `pr-first` gains
+    // the added Step-1 precondition).
     const override = deps && deps.resolveIntegrationModel;
     const mainRoot = wtDetect.mainCheckoutRoot(wtRoot) || wtRoot;
     let model;
@@ -1716,6 +1748,46 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
     } catch {
       model = 'local-merge'; // fail open: an unresolvable model is not provably pr-first
       modelResolved = false;
+    }
+    // #989: exempt an in-flight initial publish (see hasNoUpstreamYet above)
+    // before doing anything else in this branch — this is a narrow, one-shot
+    // allowance for THIS call only, never persisted as `prExempt`, so a push
+    // to an already-tracked branch (Step 2 already ran once, `gh pr create`
+    // never followed it) still falls through to the deny below, preserving
+    // the "keep pushing forever, never open the PR" case IL-131 exists to
+    // close. Applies only to the Bash/git branch (`commandGitTargets`) — an
+    // Edit/Write/NotebookEdit call (`commandGitTargets` null) is never a
+    // push and always continues past this check.
+    if (Array.isArray(commandGitTargets) && commandGitTargets.length > 0
+      && commandGitTargets.every((t) => t.action === 'push' && hasNoUpstreamYet(t.dir))) {
+      // #1800: a resolved `local-merge` model never runs Step 1 (the whole
+      // file is skipped for it), so it stays exempt exactly as before —
+      // only `pr-first` gains the added precondition below. The exemption
+      // above answers "is this the branch's first publish push?" — it does
+      // not answer "did Step 1 run first?". A `pr-first` push additionally
+      // requires every target's branch to carry a Step 1 outcome line in
+      // decisions.md before the push it precedes is let through.
+      if (model !== 'pr-first') return {};
+      const branch = currentBranchName(commandGitTargets[0].dir);
+      if (branch && commandGitTargets.every((t) => currentBranchName(t.dir) === branch)
+        && hasLoggedPrEarlyStep1(ctx.runDir, branch)) {
+        return {};
+      }
+      return stampCheckOutcome(
+        ctx, 'record-pr-step1', wtRoot, warnings,
+        `claude-tweaks: pipeline run ${path.basename(ctx.runDir)} resolves integration-model: pr-first and this ` +
+        `branch has never been pushed, but this call comes from a different session than the one that recorded ` +
+        `the run; allowing it. If this IS that pipeline's work, run pr-early-run-lifecycle.md Step 1 from the ` +
+        `owning session rather than stamping another session's run state (docs/hooks.md).`,
+        `claude-tweaks: this project resolves integration-model: pr-first and this branch has never been pushed, ` +
+        `but decisions.md carries no "PR-early run lifecycle:" line for it — pr-early-run-lifecycle.md Step 1 (the ` +
+        `\`gh pr list --head {branch} --state all\` reuse/reopen check) must run and log its outcome before this ` +
+        `initial publish push proceeds [IL-131], so a leftover PR from an earlier attempt on this branch name is ` +
+        `found and reused/reopened rather than collided with (#903). Run Step 1's check now; if it already ran, log ` +
+        `its outcome to decisions.md, e.g.: node "${pluginRoot()}/bin/log-decision.js" --run "${ctx.runDir}" ` +
+        `--status AUTO --reversibility n/a --text "PR-early run lifecycle: no existing PR for {branch}; creating."`,
+        isForeignSessionCall(ctx),
+      );
     }
     if (model === 'pr-first' && !hasLoggedPrDegrade(ctx.runDir)) {
       return stampCheckOutcome(

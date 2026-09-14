@@ -444,13 +444,20 @@ test('bookkeeping-stamps gate: worktree stamped, resolveIntegrationModel stubbed
   assert.ok(readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'record-pr'));
 });
 
-test('bookkeeping-stamps gate (#989): worktree stamped, pr-first stubbed, a push establishing a not-yet-tracked branch -> allow (pr-early-run-lifecycle.md Step 2 itself, not yet deniable)', () => {
+test('bookkeeping-stamps gate (#989): worktree stamped, pr-first stubbed, a push establishing a not-yet-tracked branch, Step 1\'s no-match line already logged -> allow (pr-early-run-lifecycle.md Step 2 itself, not yet deniable)', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
   const { run } = mkRunDir(project, wt, undefined);
   const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+  // #1800: the #989 exemption now additionally requires Step 1's outcome line
+  // for THIS branch in decisions.md — seed it, same as a real run's Step 1
+  // would before ever reaching Step 2's push.
+  fs.writeFileSync(
+    path.join(run, 'decisions.md'),
+    `## /build\n- AUTO 09:00:00 — PR-early run lifecycle: no existing PR for ${branch}; creating. Reversibility: n/a.\n`,
+  );
   // No `origin` remote configured at all on this fixture, and this branch has
   // never been pushed -> `@{u}` fails -> hasNoUpstreamYet is true. Without
   // the #989 fix this exact call — the run's own first publish push, made
@@ -462,6 +469,29 @@ test('bookkeeping-stamps gate (#989): worktree stamped, pr-first stubbed, a push
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.deepStrictEqual(out, {}, 'the initial publish push must not be denied — it is the prerequisite record-pr cannot exist without');
+});
+
+test('bookkeeping-stamps gate (#1800): worktree stamped, pr-first stubbed, a push establishing a not-yet-tracked branch, NO Step 1 line in decisions.md -> deny naming Step 1', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const { run } = mkRunDir(project, wt, undefined);
+  const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+  // No decisions.md written at all -- Step 1 never ran (or never logged),
+  // reproducing #903's exact gap: the #989 exemption alone would let this
+  // push straight through with no record of whether Step 1's `gh pr list`
+  // reuse/reopen check ever happened.
+  const out = pre.run(
+    { input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  assert.ok(out.json, 'expected a deny result — no Step 1 outcome line for this branch in decisions.md');
+  const spec = out.json.hookSpecificOutput;
+  assert.strictEqual(spec.permissionDecision, 'deny');
+  assert.match(spec.permissionDecisionReason, /Step 1/);
+  assert.match(spec.permissionDecisionReason, /gh pr list --head/);
+  assert.ok(readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'record-pr-step1'));
 });
 
 test('bookkeeping-stamps gate (#1860): a worktree branch created via `-b {branch} origin/main` (worktree.baseRef: fresh\'s own form) inherits tracking to origin/main before any push -> still allow the first publish push', () => {
@@ -495,6 +525,11 @@ test('bookkeeping-stamps gate (#1860): a worktree branch created via `-b {branch
     'git', ['-C', wtReal, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], { encoding: 'utf8' },
   ).trim();
   assert.strictEqual(upstream, 'origin/main', 'fixture sanity: @{u} must resolve (inherited), not fail, to reproduce #1860');
+  // #1800: seed Step 1's no-match line for this branch, same as #989's test above.
+  fs.writeFileSync(
+    path.join(run, 'decisions.md'),
+    `## /build\n- AUTO 09:00:00 — PR-early run lifecycle: no existing PR for ${branchName}; creating. Reversibility: n/a.\n`,
+  );
   const out = pre.run(
     { input: bashInput(`git push origin ${branchName}`, wtReal), runDir: run, runState: { status: 'active', worktree: wtReal }, cwd: wtReal },
     { resolveIntegrationModel: () => 'pr-first' },
