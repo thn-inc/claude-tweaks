@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T14:16:15.247Z",
+  "computedAt": "2026-09-14T14:27:37.707Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -334,11 +334,6 @@
         "state": "OPEN"
       },
       {
-        "number": 1909,
-        "updatedAt": "2026-09-14T14:16:03Z",
-        "state": "CLOSED"
-      },
-      {
         "number": 1890,
         "updatedAt": "2026-09-13T13:23:26Z",
         "state": "OPEN"
@@ -491,6 +486,11 @@
       {
         "number": 1911,
         "updatedAt": "2026-09-08T18:35:24Z",
+        "state": "CLOSED"
+      },
+      {
+        "number": 1909,
+        "updatedAt": "2026-09-14T14:16:03Z",
         "state": "CLOSED"
       },
       {
@@ -2137,88 +2137,6 @@
         }
       },
       {
-        "body": "Origin: brainstorm on #1904 (docs/superpowers/specs/2026-09-05-pipeline-ceremony-cost-design.md, \"Filed separately\")\nDefer-reason: genuinely-larger\n\n**Related:** #1987\n\n## Current State\n\nA `/claude-tweaks:flow` second call (`review,polish,wrap-up`) loads several hundred KB of skill prose before doing any work: `plugin/skills/_shared/` is 1.3 MB, `wrap-up/` alone is 408 KB, `flow/` 348 KB, and each 40 KB file is roughly 10k tokens. Reading the operative files shows that roughly half of most of them is provenance rather than procedure: which record moved a paragraph (\"extracted for #887\", \"split out per #635\"), which commit deleted a design doc (\"deleted `70849915`\"), and retold incident narratives that `docs/incident-log.md` already holds under their `[IL-nn]` tag. The context-cost test (`bin/lib/skill-audit/tests/context-cost.test.js`) caps bytes per file but nothing measures bytes loaded per pipeline step, so the procedure-vs-provenance ratio is invisible. #1765 (fast-lane digest) addresses the same waste for the fast-lane path only; this record is the general case. Tokens, not minutes: prose loading costs money and context headroom (compaction pressure), not wall-clock.\n\nThis record is Phase 5 of #1987 (Skill context composer — per-run bundles composed by resolved condition, not per-file ceilings): #1987's Phases 1-4 ship the composer mechanism and its per-step measurement; this record consumes that measurement and does the prose-diet and scaffolding-dedupe pass on top of it.\n\n## Deliverables\n\n- [ ] A stated authoring rule in `docs/skill-authoring.md`: operative text (`## Step N` bodies, gate tables, Next Actions) states the rule and cites the `[IL-nn]` tag or record number; the narrative of why lives in `docs/incident-log.md` or `docs/decisions/`, never restated inline. One sentence of rationale per rule is allowed; a paragraph is not.\n- [ ] Per-step composed-bytes measurement is delivered by #1990 (Per-step composed-bytes measurement in context-cost.js) — this record consumes that measurement, not builds it.\n- [ ] A first trimming pass over the five pipeline skills plus the `_shared` files they cite, moving provenance out per the rule, with the conformance tests that pin the moved prose updated in the same change (the real cost of this record — every trim moves pins).\n- [ ] Before/after bytes per step recorded in the PR description.\n- [ ] Inject the Interaction-style directive once from the `SessionStart` hook (`plugin/bin/lib/hooks/session-start.js`) and delete the 35 verbatim copies (501 B each) from every SKILL.md, with the conformance tests that pin that paragraph retargeted to the hook output.\n- [ ] Audit the per-skill `## Input`/`## Anti-Patterns`/`## Component-Skill Contract`/`## Next Actions` scaffolding (~260 KB of the 888 KB SKILL.md payload) with `bloat.js`'s existing provenance signals and trim author-facing narration.\n\n## Acceptance Criteria\n\n- [ ] `docs/skill-authoring.md` carries the rule and `harness-health` reports loaded bytes per pipeline step.\n- [ ] The five pipeline skills' default-path loaded bytes drop by at least 25% with no change to which steps execute, verified by the existing conformance suites passing after pin updates.\n- [ ] No `[IL-nn]` narrative is lost: every trimmed retelling still resolves to its incident-log entry by tag.\n\n## Technical Approach\n\n### Key Files\n\n- `docs/skill-authoring.md`\n- `plugin/bin/lib/skill-audit/`\n- `plugin/skills/flow/SKILL.md`, `plugin/skills/flow/steps-and-gates.md`\n- `plugin/skills/build/SKILL.md`\n- `plugin/skills/review/SKILL.md`, `plugin/skills/review/code-mode-steps.md`\n- `plugin/skills/wrap-up/SKILL.md`\n- `plugin/skills/test/verification.md`\n- `plugin/skills/_shared/subagent-output-contract.md`, `plugin/skills/_shared/pipeline-run-dir.md`\n- `plugin/bin/lib/hooks/session-start.js`\n- `plugin/bin/lib/skill-audit/bloat.js`\n- `tests/` (prose conformance suites pinning the trimmed text)\n",
-        "createdAt": "2026-09-05T16:43:07Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
-            "name": "size:high",
-            "description": "Scoring: large change — consider decomposition before building",
-            "color": "BFD4F2"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXTZ8w",
-            "name": "demo:pending",
-            "description": "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo",
-            "color": "1D76DB"
-          }
-        ],
-        "number": 1909,
-        "state": "CLOSED",
-        "title": "Instruction-prose diet: operative skill text states the rule and the IL tag, provenance narrative moves out, per-pipeline-step loaded-bytes budget",
-        "updatedAt": "2026-09-14T14:16:03Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "high",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": "pending",
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      },
-      {
         "body": "Surface: infra\n\n## Current State\n\n`/claude-tweaks:specify`'s decomposition path composes each sub-issue's `## Current State` and `### Key Files` from Step 1's landscape pass (`plugin/skills/specify/decomposition-mode.md`, Step 1 item 5 — \"identify existing files, schemas, APIs, and patterns that the new work will build on\") and writes them in the same declarative voice whether a claim was observed in the tree or inferred from the design doc. Nothing between composition and `gh issue create` checks a current-state claim against the actual checkout. The one verification step that exists at composition time is `_shared/dependency-narration-check.md` (cited from `shaping-mode.md` only, not from the decomposition loop), and it catches a different defect: narrating another record's unmerged follow-up as landed. Shaping mode also has a one-paragraph \"cheap sanity check\" for human-filed defect reports that name a file, function, or error string (`plugin/skills/specify/shaping-mode.md`, the paragraph above its Dependency-narration check subsection) — decomposition has no equivalent, and neither path distinguishes a verified observation from an assumption in the written body.\n\nObserved cost (feedback from a private project's four-spec decomposition on plugin 6.114.0): one spec asserted a dependency subsystem was absent and would need stubbing when it was present on the branch; another justified its trigger condition with \"an existing module already reads this field for these rows\" when the module never read the field. Both claims were falsifiable with one grep. Both survived to build and final review respectively, where the build phase re-derived the true state and the review ledgered a write-only data gap as a follow-up record.\n\n`spec-template.md` already has the vocabulary for the unverifiable case at a different scope: its \"Empirical Premise-Check Deliverables\" section handles assumptions about third-party CLI/API behavior via a blocking Task 0, and its self-check list (\"No Placeholders\") rejects files referenced but not defined in `Key Files`. It has no rule that a `## Current State` claim about *this repo's* existing code must carry evidence or be marked as an assumption. `/claude-tweaks:build` hands \"the full spec content (including Current State, Gotchas, and acceptance criteria)\" to `/superpowers:writing-plans` (`plugin/skills/build/SKILL.md`, the writing-plans handoff) and treats every sentence as a constraint.\n\nRelated but distinct: #490 (closed) propagates *planned* sibling changes into Key Files via `crossReferenceKeyFiles`; this record is about the truth of *current-state* claims. #178 (closed wontfix) proposed a `falsified` vocabulary for brainstorming briefs, not for composed spec bodies.\n\n## Deliverables\n\n- [ ] **Premise verification step in the decomposition loop.** In `plugin/skills/specify/record-creation-subissues.md`'s per-sub-issue Body composition — after the body is composed, before the Ceremony and Framing calls — add a bounded verification pass over the composed `## Current State` and `### Key Files`: every claim that a named file, module, subsystem, or symbol exists or is absent, or that a named module reads/writes/calls a named field or function, gets one `git ls-files`/`git grep -n -F` probe against the checkout the decomposition runs in. Caps stated in the prose so the pass stays one step (at most 2 probes per claim, at most 12 per sub-issue — the same cap shape `challenge/SKILL.md`'s bare-`#N` evidence search uses). A confirmed claim keeps its sentence and gains an inline citation (`path:line`, or the `git ls-files` hit for existence claims). A contradicted claim is rewritten to what the tree shows before the body is filed. The pass is a content judgment applied by the model, not a new `bin/` CLI.\n- [ ] **`ASSUMPTION — verify at build` marker for unverifiable claims.** A claim the probe cannot settle at decomposition time (a sibling unit's not-yet-built output, an external system, a runtime behavior no grep reaches) moves out of `## Current State`'s declarative voice into a `## Gotchas` bullet with the literal prefix `ASSUMPTION — verify at build:` followed by the claim and what would confirm it. Define the marker once in `plugin/skills/specify/spec-template.md`'s `## Gotchas` section (one template bullet showing the shape), and add one line to its \"No Placeholders\" self-check list: a `## Current State`/`### Key Files` sentence asserting a fact about existing code with neither an evidence citation nor the marker is incomplete.\n- [ ] **Share the check with shaping mode.** Hoist the rule into a new `plugin/skills/_shared/premise-verification.md` (what to probe, the caps, the citation form, the marker), cited from both `record-creation-subissues.md`'s new step and `shaping-mode.md`'s existing \"cheap sanity check\" paragraph (which becomes a one-sentence pointer plus its human-filed-defect-report delta). Add the `_shared` file's row to `docs/skill-graph.md` (owned by `/specify`, the only citing skill) per CLAUDE.md's stated-once rule.\n- [ ] **Build-side consumer.** In `plugin/skills/build/SKILL.md`'s writing-plans handoff (the \"Context to provide\" list), add one bullet: every `ASSUMPTION — verify at build:` bullet in the spec's `## Gotchas` is verified against the worktree before `/superpowers:writing-plans` is invoked, and its outcome (confirmed / reversed, with the probe) is logged as one `decisions.md` line per `_shared/auto-decision-log.md`; a reversed assumption is surfaced in the plan's context as the corrected fact, not silently dropped.\n- [ ] **Conformance test.** `tests/specify-premise-verification-prose.test.js`, sized like `tests/specify-decomposition-crossref-prose.test.js`: pins that `record-creation-subissues.md` cites `_shared/premise-verification.md` before its Ceremony call, that `shaping-mode.md` cites it, that `spec-template.md`'s `## Gotchas` and \"No Placeholders\" sections both carry the literal `ASSUMPTION — verify at build` marker, and that `build/SKILL.md`'s writing-plans handoff names the marker.\n\n## Acceptance Criteria\n\n1. `plugin/skills/_shared/premise-verification.md` exists, states the probe forms (`git ls-files`, `git grep -n -F`), the per-claim and per-sub-issue caps, the inline citation form, and the `ASSUMPTION — verify at build:` marker; `docs/skill-graph.md` has a row for it.\n2. `plugin/skills/specify/record-creation-subissues.md` invokes the check once per sub-issue, positioned after body composition and before the Ceremony invocation, and says a contradicted claim is rewritten before `gh issue create` / `writeRecord`.\n3. `plugin/skills/specify/shaping-mode.md`'s sanity-check paragraph cites the shared file instead of restating the rule, keeping its human-filed-defect-report specific text.\n4. `plugin/skills/specify/spec-template.md` shows the marker's shape under `## Gotchas` and lists the missing-evidence-or-marker case under \"No Placeholders\".\n5. `plugin/skills/build/SKILL.md`'s writing-plans handoff instructs verifying every marker bullet against the worktree first and logging each outcome to `decisions.md`.\n6. `node --test tests/specify-premise-verification-prose.test.js` passes, and `npm test` stays green (in particular `tests/specify-decomposition-crossref-prose.test.js` and `tests/materiality-floor-conformance.test.js`, which pin neighbouring prose).\n7. A dry decomposition of a design doc whose Current State draft asserts a file that does not exist in the tree produces a sub-issue body without that assertion (rewritten or marker-carrying), demonstrated once in the PR description with the probe output.\n\n## Technical Approach\n\nProse-only change across four skill files plus one new `_shared` file and one conformance test; no `bin/` code. Mirror `_shared/dependency-narration-check.md`'s shape (what it catches, the check as a content judgment, the write-back rule) so the two composition-time checks read as siblings. Keep the probe bounded and local — the check screens, it does not verify a design; anything the caps cannot settle becomes a marker bullet rather than a deeper search. The marker is a literal string on purpose so the build-side consumer and the conformance test can match it; do not reuse any of the placeholder tokens `_shared/work-record.md`'s spec-shaped-body check rejects.\n\n### Key Files\n\n- `plugin/skills/_shared/premise-verification.md` — new: the shared rule (probes, caps, citation form, marker)\n- `plugin/skills/specify/record-creation-subissues.md` — new premise-verification step in the per-sub-issue loop, before the Ceremony call\n- `plugin/skills/specify/shaping-mode.md` — sanity-check paragraph becomes a pointer to the shared file plus its defect-report delta\n- `plugin/skills/specify/spec-template.md` — marker shape under `## Gotchas`; new \"No Placeholders\" self-check line\n- `plugin/skills/build/SKILL.md` — writing-plans handoff: verify marker bullets first, log outcomes\n- `docs/skill-graph.md` — row for the new `_shared` file\n- `tests/specify-premise-verification-prose.test.js` — new conformance test\n\n## Gotchas\n\n- Byte-pinned conformance tests cover this prose: run `npm test` on the branch, not only the new file — `tests/specify-decomposition-crossref-prose.test.js` asserts the cross-reference step's position relative to Snapshot invalidation, so insert the new step above the accumulation, not between the cross-reference pass and invalidation.\n- The check must not trigger on citations of other records' *planned* work; that is `_shared/dependency-narration-check.md`'s domain and it already writes a `blocked-by:` edge. State the boundary in the new `_shared` file.\n- Decomposition can run in a worktree whose branch is behind `main`; the probe answers for the checkout it runs in, which is the checkout the build will start from — say so, rather than probing `main`.\n- ASSUMPTION — verify at build: none. Every Current State claim above was probed on 2026-09-09 (`shaping-mode.md` sanity-check paragraph, `record-creation-subissues.md` Body/Ceremony/Framing order, `build/SKILL.md` handoff list, `spec-template.md` sections).\n\n## Original request\n\n**Summary:** When `/claude-tweaks:specify` decomposes a design doc into N work-unit specs, each spec's Current State / Key Files sections state claims about sibling units and existing code as settled facts with no verification step — in one 4-spec decomposition two such premises were false and survived until build/final-review time.\n\n**Kind:** Gap\n\n**Affected component:** /claude-tweaks:specify (design-doc decomposition)\n\n**Use case:**\nDecomposing one design doc into four sequential work-unit specs in a private project. Two cross-unit premises were written as facts and were wrong:\n\n1. One spec asserted a dependency subsystem was absent and would need stubbing — it was present on the branch the whole time; the build phase had to re-derive the true state before proceeding.\n2. Another spec justified its trigger condition with \"an existing module already reads this field for these rows\" — the module never read the field at all; the final review found the produced data was write-only, and the gap had to be ledgered as a follow-up record.\n\nBoth claims were falsifiable with a grep in seconds. The gap: decomposition has no premise-verification step, and the spec format gives a verified observation and an unverified assumption the same voice, so downstream phases inherit errors as constraints.\n\nSuggested directions: (a) verify each cross-unit/current-state claim against the actual tree at decomposition time (the same discipline the spec-research phase applies to UI claims) and cite the evidence; or (b) mark unverifiable claims explicitly as `ASSUMPTION — verify at build`, so the build phase treats them as inputs to check rather than facts to build on. Related but distinct from #490 (cross-referencing forward-declared sibling changes): this is about the truth of current-state claims, not the propagation of planned ones.\n\n**Definition:** Clear\n\n**Plugin version:** 6.114.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-01544711 -->\n\n",
         "createdAt": "2026-09-02T00:08:42Z",
         "labels": [
@@ -2304,558 +2222,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n`plugin/bin/lib/hooks/session-start.js` walks `.claude-tweaks/pipelines/` twice per session start. The stale-runs report pulls up to `MAX_REPORTED` entries from `context.js`'s `iterRunDirsWithState(ctx.cwd)`, which anchors to the main checkout, sorts newest-first, reads each `run-state.json`, skips `status: 'clean'` runs, and skips runs whose `archive/{name}` twin is `clean` or freshly `archiving`. The #1493 AC5 staged-proposals scan, a few lines below, needs the opposite status filter (only `clean` runs, name-matched to `-(tidy|sweep)-standalone`, with a non-empty `staged/`) and therefore re-implements the walk by hand: its own `mainCheckoutRoot` anchor, its own `readdirSync` + name filter + sort + reverse, its own `JSON.parse(fs.readFileSync(run-state.json))` per dir, and its own early-break at `MAX_REPORTED`. Its comment says why: the iterator \"deliberately excludes status `clean` runs … so it needs its own directory read\". The hand-rolled copy also lacks the iterator's archive-twin and `archiving`-claim skips, so a clean standalone run whose archival is mid-flight can still be listed. Both blocks then build the same advisory shape by hand: `- {name} — {detail}` lines, a header sentence, and the #803 relay trailer.\n\n`bin/lib/reconcile/archive-merged.js`'s `iterCleanRunDirs` (#1733) is a third copy of the same clean-only walk, without the anchor and without the twin skips.\n\n## Deliverables\n- [ ] `iterRunDirsWithState(cwd, { status } = {})` in `context.js`: an optional `status` filter — `'clean'` yields only clean runs, absent keeps today's exclude-clean behavior byte-for-byte — applied at the one existing status check so the anchor, ordering, archive-twin skip, and `archiving`-claim skip are shared by both shapes. `listRunDirsWithState`/`listRunDirs` pass the option through unchanged in their default form.\n- [ ] `session-start.js`'s staged-proposals scan becomes a `for … of iterRunDirsWithState(ctx.cwd, { status: 'clean' })` loop that keeps only its own two concerns: the `-(tidy|sweep)-standalone` name test on `path.basename(dir)` and the non-empty `staged/` read, with the existing `MAX_REPORTED` early break. The hand-rolled `readdirSync`/sort/`run-state.json` read is deleted.\n- [ ] One `advisoryBanner(header, lines, trailer)` helper in `session-start.js` used by both the stale-runs and staged-proposals blocks, producing byte-identical strings to today's inline concatenation (the tests below are the proof).\n- [ ] `archive-merged.js`'s `iterCleanRunDirs(root)` reduced to `[...iterRunDirsWithState(root, { status: 'clean' })]`, so the third copy disappears; its callers and the `{ dir, state }` shape are unchanged.\n- [ ] Tests: `tests/hooks-context.test.js` cases for the option (default excludes clean; `{ status: 'clean' }` yields only clean; both shapes honor the archive-twin skip); the existing #1493/#1494 cases in `tests/hooks-session-start.test.js` pass unmodified; one new session-start case that a clean `-tidy-standalone` run with a `clean` archive twin is not listed (the skip the hand-rolled walk lacked).\n\n## Acceptance Criteria\n1. `session-start.js` contains no `fs.readdirSync` of the pipelines directory and no direct `run-state.json` parse; both advisory scans iterate `iterRunDirsWithState`.\n2. With no option, `iterRunDirsWithState` yields exactly what it yields today for every existing fixture (the `hooks-context`, `session-start`, `archive-merged`, `console-execute`, and residue-probe suites are the proof).\n3. The two banners' rendered text is byte-identical to today's for the existing fixtures.\n4. `iterCleanRunDirs` in `archive-merged.js` no longer walks the directory itself; the #1544 clean-status sweep cases pass unmodified.\n5. `npm test` is green.\n\n## Technical Approach\nAn opt-in filter, not a widened yield: #1733 declined changing the iterator's *default* output because eight callers rely on the clean exclusion; an option that leaves the default untouched changes nothing for them and lets the two clean-only walkers stop re-deriving the anchor and skips. Implement the option at the single `if (state && state.status === 'clean') continue;` line — `const wantClean = opts.status === 'clean'; if (Boolean(state && state.status === 'clean') !== wantClean) continue;` — so the archive-twin and `archiving` checks below it apply to both shapes. Land after #1733 (which touches `iterCleanRunDirs`'s caller) so the swap here is a contained one-line body replacement.\n\n### Key Files\n- `plugin/bin/lib/hooks/context.js` — `iterRunDirsWithState`, `listRunDirsWithState`, `listRunDirs`, `RUN_ID_RE`.\n- `plugin/bin/lib/hooks/session-start.js` — the stale-runs block and the #1493 AC5 staged-proposals block (both under `run()`), `MAX_REPORTED`.\n- `plugin/bin/lib/reconcile/archive-merged.js` — `iterCleanRunDirs`.\n- `tests/hooks-session-start.test.js` — #1493 AC5 / I2 / I4 / #1494 cases; `tests/hooks-context.test.js`; `tests/bin-lib/reconcile/archive-merged.test.js` (#1544 cases).\n\n## Gotchas\n- The hand-rolled scan swallows an unreadable `run-state.json` with `continue`; the iterator yields `state: null` for such a dir and the `status` check must treat `null` as not-clean under both shapes, so the swap keeps skipping it.\n- `MAX_REPORTED` applies after the name and `staged/` filters in the staged-proposals scan (it counts approvable entries, not candidates); keep the early break on `approvable.length`, not on iteration count.\n- The long #1493 comment block explaining why the scan needed its own read must be rewritten, not deleted: the reason it cites is exactly what the option removes.\n- `docs/hooks.md` mentions the stale-run report by behavior only; no docs change unless the iterator's option is worth a sentence there (judgment call at build).\n\n## Original request\n## Current State\nThe #1493 AC5 staged-proposals advisory scan in `plugin/bin/lib/hooks/session-start.js` (~line 88) hand-rolls its own `fs.readdirSync` + filter + sort + per-dir-state-read loop instead of extending `context.js`'s `iterRunDirsWithState` (already used a few lines above for the stale-runs report) — because that iterator hardcodes skipping 'clean' status runs and this scan wants only clean ones. It also duplicates the advisory-banner-building pattern (MAX_REPORTED capping, \"- name — detail\" lines, templated trailer) of the block just above it.\n\n## Deliverables\nAdd an `includeClean` option to `iterRunDirsWithState` (or equivalent) so session-start.js's clean-only scan reuses the shared iterator instead of a second, differently-filtered directory-walking implementation.\n\n## Acceptance Criteria\n- [ ] session-start.js's staged-proposals scan uses the shared iterator rather than a standalone readdir/sort/per-dir-read loop.\n- [ ] Existing session-start hook tests pass unchanged.\n- [ ] Full `npm test` passes.\n\nDefer-reason: genuinely-larger — changes iterRunDirsWithState's shared contract, not a localized single-file change; found by the pre-v6.112.0 whole-branch review.\n",
-        "createdAt": "2026-08-31T11:30:19Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACq41dsw",
-            "name": "backlog:category-technical",
-            "description": "technical-category backlog item",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1738,
-        "state": "OPEN",
-        "title": "session-start.js: #1493 AC5 staged-proposals scan duplicates context.js's directory-walking instead of extending iterRunDirsWithState",
-        "updatedAt": "2026-09-14T11:05:17Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n`isAbandonedInterrupted(runDir, state, sessionId, now)` in `plugin/bin/lib/reconcile/archive-merged.js` calls `hasReadableEventsLog(runDir)` and then `lastOwnEventMs(runDir)` back to back. Each does its own `fs.readFileSync(path.join(runDir, 'events.jsonl'))`: the first only to learn whether the read succeeds (an unreadable or absent log is UNKNOWN evidence, per #1673 F9, never proof of staleness), the second to parse every line, drop `attribution === 'fallback'` events, and return the newest parseable `ts`. Two reads of the same file per candidate run dir, per reconcile pass. `hasReadableEventsLog` exists only because `lastOwnEventMs`'s `null` conflates \"unreadable\" with \"readable but no qualifying event\".\n\n`plugin/bin/lib/hooks/context.js`'s `scanWrapupEvents(runDir)` is documented as \"the single reader for the paired appendEvent writer\", but it is not a drop-in: it returns `{ any, wrapup }` over `skill_invoked` events only, carries no timestamps, and deliberately does not filter fallback-attributed lines — the comment above `lastOwnEventMs` says the two filters are intentionally asymmetric and must not be reconciled. So the record's \"ideally reuse `scanWrapupEvents`\" half cannot be taken literally; what can be shared is the raw read-and-parse below both consumers.\n\n## Deliverables\n- [ ] A shared line reader in `context.js`, `readEventLines(runDir)` → `null` when `events.jsonl` is absent or unreadable, else an array of parsed event objects (unparseable lines skipped), exported alongside `scanWrapupEvents`; `scanWrapupEvents` reimplemented on top of it with identical output.\n- [ ] `archive-merged.js`: `hasReadableEventsLog` and `lastOwnEventMs` replaced by one `ownEventRecency(runDir)` → `{ readable: boolean, lastOwnMs: number | null }` built on `readEventLines`, keeping the fallback-attribution filter and the `Date.parse` skip exactly as `lastOwnEventMs` has them; `isAbandonedInterrupted` calls it once. `lastOwnEventMs` stays exported as a thin wrapper (`tests/bin-lib/reconcile/archive-merged.test.js` imports it) returning `ownEventRecency(runDir).lastOwnMs`.\n- [ ] The asymmetry comment above `lastOwnEventMs` moves onto `ownEventRecency` unchanged in substance; the `hasReadableEventsLog` comment's \"UNKNOWN evidence, not proof of staleness\" rationale is kept on the `readable` field.\n- [ ] Tests: `readEventLines` unit cases in `tests/hooks-context.test.js` (absent → `null`; empty file → `[]`; mixed valid/invalid lines → only the valid ones); an `archive-merged.test.js` case asserting one `readFileSync` of `events.jsonl` per `isAbandonedInterrupted` call (spy on `fs.readFileSync` via the test's existing fixture or count with a wrapped `fs`); existing `isAbandonedInterrupted` and #1673 AC cases unmodified.\n\n## Acceptance Criteria\n1. `isAbandonedInterrupted` performs at most one read of `events.jsonl` per call, pinned by a test.\n2. `archive-merged.js` contains no `fs.readFileSync(... 'events.jsonl' ...)` of its own; `context.js`'s `readEventLines` is the only raw reader for the file, and `scanWrapupEvents`'s output is unchanged for every existing fixture.\n3. For an absent/unreadable log `isAbandonedInterrupted` returns `false` (unchanged); for a readable log with only fallback-attributed lines it still classifies as abandoned once past `STALE_INTERRUPTED_TTL_MS` (the documented asymmetry with `checkRunIntegrity` holds).\n4. All existing cases in `tests/bin-lib/reconcile/archive-merged.test.js` pass unmodified; `npm test` is green.\n\n## Technical Approach\nShare the read, keep the two filters. `readEventLines` is the primitive both consumers already implement inline (read, split, skip blanks, `JSON.parse` per line, skip failures); neither consumer's semantics change because each keeps its own filter on the returned array. The `readable`/`lastOwnMs` pair replaces the two-call dance without losing the distinction #1673 F9 introduced. `checkRunIntegrity` (called at the same main-loop site, and itself a `scanWrapupEvents` consumer) will then read the file a second time per candidate; collapsing that into one read across the two callers is a separate change with a wider contract and is out of scope here. Same file as #1732/#1733/#1734: sequence, never build in parallel; no ordering dependency on them.\n\n### Key Files\n- `plugin/bin/lib/reconcile/archive-merged.js` — `lastOwnEventMs`, `hasReadableEventsLog`, `isAbandonedInterrupted`, `module.exports`.\n- `plugin/bin/lib/hooks/context.js` — `scanWrapupEvents`, `appendEvent` (the paired writer; unchanged), `module.exports`.\n- `plugin/bin/lib/hooks/run-integrity.js` — `checkRunIntegrity` (consumer of `scanWrapupEvents`; unchanged, output must not move).\n- `tests/bin-lib/reconcile/archive-merged.test.js` — `lastOwnEventMs` import and the events.jsonl fixtures.\n\n## Gotchas\n- `scanWrapupEvents` returns `null` for an unreadable file and `{ any: false, wrapup: false }` for an empty one; `readEventLines` must preserve that split (`null` vs `[]`) or `closeRunState` and `checkRunIntegrity` change behavior.\n- The `attribution === 'fallback'` filter belongs to `ownEventRecency` only; do not add it to `readEventLines` or `scanWrapupEvents` (see the asymmetry comment).\n- `docs/hooks.md` describes `events.jsonl` at the contract level and enumerates no reader list; no docs change.\n\n## Original request\n## Current State\n`lastOwnEventMs()` and `hasReadableEventsLog()` (`plugin/bin/lib/reconcile/archive-merged.js`, ~line 147) each independently `fs.readFileSync` the same `events.jsonl` file, and `isAbandonedInterrupted` (~line 209) calls both back-to-back on every invocation — reading the same file from disk twice, per run dir, per reconcile pass — while `plugin/bin/lib/hooks/context.js`'s `scanWrapupEvents` is documented elsewhere in this codebase as \"the single reader\" for events.jsonl.\n\n## Deliverables\nConsolidate `lastOwnEventMs`/`hasReadableEventsLog` onto a single read (ideally reusing `context.js`'s `scanWrapupEvents`/its underlying reader) instead of two independent events.jsonl-parsing implementations.\n\n## Acceptance Criteria\n- [ ] `isAbandonedInterrupted` reads events.jsonl at most once per call.\n- [ ] Existing `tests/bin-lib/reconcile/archive-merged.test.js` behavior is preserved.\n- [ ] Full `npm test` passes.\n\nDefer-reason: genuinely-larger — touches the events.jsonl reading contract shared with context.js, not a localized change; found by the pre-v6.112.0 whole-branch review.\n",
-        "createdAt": "2026-08-31T11:30:10Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACq41dsw",
-            "name": "backlog:category-technical",
-            "description": "technical-category backlog item",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1737,
-        "state": "OPEN",
-        "title": "archive-merged.js: isAbandonedInterrupted reads events.jsonl twice per call",
-        "updatedAt": "2026-09-14T11:05:19Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\nThree functions in `plugin/bin/lib/reconcile/archive-merged.js` carry the same directory-staleness stanza: `let mtimeMs; try { mtimeMs = fs.statSync(dir).mtimeMs; } catch { return false; } return (now - mtimeMs) > TTL;` — `isAdHocStandaloneSuperseded` against `ADHOC_SUPERSEDED_TTL_MS` (30d), `isOrphanedMint` against `ORPHAN_MINT_TTL_MS` (24h), and `isStructurallyStuck` against `STRUCTURALLY_STUCK_TTL_MS` (7d). Each takes `now = Date.now()` as its last parameter and treats an unstat-able directory as not stale (fail toward \"keep\"). The copies are byte-for-byte the same logic, so a change to the staleness basis (ctime instead of mtime, tolerating clock skew, treating `ENOENT` differently from `EACCES`) has to be made three times, and `isAbandonedInterrupted`, which uses the events log rather than the stat, is the reminder that a fourth copy would be the path of least resistance for the next detector. The related consolidation records (#1732 classifier, #1733 loop extraction) both build on this primitive existing first.\n\n## Deliverables\n- [ ] `isStaleDir(dir, ttlMs, now = Date.now())` in `archive-merged.js`: the one stat-and-compare, returning `false` on any stat failure, `true` iff `(now - mtimeMs) > ttlMs`; exported alongside the existing predicates.\n- [ ] `isAdHocStandaloneSuperseded`, `isOrphanedMint`, and `isStructurallyStuck` each reduce to their own guard clauses plus one `isStaleDir(dir, <their constant>, now)` call; their signatures, exports, and `now` defaults unchanged.\n- [ ] Unit tests for the primitive in `tests/bin-lib/reconcile/archive-merged.test.js` beside the existing `fs.utimesSync`-backdated fixtures: stale past TTL → `true`; exactly at TTL → `false` (strict `>` preserved); fresh → `false`; missing directory → `false`.\n- [ ] The three predicates' existing cases stay green unmodified.\n\n## Acceptance Criteria\n1. `archive-merged.js` contains exactly one `fs.statSync(...).mtimeMs` expression, inside `isStaleDir`.\n2. The three predicates call `isStaleDir` with their own TTL constant; the constants' names and values are unchanged and still exported.\n3. `isStaleDir` is exported and has its own test cases for the four outcomes above, including the boundary (`now - mtimeMs === ttlMs` is not stale).\n4. All existing cases in `tests/bin-lib/reconcile/archive-merged.test.js` pass without modification; `npm test` is green.\n\n## Technical Approach\nA mechanical extraction: the stanza's only free variables are `dir`, the TTL constant, and `now`. Keep the comparison strict (`>`) and the catch-to-`false` posture identical; both are load-bearing (`isStructurallyStuck`'s comment: \"pure except for the one mtime stat\", and the orphan-mint comment's fail-toward-keep rationale). Land first among the four `archive-merged.js` records: #1732's classifier calls this helper, and #1733/#1737 are independent of it but touch the same file, so sequence, never parallel.\n\n### Key Files\n- `plugin/bin/lib/reconcile/archive-merged.js` — `isAdHocStandaloneSuperseded`, `isOrphanedMint`, `isStructurallyStuck`, `module.exports`.\n- `tests/bin-lib/reconcile/archive-merged.test.js` — backdated-`utimesSync` fixtures for the orphan-mint and structurally-stuck cases are the template.\n\n## Gotchas\n- Other `statSync(...).mtimeMs` sites in the plugin (`file-lock.js`'s lock age, `residue/probes/artifacts.js`'s basis, `visual-decide/server.js`'s signature) compare against different things or for different purposes; they are out of scope and must not be routed through this helper.\n- `isAbandonedInterrupted` is not a stat-based detector (events-log recency); do not force it onto `isStaleDir`.\n- Do not change the fail-closed direction: an unreadable directory is \"not stale\" everywhere today, and `archiveMerged()` relies on that to leave a permission-broken run dir alone.\n\n## Original request\n\n## Current State\n`isStructurallyStuck` (~line 664, `plugin/bin/lib/reconcile/archive-merged.js`) reimplements the identical \"fs.statSync(dir).mtimeMs, catch->false, compare (now-mtimeMs) > TTL\" stanza already present in `isAdHocStandaloneSuperseded` (~line 85) and `isOrphanedMint` (~line 97), each against its own TTL constant.\n\n## Deliverables\nA single `isStaleDir(dir, ttlMs, now)` helper collapsing the three copies of the same try/catch staleness check into one tested primitive, used by all three call sites.\n\n## Acceptance Criteria\n- [ ] `isStructurallyStuck`, `isAdHocStandaloneSuperseded`, and `isOrphanedMint` all call the same shared staleness helper.\n- [ ] Existing `tests/bin-lib/reconcile/archive-merged.test.js` behavior is preserved.\n- [ ] Full `npm test` passes.\n\nDefer-reason: genuinely-larger — bundled with the related consolidation findings (#1732, #1733) rather than landed piecemeal mid-release; found by the pre-v6.112.0 whole-branch review.\n\n",
-        "createdAt": "2026-08-31T11:28:51Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACq41dsw",
-            "name": "backlog:category-technical",
-            "description": "technical-category backlog item",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1734,
-        "state": "OPEN",
-        "title": "archive-merged.js: extract a shared isStaleDir(dir, ttlMs, now) helper",
-        "updatedAt": "2026-09-14T11:05:22Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n`archiveMerged()` in `plugin/bin/lib/reconcile/archive-merged.js` ends with two loops that run the same merged-PR archive sequence: the main loop over `iterRunDirsWithState(root)` and the #1544 clean-status sweep over `iterCleanRunDirs(root)`. Both do `resolvePrState(root, branch)` → `readConsoleState(dir)` → `decideArchive(prState, consoleState)` → skip on `decision.action === 'skip'` → `localHasMerge(root, prState.mergeCommit)` with the `local-behind-merge` / `merge-commit-unknown` skip reasons → `dryRun` short-circuit → `archiveRunDir(root, dir)` → `trackArchiveResult(root, repoSlug, dir, result)` → push to `archived`/`skipped`. The copies already differ in one place that the duplication hides: the main loop's `decideArchive` skip also calls `trackStuckSkip(root, repoSlug, dir, decision.reason)` (#1613's structurally-stuck visibility), the clean loop's does not.\n\nThe two loops need different inputs only at the front: the main loop derives `branch` from the worktree list (with the structurally-stuck skip on `no-worktree`/`no-branch`), the clean loop from `fallbackBranch(root, dir, state)` because a `clean` run's `state.worktree` is null by construction. `iterCleanRunDirs` exists because `iterRunDirsWithState` in `bin/lib/hooks/context.js` skips `status: 'clean'` by design, and that generator has eight callers (hooks dispatcher, session-start, console-execute, the residue probe, the stray-run-dir sweep, reconcile's index) that all rely on the exclusion.\n\n## Deliverables\n- [ ] One helper in `archive-merged.js`, `archiveMergedRun({ root, repoSlug, dir, branch, dryRun, onSkip })` → `{ outcome: 'archived' | 'skipped', reason? }`, holding the full sequence from `resolvePrState` through `trackArchiveResult`; `onSkip(reason)` is the hook the main loop uses to call `trackStuckSkip` on a `decideArchive` skip, so the one existing difference becomes an explicit parameter rather than a divergence.\n- [ ] Both loops call the helper: the main loop after its worktree-derived `branch` and structurally-stuck handling, the clean loop after `fallbackBranch`; each keeps only its branch derivation and its `archived`/`skipped` push.\n- [ ] `iterRunDirsWithState`'s contract is unchanged and `iterCleanRunDirs` stays as the clean-status enumerator; the record's alternative (a state-tagged tuple from the shared iterator) is declined — see Technical Approach.\n- [ ] `tests/bin-lib/reconcile/archive-merged.test.js`: existing cases unmodified and green; one new case that a clean-status run whose `decideArchive` skips reports the skip reason without invoking `trackStuckSkip` (pins the `onSkip` asymmetry as intended, so a later reader does not \"fix\" it), and one that a main-loop skip still does.\n\n## Acceptance Criteria\n1. `archive-merged.js` contains exactly one call site each for `resolvePrState`, `decideArchive`, `localHasMerge`, and `archiveRunDir` inside `archiveMerged()`'s merged-PR path (the helper); neither loop body calls them directly.\n2. For every existing fixture, `archiveMerged({ dryRun: true })` returns the same `archived`/`skipped` sets as before the change.\n3. `iterRunDirsWithState` in `bin/lib/hooks/context.js` is byte-identical; no other caller changes.\n4. The `trackStuckSkip`-on-main-loop-only behavior is preserved and pinned by a test.\n5. `npm test` is green.\n\n## Technical Approach\nShare the sequence at the caller, not the iterator. Widening `iterRunDirsWithState` to yield `clean` runs behind a tag would touch a generator that every hook invocation drives (`context.js`'s own comment: it \"drives both the fallback event-attribution scan and every reconcile check's enumeration\") and force each of its other callers to filter the new tuple, for a benefit that is entirely local to `archiveMerged()`. The helper is a pure extraction: move the shared block into a function whose only free variables are the ones both loops already have in scope. Land this before #1732 where possible — #1732's per-kind action switch then dispatches the `merged` kind straight to this helper instead of inlining the sequence a third time. Same file as #1732, #1734, #1737: sequence, never build in parallel.\n\n### Key Files\n- `plugin/bin/lib/reconcile/archive-merged.js` — `archiveMerged` (both loops), `iterCleanRunDirs`, `decideArchive`, `localHasMerge`, `archiveRunDir`, `trackArchiveResult`, `trackStuckSkip`.\n- `plugin/bin/lib/hooks/context.js` — `iterRunDirsWithState` (read for the contract; unchanged).\n- `plugin/bin/lib/hooks/run-integrity.js` — `fallbackBranch` (clean loop's branch source; unchanged).\n- `tests/bin-lib/reconcile/archive-merged.test.js` — the #1544 clean-status fixture (around the `status: 'clean', worktree: null, pr: { branch: … }` case) is the template for the new pins.\n\n## Gotchas\n- `resolvePrState` (imported from `pr-state.js`) reads the reconcile PR cache; keep it inside the helper so a future change to its caching cannot land in one loop only.\n- The clean loop's comment block (#1544 rationale: why `state.worktree` is null and why `fallbackBranch` is the right source) must stay on the clean loop, not move into the helper — it explains the input, not the sequence.\n- `dryRun` pushes to `archived` without touching disk in both loops today; the helper returns `outcome: 'archived'` for that case and the caller pushes, so the dry-run contract stays identical.\n\n## Original request\n## Current State\n`iterCleanRunDirs()` and its consuming loop (`plugin/bin/lib/reconcile/archive-merged.js`, ~line 734/897) duplicate the main loop's `prState`/`decideArchive`/`localHasMerge`/`archiveRunDir`/`trackArchiveResult` sequence almost verbatim, added because `iterRunDirsWithState` excludes 'clean' status runs by design rather than generalizing the iterator/caller to yield a state-tagged tuple both loops could share.\n\n## Deliverables\nGeneralize the iterator (or the caller) so both the main loop and the clean-run-dir loop share one archive-decision sequence instead of two independently maintained copies.\n\n## Acceptance Criteria\n- [ ] Only one implementation of the prState/decideArchive/localHasMerge/archiveRunDir/trackArchiveResult sequence exists.\n- [ ] Existing `tests/bin-lib/reconcile/archive-merged.test.js` behavior is preserved.\n- [ ] Full `npm test` passes.\n\nDefer-reason: genuinely-larger — requires reshaping the shared iterator's contract, not a localized change; found by the pre-v6.112.0 whole-branch review.\n",
-        "createdAt": "2026-08-31T11:28:43Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACq41dsw",
-            "name": "backlog:category-technical",
-            "description": "technical-category backlog item",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1733,
-        "state": "OPEN",
-        "title": "archive-merged.js: iterCleanRunDirs() loop duplicates the main loop's archive sequence",
-        "updatedAt": "2026-09-14T11:05:24Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: backend\n\n## Current State\n\n`plugin/bin/lib/hooks/run-integrity.js`'s `mergedEvidence()` passes a caller-derived ref name as a bare positional argument to git at two call sites:\n\n- `runGit(['merge-base', '--is-ancestor', branch, integration], root)`\n- `runGit(['cherry', integration, branch], root)`\n\nThis repo's `gh-api-module-pattern` skill states the rule directly: a caller-supplied value beginning with `-` is still read as an option, and for `git` the separator is `--end-of-options`, not `--` (`--` only guards the pathspec argument slot, a different position). `docs/incident-log.md` carries the same rule for `rev-parse`/`merge-base`.\n\nRecord #1463 added a third call in the same file (`hasCommitSinceRunStart`'s `git log`) and adopted `--end-of-options` there, per CLAUDE.md's \"adopt new conventions in new code first, then migrate existing ones deliberately\". These two call sites are the deliberate migration that convention-adoption implies.\n\n## Deliverables\n\n- [ ] `mergedEvidence()`'s `merge-base --is-ancestor` call places `--end-of-options` before the two ref arguments.\n- [ ] `mergedEvidence()`'s `git cherry` call does the same.\n- [ ] No behavior change for any ref name git can actually produce — the existing `tests/run-integrity.test.js` AC1/AC2/AC3a cases stay green unchanged.\n\n## Acceptance Criteria\n\n1. Both call sites in `mergedEvidence()` pass their ref arguments after an `--end-of-options` separator.\n2. `node --test tests/run-integrity.test.js` passes with no test edits required.\n3. `npm test` passes.\n\n## Technical Approach\nTwo argument-array edits, no logic change: insert `'--end-of-options'` immediately before the first ref argument in each call — `['merge-base', '--is-ancestor', '--end-of-options', branch, integration]` and `['cherry', '--end-of-options', integration, branch]`. `hasCommitSinceRunStart`'s `git log` call in the same file is the in-file model (it already places `--end-of-options` before `branch`, followed by `--` for the pathspec slot); `git cherry` takes no pathspec, so no trailing `--` there.\n\n### Key Files\n- `plugin/bin/lib/hooks/run-integrity.js` — `mergedEvidence()` (the `merge-base --is-ancestor` and `cherry` calls), `hasCommitSinceRunStart()` (existing `--end-of-options` example).\n- `tests/run-integrity.test.js` — AC1 (ancestor), AC2 (cherry), AC3a (unmerged) cases pin the behavior; no edits expected.\n\n## Gotchas\n- Not exploitable today: `branch` reaches these calls only from `deriveBranch()`'s parse of `git worktree list --porcelain`, and git refuses to create a ref beginning with `-`.\n- `--end-of-options` requires git 2.24+; the file's existing `rev-parse --verify --quiet --end-of-options` and `git log … --end-of-options` calls already assume it, so this adds no new floor.\n- The guard just above the calls compares `branch` to `bareIntegrationName(integration)` (#1861/#1862) but passes `integration` through unnormalized; the separator protects the argument slot and changes nothing about that comparison.\n\n## Original request\n\nOrigin: `/claude-tweaks:review #1463`, Step 3 — both dispatched lenses (3b Security, 3c Error Handling) independently reported the same location; 3c cited this repo's own `gh-api-module-pattern` skill for the rule. Staged rather than fixed inside #1463 because those two call sites are untouched by that record's diff and fixing them there would have widened it beyond its declared scope, against this project's surgical-changes rule. Filed via the `/claude-tweaks:flow #1463,#1672,#1673,#1674` consolidated Review Console.\n\n",
-        "createdAt": "2026-08-29T21:03:36Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1686,
-        "state": "OPEN",
-        "title": "run-integrity.js: migrate mergedEvidence()'s two git calls to --end-of-options",
-        "updatedAt": "2026-09-14T12:11:24Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: backend\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule\nsentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`,\n18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its\npersonas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent`\ntool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a\nstatic `node --test` assertion; it can only be confirmed by observing an actual future `/specify`\ndecomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that\npersona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s\nfan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the\nobservation (transcript excerpt or note) against this item, or file a defect against\n`red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use\ncalls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of\nsub-issues) assistant messages.\n\n## Technical Approach\n\nWait for (or trigger) a `/claude-tweaks:specify` decomposition-mode run that produces 2 or more\n`ceremony:standard` sub-issue records — `ceremony-check` (`assess-agent-autonomy/ceremony-check.md`)\nresolves the tier per sub-issue during that run's own Step 3, so the tier isn't knowable until the\nrun happens. Once such a run occurs, inspect that session's stored transcript for the Step 5\nred-team dispatch (`specify/red-team.md`'s Parallel dispatch section): locate the `Agent` tool_use\nblocks for each dispatched persona and group them by the assistant message id each block belongs\nto. Confirm the number of distinct assistant message ids covering all persona dispatches for a\ngiven sub-issue is ≤ the number of sub-issues in that batch. Use the same read-only transcript\ninspection method `transcript-payload-verification` documents for reading this session's own\nlocally-stored transcript, rather than instrumenting or modifying `red-team.md` itself.\n\nIf the count exceeds the bound, file a defect issue against `red-team.md`'s dispatch prose\n(quoting the transcript grouping that violates the rule) instead of editing the file directly from\nthis record — this record's own deliverable is the observation, not the fix.\n\n### Key Files\n\n- `plugin/skills/specify/red-team.md` — the per-sub-issue persona dispatch procedure being observed\n- `plugin/skills/_shared/subagent-output-contract.md` — the fan-out single-assistant-message rule this observation verifies compliance with\n- `tests/subagent-contract-clauses.test.js` — AC1's existing static test coverage (unaffected by this record)\n\n## Gotchas\n\n- This record's acceptance criterion depends on an external event (a live `/specify` decomposition\n  run over 2+ `ceremony:standard` sub-issues happening) that this record cannot itself trigger on a\n  fixed schedule — it may sit open for some time until a qualifying run occurs naturally, or until\n  someone deliberately runs one to close it out.\n- A qualifying run must be observed via its own transcript at the time it happens; this record\n  cannot be resolved from historical data if no already-completed run's transcript is still\n  available.\n\n## Original request\n\nVerify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)\n\nOrigin: ledger resolve gate\n\nDefer-reason: needs-human-decision\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule sentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`, 18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its personas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent` tool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a static `node --test` assertion; it can only be confirmed by observing an actual future `/specify` decomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that persona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s fan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the observation (transcript excerpt or note) against this item, or file a defect against `red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use calls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of sub-issues) assistant messages.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
-        "createdAt": "2026-08-24T03:21:25Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAAC0IWj4w",
-            "name": "fix-on-worktree-worktree-dispatch-record-1350",
-            "description": "Fixed on worktree-worktree-dispatch-record-1350, not yet on the default branch",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 1350,
-        "state": "OPEN",
-        "title": "Verify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)",
-        "updatedAt": "2026-09-13T13:14:34Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
         }
       }
     ],
@@ -3455,6 +2821,472 @@
     ],
     [
       {
+        "body": "Surface: infra\n\n## Current State\n`plugin/bin/lib/hooks/session-start.js` walks `.claude-tweaks/pipelines/` twice per session start. The stale-runs report pulls up to `MAX_REPORTED` entries from `context.js`'s `iterRunDirsWithState(ctx.cwd)`, which anchors to the main checkout, sorts newest-first, reads each `run-state.json`, skips `status: 'clean'` runs, and skips runs whose `archive/{name}` twin is `clean` or freshly `archiving`. The #1493 AC5 staged-proposals scan, a few lines below, needs the opposite status filter (only `clean` runs, name-matched to `-(tidy|sweep)-standalone`, with a non-empty `staged/`) and therefore re-implements the walk by hand: its own `mainCheckoutRoot` anchor, its own `readdirSync` + name filter + sort + reverse, its own `JSON.parse(fs.readFileSync(run-state.json))` per dir, and its own early-break at `MAX_REPORTED`. Its comment says why: the iterator \"deliberately excludes status `clean` runs … so it needs its own directory read\". The hand-rolled copy also lacks the iterator's archive-twin and `archiving`-claim skips, so a clean standalone run whose archival is mid-flight can still be listed. Both blocks then build the same advisory shape by hand: `- {name} — {detail}` lines, a header sentence, and the #803 relay trailer.\n\n`bin/lib/reconcile/archive-merged.js`'s `iterCleanRunDirs` (#1733) is a third copy of the same clean-only walk, without the anchor and without the twin skips.\n\n## Deliverables\n- [ ] `iterRunDirsWithState(cwd, { status } = {})` in `context.js`: an optional `status` filter — `'clean'` yields only clean runs, absent keeps today's exclude-clean behavior byte-for-byte — applied at the one existing status check so the anchor, ordering, archive-twin skip, and `archiving`-claim skip are shared by both shapes. `listRunDirsWithState`/`listRunDirs` pass the option through unchanged in their default form.\n- [ ] `session-start.js`'s staged-proposals scan becomes a `for … of iterRunDirsWithState(ctx.cwd, { status: 'clean' })` loop that keeps only its own two concerns: the `-(tidy|sweep)-standalone` name test on `path.basename(dir)` and the non-empty `staged/` read, with the existing `MAX_REPORTED` early break. The hand-rolled `readdirSync`/sort/`run-state.json` read is deleted.\n- [ ] One `advisoryBanner(header, lines, trailer)` helper in `session-start.js` used by both the stale-runs and staged-proposals blocks, producing byte-identical strings to today's inline concatenation (the tests below are the proof).\n- [ ] `archive-merged.js`'s `iterCleanRunDirs(root)` reduced to `[...iterRunDirsWithState(root, { status: 'clean' })]`, so the third copy disappears; its callers and the `{ dir, state }` shape are unchanged.\n- [ ] Tests: `tests/hooks-context.test.js` cases for the option (default excludes clean; `{ status: 'clean' }` yields only clean; both shapes honor the archive-twin skip); the existing #1493/#1494 cases in `tests/hooks-session-start.test.js` pass unmodified; one new session-start case that a clean `-tidy-standalone` run with a `clean` archive twin is not listed (the skip the hand-rolled walk lacked).\n\n## Acceptance Criteria\n1. `session-start.js` contains no `fs.readdirSync` of the pipelines directory and no direct `run-state.json` parse; both advisory scans iterate `iterRunDirsWithState`.\n2. With no option, `iterRunDirsWithState` yields exactly what it yields today for every existing fixture (the `hooks-context`, `session-start`, `archive-merged`, `console-execute`, and residue-probe suites are the proof).\n3. The two banners' rendered text is byte-identical to today's for the existing fixtures.\n4. `iterCleanRunDirs` in `archive-merged.js` no longer walks the directory itself; the #1544 clean-status sweep cases pass unmodified.\n5. `npm test` is green.\n\n## Technical Approach\nAn opt-in filter, not a widened yield: #1733 declined changing the iterator's *default* output because eight callers rely on the clean exclusion; an option that leaves the default untouched changes nothing for them and lets the two clean-only walkers stop re-deriving the anchor and skips. Implement the option at the single `if (state && state.status === 'clean') continue;` line — `const wantClean = opts.status === 'clean'; if (Boolean(state && state.status === 'clean') !== wantClean) continue;` — so the archive-twin and `archiving` checks below it apply to both shapes. Land after #1733 (which touches `iterCleanRunDirs`'s caller) so the swap here is a contained one-line body replacement.\n\n### Key Files\n- `plugin/bin/lib/hooks/context.js` — `iterRunDirsWithState`, `listRunDirsWithState`, `listRunDirs`, `RUN_ID_RE`.\n- `plugin/bin/lib/hooks/session-start.js` — the stale-runs block and the #1493 AC5 staged-proposals block (both under `run()`), `MAX_REPORTED`.\n- `plugin/bin/lib/reconcile/archive-merged.js` — `iterCleanRunDirs`.\n- `tests/hooks-session-start.test.js` — #1493 AC5 / I2 / I4 / #1494 cases; `tests/hooks-context.test.js`; `tests/bin-lib/reconcile/archive-merged.test.js` (#1544 cases).\n\n## Gotchas\n- The hand-rolled scan swallows an unreadable `run-state.json` with `continue`; the iterator yields `state: null` for such a dir and the `status` check must treat `null` as not-clean under both shapes, so the swap keeps skipping it.\n- `MAX_REPORTED` applies after the name and `staged/` filters in the staged-proposals scan (it counts approvable entries, not candidates); keep the early break on `approvable.length`, not on iteration count.\n- The long #1493 comment block explaining why the scan needed its own read must be rewritten, not deleted: the reason it cites is exactly what the option removes.\n- `docs/hooks.md` mentions the stale-run report by behavior only; no docs change unless the iterator's option is worth a sentence there (judgment call at build).\n\n## Original request\n## Current State\nThe #1493 AC5 staged-proposals advisory scan in `plugin/bin/lib/hooks/session-start.js` (~line 88) hand-rolls its own `fs.readdirSync` + filter + sort + per-dir-state-read loop instead of extending `context.js`'s `iterRunDirsWithState` (already used a few lines above for the stale-runs report) — because that iterator hardcodes skipping 'clean' status runs and this scan wants only clean ones. It also duplicates the advisory-banner-building pattern (MAX_REPORTED capping, \"- name — detail\" lines, templated trailer) of the block just above it.\n\n## Deliverables\nAdd an `includeClean` option to `iterRunDirsWithState` (or equivalent) so session-start.js's clean-only scan reuses the shared iterator instead of a second, differently-filtered directory-walking implementation.\n\n## Acceptance Criteria\n- [ ] session-start.js's staged-proposals scan uses the shared iterator rather than a standalone readdir/sort/per-dir-read loop.\n- [ ] Existing session-start hook tests pass unchanged.\n- [ ] Full `npm test` passes.\n\nDefer-reason: genuinely-larger — changes iterRunDirsWithState's shared contract, not a localized single-file change; found by the pre-v6.112.0 whole-branch review.\n",
+        "createdAt": "2026-08-31T11:30:19Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACq41dsw",
+            "name": "backlog:category-technical",
+            "description": "technical-category backlog item",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Size: medium effort",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: standard review",
+            "color": "c5def5"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 1738,
+        "state": "OPEN",
+        "title": "session-start.js: #1493 AC5 staged-proposals scan duplicates context.js's directory-walking instead of extending iterRunDirsWithState",
+        "updatedAt": "2026-09-14T11:05:17Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      },
+      {
+        "body": "Surface: infra\n\n## Current State\n`isAbandonedInterrupted(runDir, state, sessionId, now)` in `plugin/bin/lib/reconcile/archive-merged.js` calls `hasReadableEventsLog(runDir)` and then `lastOwnEventMs(runDir)` back to back. Each does its own `fs.readFileSync(path.join(runDir, 'events.jsonl'))`: the first only to learn whether the read succeeds (an unreadable or absent log is UNKNOWN evidence, per #1673 F9, never proof of staleness), the second to parse every line, drop `attribution === 'fallback'` events, and return the newest parseable `ts`. Two reads of the same file per candidate run dir, per reconcile pass. `hasReadableEventsLog` exists only because `lastOwnEventMs`'s `null` conflates \"unreadable\" with \"readable but no qualifying event\".\n\n`plugin/bin/lib/hooks/context.js`'s `scanWrapupEvents(runDir)` is documented as \"the single reader for the paired appendEvent writer\", but it is not a drop-in: it returns `{ any, wrapup }` over `skill_invoked` events only, carries no timestamps, and deliberately does not filter fallback-attributed lines — the comment above `lastOwnEventMs` says the two filters are intentionally asymmetric and must not be reconciled. So the record's \"ideally reuse `scanWrapupEvents`\" half cannot be taken literally; what can be shared is the raw read-and-parse below both consumers.\n\n## Deliverables\n- [ ] A shared line reader in `context.js`, `readEventLines(runDir)` → `null` when `events.jsonl` is absent or unreadable, else an array of parsed event objects (unparseable lines skipped), exported alongside `scanWrapupEvents`; `scanWrapupEvents` reimplemented on top of it with identical output.\n- [ ] `archive-merged.js`: `hasReadableEventsLog` and `lastOwnEventMs` replaced by one `ownEventRecency(runDir)` → `{ readable: boolean, lastOwnMs: number | null }` built on `readEventLines`, keeping the fallback-attribution filter and the `Date.parse` skip exactly as `lastOwnEventMs` has them; `isAbandonedInterrupted` calls it once. `lastOwnEventMs` stays exported as a thin wrapper (`tests/bin-lib/reconcile/archive-merged.test.js` imports it) returning `ownEventRecency(runDir).lastOwnMs`.\n- [ ] The asymmetry comment above `lastOwnEventMs` moves onto `ownEventRecency` unchanged in substance; the `hasReadableEventsLog` comment's \"UNKNOWN evidence, not proof of staleness\" rationale is kept on the `readable` field.\n- [ ] Tests: `readEventLines` unit cases in `tests/hooks-context.test.js` (absent → `null`; empty file → `[]`; mixed valid/invalid lines → only the valid ones); an `archive-merged.test.js` case asserting one `readFileSync` of `events.jsonl` per `isAbandonedInterrupted` call (spy on `fs.readFileSync` via the test's existing fixture or count with a wrapped `fs`); existing `isAbandonedInterrupted` and #1673 AC cases unmodified.\n\n## Acceptance Criteria\n1. `isAbandonedInterrupted` performs at most one read of `events.jsonl` per call, pinned by a test.\n2. `archive-merged.js` contains no `fs.readFileSync(... 'events.jsonl' ...)` of its own; `context.js`'s `readEventLines` is the only raw reader for the file, and `scanWrapupEvents`'s output is unchanged for every existing fixture.\n3. For an absent/unreadable log `isAbandonedInterrupted` returns `false` (unchanged); for a readable log with only fallback-attributed lines it still classifies as abandoned once past `STALE_INTERRUPTED_TTL_MS` (the documented asymmetry with `checkRunIntegrity` holds).\n4. All existing cases in `tests/bin-lib/reconcile/archive-merged.test.js` pass unmodified; `npm test` is green.\n\n## Technical Approach\nShare the read, keep the two filters. `readEventLines` is the primitive both consumers already implement inline (read, split, skip blanks, `JSON.parse` per line, skip failures); neither consumer's semantics change because each keeps its own filter on the returned array. The `readable`/`lastOwnMs` pair replaces the two-call dance without losing the distinction #1673 F9 introduced. `checkRunIntegrity` (called at the same main-loop site, and itself a `scanWrapupEvents` consumer) will then read the file a second time per candidate; collapsing that into one read across the two callers is a separate change with a wider contract and is out of scope here. Same file as #1732/#1733/#1734: sequence, never build in parallel; no ordering dependency on them.\n\n### Key Files\n- `plugin/bin/lib/reconcile/archive-merged.js` — `lastOwnEventMs`, `hasReadableEventsLog`, `isAbandonedInterrupted`, `module.exports`.\n- `plugin/bin/lib/hooks/context.js` — `scanWrapupEvents`, `appendEvent` (the paired writer; unchanged), `module.exports`.\n- `plugin/bin/lib/hooks/run-integrity.js` — `checkRunIntegrity` (consumer of `scanWrapupEvents`; unchanged, output must not move).\n- `tests/bin-lib/reconcile/archive-merged.test.js` — `lastOwnEventMs` import and the events.jsonl fixtures.\n\n## Gotchas\n- `scanWrapupEvents` returns `null` for an unreadable file and `{ any: false, wrapup: false }` for an empty one; `readEventLines` must preserve that split (`null` vs `[]`) or `closeRunState` and `checkRunIntegrity` change behavior.\n- The `attribution === 'fallback'` filter belongs to `ownEventRecency` only; do not add it to `readEventLines` or `scanWrapupEvents` (see the asymmetry comment).\n- `docs/hooks.md` describes `events.jsonl` at the contract level and enumerates no reader list; no docs change.\n\n## Original request\n## Current State\n`lastOwnEventMs()` and `hasReadableEventsLog()` (`plugin/bin/lib/reconcile/archive-merged.js`, ~line 147) each independently `fs.readFileSync` the same `events.jsonl` file, and `isAbandonedInterrupted` (~line 209) calls both back-to-back on every invocation — reading the same file from disk twice, per run dir, per reconcile pass — while `plugin/bin/lib/hooks/context.js`'s `scanWrapupEvents` is documented elsewhere in this codebase as \"the single reader\" for events.jsonl.\n\n## Deliverables\nConsolidate `lastOwnEventMs`/`hasReadableEventsLog` onto a single read (ideally reusing `context.js`'s `scanWrapupEvents`/its underlying reader) instead of two independent events.jsonl-parsing implementations.\n\n## Acceptance Criteria\n- [ ] `isAbandonedInterrupted` reads events.jsonl at most once per call.\n- [ ] Existing `tests/bin-lib/reconcile/archive-merged.test.js` behavior is preserved.\n- [ ] Full `npm test` passes.\n\nDefer-reason: genuinely-larger — touches the events.jsonl reading contract shared with context.js, not a localized change; found by the pre-v6.112.0 whole-branch review.\n",
+        "createdAt": "2026-08-31T11:30:10Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACq41dsw",
+            "name": "backlog:category-technical",
+            "description": "technical-category backlog item",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: standard review",
+            "color": "c5def5"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 1737,
+        "state": "OPEN",
+        "title": "archive-merged.js: isAbandonedInterrupted reads events.jsonl twice per call",
+        "updatedAt": "2026-09-14T11:05:19Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      },
+      {
+        "body": "Surface: infra\n\n## Current State\nThree functions in `plugin/bin/lib/reconcile/archive-merged.js` carry the same directory-staleness stanza: `let mtimeMs; try { mtimeMs = fs.statSync(dir).mtimeMs; } catch { return false; } return (now - mtimeMs) > TTL;` — `isAdHocStandaloneSuperseded` against `ADHOC_SUPERSEDED_TTL_MS` (30d), `isOrphanedMint` against `ORPHAN_MINT_TTL_MS` (24h), and `isStructurallyStuck` against `STRUCTURALLY_STUCK_TTL_MS` (7d). Each takes `now = Date.now()` as its last parameter and treats an unstat-able directory as not stale (fail toward \"keep\"). The copies are byte-for-byte the same logic, so a change to the staleness basis (ctime instead of mtime, tolerating clock skew, treating `ENOENT` differently from `EACCES`) has to be made three times, and `isAbandonedInterrupted`, which uses the events log rather than the stat, is the reminder that a fourth copy would be the path of least resistance for the next detector. The related consolidation records (#1732 classifier, #1733 loop extraction) both build on this primitive existing first.\n\n## Deliverables\n- [ ] `isStaleDir(dir, ttlMs, now = Date.now())` in `archive-merged.js`: the one stat-and-compare, returning `false` on any stat failure, `true` iff `(now - mtimeMs) > ttlMs`; exported alongside the existing predicates.\n- [ ] `isAdHocStandaloneSuperseded`, `isOrphanedMint`, and `isStructurallyStuck` each reduce to their own guard clauses plus one `isStaleDir(dir, <their constant>, now)` call; their signatures, exports, and `now` defaults unchanged.\n- [ ] Unit tests for the primitive in `tests/bin-lib/reconcile/archive-merged.test.js` beside the existing `fs.utimesSync`-backdated fixtures: stale past TTL → `true`; exactly at TTL → `false` (strict `>` preserved); fresh → `false`; missing directory → `false`.\n- [ ] The three predicates' existing cases stay green unmodified.\n\n## Acceptance Criteria\n1. `archive-merged.js` contains exactly one `fs.statSync(...).mtimeMs` expression, inside `isStaleDir`.\n2. The three predicates call `isStaleDir` with their own TTL constant; the constants' names and values are unchanged and still exported.\n3. `isStaleDir` is exported and has its own test cases for the four outcomes above, including the boundary (`now - mtimeMs === ttlMs` is not stale).\n4. All existing cases in `tests/bin-lib/reconcile/archive-merged.test.js` pass without modification; `npm test` is green.\n\n## Technical Approach\nA mechanical extraction: the stanza's only free variables are `dir`, the TTL constant, and `now`. Keep the comparison strict (`>`) and the catch-to-`false` posture identical; both are load-bearing (`isStructurallyStuck`'s comment: \"pure except for the one mtime stat\", and the orphan-mint comment's fail-toward-keep rationale). Land first among the four `archive-merged.js` records: #1732's classifier calls this helper, and #1733/#1737 are independent of it but touch the same file, so sequence, never parallel.\n\n### Key Files\n- `plugin/bin/lib/reconcile/archive-merged.js` — `isAdHocStandaloneSuperseded`, `isOrphanedMint`, `isStructurallyStuck`, `module.exports`.\n- `tests/bin-lib/reconcile/archive-merged.test.js` — backdated-`utimesSync` fixtures for the orphan-mint and structurally-stuck cases are the template.\n\n## Gotchas\n- Other `statSync(...).mtimeMs` sites in the plugin (`file-lock.js`'s lock age, `residue/probes/artifacts.js`'s basis, `visual-decide/server.js`'s signature) compare against different things or for different purposes; they are out of scope and must not be routed through this helper.\n- `isAbandonedInterrupted` is not a stat-based detector (events-log recency); do not force it onto `isStaleDir`.\n- Do not change the fail-closed direction: an unreadable directory is \"not stale\" everywhere today, and `archiveMerged()` relies on that to leave a permission-broken run dir alone.\n\n## Original request\n\n## Current State\n`isStructurallyStuck` (~line 664, `plugin/bin/lib/reconcile/archive-merged.js`) reimplements the identical \"fs.statSync(dir).mtimeMs, catch->false, compare (now-mtimeMs) > TTL\" stanza already present in `isAdHocStandaloneSuperseded` (~line 85) and `isOrphanedMint` (~line 97), each against its own TTL constant.\n\n## Deliverables\nA single `isStaleDir(dir, ttlMs, now)` helper collapsing the three copies of the same try/catch staleness check into one tested primitive, used by all three call sites.\n\n## Acceptance Criteria\n- [ ] `isStructurallyStuck`, `isAdHocStandaloneSuperseded`, and `isOrphanedMint` all call the same shared staleness helper.\n- [ ] Existing `tests/bin-lib/reconcile/archive-merged.test.js` behavior is preserved.\n- [ ] Full `npm test` passes.\n\nDefer-reason: genuinely-larger — bundled with the related consolidation findings (#1732, #1733) rather than landed piecemeal mid-release; found by the pre-v6.112.0 whole-branch review.\n\n",
+        "createdAt": "2026-08-31T11:28:51Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACq41dsw",
+            "name": "backlog:category-technical",
+            "description": "technical-category backlog item",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 1734,
+        "state": "OPEN",
+        "title": "archive-merged.js: extract a shared isStaleDir(dir, ttlMs, now) helper",
+        "updatedAt": "2026-09-14T11:05:22Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      },
+      {
+        "body": "Surface: infra\n\n## Current State\n`archiveMerged()` in `plugin/bin/lib/reconcile/archive-merged.js` ends with two loops that run the same merged-PR archive sequence: the main loop over `iterRunDirsWithState(root)` and the #1544 clean-status sweep over `iterCleanRunDirs(root)`. Both do `resolvePrState(root, branch)` → `readConsoleState(dir)` → `decideArchive(prState, consoleState)` → skip on `decision.action === 'skip'` → `localHasMerge(root, prState.mergeCommit)` with the `local-behind-merge` / `merge-commit-unknown` skip reasons → `dryRun` short-circuit → `archiveRunDir(root, dir)` → `trackArchiveResult(root, repoSlug, dir, result)` → push to `archived`/`skipped`. The copies already differ in one place that the duplication hides: the main loop's `decideArchive` skip also calls `trackStuckSkip(root, repoSlug, dir, decision.reason)` (#1613's structurally-stuck visibility), the clean loop's does not.\n\nThe two loops need different inputs only at the front: the main loop derives `branch` from the worktree list (with the structurally-stuck skip on `no-worktree`/`no-branch`), the clean loop from `fallbackBranch(root, dir, state)` because a `clean` run's `state.worktree` is null by construction. `iterCleanRunDirs` exists because `iterRunDirsWithState` in `bin/lib/hooks/context.js` skips `status: 'clean'` by design, and that generator has eight callers (hooks dispatcher, session-start, console-execute, the residue probe, the stray-run-dir sweep, reconcile's index) that all rely on the exclusion.\n\n## Deliverables\n- [ ] One helper in `archive-merged.js`, `archiveMergedRun({ root, repoSlug, dir, branch, dryRun, onSkip })` → `{ outcome: 'archived' | 'skipped', reason? }`, holding the full sequence from `resolvePrState` through `trackArchiveResult`; `onSkip(reason)` is the hook the main loop uses to call `trackStuckSkip` on a `decideArchive` skip, so the one existing difference becomes an explicit parameter rather than a divergence.\n- [ ] Both loops call the helper: the main loop after its worktree-derived `branch` and structurally-stuck handling, the clean loop after `fallbackBranch`; each keeps only its branch derivation and its `archived`/`skipped` push.\n- [ ] `iterRunDirsWithState`'s contract is unchanged and `iterCleanRunDirs` stays as the clean-status enumerator; the record's alternative (a state-tagged tuple from the shared iterator) is declined — see Technical Approach.\n- [ ] `tests/bin-lib/reconcile/archive-merged.test.js`: existing cases unmodified and green; one new case that a clean-status run whose `decideArchive` skips reports the skip reason without invoking `trackStuckSkip` (pins the `onSkip` asymmetry as intended, so a later reader does not \"fix\" it), and one that a main-loop skip still does.\n\n## Acceptance Criteria\n1. `archive-merged.js` contains exactly one call site each for `resolvePrState`, `decideArchive`, `localHasMerge`, and `archiveRunDir` inside `archiveMerged()`'s merged-PR path (the helper); neither loop body calls them directly.\n2. For every existing fixture, `archiveMerged({ dryRun: true })` returns the same `archived`/`skipped` sets as before the change.\n3. `iterRunDirsWithState` in `bin/lib/hooks/context.js` is byte-identical; no other caller changes.\n4. The `trackStuckSkip`-on-main-loop-only behavior is preserved and pinned by a test.\n5. `npm test` is green.\n\n## Technical Approach\nShare the sequence at the caller, not the iterator. Widening `iterRunDirsWithState` to yield `clean` runs behind a tag would touch a generator that every hook invocation drives (`context.js`'s own comment: it \"drives both the fallback event-attribution scan and every reconcile check's enumeration\") and force each of its other callers to filter the new tuple, for a benefit that is entirely local to `archiveMerged()`. The helper is a pure extraction: move the shared block into a function whose only free variables are the ones both loops already have in scope. Land this before #1732 where possible — #1732's per-kind action switch then dispatches the `merged` kind straight to this helper instead of inlining the sequence a third time. Same file as #1732, #1734, #1737: sequence, never build in parallel.\n\n### Key Files\n- `plugin/bin/lib/reconcile/archive-merged.js` — `archiveMerged` (both loops), `iterCleanRunDirs`, `decideArchive`, `localHasMerge`, `archiveRunDir`, `trackArchiveResult`, `trackStuckSkip`.\n- `plugin/bin/lib/hooks/context.js` — `iterRunDirsWithState` (read for the contract; unchanged).\n- `plugin/bin/lib/hooks/run-integrity.js` — `fallbackBranch` (clean loop's branch source; unchanged).\n- `tests/bin-lib/reconcile/archive-merged.test.js` — the #1544 clean-status fixture (around the `status: 'clean', worktree: null, pr: { branch: … }` case) is the template for the new pins.\n\n## Gotchas\n- `resolvePrState` (imported from `pr-state.js`) reads the reconcile PR cache; keep it inside the helper so a future change to its caching cannot land in one loop only.\n- The clean loop's comment block (#1544 rationale: why `state.worktree` is null and why `fallbackBranch` is the right source) must stay on the clean loop, not move into the helper — it explains the input, not the sequence.\n- `dryRun` pushes to `archived` without touching disk in both loops today; the helper returns `outcome: 'archived'` for that case and the caller pushes, so the dry-run contract stays identical.\n\n## Original request\n## Current State\n`iterCleanRunDirs()` and its consuming loop (`plugin/bin/lib/reconcile/archive-merged.js`, ~line 734/897) duplicate the main loop's `prState`/`decideArchive`/`localHasMerge`/`archiveRunDir`/`trackArchiveResult` sequence almost verbatim, added because `iterRunDirsWithState` excludes 'clean' status runs by design rather than generalizing the iterator/caller to yield a state-tagged tuple both loops could share.\n\n## Deliverables\nGeneralize the iterator (or the caller) so both the main loop and the clean-run-dir loop share one archive-decision sequence instead of two independently maintained copies.\n\n## Acceptance Criteria\n- [ ] Only one implementation of the prState/decideArchive/localHasMerge/archiveRunDir/trackArchiveResult sequence exists.\n- [ ] Existing `tests/bin-lib/reconcile/archive-merged.test.js` behavior is preserved.\n- [ ] Full `npm test` passes.\n\nDefer-reason: genuinely-larger — requires reshaping the shared iterator's contract, not a localized change; found by the pre-v6.112.0 whole-branch review.\n",
+        "createdAt": "2026-08-31T11:28:43Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACq41dsw",
+            "name": "backlog:category-technical",
+            "description": "technical-category backlog item",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Size: medium effort",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: standard review",
+            "color": "c5def5"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 1733,
+        "state": "OPEN",
+        "title": "archive-merged.js: iterCleanRunDirs() loop duplicates the main loop's archive sequence",
+        "updatedAt": "2026-09-14T11:05:24Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      },
+      {
+        "body": "Surface: backend\n\n## Current State\n\n`plugin/bin/lib/hooks/run-integrity.js`'s `mergedEvidence()` passes a caller-derived ref name as a bare positional argument to git at two call sites:\n\n- `runGit(['merge-base', '--is-ancestor', branch, integration], root)`\n- `runGit(['cherry', integration, branch], root)`\n\nThis repo's `gh-api-module-pattern` skill states the rule directly: a caller-supplied value beginning with `-` is still read as an option, and for `git` the separator is `--end-of-options`, not `--` (`--` only guards the pathspec argument slot, a different position). `docs/incident-log.md` carries the same rule for `rev-parse`/`merge-base`.\n\nRecord #1463 added a third call in the same file (`hasCommitSinceRunStart`'s `git log`) and adopted `--end-of-options` there, per CLAUDE.md's \"adopt new conventions in new code first, then migrate existing ones deliberately\". These two call sites are the deliberate migration that convention-adoption implies.\n\n## Deliverables\n\n- [ ] `mergedEvidence()`'s `merge-base --is-ancestor` call places `--end-of-options` before the two ref arguments.\n- [ ] `mergedEvidence()`'s `git cherry` call does the same.\n- [ ] No behavior change for any ref name git can actually produce — the existing `tests/run-integrity.test.js` AC1/AC2/AC3a cases stay green unchanged.\n\n## Acceptance Criteria\n\n1. Both call sites in `mergedEvidence()` pass their ref arguments after an `--end-of-options` separator.\n2. `node --test tests/run-integrity.test.js` passes with no test edits required.\n3. `npm test` passes.\n\n## Technical Approach\nTwo argument-array edits, no logic change: insert `'--end-of-options'` immediately before the first ref argument in each call — `['merge-base', '--is-ancestor', '--end-of-options', branch, integration]` and `['cherry', '--end-of-options', integration, branch]`. `hasCommitSinceRunStart`'s `git log` call in the same file is the in-file model (it already places `--end-of-options` before `branch`, followed by `--` for the pathspec slot); `git cherry` takes no pathspec, so no trailing `--` there.\n\n### Key Files\n- `plugin/bin/lib/hooks/run-integrity.js` — `mergedEvidence()` (the `merge-base --is-ancestor` and `cherry` calls), `hasCommitSinceRunStart()` (existing `--end-of-options` example).\n- `tests/run-integrity.test.js` — AC1 (ancestor), AC2 (cherry), AC3a (unmerged) cases pin the behavior; no edits expected.\n\n## Gotchas\n- Not exploitable today: `branch` reaches these calls only from `deriveBranch()`'s parse of `git worktree list --porcelain`, and git refuses to create a ref beginning with `-`.\n- `--end-of-options` requires git 2.24+; the file's existing `rev-parse --verify --quiet --end-of-options` and `git log … --end-of-options` calls already assume it, so this adds no new floor.\n- The guard just above the calls compares `branch` to `bareIntegrationName(integration)` (#1861/#1862) but passes `integration` through unnormalized; the separator protects the argument slot and changes nothing about that comparison.\n\n## Original request\n\nOrigin: `/claude-tweaks:review #1463`, Step 3 — both dispatched lenses (3b Security, 3c Error Handling) independently reported the same location; 3c cited this repo's own `gh-api-module-pattern` skill for the rule. Staged rather than fixed inside #1463 because those two call sites are untouched by that record's diff and fixing them there would have widened it beyond its declared scope, against this project's surgical-changes rule. Filed via the `/claude-tweaks:flow #1463,#1672,#1673,#1674` consolidated Review Console.\n\n",
+        "createdAt": "2026-08-29T21:03:36Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 1686,
+        "state": "OPEN",
+        "title": "run-integrity.js: migrate mergedEvidence()'s two git calls to --end-of-options",
+        "updatedAt": "2026-09-14T12:11:24Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      }
+    ],
+    [
+      {
         "body": "Origin: reflect full-mode from #1076\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:build` Common Step 2 executes plans via `/superpowers:subagent-driven-development`, whose own Finish step deletes the plan's SDD workspace (`.superpowers/sdd/{plan}/`) once the final review is clean — including `progress.md`, where SDD convention ledgers deferred-minor review findings. claude-tweaks' wrap-up reads only the run ledger (`docs/plans/*-ledger.md`), so any observation ledgered solely in the SDD workspace is structurally lost at the seam. Observed in run 2026-08-20T154419-spec-1076: a scoped re-review's out-of-scope observation survived only because a later hindsight pass happened to re-surface it.\n\n## Deliverables\n\n- [ ] `plugin/skills/build/SKILL.md` Common Step 2 (or the SDD invocation instruction it composes) directs the controller to copy any surviving SDD deferred-minor / parked-finding ledger lines into the run ledger (phase `build/*`, status `deferred` or `observation`) before the SDD workspace is deleted.\n- [ ] The instruction names the source (`{workspace}/progress.md` lines matching `minor (deferred)` / `parked`) and the destination table's column shape.\n\n## Acceptance Criteria\n\n1. After a `/build` run whose SDD pass recorded at least one deferred minor, the run ledger contains those lines and the SDD workspace is deleted — verifiable by inspecting `docs/plans/{run}-ledger.md` post-build.\n2. A conformance check (or the existing suite pattern) pins the instruction's presence in `build/SKILL.md`.\n\n_Filed by `reflect` via wrap-up upstream-row self-reference collapse._\n",
         "createdAt": "2026-08-20T19:15:08Z",
         "labels": [
@@ -3606,6 +3438,96 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review of `tests/bin-lib/issues/shipped-candidate.test.js`.\nThe test named \"no Key Files section and no title match can never classify strong\" only asserts\n`tier === 'weak'`; it never covers the module's stated \"never upgrades a tier on missing data\"\nrule (confirmed, `shipped-candidate.js:27`'s comment: \"a PR absent from this map is simply 'files\nnot fetched for it,' which the files-based strong signal treats the same as 'files don't cover\neverything' — it never upgrades a tier on missing data\"). No existing test supplies a record with\nKey Files, no title match, and no `prFiles` entry at all — the actual missing-data path the\ncomment describes.\n\n## Deliverables\n\nAdd a test case supplying a record with a Key Files section, no title match, and no `prFiles`\nentry, asserting the module does not upgrade the tier on that missing data.\n\n## Acceptance Criteria\n\nThe new test fails if the missing-data guard is removed from `shipped-candidate.js`, proving it\nactually exercises the rule.\n\n## Technical Approach\n\nAdd a test case to `tests/bin-lib/issues/shipped-candidate.test.js`, alongside the existing \"no\nKey Files section and no title match can never classify strong\" test, using a record that DOES\ncarry a `### Key Files` section (unlike the existing test) but whose corresponding PR number has\nno entry in `opts.prFiles` — asserting the result stays `tier: 'weak'`, not `'strong'`, proving\nthe missing-`prFiles`-entry path is treated as \"files don't cover everything\" rather than\nsilently upgrading. Verify the test actually discriminates per the Acceptance Criteria: comment\nout or bypass the missing-data guard in `shipped-candidate.js` locally and confirm the new test\nfails, before considering it done.\n\n### Key Files\n\n- `tests/bin-lib/issues/shipped-candidate.test.js` — add the missing-`prFiles`-entry test case\n- `plugin/bin/lib/issues/shipped-candidate.js` (line ~27, read-only reference) — the rule being\n  tested\n\n## Gotchas\n\n- The test must supply a record that genuinely has a `### Key Files` section (the existing\n  no-Key-Files test doesn't exercise this path at all) — the distinguishing setup is Key Files\n  present + no title match + no `prFiles` entry, not merely \"no `prFiles` entry\" alone.\n- Per this record's own Acceptance Criteria, verify the test discriminates by temporarily\n  removing the guard and confirming a failure — don't skip this verification step.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review of tests/bin-lib/issues/shipped-candidate.test.js. The test named \"no Key Files section and no title match can never classify strong\" only asserts `tier === 'weak'`; it never covers the module's stated \"never upgrades a tier on missing data\" rule (shipped-candidate.js:27's comment: a PR absent from `opts.prFiles` should be treated like \"files don't cover everything\"). No existing test supplies a record with Key Files, no title match, and no prFiles entry at all — the actual missing-data path the comment describes.\n\n## Deliverables\nAdd a test case supplying a record with a Key Files section, no title match, and no prFiles entry, asserting the module does not upgrade the tier on that missing data.\n\n## Acceptance Criteria\nThe new test fails if the missing-data guard is removed from shipped-candidate.js, proving it actually exercises the rule.\n",
+        "createdAt": "2026-09-12T16:46:40Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 2339,
+        "state": "OPEN",
+        "title": "shipped-candidate.test.js doesn't cover the 'never upgrade tier on missing data' rule",
+        "updatedAt": "2026-09-13T13:32:31Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
         }
       }
     ],
@@ -3784,6 +3706,94 @@
       }
     ],
     [
+      {
+        "body": "Surface: backend\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule\nsentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`,\n18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its\npersonas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent`\ntool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a\nstatic `node --test` assertion; it can only be confirmed by observing an actual future `/specify`\ndecomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that\npersona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s\nfan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the\nobservation (transcript excerpt or note) against this item, or file a defect against\n`red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use\ncalls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of\nsub-issues) assistant messages.\n\n## Technical Approach\n\nWait for (or trigger) a `/claude-tweaks:specify` decomposition-mode run that produces 2 or more\n`ceremony:standard` sub-issue records — `ceremony-check` (`assess-agent-autonomy/ceremony-check.md`)\nresolves the tier per sub-issue during that run's own Step 3, so the tier isn't knowable until the\nrun happens. Once such a run occurs, inspect that session's stored transcript for the Step 5\nred-team dispatch (`specify/red-team.md`'s Parallel dispatch section): locate the `Agent` tool_use\nblocks for each dispatched persona and group them by the assistant message id each block belongs\nto. Confirm the number of distinct assistant message ids covering all persona dispatches for a\ngiven sub-issue is ≤ the number of sub-issues in that batch. Use the same read-only transcript\ninspection method `transcript-payload-verification` documents for reading this session's own\nlocally-stored transcript, rather than instrumenting or modifying `red-team.md` itself.\n\nIf the count exceeds the bound, file a defect issue against `red-team.md`'s dispatch prose\n(quoting the transcript grouping that violates the rule) instead of editing the file directly from\nthis record — this record's own deliverable is the observation, not the fix.\n\n### Key Files\n\n- `plugin/skills/specify/red-team.md` — the per-sub-issue persona dispatch procedure being observed\n- `plugin/skills/_shared/subagent-output-contract.md` — the fan-out single-assistant-message rule this observation verifies compliance with\n- `tests/subagent-contract-clauses.test.js` — AC1's existing static test coverage (unaffected by this record)\n\n## Gotchas\n\n- This record's acceptance criterion depends on an external event (a live `/specify` decomposition\n  run over 2+ `ceremony:standard` sub-issues happening) that this record cannot itself trigger on a\n  fixed schedule — it may sit open for some time until a qualifying run occurs naturally, or until\n  someone deliberately runs one to close it out.\n- A qualifying run must be observed via its own transcript at the time it happens; this record\n  cannot be resolved from historical data if no already-completed run's transcript is still\n  available.\n\n## Original request\n\nVerify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)\n\nOrigin: ledger resolve gate\n\nDefer-reason: needs-human-decision\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule sentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`, 18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its personas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent` tool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a static `node --test` assertion; it can only be confirmed by observing an actual future `/specify` decomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that persona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s fan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the observation (transcript excerpt or note) against this item, or file a defect against `red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use calls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of sub-issues) assistant messages.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
+        "createdAt": "2026-08-24T03:21:25Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAAC0IWj4w",
+            "name": "fix-on-worktree-worktree-dispatch-record-1350",
+            "description": "Fixed on worktree-worktree-dispatch-record-1350, not yet on the default branch",
+            "color": "FBCA04"
+          }
+        ],
+        "number": 1350,
+        "state": "OPEN",
+        "title": "Verify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)",
+        "updatedAt": "2026-09-13T13:14:34Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      },
       {
         "body": "Surface: infra\n\n## Current State\n\n`tests/timing-nested-parent-roster.test.js` (added for #2030) scans build/test/review/design-wrapper/wrap-up/flow/`_shared` for real nested `/claude-tweaks:{name}` Skill-tool invocations and asserts each is either a `PHASES` member, a `plugin/bin/lib/timing/derive.js` `NESTED_PARENT` key, or an allowlisted descriptive-only mention. The scan found three genuine nested invocations that are none of those:\n\n- `plugin/skills/flow/SKILL.md:80` — \"Run `/claude-tweaks:stories` with the detected URL\" (flow's automatic story generation).\n- `plugin/skills/flow/SKILL.md:195` / `plugin/skills/flow/survey.md:69` — \"invoke `/claude-tweaks:deepen <changed-source-files>`\" (flow's Depth Opportunities survey).\n- `plugin/skills/wrap-up/review-console.md:126` / `plugin/skills/flow/multispec-review-console.md:115` — \"invoke `/claude-tweaks:feedback --pre-confirmed`\" (Review Console upstream-feedback filing).\n\nNone of `stories`, `deepen`, `feedback` are in `NESTED_PARENT`, so a `skill_invoked` event for any of them currently opens its own new top-level phase row in `derive.js`'s output rather than nesting into the enclosing phase (`build`'s stories generation, `wrap-up`'s Review Console, etc.) — exactly the \"spurious top-level phase\" behavior `derive.js`'s own roster comment warns about. The conformance test (#2030) allowlists these three by name, with a pointer to this issue, rather than silently deciding the phase-attribution question itself.\n\n**Resolved here** — all three follow the same pattern as `NESTED_PARENT`'s nine existing entries\n(`simplify`, `reflect`, `visual-review`, `capture`, `design-wrapper`, `challenge`,\n`assess-agent-autonomy`, `ledger`, `journeys`): each is a skill dispatched *as a sub-step* of a\nlarger pipeline skill's own procedure, never itself a top-level pipeline phase (`build`, `test`,\n`review`, `polish`, `wrap-up`, `merge`). `stories` (flow's automatic story generation) is the\ndirect analogue of already-nested `journeys` (also a doc/artifact-generation sub-step of build).\n`deepen` (flow's Depth Opportunities survey) is the direct analogue of already-nested `reflect`/\n`simplify` (analysis passes run as pipeline sub-steps). `feedback` (Review Console's\nupstream-feedback filing) is the direct analogue of already-nested `capture` (a filing action\ninvoked as a pipeline sub-step). None of the three is ever a user-facing standalone pipeline\nstage the way `build`/`review`/`wrap-up` are.\n\n## Deliverables\n\n- Add `stories`, `deepen`, and `feedback` to `plugin/bin/lib/timing/derive.js`'s `NESTED_PARENT`\n  map, each mapped to `'enclosing'` — matching the nine existing entries' shape exactly.\n- Remove `stories`, `deepen`, and `feedback` from `tests/timing-nested-parent-roster.test.js`'s\n  allowlist (they're no longer an unresolved gap once they're `NESTED_PARENT` members).\n\n## Acceptance Criteria\n\n1. `tests/timing-nested-parent-roster.test.js` no longer needs `deepen`/`stories`/`feedback` in\n   its allowlist — they've moved to `NESTED_PARENT` instead.\n2. A `skill_invoked` event for `stories`, `deepen`, or `feedback` nests into its enclosing phase\n   in `derivePhases()`'s output rather than opening a new top-level phase — covered by a test\n   case mirroring the existing `NESTED_PARENT` entries' own test coverage in\n   `tests/bin-lib/timing/derive.test.js` (or wherever the existing nine entries are tested).\n3. `npm test` stays green.\n\n## Technical Approach\n\nAdd three entries to the existing `NESTED_PARENT` object literal in\n`plugin/bin/lib/timing/derive.js` (~line 21), each `'enclosing'` — the identical value every\nexisting entry already uses (`isTopLevel()` at line 55 only checks map membership, not the\nvalue, so `'enclosing'` is the only value this map currently uses; keep it consistent). Then\nremove the three names from `tests/timing-nested-parent-roster.test.js`'s `ALLOWLIST` and add\n(or extend) a test case asserting each nests correctly, following whatever pattern the existing\nnine entries' own coverage already uses.\n\n### Key Files\n\n- `plugin/bin/lib/timing/derive.js` — add three entries to `NESTED_PARENT` (~line 21)\n- `tests/timing-nested-parent-roster.test.js` — remove the three names from `ALLOWLIST`\n- `tests/bin-lib/timing/derive.test.js` (or the actual location of `NESTED_PARENT`'s existing\n  test coverage — verify at build time) — add coverage for the three new entries\n\n## Gotchas\n\n- This record resolves the phase-attribution question itself (all three nest) rather than\n  leaving it open, based on direct structural analogy to `NESTED_PARENT`'s nine existing\n  entries — every one of them is a sub-step skill invoked from within a larger pipeline\n  procedure, exactly the shape `stories`/`deepen`/`feedback` share. If a maintainer disagrees\n  that one of the three should nest, that's a five-minute label removal from the map, not a\n  structural problem with this fix.\n- Do not add a fourth, differently-shaped value to `NESTED_PARENT` (e.g. naming a *specific*\n  parent phase) — every existing entry uses the literal string `'enclosing'`, and `isTopLevel()`\n  only checks map membership, so introducing a new value shape would be unused complexity.\n\n## Original request\n\nSurface: infra\n\n## Current State\n`tests/timing-nested-parent-roster.test.js` (added for #2030) scans build/test/review/design-wrapper/wrap-up/flow/`_shared` for real nested `/claude-tweaks:{name}` Skill-tool invocations and asserts each is either a `PHASES` member, a `plugin/bin/lib/timing/derive.js` `NESTED_PARENT` key, or an allowlisted descriptive-only mention. The scan found three genuine nested invocations that are none of those:\n\n- `plugin/skills/flow/SKILL.md:80` — \"Run `/claude-tweaks:stories` with the detected URL\" (flow's automatic story generation).\n- `plugin/skills/flow/SKILL.md:195` / `plugin/skills/flow/survey.md:69` — \"invoke `/claude-tweaks:deepen <changed-source-files>`\" (flow's Depth Opportunities survey).\n- `plugin/skills/wrap-up/review-console.md:126` / `plugin/skills/flow/multispec-review-console.md:115` — \"invoke `/claude-tweaks:feedback --pre-confirmed`\" (Review Console upstream-feedback filing).\n\nNone of `stories`, `deepen`, `feedback` are in `NESTED_PARENT`, so a `skill_invoked` event for any of them currently opens its own new top-level phase row in `derive.js`'s output rather than nesting into the enclosing phase (`build`'s stories generation, `wrap-up`'s Review Console, etc.) — exactly the \"spurious top-level phase\" behavior `derive.js`'s own roster comment warns about. The conformance test (#2030) allowlists these three by name, with a pointer to this issue, rather than silently deciding the phase-attribution question itself — that's a deliberate semantic call for a maintainer, not a test-authoring one.\n\n## Deliverables\n- [ ] Decide, for each of `stories`, `deepen`, `feedback`: should it nest into its enclosing phase (add to `NESTED_PARENT`) or legitimately remain its own top-level phase (leave as-is, remove from the roster test's allowlist with a comment explaining why it's intentionally top-level)?\n- [ ] Apply the decision in `plugin/bin/lib/timing/derive.js`'s `NESTED_PARENT` and/or `tests/timing-nested-parent-roster.test.js`'s `ALLOWLIST`.\n\n## Acceptance Criteria\n1. `tests/timing-nested-parent-roster.test.js` no longer needs `deepen`/`stories`/`feedback` in its allowlist for an \"unresolved gap\" reason (either they're removed because they're now in `NESTED_PARENT`, or the allowlist comment is updated to state they're deliberately top-level).\n2. `npm test` stays green.\n\nFound while implementing #2030 (the roster conformance test itself).\n\nDefer-reason: tangential\n",
         "createdAt": "2026-09-11T19:54:17Z",
@@ -3971,94 +3981,6 @@
           "notPlanned": false,
           "shapedHeadless": true
         }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review of `tests/bin-lib/issues/shipped-candidate.test.js`.\nThe test named \"no Key Files section and no title match can never classify strong\" only asserts\n`tier === 'weak'`; it never covers the module's stated \"never upgrades a tier on missing data\"\nrule (confirmed, `shipped-candidate.js:27`'s comment: \"a PR absent from this map is simply 'files\nnot fetched for it,' which the files-based strong signal treats the same as 'files don't cover\neverything' — it never upgrades a tier on missing data\"). No existing test supplies a record with\nKey Files, no title match, and no `prFiles` entry at all — the actual missing-data path the\ncomment describes.\n\n## Deliverables\n\nAdd a test case supplying a record with a Key Files section, no title match, and no `prFiles`\nentry, asserting the module does not upgrade the tier on that missing data.\n\n## Acceptance Criteria\n\nThe new test fails if the missing-data guard is removed from `shipped-candidate.js`, proving it\nactually exercises the rule.\n\n## Technical Approach\n\nAdd a test case to `tests/bin-lib/issues/shipped-candidate.test.js`, alongside the existing \"no\nKey Files section and no title match can never classify strong\" test, using a record that DOES\ncarry a `### Key Files` section (unlike the existing test) but whose corresponding PR number has\nno entry in `opts.prFiles` — asserting the result stays `tier: 'weak'`, not `'strong'`, proving\nthe missing-`prFiles`-entry path is treated as \"files don't cover everything\" rather than\nsilently upgrading. Verify the test actually discriminates per the Acceptance Criteria: comment\nout or bypass the missing-data guard in `shipped-candidate.js` locally and confirm the new test\nfails, before considering it done.\n\n### Key Files\n\n- `tests/bin-lib/issues/shipped-candidate.test.js` — add the missing-`prFiles`-entry test case\n- `plugin/bin/lib/issues/shipped-candidate.js` (line ~27, read-only reference) — the rule being\n  tested\n\n## Gotchas\n\n- The test must supply a record that genuinely has a `### Key Files` section (the existing\n  no-Key-Files test doesn't exercise this path at all) — the distinguishing setup is Key Files\n  present + no title match + no `prFiles` entry, not merely \"no `prFiles` entry\" alone.\n- Per this record's own Acceptance Criteria, verify the test discriminates by temporarily\n  removing the guard and confirming a failure — don't skip this verification step.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review of tests/bin-lib/issues/shipped-candidate.test.js. The test named \"no Key Files section and no title match can never classify strong\" only asserts `tier === 'weak'`; it never covers the module's stated \"never upgrades a tier on missing data\" rule (shipped-candidate.js:27's comment: a PR absent from `opts.prFiles` should be treated like \"files don't cover everything\"). No existing test supplies a record with Key Files, no title match, and no prFiles entry at all — the actual missing-data path the comment describes.\n\n## Deliverables\nAdd a test case supplying a record with a Key Files section, no title match, and no prFiles entry, asserting the module does not upgrade the tier on that missing data.\n\n## Acceptance Criteria\nThe new test fails if the missing-data guard is removed from shipped-candidate.js, proving it actually exercises the rule.\n",
-        "createdAt": "2026-09-12T16:46:40Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2339,
-        "state": "OPEN",
-        "title": "shipped-candidate.test.js doesn't cover the 'never upgrade tier on missing data' rule",
-        "updatedAt": "2026-09-13T13:32:31Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
       }
     ]
   ],
@@ -4103,9 +4025,9 @@
   "bundles": [
     {
       "records": [
+        1350,
         2249,
-        2288,
-        2339
+        2288
       ]
     }
   ]
