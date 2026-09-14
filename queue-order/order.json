@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T21:42:11.810Z",
+  "computedAt": "2026-09-14T21:56:52.601Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -16,11 +16,6 @@
       {
         "number": 2428,
         "updatedAt": "2026-09-14T18:54:30Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2413,
-        "updatedAt": "2026-09-14T17:47:39Z",
         "state": "OPEN"
       },
       {
@@ -149,16 +144,6 @@
         "state": "OPEN"
       },
       {
-        "number": 2323,
-        "updatedAt": "2026-09-14T20:33:52Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2319,
-        "updatedAt": "2026-09-14T19:50:41Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2314,
         "updatedAt": "2026-09-14T19:46:56Z",
         "state": "OPEN"
@@ -231,11 +216,6 @@
       {
         "number": 2257,
         "updatedAt": "2026-09-14T14:30:54Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2221,
-        "updatedAt": "2026-09-14T18:31:12Z",
         "state": "OPEN"
       },
       {
