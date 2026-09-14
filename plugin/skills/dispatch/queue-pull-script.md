@@ -1,6 +1,14 @@
 # Dispatch Step 2 — The Queue-Pull Script
 
-Referenced by `skills/dispatch/SKILL.md` Step 2. Run this verbatim — it produces this run's session-scoped `dispatch-groups.json` (`_shared/session-tmp-root.md`), the file-overlap-grouped eligible queue every selection form (bare, `next`, `#N`, `#N,#M,...`) reads next. It also produces `dispatch-blocked-excluded.json` — every otherwise-`auto:build`-eligible candidate this run's own blocked-by checks (body-text and, under `work-links: native`, the native `blockedBy` connection) dropped from the pool, each entry naming the blocker id(s) that excluded it (`{number, blockedBy: [ids]}[]`) — via `record.js`'s `partitionByOpenBodyBlockers` for the body-text case, and via `bin/resolve-blockers.js`'s `openBlockerIds` field for the `work-links: native` case — SKILL.md Step 2's Blocked-exclusion report reads this file so a shrinking pool is never silent. It also produces `dispatch-oversized-excluded.json` (#1228) — every file-overlap group `grouping.js`'s `partitionGroupsBySizeGuard` found over the size guard, each entry naming the group's members and size (`{records: number[], size, threshold}[]`). These groups stay IN `dispatch-groups.json` (`#N`/`#N,#M,...` still resolve them normally — a human present, explicitly naming one, is itself the required surfacing); only bare drain's auto-selection (SKILL.md Step 3, reusing the `next`-alias ranking script) reads this file to exclude an oversized group from its own candidate pool, since nobody is present there to see a table row or answer a prompt. SKILL.md Step 3's Oversized-exclusion report also reads this file so every form's exclusion (or non-exclusion) is surfaced, never silent. Before the size guard runs, `grouping.js`'s `bundleFastLaneSingletons` (#1910) merges up to `dispatch-fastlane-bundle-cap` (default 3, `policy.yml`) non-overlapping `ceremony:fast-lane` singleton groups — same `auto:merge` state, same `priority:*` band, oldest-first — into one multi-spec group each, so the pool `dispatch-groups.json` carries already reflects any bundling; it also writes `dispatch-fastlane-bundles.json` (`{records: number[]}[]`), naming exactly the groups this pass created, so the Reporting section can call out a fast-lane bundle distinctly from an ordinary file-overlap group. It also produces `dispatch-open-pr-excluded.json` (#1224) — every candidate already covered by an open, unmerged PR that will close it (GitHub's own `closedByPullRequestsReferences` connection, a closing keyword in the PR body), each entry naming the linked PR (`{number, pr}[]`) — via `record.js`'s `partitionByOpenLinkedPR`. Unlike the blocked-by check above, this one runs unconditionally, independent of `work-links`, and unlike the cross-PR overlap report below it DOES remove excluded candidates from `dispatch-groups.json` before any selection form reads it — a record with an in-flight PR is not a warning, it is not re-dispatch-eligible at all. It also produces `dispatch-target-missing-excluded.json` (#1983) — every remaining candidate whose `namedTarget` (`bin/lib/issues/named-target.js` — today, `by:docs-health` records only) names a file no longer present at the integration tip, each entry naming the absent path (`{number, path}[]`) — a docs-health-filed ledger correction whose target a since-merged tidy sweep already deleted. This one DOES remove excluded candidates from `dispatch-groups.json` too, the same as the open-linked-PR exclusion: such a record's own Acceptance Criteria is unsatisfiable, so re-dispatching it only burns a build attempt against the retry ceiling for nothing. Each exclusion also stages one Close proposal in this firing's own run directory (`tidy`'s Close (GitHub) shape) so the next `tidy --approve` closes the record — nothing is written to GitHub by dispatch itself. SKILL.md Step 3's Blocked-exclusion report reads this file too, under the same non-silent convention.
+Referenced by `skills/dispatch/SKILL.md` Step 2. Run this verbatim — it produces this run's session-scoped `dispatch-groups.json` (`_shared/session-tmp-root.md`), the file-overlap-grouped eligible queue every selection form (bare, `next`, `#N`, `#N,#M,...`) reads next. It also produces this run's session-scoped `dispatch-exclusions.json` (#1752) — one array of `{reason, records: number[], detail}` entries, written and read through `bin/lib/dispatch/exclusions.js` (`readExclusions`/`appendExclusion`), replacing five ad hoc per-reason files that each used to carry their own shape/producer/reader/report. The file is truncated (preserving only `firing`-reason entries — see `firing-exclusion.md`) at the start of this script's run, then five passes append to it:
+
+- `reason: 'blocked'` (`detail: {blockedBy: [ids]}`) — every otherwise-`auto:build`-eligible candidate this run's own blocked-by checks (body-text and, under `work-links: native`, the native `blockedBy` connection) dropped from the pool, via `record.js`'s `partitionByOpenBodyBlockers` for the body-text case and `bin/resolve-blockers.js`'s `openBlockerIds` field for the `work-links: native` case — SKILL.md Step 2's Blocked-exclusion report reads these entries so a shrinking pool is never silent.
+- `reason: 'oversized'` (`detail: {size, threshold}`, #1228) — every file-overlap group `grouping.js`'s `partitionGroupsBySizeGuard` found over the size guard. These groups stay IN `dispatch-groups.json` (`#N`/`#N,#M,...` still resolve them normally — a human present, explicitly naming one, is itself the required surfacing); only bare drain's auto-selection (SKILL.md Step 3, reusing the `next`-alias ranking script) excludes an oversized group from its own candidate pool, since nobody is present there to see a table row or answer a prompt. SKILL.md Step 3's Oversized-exclusion report surfaces these entries too, so every form's exclusion (or non-exclusion) is never silent. Before the size guard runs, `grouping.js`'s `bundleFastLaneSingletons` (#1910) merges up to `dispatch-fastlane-bundle-cap` (default 3, `policy.yml`) non-overlapping `ceremony:fast-lane` singleton groups — same `auto:merge` state, same `priority:*` band, oldest-first — into one multi-spec group each, so the pool `dispatch-groups.json` carries already reflects any bundling; it also writes `dispatch-fastlane-bundles.json` (`{records: number[]}[]`), naming exactly the groups this pass created, so the Reporting section can call out a fast-lane bundle distinctly from an ordinary file-overlap group.
+- `reason: 'open-pr'` (`detail: {pr}`, #1224) — every candidate already covered by an open, unmerged PR that will close it (GitHub's own `closedByPullRequestsReferences` connection, a closing keyword in the PR body), via `record.js`'s `partitionByOpenLinkedPR`. Unlike the blocked-by pass above, this one runs unconditionally, independent of `work-links`, and unlike the cross-PR overlap report below it DOES remove excluded candidates from `dispatch-groups.json` before any selection form reads it — a record with an in-flight PR is not a warning, it is not re-dispatch-eligible at all.
+- `reason: 'target-missing'` (`detail: {path}`, #1983) — every remaining candidate whose `namedTarget` (`bin/lib/issues/named-target.js` — today, `by:docs-health` records only) names a file no longer present at the integration tip — a docs-health-filed ledger correction whose target a since-merged tidy sweep already deleted. This one DOES remove excluded candidates from `dispatch-groups.json` too, the same as the open-PR pass: such a record's own Acceptance Criteria is unsatisfiable, so re-dispatching it only burns a build attempt against the retry ceiling for nothing. Also stages one Close proposal in this firing's own run directory (`tidy`'s Close (GitHub) shape) so the next `tidy --approve` closes the record — nothing is written to GitHub by dispatch itself. SKILL.md Step 3's Blocked-exclusion report reads this reason too, under the same non-silent convention.
+- `reason: 'shipped'` (`detail: {pr, signals}`, #1984) — every remaining candidate a merged PR's `strong`-tier mention already ships (see the False-positive posture note in `SKILL.md`). Also stages one Close proposal, exactly like the `target-missing` pass above.
+
+A sixth reason, `firing`, is never written by this script — it is appended incrementally by `SKILL.md`'s Loop between successive re-runs of this script within one firing (`firing-exclusion.md`), which is exactly why this script's own truncation step preserves it rather than dropping it.
 
 ```bash
 eval "$(node -e "
@@ -18,18 +26,14 @@ eval "$(node -e "
     DISPATCH_NATIVE_DEPS_TMP: 'dispatch-native-deps.tmp.json',
     DISPATCH_NATIVE_DEPS_ERR: 'dispatch-native-deps.err',
     DISPATCH_GROUPS: 'dispatch-groups.json',
-    DISPATCH_BLOCKED_EXCLUDED: 'dispatch-blocked-excluded.json',
-    DISPATCH_OVERSIZED_EXCLUDED: 'dispatch-oversized-excluded.json',
+    DISPATCH_EXCLUSIONS: 'dispatch-exclusions.json',
     DISPATCH_FASTLANE_BUNDLES: 'dispatch-fastlane-bundles.json',
     DISPATCH_DEP_FRESHNESS: 'dispatch-dep-freshness.json',
     DISPATCH_OPEN_PRS: 'dispatch-open-prs.json',
     DISPATCH_CROSSPR_OVERLAP: 'dispatch-crosspr-overlap.json',
     DISPATCH_LINKED_PRS: 'dispatch-linked-prs.json',
     DISPATCH_LINKED_PRS_ERR: 'dispatch-linked-prs.err',
-    DISPATCH_OPEN_PR_EXCLUDED: 'dispatch-open-pr-excluded.json',
     DISPATCH_NAMED_TARGETS: 'dispatch-named-targets.json',
-    DISPATCH_TARGET_MISSING_EXCLUDED: 'dispatch-target-missing-excluded.json',
-    DISPATCH_SHIPPED_EXCLUDED: 'dispatch-shipped-excluded.json',
     DISPATCH_SHIPPED_PROBE_PRS: 'dispatch-shipped-probe-prs.json',
     DISPATCH_SHIPPED_PR_FILES: 'dispatch-shipped-pr-files.jsonl',
   };
@@ -38,6 +42,18 @@ eval "$(node -e "
     console.log(varName + '=' + JSON.stringify(p));
   }
 ")"
+
+# #1752: truncate this run's session-scoped dispatch-exclusions.json, keeping
+# only 'firing'-reason entries -- those are appended incrementally by
+# SKILL.md's Loop BETWEEN successive re-runs of this script within one
+# firing (firing-exclusion.md) and must survive this script's own re-pull,
+# while every other reason below is recomputed fresh each run.
+node -e "
+  const { readExclusions } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
+  const fs = require('fs');
+  const kept = readExclusions(process.argv[1]).filter((e) => e.reason === 'firing');
+  fs.writeFileSync(process.argv[1], JSON.stringify(kept));
+" "$DISPATCH_EXCLUSIONS"
 
 gh issue list --label auto:build --state open --json number,title,body,labels,createdAt,updatedAt,state --limit 500 > "$DISPATCH_QUEUE_RAW"
 QUEUE_RAW_COUNT=$(node -e "console.log(require(process.argv[1]).length)" "$DISPATCH_QUEUE_RAW")
@@ -75,6 +91,7 @@ fi
 CACHE_HIT=$(node -e "
   const { mainCheckoutRoot } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/hooks/worktree-detect.js');
   const { readOrder, buildFreshnessSignal, signalsMatch } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/queue-order.js');
+  const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const fs = require('fs');
   const root = mainCheckoutRoot(process.cwd()) || process.cwd();
   const persisted = readOrder(root);
@@ -84,17 +101,25 @@ CACHE_HIT=$(node -e "
   const current = buildFreshnessSignal([...autoBuild, ...depFreshness]);
   if (!signalsMatch(persisted.freshnessSignal, current)) { console.log('0'); process.exit(0); }
   fs.writeFileSync(process.argv[3], JSON.stringify(persisted.groups));
-  fs.writeFileSync(process.argv[4], JSON.stringify(persisted.excluded));
+  // persisted.excluded is the disk cache's own (unchanged) blocked-only
+  // shape ({number, blockedBy}[]) -- convert to this run's unified
+  // reason:'blocked' entries at the point it's materialized into the
+  // session-scoped file, rather than changing the disk cache's schema.
+  for (const e of persisted.excluded) {
+    appendExclusion(process.argv[4], { reason: 'blocked', records: [e.number], detail: { blockedBy: e.blockedBy } });
+  }
   const groupSizeGuard = parseInt(process.argv[5], 10);
   const { partitionGroupsBySizeGuard } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/grouping.js');
   const { oversized, threshold } = partitionGroupsBySizeGuard(persisted.groups, { groupSizeGuard });
-  fs.writeFileSync(process.argv[6], JSON.stringify(oversized.map((g) => ({ records: g.map((i) => i.number), size: g.length, threshold }))));
+  for (const g of oversized) {
+    appendExclusion(process.argv[4], { reason: 'oversized', records: g.map((i) => i.number), detail: { size: g.length, threshold } });
+  }
   // #2066: a cache hit's persisted bundle membership replaces the
   // pre-computation '[]' default above -- a persisted record from before
   // this field existed has no 'bundles' key, so this falls back to [].
-  fs.writeFileSync(process.argv[7], JSON.stringify(persisted.bundles || []));
+  fs.writeFileSync(process.argv[6], JSON.stringify(persisted.bundles || []));
   console.log('1');
-" "$DISPATCH_QUEUE_RAW" "$DISPATCH_DEP_FRESHNESS" "$DISPATCH_GROUPS" "$DISPATCH_BLOCKED_EXCLUDED" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values dispatch-group-size-guard)" "$DISPATCH_OVERSIZED_EXCLUDED" "$DISPATCH_FASTLANE_BUNDLES")
+" "$DISPATCH_QUEUE_RAW" "$DISPATCH_DEP_FRESHNESS" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values dispatch-group-size-guard)" "$DISPATCH_FASTLANE_BUNDLES")
 
 if [ "$CACHE_HIT" = "1" ]; then
   echo "Queue-order cache hit — using persisted groups/excluded, skipping dependency verification and native blocker query (#1571)." >&2
@@ -154,6 +179,7 @@ fi
 node -e "
   const fs = require('fs');
   const { extractKeyFiles, expectsKeyFilesSection, groupByFileOverlap, partitionGroupsBySizeGuard, bundleFastLaneSingletons } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/grouping.js');
+  const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const eligible = require(process.argv[1]);
   const nativeDeps = require(process.argv[2]);
   const finalEligible = [];
@@ -176,23 +202,26 @@ node -e "
   // size guard -- a bundle tops out at bundleCap (default 3), always well
   // under the size guard's own default of 10, so ordering here never
   // interacts with that gate.
-  const bundleCap = parseInt(process.argv[7], 10);
+  const bundleCap = parseInt(process.argv[6], 10);
   const { groups, bundles } = bundleFastLaneSingletons(rawGroups, { bundleCap });
   console.log(JSON.stringify(groups));
-  fs.writeFileSync(process.argv[8], JSON.stringify(bundles));
+  fs.writeFileSync(process.argv[7], JSON.stringify(bundles));
   const excludedBody = require(process.argv[3]);
-  fs.writeFileSync(process.argv[4], JSON.stringify([...excludedBody, ...excludedNative]));
+  for (const e of [...excludedBody, ...excludedNative]) {
+    appendExclusion(process.argv[4], { reason: 'blocked', records: [e.number], detail: { blockedBy: e.blockedBy } });
+  }
   // Size guard (#1228): flagged, never removed from DISPATCH_GROUPS -- bare
   // and #N/#N,#M still resolve an oversized group normally (a human present,
   // explicitly naming/picking it, is itself the required surfacing). Only
   // the drain's ranking script (Step 3 — bare, or its deprecated next
-  // alias) reads this file to exclude an oversized group from its own
-  // candidate pool, since nobody is present there to see a table row or
-  // answer a prompt.
-  const groupSizeGuard = parseInt(process.argv[6], 10);
+  // alias) excludes an oversized group from its own candidate pool, since
+  // nobody is present there to see a table row or answer a prompt.
+  const groupSizeGuard = parseInt(process.argv[5], 10);
   const { oversized, threshold } = partitionGroupsBySizeGuard(groups, { groupSizeGuard });
-  fs.writeFileSync(process.argv[5], JSON.stringify(oversized.map((g) => ({ records: g.map((i) => i.number), size: g.length, threshold }))));
-" "$DISPATCH_ELIGIBLE" "$DISPATCH_NATIVE_DEPS" "$DISPATCH_BLOCKED_EXCLUDED_BODY" "$DISPATCH_BLOCKED_EXCLUDED" "$DISPATCH_OVERSIZED_EXCLUDED" "$DISPATCH_GROUP_SIZE_GUARD" "$DISPATCH_FASTLANE_BUNDLE_CAP" "$DISPATCH_FASTLANE_BUNDLES" > "$DISPATCH_GROUPS"
+  for (const g of oversized) {
+    appendExclusion(process.argv[4], { reason: 'oversized', records: g.map((i) => i.number), detail: { size: g.length, threshold } });
+  }
+" "$DISPATCH_ELIGIBLE" "$DISPATCH_NATIVE_DEPS" "$DISPATCH_BLOCKED_EXCLUDED_BODY" "$DISPATCH_EXCLUSIONS" "$DISPATCH_GROUP_SIZE_GUARD" "$DISPATCH_FASTLANE_BUNDLE_CAP" "$DISPATCH_FASTLANE_BUNDLES" > "$DISPATCH_GROUPS"
 
 # #1571: write-back (cache-miss path only — a hit's persisted blob already
 # reflects current state, so re-persisting it would be a wasted, byte-
@@ -214,11 +243,18 @@ node -e "
   const { mainCheckoutRoot } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/hooks/worktree-detect.js');
   const path = require('path');
   const { writeOrder, buildFreshnessSignal, composeOrderBlob } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/queue-order.js');
+  const { readExclusions } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const root = mainCheckoutRoot(process.cwd()) || process.cwd();
   const autoBuild = require(process.argv[1]);
   const depFreshness = require(process.argv[2]);
   const groups = require(process.argv[3]);
-  const excluded = require(process.argv[4]);
+  // The disk cache's own 'excluded' field keeps its pre-#1752 shape
+  // ({number, blockedBy}[]) unchanged -- reshape this run's unified
+  // reason:'blocked' entries back into it here, at the one place the two
+  // schemas meet, rather than changing the persisted cache's own format.
+  const excluded = readExclusions(process.argv[4])
+    .filter((e) => e.reason === 'blocked')
+    .map((e) => ({ number: e.records[0], blockedBy: e.detail.blockedBy }));
   const bundles = require(process.argv[5]);
   const freshnessSignal = buildFreshnessSignal([...autoBuild, ...depFreshness]);
   const blob = composeOrderBlob({
@@ -228,7 +264,7 @@ node -e "
   });
   const result = writeOrder(root, blob);
   if (!result.ok) console.error('Queue-order cache write-back failed (non-blocking): ' + result.error);
-" "$DISPATCH_QUEUE_RAW" "$DISPATCH_DEP_FRESHNESS" "$DISPATCH_GROUPS" "$DISPATCH_BLOCKED_EXCLUDED" "$DISPATCH_FASTLANE_BUNDLES"
+" "$DISPATCH_QUEUE_RAW" "$DISPATCH_DEP_FRESHNESS" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_FASTLANE_BUNDLES"
 
 fi
 
@@ -261,19 +297,21 @@ if [ -n "$DISPATCH_GROUP_NUMS" ]; then
 fi
 node -e "
   const fs = require('fs');
+  const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const groups = require(process.argv[1]);
   const linkedPRs = require(process.argv[2]);
-  const excluded = [];
   const finalGroups = groups
     .map((g) => g.filter((c) => {
       const entry = linkedPRs[c.number];
-      if (entry && entry.openPR) { excluded.push({ number: c.number, pr: entry.openPR }); return false; }
+      if (entry && entry.openPR) {
+        appendExclusion(process.argv[3], { reason: 'open-pr', records: [c.number], detail: { pr: entry.openPR } });
+        return false;
+      }
       return true;
     }))
     .filter((g) => g.length > 0);
-  fs.writeFileSync(process.argv[3], JSON.stringify(excluded));
   console.log(JSON.stringify(finalGroups));
-" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_OPEN_PR_EXCLUDED" > "${DISPATCH_GROUPS}.tmp" && mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
+" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" > "${DISPATCH_GROUPS}.tmp" && mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
 
 # #1983: named-target existence exclusion. Runs unconditionally, right after
 # the open-linked-PR exclusion above and before the (read-only) cross-PR
@@ -306,7 +344,7 @@ node -e "
 " "$DISPATCH_GROUPS" "$DISPATCH_NAMED_TARGETS"
 node -e "
   const { execFileSync } = require('child_process');
-  const fs = require('fs');
+  const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const named = require(process.argv[1]);
   const ref = process.argv[2];
   const missing = named.filter(({ target }) => {
@@ -316,23 +354,28 @@ node -e "
     } catch {
       return true;
     }
-  }).map(({ number, target }) => ({ number, path: target.path }));
-  fs.writeFileSync(process.argv[3], JSON.stringify(missing));
-" "$DISPATCH_NAMED_TARGETS" "$INTEGRATION_REF" "$DISPATCH_TARGET_MISSING_EXCLUDED"
+  });
+  for (const { number, target } of missing) {
+    appendExclusion(process.argv[3], { reason: 'target-missing', records: [number], detail: { path: target.path } });
+  }
+" "$DISPATCH_NAMED_TARGETS" "$INTEGRATION_REF" "$DISPATCH_EXCLUSIONS"
 node -e "
   const fs = require('fs');
+  const { readExclusions, groupIsExcluded } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const groups = require(process.argv[1]);
-  const missing = require(process.argv[2]);
-  const missingNums = new Set(missing.map((m) => m.number));
+  const entries = readExclusions(process.argv[2]);
   const finalGroups = groups
-    .map((g) => g.filter((c) => !missingNums.has(c.number)))
+    .map((g) => g.filter((c) => !groupIsExcluded([c], entries, ['target-missing'])))
     .filter((g) => g.length > 0);
   console.log(JSON.stringify(finalGroups));
-" "$DISPATCH_GROUPS" "$DISPATCH_TARGET_MISSING_EXCLUDED" > "${DISPATCH_GROUPS}.tmp" && mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
+" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" > "${DISPATCH_GROUPS}.tmp" && mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
 for ROW in $(node -e "
-  const missing = require(process.argv[1]);
+  const { readExclusions } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
+  const missing = readExclusions(process.argv[1])
+    .filter((e) => e.reason === 'target-missing')
+    .map((e) => ({ number: e.records[0], path: e.detail.path }));
   for (const m of missing) console.log(Buffer.from(JSON.stringify(m)).toString('base64'));
-" "$DISPATCH_TARGET_MISSING_EXCLUDED"); do
+" "$DISPATCH_EXCLUSIONS"); do
   NUM=$(node -e "console.log(JSON.parse(Buffer.from(process.argv[1], 'base64').toString()).number)" "$ROW")
   TPATH=$(node -e "console.log(JSON.parse(Buffer.from(process.argv[1], 'base64').toString()).path)" "$ROW")
   node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$DISPATCH_STANDALONE_DIR" --status AUTO \
@@ -401,13 +444,13 @@ done
 node -e "
   const fs = require('fs');
   const { classifyShipped } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
+  const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const groups = require(process.argv[1]);
   const linkedPRs = require(process.argv[2]);
   const prFilesLines = fs.existsSync(process.argv[4])
     ? fs.readFileSync(process.argv[4], 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
     : [];
   const prFiles = new Map(prFilesLines.map((e) => [e.pr, e.files]));
-  const shippedExcluded = [];
   const finalGroups = groups
     .map((g) => g.filter((c) => {
       const entry = linkedPRs[c.number];
@@ -415,7 +458,7 @@ node -e "
       if (mentions.length === 0) return true;
       const result = classifyShipped(c, mentions, { prFiles });
       if (result.tier === 'strong') {
-        shippedExcluded.push({ number: c.number, pr: result.pr, signals: result.signals });
+        appendExclusion(process.argv[3], { reason: 'shipped', records: [c.number], detail: { pr: result.pr, signals: result.signals } });
         console.error('AUTO — dispatch: #' + c.number + ' excluded, shipped by merged PR #' + result.pr + ' (' + result.signals.join(', ') + ')');
         return false;
       }
@@ -425,9 +468,8 @@ node -e "
       return true;
     }))
     .filter((g) => g.length > 0);
-  fs.writeFileSync(process.argv[3], JSON.stringify(shippedExcluded));
   console.log(JSON.stringify(finalGroups));
-" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_SHIPPED_EXCLUDED" "$DISPATCH_SHIPPED_PR_FILES" > "${DISPATCH_GROUPS}.tmp" && mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
+" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_SHIPPED_PR_FILES" > "${DISPATCH_GROUPS}.tmp" && mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
 
 # Stage one Close proposal per strong-tier exclusion, into this firing's own
 # standalone run dir (Step 1's $RUN_ID — resolved again here since this
@@ -439,7 +481,10 @@ if [ -n "$DISPATCH_FIRING_RUN_DIR" ]; then
   node -e "
     const fs = require('fs');
     const path = require('path');
-    const shippedExcluded = require(process.argv[1]);
+    const { readExclusions } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
+    const shippedExcluded = readExclusions(process.argv[1])
+      .filter((e) => e.reason === 'shipped')
+      .map((e) => ({ number: e.records[0], pr: e.detail.pr, signals: e.detail.signals }));
     const tmpDir = process.argv[2];
     for (const entry of shippedExcluded) {
       const file = path.join(tmpDir, 'shipped-close-proposal-' + entry.number + '.md');
@@ -454,7 +499,7 @@ if [ -n "$DISPATCH_FIRING_RUN_DIR" ]; then
       ].join('\n'));
       console.log(entry.number + '=' + file);
     }
-  " "$DISPATCH_SHIPPED_EXCLUDED" "$(dirname "$DISPATCH_SHIPPED_EXCLUDED")" | while IFS='=' read -r NUM FILE; do
+  " "$DISPATCH_EXCLUSIONS" "$(dirname "$DISPATCH_EXCLUSIONS")" | while IFS='=' read -r NUM FILE; do
     node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$DISPATCH_FIRING_RUN_DIR" --id "shipped-close-$NUM" --file "$FILE" >/dev/null 2>&1 || true
   done
 fi
