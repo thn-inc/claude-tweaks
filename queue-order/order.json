@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T21:05:06.966Z",
+  "computedAt": "2026-09-14T21:15:38.367Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -130,7 +130,7 @@
       },
       {
         "number": 2331,
-        "updatedAt": "2026-09-13T13:32:44Z",
+        "updatedAt": "2026-09-14T21:08:35Z",
         "state": "OPEN"
       },
       {
@@ -166,11 +166,6 @@
       {
         "number": 2323,
         "updatedAt": "2026-09-14T20:33:52Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2322,
-        "updatedAt": "2026-09-13T13:33:00Z",
         "state": "OPEN"
       },
       {
@@ -1099,96 +1094,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review. Two independently-merged PRs each shipped their\nown Jaccard-similarity tokenizer and threshold constant, with no shared source and no test\nimporting either exported constant — so a change to one can silently invalidate the other's\ntests without either noticing:\n\n- `plugin/bin/lib/coordination.js` (confirmed, line 17, #1980): `SUBSTANCE_SIMILARITY_MIN = 0.4`\n  + `SUBSTANCE_STOP_WORDS` (line 22).\n- `plugin/bin/lib/issues/near-duplicate.js` (confirmed, line 24, #1944):\n  `DEFAULT_TITLE_SIMILARITY_THRESHOLD = 0.5` + `STOP_WORDS` (line 30).\n\nA search of `tests/` for either constant name returns zero hits —\n`tests/bin-lib/issues/near-duplicate.test.js:66` hardcodes \"0.5\" in a test name/reasoning\n(`'title similarity below the default 0.5 threshold does not fire'`) instead of importing the\nreal constant.\n\n## Deliverables\n\n- Decide whether these two similarity checks are conceptually the same primitive (in which case\n  consolidate into one shared tokenizer/threshold module both import) or genuinely distinct\n  enough to justify separate constants (in which case document why, and have each test import\n  its own module's real constant instead of hardcoding the value).\n- Update `near-duplicate.test.js` to import `DEFAULT_TITLE_SIMILARITY_THRESHOLD` rather than\n  hardcoding 0.5.\n\n## Acceptance Criteria\n\nNo test hardcodes either threshold as a bare numeric literal; both are imported from their\nsource module.\n\n## Technical Approach\n\nRead both modules' full similarity-scoring logic (`coordination.js`'s substance-similarity check\nand `near-duplicate.js`'s title-similarity check) to judge whether they're the same primitive\napplied to different inputs (substance text vs. titles) or genuinely distinct enough to warrant\nseparate stop-word lists and thresholds — this is the actual judgment call the Deliverables ask\nfor, not a mechanical decision this shaping pass can make without reading both algorithms'\nfull bodies. If consolidating: extract a shared tokenizer/stop-word/threshold module both import,\npreserving each call site's own threshold value unless the investigation finds a reason to unify\nthose too. If keeping them separate: add a one-line comment at each constant's definition site\nstating why the two are conceptually distinct, and fix the test regardless — the test-hardcoding\nfix (Deliverable 2) applies either way. Update `near-duplicate.test.js:66` to import\n`DEFAULT_TITLE_SIMILARITY_THRESHOLD` and interpolate it into the test name/assertion instead of\nthe bare literal `0.5`.\n\n### Key Files\n\n- `plugin/bin/lib/coordination.js` — `SUBSTANCE_SIMILARITY_MIN`/`SUBSTANCE_STOP_WORDS`, possible\n  consolidation target\n- `plugin/bin/lib/issues/near-duplicate.js` — `DEFAULT_TITLE_SIMILARITY_THRESHOLD`/`STOP_WORDS`,\n  possible consolidation target\n- `tests/bin-lib/issues/near-duplicate.test.js` (line 66) — fix the hardcoded `0.5`\n\n## Gotchas\n\n- Per a standing memory in this codebase, similarity scores are normalization-sensitive —\n  consolidating the two tokenizers is only safe if their actual normalization behavior (case\n  folding, punctuation handling, stop-word removal order) genuinely matches; verify with a\n  substitution+diff test before assuming they're interchangeable, not just by reading the\n  constant values.\n- If consolidating, do not silently change either module's effective threshold — a Jaccard\n  score computed by a merged tokenizer can differ from the original even at the \"same\" nominal\n  threshold value if the tokenization itself changes; re-verify both modules' existing test\n  suites still pass with real (not just literal-matching) behavior preserved.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review. Two independently-merged PRs each shipped their own Jaccard-similarity tokenizer and threshold constant, with no shared source and no test importing either exported constant — so a change to one can silently invalidate the other's tests without either noticing:\n\n- `plugin/bin/lib/coordination.js` (~line 17, #1980): `SUBSTANCE_SIMILARITY_MIN = 0.4` + `SUBSTANCE_STOP_WORDS`.\n- `plugin/bin/lib/issues/near-duplicate.js` (~line 24, #1944): `DEFAULT_TITLE_SIMILARITY_THRESHOLD = 0.5` + `STOP_WORDS`.\n\nA search of tests/ for either constant name returns zero hits — tests/bin-lib/issues/near-duplicate.test.js hardcodes \"0.5\" in a test name/reasoning instead of importing the real constant.\n\n## Deliverables\n- Decide whether these two similarity checks are conceptually the same primitive (in which case consolidate into one shared tokenizer/threshold module both import) or genuinely distinct enough to justify separate constants (in which case document why, and have each test import its own module's real constant instead of hardcoding the value).\n- Update near-duplicate.test.js to import DEFAULT_TITLE_SIMILARITY_THRESHOLD rather than hardcoding 0.5.\n\n## Acceptance Criteria\nNo test hardcodes either threshold as a bare numeric literal; both are imported from their source module.\n",
-        "createdAt": "2026-09-12T16:44:34Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2331,
-        "state": "OPEN",
-        "title": "Duplicate similarity-detection tokenizer/threshold constants: coordination.js vs issues/near-duplicate.js",
-        "updatedAt": "2026-09-13T13:32:44Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review of `plugin/bin/lib/claim-targets/claim-targets.js`\n— all three confirmed still true at this shaping pass:\n\n- **Read-back race** (~line 400): post-write verification (#2073) re-reads immediately with no\n  retry/backoff (`if (!verifyClaimLanded(deps, repoSlug, issue, opts.runId, knownTip))`). On the\n  contents-API transport `knownTip` is `null`, so the read-back hits GitHub's\n  eventually-consistent contents API and can legitimately return the pre-write blob — a spurious\n  exit 5 on a claim that actually landed. The file's own header already warns against\n  eventually-consistent GitHub reads elsewhere.\n- **Claim leak on abort** (~line 227, confirmed): `abort()` releases only `claimedThisRun`\n  (`releaseClaimedThisRun(deps, repoSlug, opts.runId, claimedThisRun)`). `stopOrSkip(issue,\n  'unverified', 'unverified', 5, {})` runs (confirmed, ~line 401) *before* the target is pushed\n  onto `claimedThisRun` (the `claimedThisRun.push(issue)` call is one line after the verification\n  check), so a target whose claim genuinely landed (just couldn't be verified back) leaks until\n  TTL expiry with no `bot:in-progress` marker making it visible.\n- **Stale doc comment** (~line 225, confirmed): `abort()`'s comment still enumerates only exit\n  codes 3 and 4 (\"`exitCode` is 3 for a `contested`/`inFlight` envelope, 4 for a `transient`\n  one\") — exit 5 (`unverified`) was added without updating it.\n\n## Deliverables\n\n- Add a bounded retry/backoff to the post-write read-back verification when `knownTip` is `null`,\n  before declaring exit 5.\n- Release (or otherwise make visible) the `unverified` target's claim on abort, not just\n  `claimedThisRun`.\n- Update `abort()`'s doc comment to include exit 5.\n\n## Acceptance Criteria\n\n- A simulated eventually-consistent stale read on the contents-API path no longer produces a\n  spurious exit 5 within the retry window.\n- An aborted run with an `unverified` target leaves that claim in a state a later run can\n  detect/reclaim before TTL, not silently leaked.\n- `abort()`'s doc comment lists exit codes 3, 4, and 5.\n- `npm test` passes.\n\n## Technical Approach\n\nFor the read-back race: wrap the `verifyClaimLanded` call (~line 400) in a small bounded\nretry loop (a few attempts with a short backoff) specifically for the `knownTip === null` case —\nthe git-CAS path (`knownTip` set) already has a real tip to compare against and doesn't need\nthis, since a git-CAS success is immediately consistent. Only declare exit 5 after the retry\nwindow is exhausted. For the claim leak: capture the `unverified` issue's claim state (the\ncontext `verifyClaimLanded` already had before failing) and pass it to `abort()` so it can be\nreleased or explicitly flagged alongside `claimedThisRun`'s own release — the goal is that a\ngenuinely-landed-but-unverified claim doesn't sit invisible until TTL; releasing it (so a later\nrun can pick it up cleanly) is the safer default over leaving it silently held. Update the\n`abort()` doc comment in the same change.\n\n### Key Files\n\n- `plugin/bin/lib/claim-targets/claim-targets.js` — the read-back retry (~line 400), the claim\n  leak fix (~line 227, `abort()` and the `unverified` stop path), and the doc comment update\n\n## Gotchas\n\n- The retry must be scoped to the `knownTip === null` (contents-API) path only — the git-CAS\n  path's `knownTip`-based verification is already immediately consistent and doesn't need\n  (or benefit from) a retry; adding one there would just slow down every claim for no\n  correctness gain.\n- Releasing an `unverified` claim on abort must not race with the claim that write actually\n  produced — verify the release targets the same claim identity (`repoSlug`, `issue`, `opts.runId`)\n  the write itself used, so a genuinely different run's claim on the same issue is never touched.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review of `plugin/bin/lib/claim-targets/claim-targets.js`:\n\n- **Read-back race** (~line 400): post-write verification (#2073) re-reads immediately with no retry/backoff. On the contents-API transport `knownTip` is `null`, so the read-back hits GitHub's eventually-consistent contents API and can legitimately return the pre-write blob — a spurious exit 5 on a claim that actually landed. The file's own header already warns against eventually-consistent GitHub reads elsewhere.\n- **Claim leak on abort** (~line 227): `abort()` releases only `claimedThisRun`. `stopOrSkip(issue, 'unverified', 'unverified', 5, {})` runs *before* the target is pushed onto `claimedThisRun` (line ~405), so a target whose claim genuinely landed (just couldn't be verified back) leaks until TTL expiry with no `bot:in-progress` marker making it visible.\n- **Stale doc comment** (~line 225): `abort()`'s comment still enumerates only exit codes 3 and 4; exit 5 (`unverified`) was added without updating it.\n\n## Deliverables\n- Add a bounded retry/backoff to the post-write read-back verification when `knownTip` is `null`, before declaring exit 5.\n- Release (or otherwise make visible) the `unverified` target's claim on abort, not just `claimedThisRun`.\n- Update `abort()`'s doc comment to include exit 5.\n\n## Acceptance Criteria\n- A simulated eventually-consistent stale read on the contents-API path no longer produces a spurious exit 5 within the retry window.\n- An aborted run with an `unverified` target leaves that claim in a state a later run can detect/reclaim before TTL, not silently leaked.\n",
         "createdAt": "2026-09-12T16:43:52Z",
         "labels": [
@@ -1323,84 +1228,6 @@
         "state": "OPEN",
         "title": "Fact-pack siblings: name the crash exit and reject an empty --only list (flow-preflight, wrap-up-pack)",
         "updatedAt": "2026-09-13T13:32:53Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: wrap-up ledger gate for #2252 (run ledger row 24)\n\nDefer-reason: needs-human-decision\n\n## Current State\n\n`plugin/bin/lib/reconcile/archive-branches.js` computes the squash-provenance proof only after the per-branch confirm, and the confirm runs only for destructive or MERGED-screened candidates. A squash-merged local branch whose remote ref was deleted by `gh pr merge --delete-branch` screens `null` (the bulk screen's deleted-ref blind spot, `pr-state.js` header), so while its tip is younger than `BRANCH_AGE_DAYS` (14) it reads `too-young` on every pass and is archived only once it ages — safe direction, delayed convergence (#2252 whole-branch re-review, out-of-scope observation; run ledger row 24).\n\n## Deliverables\n\nDecide whether a screen-`null`, cherry-`false` local branch should reach the per-branch confirm regardless of age (one `gh pr list --head` call per such branch per pass) or keep the age gate and accept delayed convergence.\n\nIf confirming: route `screenPr === null && !cherryEquivalent` branches to the confirm in `archiveBranches`'s loop (the `squashCandidate` routing already exists for the MERGED-screened shape) and add a fixture: young (<14d) two-commit branch, squash-merged, screen `null`, confirm MERGED with `mergeCommit` → `delete` `squash-merged`.\n\nDocument the chosen posture in `docs/reconcile-checks.md`'s Merged-proof section (the per-pass `gh` cost vs the convergence delay).\n\n## Acceptance Criteria\n\nA young squash-merged local branch with a deleted remote ref converges (deleted with reason `squash-merged`) on the first pass after its PR merges, or the docs state the deliberate delay and its bound (`BRANCH_AGE_DAYS`).\n\nEvery pre-existing archive-branches fixture keeps passing unchanged; the per-branch confirm count for non-candidates does not grow beyond the new routing.\n\n_Filed by `wrap-up` via specShapedBody._\n\n\n---\nFiled by the multi-spec wrap-up of run `2026-09-11T204239-spec-2251-2252-2253-2254-2255-2256-2258` (queue write from spec 2252; source `spec-2252/staged/ledger-record-archive-squash-recall-gap.md`; consoleAutoResolve at `autonomy: unattended`).\n\nhttps://claude.ai/code/session_018rz67jb18j1RLSqhjEdYWH\n",
-        "createdAt": "2026-09-12T16:21:29Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2322,
-        "state": "OPEN",
-        "title": "Archive-branches: confirm young squash-merged branches whose remote ref is gone (or document the 14-day delay)",
-        "updatedAt": "2026-09-13T13:33:00Z",
         "facets": {
           "origin": null,
           "risk": "low",
