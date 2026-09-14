@@ -34,6 +34,8 @@ more here, as literals**, before composing either call:
    `{minted-run-dir}/context/merge.md`, composed by the dispatching session before either call;
    every citation of them in the templates below carries its own fallback to the source file.
 
+6. **Worktree shell constraint** — the Claude Code harness enforces limits on Bash commands in a single call, independent of filesystem effect (see `_shared/scratch-worktree.md` §7 ("Shell constraint") for the full boundary description, if that bundle is absent, read `_shared/scratch-worktree.md` directly). Avoid these shapes: quoted JSON containing `git`; a `for`/`while` loop variable; a glob argument; a `gh api` call inside an `if RAW=$(...)`; `sed -i` on a variable path; `cat "$P/…"` or `sed -n 'a,bp' "$P/…"` where `$P` is a runtime-computed path variable. Use `Write`/`Edit`/`Read` tools instead of equivalent shell commands, separate commands instead of loops or compound constructs, and literal file paths instead of variables. One plain command per Bash call is the general pattern.
+
 Substitute this whole block, filled in with this firing's actual resolved values, as
 `{context-pack}` immediately after each call's opening `Task scope:` paragraph below. This is
 environment facts and tool signatures only — never a prior call's conclusions (test results,
