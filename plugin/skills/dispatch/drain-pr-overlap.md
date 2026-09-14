@@ -72,7 +72,7 @@ judgment. No hit, or a hit only against a PR that has already merged/closed: pro
 Authorization immediately, unaffected.
 
 **This log line has a second reader (#2299).** `bin/lib/console/resolve.js`'s `mergeResolution()`
-parses this exact line (`drainOverlapHoldPr()`) when a group reaches the Wrap-Up Review Console's
+parses this exact line (`drainOverlapHoldPrs()`) when a group reaches the Wrap-Up Review Console's
 `unattended` auto-resolver (`wrap-up/review-console.md`'s Auto-resolution short-circuit) without
 ever having its merge decision reach this Auto-merge gate at all — the hold above only runs from
 *this* skill's own Auto-merge gate, but the log line it writes outlives that one evaluation. The
