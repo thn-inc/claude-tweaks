@@ -3,7 +3,6 @@ name: routine-kickoff
 description: Machine-invoked by cloud-Routine kernels — the firing-lifecycle home. Runs the stale-docs guard, plugin-list dump, and reconcile, then invokes the target skill. Not user-facing. Keywords - routine kickoff, firing lifecycle, kernel, cloud routine.
 argument-hint: "<skill> [args...]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
 
 # Routine Kickoff — Firing-Lifecycle Home
 

@@ -50,9 +50,12 @@ test('SKILL.md frontmatter has required fields', () => {
   assert.match(fm.description, /research/i, 'description must mention research');
 });
 
-test('SKILL.md contains interaction style directive', () => {
+// #1909: the directive moved to a single SessionStart-hook injection
+// (plugin/bin/lib/hooks/interaction-style.js) rather than being restated in
+// every SKILL.md — pinned there by tests/hooks-session-start.test.js.
+test('SKILL.md does not carry its own inline interaction style directive', () => {
   const body = readSkill();
-  assert.ok(body.includes('> **Interaction style:**'));
+  assert.ok(!body.includes('> **Interaction style:**'));
 });
 
 test('SKILL.md has the required sections', () => {

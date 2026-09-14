@@ -556,6 +556,32 @@ test('gatherPack: residue probe refuses to run with an unresolved merge-base rat
   assert.strictEqual(calls.length, 0);
 });
 
+// #1781: the residue probe passes --own-pr {inputs.pr} only when run-state.json
+// carries a pr.number — a local-merge run (no recorded pr) invokes residue.js
+// with the same argv as before this change.
+test('gatherPack: residue probe appends --own-pr when run-state.json carries a pr.number (#1781)', async () => {
+  const calls = [];
+  const deps = okDeps({
+    execFile: async (cmd, args) => { if (String(args[0]).endsWith('residue.js')) { calls.push(args); } return okDeps().execFile(cmd, args); },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir({ withPr: true }), cwd: '/w/tree', only: ['residue'], deps });
+  assert.strictEqual(pack.residue.ok, true);
+  assert.strictEqual(calls.length, 1);
+  assert.ok(calls[0].includes('--own-pr'), JSON.stringify(calls[0]));
+  assert.strictEqual(calls[0][calls[0].indexOf('--own-pr') + 1], '1901');
+});
+
+test('gatherPack: residue probe omits --own-pr when run-state.json carries no pr (local-merge, #1781)', async () => {
+  const calls = [];
+  const deps = okDeps({
+    execFile: async (cmd, args) => { if (String(args[0]).endsWith('residue.js')) { calls.push(args); } return okDeps().execFile(cmd, args); },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir({ withPr: false }), cwd: '/w/tree', only: ['residue'], deps });
+  assert.strictEqual(pack.residue.ok, true);
+  assert.strictEqual(calls.length, 1);
+  assert.ok(!calls[0].includes('--own-pr'), JSON.stringify(calls[0]));
+});
+
 test('gatherPack: state probe refuses to run with an unresolved merge-base rather than passing the literal "null" (#1930 fix)', async () => {
   const calls = [];
   const deps = okDeps({

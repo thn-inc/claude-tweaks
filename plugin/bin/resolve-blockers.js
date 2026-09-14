@@ -53,7 +53,11 @@ const { run, parseArgs, parseNumbers, realDeps } = makeNumberListCli({
   // unblocked-records.md/queue-pull-script.md build from `--limit 200`.
   runnerTimeoutMs: 30000,
   ghRequiredNote: '(work-links: native)',
-  fetch: ({ numbers, owner, repo, runner }) => fetchNativeDependencies({ numbers, owner, repo, runner }),
+  fetch: ({
+    numbers, owner, repo, host, runner,
+  }) => fetchNativeDependencies({
+    numbers, owner, repo, host, runner,
+  }),
   mapResult: (n, byNumber) => byNumber.get(n),
 });
 

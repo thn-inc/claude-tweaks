@@ -53,8 +53,13 @@ function registerHouseSectionOrderTest(test, assert, read) {
 }
 
 function registerInteractionStyleTest(test, assert, read) {
-  test('carries the standard interaction-style directive', () => {
-    assert.ok(read().includes('> **Interaction style:**'));
+  // #1909: the directive moved out of every SKILL.md into a single
+  // SessionStart-hook injection (plugin/bin/lib/hooks/interaction-style.js,
+  // wired in session-start.js) — pinned there by
+  // tests/hooks-session-start.test.js, not per-skill file content any more.
+  // This test now guards the inverse: no skill silently reintroduces its own copy.
+  test('does not carry its own inline interaction-style directive (moved to the SessionStart hook)', () => {
+    assert.ok(!read().includes('> **Interaction style:**'));
   });
 }
 

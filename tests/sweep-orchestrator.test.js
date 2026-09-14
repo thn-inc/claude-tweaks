@@ -188,7 +188,7 @@ test('specify/next-mode.md contains the --source sweep component paragraph', () 
   );
 });
 
-test('backlog/SKILL.md line 104 states --source sweep never renders Next Actions', () => {
+test('backlog/SKILL.md line 103 states --source sweep never renders Next Actions', () => {
   // Discrimination: base commit 0ac4d7a00's backlog/SKILL.md line 104
   // already mentioned "--source sweep" (it existed as a paste-ready human
   // form back then — 5 total "source sweep" occurrences at base, none of
@@ -199,13 +199,17 @@ test('backlog/SKILL.md line 104 states --source sweep never renders Next Actions
   // refine --source routine`/`--source sweep`/`grant` directly ... → render'
   // — the literal OPPOSITE of the live rule below, which reserves
   // --source sweep for the parent and forbids it as a human-typeable form.
+  // Line number moved 104 -> 103 (#1909): the per-SKILL.md Interaction-style
+  // directive that used to sit right after the frontmatter was removed
+  // (moved to a single SessionStart-hook injection), shifting every line
+  // below it up by one. The pinned clause's own text is unchanged.
   const source = read(BACKLOG_DIR, 'SKILL.md');
   const lines = source.split('\n');
   assert.ok(
-    lines[103].includes(
+    lines[102].includes(
       '`--source sweep` is reserved for `/claude-tweaks:sweep`\'s component-step invocation and NEVER renders Next Actions, regardless of who typed it',
     ),
-    `expected line 104 to state the --source-sweep-never-renders rule, got: ${lines[103]}`,
+    `expected line 103 to state the --source-sweep-never-renders rule, got: ${lines[102]}`,
   );
 });
 

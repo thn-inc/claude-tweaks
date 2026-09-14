@@ -90,6 +90,14 @@ const FP_RE_WORK_PLAIN = /^work-fingerprint: (\S+)[ \t]*$/m;
 const VERIFIED_AS_OF_RE = /^Verified-as-of: ([0-9a-f]{7,40})[ \t]*$/mi;
 const SHA_SHAPE_RE = /^[0-9a-f]{7,40}$/i;
 
+// #1829: an optional body-metadata line naming a mechanical command whose
+// exit code answers whether the record's stated premise still holds at the
+// checkout being materialized (e.g. `wc -l CLAUDE.md`-shaped budget claims)
+// — same plain-line convention as Verified-as-of/Origin:/Defer-reason:,
+// never YAML frontmatter. The command text is everything after the colon,
+// trimmed; single-line only (materialize.js runs it as-is via the shell).
+const PREMISE_CHECK_RE = /^Premise-check: (.+)$/m;
+
 // Line-anchored 'Blocked by #N' dependency declarations (multiline).
 const DEP_RE = /^Blocked by #(\d+)\b/gm;
 
@@ -275,6 +283,16 @@ function extractVerifiedAsOf(body) {
   if (typeof body !== 'string' || !body) return null;
   const m = VERIFIED_AS_OF_RE.exec(body);
   return m ? m[1].toLowerCase() : null;
+}
+
+// body -> the Premise-check: command string, or null when the line is
+// absent — mirrors extractVerifiedAsOf's shape exactly. #1829: materialize.js
+// runs this command from the checkout root to answer "does the record's
+// Current State claim still hold at base" before a build starts.
+function extractPremiseCheck(body) {
+  if (typeof body !== 'string' || !body) return null;
+  const m = PREMISE_CHECK_RE.exec(body);
+  return m ? m[1].trim() : null;
 }
 
 // Accepts either bare label-name strings or {name} objects (gh's own shape).
@@ -635,8 +653,15 @@ function parseDependencyAssumptions(body) {
 // resolved earlier than the read that produced currentState/deliverables, or a queued
 // finding filed later stamps a commit it never actually looked at (worse than no stamp —
 // see the Gotchas in issue #117).
+// premiseCheck (#1829, optional): a single-line shell command whose exit code answers
+// whether the record's Current State claim still holds — rendered as `Premise-check:
+// {command}` right after Verified-as-of (extracted by extractPremiseCheck, above). No
+// shape validation beyond single-line (a bad command degrades to premise: null with a
+// stderr note at materialize time, per that CLI's fail-open posture — never a filing-time
+// gate). The filing site is the only place that knows its own command; materialize.js
+// never invents one.
 function specShapedBody({
-  header, currentState, deliverables, acceptanceCriteria, openQuestion, filedBy, provenance, footer, verifiedAsOf,
+  header, currentState, deliverables, acceptanceCriteria, openQuestion, filedBy, provenance, footer, verifiedAsOf, premiseCheck,
 } = {}) {
   const isEmpty = (value) => value === undefined || value === null || value === ''
     || (Array.isArray(value) && value.length === 0);
@@ -658,12 +683,16 @@ function specShapedBody({
   if (!isEmpty(verifiedAsOf) && !SHA_SHAPE_RE.test(verifiedAsOf)) {
     throw new Error(`specShapedBody: verifiedAsOf must be a git commit sha (got "${verifiedAsOf}")`);
   }
+  if (!isEmpty(premiseCheck) && /\n/.test(premiseCheck)) {
+    throw new Error('specShapedBody: premiseCheck must be a single-line command');
+  }
   const { origin, deferReason } = provenance || {};
   if (deferReason !== undefined) oneOf('deferReason', deferReason, DEFER_REASONS);
   const block = (v) => (Array.isArray(v) ? v.join('\n\n') : v);
   const parts = [];
   if (!isEmpty(header)) parts.push(header);
   if (!isEmpty(verifiedAsOf)) parts.push(`Verified-as-of: ${verifiedAsOf.toLowerCase()}`);
+  if (!isEmpty(premiseCheck)) parts.push(`Premise-check: ${premiseCheck}`);
   if (!isEmpty(origin)) parts.push(`Origin: ${origin}`);
   if (deferReason !== undefined) parts.push(`Defer-reason: ${deferReason}`);
   parts.push('## Current State', block(currentState), '## Deliverables', block(deliverables));
@@ -679,7 +708,7 @@ function specShapedBody({
 
 module.exports = {
   ORIGINS, TYPES, TIERS, PRIORITIES, DEFER_REASONS, LABELS, TYPE_LABELS, recordPayload, specShapedBody,
-  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, extractVerifiedAsOf, normalizeLabelNames, parseRecordFacets,
+  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, extractVerifiedAsOf, extractPremiseCheck, normalizeLabelNames, parseRecordFacets,
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
   hasOpenNativeBlocker, CLASSIFICATION_SCORING, fenceFor, fencedBlock, parseSubIssues,
   buildNativeSubIssuesQuery, buildNativeParentQuery, partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,

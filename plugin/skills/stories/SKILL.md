@@ -3,8 +3,6 @@ name: stories
 description: Use for generating or updating user-story YAML for UI testing — browses with agent-browser and creates semantic-locator (schema v2) stories, with diff-aware updates. Keywords - stories, generate, create, user journey, persona, QA, testing, semantic-locators.
 argument-hint: "[<url>] [persona=<name>] [dir=<path>] [focus=<area>] [pages=<n>] [refine=false] [negative=false] [journey=<name>]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
-
 
 # Stories — Generate, refine, and update user-story YAML (semantic locators, journey + source aware)
 

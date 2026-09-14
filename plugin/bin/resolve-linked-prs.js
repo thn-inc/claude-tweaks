@@ -44,7 +44,11 @@ const { run, parseArgs, parseNumbers, realDeps } = makeNumberListCli({
   // this comma-list can span the same full ~200-record queues
   // queue-pull-script.md builds from `--limit 200`.
   runnerTimeoutMs: 30000,
-  fetch: ({ numbers, owner, repo, runner }) => fetchLinkedPRs({ numbers, owner, repo, runner }),
+  fetch: ({
+    numbers, owner, repo, host, runner,
+  }) => fetchLinkedPRs({
+    numbers, owner, repo, host, runner,
+  }),
   mapResult: (n, byNumber) => byNumber.get(n),
 });
 

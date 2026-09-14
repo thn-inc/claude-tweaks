@@ -34,11 +34,17 @@ test('Shape 8 node -e script filters out needsDefinition closed records', () => 
 });
 
 // Go-red control: pre-change Shape 7/8 scripts had no needsDefinition-aware filter anywhere.
-// Fixed to a specific pre-Task-11 base SHA (Task 10's final commit), not HEAD — HEAD moves past
-// Task 11's own commit once that commit lands, which would make this control read post-change
-// content and defeat its purpose.
+// Fixed to a specific pre-Task-11 base SHA, not HEAD — HEAD moves past Task 11's own commit once
+// that commit lands, which would make this control read post-change content and defeat its
+// purpose. The original pin (Task 10's final commit on its own feature branch, pre-squash) was
+// never reachable from origin/main once that branch's PR (#1488/#1499) squash-merged — a fresh
+// clone (CI's fetch-depth: 0 included; it only fetches what origin's refs reach) can't resolve
+// it, so `git show {sha}:{path}` fails with "exists on disk, but not in {sha}" even though the
+// path is real. Repinned to d111b1474 — the immediate parent, on origin/main's own history, of
+// e2f499095 (the squash-merged commit that added the needsDefinition filter) — which is reachable
+// and carries the file with no needsDefinition reference, same as the original pin intended.
 const { execFileSync } = require('node:child_process');
-const PRE_TASK11_BASE_SHA = '59e1967a555fe7b5776124c762d55854dab2e0df';
+const PRE_TASK11_BASE_SHA = 'd111b14742e935487e64a7afa7949cd24e71b8d8';
 const PRE_CHANGE_STEP1_RECORDS = execFileSync(
   'git',
   ['show', `${PRE_TASK11_BASE_SHA}:plugin/skills/tidy/step-1-records.md`],

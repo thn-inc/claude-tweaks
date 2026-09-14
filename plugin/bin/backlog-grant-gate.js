@@ -141,6 +141,7 @@ function run(argv, deps = realDeps) {
 
   let owner = null;
   let repo = null;
+  let host = null;
   if (workLinks === 'native') {
     let remote = null;
     if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
@@ -157,7 +158,7 @@ function run(argv, deps = realDeps) {
       deps.stderr('backlog-grant-gate.js: invalid --repo value — owner/repo cannot be "." or ".."\n');
       return 2;
     }
-    owner = repoSpec.owner; repo = repoSpec.repo;
+    owner = repoSpec.owner; repo = repoSpec.repo; host = repoSpec.host;
   }
 
   let integrationBranch = resolved['integration-branch'].value;
@@ -181,6 +182,7 @@ function run(argv, deps = realDeps) {
       integrationBranch,
       owner,
       repo,
+      host,
       runner: deps.runner,
       gitRunner: deps.gitRunner,
       sessionId: process.env.CLAUDE_CODE_SESSION_ID,

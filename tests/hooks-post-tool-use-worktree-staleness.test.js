@@ -200,7 +200,7 @@ test('does not execute an injected --upload-pack value when integration-branch s
   const markerFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wts-marker-')), 'ran.txt');
   const markerScript = path.join(path.dirname(markerFile), 'marker.sh');
   fs.writeFileSync(markerScript, `#!/bin/sh\ntouch ${markerFile}\n`);
-  fs.chmodSync(markerScript, 0o755);
+  fs.chmodSync(markerScript, 0o755); // root-safe: makes a marker script executable, not a permission-denial simulation
   // Must be committed, not just written — harnessWorktreeOf() below checks
   // out a fresh worktree from main's current commit, which would otherwise
   // still see setupProject()'s original, harmless policy.yml.

@@ -21,7 +21,7 @@ function installGhWrapper(jsonOrScript) {
     ? jsonOrScript
     : `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(jsonOrScript)}\nEOF\n`;
   fs.writeFileSync(wrapperPath, body);
-  fs.chmodSync(wrapperPath, 0o755);
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   const originalPath = process.env.PATH;
   process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
   return { restore: () => { process.env.PATH = originalPath; } };
@@ -313,6 +313,32 @@ test('resolvePrStateByNumber: malformed gh output -> network-failure, no throw',
     assert.equal(resolvePrStateByNumber('/tmp', 42), 'network-failure');
   } finally {
     wrapper.restore();
+  }
+});
+
+// #2367: the pending-review staleness check reuses resolvePrStateByNumber
+// rather than adding a third PR-state-reading code path — it needs
+// mergeable/mergeStateStatus on the returned shape.
+test('resolvePrStateByNumber: requests and returns mergeable/mergeStateStatus (#2367)', () => {
+  const pr = {
+    number: 42, state: 'OPEN', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z', mergeCommit: null, mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY',
+  };
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghwrap-argv-'));
+  const wrapperPath = path.join(wrapperDir, 'gh');
+  const argvLog = path.join(wrapperDir, 'argv.log');
+  fs.writeFileSync(wrapperPath, `#!/bin/sh\necho "$@" > "${argvLog}"\ncat <<'EOF'\n${JSON.stringify(pr)}\nEOF\n`);
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  try {
+    const result = resolvePrStateByNumber('/tmp', 42);
+    assert.equal(result.mergeStateStatus, 'DIRTY');
+    assert.equal(result.mergeable, 'CONFLICTING');
+    const argv = fs.readFileSync(argvLog, 'utf8');
+    assert.match(argv, /mergeable/);
+    assert.match(argv, /mergeStateStatus/);
+  } finally {
+    process.env.PATH = originalPath;
   }
 });
 
