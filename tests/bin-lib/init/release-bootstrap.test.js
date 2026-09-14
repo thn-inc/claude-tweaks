@@ -75,15 +75,9 @@ test('resolveReleaseType: override releaseType + extraFile bypasses the stack sc
   assert.deepEqual(r, { releaseType: 'simple', extraFiles: [{ type: 'json', path: 'plugin/.claude-plugin/plugin.json', jsonpath: '$.version' }] });
 });
 
-test('resolveReleaseType: override releaseType without extraFile throws (both must be given together)', () => {
-  const root = tmp();
-  write(root, 'go.mod', 'module x'); // would otherwise resolve to go
-  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'node' }), /--release-type and --extra-file must be given together/);
-});
-
 test('resolveReleaseType: an unrecognized override releaseType throws after validating both flags are given', () => {
   const root = tmp();
-  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'bogus', extraFile: 'x.json' }), /invalid release-type/);
+  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'bogus', extraFile: 'x.json' }), /invalid releaseType override: bogus/);
 });
 
 test('resolveReleaseType: override with extraFile pointing to nonexistent file throws, naming the file as missing', () => {
@@ -144,13 +138,13 @@ test('resolveReleaseType: override with extraFile but no releaseType throws', ()
   const root = tmp();
   write(root, 'package.json', '{"version":"1.0.0"}');
   write(root, 'custom.json', '{"version":"9.9.9"}');
-  assert.throws(() => rb.resolveReleaseType(root, { extraFile: 'custom.json' }), /--release-type and --extra-file must be given together/);
+  assert.throws(() => rb.resolveReleaseType(root, { extraFile: 'custom.json' }), /releaseType and extraFile must be given together/);
 });
 
 test('resolveReleaseType: override with releaseType but no extraFile throws', () => {
   const root = tmp();
   write(root, 'package.json', '{"version":"1.0.0"}');
-  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'simple' }), /--release-type and --extra-file must be given together/);
+  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'simple' }), /releaseType and extraFile must be given together/);
 });
 
 test('readStackManifestVersion: node/php read JSON version, python/rust read the TOML version line, others null', () => {
@@ -530,4 +524,13 @@ test('bootstrapRelease: without the override, the same fixture still resolves no
   const r = rb.bootstrapRelease({ root, integrationModel: 'local-merge', listTags: () => [] });
   assert.equal(r.releaseType, 'node');
   assert.equal(r.version, '1.0.0');
+});
+
+test('bootstrapRelease: no override, auto-detected simple with a found manifest seeds from that manifest\'s real version, not the 0.1.0/tag fallback (item 5)', () => {
+  const root = tmp();
+  write(root, 'plugin/.claude-plugin/plugin.json', '{"version":"6.121.0"}');
+  const r = rb.bootstrapRelease({ root, integrationModel: 'local-merge', listTags: () => [] });
+  assert.equal(r.releaseType, 'simple');
+  assert.equal(r.version, '6.121.0');
+  assert.deepEqual(JSON.parse(read(root, '.release-please-manifest.json')), { '.': '6.121.0' });
 });
