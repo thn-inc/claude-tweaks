@@ -1,6 +1,7 @@
 {
-  "released": true,
-  "runId": "2026-09-11T181926-record-666",
-  "reason": "failed: not-yet-due (backstop 2026-11-16 not reached; today 2026-09-11)",
-  "releasedAt": "2026-09-11T18:24:10.232Z"
+  "runId": "2026-09-14T104958-record-666",
+  "sessionId": "08d8b20e-a36d-4613-b62a-40303a4cd838",
+  "claimedAt": "2026-09-14T10:54:12.049Z",
+  "ttlHours": 72,
+  "host": "Thomass-MacBook-Pro-3376.local"
 }
