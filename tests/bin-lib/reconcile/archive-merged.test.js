@@ -1844,6 +1844,102 @@ test('archiveMerged: a run dir with no worktree stamp at all (never set) still r
   assert.equal(fs.existsSync(archiveDir), true);
 });
 
+// #2231: a run dir reaching the #1962 by-number fallback with a CLOSED
+// (never-merged) PR and no console.json at all used to fall into the same
+// 'console-never-rendered' bucket the general MERGED-PR path uses — a
+// reason deliberately excluded from STRUCTURALLY_STUCK_REASONS because it
+// "already has its own clear resolution path" (a human eventually answers
+// a rendered console). That assumption is false for a CLOSED PR: nothing
+// drives this run's pipeline to wrap-up anymore, so no console will ever
+// render. The fallback now uses a distinct, tracked reason for exactly
+// this sub-case, so it escalates like no-branch/no-worktree/no-pr instead
+// of silently freezing the escalation cache.
+test('archiveMerged: a CLOSED (never-merged) PR reached via the by-number fallback with no console.json gets the distinct console-never-rendered-pr-closed reason and is tracked toward escalation', () => {
+  const root = fs.realpathSync(makeRepo());
+  const runId = '2026-08-01T090000-record-2231-closedpr-noconsole';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  // config.yml marks this dir as adopted (flow's Manifesto ran) — without
+  // it, isOrphanedMint's own 24h mtime sweep would archive this dir first,
+  // before ever reaching the by-number fallback this test means to exercise
+  // (same pitfall the #1613 "still skips in place" test above documents).
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', 'gone-record-2231'), // stamped, but never created here
+    pr: { number: 2231001 }, // no branch field — mirrors #1413's own run-state.json shape
+  }));
+  // Deliberately no console.json — this is the "never rendered" case.
+  const stuckBackdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(runDir, stuckBackdated, stuckBackdated);
+
+  const wrapper = installGhWrapper({ number: 2231001, state: 'CLOSED', mergedAt: null, updatedAt: '2026-08-01T00:00:00Z', mergeCommit: null });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(!result.archived.includes(runDir));
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'console-never-rendered-pr-closed');
+  assert.equal(fs.existsSync(runDir), true);
+
+  // Tracked toward escalation (unlike plain 'console-never-rendered') —
+  // this dir's mtime was backdated past the TTL above, so one pass is
+  // enough to start the residue counter.
+  const failures = listResidueFailures(root);
+  assert.ok(
+    failures.some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
+    `expected ${runDir} to start accumulating a structurally-stuck residue count, got ${JSON.stringify(failures)}`,
+  );
+});
+
+// Companion case: the MERGED sub-case of the same fallback branch must
+// keep emitting plain 'console-never-rendered' and must NOT be tracked —
+// code landed there, so a console may genuinely still be pending; only the
+// CLOSED sub-case changes in this fix.
+test('archiveMerged: a MERGED PR reached via the by-number fallback with no console.json still uses plain console-never-rendered and is never tracked', () => {
+  const { root, featureSha } = mergedFeatureBranchRepo('feat-2231-merged-noconsole');
+  git(root, 'branch', '-D', 'feat-2231-merged-noconsole'); // branch ref gone too — nothing for fallbackBranch to recover
+  const runId = '2026-08-01T090000-record-2231-mergedpr-noconsole';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  // config.yml marks this dir as adopted — see the identical comment on the
+  // CLOSED companion test above; same pitfall applies here.
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', 'gone-record-2231-merged'),
+    pr: { number: 2231002, branch: 'feat-2231-merged-noconsole' },
+  }));
+  // Deliberately no console.json.
+  const stuckBackdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(runDir, stuckBackdated, stuckBackdated);
+
+  const wrapper = installGhWrapper({
+    number: 2231002, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    mergeCommit: { oid: featureSha },
+  });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(!result.archived.includes(runDir));
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'console-never-rendered');
+
+  const failures = listResidueFailures(root);
+  assert.ok(
+    !failures.some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
+    `a MERGED PR's never-rendered console must not be tracked toward escalation, got ${JSON.stringify(failures)}`,
+  );
+});
+
 test('isAbandonedInterrupted: false for a non-interrupted status', () => {
   assert.equal(isAbandonedInterrupted('/x', { status: 'active' }, 'sess-1', Date.now()), false);
 });
