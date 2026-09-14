@@ -1335,7 +1335,7 @@ function archiveMerged({ cwd, dryRun = false, sessionId = process.env.CLAUDE_COD
             // case, where a console really may still be pending).
             const consoleReason = byNumber.state === 'CLOSED' ? 'console-never-rendered-pr-closed' : 'console-never-rendered';
             skipped.push({ runDir: dir, reason: consoleReason });
-            if (consoleReason === 'console-never-rendered-pr-closed') trackStuckSkip(root, repoSlug, dir, consoleReason);
+            trackStuckSkip(root, repoSlug, dir, consoleReason);
             continue;
           }
           if (dryRun) { archived.push(dir); continue; }
