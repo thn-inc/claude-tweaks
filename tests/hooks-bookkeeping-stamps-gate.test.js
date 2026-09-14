@@ -494,6 +494,79 @@ test('bookkeeping-stamps gate (#1800): worktree stamped, pr-first stubbed, a pus
   assert.ok(readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'record-pr-step1'));
 });
 
+test('bookkeeping-stamps gate (#1800 review finding): a Step 1 line logged for a DIFFERENT, longer branch that has THIS branch as a strict prefix does NOT satisfy the precondition -> still deny', () => {
+  // Regression coverage for a review-time finding on #1800 itself: the
+  // original `hasLoggedPrEarlyStep1` regex anchored the branch name's
+  // right-hand side with a plain `\b`, which fires on ANY word/non-word
+  // transition -- including the hyphen that starts a `-retry` suffix. A
+  // Step 1 line logged for `{branch}-retry` would therefore spuriously
+  // satisfy branch `{branch}`'s own precondition, defeating the "keep it
+  // attempt-specific" guarantee this file's Gotchas section calls for.
+  const main = gitRepo();
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-wtparent-'));
+  const wt = path.join(parent, 'wt');
+  const branch = `wt-branch-${path.basename(parent)}`;
+  execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt, '-b', branch]);
+  const wtReal = fs.realpathSync(wt);
+  commitMaterializedSpec(wtReal, path.join('work', '991-spec.md'));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const { run } = mkRunDir(project, wtReal, undefined);
+  // Seed a Step 1 line for a DIFFERENT branch (`{branch}-retry`) that has
+  // THIS branch as a strict prefix -- never for `{branch}` itself.
+  fs.writeFileSync(
+    path.join(run, 'decisions.md'),
+    `## /build\n- AUTO 09:00:00 — PR-early run lifecycle: no existing PR for ${branch}-retry; creating. Reversibility: n/a.\n`,
+  );
+  const out = pre.run(
+    { input: bashInput(`git push origin ${branch}`, wtReal), runDir: run, runState: { status: 'active', worktree: wtReal }, cwd: wtReal },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  assert.ok(out.json, 'expected a deny -- the logged line names a different (longer) branch, not this one');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /Step 1/);
+});
+
+// Review finding (3f, #1800): #989's own test above seeds only the no-match
+// log-line shape; the other two shapes `hasLoggedPrEarlyStep1` also accepts
+// (reuse-open, reopen) had no coverage at all -- a regex break isolated to
+// either alternative would pass the whole suite. One minimal allow-case per
+// remaining shape closes that gap.
+test('bookkeeping-stamps gate (#1800): Step 1\'s reuse-open line satisfies the #989 exemption precondition -> allow', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const { run } = mkRunDir(project, wt, undefined);
+  const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(
+    path.join(run, 'decisions.md'),
+    `## /build\n- AUTO 09:00:00 — PR-early run lifecycle: reusing open PR #42 for ${branch}. Reversibility: high.\n`,
+  );
+  const out = pre.run(
+    { input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  assert.deepStrictEqual(out, {}, 'a logged reuse-open line for this branch must satisfy the precondition');
+});
+
+test('bookkeeping-stamps gate (#1800): Step 1\'s reopen line satisfies the #989 exemption precondition -> allow', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const { run } = mkRunDir(project, wt, undefined);
+  const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(
+    path.join(run, 'decisions.md'),
+    `## /build\n- AUTO 09:00:00 — PR-early run lifecycle: reopened PR #42 for ${branch} (retry). Reversibility: high.\n`,
+  );
+  const out = pre.run(
+    { input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  assert.deepStrictEqual(out, {}, 'a logged reopen line for this branch must satisfy the precondition');
+});
+
 test('bookkeeping-stamps gate (#1860): a worktree branch created via `-b {branch} origin/main` (worktree.baseRef: fresh\'s own form) inherits tracking to origin/main before any push -> still allow the first publish push', () => {
   const main = gitRepo();
   // Give `main` a real self-remote so `origin/main` exists as an actual

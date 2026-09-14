@@ -1188,12 +1188,30 @@ function hasLoggedPrDegrade(runDir) {
 // satisfy a fresh attempt's precondition. Read-only, best-effort: a missing
 // or unreadable decisions.md resolves to false (no Step 1 line found), never
 // throws — same posture as hasLoggedPrDegrade above.
+//
+// Review finding (#1800): the right-hand anchor after `${b}` must NOT be a
+// plain `\b` — `\b` only asserts a word/non-word transition, and `-` and `/`
+// (both valid git branch-name characters) are non-word themselves, so `\b`
+// fires immediately after a branch name that is a strict PREFIX of a
+// different, longer branch logged earlier in the same run's decisions.md
+// (e.g. `1800` spuriously matching inside a logged `1800-retry` line). That
+// defeats the exact "keep it attempt-specific" guarantee this function's own
+// header comment states. `.` is ALSO a valid branch-name character, but it
+// doubles as the reuse-open/reopen lines' own literal terminator immediately
+// after `{branch}` — a generic "reject any branch-name-continuation char"
+// lookahead can't use a single right-hand anchor for all three shapes
+// without that ambiguity. Anchor each alternative to its own exact,
+// hand-verified terminator instead (`pr-early-run-lifecycle.md` Step 1's
+// three logged line shapes), so the match can only ever end the branch
+// mention at the real delimiter each shape actually uses.
 function hasLoggedPrEarlyStep1(runDir, branch) {
   try {
     const body = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
     const b = escapeRegExp(branch);
     const re = new RegExp(
-      `PR-early run lifecycle: (?:no existing PR for|reusing open PR #\\d+ for|reopened PR #\\d+ for) ${b}\\b`,
+      `PR-early run lifecycle: (?:no existing PR for ${b};`
+        + `|reusing open PR #\\d+ for ${b}\\.`
+        + `|reopened PR #\\d+ for ${b} \\(retry\\))`,
       'i',
     );
     return re.test(body);
