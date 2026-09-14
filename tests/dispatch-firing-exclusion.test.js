@@ -16,8 +16,9 @@ const { sessionTmpPath } = require('../plugin/bin/lib/session-tmp');
 // the very next iteration of the *same* firing re-ranks the identical group
 // back to the top and reproduces the identical stop. This test extracts and
 // runs the actual `next-ranking.md` script (not a reimplementation) against
-// synthetic group data, proving the new `dispatch-firing-excluded.json`
-// input is read and actually changes the pick.
+// synthetic group data, proving a `reason: 'firing'` entry in the unified
+// `dispatch-exclusions.json` (#1752; formerly its own dispatch-firing-
+// excluded.json file) is read and actually changes the pick.
 
 const ROOT = path.join(__dirname, '..');
 const NEXT_RANKING = fs.readFileSync(
@@ -66,7 +67,7 @@ function runRanking({ groups, oversizedExcluded = [], firingExcluded, priorityFi
   return JSON.parse(fs.readFileSync(pickPath, 'utf8'));
 }
 
-test('no dispatch-firing-excluded.json (absent) ranks normally -- backward compatible', () => {
+test('no firing-reason exclusions present ranks normally -- backward compatible', () => {
   const pick = runRanking({
     groups: [group(100, { priority: 'high' }), group(300, { priority: 'low' })],
   });
@@ -74,7 +75,7 @@ test('no dispatch-firing-excluded.json (absent) ranks normally -- backward compa
   assert.strictEqual(pick[0].number, 100);
 });
 
-test('a group on dispatch-firing-excluded.json is skipped in favor of the next-ranked candidate', () => {
+test('a group with a reason:\'firing\' exclusion entry is skipped in favor of the next-ranked candidate', () => {
   const pick = runRanking({
     groups: [
       group(100, { priority: 'high', createdAt: '2026-01-01T00:00:00Z' }),
