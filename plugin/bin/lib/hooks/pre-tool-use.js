@@ -1187,7 +1187,13 @@ function hasLoggedPrDegrade(runDir) {
 // (decisions.md is reused across retries on the same branch name) can't
 // satisfy a fresh attempt's precondition. Read-only, best-effort: a missing
 // or unreadable decisions.md resolves to false (no Step 1 line found), never
-// throws — same posture as hasLoggedPrDegrade above.
+// throws — same posture as hasLoggedPrDegrade above. Deliberately collapses
+// "no decisions.md at all" and "decisions.md exists but carries no matching
+// line" into the same false/deny (`.claude/skills/parse-signal-discipline`'s
+// couldn't-parse-vs-doesn't-apply distinction, not made here) — safe because
+// the collapse direction is conservative: either case denies and points at
+// Step 1's own check, never silently skips it, so an unrecognized line shape
+// costs one extra remediation step rather than a missed gate.
 //
 // Review finding (#1800): the right-hand anchor after `${b}` must NOT be a
 // plain `\b` — `\b` only asserts a word/non-word transition, and `-` and `/`
