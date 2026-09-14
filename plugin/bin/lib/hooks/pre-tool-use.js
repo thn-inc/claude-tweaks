@@ -1726,5 +1726,4 @@ module.exports = {
   toplevel,
   checkBookkeepingStampsGate,
   hasLoggedPrDegrade,
-  teardownTargets,
 };
