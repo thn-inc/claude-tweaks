@@ -2,3 +2,4 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | review | AC3 ("An upstream report exists ... pasted in this record's closing comment") is not literally satisfiable: `/claude-tweaks:feedback` files only against `thomasholknielsen/claude-tweaks` (SKILL.md's own scope line), and this learning never classifies as D5 under `learning-routing.md` (it's a harness quirk with no owning claude-tweaks artifact — rule 3, not rule 1) since the guard is confirmed by this record's own Current State to live outside the plugin. | resolved | No upstream report is filed anywhere. #1785's closing comment (drafted at wrap-up) states the corrected component attribution and this scope explanation in place of a filed URL. Root cause tracked separately: #2433 (filed this session) asks `/claude-tweaks:specify` to stop emitting an unfileable feedback deliverable when a spec's own Current State already places the component outside the plugin. |
