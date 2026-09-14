@@ -12,8 +12,9 @@ judgment. Three are shipped — `plugin/bin/lib/wrap-up/pack.js` + `plugin/bin/w
 (wrap-up Phases 3-4, eight probes), `plugin/bin/lib/flow/preflight.js` +
 `plugin/bin/flow-preflight.js` (`/flow`'s second call) and
 `plugin/bin/lib/release-preflight/pack.js` + `plugin/bin/release-preflight.js`
-(release preflight, eight probes) — and they agree on every rule below
-except selective-probe filtering (see the `--only` bullet).
+(release preflight, eight probes) — and they agree on every rule below except
+selective-probe filtering (see the `--only` bullet) and the preamble-failure
+envelope (see its own bullet), which exactly one of the three implements.
 Read them before writing a fourth.
 
 ## The shape
@@ -26,6 +27,13 @@ Read them before writing a fourth.
   error}`. A probe that fails degrades its own field and nothing else; the pack is still produced.
   This is why the CLI exits 0 "whenever the pack was produced" — a BLOCKED freshness verdict or an
   unavailable `gh` is *data the skill acts on*, never an exit code.
+- **The preamble is inside the envelope too — but only one pack implements it today.** A gather's
+  setup stage (policy, root, branch, tip ref) runs before any probe, so a throw there has no field
+  of its own to degrade and the per-field rule above does not reach it. `release-preflight/pack.js`
+  catches it and substitutes a `preamble failed: …` thrower for *every* selected probe, so the pack
+  is still written at exit 0 with `branch`/`tipRef` null (its "Ruling 13" comment); #2422's fix
+  added a real `throw` to `prepare()` and is safe only because of it. `wrap-up/pack.js`'s
+  `resolveInputs` call is uncaught — a preamble throw there exits 1. A fourth pack copies the former.
 - **Exit vocabulary: 0 / 2 / 3, no 1.** 0 the pack was produced, 2 malformed invocation, 3 the
   `--run` directory (or `--json`'s parent) does not resolve under the main checkout. Both CLIs get
   the anchoring predicate by importing `lib/stage-item/write.js`'s `resolveTarget` rather than
