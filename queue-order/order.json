@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T04:00:07.265Z",
+  "computedAt": "2026-09-14T04:47:00.585Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -106,11 +106,6 @@
       {
         "number": 2330,
         "updatedAt": "2026-09-13T13:32:47Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2329,
-        "updatedAt": "2026-09-13T13:31:26Z",
         "state": "OPEN"
       },
       {
@@ -2724,90 +2719,6 @@
           "grants": {
             "build": true,
             "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review of `plugin/bin/lib/claim-targets/claim-targets.js`\n— all three confirmed still true at this shaping pass:\n\n- **Read-back race** (~line 400): post-write verification (#2073) re-reads immediately with no\n  retry/backoff (`if (!verifyClaimLanded(deps, repoSlug, issue, opts.runId, knownTip))`). On the\n  contents-API transport `knownTip` is `null`, so the read-back hits GitHub's\n  eventually-consistent contents API and can legitimately return the pre-write blob — a spurious\n  exit 5 on a claim that actually landed. The file's own header already warns against\n  eventually-consistent GitHub reads elsewhere.\n- **Claim leak on abort** (~line 227, confirmed): `abort()` releases only `claimedThisRun`\n  (`releaseClaimedThisRun(deps, repoSlug, opts.runId, claimedThisRun)`). `stopOrSkip(issue,\n  'unverified', 'unverified', 5, {})` runs (confirmed, ~line 401) *before* the target is pushed\n  onto `claimedThisRun` (the `claimedThisRun.push(issue)` call is one line after the verification\n  check), so a target whose claim genuinely landed (just couldn't be verified back) leaks until\n  TTL expiry with no `bot:in-progress` marker making it visible.\n- **Stale doc comment** (~line 225, confirmed): `abort()`'s comment still enumerates only exit\n  codes 3 and 4 (\"`exitCode` is 3 for a `contested`/`inFlight` envelope, 4 for a `transient`\n  one\") — exit 5 (`unverified`) was added without updating it.\n\n## Deliverables\n\n- Add a bounded retry/backoff to the post-write read-back verification when `knownTip` is `null`,\n  before declaring exit 5.\n- Release (or otherwise make visible) the `unverified` target's claim on abort, not just\n  `claimedThisRun`.\n- Update `abort()`'s doc comment to include exit 5.\n\n## Acceptance Criteria\n\n- A simulated eventually-consistent stale read on the contents-API path no longer produces a\n  spurious exit 5 within the retry window.\n- An aborted run with an `unverified` target leaves that claim in a state a later run can\n  detect/reclaim before TTL, not silently leaked.\n- `abort()`'s doc comment lists exit codes 3, 4, and 5.\n- `npm test` passes.\n\n## Technical Approach\n\nFor the read-back race: wrap the `verifyClaimLanded` call (~line 400) in a small bounded\nretry loop (a few attempts with a short backoff) specifically for the `knownTip === null` case —\nthe git-CAS path (`knownTip` set) already has a real tip to compare against and doesn't need\nthis, since a git-CAS success is immediately consistent. Only declare exit 5 after the retry\nwindow is exhausted. For the claim leak: capture the `unverified` issue's claim state (the\ncontext `verifyClaimLanded` already had before failing) and pass it to `abort()` so it can be\nreleased or explicitly flagged alongside `claimedThisRun`'s own release — the goal is that a\ngenuinely-landed-but-unverified claim doesn't sit invisible until TTL; releasing it (so a later\nrun can pick it up cleanly) is the safer default over leaving it silently held. Update the\n`abort()` doc comment in the same change.\n\n### Key Files\n\n- `plugin/bin/lib/claim-targets/claim-targets.js` — the read-back retry (~line 400), the claim\n  leak fix (~line 227, `abort()` and the `unverified` stop path), and the doc comment update\n\n## Gotchas\n\n- The retry must be scoped to the `knownTip === null` (contents-API) path only — the git-CAS\n  path's `knownTip`-based verification is already immediately consistent and doesn't need\n  (or benefit from) a retry; adding one there would just slow down every claim for no\n  correctness gain.\n- Releasing an `unverified` claim on abort must not race with the claim that write actually\n  produced — verify the release targets the same claim identity (`repoSlug`, `issue`, `opts.runId`)\n  the write itself used, so a genuinely different run's claim on the same issue is never touched.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review of `plugin/bin/lib/claim-targets/claim-targets.js`:\n\n- **Read-back race** (~line 400): post-write verification (#2073) re-reads immediately with no retry/backoff. On the contents-API transport `knownTip` is `null`, so the read-back hits GitHub's eventually-consistent contents API and can legitimately return the pre-write blob — a spurious exit 5 on a claim that actually landed. The file's own header already warns against eventually-consistent GitHub reads elsewhere.\n- **Claim leak on abort** (~line 227): `abort()` releases only `claimedThisRun`. `stopOrSkip(issue, 'unverified', 'unverified', 5, {})` runs *before* the target is pushed onto `claimedThisRun` (line ~405), so a target whose claim genuinely landed (just couldn't be verified back) leaks until TTL expiry with no `bot:in-progress` marker making it visible.\n- **Stale doc comment** (~line 225): `abort()`'s comment still enumerates only exit codes 3 and 4; exit 5 (`unverified`) was added without updating it.\n\n## Deliverables\n- Add a bounded retry/backoff to the post-write read-back verification when `knownTip` is `null`, before declaring exit 5.\n- Release (or otherwise make visible) the `unverified` target's claim on abort, not just `claimedThisRun`.\n- Update `abort()`'s doc comment to include exit 5.\n\n## Acceptance Criteria\n- A simulated eventually-consistent stale read on the contents-API path no longer produces a spurious exit 5 within the retry window.\n- An aborted run with an `unverified` target leaves that claim in a state a later run can detect/reclaim before TTL, not silently leaked.\n",
-        "createdAt": "2026-09-12T16:43:52Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2329,
-        "state": "OPEN",
-        "title": "claim-targets.js: eventually-consistent read-back race + unverified-claim leak",
-        "updatedAt": "2026-09-13T13:31:26Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
           },
           "bot": {
             "inProgress": false,
