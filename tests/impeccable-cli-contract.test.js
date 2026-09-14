@@ -10,6 +10,20 @@
 // it is exactly the drift this file used to carry: this constant read
 // '3.6.0' while manifest.yml's own entry read '3.5.0', and nothing ever
 // compared the two (#1900).
+//
+// Resolution path (confirmed on this host, #2321): `npm list -g impeccable`
+// is empty and no `impeccable` binary is on PATH, yet `npx --no-install
+// impeccable --version` (manifest.yml's installed-probe) still resolves to a
+// concrete version. There is no single "installed" copy to name — npx keeps
+// its own cache under `~/.npm/_npx/<hash>/node_modules/impeccable`, one
+// directory per distinct dependency-range it has ever resolved (this host
+// carries entries for `^3.2.0`, `^3.6.0`, and `^4.1.0` simultaneously), and
+// `--no-install` picks whichever cached entry npx's own unversioned-specifier
+// resolution currently prefers. That resolution drifts across sessions
+// independent of anything this repo controls — exactly the shared-host
+// non-determinism `version-mode: floor` below (see manifest.yml's own
+// comment on this dependency, added for #2277) exists to tolerate rather than
+// chase.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
