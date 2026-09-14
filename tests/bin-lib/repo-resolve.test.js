@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { parseRepo, ghAvailable } = require('../../plugin/bin/lib/repo-resolve');
+const { parseRepo, ghAvailable, repoSlug } = require('../../plugin/bin/lib/repo-resolve');
 
 test('parseRepo: SSH remote URL', () => {
   assert.deepEqual(parseRepo('git@github.com:o/r.git'), { host: 'github.com', owner: 'o', repo: 'r' });
@@ -20,19 +20,11 @@ test('parseRepo: an owner/name string wrapped as github.com/owner/name (the --re
 });
 
 test('parseRepo: SSH remote on a GitHub Enterprise Server host', () => {
-  assert.deepEqual(parseRepo('git@ghe.example.com:acme/widget.git'), {
-    host: 'ghe.example.com',
-    owner: 'acme',
-    repo: 'widget',
-  });
+  assert.deepEqual(parseRepo('git@ghe.example.com:acme/widget.git'), { host: 'ghe.example.com', owner: 'acme', repo: 'widget' });
 });
 
 test('parseRepo: HTTPS remote on a GitHub Enterprise Server host', () => {
-  assert.deepEqual(parseRepo('https://ghe.example.com/acme/widget'), {
-    host: 'ghe.example.com',
-    owner: 'acme',
-    repo: 'widget',
-  });
+  assert.deepEqual(parseRepo('https://ghe.example.com/acme/widget'), { host: 'ghe.example.com', owner: 'acme', repo: 'widget' });
 });
 
 test('parseRepo: malformed URL (no host/owner/repo structure) -> null', () => {
@@ -80,6 +72,21 @@ test('ghAvailable: no deps passed -> defaults to the real execFileSync (does not
   // pre-existing direct importer (fetch-sub-issues.js, backlog-grant-gate.js,
   // etc.) still resolves without throwing.
   assert.doesNotThrow(() => ghAvailable());
+});
+
+// repoSlug is the one composer of the `gh --repo` value shared by
+// apply-refine-labels.js, compose-subject.js, materialize.js, and
+// release-claim.js — each of which hand-rolled the same host ternary.
+test('repoSlug: a github.com spec stays the bare owner/repo slug', () => {
+  assert.equal(repoSlug({ host: 'github.com', owner: 'acme', repo: 'widget' }), 'acme/widget');
+});
+
+test('repoSlug: a GitHub Enterprise Server spec is host-qualified', () => {
+  assert.equal(repoSlug({ host: 'ghe.example.com', owner: 'acme', repo: 'widget' }), 'ghe.example.com/acme/widget');
+});
+
+test('repoSlug: a missing host reads as github.com (materialize.js threads host as an optional 4th arg)', () => {
+  assert.equal(repoSlug({ owner: 'acme', repo: 'widget' }), 'acme/widget');
 });
 
 const fs = require('fs');

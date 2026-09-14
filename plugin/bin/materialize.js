@@ -40,7 +40,7 @@ const {
 } = require('./lib/issues/record');
 const { shapeGate, liftMetadata, composeHeader, composeFile } = require('./lib/issues/materialize-format');
 const wtDetect = require('./lib/hooks/worktree-detect');
-const { parseRepo, ghAvailable } = require('./lib/repo-resolve');
+const { parseRepo, ghAvailable, repoSlug } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: materialize.js <n> --run-dir <dir> [--repo owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]\n';
 
@@ -108,10 +108,7 @@ function parseArgs(argv) {
 }
 
 const realDeps = {
-  ghView: (owner, repo, n, host) => {
-    const repoFlag = host && host !== 'github.com' ? `${host}/${owner}/${repo}` : `${owner}/${repo}`;
-    return execFileSync('gh', ['issue', 'view', String(n), '--repo', repoFlag, '--json', 'number,title,body,labels,url'], { encoding: 'utf8' });
-  },
+  ghView: (owner, repo, n, host) => execFileSync('gh', ['issue', 'view', String(n), '--repo', repoSlug({ host, owner, repo }), '--json', 'number,title,body,labels,url'], { encoding: 'utf8' }),
   ghAvailable,
   remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }),
   // #117: commit distance from a record's Verified-as-of: stamp to current

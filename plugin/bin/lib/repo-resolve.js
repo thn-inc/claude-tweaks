@@ -44,4 +44,14 @@ function remoteUrl() {
   return execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' });
 }
 
-module.exports = { parseRepo, ghAvailable, remoteUrl };
+// A parseRepo result (or any { host, owner, repo }) -> the slug `gh --repo`
+// takes: bare `owner/repo` on github.com, host-qualified `host/owner/repo` on
+// a GitHub Enterprise Server host. A missing host reads as github.com, so a
+// caller threading an optional host through needs no guard of its own.
+function repoSlug({ host, owner, repo }) {
+  return host && host !== 'github.com' ? `${host}/${owner}/${repo}` : `${owner}/${repo}`;
+}
+
+module.exports = {
+  parseRepo, ghAvailable, remoteUrl, repoSlug,
+};
