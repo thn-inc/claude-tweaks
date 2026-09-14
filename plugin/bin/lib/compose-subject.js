@@ -129,9 +129,7 @@ function firstSentence(text) {
   const t = typeof text === 'string' ? text.trim() : '';
   if (!t) return '';
   const firstPara = t.split(/\n\s*\n/)[0].replace(/\s*\n\s*/g, ' ').trim();
-  const terminators = /[.!?](?=\s|$)/g;
-  let m;
-  while ((m = terminators.exec(firstPara))) {
+  for (const m of firstPara.matchAll(/[.!?](?=\s|$)/g)) {
     const before = firstPara.slice(0, m.index);
     const wordMatch = /(\S+)$/.exec(before);
     if (wordMatch && isNonTerminalToken(wordMatch[1])) continue;
