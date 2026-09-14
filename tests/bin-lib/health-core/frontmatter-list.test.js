@@ -73,3 +73,27 @@ test('parseFrontmatterListField treats the field name as a literal, not a regex'
   const content = '---\nfil.s:\n  - src/a.ts\n---\n';
   assert.deepStrictEqual(parseFrontmatterListField(content, 'files'), []);
 });
+
+// --- CRLF regression (#1882) — constructs CRLF content directly rather
+// than relying on the checkout's own core.autocrlf setting, so this test
+// exercises the bug regardless of how CI or a contributor's checkout is
+// configured. ---
+
+test('splitFrontmatterFence parses CRLF content identically to its LF equivalent', () => {
+  const lf = '---\ntype: task\nrisk: low\n---\n\n# Title\n\nbody\n';
+  const crlf = lf.replace(/\n/g, '\r\n');
+  const lfResult = splitFrontmatterFence(lf);
+  const crlfResult = splitFrontmatterFence(crlf);
+  assert.deepStrictEqual(crlfResult.frontmatter, ['type: task', 'risk: low']);
+  assert.deepStrictEqual(crlfResult.afterLines, ['', '# Title', '', 'body', '']);
+  assert.deepStrictEqual(crlfResult, lfResult);
+});
+
+test('parseFrontmatterListField parses CRLF content identically to its LF equivalent', () => {
+  const lf = '---\nfiles:\n  - src/checkout/Cart.tsx\n  - src/checkout/Payment.tsx\n---\n';
+  const crlf = lf.replace(/\n/g, '\r\n');
+  const lfResult = parseFrontmatterListField(lf, 'files');
+  const crlfResult = parseFrontmatterListField(crlf, 'files');
+  assert.deepStrictEqual(crlfResult, ['src/checkout/Cart.tsx', 'src/checkout/Payment.tsx']);
+  assert.deepStrictEqual(crlfResult, lfResult);
+});
