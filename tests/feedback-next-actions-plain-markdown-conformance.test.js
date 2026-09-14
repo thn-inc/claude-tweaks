@@ -6,8 +6,9 @@
 // was filed (plugin v6.87.0), this section's own closing-step logic asked
 // "what next?" via `AskUserQuestion` even when the Recommended option already
 // restated a next step the skill had fully determined. The repo-wide
-// Interaction style banner every skill carries (pinned separately by
-// tests/skill-conventions.test.js) states the general convention, but does
+// Interaction style banner every session gets injected by the SessionStart
+// hook (#1909; pinned separately by tests/skill-conventions.test.js and
+// tests/hooks-session-start.test.js) states the general convention, but does
 // not itself check that this skill's own Next Actions section complies —
 // this test pins the section's own content directly, so a future edit to
 // this skill specifically can't silently reintroduce the forced question.

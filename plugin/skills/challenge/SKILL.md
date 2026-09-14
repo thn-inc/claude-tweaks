@@ -3,7 +3,6 @@ name: challenge
 description: Use when /specify needs a solution-baked verdict on a record, or the evidence-or-accept-risk call on a solution:unjustified record, or to stress-test a framing via a lens. Keywords - framing, debias, solution-baked, assumptions, evidence, lens, reframe.
 argument-hint: "framing-check [#<n>] | #<n> | --lens=<n[,n...]> <#n|topic|problem statement>"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
 
 # Challenge — Framing Verdicts and Debiasing Lenses
 

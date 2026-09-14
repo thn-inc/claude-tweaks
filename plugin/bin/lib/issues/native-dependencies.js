@@ -12,7 +12,7 @@
 // pure, no-network module.
 'use strict';
 
-const { buildNativeDependencyQuery, hasOpenNativeBlocker, buildNativeSubIssuesQuery } = require('./record');
+const { buildNativeDependencyQuery, hasOpenNativeBlocker, buildNativeSubIssuesQuery, buildNativeParentQuery } = require('./record');
 
 // { numbers, owner, repo, runner } -> Map<number, {blockedBy: number[],
 // openBlocker: boolean, openBlockerIds: number[]}>.
@@ -95,4 +95,31 @@ function fetchNativeSubIssues({ numbers, owner, repo, runner } = {}) {
   return result;
 }
 
-module.exports = { fetchNativeDependencies, fetchNativeSubIssues };
+// { number, owner, repo, runner } -> number|null -- the resolved native
+// parent's issue number, or null when the issue has no parent. Wraps
+// buildNativeParentQuery for a single candidate: bin/lib/wrap-up/engine-verify.js's
+// resolveParent uses this instead of `gh issue view --json parent`, which gh
+// <2.96 rejects as an unknown JSON field (#1841) -- GraphQL's Issue.parent
+// works on every gh version that can run GraphQL at all.
+//
+// Throws on a whole-response failure (missing repository, or this candidate's
+// own alias absent from the response) -- same "throw on a partial result"
+// posture fetchNativeDependencies above documents; there is no per-item
+// fallback for a single-candidate call, so a partial result here is simply a
+// failure.
+function fetchNativeParent({ number, owner, repo, runner } = {}) {
+  const query = buildNativeParentQuery([number]);
+  if (!query) return null;
+  const out = runner(['api', 'graphql', '-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `repo=${repo}`]);
+  const parsed = JSON.parse(out);
+  const repository = parsed && parsed.data && parsed.data.repository;
+  const node = repository && repository[`i${number}`];
+  if (!node) {
+    const errs = Array.isArray(parsed && parsed.errors) ? parsed.errors.map((e) => e && e.message).filter(Boolean) : [];
+    const reason = repository ? 'missing parent data for' : 'missing repository — no parent data for';
+    throw new Error(`${reason} #${number}${errs.length ? ` (GraphQL: ${errs.join('; ')})` : ''}`);
+  }
+  return node.parent ? node.parent.number : null;
+}
+
+module.exports = { fetchNativeDependencies, fetchNativeSubIssues, fetchNativeParent };

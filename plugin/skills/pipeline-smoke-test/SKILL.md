@@ -3,8 +3,6 @@ name: pipeline-smoke-test
 description: Use when you want to verify claude-tweaks' own capture->specify->backlog->dispatch pipeline end-to-end against live git/gh state, including the claim-race path, via isolated sessions. Keywords - smoke test, integration test, claim race, cross-session.
 argument-hint: "[stop-before-build] [cleanup-only]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
-
 
 # Pipeline Smoke Test — Cross-Session Integration Test of claude-tweaks' Own Pipeline
 
