@@ -61,6 +61,59 @@ name for anything downstream that reports or acts on it — never assume its own
 the branch, since a rename could break an already-open PR on a worktree left over from unrelated
 prior work in the same session.
 
+**Dependency freshness check (adopt path only).** A fresh `EnterWorktree`/`git worktree add`
+creation installs dependencies as part of `/superpowers:using-git-worktrees` itself
+(`build/worktree-setup.md`'s Procedure Step 3 — "branch creation, dependency install, baseline
+test verification"). The adopt branch never calls that skill, so an adopted worktree with no
+local `node_modules` at all has no install step anywhere in its lifecycle — Node's module
+resolution then walks up to the main checkout's own `node_modules`, which can be stale relative
+to the adopted worktree's branch (missing a dependency that branch's own commits already added),
+producing cascading `ERR_MODULE_NOT_FOUND` failures that read as a code regression rather than a
+dependency gap. Run this check once per adopt, **after** Post-creation catch-up's fetch+merge
+above (so it reads the worktree's final `package.json`/lockfile state, not a snapshot the same
+step's own merge might still change):
+
+1. **Applicability.** Resolve the lockfile first, before looking at `node_modules` at all:
+   ```bash
+   LOCKFILE=$(ls package-lock.json yarn.lock pnpm-lock.yaml 2>/dev/null | head -1)
+   ```
+   No lockfile found at the worktree root → this project declares no installable Node dependency
+   surface (a test-harness-only `package.json` with empty/no `dependencies`/`devDependencies`, or
+   no `package.json` at all) — stop here, nothing to check. A missing `node_modules` is expected
+   and correct in this case, not a gap: don't let step 2 below fire on a project that was never
+   going to have one. `claude-tweaks`'s own `package.json` is exactly this case (no lockfile, no
+   `node_modules`, by design — `.gitignore` even excludes `/package-lock.json`), so this
+   applicability check is not a hypothetical edge case.
+2. **Presence.** A lockfile exists → `node_modules` missing entirely at the worktree root → gap
+   confirmed, skip to step 4.
+3. **Staleness (cheap signal only).** `node_modules` present → compare its own mtime against the
+   lockfile's:
+   ```bash
+   [ "$LOCKFILE" -nt node_modules ] && echo STALE || echo FRESH
+   ```
+   `FRESH` → nothing to report, stop here. The comparison failing to run for some other reason
+   (permissions, an unusual `node_modules` symlink) also degrades to **FRESH** — this is a cheap
+   mtime heuristic, not a hash-based guarantee, and a false negative here is far cheaper than a
+   false positive that nags on every adopt.
+4. **Report.** On missing or `STALE`, detect the project's install command the same
+   lockfile-driven way `dev-url-detection.md`'s Step 2 detects a dev command:
+   `package-lock.json` → `npm ci`, `yarn.lock` → `yarn install --frozen-lockfile`,
+   `pnpm-lock.yaml` → `pnpm install --frozen-lockfile`. Surface a clear, actionable message naming
+   the gap and the detected command before the caller proceeds to any build/test step — never a
+   silent auto-install: an install command run unattended and wrong (ambiguous lockfile match, a
+   monorepo workspace subtlety this cheap check can't see) can leave the worktree worse off than
+   the stale-but-working state it started in, so this check always degrades to a warning rather
+   than executing anything itself. Log entry (`auto`/`hybrid` — a pipeline run dir exists):
+   ```
+   AUTO {time} — Adopt-or-create: adopted worktree's node_modules is {missing|stale relative to
+   {lockfile}}. Recommend `{install command}` before running tests. Reversibility: n/a (a
+   detection, not a mutation).
+   ```
+   Standalone or interactive: surface the same message inline. This is a warning, not a
+   HARD-GATE — the caller still proceeds (a project whose test commands don't touch
+   `node_modules` at all pays no real cost either way), but the message must land before Common
+   Step 5's verification, not after it starts failing.
+
 **Not isolated:** create normally — proceed to Pre-creation reconcile and Post-creation catch-up
 below, unchanged (`EnterWorktree(name=...)`).
 
