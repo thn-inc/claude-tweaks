@@ -40,13 +40,19 @@ function group(number, { priority = null, createdAt = '2026-01-01T00:00:00Z' } =
 // Runs the real next-ranking.md snippet against a fresh session-scoped temp
 // root (so concurrent test runs never collide), writing the given fixture
 // inputs first. Returns the parsed dispatch-next-pick.json content.
+//
+// #1752: oversizedExcluded/firingExcluded are still this test's own fixture
+// vocabulary (unchanged from before the unification) -- only how they reach
+// the snippet changed, from two separate files to one dispatch-exclusions.json
+// composed of {reason, records, detail} entries.
 function runRanking({ groups, oversizedExcluded = [], firingExcluded, priorityFilter = '' }) {
   const sessionId = `dispatch-firing-excl-test-${crypto.randomBytes(6).toString('hex')}`;
   fs.writeFileSync(sessionTmpPath(sessionId, 'dispatch-groups.json'), JSON.stringify(groups));
-  fs.writeFileSync(sessionTmpPath(sessionId, 'dispatch-oversized-excluded.json'), JSON.stringify(oversizedExcluded));
+  const entries = oversizedExcluded.map((o) => ({ reason: 'oversized', records: o.records, detail: { size: o.size, threshold: o.threshold } }));
   if (firingExcluded !== undefined) {
-    fs.writeFileSync(sessionTmpPath(sessionId, 'dispatch-firing-excluded.json'), JSON.stringify(firingExcluded));
+    entries.push(...firingExcluded.map((n) => ({ reason: 'firing', records: [n], detail: null })));
   }
+  fs.writeFileSync(sessionTmpPath(sessionId, 'dispatch-exclusions.json'), JSON.stringify(entries));
   execFileSync('bash', ['-c', SNIPPET], {
     env: {
       ...process.env,
