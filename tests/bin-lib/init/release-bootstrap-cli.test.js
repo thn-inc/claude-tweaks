@@ -99,3 +99,20 @@ test('CLI: an unrecognized --release-type is a usage error naming the flag', () 
   assert.equal(r.status, 2);
   assert.match(r.stderr, /--release-type/);
 });
+
+test('CLI: --extra-file without --release-type is a usage error naming both flags', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  fs.writeFileSync(path.join(root, 'package.json'), '{"version":"1.0.0"}');
+  fs.writeFileSync(path.join(root, 'custom.json'), '{"version":"9.9.9"}');
+  const r = run(['--root', root, '--integration-model', 'local-merge', '--extra-file', 'custom.json']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--release-type and --extra-file must be given together/);
+});
+
+test('CLI: --release-type without --extra-file is a usage error naming both flags', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  fs.writeFileSync(path.join(root, 'package.json'), '{"version":"1.0.0"}');
+  const r = run(['--root', root, '--integration-model', 'local-merge', '--release-type', 'simple']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--release-type and --extra-file must be given together/);
+});

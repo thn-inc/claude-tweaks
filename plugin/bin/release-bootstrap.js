@@ -42,6 +42,13 @@ function parseArgs(argv) {
   if (!opts.help && opts.releaseType !== undefined && !RELEASE_TYPE_VALUES.has(opts.releaseType)) {
     return { error: `invalid --release-type: ${opts.releaseType}` };
   }
+  if (!opts.help && (opts.releaseType !== undefined || opts.extraFile !== undefined)) {
+    const hasReleaseType = opts.releaseType !== undefined;
+    const hasExtraFile = opts.extraFile !== undefined;
+    if (hasReleaseType !== hasExtraFile) {
+      return { error: '--release-type and --extra-file must be given together' };
+    }
+  }
   return opts;
 }
 

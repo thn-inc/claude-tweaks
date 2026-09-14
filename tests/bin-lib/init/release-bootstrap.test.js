@@ -74,15 +74,15 @@ test('resolveReleaseType: override releaseType + extraFile bypasses the stack sc
   assert.deepEqual(r, { releaseType: 'simple', extraFiles: [{ type: 'json', path: 'plugin/.claude-plugin/plugin.json', jsonpath: '$.version' }] });
 });
 
-test('resolveReleaseType: override releaseType alone (no extraFile) still bypasses the scan, with no extra-files', () => {
+test('resolveReleaseType: override releaseType without extraFile throws (both must be given together)', () => {
   const root = tmp();
   write(root, 'go.mod', 'module x'); // would otherwise resolve to go
-  assert.deepEqual(rb.resolveReleaseType(root, { releaseType: 'node' }), { releaseType: 'node', extraFiles: [] });
+  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'node' }), /--release-type and --extra-file must be given together/);
 });
 
-test('resolveReleaseType: an unrecognized override releaseType throws', () => {
+test('resolveReleaseType: an unrecognized override releaseType throws after validating both flags are given', () => {
   const root = tmp();
-  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'bogus' }), /invalid release-type/);
+  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'bogus', extraFile: 'x.json' }), /invalid release-type/);
 });
 
 test('resolveReleaseType: no override -> unchanged single-row behavior (AC: "without the override the same fixture still resolves node")', () => {
@@ -94,6 +94,19 @@ test('resolveReleaseType: no override -> unchanged single-row behavior (AC: "wit
 
 test('RELEASE_TYPE_VALUES: the eight stack types plus simple, nothing else', () => {
   assert.deepEqual([...rb.RELEASE_TYPE_VALUES].sort(), ['dotnet', 'go', 'java', 'node', 'php', 'python', 'ruby', 'rust', 'simple'].sort());
+});
+
+test('resolveReleaseType: override with extraFile but no releaseType throws', () => {
+  const root = tmp();
+  write(root, 'package.json', '{"version":"1.0.0"}');
+  write(root, 'custom.json', '{"version":"9.9.9"}');
+  assert.throws(() => rb.resolveReleaseType(root, { extraFile: 'custom.json' }), /--release-type and --extra-file must be given together/);
+});
+
+test('resolveReleaseType: override with releaseType but no extraFile throws', () => {
+  const root = tmp();
+  write(root, 'package.json', '{"version":"1.0.0"}');
+  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'simple' }), /--release-type and --extra-file must be given together/);
 });
 
 test('readStackManifestVersion: node/php read JSON version, python/rust read the TOML version line, others null', () => {
