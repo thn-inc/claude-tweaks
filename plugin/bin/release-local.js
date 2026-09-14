@@ -37,22 +37,34 @@ const { resolvePolicyKeys } = require('./lib/policy-schema.js');
 const { withIndexLockRetry } = require('./lib/git-retry.js');
 
 const USAGE = [
-  'usage: release-local.js [--dry-run] [--root <dir>] [--branch <name>]',
+  'usage: release-local.js [--dry-run] [--root <dir>] [--branch <name>] [--release-as <version>]',
   'exit 0 released (or dry-run plan printed); 1 git/engine failure — nothing written, or a NAMED PARTIAL STATE with a recovery command;',
-  '     2 usage, no release-please-config.json (run /claude-tweaks:init first), or a malformed/unsupported config; 3 nothing to release; 4 version collision;',
+  '     2 usage, no release-please-config.json (run /claude-tweaks:init first), a malformed/unsupported config, or --release-as not ahead of the current base;',
+  '     3 nothing to release; 4 version collision;',
   '     5 release-hook failed after the tag (and push) landed — re-run the hook alone',
 ].join('\n');
 const VALUE_FLAGS = new Set(['--root', '--branch']);
 const POLICY_FILE = '.claude-tweaks/policy.yml';
+// Strict three-part semver, no `v` prefix — the same shape /claude-tweaks:release's
+// own --as flag already validates (#2326: threaded through as --release-as).
+const RELEASE_AS_RE = /^\d+\.\d+\.\d+$/;
 
 class UsageError extends Error {}
 
 function parseArgs(argv) {
-  const opts = { dryRun: false, branch: null, root: null, help: false };
+  const opts = { dryRun: false, branch: null, root: null, releaseAs: null, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { opts.help = true; continue; }
     if (a === '--dry-run') { opts.dryRun = true; continue; }
+    if (a === '--release-as') {
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith('--')) return { error: '--release-as requires a value' };
+      i += 1;
+      if (!RELEASE_AS_RE.test(next)) return { error: `--release-as must be strict semver (X.Y.Z), got "${next}"` };
+      opts.releaseAs = next;
+      continue;
+    }
     if (VALUE_FLAGS.has(a)) {
       const next = argv[i + 1];
       if (next === undefined || next.startsWith('--')) return { error: `${a} requires a value` };
@@ -93,15 +105,16 @@ function remoteUrl(deps) {
   }
 }
 
-function planLines({ version, part, history, hook, edits, unconventional }) {
+function planLines({ version, part, history, hook, edits, unconventional, releaseAs }) {
   const counts = { feat: 0, fix: 0, breaking: 0 };
   for (const c of history.commits) {
     if (c.breaking) counts.breaking += 1;
     if (c.type === 'feat') counts.feat += 1;
     if (c.type === 'fix') counts.fix += 1;
   }
+  const versionLabel = releaseAs ? `${part} — --release-as override` : part;
   const lines = [
-    `release-local: v${version} (${part}) from ${history.lastTag || 'no prior tag'} — ${history.commits.length} commit(s): ${counts.feat} feat, ${counts.fix} fix, ${counts.breaking} breaking`,
+    `release-local: v${version} (${versionLabel}) from ${history.lastTag || 'no prior tag'} — ${history.commits.length} commit(s): ${counts.feat} feat, ${counts.fix} fix, ${counts.breaking} breaking`,
     `hook: ${hook || 'no hook configured'}`,
     `manifest: ${edits.length ? edits.join(', ') : 'none (tag only)'}`,
   ];
@@ -162,8 +175,12 @@ function run(argv, deps) {
     const check = precheck(deps, part, {
       keySource: 'tags', branch, hasOrigin: remoteBranchExists,
       versionAtRef: (ref) => manifest.versionAtRef(targets, (p) => deps.git(['show', `${ref}:${p}`])),
+      releaseAs: opts.releaseAs,
     });
     version = check.candidate;
+    if (opts.releaseAs && check.result.usageError) {
+      throw new UsageError(`--release-as ${opts.releaseAs} is not ahead of the current version ${check.base} — pass a version greater than ${check.base}`);
+    }
     if (!check.result.ok) {
       const lines = check.result.conflicts.map((c) => `  - ${c.source}: ${c.detail} claims v${c.version}`);
       deps.stderr(`version collision on v${version}:\n${lines.join('\n')}\nSuggested renumber: v${check.result.suggested}. Resolve and re-run.\n`);
@@ -174,7 +191,7 @@ function run(argv, deps) {
     const section = renderSection({ version, previousTag: history.lastTag, date: deps.today(), commits: history.commits, repo });
     const unconventional = history.commits.filter((c) => c.unconventional);
     const edits = manifest.plannedWrites(targets, version, deps.readFile);
-    for (const line of planLines({ version, part, history, hook, edits, unconventional })) deps.stdout(`${line}\n`);
+    for (const line of planLines({ version, part, history, hook, edits, unconventional, releaseAs: opts.releaseAs })) deps.stdout(`${line}\n`);
     if (hasOrigin && !remoteBranchExists) deps.stdout(`origin: ${branch} is not on origin yet — first push\n`);
     if (history.lastTag && current && current !== history.lastTag.replace(/^v/, '')) {
       deps.stdout(`manifest-drift: manifest says ${current}, last tag is ${history.lastTag} — the tag is the version of record\n`);
