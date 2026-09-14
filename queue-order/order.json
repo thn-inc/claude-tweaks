@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-13T23:35:10.930Z",
+  "computedAt": "2026-09-14T00:02:29.947Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -200,12 +200,12 @@
       },
       {
         "number": 2281,
-        "updatedAt": "2026-09-13T13:33:17Z",
+        "updatedAt": "2026-09-13T23:37:59Z",
         "state": "OPEN"
       },
       {
         "number": 2280,
-        "updatedAt": "2026-09-13T13:33:19Z",
+        "updatedAt": "2026-09-13T23:37:53Z",
         "state": "OPEN"
       },
       {
@@ -4049,178 +4049,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\n\n## Overview\n\n`review/code-mode-steps.md`'s Step 6.7 (Late Findings Routing) and `design-wrapper/modes/polish.md`'s Step 5 (suggestion-driven dispatch) both independently consume the same `source: \"audit\"` findings from the shared cache `docs/plans/YYYY-MM-DD-{feature}-audit.json` (`design-wrapper/modes/review.md`'s Step 5, the cache's sole producer) — Step 6.7 routes each finding by severity under the run's ceiling (low → AUTO, medium/high → STAGED, critical → KEPT-PROMPT), while polish's Step 5 independently applies whatever command each finding's own `suggestion` field names, with no awareness of what review already decided. When both run in the same `/claude-tweaks:flow` (review, then polish, per the pipeline order), polish's blind suggestion-driven dispatch can re-derive and auto-apply a finding review had just staged for a human — bypassing the ceiling entirely.\n\n**Design resolved before shaping (the record's own two-option Open Question):** traced the actual cache mechanism directly. Both Step 6.7 and polish's Step 5 read the exact same JSON structure (`review.md` Step 5's documented cache shape: `{spec, written_at, findings: [{id, source, category, severity, message, suggestion}, ...]}`), and nothing currently writes back to it after review resolves a finding's routing — that's the actual gap, not a missing precedence rule. Option (a) — polish defers to review's routing via a disposition field on the cache entry — is directly buildable on this existing shared structure with no new plumbing. Option (b) — review leaves suggestion-bearing audit findings to polish entirely — is rejected: it would mean a **high-severity** audit finding carrying a `suggestion` never reaches Step 6.7's ceiling-aware human-staging at all, unconditionally auto-applied by polish regardless of severity — the opposite of what Step 6.7 exists to guarantee.\n\n**Complexity:** Low\n**Estimated tasks:** 2-3\n\n## Non-Goals\n\n- Any change to Step 6.7's own severity-routing rules (`step3-routing.md`'s AUTO/STAGED/KEPT-PROMPT thresholds) — this spec only adds a write-back of the *outcome*, not a change to how that outcome is decided.\n- Any change to `craft-critic` or `critique` finding handling — the disposition field applies only to `source: \"audit\"` cache entries, the only kind polish's Step 5 three-way table dispatches by `suggestion` at all (`craft-critic` entries are Step 4's context, never Step 5's dispatch key, per `polish.md`'s own three-way consumption table).\n- Cross-run or cross-invocation coordination — this only guards the in-flow ordering (review's Step 6.7, then polish's Step 5, within one `/claude-tweaks:flow` run) where both read the same cache file the same run produced.\n\n## Current State\n\n- `plugin/skills/design-wrapper/modes/review.md` (~line 373-390): Step 5, the cache's sole writer. Filters to `source === \"audit\" || (source === \"craft-critic\" && target === \"code\")`. Cache shape documented in full (see Overview above). \"Primary path\" (`docs/plans/YYYY-MM-DD-{feature}-audit.json`) vs \"Fallback\" (`docs/plans/audit-{spec-slug}.json`) path resolution is stated once here — Step 6.7's write-back must resolve the same path the same way, not re-derive its own rule.\n- `plugin/skills/review/code-mode-steps.md` Step 6.7 (~line 293-306): routes \"Design Quality\" findings (populated from the wrapper's `review` mode output, which itself is audit + craft-critic-normalized-into-critique-shape per `code-mode-steps.md` ~line 277/289) via `step3-routing.md`'s severity rules. Currently reads the cached findings for display/routing only — never writes back to the cache file.\n- `plugin/skills/design-wrapper/modes/polish.md` (~line 49-58): the three-way consumption table for `source: \"audit\"` cache entries — usable `suggestion` → Command (Step 5); `suggestion: null`/unresolvable → Staged observation (`kind: \"unclassified\"`); no third branch exists for \"already routed by review.\"\n- `plugin/skills/design-wrapper/modes/polish.md` Step 5 (~line 91-101): \"Read the audit findings from Step 3 — the cache entries with `source: \"audit\"` only... Dispatch what the finding names.\" No check against any prior disposition.\n- Ordering guarantee: `/claude-tweaks:flow` invokes `design-wrapper polish` mode \"after review passes\" (`design-wrapper/SKILL.md`'s \"When to Use\" list) — within one flow run, Step 6.7 always resolves before polish's Step 5 ever reads the cache, so a write-then-read ordering is safe by construction for the in-flow case this spec targets.\n- Standalone `/claude-tweaks:design-wrapper polish` (outside a flow context, `docs/plans/audit-{spec-slug}.json`): review's Step 6.7 may never have run at all — no cache entry would carry a disposition field in that case, and polish's existing three-way table applies unchanged. This is a safe, natural degrade requiring no special-casing (Non-Goals above).\n\n## Deliverables\n\n- [ ] `review/code-mode-steps.md` Step 6.7: after resolving each Design-Quality-category finding sourced from `audit` (not visual, not a craft-critic-only entry with no cache counterpart), write a `dispositionByReview: {status: \"applied\"|\"staged\"|\"accepted\"|\"deferred\"|\"kept-prompt\", at: \"<ISO timestamp>\"}` field onto that finding's entry in the same cache file `review.md` Step 5 wrote — an in-place read-modify-write (read the existing JSON, find the entry by `id`, set the field, write the whole file back) — never a blind overwrite that would drop other entries' existing fields. Resolve the cache file path the same way `review.md` Step 5 does (Primary/Fallback), not a new derivation.\n- [ ] `design-wrapper/modes/polish.md`'s three-way consumption table (~line 49-58) gains a new first-checked branch: a `source: \"audit\"` entry that already carries a `dispositionByReview` field (any value) is **skipped entirely** — not dispatched as a Command, not staged as an unclassified observation. State this explicitly as a fourth row in the table, checked before the existing `suggestion`-based branches.\n- [ ] `polish.md` Step 5's own prose (~line 93): add the skip check as the first step of the per-finding loop, before reading `suggestion`.\n- [ ] State in both files' prose that this is what makes review's ceiling-aware routing authoritative over polish's blind suggestion-driven dispatch — the precedence the record's own use-case found undocumented.\n\n## Acceptance Criteria\n\n1. After Step 6.7 resolves a `source: \"audit\"` finding's routing, the cache file's matching entry (by `id`) carries a `dispositionByReview` field with the resolved status — verified by a fixture cache file + a test asserting the field is present and correctly valued after a simulated Step 6.7 resolution for each of the four severity outcomes.\n2. Every other field on that entry (`source`, `category`, `severity`, `message`, `suggestion`, and every other entry in `findings`) is unchanged by the write — verified by a test asserting only the targeted entry's `dispositionByReview` field differs from the pre-write cache.\n3. `polish.md`'s Step 5, given a cache where one `source: \"audit\"` entry carries `dispositionByReview` and another does not, dispatches a command (or stages an unclassified observation) for the undisposed entry only — the disposed entry produces neither — verified by a fixture test.\n4. A cache with no `dispositionByReview` field on any entry (the standalone-polish, review-never-ran case) behaves exactly as it does today — no regression to existing suggestion-driven dispatch tests.\n5. `npm test` passes with no regressions.\n\n## Technical Approach\n\nReuses the cache file both consumers already share rather than inventing new inter-skill plumbing (a lock file, an env var, a separate coordination artifact) — the fix is entirely a read-modify-write on data that already flows through both files. The skip check in `polish.md` is a presence check on the field (any value means \"review already handled this\"), not a value-based branch, since polish never needs to know *which* terminal status review chose — only that review already decided.\n\n### Key Files\n\n- `plugin/skills/review/code-mode-steps.md` — Step 6.7 (~line 293-306), the write-back\n- `plugin/skills/design-wrapper/modes/review.md` — Step 5 (~line 373-390), reference only for the cache shape/path-resolution rule Step 6.7's write must match\n- `plugin/skills/design-wrapper/modes/polish.md` — the three-way consumption table (~line 49-58) and Step 5 (~line 91-101), the skip check\n- Existing test coverage for `polish.md`'s suggestion-driven dispatch and `review`'s Step 6.7 (locate via `grep -rl \"suggestion-driven\\|Step 6.7\\|dispositionByReview\" tests/`) — extend with the new fixture cases\n\n## Gotchas\n\n- The write-back must be a read-modify-write against the existing cache file, never a fresh overwrite — `review.md` Step 5's own cache write already happened earlier in the same run (it's the producer), and Step 6.7's write is a later, additive update to the same file, not a second production pass.\n- Scope the disposition field to `source: \"audit\"` entries only — `craft-critic` entries have no `suggestion`-driven dispatch path in polish's Step 5 to guard against (they're Step 4's context, consumed differently), so writing a disposition onto them would be inert but also potentially confusing; don't do it.\n- The ordering guarantee (review's Step 6.7 before polish's Step 5, within one flow run) is what makes this fix sufficient — this spec does not need to solve for review and polish running concurrently or out of order, which the current pipeline structure doesn't produce.\n\n## Original request\n\n**Summary:** An Impeccable `audit` finding can be staged for a human by review Step 6.7 and, minutes later, auto-applied by `design-wrapper polish`'s suggestion-driven dispatch of the same finding's `suggestion` — the two files never say which route wins.\n\n**Kind:** Gap\n\n**Affected component:** skills/review/code-mode-steps.md (Step 6.7 Late Findings Routing) and skills/design-wrapper/modes/polish.md (Step 5 suggestion-driven dispatch)\n\n**Use case:** In a `/claude-tweaks:flow` run, `audit` reported two accessibility findings on a form (a missing `aria-describedby`; two show/hide toggles sharing one accessible name), each carrying `suggestion: harden`. Review Step 6.7 routed them by severity under the run's ceiling — one staged for the Review Console (high), one auto-applied (medium). The flow's polish phase then ran `design-wrapper polish`, whose Step 5 dispatches the `harden` command each cached finding's `suggestion` names — which would re-derive and apply the very finding review had just staged for a human, bypassing the ceiling. The executing agent noticed and had polish honour review's routing (logged as a KEPT-PROMPT-shaped anomaly note), but nothing in either file states the precedence, so the next run may resolve it the other way.\n\nTwo viable fixes, no preference stated here: (a) polish's suggestion-driven dispatch skips any cached audit finding review Step 6.7 already routed — the cache entry could carry review's disposition (`applied` / `staged`) and polish dispatches only unrouted ones; or (b) Step 6.7 leaves audit findings that carry a usable `suggestion` to polish and routes only critique/critic findings.\n\n**Definition:** Needed — two directions ((a) polish defers to review's routing via a disposition field on the cache entry; (b) review leaves suggestion-bearing audit findings to polish) with no tradeoff made yet.\n\n**Plugin version:** 6.118.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-41e1aa69 -->\n",
-        "createdAt": "2026-09-12T01:53:33Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          }
-        ],
-        "number": 2281,
-        "state": "OPEN",
-        "title": "review Step 6.7 and design-wrapper polish route the same audit finding two contradictory ways",
-        "updatedAt": "2026-09-13T13:33:17Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`plugin/skills/review/step3-routing.md`'s auto-mode routing table (line ~40) is headed\n\"Default action under `review-auto-apply-ceiling: low`\", with the `medium` and `none` ceiling\nbehavior stated only as plain prose sentences below the table (lines 47-48: \"When\n`review-auto-apply-ceiling: medium`: auto-apply Low AND Medium; stage High\"). Worse,\n`skills/review/code-mode-steps.md` Step 6.7 (line ~310) cites the routing rule directly in its\nown text as a fixed mapping — \"severity-based auto routing when a pipeline run directory exists\n(low → AUTO, medium → STAGED, high → STAGED, critical → KEPT-PROMPT)\" — with no mention of the\nceiling at all, baking in the `low`-ceiling behavior as if it were universal.\n\nA live run confirmed the failure mode: under a resolved `review-auto-apply-ceiling: medium`,\nStep 6.5 produced medium-severity Design Quality findings, and Step 6.7 staged all four of them\n(`STAGED … Stage path: staged/review-{n}.patch`) instead of auto-applying them, then\nself-corrected four minutes later with a \"routing correction\" log line. The same agent, in the\nsame run, had applied medium-severity *code* findings correctly at Step 3 earlier — because\nStep 3's own prose names the resolved ceiling explicitly, while Step 6.7's text does not.\n\n## Deliverables\n\n- Make `step3-routing.md`'s table ceiling-keyed — one column per ceiling value (`none` / `low` /\n  `medium`) with the action in each cell, replacing the current single `low`-only table plus\n  separate prose sentences for `medium`/`none` — so a reader (or an agent following it) sees all\n  three ceilings' behavior in one place with no risk of reading only the table header and missing\n  the prose below it.\n- Fix `code-mode-steps.md` Step 6.7's own citation (line ~310) to name the resolved ceiling\n  explicitly, the way Step 3's own prose already does, instead of hardcoding the `low`-ceiling\n  mapping (`low → AUTO, medium → STAGED, high → STAGED, critical → KEPT-PROMPT`) as if it applied\n  under every ceiling.\n\n## Acceptance Criteria\n\n- `step3-routing.md`'s routing table has a column (or an equivalent unambiguous per-ceiling\n  layout) for `none`, `low`, and `medium`, each showing that ceiling's actual per-severity action\n  — no ceiling's behavior is stated only as prose below a table headed with a different ceiling.\n- `code-mode-steps.md` Step 6.7's routing citation names the resolved ceiling variable (mirroring\n  how Step 3's own prose already does) rather than a hardcoded `low`-ceiling mapping.\n- Re-reading Step 6.7 in isolation (without also reading `step3-routing.md`'s prose sentences\n  below the table) is now sufficient to route a medium-severity finding correctly under a\n  `medium` ceiling — the exact gap the live-run repro demonstrated.\n- No change to the actual routing *behavior* for any ceiling value — this is a documentation\n  clarity fix; the underlying `_shared/auto-mode-contract.md` severity-routing floors are\n  unchanged.\n\n## Technical Approach\n\nIn `plugin/skills/review/step3-routing.md`, restructure the table at line ~40 (currently 4 rows ×\n3 columns: Severity / Default action under `review-auto-apply-ceiling: low` / Log entry) into a\nceiling-keyed form — either add two more Default-action columns (`review-auto-apply-ceiling:\nmedium`, `review-auto-apply-ceiling: none`) to the same table, or split into three small\nceiling-headed tables in sequence — whichever keeps the file's existing lazy-load size discipline\n(`docs/skill-authoring.md`'s byte-ceiling conventions this repo already enforces on skill files).\nFold lines 47-48's current prose content into whichever layout is chosen rather than leaving it\nduplicated alongside the new table. Then in `code-mode-steps.md` at line ~310, replace the\nhardcoded `(low → AUTO, medium → STAGED, high → STAGED, critical → KEPT-PROMPT)` parenthetical\nwith language naming the resolved `review-auto-apply-ceiling` variable and pointing at\n`step3-routing.md`'s table, mirroring how this same file's Step 3 prose (which does not exhibit\nthis bug) already names the ceiling.\n\n### Key Files\n\n- `plugin/skills/review/step3-routing.md` — restructure the routing table to be ceiling-keyed\n  (~line 40-48)\n- `plugin/skills/review/code-mode-steps.md` — fix Step 6.7's hardcoded ceiling citation (~line\n  310)\n\n## Gotchas\n\n- This is a prose-only fix to skill guidance — verify the file(s) still pass this repo's\n  skill-prose conformance tests and byte-ceiling checks (`npm test`) after editing, since these\n  are exactly the kind of files those suites pin.\n- Do not change the actual severity-routing floors in `_shared/auto-mode-contract.md` — this\n  record is about the table's presentation being misleading, not about the routing rules\n  themselves being wrong.\n\n## Original request\n\n**Summary:** The auto-mode routing table in `skills/review/step3-routing.md` is headed for `review-auto-apply-ceiling: low`; the `medium` behaviour is one prose sentence below it, and review Step 6.7 staged four medium findings under a medium ceiling before correcting itself.\n\n**Kind:** Defect\n\n**Affected component:** skills/review/step3-routing.md (Auto mode routing table), cited by skills/review/code-mode-steps.md Step 6.7\n\n**Repro steps:**\n1. Run `/claude-tweaks:flow` in auto mode on a frontend record whose Manifesto resolves `review-auto-apply-ceiling: medium`.\n2. Let review Step 6.5 produce medium-severity Design Quality findings (an Impeccable audit/critique pass with a couple of `warning` findings is enough).\n3. Watch Step 6.7 route them \"per the routing rules from step3-routing.md\".\n\n**Expected vs. actual:**\nExpected: medium findings auto-apply (the file states \"When `review-auto-apply-ceiling: medium`: auto-apply Low AND Medium; stage High\").\nActual: the agent applied the table's rows — headed \"Default action under `review-auto-apply-ceiling: low`\", High/Medium → stage — and wrote four `STAGED … Stage path: staged/review-{n}.patch` lines, then a `routing correction` line four minutes later applying them. The same agent had applied medium code findings correctly at Step 3 earlier in the run, because Step 3's own prose names the ceiling; Step 6.7's text does not.\n\nSuggested fix: make the table ceiling-keyed — one column per ceiling value (`none` / `low` / `medium`) with the action in each cell — or restate the resolved-ceiling rule at the top of the table with the current ceiling substituted, and have Step 6.7 name the ceiling the way Step 3 does.\n\n**Definition:** Clear\n\n**Plugin version:** 6.118.0\n\n---\nFiled via /claude-tweaks:feedback.\n",
-        "createdAt": "2026-09-12T01:53:17Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2280,
-        "state": "OPEN",
-        "title": "review/step3-routing.md: the auto-mode routing table is keyed to ceiling low; the ceiling=medium rule is one prose line an agent can miss",
-        "updatedAt": "2026-09-13T13:33:19Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
