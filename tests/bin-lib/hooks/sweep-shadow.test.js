@@ -15,6 +15,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { sweepShadow } = require('../../../plugin/bin/lib/hooks/sweep-shadow');
+const { skipUnderRoot } = require('../../helpers/root');
 
 const REL = path.join('.claude-tweaks', 'pipelines', 'testrun');
 
@@ -37,7 +38,7 @@ function setup() {
   return { root, runDir, wt, shadow };
 }
 
-test('read-only shadow staged/ dir produces a failure diagnostic, not a clean-sweep report', () => {
+test('read-only shadow staged/ dir produces a failure diagnostic, not a clean-sweep report', skipUnderRoot('root ignores directory permissions'), () => {
   const { root, runDir, wt, shadow } = setup();
   const shadowStaged = path.join(shadow, 'staged');
   fs.mkdirSync(shadowStaged, { recursive: true });
@@ -55,7 +56,7 @@ test('read-only shadow staged/ dir produces a failure diagnostic, not a clean-sw
   }
 });
 
-test('unreadable shadow decisions.md produces a failure diagnostic, not silence', () => {
+test('unreadable shadow decisions.md produces a failure diagnostic, not silence', skipUnderRoot('root ignores file permissions'), () => {
   const { root, runDir, wt, shadow } = setup();
   const shadowDecisions = path.join(shadow, 'decisions.md');
   fs.writeFileSync(shadowDecisions, '# Decisions\n- an entry\n');
@@ -100,7 +101,7 @@ test('a clean sweep relocates shadow decisions.md entries exactly once — a sec
   assert.equal((anchoredAfterSecond.match(/- second entry/g) || []).length, 1, 'still exactly one copy after a second run');
 });
 
-test('#1305: permission-denied PARENT dir (not the target) at the staged/ entry gate produces a diagnostic, not a silent clean sweep', () => {
+test('#1305: permission-denied PARENT dir (not the target) at the staged/ entry gate produces a diagnostic, not a silent clean sweep', skipUnderRoot('root ignores directory permissions'), () => {
   const { root, runDir, wt, shadow } = setup();
   // Deny traversal into `shadow` itself — the PARENT of `shadow/staged` —
   // rather than chmod-ing `shadow/staged` directly (that exercises the
@@ -118,7 +119,7 @@ test('#1305: permission-denied PARENT dir (not the target) at the staged/ entry 
   }
 });
 
-test('#1305: permission-denied PARENT dir (not the target) at the decisions.md entry gate produces a diagnostic, not a silent clean sweep', () => {
+test('#1305: permission-denied PARENT dir (not the target) at the decisions.md entry gate produces a diagnostic, not a silent clean sweep', skipUnderRoot('root ignores directory permissions'), () => {
   const { root, runDir, wt, shadow } = setup();
   // Same PARENT-directory denial as above, for the decisions.md gate.
   fs.chmodSync(shadow, 0o000);

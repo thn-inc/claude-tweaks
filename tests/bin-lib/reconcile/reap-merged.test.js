@@ -25,7 +25,7 @@ function installGhWrapper(prsJson) {
   const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-ghwrap-'));
   const wrapperPath = path.join(wrapperDir, 'gh');
   fs.writeFileSync(wrapperPath, `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(prsJson)}\nEOF\n`);
-  fs.chmodSync(wrapperPath, 0o755);
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   const originalPath = process.env.PATH;
   process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
   return { restore: () => { process.env.PATH = originalPath; } };
