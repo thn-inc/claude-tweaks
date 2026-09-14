@@ -17,6 +17,47 @@ const PLACEHOLDER_RE = /\bTBD\b|\bTODO\b|<!--\s*ambiguity:/;
 // the placeholder gate tests only the text before it (refs #1240).
 const ORIGINAL_REQUEST_RE = /^## Original request[ \t]*$/m;
 
+// #1839: a fenced block or inline code span quotes content rather than
+// authoring it — a Deliverables fence quoting the exact CLAUDE.md line
+// being replaced (harness-health drift records do this by construction) is
+// not an unresolved placeholder just because the quoted text contains the
+// marker word. Removes, in order: fenced blocks (``` or ~~~, any info
+// string, an unclosed fence run to end of text — the safer direction, since
+// a truncated fence is quoted content, not authored prose) and, from what's
+// left, inline code spans (backtick runs of any length, matched by exact
+// opening/closing length per CommonMark, so a single backtick inside a
+// double-backtick span is never mis-cut).
+function stripCodeSpans(text) {
+  const lines = text.split('\n');
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const fenceMatch = lines[i].match(/^(`{3,}|~{3,})/);
+    if (fenceMatch) {
+      const fenceChar = fenceMatch[1][0];
+      const fenceLen = fenceMatch[1].length;
+      const closeRe = new RegExp(`^${fenceChar}{${fenceLen},}\\s*$`);
+      let j = i + 1;
+      while (j < lines.length && !closeRe.test(lines[j])) j++;
+      // j is the closing fence line, or lines.length when unclosed (runs to
+      // end of text). Either way, everything from the opening fence through
+      // the close (or end) is quoted, not authored — drop it, keeping one
+      // blank line so a section whose only content is a fenced block is
+      // still detected as non-empty by sectionText (which reads the
+      // unstripped body anyway, but this keeps stripCodeSpans' own output
+      // shape sane for any other caller).
+      out.push('');
+      i = j < lines.length ? j + 1 : lines.length;
+      continue;
+    }
+    out.push(lines[i]);
+    i++;
+  }
+  // Inline code spans: an opening backtick run, non-greedy content, a
+  // closing run of the exact same length (the backreference enforces this).
+  return out.join('\n').replace(/(`+)([\s\S]*?)\1/g, '');
+}
+
 // body -> the text of section `## {name}` up to the next `## ` heading (or
 // end of body). null when the heading itself is absent.
 function sectionText(body, name) {
@@ -45,7 +86,7 @@ function shapeGate(body) {
   }
   const originalRequestAt = text.search(ORIGINAL_REQUEST_RE);
   const authored = originalRequestAt === -1 ? text : text.slice(0, originalRequestAt);
-  if (PLACEHOLDER_RE.test(authored)) missing.push('unresolved-placeholder');
+  if (PLACEHOLDER_RE.test(stripCodeSpans(authored))) missing.push('unresolved-placeholder');
   return missing.length ? { ok: false, missing } : { ok: true, missing: [] };
 }
 
@@ -117,4 +158,6 @@ function composeFile({ header, n, title, body }) {
   return `${header}\n# ${n}: ${title}\n\n${body}\n`;
 }
 
-module.exports = { REQUIRED_SECTIONS, sectionText, shapeGate, liftMetadata, composeHeader, composeFile };
+module.exports = {
+  REQUIRED_SECTIONS, sectionText, shapeGate, liftMetadata, composeHeader, composeFile, stripCodeSpans,
+};

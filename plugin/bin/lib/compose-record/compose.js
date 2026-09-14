@@ -7,6 +7,9 @@
 'use strict';
 
 const { recordPayload } = require('../issues/record');
+// #1839: shared with materialize-format.js's shapeGate — a fenced block or
+// inline code span quotes content rather than authoring it.
+const { stripCodeSpans } = require('../issues/materialize-format');
 
 const REQUIRED_SECTIONS = ['Current State', 'Deliverables', 'Acceptance Criteria', 'Release Note'];
 const PLACEHOLDER_MARKERS = ['TBD', 'TODO', '<!-- ambiguity:'];
@@ -51,8 +54,9 @@ function validateShaped(body) {
   }
   const originalRequestAt = text.search(ORIGINAL_REQUEST_RE);
   const authored = originalRequestAt === -1 ? text : text.slice(0, originalRequestAt);
+  const strippedAuthored = stripCodeSpans(authored);
   for (const marker of PLACEHOLDER_MARKERS) {
-    if (authored.includes(marker)) gaps.push(`unresolved placeholder marker: ${marker}`);
+    if (strippedAuthored.includes(marker)) gaps.push(`unresolved placeholder marker: ${marker}`);
   }
   return { ok: gaps.length === 0, gaps };
 }
