@@ -20,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { compareVersions } = require('../changelog');
+const { isPathContained } = require('../shared-primitives');
 
 const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)$/;
 // Pre-release/build-metadata tags (e.g. `v2.0.0-rc.1`) are not full releases
@@ -202,9 +203,8 @@ function resolveReleaseType(root, override) {
     if (!RELEASE_TYPE_VALUES.has(override.releaseType)) {
       throw new Error(`invalid release-type override: ${override.releaseType}`);
     }
-    const resolvedRoot = path.resolve(root);
     const resolvedExtraFile = path.resolve(root, override.extraFile);
-    if (resolvedExtraFile !== resolvedRoot && !resolvedExtraFile.startsWith(resolvedRoot + path.sep)) {
+    if (!isPathContained(resolvedExtraFile, path.resolve(root), { orEqual: true })) {
       throw new Error(`--extra-file must resolve inside the repo root: ${override.extraFile}`);
     }
     const problem = extraFileProblem(root, override.extraFile);
@@ -389,7 +389,7 @@ function bootstrapRelease({ root, integrationModel, branch, dryRun = false, list
       assertSafeWriteTarget(root, rel);
       fs.mkdirSync(path.dirname(full), { recursive: true });
       const resolvedDir = fs.realpathSync(path.dirname(full));
-      if (resolvedDir !== realRoot && !resolvedDir.startsWith(realRoot + path.sep)) {
+      if (!isPathContained(resolvedDir, realRoot, { orEqual: true })) {
         throw new Error(`refusing to write through a symlink: ${rel}`);
       }
       try {

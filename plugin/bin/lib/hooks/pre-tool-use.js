@@ -33,6 +33,7 @@ const wtDetect = require('./worktree-detect');
 const { resolveIntegrationBranch, preferRemoteTrackingRef } = require('./worktree-reap');
 const { runGit, FAILURE } = require('./git-exec');
 const { detectIntegrationModel, resolvePolicyConfig } = require('../policy-schema');
+const { isPathContained } = require('../shared-primitives');
 
 function pluginRoot() {
   return process.env.CLAUDE_PLUGIN_ROOT || '${CLAUDE_PLUGIN_ROOT}';
@@ -141,7 +142,7 @@ const GATE_COVERAGE = Object.freeze({
 function isPipelineBookkeeping(repoRoot, targetPath) {
   if (!repoRoot || typeof targetPath !== 'string' || !targetPath) return false;
   if (!path.isAbsolute(targetPath)) return false;
-  return path.resolve(targetPath).startsWith(path.join(repoRoot, PIPELINE_STATE_DIR) + path.sep);
+  return isPathContained(path.resolve(targetPath), path.join(repoRoot, PIPELINE_STATE_DIR));
 }
 
 // Resolves a write TARGET the way an already-existing file or symlink chain
@@ -489,7 +490,7 @@ function checkTeardownGate(ctx, teardownWarnings = []) {
     // still resolves to allow, matching this file's own posture throughout.
     if (source === 'bash') {
       const targetReal = safeReal(target);
-      if (targetReal && cwdReal && (cwdReal === targetReal || cwdReal.startsWith(targetReal + path.sep))) {
+      if (targetReal && cwdReal && isPathContained(cwdReal, targetReal, { orEqual: true })) {
         return denyResult(
           `claude-tweaks teardown gate: this \`git worktree remove\` targets ${target}, which is the ` +
           `current session's own working directory (or an ancestor of it). Removing it deletes the ` +
