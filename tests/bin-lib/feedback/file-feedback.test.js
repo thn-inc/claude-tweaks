@@ -550,9 +550,11 @@ test('validateDraft: flags a missing title, body, and fingerprintBasis fields in
   assert.equal(validateDraft({ title: 't', body: 'b', fingerprintBasis: { component: 'c', summary: 's' } }, 0), null);
 });
 
-test('parseRepo: extracts owner/repo from github.com/owner/repo and github.com:owner/repo.git forms', () => {
-  assert.deepEqual(parseRepo('github.com/owner/repo'), { owner: 'owner', repo: 'repo' });
-  assert.deepEqual(parseRepo('github.com:owner/repo.git'), { owner: 'owner', repo: 'repo' });
-  assert.deepEqual(parseRepo('https://github.com/owner/repo.git'), { owner: 'owner', repo: 'repo' });
-  assert.equal(parseRepo('https://gitlab.com/owner/repo'), null);
+test('parseRepo: extracts host/owner/repo from github.com/owner/repo and github.com:owner/repo.git forms', () => {
+  assert.deepEqual(parseRepo('github.com/owner/repo'), { host: 'github.com', owner: 'owner', repo: 'repo' });
+  assert.deepEqual(parseRepo('github.com:owner/repo.git'), { host: 'github.com', owner: 'owner', repo: 'repo' });
+  assert.deepEqual(parseRepo('https://github.com/owner/repo.git'), { host: 'github.com', owner: 'owner', repo: 'repo' });
+  // #2240: parseRepo now widens to an arbitrary host (GitHub Enterprise Server support) —
+  // a non-github.com host is no longer rejected, it's captured.
+  assert.deepEqual(parseRepo('https://gitlab.com/owner/repo'), { host: 'gitlab.com', owner: 'owner', repo: 'repo' });
 });

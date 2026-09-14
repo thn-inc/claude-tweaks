@@ -171,7 +171,9 @@ function run(argv, deps = realDeps) {
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
   const repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
   if (!repoSpec) { deps.stderr('apply-refine-labels.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
-  const repoFlag = `${repoSpec.owner}/${repoSpec.repo}`;
+  const repoFlag = repoSpec.host !== 'github.com'
+    ? `${repoSpec.host}/${repoSpec.owner}/${repoSpec.repo}`
+    : `${repoSpec.owner}/${repoSpec.repo}`;
 
   const ok = [];
   const failed = [];

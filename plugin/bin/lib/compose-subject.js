@@ -138,7 +138,9 @@ function run(argv, deps = realDeps) {
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
   const repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
   if (!repoSpec) { deps.stderr('compose-subject.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
-  const slug = `${repoSpec.owner}/${repoSpec.repo}`;
+  const slug = repoSpec.host !== 'github.com'
+    ? `${repoSpec.host}/${repoSpec.owner}/${repoSpec.repo}`
+    : `${repoSpec.owner}/${repoSpec.repo}`;
 
   const records = [];
   for (const n of opts.numbers) {

@@ -108,7 +108,10 @@ function parseArgs(argv) {
 }
 
 const realDeps = {
-  ghView: (owner, repo, n) => execFileSync('gh', ['issue', 'view', String(n), '--repo', `${owner}/${repo}`, '--json', 'number,title,body,labels,url'], { encoding: 'utf8' }),
+  ghView: (owner, repo, n, host) => {
+    const repoFlag = host && host !== 'github.com' ? `${host}/${owner}/${repo}` : `${owner}/${repo}`;
+    return execFileSync('gh', ['issue', 'view', String(n), '--repo', repoFlag, '--json', 'number,title,body,labels,url'], { encoding: 'utf8' });
+  },
   ghAvailable,
   remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }),
   // #117: commit distance from a record's Verified-as-of: stamp to current
@@ -246,10 +249,10 @@ function run(argv, deps = realDeps) {
     if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
     const repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
     if (!repoSpec) { deps.stderr('materialize.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
-    const { owner, repo } = repoSpec;
+    const { host, owner, repo } = repoSpec;
 
     try {
-      record = JSON.parse(deps.ghView(owner, repo, opts.n));
+      record = JSON.parse(deps.ghView(owner, repo, opts.n, host));
     } catch (err) {
       deps.stderr(`materialize.js: Record #${opts.n} could not be resolved (\`gh issue view ${opts.n}\` failed — check the issue exists in this repo). ${err && err.message ? err.message : ''}\n`);
       return 2;

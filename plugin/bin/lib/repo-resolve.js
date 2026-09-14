@@ -12,12 +12,17 @@
 'use strict';
 const { execFileSync } = require('child_process');
 
-// A GitHub remote URL (SSH or HTTPS, with or without .git, or an
-// `owner/name` string wrapped as `github.com/owner/name` by a caller) ->
-// { owner, repo }, or null when it doesn't match.
+// A git remote URL (SSH or HTTPS, with or without .git, on github.com or an
+// arbitrary GitHub Enterprise Server host, or an `owner/name` string wrapped
+// as `{host}/owner/name` by a caller) -> { host, owner, repo }, or null when
+// it doesn't match. `host` defaults to matching whatever host segment is
+// present in the URL -- callers that only destructure { owner, repo } are
+// unaffected by the added field.
 function parseRepo(url) {
-  const m = /github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(String(url || '').trim());
-  return m ? { owner: m[1], repo: m[2] } : null;
+  const m = /^(?:[a-zA-Z0-9._-]+@)?(?:https?:\/\/)?([a-zA-Z0-9.-]+)[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(
+    String(url || '').trim()
+  );
+  return m ? { host: m[1], owner: m[2], repo: m[3] } : null;
 }
 
 // gh-api-module-pattern: bound every remote-contacting call on the seam.

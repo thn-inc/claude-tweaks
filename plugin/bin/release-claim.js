@@ -84,8 +84,9 @@ function parseArgs(argv) {
 // #2090: resolve whether the target issue is currently open or closed, for a
 // sweep's `sweep.issueClosed` decision. Never assumes closed on a failed
 // read — the caller must abort the release rather than guess.
-function resolveIssueState(runner, owner, repo, issue) {
-  const out = runner(['issue', 'view', String(issue), '--repo', `${owner}/${repo}`, '--json', 'state', '-q', '.state']);
+function resolveIssueState(runner, host, owner, repo, issue) {
+  const repoFlag = host !== 'github.com' ? `${host}/${owner}/${repo}` : `${owner}/${repo}`;
+  const out = runner(['issue', 'view', String(issue), '--repo', repoFlag, '--json', 'state', '-q', '.state']);
   return String(out).trim().toUpperCase();
 }
 
@@ -169,7 +170,7 @@ function run(argv, deps = realDeps) {
   let sweep;
   if (o.sweep) {
     let state;
-    try { state = resolveIssueState(deps.runner, repoSpec.owner, repoSpec.repo, issue); } catch (err) {
+    try { state = resolveIssueState(deps.runner, repoSpec.host, repoSpec.owner, repoSpec.repo, issue); } catch (err) {
       deps.stderr(`release-claim.js: --sweep could not resolve #${issue}'s open/closed state — aborting rather than assuming closed: ${err && err.message}\n`);
       return 1;
     }

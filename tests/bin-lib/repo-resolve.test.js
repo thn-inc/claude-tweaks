@@ -4,26 +4,47 @@ const assert = require('node:assert/strict');
 const { parseRepo, ghAvailable } = require('../../plugin/bin/lib/repo-resolve');
 
 test('parseRepo: SSH remote URL', () => {
-  assert.deepEqual(parseRepo('git@github.com:o/r.git'), { owner: 'o', repo: 'r' });
+  assert.deepEqual(parseRepo('git@github.com:o/r.git'), { host: 'github.com', owner: 'o', repo: 'r' });
 });
 
 test('parseRepo: HTTPS remote URL', () => {
-  assert.deepEqual(parseRepo('https://github.com/o/r.git'), { owner: 'o', repo: 'r' });
+  assert.deepEqual(parseRepo('https://github.com/o/r.git'), { host: 'github.com', owner: 'o', repo: 'r' });
 });
 
 test('parseRepo: HTTPS remote URL without .git suffix', () => {
-  assert.deepEqual(parseRepo('https://github.com/o/r'), { owner: 'o', repo: 'r' });
+  assert.deepEqual(parseRepo('https://github.com/o/r'), { host: 'github.com', owner: 'o', repo: 'r' });
 });
 
 test('parseRepo: an owner/name string wrapped as github.com/owner/name (the --repo CLI flag shape)', () => {
-  assert.deepEqual(parseRepo('github.com/o/r'), { owner: 'o', repo: 'r' });
+  assert.deepEqual(parseRepo('github.com/o/r'), { host: 'github.com', owner: 'o', repo: 'r' });
 });
 
-test('parseRepo: non-GitHub or malformed URL -> null', () => {
-  assert.equal(parseRepo('https://gitlab.com/o/r.git'), null);
+test('parseRepo: SSH remote on a GitHub Enterprise Server host', () => {
+  assert.deepEqual(parseRepo('git@ghe.example.com:acme/widget.git'), {
+    host: 'ghe.example.com',
+    owner: 'acme',
+    repo: 'widget',
+  });
+});
+
+test('parseRepo: HTTPS remote on a GitHub Enterprise Server host', () => {
+  assert.deepEqual(parseRepo('https://ghe.example.com/acme/widget'), {
+    host: 'ghe.example.com',
+    owner: 'acme',
+    repo: 'widget',
+  });
+});
+
+test('parseRepo: malformed URL (no host/owner/repo structure) -> null', () => {
+  assert.equal(parseRepo('not-a-url'), null);
   assert.equal(parseRepo(''), null);
   assert.equal(parseRepo(null), null);
   assert.equal(parseRepo(undefined), null);
+});
+
+test('parseRepo: existing callers that destructure only { owner, repo } still see the same shape', () => {
+  const { owner, repo } = parseRepo('git@github.com:o/r.git');
+  assert.deepEqual({ owner, repo }, { owner: 'o', repo: 'r' });
 });
 
 test('ghAvailable: injected runner succeeds -> true', () => {
@@ -80,5 +101,5 @@ test("'--version' appears in plugin/bin only inside repo-resolve.js's ghAvailabl
     }
   };
   walk(binDir);
-  assert.deepEqual(hits, [`lib${pathModule.sep}repo-resolve.js:31`]);
+  assert.deepEqual(hits, [`lib${pathModule.sep}repo-resolve.js:36`]);
 });

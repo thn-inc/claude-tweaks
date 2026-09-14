@@ -193,11 +193,13 @@ test('link-records CLI: a blocked-by pair with a missing side is a malformed inv
 
 test('parseRepo: dotted repo names survive; only a trailing .git is stripped', () => {
   const { parseRepo } = require('../../../plugin/bin/link-records');
-  assert.deepEqual(parseRepo('https://github.com/owner/my.repo.git'), { owner: 'owner', repo: 'my.repo' });
-  assert.deepEqual(parseRepo('https://github.com/owner/my.repo'), { owner: 'owner', repo: 'my.repo' });
-  assert.deepEqual(parseRepo('git@github.com:owner/repo.git'), { owner: 'owner', repo: 'repo' });
-  assert.deepEqual(parseRepo('https://github.com/owner/repo/'), { owner: 'owner', repo: 'repo' });
-  assert.equal(parseRepo('https://gitlab.com/owner/repo'), null);
+  assert.deepEqual(parseRepo('https://github.com/owner/my.repo.git'), { host: 'github.com', owner: 'owner', repo: 'my.repo' });
+  assert.deepEqual(parseRepo('https://github.com/owner/my.repo'), { host: 'github.com', owner: 'owner', repo: 'my.repo' });
+  assert.deepEqual(parseRepo('git@github.com:owner/repo.git'), { host: 'github.com', owner: 'owner', repo: 'repo' });
+  assert.deepEqual(parseRepo('https://github.com/owner/repo/'), { host: 'github.com', owner: 'owner', repo: 'repo' });
+  // #2240: parseRepo now widens to an arbitrary host (GitHub Enterprise Server support) —
+  // a non-github.com host is no longer rejected, it's captured.
+  assert.deepEqual(parseRepo('https://gitlab.com/owner/repo'), { host: 'gitlab.com', owner: 'owner', repo: 'repo' });
 });
 
 test('link-records CLI: blocked-by-only invocation is valid (no --parent/--subs)', () => {
