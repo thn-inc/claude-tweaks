@@ -189,7 +189,7 @@ test('AC7 (#1323): --run pointed at an already-archived path (4 levels below roo
 });
 
 test('AC8 (#2362): no worktree recorded, but a PR-early decisions.md line names the branch -> recovers and removes the live worktree via fallback', () => {
-  const { root, wt, runDir } = fixtureRepo();
+  const { root, runDir } = fixtureRepo();
   // Simulate the exact gap #2362 describes: EnterWorktree entered `wt` on
   // `feat-branch`, but run-state.json never got a `worktree` field written.
   writeRunState(runDir, { status: 'active', worktree: null, sessionId: 'me' });
@@ -210,7 +210,7 @@ test('AC8 (#2362): no worktree recorded, but a PR-early decisions.md line names 
 });
 
 test('AC8b (#2362): no worktree recorded and no recoverable branch -> unchanged "no worktree recorded" message, nothing removed', () => {
-  const { root, wt, runDir } = fixtureRepo();
+  const { root, runDir } = fixtureRepo();
   writeRunState(runDir, { status: 'active', worktree: null, sessionId: 'me' });
   // decisions.md carries no PR-early lifecycle line and state.pr is absent —
   // fallbackBranch has nothing to recover.
@@ -218,4 +218,36 @@ test('AC8b (#2362): no worktree recorded and no recoverable branch -> unchanged 
 
   assert.match(result.lines.join('\n'), /worktree: skipped — no worktree recorded/);
   assert.match(git(root, 'worktree', 'list'), /feat-branch/, 'the unrelated live worktree must survive untouched');
+});
+
+test('AC9 (#2362): a recorded worktree that no longer exists must NOT trigger the branch-name fallback, even when decisions.md could recover a branch', () => {
+  const { root, wt, runDir } = fixtureRepo();
+  // run-state.json DOES have a recorded worktree — but it was removed after
+  // recording (a reap, a manual `git worktree remove`, or a prior partial
+  // teardown). This must behave exactly as it did before #2362's fix: the
+  // fallback must never fire just because decisions.md happens to name a
+  // branch — only a run-state.json with NO worktree field at all may use it.
+  execFileSync('git', ['worktree', 'remove', '--force', wt], { cwd: root });
+  writeRunState(runDir, { status: 'active', worktree: wt, sessionId: 'me' });
+  fs.writeFileSync(
+    path.join(runDir, 'decisions.md'),
+    '# log\n- AUTO 08:17:11 — Spec Step 1: PR-early run lifecycle: pushed feat-branch to origin. Reversibility: high.\n',
+  );
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  // Step 3 (worktree removal) is orthogonal to this fix: `worktreePath` is the
+  // recorded (now-stale) path, so `effectiveWorktreePath` stays that value and
+  // Step 3 correctly attempts (and fails) removal of it — "removal failed",
+  // not "no worktree recorded" (that message only fires when nothing at all
+  // was recorded). The discriminating assertions for this fix are the
+  // branch/remote-ref lines below, which must fall back to "no branch
+  // recorded" rather than recovering `feat-branch` from decisions.md.
+  assert.match(result.lines.join('\n'), /worktree: skipped — removal failed/);
+  assert.match(result.lines.join('\n'), /branch: skipped — no branch recorded/);
+  assert.match(result.lines.join('\n'), /remote ref: skipped — no branch recorded/);
+  assert.strictEqual(calls.length, 0, 'gh api delete must never be called — the branch must not be recovered for a recorded-but-gone worktree');
+  assert.notStrictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '', 'the local branch must survive — it was never a target for deletion');
 });

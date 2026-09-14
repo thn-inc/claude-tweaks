@@ -112,7 +112,7 @@ function teardownRun(runDir, opts = {}) {
   // costs nothing and protects a future writer that might.
   const branch = (root ? branchOfWorktree(root, worktreePath) : null)
     || (prevState && prevState.branch)
-    || (root ? fallbackBranch(root, runDir, prevState) : null)
+    || (!worktreePath && root ? fallbackBranch(root, runDir, prevState) : null)
     || null;
   // Fallback worktree-path recovery (#2362): only attempted when nothing was
   // recorded at all. Never overrides a recorded (even if now-stale) worktree
@@ -195,7 +195,7 @@ function teardownRun(runDir, opts = {}) {
     lines.push('worktree: skipped — worktree locked');
   } else {
     const rm = runGit(['worktree', 'remove', effectiveWorktreePath], root);
-    if (rm.failure) lines.push('worktree: skipped — removal failed');
+    if (rm.failure) lines.push(`worktree: skipped — removal failed${rm.stderr ? ` (${rm.stderr})` : ''}`);
     else {
       lines.push(`worktree: removed ${effectiveWorktreePath}${recoveredWorktreePath ? ' (resolved via branch-name fallback — no worktree recorded in run-state.json)' : ''}`);
     }

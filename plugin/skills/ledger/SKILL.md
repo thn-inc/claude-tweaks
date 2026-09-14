@@ -111,7 +111,7 @@ Only delete when the resolve gate has passed — all items must have terminal st
 
 > **Parallel execution:** Use parallel tool calls aggressively — all `Glob`/`Read` operations across the matched ledger files are independent and should run concurrently.
 
-1. Find active ledger files: glob `docs/plans/*-ledger.md` when this run has a worktree; otherwise read `{run-dir}/ledger.md` directly — there is nothing to glob for a run-dir-scoped file, since the caller already knows its own `$PIPELINE_RUN_DIR`.
+1. Find active ledger files: glob `docs/plans/*-ledger.md`. When a run dir resolves for this invocation (`$PIPELINE_RUN_DIR`, or the most-recent-matching run), also check `{run-dir}/ledger.md` — per `_shared/ledger-format.md`'s Location section's resolution rule, include it in the listing when it exists. With no run dir at all, the glob alone is the complete listing.
 2. For each ledger, show:
    ```
    ## {ledger name}
@@ -121,14 +121,14 @@ Only delete when the resolve gate has passed — all items must have terminal st
 
 ### `/claude-tweaks:ledger {feature-name}`
 
-1. Glob `docs/plans/*-ledger.md` when this run has a worktree; otherwise read `{run-dir}/ledger.md` directly — there is nothing to glob for a run-dir-scoped file, since the caller already knows its own `$PIPELINE_RUN_DIR`. When globbing, match `{feature-name}` against each file's `{feature}` slug (case-insensitive substring match — e.g. `auth` matches `2026-01-15-auth-refactor-ledger.md`)
+1. Glob `docs/plans/*-ledger.md`, matching `{feature-name}` against each file's `{feature}` slug (case-insensitive substring match — e.g. `auth` matches `2026-01-15-auth-refactor-ledger.md`). When a run dir resolves for this invocation, also check `{run-dir}/ledger.md` for existence per `_shared/ledger-format.md`'s Location section's resolution rule, and include it in the match set. With no run dir at all, the glob alone is the complete match set.
 2. If exactly one file matches, show its full item table
 3. If multiple files match, list all matches (with their dates) and ask the user which one they mean
 4. If no file matches, report `No ledger found for "{feature-name}"` and list the currently active ledgers (same glob as the no-arguments form) so the user can retry with a correct name
 
 ### `/claude-tweaks:ledger resolve`
 
-1. Find the active ledger: when this run has a worktree, if a `{feature-name}` is given (`resolve {feature-name}`), match it against `docs/plans/*-ledger.md` the same way the `{feature-name}` form does above — if no match, report `No ledger found for "{feature-name}"` and list the currently active ledgers instead of guessing. Otherwise, default to the most recent `docs/plans/*-ledger.md`. When this run has no worktree, read `{run-dir}/ledger.md` directly — there is nothing to glob for a run-dir-scoped file, since the caller already knows its own `$PIPELINE_RUN_DIR`.
+1. Find the active ledger: when a run dir resolves for this invocation and `{run-dir}/ledger.md` exists (per `_shared/ledger-format.md`'s Location section's resolution rule), that is the active ledger — a `{feature-name}` argument is not applicable to a single run-dir-scoped file. Otherwise, resolve against `docs/plans/*-ledger.md` the same way the `{feature-name}` form does above: if a `{feature-name}` is given (`resolve {feature-name}`), match it (no match → report `No ledger found for "{feature-name}"` and list the currently active ledgers instead of guessing); otherwise default to the most recent `docs/plans/*-ledger.md`.
 2. Run the resolve gate procedure
 3. Present results
 
