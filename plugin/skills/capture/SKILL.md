@@ -149,10 +149,7 @@ node -e "
   const row = trustRows(issues, gitLog, Date.now(), policy).find((r) => r.key === 'producer:capture|elevated');
   const ceiling = resolveCeiling({ policy: '{resolved-ceiling}' });
   const permitted = permittedGrants({ ceiling, row });
-  // Fallback to the flat keys: repo-HEAD skill text can run against an older
-  // installed build's autonomy.js (no grants key yet). Remove with #647's
-  // transitional twin (see bin/lib/issues/autonomy.js module header).
-  const g = (permitted.grants || {}).bornReady || { granted: permitted.bornReady, reason: permitted.reason };
+  const g = permitted.grants.bornReady;
   console.log(JSON.stringify({ bornReady: g.granted, reason: g.reason, verdict: row ? row.verdict : 'no-cell' }));
 " -- "{resolved-window}"
 ```
