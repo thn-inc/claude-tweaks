@@ -1645,35 +1645,7 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
 // this parameter is what lets a test exercise checkBookkeepingStampsGate's
 // pr-first branch through run()'s own dispatch instead of calling the gate
 // function directly, bypassing every gate ahead of it in runInner (record #1268).
-// #1501: env-gated debug capture. Every reproduction attempt for the #989
-// exemption's repro-resistant failure (a real `git push` denied even though
-// it should match `hasNoUpstreamYet`) matched a synthetic replay field-for-
-// field and still allowed — the discrepancy must live in some field of the
-// real invocation's `ctx` that no synthetic payload has captured yet.
-// Setting CT_HOOKS_DEBUG_CAPTURE to a file path appends this call's
-// `ctx.input`/`cwd`/`runDir`/`runState`/`ownedRun` to that file on every
-// pre-tool-use invocation, so the next live occurrence can be diffed
-// byte-for-byte against a synthetic payload built from the same fields.
-// Best-effort and silent on failure — a debug aid must never itself change
-// gate behavior or crash a real session; unset by default, so this never
-// runs (or costs anything) outside a deliberate capture session.
-function captureDebugPayload(ctx) {
-  const target = process.env.CT_HOOKS_DEBUG_CAPTURE;
-  if (!target) return;
-  try {
-    fs.appendFileSync(target, `${JSON.stringify({
-      at: new Date().toISOString(),
-      input: ctx.input,
-      cwd: ctx.cwd,
-      runDir: ctx.runDir,
-      runState: ctx.runState,
-      ownedRun: ctx.ownedRun,
-    })}\n`);
-  } catch { /* best-effort — a debug capture must never break a real hook call */ }
-}
-
 function run(ctx, deps = {}) {
-  captureDebugPayload(ctx);
   const indeterminateTargets = [];
   const warnings = [];
   const out = runInner(ctx, indeterminateTargets, warnings, deps) || {};
