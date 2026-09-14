@@ -63,8 +63,9 @@ Two consequences, both load-bearing:
   `session-start.js`) safe. Run directories that predate anchoring are the one exception, and
   `skills/wrap-up/cleanup-procedures-execution.md` Section C step 3.5 carries the transitional guard that
   copies them out before a worktree is removed.
-- **`work/{n}-spec.md` is the exception** and stays inside the worktree. It is git-tracked
-  and must be committed onto the feature branch; it reaches the main checkout by merge.
+- **`work/{n}-spec.md` is the first of two exceptions** and stays inside the worktree. It is
+  git-tracked and must be committed onto the feature branch; it reaches the main checkout by
+  merge.
 - **A `*-tidy-standalone*` run's own audit files are the second exception (#1493)** — under
   `pr-first`, `decisions.md`, `report.md`, and `staged/**` are copied into the worktree's own
   copy of the run dir (`tidy/SKILL.md` Step 7.5) and committed there, the same shape as

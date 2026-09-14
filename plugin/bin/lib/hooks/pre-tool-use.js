@@ -79,6 +79,19 @@ const POLICY_FILE = path.join('.claude-tweaks', 'policy.yml');
 // worktree — only the one tracked, committed-on-branch artifact this section documents.
 const WORK_SPEC_TAIL_RE = /^(?:spec-[^/\\]+[/\\])?work(?:[/\\]\d+-spec\.md)?$/;
 
+// #1493/#1494: the second documented worktree-local exception — a
+// `*-tidy-standalone*`/`*-sweep-standalone*` run's `decisions.md`, `report.md`,
+// and `staged/**` are the exact three shapes `.gitignore`'s block un-ignores
+// (top-level pipelines depth only, never spec-*/-nested — see that block's own
+// comment) so `tidy/step-7-5-worktree-always.md`'s pr-first mirror-then-commit
+// procedure can land the run's audit trail on the worktree's own branch instead
+// of only the main-checkout copy. Keyed on the run-dir NAME (new for this
+// guard, unlike WORK_SPEC_TAIL_RE which is tail-only) — anchored so a
+// `spec-{slug}` nesting or an `archive/` parent can never match, since
+// `runDirName` is always the top-level segment (relParts[0]) by construction.
+const STANDALONE_AUDIT_RUN_RE = /-(?:tidy|sweep)-standalone/;
+const STANDALONE_AUDIT_TAIL_RE = /^(?:decisions\.md|report\.md|staged(?:[/\\].+)?)$/;
+
 // git always reports/accepts forward-slash paths regardless of platform —
 // used for GATE_COVERAGE's prose-facing rendering and for comparing against
 // `git diff --cached --name-only` output in isPolicyOnlyCommit below.
@@ -615,6 +628,7 @@ function shadowPipelineRunDir(targetPath) {
   const runDirName = relParts[0];
   const tail = relParts.slice(1).join(path.sep);
   if (WORK_SPEC_TAIL_RE.test(tail)) return null;
+  if (STANDALONE_AUDIT_RUN_RE.test(runDirName) && STANDALONE_AUDIT_TAIL_RE.test(tail)) return null;
   const runDirCandidate = path.join(pipelinesDir, runDirName);
   let exists = false;
   try { exists = fs.statSync(runDirCandidate).isDirectory(); } catch { /* not there yet — a genuinely new shadow */ }
