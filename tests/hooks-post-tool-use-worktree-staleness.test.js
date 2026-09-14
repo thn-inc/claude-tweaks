@@ -17,7 +17,8 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const cp = require('child_process');
+const { execFileSync } = cp;
 const post = require('../plugin/bin/lib/hooks/post-tool-use');
 const { gitRepo, harnessWorktreeOf } = require('./helpers/git-fixtures');
 
@@ -54,10 +55,12 @@ function advance(main, n) {
   }
 }
 
-function enterWorktreeCtx(wt, { toolResponse, ownedRun } = {}) {
+function enterWorktreeCtx(wt, { toolResponse, ownedRun, platform } = {}) {
   const input = { tool_name: 'EnterWorktree', cwd: wt };
   if (toolResponse !== undefined) input.tool_response = toolResponse;
-  return { input, cwd: wt, ownedRun };
+  const ctx = { input, cwd: wt, ownedRun };
+  if (platform !== undefined) ctx.platform = platform;
+  return ctx;
 }
 
 function createdAt(wt, branch) {
@@ -218,4 +221,54 @@ test('does not execute an injected --upload-pack value when integration-branch s
 test('an unusable cwd (no tool result, no resolvable worktree) never throws — returns {} rather than crashing', () => {
   const out = post.run({ input: { tool_name: 'EnterWorktree', cwd: '/this/path/does/not/exist/at/all' } });
   assert.deepStrictEqual(out, {});
+});
+
+// #1782: proactive core.longpaths nudge — win32 only, before the staleness
+// fetch. Platform is injected via ctx.platform (this module's existing
+// per-call ctx seam, extended with one field — there was no other
+// deps-injection seam in this file to reuse) rather than stubbing
+// process.platform, which is process-global and would leak across tests.
+test('warns on win32 when core.longpaths is unset', () => {
+  const { main } = setupProject();
+  const wt = harnessWorktreeOf(main);
+  const out = post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32' }));
+  assert.ok(out.json && typeof out.json.systemMessage === 'string', 'expected a core.longpaths warning');
+  assert.match(out.json.systemMessage, /core\.longpaths/);
+  assert.match(out.json.systemMessage, /_shared\/worktree-setup\.md/);
+});
+
+test('does not warn on win32 when core.longpaths is already true', () => {
+  const { main } = setupProject();
+  // Linked worktrees share the main checkout's .git/config, so setting it via
+  // the main checkout is visible from the worktree created below.
+  execFileSync('git', ['config', 'core.longpaths', 'true'], { cwd: main });
+  const wt = harnessWorktreeOf(main);
+  const out = post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32' }));
+  assert.deepStrictEqual(out, {}, 'core.longpaths already true — no nudge, and the worktree is not stale either');
+});
+
+test('does not fire on darwin or linux, even with core.longpaths unset', () => {
+  const { main } = setupProject();
+  const wt = harnessWorktreeOf(main);
+  for (const platform of ['darwin', 'linux']) {
+    const out = post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform }));
+    assert.deepStrictEqual(out, {}, `platform ${platform} must never see the win32-only nudge`);
+  }
+});
+
+test('never writes git config — only a read-only `config --get` reaches the exec seam on win32', (t) => {
+  const { main } = setupProject();
+  const wt = harnessWorktreeOf(main);
+  const realExecFileSync = cp.execFileSync;
+  const configCalls = [];
+  t.mock.method(cp, 'execFileSync', (cmd, args, opts) => {
+    if (cmd === 'git' && Array.isArray(args) && args.includes('config')) configCalls.push(args);
+    return realExecFileSync(cmd, args, opts);
+  });
+  post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32' }));
+  assert.ok(configCalls.length > 0, 'expected at least one `git config` read call');
+  for (const args of configCalls) {
+    assert.ok(args.includes('--get'), `every config call must be a --get read, never a set: ${args.join(' ')}`);
+    assert.ok(!args.includes('true') && !args.includes('false'), `no config call may pass a value to set: ${args.join(' ')}`);
+  }
 });

@@ -493,6 +493,56 @@ function logWorktreeStalenessEvent(ctx, data) {
   ctxLib.appendEvent(ownedRun.dir, 'worktree-staleness', data, ownedRun.attribution);
 }
 
+// Windows `core.longpaths` proactive nudge (#1782, warn tier). `_shared/
+// worktree-setup.md`'s Post-creation catch-up documents the `Filename too
+// long` failure mode and its `core.longpaths` fix reactively, i.e. only
+// after a fetch/merge has already failed that way. This hook nudges
+// proactively, right after worktree creation — win32 only, since neither the
+// setting nor the failure mode exists on any other platform, and this hook
+// fires on every PostToolUse event across every session in the harness, so a
+// `git config` spawn on a non-Windows platform would be pure waste for a
+// check that is meaningless there. Warn only, matching the sibling
+// staleness check's own #307 Non-Goals: this hook never sets the config
+// itself, only reads it and reports.
+function logWindowsLongpathsEvent(ctx, data) {
+  const ownedRun = ctx.ownedRun || {};
+  if (!ownedRun.dir) return;
+  ctxLib.appendEvent(ownedRun.dir, 'windows-longpaths', data, ownedRun.attribution);
+}
+
+function checkWindowsLongpaths(ctx) {
+  if (ctx.input.tool_name !== 'EnterWorktree') return null;
+  const platform = ctx.platform || process.platform;
+  if (platform !== 'win32') return null;
+  try {
+    const worktreePath = resolveCreatedWorktreePath(ctx);
+    if (!worktreePath) return null; // couldn't resolve where we landed — nothing to check, fail open
+
+    // Read-only: `--get` never writes. A non-zero exit (key unset) and an
+    // explicit `false` are both treated as "not enabled" — only a literal
+    // `true` skips the nudge.
+    const result = runGit(['config', '--get', 'core.longpaths'], worktreePath);
+    if (!result.failure && result.stdout === 'true') {
+      logWindowsLongpathsEvent(ctx, { worktree: worktreePath, result: 'enabled' });
+      return null;
+    }
+
+    logWindowsLongpathsEvent(ctx, { worktree: worktreePath, result: 'unset', value: result.stdout });
+    return {
+      json: {
+        systemMessage:
+          'claude-tweaks: core.longpaths is not enabled on this Windows checkout. A fetch/merge ' +
+          'against a deeply nested pipeline path (.claude-tweaks/pipelines/**/spec-*/work/*.md) can ' +
+          'fail with "Filename too long" — see skills/_shared/worktree-setup.md\'s Post-creation ' +
+          'catch-up ("Windows: `Filename too long`") for the fix (`git config core.longpaths true`) ' +
+          'and the recovery steps if a merge already failed this way.',
+      },
+    };
+  } catch {
+    return null; // never break a session over a nudge
+  }
+}
+
 function checkWorktreeStaleness(ctx) {
   if (ctx.input.tool_name !== 'EnterWorktree') return null;
   try {
@@ -744,6 +794,11 @@ function run(ctx) {
   // compete, since stampAdHocRunDir no-ops the instant ctx.ownedRun.dir is
   // already set.
   stampAdHocRunDir(ctx);
+
+  // Windows core.longpaths proactive nudge (#1782, warn tier) — before the
+  // staleness fetch below, win32 only; non-Windows sessions pay nothing.
+  const longpathsNudge = checkWindowsLongpaths(ctx);
+  if (longpathsNudge) return longpathsNudge;
 
   // EnterWorktree staleness backstop (warn tier) — deliberately NOT gated on
   // ctx.runDir (matches this file's other nudges); its own log-tier
