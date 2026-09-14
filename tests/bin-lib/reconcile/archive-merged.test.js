@@ -1249,7 +1249,7 @@ test('trackArchiveResult: forwards result.lastError into escalate and the residu
   assert.match(cached.lastError, /EACCES: permission denied/);
 });
 
-test('trackArchiveResult: only tracks move-failed — a different failure reason never enters the counter', () => {
+test('trackArchiveResult: only tracks move-failed and work-twin reasons — an unrelated failure reason never enters the counter', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-track2-'));
   const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-other');
   trackArchiveResult(root, 'o/r', dir, { ok: false, reason: 'commit-failed' });
@@ -1260,6 +1260,47 @@ test('trackArchiveResult: a success clears a prior failure streak for the same d
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-track3-'));
   const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-recovered');
   trackArchiveResult(root, 'o/r', dir, { ok: false, reason: 'move-failed' });
+  assert.equal(listResidueFailures(root).length, 1);
+  trackArchiveResult(root, 'o/r', dir, { ok: true, movedEntries: [] });
+  assert.deepEqual(listResidueFailures(root), []);
+});
+
+// #2330 — work-twin-conflict / work-twin-resolve-failed[-partial-revert] must
+// accumulate toward the same residue-escalation streak as move-failed,
+// rather than being silently dropped every pass (the old
+// `result.reason !== 'move-failed'` guard's bug).
+test('trackArchiveResult: work-twin-conflict accumulates and escalates like move-failed, under its own reason key', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-track-twin-'));
+  const calls = [];
+  const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-twin');
+
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    trackArchiveResult(root, 'o/r', dir, { ok: false, reason: 'work-twin-conflict' }, { escalate });
+  }
+  assert.equal(calls.length, 1, `expected exactly one escalation call, got ${calls.length}`);
+  assert.equal(calls[0].reason, 'work-twin-conflict', 'escalated reason must name the actual failure, not a generic move-failed label');
+  assert.equal(calls[0].targetPath, dir);
+  assert.equal(calls[0].count, RESIDUE_ESCALATE_THRESHOLD);
+
+  const cached = listResidueFailures(root).find((f) => f.reason === 'work-twin-conflict' && f.path === dir);
+  assert.ok(cached, 'expected a residue cache entry keyed on work-twin-conflict, not move-failed');
+});
+
+test('trackArchiveResult: work-twin-resolve-failed-partial-revert tracks under its own distinct reason key from work-twin-conflict', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-track-twin2-'));
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-twin2');
+  trackArchiveResult(root, 'o/r', dir, { ok: false, reason: 'work-twin-resolve-failed-partial-revert', lastError: 'partial revert left dirty state' });
+  const failures = listResidueFailures(root);
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0].reason, 'work-twin-resolve-failed-partial-revert');
+  assert.match(failures[0].lastError, /partial revert/);
+});
+
+test('trackArchiveResult: a success clears prior work-twin-conflict and work-twin-resolve-failed streaks for the same dir', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-track-twin3-'));
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-twin3');
+  trackArchiveResult(root, 'o/r', dir, { ok: false, reason: 'work-twin-conflict' });
   assert.equal(listResidueFailures(root).length, 1);
   trackArchiveResult(root, 'o/r', dir, { ok: true, movedEntries: [] });
   assert.deepEqual(listResidueFailures(root), []);

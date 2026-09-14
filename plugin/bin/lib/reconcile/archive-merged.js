@@ -18,6 +18,7 @@ const { recordResidueSuccess, trackResidue, pruneResidueFailures } = require('./
 const { escalateResidue } = require('./escalate-residue');
 const { isWorktreeAlwaysOn } = require('../policy');
 const { repoSlugOf } = require('./release-merged');
+const { withIndexLockRetry } = require('../git-retry');
 const { closeRunState } = require('../hooks/close-run-state');
 const { checkRunIntegrity, fallbackBranch } = require('../hooks/run-integrity');
 
@@ -109,6 +110,34 @@ function hasTrackedContent(root, dir) {
   const listed = runGit(['ls-files', '--', dir], root);
   if (listed.failure) return true;
   return (listed.stdout || '').length > 0;
+}
+
+// #2346: `runGit` (git-exec.js) never throws — it returns
+// `{ stdout, failure, stderr }` — but `withIndexLockRetry` is shaped around a
+// throwing, execFileSync-style runner (matching every other plugin commit
+// call site it wraps). Adapt one direction into the other at this single
+// call site rather than changing `runGit`'s own non-throwing contract (every
+// other caller in this file, and in classify.js/archive-branches.js, depends
+// on it never throwing): wrap `runGit` in a throwing shim for the retry
+// helper, then unwrap the outcome back into `runGit`'s own return shape so
+// the `commit.failure` check right below this function's one call site is
+// unaffected either way.
+function runGitCommitWithIndexLockRetry(args, cwd) {
+  const throwingRunner = (a) => {
+    const r = runGit(a, cwd);
+    if (r.failure) {
+      const err = new Error(r.stderr || `git ${a.join(' ')} failed (${r.failure})`);
+      err.stderr = r.stderr;
+      err.result = r;
+      throw err;
+    }
+    return r;
+  };
+  try {
+    return withIndexLockRetry(throwingRunner)(args);
+  } catch (err) {
+    return err.result || { stdout: null, failure: 'git-error', stderr: err.stderr || '' };
+  }
 }
 
 // A minted run dir that never got adopted: no config.yml (flow's Manifesto
@@ -821,7 +850,10 @@ function archiveRunDir(root, runDir) {
     // rather than sweeping whatever else a human or sibling session happens
     // to have staged in this shared main checkout at the same moment.
     const commitPaths = workMoves.flatMap(([src, dest]) => [src, dest]);
-    const commit = runGit(['commit', '-m', `[reconcile] archive run ${runId}`, '--', ...commitPaths], root);
+    // #2346: bounded-retry a transient index.lock collision (a sibling
+    // agent's git call, or a PostToolUse hook, in the same checkout) rather
+    // than hard-failing this archive pass on it.
+    const commit = runGitCommitWithIndexLockRetry(['commit', '-m', `[reconcile] archive run ${runId}`, '--', ...commitPaths], root);
     if (commit.failure) {
       // A partial revert (some ops' `git reset`/`git checkout` or disk move
       // failed) is a distinct outcome from a clean one: the retry guard
@@ -1053,23 +1085,41 @@ function trackStuckSkip(root, repoSlug, dir, reason, { escalate = escalateResidu
   trackResidue(root, repoSlug, 'structurally-stuck', dir, { failed: true, lastError: `stuck at ${reason}` }, { escalate });
 }
 
-// #644 Deliverable 2 — every archive attempt's outcome, whichever of the two
-// archival paths (mint vs. full run dir) produced it, flows through this one
-// choke point so the consecutive-failure counter and escalation live in
-// exactly one place rather than duplicated per call site. `dir` is the run
-// directory — the same granularity `iterRunDirsWithState` iterates and the
-// same unit a retry re-examines whole, matching the issue's own observed
-// symptom ("15 run dirs stuck at move-failed"). Only `move-failed` tracks:
-// the other reasons (`mkdir-failed`, `git-mv-failed`, `commit-failed`,
-// `ls-files-failed`, `readdir-failed`, `tracked-entry`, `close-failed`) are
-// distinct failure classes the issue never named, and folding them into the
-// same counter would blur reasons that need different diagnosis.
+// #644 Deliverable 2 / #2330 — every archive attempt's outcome, whichever of
+// the two archival paths (mint vs. full run dir) produced it, flows through
+// this one choke point so the consecutive-failure counter and escalation
+// live in exactly one place rather than duplicated per call site. `dir` is
+// the run directory — the same granularity `iterRunDirsWithState` iterates
+// and the same unit a retry re-examines whole, matching the issue's own
+// observed symptom ("15 run dirs stuck at move-failed"). Only the reasons in
+// `TRACKED_FAILURE_REASONS` track: the other reasons (`mkdir-failed`,
+// `git-mv-failed`, `commit-failed`, `ls-files-failed`, `readdir-failed`,
+// `tracked-entry`, `close-failed`) are distinct failure classes neither #644
+// nor #2330 ever named, and folding them into the same counter would blur
+// reasons that need different diagnosis.
 // `escalate` is injectable (defaults to the real `escalateResidue`, which
 // shells to `gh`) so a test can assert escalation actually fired — and how
 // many times — without touching real `gh` or the network.
+//
+// #2330: `work-twin-conflict` and `work-twin-resolve-failed[-partial-revert]`
+// (the work-twin divergence paths above) were silently dropped by the old
+// single-reason `!== 'move-failed'` guard — no streak, no eventual issue
+// filing. Each tracked reason is passed through to `trackResidue` verbatim
+// (never collapsed to a shared literal) so `escalate-residue.js`'s filed
+// title/body names the actual failure — distinguishing a clean
+// `work-twin-conflict` from a worse `work-twin-resolve-failed-partial-revert`
+// (a partially-applied revert) rather than lumping both under one generic
+// label.
+const TRACKED_FAILURE_REASONS = [
+  'move-failed',
+  'work-twin-conflict',
+  'work-twin-resolve-failed',
+  'work-twin-resolve-failed-partial-revert',
+];
+
 function trackArchiveResult(root, repoSlug, dir, result, { escalate = escalateResidue } = {}) {
   if (result.ok) {
-    recordResidueSuccess(root, 'move-failed', dir);
+    for (const reason of TRACKED_FAILURE_REASONS) recordResidueSuccess(root, reason, dir);
     // #1613: a dir that just successfully archived can no longer be
     // structurally stuck — clear any prior tracking so a future, unrelated
     // reuse of this path (unlikely — paths are timestamp-uniqued, but cheap
@@ -1080,11 +1130,12 @@ function trackArchiveResult(root, repoSlug, dir, result, { escalate = escalateRe
   // Archive-specific vocabulary — not part of the shared branching cache.js's
   // trackResidue dedups (#1233) — so it stays here, ahead of the shared
   // call, rather than moving inside it.
-  if (result.reason !== 'move-failed') return;
+  if (!TRACKED_FAILURE_REASONS.includes(result.reason)) return;
   // Mirrors reap-merged.js's trackReapResidue: forward the underlying error
-  // (now captured at each move-failed catch site above) into the shared
-  // residue-tracking/escalation choke point.
-  trackResidue(root, repoSlug, 'move-failed', dir, { failed: true, lastError: result.lastError }, { escalate });
+  // (now captured at each move-failed/work-twin catch site above) into the
+  // shared residue-tracking/escalation choke point, keyed on the result's own
+  // reason (#2330) rather than a hardcoded 'move-failed' literal.
+  trackResidue(root, repoSlug, result.reason, dir, { failed: true, lastError: result.lastError }, { escalate });
 }
 
 // #1544: `iterRunDirsWithState` (context.js) excludes every `status:
