@@ -92,6 +92,13 @@ const FP_RE_WORK_PLAIN = /^work-fingerprint: (\S+)[ \t]*$/m;
 // (/m) so prose elsewhere in the body mentioning a commit never matches.
 const VERIFIED_AS_OF_RE = /^Verified-as-of: ([0-9a-f]{7,40})[ \t]*$/mi;
 const SHA_SHAPE_RE = /^[0-9a-f]{7,40}$/i;
+// #1840: same body-metadata-line convention as Verified-as-of — a harness-health
+// template-conformance/best-practice finding's Proposed block is a snapshot of
+// the origin template at filing time, not a promise it still matches the
+// installed template at build time. `{path}` is repo-relative
+// (skills/init/claude-md-template.md); `{version}` is the plugin.json version
+// string (dots, no spaces).
+const TEMPLATE_STAMP_RE = /^Template: (\S+) @ (\S+)[ \t]*$/m;
 
 // #1829: an optional body-metadata line naming a mechanical command whose
 // exit code answers whether the record's stated premise still holds at the
@@ -342,6 +349,18 @@ function extractPremiseCheck(body) {
   if (typeof body !== 'string' || !body) return null;
   const m = PREMISE_CHECK_RE.exec(body);
   return m ? m[1].trim() : null;
+}
+
+// body -> { path, version } the harness-health finding's Proposed block was
+// snapshotted from, or null when the record carries no Template: line (every
+// finding except a template-derived CLAUDE.md/rule template-conformance or
+// best-practice finding, and every record filed before #1840). Consumers
+// (bin/materialize.js) compare `version` against the installed plugin's own
+// version to decide whether the Proposed block needs re-deriving.
+function extractTemplateStamp(body) {
+  if (typeof body !== 'string' || !body) return null;
+  const m = TEMPLATE_STAMP_RE.exec(body);
+  return m ? { path: m[1], version: m[2] } : null;
 }
 
 // Accepts either bare label-name strings or {name} objects (gh's own shape).
@@ -734,6 +753,7 @@ function parseDependencyAssumptions(body) {
 // content, never as licence to skip the section.
 function specShapedBody({
   header, currentState, deliverables, acceptanceCriteria, openQuestion, releaseNote, filedBy, provenance, footer, verifiedAsOf, premiseCheck,
+  templateStamp,
 } = {}) {
   const isEmpty = (value) => value === undefined || value === null || value === ''
     || (Array.isArray(value) && value.length === 0);
@@ -759,6 +779,9 @@ function specShapedBody({
   if (!isEmpty(premiseCheck) && /\n/.test(premiseCheck)) {
     throw new Error('specShapedBody: premiseCheck must be a single-line command');
   }
+  if (!isEmpty(templateStamp) && typeof templateStamp !== 'string') {
+    throw new Error(`specShapedBody: templateStamp must be a string (got ${typeof templateStamp})`);
+  }
   const { origin, deferReason } = provenance || {};
   if (deferReason !== undefined) oneOf('deferReason', deferReason, DEFER_REASONS);
   const block = (v) => (Array.isArray(v) ? v.join('\n\n') : v);
@@ -766,6 +789,7 @@ function specShapedBody({
   if (!isEmpty(header)) parts.push(header);
   if (!isEmpty(verifiedAsOf)) parts.push(`Verified-as-of: ${verifiedAsOf.toLowerCase()}`);
   if (!isEmpty(premiseCheck)) parts.push(`Premise-check: ${premiseCheck}`);
+  if (!isEmpty(templateStamp)) parts.push(`Template: ${templateStamp}`);
   if (!isEmpty(origin)) parts.push(`Origin: ${origin}`);
   if (deferReason !== undefined) parts.push(`Defer-reason: ${deferReason}`);
   parts.push('## Current State', block(currentState), '## Deliverables', block(deliverables));
@@ -782,7 +806,7 @@ function specShapedBody({
 
 module.exports = {
   ORIGINS, TYPES, TIERS, PRIORITIES, DEFER_REASONS, LABELS, TYPE_LABELS, recordPayload, specShapedBody,
-  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, normalizeLabelNames, parseRecordFacets,
+  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, normalizeLabelNames, parseRecordFacets,
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
   hasOpenNativeBlocker, CLASSIFICATION_SCORING, fenceFor, fencedBlock, parseSubIssues,
   buildNativeSubIssuesQuery, buildNativeParentQuery, partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,

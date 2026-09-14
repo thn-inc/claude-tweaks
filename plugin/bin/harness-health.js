@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 const fs = require('fs');
+const path = require('path');
 const { fingerprint } = require('./lib/harness-health/fingerprint');
 const {
   readCache, writeCache, readDurableState, writeDurableState, buildValidateFindingsUpdate,
@@ -22,6 +23,24 @@ const {
 const { STALE_DAYS } = require('./lib/harness-health/score');
 
 const TOOL_NAME = 'harness-health';
+
+// #1840: the RUNNING build's own version — CLAUDE_PLUGIN_ROOT/.claude-plugin/plugin.json,
+// never this repo's own plugin/.claude-plugin/plugin.json, which is ahead of the installed
+// build during development (same distinction hooks/session-start.js's resolveBuildLine
+// makes for the identical read). Fail-toward-undefined: a missing/unreadable/malformed
+// manifest degrades to no Template: line rather than a crashed sweep.
+function resolvePluginVersion(env = process.env) {
+  const pluginRoot = env.CLAUDE_PLUGIN_ROOT;
+  if (!pluginRoot) return undefined;
+  let pkg;
+  try {
+    pkg = JSON.parse(fs.readFileSync(path.join(pluginRoot, '.claude-plugin', 'plugin.json'), 'utf8'));
+  } catch {
+    return undefined;
+  }
+  return pkg && typeof pkg.version === 'string' && pkg.version ? pkg.version : undefined;
+}
+
 const retryQueueCommands = makeRetryQueueCommands({ readDurableState, writeDurableState });
 const cmdChurnReport = makeCmdChurnReport({ readDurableState, computeChurn });
 // readDurableState/writeDurableState wired through so a "declined" mark also
@@ -257,9 +276,12 @@ function cmdValidateFindings(args) {
   // must reflect the commit this sweep actually read, not the moment each
   // finding's issue happens to be created.
   const verifiedAsOf = resolveReadCommit(root);
+  // #1840: resolved once per run, same non-resolved-in-the-payload-composer
+  // convention as verifiedAsOf above.
+  const pluginVersion = resolvePluginVersion();
 
   const { cache, payloads, seen, wontfixSuppressed } = dedupAndDispatch({
-    root, issuesPath: args.issues, toolName: TOOL_NAME, survivors, readCache: readCacheWithDeclined, decide, toIssuePayload, verifiedAsOf,
+    root, issuesPath: args.issues, toolName: TOOL_NAME, survivors, readCache: readCacheWithDeclined, decide, toIssuePayload, verifiedAsOf, pluginVersion,
   });
 
   if (!args.dryRun) {

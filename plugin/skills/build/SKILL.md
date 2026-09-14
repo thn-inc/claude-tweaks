@@ -119,6 +119,8 @@ Context to provide to `/superpowers:writing-plans`:
 
 The plan will be written to `docs/superpowers/plans/YYYY-MM-DD-{feature}.md`.
 
+**Template version delta (#1840):** when `materialize.md`'s JSON envelope reported `template.changed: true` for this record (a `by:harness-health` `claude-md`/`rule` finding whose stamped plugin version differs from the installed one), the plan's first task re-reads the named template path at the currently-installed version and derives the replacement from it, rather than applying the record's Proposed block literally — a committed fence that matches the filing-time template but not the installed one closes one drift and reopens another the next harness-health sweep re-files. Name the installed-template read as the plan's own task, and have the PR description quote the installed template line the commit ends up matching.
+
 **Plan header artifact:** Every plan written by `/superpowers:writing-plans` starts with a "For agentic workers" block that advertises `subagent-driven-development` (recommended) or `executing-plans` as the next step. **Ignore it.** `/build` controls execution strategy — the header is boilerplate from writing-plans's general-purpose handoff. Do not treat it as guidance for this build. (Same rule applies in Design Step 3 below.)
 
 **Plan-authoring checks:** before finalizing the plan, run every check in `plan-authoring-checks.md` in this skill's directory — one bold paragraph per check; the file, not this sentence, is the list (the enumeration that used to sit here had already fallen two checks behind it). (Same checks apply in Design Step 3 below.)

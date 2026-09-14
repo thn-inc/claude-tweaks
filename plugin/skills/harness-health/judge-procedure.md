@@ -213,6 +213,7 @@ Emit each finding in this shape:
   "classification": "additive | restructural",
   "confidence": "high | med | low",
   "reversibility": "high | med | low",
+  "templateSource": "<optional — repo-relative path of the origin template this Proposed text was derived from>",
   "description": "<acceptance criteria — what 'fixed' looks like>",
   "oldString": "<exact verbatim quote from the target; empty string only for a pure addition>",
   "newString": "<proposed replacement text>",
@@ -221,6 +222,8 @@ Emit each finding in this shape:
 ```
 
 A **removal** additionally sets `"intent": "remove"` with `newString: ""`, and requires `assetType: "claude-md"`, `classification: "restructural"`, and a non-empty `oldString`. Omit `intent` on every other finding — an empty `newString` anywhere else is a validation error, because that is the signature of a model that returned nothing rather than an intentional delete.
+
+**`templateSource` (#1840).** Set it to the repo-relative origin-template path (`skills/init/claude-md-template.md` for `claude-md`, `skills/init/rules-template.md` for `rule`) for every `claude-md`/`rule` finding whose `category` is `template-conformance` or `best-practice` — the Proposed block for those is derived from a template that ships inside the plugin and can itself change version to version, so the filed record needs to say which version it was snapshotted from. Omit `templateSource` for a `drift` finding (its Proposed text comes from the codebase, not a template) and for a proposed-skill-candidate finding (no origin template to snapshot). `bin/lib/harness-health/issue-payload.js`'s `toIssuePayload` reads it to render the `Template:` metadata line and the snapshot sentence.
 
 **Bundling rule:** when two or more findings in this target share both the same `category` and the same root cause, emit **one** finding, not one per section. Pick the clearest occurrence as the primary `section`, list the others in `relatedSections`, make `reason` state the shared root cause, and make `description` require every listed section fixed. Only bundle when both `category` and root cause match.
 
