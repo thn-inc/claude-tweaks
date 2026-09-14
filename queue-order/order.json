@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T11:10:49.155Z",
+  "computedAt": "2026-09-14T11:36:45.430Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -411,11 +411,6 @@
       {
         "number": 1780,
         "updatedAt": "2026-09-14T11:04:36Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 1779,
-        "updatedAt": "2026-09-14T11:05:07Z",
         "state": "OPEN"
       },
       {
@@ -4380,6 +4375,102 @@
     ],
     [
       {
+        "body": "Surface: infra\n\n## Current State\n\n`plugin/bin/lib/wrap-up/engine-verify.js`'s `resolveParent()` (line 392) resolves a record's decomposition parent with `gh issue view {n} --json parent`. On `gh` 2.92.0 (2026-04-28) that field is not in the command's JSON field list, the call throws `Unknown JSON field: \"parent\"`, and `resolveParent` returns `{ok: false}` — which the `acceptance-labeling` check folds into a `fail` row, so `wrap-up-engine.js verify` exits 3 and `/claude-tweaks:wrap-up`'s Verify step withholds the closure line (`execution-and-verification.md`'s exit-3 rule) on every record-mode run, even when the record's `demo:*` labeling is correct. On `gh` 2.96.0 (this checkout, 2026-09-09) the same command returns `{\"parent\": null}`, so the failure is version-dependent: any sandbox or machine still on 2.92.x hits it on every run.\n\nTwo things are wrong at once. The field choice is fragile — the plugin's other parent/sub-issue resolution (`bin/lib/issues/native-dependencies.js`, `fetchNativeSubIssues`) goes through GraphQL, which exposes `Issue.parent` on every `gh` version that can run GraphQL at all. And the failure class is misreported — every other gather failure in this file (`git status`, `git worktree list`, `git log`, `gh pr view`, lines 172–326) renders `result: 'unknown'`, which the closure line quotes without blocking, while `resolveParent`'s failure alone is rendered as `fail`, turning a tooling gap into a false labeling verdict.\n\n## Deliverables\n\n- Resolve the parent through GraphQL — `gh api graphql` with `repository(owner,name){ issue(number){ parent { number } } }` — through the same `deps.gh` seam the rest of the file uses, so the test double can drive it; keep the resolution in `resolveParent` (or a sibling in `native-dependencies.js` it delegates to) and drop the `--json parent` call.\n- When the parent gather itself fails (GraphQL error, unparseable response), render the `acceptance-labeling` row as `result: 'unknown'` with the gather error in `detail`, matching the file's other could-not-gather rows — never `fail`. A real labeling mismatch on a successfully resolved record stays `fail`.\n- Extend `tests/bin-lib/wrap-up/engine-verify.test.js`: a record whose `deps.gh` GraphQL call returns a parent redirects the labeling check to the parent; a null parent takes the non-parent path; a throwing gather renders `unknown` and does not set exit 3.\n\n## Acceptance Criteria\n\n- `resolveParent` no longer invokes `gh issue view … --json parent`; `grep -n \"'--json', 'parent'\" plugin/bin/lib/wrap-up/engine-verify.js` returns nothing.\n- With a `deps.gh` double that throws `Unknown JSON field: \"parent\"` (or any error) on the parent lookup, `verify` renders `| acceptance-labeling | unknown | … |` and exits 0 when every other check passes; the closure line quotes the unknown row per `execution-and-verification.md`.\n- With a double that returns a parent number, the check reads labels/comments from the parent record; with `parent: null`, from the record itself — both covered by tests.\n- `npm test` passes.\n\n## Technical Approach\n\nAdd a `parentOf(n)` GraphQL query beside `fetchNativeSubIssues` in `native-dependencies.js` (same `runner` seam, same `{owner, repo}` resolution) and have `resolveParent` call it via `deps.gh(['api', 'graphql', '-f', query, '-F', …])`. In the `acceptance-labeling` check (line ~463), branch on `resolved.ok`: false → return `{ result: 'unknown', detail: resolved.error }` before any label read. Keep the existing `{ok, error}` return shape so the check's other callers are untouched. Tests use the file's existing `deps` injection; no live `gh`.\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/engine-verify.js` — `resolveParent` (GraphQL via `deps.gh`), `acceptance-labeling` check's could-not-gather branch\n- `plugin/bin/lib/issues/native-dependencies.js` — optional `parentOf` helper sharing the GraphQL runner seam\n- `tests/bin-lib/wrap-up/engine-verify.test.js` — parent-redirect, null-parent, and gather-failure cases\n- `plugin/skills/wrap-up/execution-and-verification.md` — only if the `unknown` row's closure-line quoting needs the acceptance-labeling case named explicitly\n\n## Gotchas\n\n- Do not \"fix\" this by pinning a minimum `gh` version: the field works on 2.96 but the plugin runs in sandboxes that install whatever `gh` the image ships; GraphQL is the version-stable path the plugin already relies on elsewhere.\n- `unknown` must stay distinct from `skip` (the file's own comment at line 109); a gather failure is not a deliberately skipped check.\n- The `deps.gh` double in `engine-verify.test.js` matches on argv — the GraphQL call's argv shape must be stable enough for the existing matcher style, or add one helper the tests can stub by name.\n\n## Original request\n\nwrap-up verify: acceptance-labeling check fails on every record-mode run — `gh issue view --json parent` is not a valid field in gh 2.92.0\n\n**Summary:** `bin/lib/wrap-up/engine-verify.js`'s `resolveParent()` calls `gh issue view {n} --json parent`; `gh` 2.92.0 rejects `parent` as an unknown JSON field, so the `acceptance-labeling` row renders `fail` and `verify` exits 3 for any record-mode run, blocking the closure line even when labeling was correct.\n\n**Kind:** Defect\n\n**Affected component:** `bin/lib/wrap-up/engine-verify.js` (`resolveParent`, the `acceptance-labeling` check) — `/claude-tweaks:wrap-up`'s Verify execution step\n\n**Repro steps:**\n1. On a machine with `gh version 2.92.0 (2026-04-28)`, complete a record-mode `/claude-tweaks:wrap-up` whose `verify-expectations.json` resolves at least one issue number (materialized header or the `issues` key).\n2. Run `node bin/wrap-up-engine.js verify --run-dir <run> --base <base>`.\n\n**Expected vs. actual:**\nExpected: the `acceptance-labeling` row evaluates the record's parent linkage (null → non-parent path → checks the record's own `demo:*` state / oversight-floor exemption) and passes or fails on the labeling itself.\nActual: `| acceptance-labeling | fail | #{n}: gh issue view (parent) failed for #{n} (Command failed: gh issue view {n} --json parent Unknown JSON field: \"parent\" Available fields: assignees author body closed closedAt closedByPullRequestsReferences comments createdAt id isPinned labels milestone number projectCards projectItems reactionGroups state stateReason title updatedAt url ) |` and exit code 3 — a tooling failure reported as a labeling failure, and the closure line is withheld per `execution-and-verification.md`'s exit-3 rule.\n\n**Suggested remedy:** resolve the parent the way the plugin already does elsewhere — `bin/lib/issues/native-dependencies.js` / `bin/resolve-blockers.js` use the GraphQL `issue(number:){ parent { number } }` field, which works on this gh version — instead of the REST-backed `--json parent` field the `gh issue view` command does not expose. Also consider distinguishing could-not-gather from a real labeling failure in the row's Result (e.g. `unknown` rather than `fail`), per the skill's own could-not-gather vocabulary.\n\n**Definition:** Clear\n\n**Plugin version:** 6.114.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-0a41798f -->\n\n",
+        "createdAt": "2026-09-04T15:13:23Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
+            "name": "bug",
+            "description": "Something isn't working",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 1841,
+        "state": "OPEN",
+        "title": "wrap-up verify: acceptance-labeling check fails on every record-mode run — `gh issue view --json parent` is not a valid field in gh 2.92.0",
+        "updatedAt": "2026-09-13T20:09:39Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      }
+    ],
+    [
+      {
         "body": "Surface: infra\n\n## Current State\n\n`fileMatchesFrontendPredicate` (`plugin/bin/lib/design-detect/index.js`, the Layer 3 sniff) returns true when a file's extension is in `TRIGGER_EXTENSIONS` or when any path segment is in `TRIGGER_PATH_SEGMENTS = ['components', 'pages', 'app', 'routes', 'views', 'ui']`. The segment rule exists so app-router `page.ts`/`layout.ts` files without a rendering extension are still caught. It has no exclusion, so Next.js API route handlers — `app/api/**/route.{ts,js}` (app router) and `pages/api/**` (pages router) — match on the `app`/`pages` segment even though they render nothing. `skills/design-wrapper/frontend-detection.md`'s Match rule (two positive clauses, no exclusion) and its Negative cases list (which names `.ts`/`.js` \"outside any trigger path\" only) describe the same behavior, so the sniff and its documentation agree with each other and are both wrong for this case.\n\nObserved on plugin 6.114.0: a record whose diff was two `app/api/**/route.ts` handlers, one vitest file, and four markdown files, with no `Surface:` header (filed before that field existed, so Layer 2 could not rule), returned `{\"decision\":\"proceed\",\"track\":\"web\"}` from `design-detect.js` in `review`, `polish`, and `survey` modes. The run overrode the verdict by hand three times, each logged as a deviation, while `/build`'s own design pre-build step on the same run had already been skipped as \"no frontend surface\". Layer 3 is a fallback that runs only when nothing was declared (`layer3Applies`), so the false positive costs exactly the records that most need the sniff to be right.\n\nTests: `tests/bin-lib/design-detect/index.test.js` (245 lines) covers \"trigger path segments match regardless of extension\" and the zero-match skip; no case exercises an API route path.\n\n## Deliverables\n\n- [ ] Add an API-route exclusion to `fileMatchesFrontendPredicate`: after the extension check (a `.tsx` under `app/api/` still matches on extension) and before the segment scan, return false when the normalized path contains `app/api/` or `pages/api/` as adjacent segments (`(^|/)(app|pages)/api/`), so the `app`/`pages` segment rule never fires for a Next.js API route. Keep `TRIGGER_PATH_SEGMENTS` unchanged; the exclusion is a named constant (`API_ROUTE_SEGMENTS` or a regex) with a comment citing this record and the two Next.js conventions.\n- [ ] `frontend-detection.md`: add a third clause to the Match rule stating the exclusion (segment matches under `app/api/` or `pages/api/` do not count; extension matches still do), and add \"Next.js API route handlers — `app/api/**/route.{ts,js}`, `pages/api/**`\" to the Negative cases list, so the sniff and its documentation agree.\n- [ ] `tests/bin-lib/design-detect/index.test.js`: `app/api/users/route.ts` and `pages/api/health.ts` do not match; `src/app/api/x/route.js` does not match; `app/api/x/page.tsx` still matches (extension wins); `app/dashboard/page.ts` still matches (segment rule intact); `layer3` over the observed file list (two `app/api/**/route.ts`, one `.test.ts`, four `.md`) returns the sniff skip.\n- [ ] `docs/incident-log.md` / `CLAUDE.md` untouched; if `docs/plugin-structure.md`'s `design-detect` line enumerates the trigger tables, leave it — the tables themselves did not change.\n\n## Acceptance Criteria\n\n1. `fileMatchesFrontendPredicate('app/api/users/route.ts')`, `('pages/api/health.ts')`, and `('src/app/api/x/route.js')` return false; `('app/api/x/page.tsx')` and `('app/dashboard/page.ts')` return true.\n2. `layer3([...two app/api route.ts, one .test.ts, four .md])` returns `{ proceed: false, reason: SKIP_REASONS.NON_FRONTEND_SNIFF }`; `node bin/design-detect.js --mode review` over the same list returns a skip decision, not `proceed`.\n3. Every existing case in `tests/bin-lib/design-detect/index.test.js` and `cli.test.js` passes unchanged.\n4. `frontend-detection.md`'s Match rule has the exclusion clause and its Negative cases list names Next.js API route handlers with both path shapes.\n5. `npm test` green.\n\n## Technical Approach\n\nOne predicate change, no new layer: the exclusion is scoped to the two Next.js API conventions the report observed, applied only to the segment rule so the extension rule keeps precedence. Do not generalise to `routes/` (SvelteKit `+server.ts`, Remix resource routes) in this record — those are a different convention with a different marker and belong in a follow-up if observed; name that boundary in the code comment.\n\n### Key Files\n\n- `plugin/bin/lib/design-detect/index.js` — exclusion constant + check in `fileMatchesFrontendPredicate`, above the segment scan\n- `plugin/skills/design-wrapper/frontend-detection.md` — Match rule clause 3; Negative cases bullet\n- `tests/bin-lib/design-detect/index.test.js` — the cases in Deliverables\n\n## Gotchas\n\n- Normalize backslashes before matching (the function already does); the exclusion regex must run on the normalized string so Windows paths behave.\n- `pages/api/` under a `src/` prefix and `app/api/` nested inside a monorepo package path (`packages/web/app/api/...`) must both be excluded; anchor on the adjacent segment pair, not on path start.\n- A `.tsx` under `app/api/` is exotic but possible (a handler that renders an OG image with JSX); the extension rule keeps it frontend on purpose, and the test pins that.\n- `frontend-detection.md`'s trigger tables are cited as \"web-only\" by the native track's routing paragraph; the exclusion does not change that property, so no native-track text needs editing.\n\n## Original request\n\n**Summary:** `design-detect.js`'s Layer 3 path sniff marks Next.js app-router API route handlers (`app/api/**/route.ts`) as frontend, so a backend-only record without a `Surface:` header returns `proceed` for review, polish and survey.\n\n**Kind:** Gap\n\n**Affected component:** bin/lib/design-detect (Layer 3 file-extension / path-segment sniff) and skills/design-wrapper/frontend-detection.md\n\n**Use case:**\nLayer 3's trigger-path table treats any file under a `/app/` segment as frontend so that app-router `page.ts`/`layout.ts` files without a `.tsx` extension are still caught. That rule also matches `app/api/**/route.ts` — Next.js app-router API route handlers, which render nothing. On a record whose diff was two Next.js API route handler files (`app/api/**/route.ts`) plus a vitest file and four markdown files, with no `Surface:` header (a code-health-filed record predating that field), `design-detect.js --mode review`, `--mode polish` and `--mode survey` all returned `{\"decision\":\"proceed\",\"track\":\"web\"}`. The caller then either pays for Impeccable critique/audit over request handlers, or overrides the CLI's verdict by hand — which is what the run did, three times, each as a logged deviation — while `/build`'s own design pre-build step on the same run had already been skipped for \"no frontend surface, two backend API route files\".\n\nSuggested change: exclude `**/app/api/**/route.{ts,js}` (and `pages/api/**`) from the `/app/` and `/pages/` path triggers, or require a rendering extension when the only match is a path segment and the file is a `route.ts`; add \"Next.js API route handlers\" to `frontend-detection.md`'s Negative cases list so the sniff and its documentation agree.\n\n**Definition:** Clear\n\n**Plugin version:** 6.114.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-85c00f04 -->\n\n",
         "createdAt": "2026-09-02T11:41:30Z",
         "labels": [
@@ -4841,196 +4932,6 @@
           "shapedHeadless": true
         }
       }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\n- `plugin/skills/init/bootstrap/step-14-cloud-routine-parity.md` is the template `/claude-tweaks:init` Step 14 expands into the generated `scripts/claude-cloud-setup.sh`. The script opens with `set -euo pipefail`, and its plugin-freshness block tests `if [ -n \"$CLAUDE_CODE_SESSION_ID\" ]; then` unguarded — one line after `CC_TMP_DIR=\"${TMPDIR:-/tmp}\"` already uses the `:-` guard. Under `set -u`, expanding an unset variable aborts the script (exit 1) before the `if` body runs; `set -e`'s conditional-context exemption does not cover a `-u` expansion error. The canonical invocation ends in `|| true`, so the abort is silent. Confirmed still present at origin/main (v6.121.0): the template's session-id line and the committed `scripts/claude-cloud-setup.sh` line 73.\n- In the script's primary context — the claude.ai/code Setup-script shell, which never exports `CLAUDE_CODE_SESSION_ID` — everything after that line never runs: plugin drift verification and repair, the `agent-browser` install, the Chrome-for-Testing install. The plugin install loop sits above the crash, so plugins still install and the sandbox reports a successful setup.\n- In the same block, the git-subdir version resolution (`curl -fsSL` of the pinned sha's `.claude-plugin/plugin.json`, added for #860) is wrapped in `try { … } catch { /* comment only */ }`. On any fetch failure `expected` falls through to `\"unversioned\"`, `drift` evaluates false, the verdict line prints `catalog=unversioned (ok)`, and nothing reaches stderr — for claude-tweaks itself, the one git-subdir plugin the block exists to protect.\n- The `replace(/^https:\\/\\/github\\.com\\//, …)` rewrite silently no-ops for a `source.url` on any other host, so a meaningless raw URL is fetched (low severity — the catalog is already the trust boundary).\n- Tests: `tests/cloud-setup-drift-check.test.js` pins the template's drift-check block; `tests/session-tmp-root-migration.test.js` pins the session-tmp lines next to it.\n\n## Deliverables\n\n- [ ] Guard the session-id test in the template: `if [ -n \"${CLAUDE_CODE_SESSION_ID:-}\" ]; then` — the degrade rule `bin/lib/session-tmp.js` documents (fall through to an unscoped path on a missing id, never error), which the template's own comment says it mirrors.\n- [ ] Announce the git-subdir version-fetch fallback: the `catch` writes `[claude-cloud-setup] WARNING: could not resolve the pinned version of <spec> at <sha> (<reason>) — freshness unverified.` to stderr, so it passes through the `$(...)` capture into the setup log like the script's other degrades.\n- [ ] Attempt the raw-manifest fetch only when `source.url` starts with `https://github.com/`; for any other host skip the fetch and emit the same warning.\n- [ ] Regenerate this repo's committed `scripts/claude-cloud-setup.sh` from the fixed template so the generated copy matches (edit the generator, never the generated file by hand).\n- [ ] Extend `tests/cloud-setup-drift-check.test.js` with one discriminating assertion per template change (guarded expansion, stderr warning in the catch, github.com host gate).\n\n## Acceptance Criteria\n\n1. The plugin-freshness block extracted into a standalone script with the `set -euo pipefail` header, run under bash 5.x with `CLAUDE_CODE_SESSION_ID` unset (`env -u CLAUDE_CODE_SESSION_ID bash …`), no longer aborts at the session-id line and reaches the plugin loop.\n2. With `CLAUDE_CODE_SESSION_ID` exported, `CC_TMP_DIR` still resolves to the `ct-session-{id}` subdirectory — existing behavior unchanged.\n3. With the raw-manifest fetch forced to fail (an unreachable URL or absent manifest path), stderr carries the `[claude-cloud-setup] WARNING: could not resolve the pinned version …` line naming the spec and sha, and the verdict still prints `unversioned` (the fail-open posture is unchanged; only the silence is removed).\n4. A `source.url` on a non-github.com host produces that warning without invoking `curl`.\n5. `node --test tests/cloud-setup-drift-check.test.js` passes, and each new assertion goes red when its template change is reverted (verify by reverting, per the repo's convention).\n6. `scripts/claude-cloud-setup.sh` at the branch tip is byte-identical to a fresh Step 14 regeneration from the fixed template.\n\n## Technical Approach\n\nThree edits inside the heredoc template in `plugin/skills/init/bootstrap/step-14-cloud-routine-parity.md`, then regenerate the committed script. In the JS block, replace the bare `try { … } catch {}` with a host gate plus an announced catch: `if (declared.source.url.startsWith(\"https://github.com/\")) { try { … } catch (e) { console.error(\"[claude-cloud-setup] WARNING: …\" + e.message + \" — freshness unverified.\"); } } else { console.error(\"[claude-cloud-setup] WARNING: … (non-github.com source url) — freshness unverified.\"); }`. Keep the fall-through to `\"unversioned\"` intact so `drift` semantics do not change. Match the `console.error` style the script already uses for its other degrades.\n\n### Key Files\n\n- `plugin/skills/init/bootstrap/step-14-cloud-routine-parity.md` — the generator template: guard the expansion, announce the catch, gate the fetch on the github.com host\n- `scripts/claude-cloud-setup.sh` — generated by `/claude-tweaks:init` Step 14 from the template above: edit the generator, not this file; regenerate and commit the result\n- `tests/cloud-setup-drift-check.test.js` — pin the three template changes\n\n## Gotchas\n\n- `set -e`'s conditional-context exemption does not cover `set -u` expansion errors — `[ -n \"$UNSET\" ]` still aborts the script. Use `${VAR:-}` inside the test, exactly as `CC_TMP_DIR=\"${TMPDIR:-/tmp}\"` one line above already does.\n- The JS block is single-quoted heredoc content inside a bash `$(...)` capture; `console.error` output bypasses the capture and lands in the setup log, which is the intended path for the warning.\n- The script header states the file is regenerated in full on every `/init` run — a downstream patch to the generated file is lost on the next run, so the fix must land in the template.\n- Two existing test files pin adjacent lines of this block (`tests/cloud-setup-drift-check.test.js`, `tests/session-tmp-root-migration.test.js`); run both after editing the template.\n\n## Original request\n\ninit Step 14: generated claude-cloud-setup.sh aborts under set -u on an unguarded $CLAUDE_CODE_SESSION_ID and silently swallows the git-subdir version-fetch failure\n\n**Summary:** The `/init` Step 14 template emits `if [ -n \"$CLAUDE_CODE_SESSION_ID\" ]` under `set -euo pipefail`, so the generated `scripts/claude-cloud-setup.sh` aborts with `unbound variable` in its primary context (the claude.ai/code Setup-script shell, where that variable is never exported) — silently, because the canonical invocation ends in `|| true`; the same block's git-subdir version-fetch `catch` swallows failures so a stale claude-tweaks reads `ok`.\n\n**Kind:** Defect\n\n**Affected component:** `/init` Step 14 (Cloud/Routine Parity Setup) — the generated `scripts/claude-cloud-setup.sh` template\n\n**Repro steps:**\n1. Run `/claude-tweaks:init` (update mode) on a project with plugin 6.114.0 so it regenerates `scripts/claude-cloud-setup.sh`.\n2. Note line 12 `set -euo pipefail` and, in the plugin-freshness block, `CC_TMP_DIR=\"${TMPDIR:-/tmp}\"` followed by `if [ -n \"$CLAUDE_CODE_SESSION_ID\" ]; then`.\n3. Run the script from a shell that is not a live Claude Code session (e.g. `env -u CLAUDE_CODE_SESSION_ID bash scripts/claude-cloud-setup.sh`), or extract lines 12 + 75-79 into a standalone script under bash 5.x and run it with the variable unset.\n4. Observe `CLAUDE_CODE_SESSION_ID: unbound variable`, exit 1, before the `if` body — `set -e`'s conditional-context exemption does not apply to a parameter-expansion error under `-u`. With the header's prescribed `{ bash scripts/claude-cloud-setup.sh || … ; } … || true` line the wrapper exits 0.\n5. For the second defect: in the same block, the git-subdir version resolution (`curl -fsSL` of the pinned sha's `.claude-plugin/plugin.json`, added for #860) is `try { … } catch { /* comment only */ }`; make the fetch fail (offline, or a sha whose manifest path is absent) and observe the verdict line prints `catalog=unversioned (ok)` — `drift` evaluates false because `expected` fell back to `\"unversioned\"`, so the uninstall/reinstall repair is skipped, and nothing is written to stderr (`curl -s` without `-S`).\n\n**Expected vs. actual:**\nExpected: `if [ -n \"${CLAUDE_CODE_SESSION_ID:-}\" ]; then` — the degrade rule `bin/lib/session-tmp.js` documents (fall through to an unscoped path on a missing id, never error), which the template's own comment says it mirrors; a `console.error(\"[claude-cloud-setup] WARNING: could not resolve the pinned version of <spec> at <sha> (<reason>) — freshness unverified.\")` in the catch so the fallback is announced like the script's other degrades (stderr passes through the `$(...)` capture to the setup log); and the raw-manifest fetch attempted only when `source.url` starts with `https://github.com/` (today the `replace(/^https:\\/\\/github\\.com\\//, …)` rewrite silently no-ops for any other host and a meaningless URL is fetched — low, the catalog is already the trust boundary).\nActual: the sandbox reports a successful setup while everything after the crash line — plugin drift verification/repair, `agent-browser`, the Chrome-for-Testing install — never runs; plugins themselves still install (that loop sits above the crash), so what is lost is exactly the anti-drift verification the block's own comment (#129) exists to provide, plus all browser capability. And on a version-fetch failure the drift check reads `ok` for the one plugin (claude-tweaks itself, a git-subdir source with no entry-level `version`) the block exists to protect. The line directly above the crash uses the guard (`\"${TMPDIR:-/tmp}\"`), so this reads as an oversight in the template. Found in a private project by a `/flow` review lens and confirmed by an independent refutation agent; a local patch was applied downstream, but the header says the file is regenerated in full on every `/init` run, so the fix has to land in the generator.\n\n**Definition:** Clear\n\n**Plugin version:** 6.114.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-3fae30b3 -->\n",
-        "createdAt": "2026-09-02T09:25:15Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1779,
-        "state": "OPEN",
-        "title": "init Step 14: generated claude-cloud-setup.sh aborts under set -u on an unguarded $CLAUDE_CODE_SESSION_ID and silently swallows the git-subdir version-fetch failure",
-        "updatedAt": "2026-09-14T11:05:07Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`plugin/bin/lib/wrap-up/engine-verify.js`'s `resolveParent()` (line 392) resolves a record's decomposition parent with `gh issue view {n} --json parent`. On `gh` 2.92.0 (2026-04-28) that field is not in the command's JSON field list, the call throws `Unknown JSON field: \"parent\"`, and `resolveParent` returns `{ok: false}` — which the `acceptance-labeling` check folds into a `fail` row, so `wrap-up-engine.js verify` exits 3 and `/claude-tweaks:wrap-up`'s Verify step withholds the closure line (`execution-and-verification.md`'s exit-3 rule) on every record-mode run, even when the record's `demo:*` labeling is correct. On `gh` 2.96.0 (this checkout, 2026-09-09) the same command returns `{\"parent\": null}`, so the failure is version-dependent: any sandbox or machine still on 2.92.x hits it on every run.\n\nTwo things are wrong at once. The field choice is fragile — the plugin's other parent/sub-issue resolution (`bin/lib/issues/native-dependencies.js`, `fetchNativeSubIssues`) goes through GraphQL, which exposes `Issue.parent` on every `gh` version that can run GraphQL at all. And the failure class is misreported — every other gather failure in this file (`git status`, `git worktree list`, `git log`, `gh pr view`, lines 172–326) renders `result: 'unknown'`, which the closure line quotes without blocking, while `resolveParent`'s failure alone is rendered as `fail`, turning a tooling gap into a false labeling verdict.\n\n## Deliverables\n\n- Resolve the parent through GraphQL — `gh api graphql` with `repository(owner,name){ issue(number){ parent { number } } }` — through the same `deps.gh` seam the rest of the file uses, so the test double can drive it; keep the resolution in `resolveParent` (or a sibling in `native-dependencies.js` it delegates to) and drop the `--json parent` call.\n- When the parent gather itself fails (GraphQL error, unparseable response), render the `acceptance-labeling` row as `result: 'unknown'` with the gather error in `detail`, matching the file's other could-not-gather rows — never `fail`. A real labeling mismatch on a successfully resolved record stays `fail`.\n- Extend `tests/bin-lib/wrap-up/engine-verify.test.js`: a record whose `deps.gh` GraphQL call returns a parent redirects the labeling check to the parent; a null parent takes the non-parent path; a throwing gather renders `unknown` and does not set exit 3.\n\n## Acceptance Criteria\n\n- `resolveParent` no longer invokes `gh issue view … --json parent`; `grep -n \"'--json', 'parent'\" plugin/bin/lib/wrap-up/engine-verify.js` returns nothing.\n- With a `deps.gh` double that throws `Unknown JSON field: \"parent\"` (or any error) on the parent lookup, `verify` renders `| acceptance-labeling | unknown | … |` and exits 0 when every other check passes; the closure line quotes the unknown row per `execution-and-verification.md`.\n- With a double that returns a parent number, the check reads labels/comments from the parent record; with `parent: null`, from the record itself — both covered by tests.\n- `npm test` passes.\n\n## Technical Approach\n\nAdd a `parentOf(n)` GraphQL query beside `fetchNativeSubIssues` in `native-dependencies.js` (same `runner` seam, same `{owner, repo}` resolution) and have `resolveParent` call it via `deps.gh(['api', 'graphql', '-f', query, '-F', …])`. In the `acceptance-labeling` check (line ~463), branch on `resolved.ok`: false → return `{ result: 'unknown', detail: resolved.error }` before any label read. Keep the existing `{ok, error}` return shape so the check's other callers are untouched. Tests use the file's existing `deps` injection; no live `gh`.\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/engine-verify.js` — `resolveParent` (GraphQL via `deps.gh`), `acceptance-labeling` check's could-not-gather branch\n- `plugin/bin/lib/issues/native-dependencies.js` — optional `parentOf` helper sharing the GraphQL runner seam\n- `tests/bin-lib/wrap-up/engine-verify.test.js` — parent-redirect, null-parent, and gather-failure cases\n- `plugin/skills/wrap-up/execution-and-verification.md` — only if the `unknown` row's closure-line quoting needs the acceptance-labeling case named explicitly\n\n## Gotchas\n\n- Do not \"fix\" this by pinning a minimum `gh` version: the field works on 2.96 but the plugin runs in sandboxes that install whatever `gh` the image ships; GraphQL is the version-stable path the plugin already relies on elsewhere.\n- `unknown` must stay distinct from `skip` (the file's own comment at line 109); a gather failure is not a deliberately skipped check.\n- The `deps.gh` double in `engine-verify.test.js` matches on argv — the GraphQL call's argv shape must be stable enough for the existing matcher style, or add one helper the tests can stub by name.\n\n## Original request\n\nwrap-up verify: acceptance-labeling check fails on every record-mode run — `gh issue view --json parent` is not a valid field in gh 2.92.0\n\n**Summary:** `bin/lib/wrap-up/engine-verify.js`'s `resolveParent()` calls `gh issue view {n} --json parent`; `gh` 2.92.0 rejects `parent` as an unknown JSON field, so the `acceptance-labeling` row renders `fail` and `verify` exits 3 for any record-mode run, blocking the closure line even when labeling was correct.\n\n**Kind:** Defect\n\n**Affected component:** `bin/lib/wrap-up/engine-verify.js` (`resolveParent`, the `acceptance-labeling` check) — `/claude-tweaks:wrap-up`'s Verify execution step\n\n**Repro steps:**\n1. On a machine with `gh version 2.92.0 (2026-04-28)`, complete a record-mode `/claude-tweaks:wrap-up` whose `verify-expectations.json` resolves at least one issue number (materialized header or the `issues` key).\n2. Run `node bin/wrap-up-engine.js verify --run-dir <run> --base <base>`.\n\n**Expected vs. actual:**\nExpected: the `acceptance-labeling` row evaluates the record's parent linkage (null → non-parent path → checks the record's own `demo:*` state / oversight-floor exemption) and passes or fails on the labeling itself.\nActual: `| acceptance-labeling | fail | #{n}: gh issue view (parent) failed for #{n} (Command failed: gh issue view {n} --json parent Unknown JSON field: \"parent\" Available fields: assignees author body closed closedAt closedByPullRequestsReferences comments createdAt id isPinned labels milestone number projectCards projectItems reactionGroups state stateReason title updatedAt url ) |` and exit code 3 — a tooling failure reported as a labeling failure, and the closure line is withheld per `execution-and-verification.md`'s exit-3 rule.\n\n**Suggested remedy:** resolve the parent the way the plugin already does elsewhere — `bin/lib/issues/native-dependencies.js` / `bin/resolve-blockers.js` use the GraphQL `issue(number:){ parent { number } }` field, which works on this gh version — instead of the REST-backed `--json parent` field the `gh issue view` command does not expose. Also consider distinguishing could-not-gather from a real labeling failure in the row's Result (e.g. `unknown` rather than `fail`), per the skill's own could-not-gather vocabulary.\n\n**Definition:** Clear\n\n**Plugin version:** 6.114.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-0a41798f -->\n\n",
-        "createdAt": "2026-09-04T15:13:23Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1841,
-        "state": "OPEN",
-        "title": "wrap-up verify: acceptance-labeling check fails on every record-mode run — `gh issue view --json parent` is not a valid field in gh 2.92.0",
-        "updatedAt": "2026-09-13T20:09:39Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
     ]
   ],
   "excluded": [
@@ -5089,12 +4990,6 @@
         2249,
         2288,
         2339
-      ]
-    },
-    {
-      "records": [
-        1779,
-        1841
       ]
     }
   ]
