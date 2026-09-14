@@ -45,13 +45,22 @@ function enrich(result) {
     // summary/region/counts stay empty; exitCode still decides pass/fail.
     return { ...result, summary: result.spawnError || null, failingRegion: null, counts: null };
   }
-  const family = sniffFamily(text);
+  // #1837: strip ANSI once, before every parser — a coloured vitest/jest
+  // summary line is otherwise invisible to the anchored regexes below. The
+  // raw log file on disk stays raw; only this in-memory copy is stripped.
+  const plain = stripAnsi(text);
+  const family = sniffFamily(plain);
   const failed = result.exitCode !== 0;
+  const counts = parseCounts(plain, family);
   return {
     ...result,
-    summary: result.spawnError || summaryLine(text, family) || null,
-    failingRegion: failed ? extractFailingRegion(text, family) : null,
-    counts: parseCounts(text, family),
+    summary: result.spawnError || summaryLine(plain, family) || null,
+    failingRegion: failed ? extractFailingRegion(plain, family) : null,
+    counts,
+    // A tests check whose counts didn't parse — surfaced on the report entry
+    // only when a count-stamp comparison is actually in play (main() gates
+    // this on countStampPath before it reaches composeReport).
+    ...(result.name === 'tests' && counts === null ? { countsFamily: family } : {}),
   };
 }
 
@@ -334,9 +343,19 @@ async function main() {
     });
     return { ...retried, retryDecision: decision };
   };
-  const results = sel && sel.mode === 'none' ? [] : (await runChecks({
+  const results = (sel && sel.mode === 'none' ? [] : (await runChecks({
     cmds, logDir, retry: retryHook, cwd: parsed.cwd,
-  })).map(enrich);
+  })).map(enrich)).map((c) => {
+    // #1837: countsUnparsed is real report content only when a count stamp
+    // is actually in play — never disable the comparison silently, but also
+    // never surface the field when there is no comparison to have skipped.
+    if (!countStampPath || c.countsFamily === undefined) {
+      const { countsFamily, ...rest } = c;
+      return rest;
+    }
+    const { countsFamily, ...rest } = c;
+    return { ...rest, countsUnparsed: { family: countsFamily } };
+  });
   const retriedFiles = [...new Set(results.flatMap((c) => c.flakyRetried || []))];
   const git = gitInfo();
 
@@ -516,6 +535,14 @@ async function main() {
     }
   }
   if (testCountRegression) lines.push('', caveatLine(testCountRegression));
+  // #1837: a tests check whose counts didn't parse (with a count stamp in
+  // play) silently disabled the regression comparison before this line
+  // existed — make the skip visible instead of a fabricated non-regression.
+  for (const check of results) {
+    if (check.countsUnparsed) {
+      lines.push('', `CAVEAT: tests counts unparsed (family ${check.countsUnparsed.family}) — count-stamp comparison skipped; see ${check.logPath}`);
+    }
+  }
   for (const line of flakyCaveatLines(results)) lines.push('', line);
   for (const e of flakyEscalation) lines.push('', escalationCaveatLine(e));
   lines.push('', `report: ${jsonPath}`);

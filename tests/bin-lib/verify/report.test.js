@@ -37,6 +37,19 @@ test('counts is omitted from the entry when null (spec: never guessed/partial)',
   assert.ok(!('counts' in report.checks.tests));
 });
 
+test('countsUnparsed is carried on the entry when set, omitted otherwise (#1837)', () => {
+  const withField = composeReport({
+    checks: [{ ...PASSING, counts: null, countsUnparsed: { family: 'generic' } }],
+    startedAt: 'x', durationMs: 1, git: { sha: null, dirty: null },
+  });
+  assert.deepStrictEqual(withField.checks.tests.countsUnparsed, { family: 'generic' });
+  const without = composeReport({
+    checks: [{ ...PASSING, counts: null }],
+    startedAt: 'x', durationMs: 1, git: { sha: null, dirty: null },
+  });
+  assert.ok(!('countsUnparsed' in without.checks.tests));
+});
+
 test('a failing check flips pass and keeps its real exit code (AC4)', () => {
   const report = composeReport({
     checks: [{ ...PASSING, exitCode: 7, failingRegion: 'not ok 1' }],

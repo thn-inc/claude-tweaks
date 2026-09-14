@@ -13,7 +13,13 @@ const MAX_SUMMARY_CHARS = 200;
 const MAX_LINE_CHARS = 500;
 
 const TAP_MARKERS = [/^not ok\b/m, /^ok \d/m, /^# tests\b/m];
-const SUMMARY_MARKERS = [/^FAIL /m, /^PASS /m, /^Tests:.*failed/m, /^=+ .*(passed|failed).*=+$/m];
+// Vitest's own summary block (`Test Files  64 passed (64)` / `Tests  727 passed
+// (727)`) carries no colon and no `=`-banner — #1837 adds this as its own
+// dialect rather than loosening the jest/pytest regexes.
+const SUMMARY_MARKERS = [
+  /^FAIL /m, /^PASS /m, /^Tests:.*failed/m, /^=+ .*(passed|failed).*=+$/m,
+  /^\s*Test Files\s+\d+ (?:passed|failed)/m,
+];
 const KNOWN_SUMMARY_CATEGORIES = ['failed', 'passed', 'skipped', 'pending', 'todo'];
 
 function sniffFamily(text) {
@@ -72,7 +78,7 @@ function parseCounts(text, family) {
   }
   if (family === 'summary') {
     const lineMatch = text.match(/^Tests:.*$/m) || text.match(/^=+ .*(?:passed|failed).*=+$/m);
-    if (lineMatch === null) return null;
+    if (lineMatch === null) return parseVitestCounts(text);
     const line = lineMatch[0];
     let failed = num(line.match(/(\d+) failed/));
     let passed = num(line.match(/(\d+) passed/));
@@ -95,6 +101,33 @@ function parseCounts(text, family) {
     return { tests: total === null ? passed + failed : total, pass: passed, fail: failed };
   }
   return null;
+}
+
+// Vitest's `Tests` line only — `Test Files` counts suites, not tests, and
+// must never feed `counts.tests` (a 64-file suite is not 64 tests).
+function parseVitestCounts(text) {
+  const lineMatch = text.match(/^\s*Tests\s+\d+.*$/m);
+  if (lineMatch === null) return null;
+  const line = lineMatch[0];
+  let failed = num(line.match(/(\d+) failed/));
+  let passed = num(line.match(/(\d+) passed/));
+  const skipped = num(line.match(/(\d+) skipped/));
+  const total = num(line.match(/\((\d+)\)/));
+  if (failed === null && passed === null) return null;
+  if (total !== null) {
+    const pairs = [...line.matchAll(/(\d+) ([a-z]+)/gi)];
+    const hasUnknownCategory = pairs.some((m) => !KNOWN_SUMMARY_CATEGORIES.includes(m[2].toLowerCase()));
+    if (!hasUnknownCategory) {
+      const accounted = pairs.reduce((s, m) => s + Number(m[1]), 0);
+      const missing = total - accounted;
+      if (missing >= 0) {
+        if (failed === null) failed = missing;
+        else if (passed === null) passed = missing;
+      }
+    }
+  }
+  if (failed === null || passed === null) return null;
+  return { tests: total === null ? passed + failed + (skipped || 0) : total, pass: passed, fail: failed };
 }
 
 // One bounded line for the report table: the counts line when one parses,

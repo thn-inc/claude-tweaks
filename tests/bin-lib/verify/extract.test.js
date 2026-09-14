@@ -37,6 +37,25 @@ const PYTEST_FIXTURE = [
 
 const GENERIC_FIXTURE = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`).join('\n');
 
+// #1837: vitest's default reporter summary — no colon, `Test Files` counts
+// suites (never tests), the `Tests` line carries the parseable total.
+const VITEST_FIXTURE = [
+  ' Test Files  64 passed (64)',
+  '      Tests  727 passed (727)',
+].join('\n');
+
+// The same shape wrapped in ANSI colour codes, as vitest emits by default on
+// a colour-capable (even non-TTY) terminal — the reported repro shape.
+const VITEST_COLOURED = [
+  '\x1b[32m Test Files\x1b[39m  \x1b[1m\x1b[32m64 passed\x1b[39m\x1b[22m (64)',
+  '\x1b[32m      Tests\x1b[39m  \x1b[1m\x1b[32m727 passed\x1b[39m\x1b[22m (727)',
+].join('\n');
+
+const VITEST_WITH_FAILURES = [
+  ' Test Files  2 failed | 62 passed (64)',
+  '      Tests  3 failed | 724 passed (727)',
+].join('\n');
+
 test('sniffs TAP from line-anchored markers', () => {
   assert.strictEqual(sniffFamily(TAP_FIXTURE), 'tap');
 });
@@ -44,6 +63,11 @@ test('sniffs TAP from line-anchored markers', () => {
 test('sniffs summary family for jest and pytest shapes', () => {
   assert.strictEqual(sniffFamily(JEST_FIXTURE), 'summary');
   assert.strictEqual(sniffFamily(PYTEST_FIXTURE), 'summary');
+});
+
+test('sniffs summary family for vitest (plain and ANSI-coloured), never generic (#1837)', () => {
+  assert.strictEqual(sniffFamily(VITEST_FIXTURE), 'summary');
+  assert.strictEqual(sniffFamily(stripAnsi(VITEST_COLOURED)), 'summary');
 });
 
 test('TAP precedence beats summary markers in the same text (AC5 precedence)', () => {
@@ -95,6 +119,25 @@ test('jest counts parse from the Tests: line', () => {
 
 test('pytest counts parse from the === summary line', () => {
   assert.deepStrictEqual(parseCounts(PYTEST_FIXTURE, 'summary'), { tests: 5, pass: 4, fail: 1 });
+});
+
+test('vitest counts parse from the Tests line, plain and ANSI-coloured (AC1, #1837)', () => {
+  assert.deepStrictEqual(parseCounts(VITEST_FIXTURE, 'summary'), { tests: 727, pass: 727, fail: 0 });
+  assert.deepStrictEqual(
+    parseCounts(stripAnsi(VITEST_COLOURED), sniffFamily(stripAnsi(VITEST_COLOURED))),
+    { tests: 727, pass: 727, fail: 0 },
+  );
+});
+
+test('vitest counts with failures parse the | N failed segment (#1837)', () => {
+  assert.deepStrictEqual(parseCounts(VITEST_WITH_FAILURES, 'summary'), { tests: 727, pass: 724, fail: 3 });
+});
+
+test('vitest Test Files line never feeds counts.tests — only the Tests line does (#1837 gotcha)', () => {
+  // A 64-file suite must never be recorded as 64 tests.
+  const counts = parseCounts(VITEST_FIXTURE, 'summary');
+  assert.notStrictEqual(counts.tests, 64);
+  assert.strictEqual(counts.tests, 727);
 });
 
 test('incomplete TAP count block yields null, never a guess', () => {

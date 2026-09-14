@@ -246,6 +246,25 @@ test('a failing run, a fail-fast skip, and --no-stamp write neither stamp file (
   }
 });
 
+// #2341: only one --cmd name ("types") gets the fail-fast-before-tests
+// tier — the documented workaround for N independent typecheck commands is
+// a compound `--cmd types="a && b && c"`, proven working here: each half
+// writes its own marker, and a failure in either half fails the combined
+// check and skips tests, exactly as a single typecheck command would.
+test('#2341 documented workaround: a compound --cmd types="a && b" runs both halves and fails the combined check like a single typecheck command', async () => {
+  const { repo, gitDir } = tmpGitRepo();
+  const markerA = path.join(repo, 'a.marker');
+  const markerB = path.join(repo, 'b.marker');
+  const compound = `node -e 'require("fs").writeFileSync(${JSON.stringify(markerA)}, "ran")' && node -e 'require("fs").writeFileSync(${JSON.stringify(markerB)}, "ran"); process.exit(1)'`;
+  const { code, stdout } = await runCli(['--cmd', `types=${compound}`, '--cmd', 'tests=node -e 0'], { cwd: repo });
+  assert.strictEqual(code, 1);
+  assert.ok(fs.existsSync(markerA), 'first half of the compound command must run');
+  assert.ok(fs.existsSync(markerB), 'second half of the compound command must run');
+  assert.match(stdout, /\| types \| fail \|/);
+  assert.match(stdout, /\| tests \| skipped: fail-fast \|/);
+  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')));
+});
+
 test('--stamp-status reports match/mismatch/absent as data with exit 0 (#1921 AC3)', async () => {
   const { repo, git, gitDir } = tmpGitRepo();
   const absent = await runCli(['--stamp-status'], { cwd: repo });
@@ -1171,6 +1190,21 @@ test('flaky retry: a generic-family failing fixture (no extractable file) gets t
   const passRun = await runCli(passArgs, { cwd: passRepo.repo });
   assert.strictEqual(passRun.code, 0, passRun.stderr);
   assert.doesNotMatch(passRun.stdout, /no-parse/);
+});
+
+test('flaky retry: an empty/absent flaky declaration still records retryDecision.reason (#2333 — the actual behavior #2026 shipped)', async () => {
+  // #2026 replaced `flakyEnabled = Boolean(decl && decl.flaky.files.length > 0)`
+  // with `if (!decl) return result` — an empty (or absent) `flaky.files`
+  // must still reach planRetry and record a decision, not be gated out
+  // before the hook ever runs. declaration.js's own default for a missing
+  // `flaky` key is `{ files: [], maxRetries: DEFAULT_MAX_RETRIES }`, so an
+  // explicit empty array below exercises the exact same shape.
+  const r = flakyRepo({ flaky: { files: [] } });
+  const { code } = await runCli(r.args, { cwd: r.repo });
+  assert.strictEqual(code, 1);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.deepStrictEqual(report.checks.tests.retryDecision, { retry: false, reason: 'unlisted: [tests/flaky.test.js]' });
+  assert.ok(!fs.existsSync(r.marker), 'no retry command may run when the allowlist is empty');
 });
 
 test('flaky retry: maxRetries 2 performs at most two attempts and an exhausted file fails the run with retryFailed; maxRetries 3 is rejected by the declaration (#1925 AC6)', async () => {

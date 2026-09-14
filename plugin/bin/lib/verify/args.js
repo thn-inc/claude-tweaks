@@ -10,7 +10,19 @@ const USAGE =
   + '[--cwd <dir>] '
   + '[--scope <path> [--base <ref>] [--integration-branch <name>]] '
   + '| verify.js --stamp-status [--git-dir <dir>] '
-  + '| verify.js --changed-files [--base <ref>] [--integration-branch <name>]';
+  + '| verify.js --changed-files [--base <ref>] [--integration-branch <name>]\n'
+  // #2341: exactly one --cmd name ("types", alongside "lint") gets the
+  // fail-fast-before-tests tier — a monorepo with N independent typecheck
+  // commands should either combine them into one compound
+  // --cmd types="a && b && c", or give each its own verify.js invocation,
+  // rather than naming them types-a/types-b/types-c (those run in the
+  // "any other name" tier, serially after tests, and get skipped whenever
+  // tests fails for an unrelated reason).
+  + '\nnote: only one --cmd name, "types", joins the reserved fail-fast-before-tests tier '
+  + '(alongside "lint"); a monorepo with several independent typecheck commands should '
+  + 'combine them (--cmd types="tsc -p a && tsc -p b") or run each through its own '
+  + 'verify.js invocation — a differently-named check (types-a, types-b, …) runs in the '
+  + '"any other name" tier, serially after tests, and is skipped on an unrelated tests failure.';
 
 const VALUE_FLAGS = new Set(['--cmd', '--json', '--log-dir', '--count-stamp', '--git-dir', '--scope', '--base', '--integration-branch', '--run', '--cwd']);
 

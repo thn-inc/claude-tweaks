@@ -107,6 +107,11 @@ test('USAGE names every flag', () => {
   }
 });
 
+test('USAGE documents the workaround for a monorepo with N independent typecheck commands (#2341)', () => {
+  assert.match(USAGE, /only one --cmd name, "types", joins the reserved/);
+  assert.match(USAGE, /combine them/);
+});
+
 test('--stamp-status parses with no --cmd and sets stampStatus (#1921)', () => {
   const parsed = parseArgs(['--stamp-status']);
   assert.strictEqual(parsed.stampStatus, true);
