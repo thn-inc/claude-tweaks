@@ -1,7 +1,7 @@
 ---
 name: dispatch
 description: "Use to select and dispatch authorized GitHub records to /flow — the gate-to-executor queue consumer. Drain (--budget) or #N direct. Keywords - dispatch, queue, claim, auto:build, auto:merge, bot:in-progress, bot:blocked, bot:parked, autonomous build, routine."
-argument-hint: "[#N[,#M...]] [--budget <n|all>] [--priority high|medium|low]"
+argument-hint: "[#N[,#M...]] [--budget <n|all>] [--priority high|medium|low] [--settle-parked]"
 ---
 
 # Dispatch — the Queue Consumer
@@ -51,8 +51,19 @@ Not for: granting authorization (`/claude-tweaks:backlog refine`'s job), derivin
 | `--batch-size <n>` (deprecated alias) | Deprecated alias for `--budget <n>` — same effect, one warn-tier notice. Removal condition: `deprecated-aliases.md`. The old suffix `#N,#M,...` use is no longer accepted — rejected like `--budget` on an explicit list; explicit-list firings are capped by `dispatch-batch-size` alone. |
 | `--concurrent <n>` (deprecated alias) | Two-hop deprecated alias for `--batch-size <n>` — same effect, one warn-tier notice. Removal condition: `deprecated-aliases.md`. |
 | `--priority <high\|medium\|low>` (modifier) | Suffix bare drain (or its deprecated `next` alias) — restrict the candidate pool's representative-member band before ranking/selection runs (Step 3's ranking definition). Lets multiple differently-scheduled Routines each own a distinct slice of the queue. No effect on `#N`/`#N,#M,...`, which select by explicit name, not ranking. |
+| `--settle-parked` (standalone form) | Batch-review every open `bot:parked` PR in one pass and let a human pick which subset to resume — human-present only, never invoked by a scheduled Routine (same posture as `backlog refine --reset-breaker`). **Mutually exclusive** with a ref (`#N`/`#N,#M,...`) or `--budget` — reject the combination with a one-line notice and perform no fetch. Read `settle-parked.md` in this skill's directory for the full fetch/freshness-probe/batch-confirm/sequential-resume procedure. |
 
 **Repo-wide infra outage stop (#2365).** Bare drain's no-`AskUserQuestion` rule (Input table above) has no carve-out — not for a detected infra-wide emergency, not for anything else, human present or not. It is not defenseless either: `settle-and-merge.md` Step 6 point 3 already classifies each Settle failure as `correctness`/`ambiguous`/`transient` via `assess-agent-autonomy`'s `failure-check` mode, where `transient` means "infrastructure failure, not this record's fault." When **two or more groups in the same drain firing** land a `transient` classification, that repetition — not any single transient failure, which is ordinary and already handled by preserving `auto:merge`/`auto:merge-pending` per that step — is the repo-wide-outage signal: stop the remaining drain immediately (do not attempt further groups against `--budget`), and report the halt in this firing's own end-of-run output naming which groups hit it and each one's `assess-agent-autonomy` rationale. This reuses Settle's existing classification rather than inventing a new detection heuristic, and follows the same "report and stop, never ask" shape the Detection Ladder already uses for a real Preflight failure (`stop for any real failure`, above) — a repo-wide outage is a real failure, just one only visible after two groups have independently hit it.
+
+## Settle Parked
+
+`--settle-parked` skips the rest of this file's Preflight/Workflow (queue
+pull, ranking, group claiming, minting — none of that applies to a batch
+review of already-parked PRs) and instead follows `settle-parked.md` in this
+skill's directory end to end: fetch every open `bot:parked` PR, freshness-
+probe and CI-read each one, render the batch table and multi-select confirm,
+then sequentially resume only the selected PRs. Read that file now if
+`--settle-parked` is the resolved form.
 
 ## Preflight
 
@@ -277,6 +288,8 @@ Render only when a human is present to answer — bare / `next` / `#N` / `#N,#M,
 
 `/claude-tweaks:dispatch` is never invoked as a pipeline component by another skill — a human runs one of its forms directly, or a scheduled Routine fires `/claude-tweaks:dispatch --budget 1` headlessly (see Routine Configuration above). See Next Actions above for the render/suppress rule.
 
+`--settle-parked` carries the same human-present-only posture as `backlog refine --reset-breaker` — never Routine-fired, and never invoked by another skill.
+
 `$PIPELINE_RUN_DIR` is not this skill's own state. Dispatch resolves its own standalone-auto run dir (per `_shared/run-dir-resolution.md`'s allowlist) purely to write its own `decisions.md` — the queue-pull/selection/minting audit trail for this firing, scoped to the firing as a whole (which may dispatch multiple groups in bare mode). That directory is distinct from the per-group run directory Step 4 mints, before `/flow`'s Step 2.8 claims it — the one that *becomes* the dispatched group's own `PIPELINE_RUN_DIR` once its first Task call invokes `/flow` and adopts it (`flow/steps-and-gates.md`'s Adopting-an-inherited-run-directory case 2). Unlike before, there is no separate identity to bridge between the two: the minted directory's basename is the claim's `runId` directly, passed on the Task call's command line, nothing parsed out of a report.
 
 ## Anti-Patterns
@@ -292,3 +305,4 @@ Render only when a human is present to answer — bare / `next` / `#N` / `#N,#M,
 | Filing, closing, or granting authorization on records from inside dispatch | Dispatch only *consumes* grants — filing belongs to the health skills/`/claude-tweaks:capture`, granting to `/claude-tweaks:backlog refine` |
 | Deriving a spec per bundle member before invoking `/flow` | A granted record is already spec-shaped (`ready` + spec-shaped body), so `/flow #A,#B` materializes directly — don't reintroduce the deleted per-member `/specify` pre-step |
 | Re-selecting a Settle-failed group within the same drain firing | The per-iteration re-fetch excludes it (`bot:blocked`/claim markers); it counted as one attempted budget unit — move on |
+| Resuming `--settle-parked`-selected PRs in parallel, or in a headless/Routine-fired context | Sequential-only by design (see `settle-parked.md`'s own Anti-Patterns); human-present-only, same posture as `backlog refine --reset-breaker` |
