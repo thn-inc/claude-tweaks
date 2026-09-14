@@ -104,9 +104,66 @@ test('resolveInputs marks a missing source unavailable and still resolves the re
   const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps({ resolvePolicy: policyFake({}) }) });
   assert.strictEqual(inputs.pr, null);
   assert.strictEqual(inputs.sources.pr, 'unavailable');
+  // No integration-branch policy key: okDeps' git fake answers the offline
+  // origin/HEAD lookup, so this resolves via the git-default ladder rank
+  // (#2385), not the bare 'main' literal the pre-fix code reported as 'default'.
+  assert.strictEqual(inputs.integrationBranch, 'main');
+  assert.strictEqual(inputs.sources.integrationBranch, 'git-default');
+  assert.strictEqual(inputs.base, 'abc123');
+});
+
+test('resolveInputs resolves integrationBranch via the git-default ladder rank when no policy key is set, even when the real default branch is not "main" (#2385)', () => {
+  const runDir = fixtureRunDir({ withPr: false });
+  const deps = okDeps({
+    resolvePolicy: policyFake({}),
+    git: (args, opts) => {
+      if (args[0] === 'rev-parse' && args[1] === '--symbolic-full-name') return 'refs/remotes/origin/master\n';
+      if (args[0] === 'merge-base') return 'abc123\n';
+      return '';
+    },
+  });
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps });
+  assert.strictEqual(inputs.integrationBranch, 'master');
+  assert.strictEqual(inputs.sources.integrationBranch, 'git-default');
+  // The residue/state/blastRadius probes' merge-base call succeeds against
+  // the resolved non-"main" branch instead of failing on an unresolved base.
+  assert.strictEqual(inputs.base, 'abc123');
+});
+
+test('resolveInputs falls back to gh repo view for the default branch when the offline git pointer is unavailable, no policy key set (#2385)', () => {
+  const runDir = fixtureRunDir({ withPr: false });
+  const deps = okDeps({
+    resolvePolicy: policyFake({}),
+    git: (args) => { if (args[0] === 'rev-parse') throw new Error('no such ref'); return args[0] === 'merge-base' ? 'abc123\n' : ''; },
+    ghSync: (args) => (args[0] === 'repo' ? 'trunk\n' : ''),
+  });
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps });
+  assert.strictEqual(inputs.integrationBranch, 'trunk');
+  assert.strictEqual(inputs.sources.integrationBranch, 'gh-default');
+});
+
+test('resolveInputs falls back to the literal "main" only when neither policy, git, nor gh resolve anything (#2385)', () => {
+  const runDir = fixtureRunDir({ withPr: false });
+  const deps = okDeps({
+    resolvePolicy: policyFake({}),
+    git: (args) => { if (args[0] === 'rev-parse') throw new Error('no such ref'); return args[0] === 'merge-base' ? 'abc123\n' : ''; },
+    ghSync: () => { throw new Error('gh: not found'); },
+  });
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps });
   assert.strictEqual(inputs.integrationBranch, 'main');
   assert.strictEqual(inputs.sources.integrationBranch, 'default');
-  assert.strictEqual(inputs.base, 'abc123');
+});
+
+test('resolveInputs: an explicit integration-branch policy value always wins outright, never consulting git or gh (#2385)', () => {
+  const runDir = fixtureRunDir({ withPr: false });
+  let gitCalledWithRevParse = false;
+  const deps = okDeps({
+    git: (args) => { if (args[0] === 'rev-parse') gitCalledWithRevParse = true; return args[0] === 'merge-base' ? 'abc123\n' : ''; },
+  });
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps });
+  assert.strictEqual(inputs.integrationBranch, 'main');
+  assert.strictEqual(inputs.sources.integrationBranch, 'policy');
+  assert.strictEqual(gitCalledWithRevParse, false, 'policy short-circuits before the git rank is ever consulted');
 });
 
 test('resolveInputs resolves the policy levers ONCE, not once per probe (#1930 review I8)', async () => {
@@ -189,6 +246,46 @@ test('resolveInputs (c): a parent multi-spec run dir resolves records from manif
   assert.deepStrictEqual(inputs.records, [1930, 1931, 1932]);
   assert.strictEqual(inputs.record, null, 'several records → no single record');
   assert.strictEqual(inputs.sources.records, 'manifest');
+});
+
+test('resolveRecords rung (c) worktree-mirrors spec-*/work headers when the main-checkout run dir has neither work/ nor spec-* entries (#2391)', () => {
+  // The real /claude-tweaks:dispatch file-overlap group shape: materialize.md
+  // commits each record's header to {run-dir}/spec-{n}/work/{n}-spec.md on the
+  // feature branch, so it exists only inside the worktree's own working tree —
+  // never in the main-checkout run dir --run anchors to. Observed live on
+  // run 2026-09-14T000308-record-2283-2338 (#2391's Current State).
+  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-rungc-main-'));
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-rungc-tree-'));
+  const rel = path.join('.claude-tweaks', 'pipelines', '2026-09-14T000308-record-2283-2338');
+  const runDir = path.join(main, rel);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: tree, status: 'active', pr: { number: 1901 } }));
+  const mirrorRunDir = path.join(tree, rel);
+  fs.mkdirSync(path.join(mirrorRunDir, 'spec-2283', 'work'), { recursive: true });
+  fs.mkdirSync(path.join(mirrorRunDir, 'spec-2338', 'work'), { recursive: true });
+  fs.writeFileSync(path.join(mirrorRunDir, 'spec-2283', 'work', '2283-spec.md'), '---\nrecord: 2283\n---\n');
+  fs.writeFileSync(path.join(mirrorRunDir, 'spec-2338', 'work', '2338-spec.md'), '---\nrecord: 2338\n---\n');
+  const deps = { readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
+  const { records, source } = resolveRecords(deps, runDir, tree);
+  assert.deepStrictEqual(records, [2283, 2338]);
+  assert.strictEqual(source, 'worktree-manifest');
+
+  // resolveInputs surfaces the same resolution end-to-end, and the four
+  // probes that gate on `recordsOrThrow()` no longer see an empty list.
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'ceremony-profile: standard\n');
+  const inputs = resolveInputs({ runDir, cwd: tree, deps: okDeps({ readdir: deps.readdir, readFile: (p) => (path.basename(p) === 'CLAUDE.md' ? '# Fixture\n\nwork-backend: github-issues\n' : deps.readFile(p)) }) });
+  assert.deepStrictEqual(inputs.records, [2283, 2338]);
+  assert.strictEqual(inputs.sources.records, 'worktree-manifest');
+});
+
+test('resolveRecords rung (c): the main-checkout run dir\'s own spec-*/work headers still win over the worktree mirror (#2391 — preserves the existing single-record/no-worktree case)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-rungc-own-'));
+  fs.mkdirSync(path.join(dir, 'spec-1', 'work'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'spec-1', 'work', '1-spec.md'), '---\nrecord: 1\n---\n');
+  const deps = { readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
+  const { records, source } = resolveRecords(deps, dir, null);
+  assert.deepStrictEqual(records, [1]);
+  assert.strictEqual(source, 'manifest', 'no worktree given — the direct runDir read wins, mirror never consulted');
 });
 
 test('pack.js exports resolveRecords (and headerRecords) so console/resolve.js can share the ladder instead of copying it (#2028)', () => {

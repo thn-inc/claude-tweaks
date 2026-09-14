@@ -55,6 +55,12 @@ function defaultGit(args, { cwd } = {}) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
+// Synchronous sibling of defaultGit, for the one ladder rank (#2385) that
+// needs `gh` before resolveInputs has anything async to await.
+function defaultGhSync(args, { cwd } = {}) {
+  return execFileSync('gh', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
 // In-process replacement for `node resolve-policy.js --values <key>` (#1930
 // review I8). Same scalar semantics as that CLI's --values mode: an unknown
 // key, an error entry, or a null/absent value all read as ''. One call
@@ -79,6 +85,7 @@ function defaultDeps(cwd) {
   return {
     now: () => Date.now(),
     git: defaultGit,
+    ghSync: defaultGhSync,
     execFile: promisify(execFileCb),
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
@@ -151,10 +158,33 @@ function worktreeMirror(runDir, worktree) {
   return path.join(worktree, ...parts.slice(i));
 }
 
+// Rung (c)'s read: a parent multi-spec run's manifest.yml ids plus any
+// spec-*/work/ headers, both anchored at `dir`. Factored out so the
+// worktree-mirror fallback (#2391) can re-run the exact same read against the
+// mirrored path instead of a second hand-copy of this scan.
+function manifestRecords(deps, dir) {
+  const nums = [];
+  const manifest = parseManifestYaml(readText(deps, path.join(dir, 'manifest.yml')));
+  const specs = manifest && manifest.multispec && Array.isArray(manifest.multispec.specs) ? manifest.multispec.specs : [];
+  for (const spec of specs) {
+    const n = Number(spec && spec.id);
+    if (Number.isInteger(n)) nums.push(n);
+  }
+  for (const name of deps.readdir(dir)) {
+    if (!/^spec-/.test(name)) continue;
+    nums.push(...headerRecords(deps, path.join(dir, name, 'work')));
+  }
+  return sortedUnique(nums);
+}
+
 // The record-resolution ladder, in order, reporting which rung won:
 // (a) the run dir's own materialized headers; (b) the worktree's mirror of the
 // same run dir; (c) a parent multi-spec run's manifest.yml ids plus any
-// spec-*/work/ headers; else none.
+// spec-*/work/ headers, then that same rung's own worktree mirror (#2391 —
+// materialize.md commits spec-{n}/work/{n}-spec.md on the feature branch, so
+// on a real pr-first dispatch group it exists only in the worktree, never in
+// the main-checkout run dir --run anchors to, same reason rung (b) mirrors
+// rung (a)); else none.
 function resolveRecords(deps, runDir, worktree) {
   const own = headerRecords(deps, path.join(runDir, 'work'));
   if (own.length) return { records: own, source: 'headers' };
@@ -165,18 +195,13 @@ function resolveRecords(deps, runDir, worktree) {
     if (mirrored.length) return { records: mirrored, source: 'worktree-headers' };
   }
 
-  const nums = [];
-  const manifest = parseManifestYaml(readText(deps, path.join(runDir, 'manifest.yml')));
-  const specs = manifest && manifest.multispec && Array.isArray(manifest.multispec.specs) ? manifest.multispec.specs : [];
-  for (const spec of specs) {
-    const n = Number(spec && spec.id);
-    if (Number.isInteger(n)) nums.push(n);
+  const own2 = manifestRecords(deps, runDir);
+  if (own2.length) return { records: own2, source: 'manifest' };
+
+  if (mirror && path.resolve(mirror) !== path.resolve(runDir)) {
+    const mirrored2 = manifestRecords(deps, mirror);
+    if (mirrored2.length) return { records: mirrored2, source: 'worktree-manifest' };
   }
-  for (const name of deps.readdir(runDir)) {
-    if (!/^spec-/.test(name)) continue;
-    nums.push(...headerRecords(deps, path.join(runDir, name, 'work')));
-  }
-  if (nums.length) return { records: sortedUnique(nums), source: 'manifest' };
 
   return { records: [], source: 'unavailable' };
 }
@@ -200,6 +225,30 @@ function resolveState(deps, runDir) {
   if (typeof merged.worktree !== 'string' && typeof parent.worktree === 'string') merged.worktree = parent.worktree;
   if (!hasPrNumber(merged) && hasPrNumber(parent)) merged.pr = parent.pr;
   return { state: merged, source: 'parent' };
+}
+
+// `_shared/integration-branch.md`'s canonical ladder, minus the two ranks
+// with no meaning inside this CLI (an explicit argument, a routine template)
+// and rank 4 (a branching model stated in CLAUDE.md prose — no mechanical
+// reader for that exists anywhere in bin/lib; `worktree-reap.js`'s
+// resolveIntegrationBranch and run-integrity.js's deriveBranch skip the same
+// rank for the same reason, per that file's own per-consumer table). Policy
+// wins outright (rank 3); else the offline git pointer at origin/HEAD (rank
+// 5's git half); else `gh repo view`'s default branch (rank 5's gh half);
+// else the pre-existing 'main' literal, so a repo with no remote at all sees
+// no behavior change (#2385).
+function resolveIntegrationBranch(deps, worktree, policyValue) {
+  if (policyValue) return { branch: policyValue, source: 'policy' };
+  try {
+    const out = deps.git(['rev-parse', '--symbolic-full-name', 'refs/remotes/origin/HEAD'], { cwd: worktree }).trim();
+    const name = out.replace(/^refs\/remotes\/origin\//, '');
+    if (name) return { branch: name, source: 'git-default' };
+  } catch { /* fall through to gh */ }
+  try {
+    const out = deps.ghSync(['repo', 'view', '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name'], { cwd: worktree }).trim();
+    if (out) return { branch: out, source: 'gh-default' };
+  } catch { /* fall through to the final fallback */ }
+  return { branch: 'main', source: 'default' };
 }
 
 function mergeBase(deps, cwd, integrationBranch) {
@@ -235,8 +284,9 @@ function resolveInputs({ runDir, cwd, deps }) {
     workBackend: backend.value,
     workLinks: values['work-links'] || '',
   };
-  const integrationBranch = policy.integrationBranch || 'main';
-  sources.integrationBranch = policy.integrationBranch ? 'policy' : 'default';
+  const branchResolution = resolveIntegrationBranch(deps, worktree, policy.integrationBranch);
+  const integrationBranch = branchResolution.branch;
+  sources.integrationBranch = branchResolution.source;
   const mb = mergeBase(deps, worktree, integrationBranch);
   sources.base = mb.base ? 'merge-base' : 'unavailable';
   // One record is a record; several are a parent multi-spec run, whose
