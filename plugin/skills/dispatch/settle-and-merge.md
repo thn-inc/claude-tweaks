@@ -56,6 +56,19 @@ failure. When `DISPATCH_HEADLESS` is unset (a human-present dispatch form), skip
 message the Task call already produced is sufficient; nobody headless needs a durable trace of
 it.
 
+**Open-linked-PR enrichment for the contested-claim shape (#2402).** For the contested-claim stop
+specifically — never the in-flight stop, whose card already names its PR via `link` — attempt one
+best-effort open-linked-PR lookup for `#{target}` before filing, so a future reader isn't left to
+do this by hand the way #2402's own incident required: on the `gh` transport,
+`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-linked-prs.js" {target}`. `mcp-transport.md`'s Step 2 note
+applies unchanged here — there is no confirmed MCP mapping for this query (investigated and
+confirmed infeasible, #2402), so on the MCP transport skip this lookup outright, never attempt it.
+A `gh`-transport exit 0 with a non-null `openPR` appends one line to the diagnostic body handed to
+`headless-self-report.md`: `Open linked PR: #{openPR} — not yet caught by the #1224 exclusion on
+this transport; see #2402.` A null `openPR`, a non-zero exit, or the MCP transport all fall through
+to the card's own text unchanged — this is enrichment only, never a gate, and a lookup failure here
+never blocks or fails the self-report itself.
+
 **Headless ride-along special case (#1780).** When the failure this call is settling is instead
 `_shared/worktree-setup.md`'s Post-creation catch-up "Headless ride-along check" — reached during
 `build`'s Common Step 1 worktree creation, always `DISPATCH_HEADLESS=1`-only by construction (see
