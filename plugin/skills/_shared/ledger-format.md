@@ -12,6 +12,14 @@ docs/plans/YYYY-MM-DD-{feature}-ledger.md
 
 The `{feature}` name matches the execution plan or spec topic. One ledger per pipeline run.
 
+**Standalone (no-worktree) exception.** A run with no worktree at all — `run-state.json` carries no `worktree` field, or no `run-state.json` exists yet — has nowhere to commit a `docs/plans/` write: under `worktree-always: true` the mechanical PreToolUse gate denies any tracked-path write from the main checkout, worktree or not. This is exactly the shape `wrap-up/residue-sweep.md`'s preamble runs in (a single-spec or final-spec wrap-up finding nothing left to build, so no build/test/review step ever created a worktree for this run). For that case only, create the ledger at:
+
+```
+{run-dir}/ledger.md
+```
+
+— inside this run's own pipeline directory (`.claude-tweaks/pipelines/{run-id}/`), which is already gitignored and commit-exempt (CLAUDE.md's `_shared/pipeline-run-dir.md` Anchoring section) and already this run's own audit-trail home. Never committed, never a `docs/plans/*-ledger.md` glob match — a caller resolving "the active ledger for this run" checks whether the run has a worktree first (the same `run-state.json.worktree` presence check above) and reads the matching location; a caller with no run dir at all (no `$PIPELINE_RUN_DIR` resolves) always uses `docs/plans/`, since there is no run-dir-scoped alternative available.
+
 ### Format
 
 ```markdown

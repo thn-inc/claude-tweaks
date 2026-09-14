@@ -59,7 +59,10 @@ operation): `Phase: wrap-up`, `Item`: `{kind} — {subject} — {evidence}`, `St
 ledger's own semantic-duplicate check first (`ledger/SKILL.md`'s Add Item section) — a finding
 matching an existing item's phase and description is a duplicate, not a second row. If no ledger
 file exists yet for this run (the standalone case this preamble exists for), create it now via the
-ledger's own Create operation before adding the first item.
+ledger's own Create operation before adding the first item. Under `worktree-always: true` this
+"standalone case" always means no worktree exists for this run — Create resolves to
+`{run-dir}/ledger.md`, never `docs/plans/`, so this step never hits the write-outside-worktree
+gate.
 
 **There is no second disposition mechanism here.** Phase 3's existing three-phase resolve gate
 (`_shared/ledger-format.md`'s Resolve Gate section) is what assigns each item's eventual disposition, exactly as it already
