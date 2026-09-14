@@ -41,6 +41,17 @@ function defaultGhApiDelete(args) {
   }
 }
 
+// Shared gating for Steps 4-5 below: both delete something keyed on `branch` and skip for the
+// same three reasons (no --merged, nothing recorded, or the integration branch itself) with only
+// the label differing. Returns the skip line, or null when the caller should proceed with its own
+// (differing) delete action.
+function modeGateSkip(mode, branch, isIntegrationBranch, label) {
+  if (mode !== 'merged') return `${label}: skipped — ${mode === 'abandoned' ? 'abandoned' : 'no --merged/--abandoned given'}`;
+  if (!branch) return `${label}: skipped — no branch recorded`;
+  if (isIntegrationBranch) return `${label}: skipped — refusing to delete the integration branch (${branch})`;
+  return null;
+}
+
 function repoSlugOf(root) {
   const remote = runGit(['remote', 'get-url', 'origin'], root);
   if (remote.failure || !remote.stdout) return null;
@@ -202,12 +213,9 @@ function teardownRun(runDir, opts = {}) {
   }
 
   // Step 4 (local branch delete) — only under --merged.
-  if (mode !== 'merged') {
-    lines.push(`branch: skipped — ${mode === 'abandoned' ? 'abandoned' : 'no --merged/--abandoned given'}`);
-  } else if (!branch) {
-    lines.push('branch: skipped — no branch recorded');
-  } else if (isIntegrationBranch) {
-    lines.push(`branch: skipped — refusing to delete the integration branch (${branch})`);
+  const branchSkip = modeGateSkip(mode, branch, isIntegrationBranch, 'branch');
+  if (branchSkip) {
+    lines.push(branchSkip);
   } else {
     const del = runGit(['branch', '-D', branch], root);
     if (del.failure) lines.push(`branch: skipped — delete failed for ${branch}`);
@@ -216,12 +224,9 @@ function teardownRun(runDir, opts = {}) {
 
   // Step 5 (remote ref delete) — same --merged-only gating as Step 4; never `git push --delete`
   // (denied by worktree.always from the main checkout) — the contents/refs API only.
-  if (mode !== 'merged') {
-    lines.push(`remote ref: skipped — ${mode === 'abandoned' ? 'abandoned' : 'no --merged/--abandoned given'}`);
-  } else if (!branch) {
-    lines.push('remote ref: skipped — no branch recorded');
-  } else if (isIntegrationBranch) {
-    lines.push(`remote ref: skipped — refusing to delete the integration branch (${branch})`);
+  const refSkip = modeGateSkip(mode, branch, isIntegrationBranch, 'remote ref');
+  if (refSkip) {
+    lines.push(refSkip);
   } else {
     const slug = repoSlugOf(root);
     if (!slug) {

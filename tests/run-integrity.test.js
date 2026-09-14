@@ -160,7 +160,9 @@ test('#1672 validation: a resolved name that is not a real local ref never becom
   assert.strictEqual(r.evidence.branch, null);
 });
 
-test('worktreePathForBranch: finds the live linked worktree checked out on the given branch', () => {
+// Shared base repo for the worktreePathForBranch tests below: init + one commit on `trunk`,
+// nothing more — each test adds only what it individually needs on top of this.
+function basicRepo() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wpfb-')));
   execFileSync('git', ['init', '-q', '-b', 'trunk'], { cwd: root });
   execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: root });
@@ -168,6 +170,11 @@ test('worktreePathForBranch: finds the live linked worktree checked out on the g
   fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
   execFileSync('git', ['add', 'a.txt'], { cwd: root });
   execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: root });
+  return root;
+}
+
+test('worktreePathForBranch: finds the live linked worktree checked out on the given branch', () => {
+  const root = basicRepo();
   const wt = path.join(root, '.claude', 'worktrees', 'feat');
   execFileSync('git', ['worktree', 'add', '-q', '-b', 'feat-branch', wt], { cwd: root });
 
@@ -175,25 +182,13 @@ test('worktreePathForBranch: finds the live linked worktree checked out on the g
 });
 
 test('worktreePathForBranch: never returns the main checkout even when its branch is asked for', () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wpfb-')));
-  execFileSync('git', ['init', '-q', '-b', 'trunk'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'T'], { cwd: root });
-  fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
-  execFileSync('git', ['add', 'a.txt'], { cwd: root });
-  execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: root });
+  const root = basicRepo();
 
   assert.strictEqual(worktreePathForBranch(root, 'trunk'), null);
 });
 
 test('worktreePathForBranch: no matching branch -> null', () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wpfb-')));
-  execFileSync('git', ['init', '-q', '-b', 'trunk'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'T'], { cwd: root });
-  fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
-  execFileSync('git', ['add', 'a.txt'], { cwd: root });
-  execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: root });
+  const root = basicRepo();
 
   assert.strictEqual(worktreePathForBranch(root, 'no-such-branch'), null);
 });

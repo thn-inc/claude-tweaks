@@ -70,16 +70,20 @@ function realpathOrSelf(p) {
 // coalesce redundant `git worktree list`/`git rev-parse` spawns for the same repo root within
 // one SessionStart. Omitted (the shape every other caller and every pre-existing test uses),
 // this spawns fresh every call — byte-identical to pre-cache behavior. See #381.
+// Shared by deriveBranch and worktreePathForBranch below — both read the same
+// `git worktree list --porcelain` output, so the cache lookup/populate
+// sequence lives here once instead of twice.
+function worktreeListStdout(root, cache) {
+  if (cache && cache.worktreeList.has(root)) return cache.worktreeList.get(root);
+  const list = runGit(['worktree', 'list', '--porcelain'], root);
+  const stdout = list.failure || list.stdout === null ? null : list.stdout;
+  if (cache) cache.worktreeList.set(root, stdout);
+  return stdout;
+}
+
 function deriveBranch(root, worktreePath, cache) {
   if (!worktreePath) return null;
-  let stdout;
-  if (cache && cache.worktreeList.has(root)) {
-    stdout = cache.worktreeList.get(root);
-  } else {
-    const list = runGit(['worktree', 'list', '--porcelain'], root);
-    stdout = list.failure || list.stdout === null ? null : list.stdout;
-    if (cache) cache.worktreeList.set(root, stdout);
-  }
+  const stdout = worktreeListStdout(root, cache);
   if (stdout === null) return null;
   const target = realpathOrSelf(worktreePath);
   const realRoot = realpathOrSelf(root);
@@ -101,14 +105,7 @@ function deriveBranch(root, worktreePath, cache) {
 // liveness rule exactly.
 function worktreePathForBranch(root, branch, cache) {
   if (!branch) return null;
-  let stdout;
-  if (cache && cache.worktreeList.has(root)) {
-    stdout = cache.worktreeList.get(root);
-  } else {
-    const list = runGit(['worktree', 'list', '--porcelain'], root);
-    stdout = list.failure || list.stdout === null ? null : list.stdout;
-    if (cache) cache.worktreeList.set(root, stdout);
-  }
+  const stdout = worktreeListStdout(root, cache);
   if (stdout === null) return null;
   const realRoot = realpathOrSelf(root);
   for (const entry of parseWorktreeList(stdout)) {
