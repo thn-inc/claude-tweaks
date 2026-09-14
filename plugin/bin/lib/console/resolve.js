@@ -182,19 +182,12 @@ function needsHumanVerdict(decisions) {
 const DRAIN_OVERLAP_HOLD_RE = /held\s*[-—]\s*overlaps drain PR #(\d+)/i;
 
 function drainOverlapHoldPrs(decisions) {
-  const found = [];
-  const seen = new Set();
+  const found = new Set();
   for (const line of decisionLines(decisions)) {
     const m = DRAIN_OVERLAP_HOLD_RE.exec(line);
-    if (m) {
-      const n = Number(m[1]);
-      if (!seen.has(n)) {
-        seen.add(n);
-        found.push(n);
-      }
-    }
+    if (m) found.add(Number(m[1]));
   }
-  return found;
+  return [...found];
 }
 
 function mergeResolution(snapshot, deps) {
