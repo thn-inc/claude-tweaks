@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T13:32:24.220Z",
+  "computedAt": "2026-09-14T13:38:06.428Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -95,7 +95,7 @@
       },
       {
         "number": 2336,
-        "updatedAt": "2026-09-13T13:32:37Z",
+        "updatedAt": "2026-09-14T13:36:33Z",
         "state": "OPEN"
       },
       {
@@ -410,7 +410,7 @@
       },
       {
         "number": 1778,
-        "updatedAt": "2026-09-14T11:04:38Z",
+        "updatedAt": "2026-09-14T13:36:26Z",
         "state": "OPEN"
       },
       {
@@ -435,7 +435,7 @@
       },
       {
         "number": 1739,
-        "updatedAt": "2026-09-14T11:05:14Z",
+        "updatedAt": "2026-09-14T13:36:20Z",
         "state": "OPEN"
       },
       {
@@ -1458,278 +1458,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review. #2019 split `_shared/pipeline-run-dir.md`'s\nResolution-order content out into a new `_shared/run-dir-resolution.md`, and migrated most\nciters, but two gaps remain — both confirmed still present at this shaping pass:\n\n- `plugin/skills/research/verify-mode.md` (confirmed, lines ~124 and ~184) still cites\n  `pipeline-run-dir.md` for content that moved: \"not on the standalone-auto allowlist in\n  `skills/_shared/pipeline-run-dir.md`\" (now `run-dir-resolution.md` step 4) and\n  \"`_shared/pipeline-run-dir.md`'s most-recent-matching-directory fallback\" (now step 2). Every\n  other named citer (`/capture`, `tidy/step-6-auto.md`, `flow/materialize.md`,\n  `_shared/auto-decision-log.md`, `sweep/SKILL.md`) was migrated.\n- `_shared/pipeline-run-dir.md` itself (confirmed, lines ~31, 33) has two internal references\n  that now dangle: \"step 4's standalone-auto-fallback shape\" and \"when the caller is on the\n  standalone-auto allowlist above\" — neither step 4 nor the allowlist lives in this file any\n  more (both moved to `run-dir-resolution.md:14-19`). This file's remaining sections are the CLI\n  reference, Anchoring, and the worktree-local `--run` fallback.\n\n## Deliverables\n\n- Retarget `research/verify-mode.md`'s two citations to `run-dir-resolution.md`.\n- Fix `pipeline-run-dir.md`'s two dangling internal self-references to point at the correct\n  file/step now that the content moved out.\n\n## Acceptance Criteria\n\nNeither file references content by a step number or \"above\"/\"below\" pointer that no longer\nresolves in the cited location.\n\n## Technical Approach\n\nFour targeted text edits, no logic change:\n\n1. `research/verify-mode.md` (~line 124): change \"not on the standalone-auto allowlist in\n   `skills/_shared/pipeline-run-dir.md`\" to cite `_shared/run-dir-resolution.md`'s step 4\n   allowlist instead.\n2. `research/verify-mode.md` (~line 184): change \"`_shared/pipeline-run-dir.md`'s\n   most-recent-matching-directory fallback\" to cite `_shared/run-dir-resolution.md`'s step 2\n   instead.\n3. `pipeline-run-dir.md` (~line 31): change \"step 4's standalone-auto-fallback shape\" to name\n   `run-dir-resolution.md`'s step 4 explicitly, since that step no longer lives in this file.\n4. `pipeline-run-dir.md` (~line 33): change \"when the caller is on the standalone-auto allowlist\n   above\" to point at `run-dir-resolution.md`'s allowlist (also step 4, per edit 3) rather than\n   \"above,\" since the allowlist is no longer in this file at all.\n\n### Key Files\n\n- `plugin/skills/research/verify-mode.md` — retarget two citations (~lines 124, 184)\n- `plugin/skills/_shared/pipeline-run-dir.md` — fix two dangling internal self-references\n  (~lines 31, 33)\n\n## Gotchas\n\n- This is a pure citation-retargeting fix — verify no other file makes the same stale reference\n  by grepping for \"standalone-auto allowlist\" and \"most-recent-matching-directory\" repo-wide\n  before assuming these are the only two gaps #2019's migration left; the record's own Current\n  State only names the two it found, not a guarantee of exhaustiveness.\n- Run this repo's skill-prose conformance tests (`npm test`) after editing, since these are\n  exactly the kind of cross-reference the conformance suites are designed to catch drift in.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review. #2019 split `_shared/pipeline-run-dir.md`'s Resolution-order content out into a new `_shared/run-dir-resolution.md`, and migrated most citers, but two gaps remain:\n\n- `plugin/skills/research/verify-mode.md` (lines ~125, 183) still cites `pipeline-run-dir.md` for content that moved: the standalone-auto allowlist (now `run-dir-resolution.md` step 4) and the most-recent-matching-directory fallback (now step 2). Every other named citer (`/capture`, `tidy/step-6-auto.md`, `flow/materialize.md`, `_shared/auto-decision-log.md`, `sweep/SKILL.md`) was migrated.\n- `_shared/pipeline-run-dir.md` itself (lines ~31, 33) has two internal references that now dangle: \"step 4's standalone-auto-fallback shape\" and \"when the caller is on the standalone-auto allowlist above\" — neither step 4 nor the allowlist lives in this file any more (both moved to `run-dir-resolution.md:14-19`). This file's remaining sections are the CLI reference, Anchoring, and the worktree-local `--run` fallback.\n\n## Deliverables\n- Retarget `research/verify-mode.md`'s two citations to `run-dir-resolution.md`.\n- Fix `pipeline-run-dir.md`'s two dangling internal self-references to point at the correct file/step now that the content moved out.\n\n## Acceptance Criteria\nNeither file references content by a step number or \"above\"/\"below\" pointer that no longer resolves in the cited location.\n",
-        "createdAt": "2026-09-12T16:45:54Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2336,
-        "state": "OPEN",
-        "title": "Dangling citations from #2019's pipeline-run-dir.md split: research/verify-mode.md + the split file's own internal refs",
-        "updatedAt": "2026-09-13T13:32:37Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`shadowPipelineRunDir` (`plugin/bin/lib/hooks/pre-tool-use.js`, the function above `checkPipelineShadowGuard`) denies any Edit/Write/NotebookEdit target or Bash write/mkdir target that would create a run directory under `.claude-tweaks/pipelines/` inside a linked worktree when that run-dir name does not yet exist there. Its only carve-out is `WORK_SPEC_TAIL_RE` (#959), tested against the path tail *below* the run-dir segment; the run-dir name itself (`relParts[0]`) is computed and never inspected. The comment block at the top of the file's exemption section already names `*-tidy-standalone*`/`*-sweep-standalone*` audit files (#1493/#1494) as the gitignore exception, but no code implements a matching carve-out.\n\nThe documented procedure that collides with this: `plugin/skills/tidy/step-7-5-worktree-always.md`'s `pr-first` branch says that before the housekeeping `git add`, the run copies `decisions.md`, `report.md`, and `staged/**` from the `$RUN_ROOT`-anchored run dir into the worktree's own copy of that path and commits the worktree copies, because a worktree cannot `git add` a main-checkout path. `.gitignore` un-ignores exactly those three shapes under `*-tidy-standalone*` and `*-sweep-standalone*` (its #1493/#1494 block), and `_shared/pipeline-run-dir.md`'s Anchoring section describes the same exception. The first `mkdir -p .claude-tweaks/pipelines/{id}-sweep-standalone/staged` inside the scratch worktree is a new run-dir creation to the guard, so it is denied with the \"refusing to create ... a NEW pipeline run directory inside a linked worktree\" message (observed live 2026-09-02 during a `/claude-tweaks:sweep` run at tidy Step 7.5).\n\nNet effect today: under `worktree-always: true` + `pr-first`, a tidy or sweep housekeeping commit can never carry its audit trail. The trail stays real at the main-checkout path (writes there pass `checkWorktreeRequired`'s `.claude-tweaks/pipelines/` prefix exemption) but never lands on the integration branch, contradicting the gitignore and skill text.\n\nExisting coverage: `tests/hooks-pipeline-shadow-guard.test.js` (167 lines) pins the deny shapes plus #959's allow and negative-control cases using `tests/helpers/git-fixtures`' `gitRepo`/`linkedWorktreeOf`; its last negative control asserts a new `decisions.md` in an ordinary run dir is still denied, which must keep holding for non-standalone names.\n\n## Deliverables\n\n- [ ] Add a second, name-keyed carve-out to `shadowPipelineRunDir`: when `runDirName` matches a `STANDALONE_AUDIT_RUN_RE` (`*-tidy-standalone*` or `*-sweep-standalone*`, the same two globs `.gitignore` un-ignores) **and** the tail matches a `STANDALONE_AUDIT_TAIL_RE` covering exactly `decisions.md`, `report.md`, `staged`, or `staged/{anything}` (directory form for `mkdir -p`, file form for the Write/heredoc/`cp` target), return `null` before the existence check — mirroring how `WORK_SPEC_TAIL_RE` is applied. Both regexes sit beside `WORK_SPEC_TAIL_RE` with a comment block of the same shape citing #1493/#1494, `.gitignore`'s block, and `step-7-5-worktree-always.md`'s mirror paragraph.\n- [ ] Keep the deny unchanged for everything else: an empty tail (bare `mkdir` of the run dir itself is still denied unless the tail is one of the three), any other file inside a standalone run dir (`config.yml`, `events.jsonl`, `context/**`, `run-state.json`), a standalone-looking name nested below `spec-*/`, and every non-standalone run-dir name. The deny message's `resolve-run-dir --create` pointer stays as is.\n- [ ] Extend `tests/hooks-pipeline-shadow-guard.test.js` with one block sized like the #959 block: allow cases for `mkdir -p {id}-sweep-standalone/staged`, `mkdir -p {id}-tidy-standalone/staged`, a Write of `{id}-sweep-standalone/decisions.md`, a `cp` of `report.md`, and a Write of `staged/tidy-close-issue-1.md`; negative controls for `{id}-sweep-standalone/config.yml`, `{id}-sweep-standalone/context/records.json`, and `decisions.md` under a plain `{id}-record-42` name (the existing last test already covers this last shape; keep it and add the standalone-adjacent ones).\n- [ ] Update the two prose sites that describe the guard's exemptions so the new carve-out is stated once: the code comment (above), and `_shared/pipeline-run-dir.md`'s Anchoring section sentence that names `work/{n}-spec.md` as \"the exception\" — it now has a second, tidy/sweep-only one. `docs/hooks.md` gets one line if it enumerates the shadow guard's carve-outs (check before editing; do not add a section).\n\n## Acceptance Criteria\n\n1. In a linked worktree fixture, `mkdir -p .claude-tweaks/pipelines/2026-01-01T000000-sweep-standalone/staged` and the `-tidy-standalone` equivalent are allowed by `checkPipelineShadowGuard` when the run dir does not yet exist in the worktree; a Write of `decisions.md` and a `cp` of `report.md` at that run dir's top level are allowed; a Write under `staged/` is allowed.\n2. The same fixture still denies: a new non-standalone run dir of any shape, `config.yml`/`events.jsonl`/`context/**`/`run-state.json` inside a not-yet-existing standalone run dir, and a standalone-named directory nested under `spec-*/`.\n3. Every pre-existing test in `tests/hooks-pipeline-shadow-guard.test.js` passes unchanged, including the `decisions.md`-in-an-ordinary-run-dir negative control.\n4. `npm test` green.\n5. `tidy/step-7-5-worktree-always.md`'s mirror-then-commit paragraph completes end-to-end in a worktree under `worktree-always: true` + `pr-first` without a guard denial, demonstrated once in the PR description by the exact `mkdir -p` and `cp` commands and the hook's allow output.\n6. The comment beside the new regexes and `_shared/pipeline-run-dir.md`'s Anchoring section both name the carve-out, and no third file restates it.\n\n## Technical Approach\n\nA two-regex, name-plus-tail check inserted right after `WORK_SPEC_TAIL_RE.test(tail)` in `shadowPipelineRunDir`. Keying on the run-dir *name* is new for this guard; keep the name regex anchored (`/-(?:tidy|sweep)-standalone/`) so a `spec-{slug}` nesting or an `archive/` parent cannot match (the `.gitignore` block is explicitly top-level-only, \"never spec-*/-nested\"). Use `path.sep`-agnostic character classes the way `WORK_SPEC_TAIL_RE` does. Cross-check the prior-art dimensions the #959 carve-out established (directory form vs file form, `cp` shape, nested negative control) and cover each in the new tests. No change to `checkWorktreeRequired` — the main-checkout writes already pass its prefix exemption.\n\n### Key Files\n\n- `plugin/bin/lib/hooks/pre-tool-use.js` — `STANDALONE_AUDIT_RUN_RE` + `STANDALONE_AUDIT_TAIL_RE` beside `WORK_SPEC_TAIL_RE`; second early-return in `shadowPipelineRunDir`; comment block\n- `tests/hooks-pipeline-shadow-guard.test.js` — new allow and negative-control block after the #959 block\n- `plugin/skills/_shared/pipeline-run-dir.md` — Anchoring section: name the second exception\n- `docs/hooks.md` — one line only if it enumerates the shadow guard's carve-outs\n\n## Gotchas\n\n- The guard runs unconditionally (not gated on `worktree-always`), so the new carve-out also applies on projects without the policy; that is correct — the `.gitignore` exception is not policy-gated either.\n- Order matters: return `null` for the carve-out before the `fs.statSync` existence check, exactly like #959, or the first `mkdir -p` of the run dir still fails because the run dir does not exist yet.\n- `mkdirTargets`/`fileWriteTargets` (Bash parsing) feed the candidates; `cp` is already a recognised write shape (existing test), so no parser change is needed.\n- Sweep's own run dir is minted by `/claude-tweaks:sweep` Step 0 and tidy runs inside it, so the `-sweep-standalone` name is the one a sweep-driven tidy hits; both names must be covered.\n- A worktree copy of `decisions.md` diverges from `$RUN_ROOT`'s the moment the run logs another line; the skill text already says `$RUN_ROOT` stays authoritative until merge. Do not \"fix\" that here.\n\n## Original request\n\n**Related:** none\n\n## Current State\n\n`checkPipelineShadowGuard`/`shadowPipelineRunDir` in `plugin/bin/lib/hooks/pre-tool-use.js` denies\nany Edit/Write/NotebookEdit/Bash write or mkdir that would create a NEW top-level directory under\n`.claude-tweaks/pipelines/` inside a linked worktree — intended to stop a worktree-local shadow of\npipeline run state (`[IL-127]`). The only carve-out implemented is `WORK_SPEC_TAIL_RE` (#959),\nwhich matches `work[/{n}-spec.md]` (or `spec-{slug}/work[/{n}-spec.md]`) tails only.\n\n`.gitignore` (lines 18-30) and `_shared/pipeline-run-dir.md`'s Anchoring section (plus\n`tidy/SKILL.md` Step 7.5) document a second, separate exemption for `*-tidy-standalone*` and\n`*-sweep-standalone*` run directories: under `worktree-always: true` + `integration-model:\npr-first`, a worktree-isolated tidy/sweep run is supposed to mirror that run's `decisions.md`,\n`report.md`, and `staged/**` into the worktree's own copy of the run-dir path, then `git add`+\ncommit them there (#1493/#1494) — those specific paths are the ones `.gitignore` un-ignores.\n\n`shadowPipelineRunDir` has no code path implementing #1493/#1494 at all — it only checks the tail\nagainst `WORK_SPEC_TAIL_RE`. Reproduced live on 2026-09-02 during a `/claude-tweaks:sweep` run:\ninside a worktree at Step 7.5, `mkdir -p .claude-tweaks/pipelines/{sweep-run-id}/staged` (following\nthe documented mirror-then-commit procedure verbatim) was denied with \"refusing to create ... a NEW\npipeline run directory inside a linked worktree\" — indistinguishable from a genuine shadow attempt,\nbecause the guard never inspects the run-dir's own NAME, only the tail beneath it.\n\nNet effect: a worktree-run tidy/sweep housekeeping commit can never land. The audit trail\n(decisions.md, staged proposals) stays real and readable at the main-checkout path — writes there\nare separately exempted by `checkWorktreeRequired`'s own `.claude-tweaks/pipelines/` prefix\nexemption — but is permanently uncommitted, contradicting the documented and gitignore-encoded\ndesign.\n\n## Deliverables\n\n- Extend `shadowPipelineRunDir` (or add a sibling check alongside `WORK_SPEC_TAIL_RE`) so a\n  first-creation of `decisions.md`, `report.md`, or anything under `staged/` is also let through\n  when the run-dir's top-level name matches `*-tidy-standalone*` or `*-sweep-standalone*` — mirror\n  the existing carve-out's narrowness: only those specific paths, nothing else in the run dir, and\n  never a match that isn't a first-creation of exactly one of those.\n- Keep the deny message's `resolve-run-dir --create` pointer accurate for every path this new\n  carve-out does NOT cover (i.e. it should still fire for a genuinely new run-dir name, or for any\n  other file inside a `*-tidy-standalone*`/`*-sweep-standalone*` run dir besides the three\n  exempted paths).\n- Update the code comment block above `WORK_SPEC_TAIL_RE` (or add a sibling comment) to document\n  the new regex the same way #959's is documented, so a future reader doesn't rediscover this gap.\n\n## Acceptance Criteria\n\n- A worktree-isolated session under `worktree-always: true` can successfully `mkdir -p\n  .claude-tweaks/pipelines/{id}-tidy-standalone/staged` and `.claude-tweaks/pipelines/{id}-sweep-standalone/staged`\n  for a run-dir name that does not yet exist in that worktree, and can write `decisions.md`/\n  `report.md` at that run dir's top level — none of these are denied by `checkPipelineShadowGuard`.\n- The guard still denies: (a) any other new pipeline run-dir name/shape inside a worktree, (b) any\n  file under a `*-tidy-standalone*`/`*-sweep-standalone*` run dir besides `decisions.md`,\n  `report.md`, and `staged/**`.\n- A new `node --test` case in the existing pre-tool-use hook test suite covers both the allow and\n  the still-denied shapes above.\n- `tidy/SKILL.md` Step 7.5's documented worktree-mirror-then-commit procedure for a\n  `*-tidy-standalone*`/`*-sweep-standalone*` run completes end-to-end without a guard denial.\n\n",
-        "createdAt": "2026-09-02T08:11:43Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1778,
-        "state": "OPEN",
-        "title": "Pipeline-shadow guard has no #1493/#1494 carve-out for tidy/sweep-standalone run-dir mirroring",
-        "updatedAt": "2026-09-14T11:04:38Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: backend\n\n## Current State\n`captureDebugPayload` (`plugin/bin/lib/hooks/pre-tool-use.js:1633`) is env-gated (`CT_HOOKS_DEBUG_CAPTURE`) diagnostic instrumentation wired directly into `run()` — the general hook dispatcher invoked on every covered tool call — added by #1501 to chase a repro-resistant #989 investigation. #1501's own investigation found the actual cause without it (a fresh worktree's `@{u}` inherited `origin/main`), and #1860/PR #1874 (merged 2026-09-05) fixed `hasNoUpstreamYet` for that case with regression tests covering the inherited-upstream shape. The harness gap the instrumentation was added to diagnose is closed at the test level. Nothing in the repo reads the capture file, and no other open record cites `CT_HOOKS_DEBUG_CAPTURE`. A maintainer has decided (this record's own resolution, 2026-09-13) to remove the instrumentation rather than keep it as permanent tooling.\n\n## Deliverables\n- Remove `captureDebugPayload(ctx)` (function definition, its header comment block, and its call site in `run()`) from `plugin/bin/lib/hooks/pre-tool-use.js`.\n- Remove the three `CT_HOOKS_DEBUG_CAPTURE` tests and their preceding comment block from `tests/hooks-pre-tool-use.test.js`.\n\n## Acceptance Criteria\n- [ ] `captureDebugPayload`'s function definition, its header comment (the `#1501: env-gated debug capture...` block), and its `captureDebugPayload(ctx);` call inside `run()` no longer exist in `plugin/bin/lib/hooks/pre-tool-use.js`.\n- [ ] The three `CT_HOOKS_DEBUG_CAPTURE` tests (`unset by default, no file is written`; `when set, appends one JSON line per call...`; `an unwritable target never breaks the real gate call`) and their preceding `#1501` comment no longer exist in `tests/hooks-pre-tool-use.test.js`.\n- [ ] `grep -rn \"captureDebugPayload\\|CT_HOOKS_DEBUG_CAPTURE\" plugin/ tests/` returns no results.\n- [ ] Full `npm test` passes.\n\n## Technical Approach\nDelete the `captureDebugPayload` function (`plugin/bin/lib/hooks/pre-tool-use.js`, currently ~lines 1621-1646 including its header comment) and its call site inside `run()` (currently the `captureDebugPayload(ctx);` statement at the top of `run()`, ~line 1649) — `run()`'s remaining body is unaffected; it already builds `indeterminateTargets`/`warnings` and calls `runInner` immediately after.\n\nDelete the corresponding test block in `tests/hooks-pre-tool-use.test.js` (currently ~lines 1127-1176: the `#1501` comment plus all three `CT_HOOKS_DEBUG_CAPTURE` tests) — the surrounding tests (the preceding block and the following `#1967` git-stash test) are unaffected and need no renumbering.\n\n### Key Files\n- `plugin/bin/lib/hooks/pre-tool-use.js` — remove `captureDebugPayload` function, its header comment, and its call in `run()`\n- `tests/hooks-pre-tool-use.test.js` — remove the three `CT_HOOKS_DEBUG_CAPTURE` tests and their preceding comment\n\n## Gotchas\n- `run()` calls `captureDebugPayload(ctx)` unconditionally as its first statement — confirmed only one call site and one definition exist in the repo (`grep -rn \"captureDebugPayload\\|CT_HOOKS_DEBUG_CAPTURE\"` against `plugin/bin/lib/hooks/pre-tool-use.js` and `tests/hooks-pre-tool-use.test.js`) before removing either.\n- Pure removal with no behavior change for any caller — `CT_HOOKS_DEBUG_CAPTURE` was already a no-op unless the env var was explicitly set for a deliberate capture session, so no production behavior depends on it.\n\n## Original request\n\npre-tool-use.js: captureDebugPayload is permanent scaffolding in the production hook dispatcher\n\n## Current State\n`captureDebugPayload` (`plugin/bin/lib/hooks/pre-tool-use.js`, ~line 1409) — permanent, env-gated (`CT_HOOKS_DEBUG_CAPTURE`) diagnostic instrumentation added to chase one repro-resistant #989 bug — is wired directly into `run()`, the general hook dispatcher invoked on every covered tool call, rather than the actual ctx-field gap (between synthetic test payloads and live invocations) being closed in the test harness. Low runtime cost when unset, but sets a precedent for future \"repro doesn't match\" investigations to keep accumulating env-gated capture hooks in the production dispatcher rather than fixing the harness gap that necessitated it.\n\n## Deliverables\nEither (a) close the actual ctx-field gap in the test harness so synthetic payloads match live invocations and remove `captureDebugPayload` from `run()`, or (b) make a deliberate call to keep it as permanent tooling and document why in place of the current \"added to chase one bug\" framing.\n\n## Acceptance Criteria\n- [ ] A decision is made and recorded: remove captureDebugPayload (harness gap closed) or keep it deliberately (comment updated to reflect permanent-tooling intent).\n- [ ] Full `npm test` passes.\n\nDefer-reason: needs-human-decision — whether to invest in closing the harness gap vs. keep the instrumentation is a product/maintainer call, not a mechanical fix; found by the pre-v6.112.0 whole-branch review.\n",
-        "createdAt": "2026-08-31T11:30:30Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACq4x75g",
-            "name": "backlog",
-            "description": "Captured idea or deferred work, tracked via /claude-tweaks:capture and /claude-tweaks:tidy",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACq41dsw",
-            "name": "backlog:category-technical",
-            "description": "technical-category backlog item",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          }
-        ],
-        "number": 1739,
-        "state": "OPEN",
-        "title": "pre-tool-use.js: captureDebugPayload is permanent scaffolding in the production hook dispatcher",
-        "updatedAt": "2026-09-14T11:05:14Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
         }
       }
     ],
