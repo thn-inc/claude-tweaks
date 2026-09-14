@@ -139,7 +139,7 @@ function removeLabel({ owner, repo, issueNumber, label, runner = defaultRunner }
 // intentional (the grant is the standing retry request) — see
 // `_shared/issue-claims.md`'s "Grant revocation" section.
 function releaseClaim({
-  owner, repo, issueNumber, runId, reason, link, removeGrants = false, removeInProgress = true, runner = defaultRunner, gitRunner, now = Date.now(),
+  owner, repo, issueNumber, runId, reason, link, sweep, removeGrants = false, removeInProgress = true, runner = defaultRunner, gitRunner, now = Date.now(),
 }) {
   const result = { outcome: 'failed', calls: [], commentPosted: false, labelsRemoved: [], labelsFailed: [], note: null };
   let blob;
@@ -148,11 +148,24 @@ function releaseClaim({
   const classified = classifyClaimBlob(blob.content, now);
   if (classified.state === 'unreadable') { result.outcome = 'unreadable'; return result; }
   const isHeld = classified.state === 'live' || classified.state === 'stale';
+  // #2090: a sweep release (a /tidy run releasing a claim it never held)
+  // replaces the plain ownership check with a narrower rule — the sweep may
+  // break a 'stale' foreign claim (past its own TTL) unconditionally, or a
+  // 'live' foreign claim only when the caller has already confirmed the
+  // issue itself is closed (`sweep.issueClosed`); a 'live' claim on an OPEN
+  // issue is never swept, sweep flag or not. `sweptFrom` records the
+  // original holder so the tombstone (and this function's own result) never
+  // claims a false owner.
+  let sweptFrom;
   if (isHeld) {
     const holder = JSON.parse(blob.content).runId;
-    if (holder !== runId) { result.outcome = 'skipped-not-owner'; result.holder = holder; return result; }
+    const sweepOk = sweep && (classified.state === 'stale' || (classified.state === 'live' && sweep.issueClosed === true));
+    if (holder !== runId && !sweepOk) { result.outcome = 'skipped-not-owner'; result.holder = holder; return result; }
+    if (sweepOk && holder !== runId) sweptFrom = holder;
   }
-  const payload = releasePayload({ issueNumber, runId, reason, link: link || undefined, now });
+  const payload = releasePayload({
+    issueNumber, runId, reason, link: link || undefined, sweptFrom, now,
+  });
   if (isHeld) {
     try {
       writeTombstone({
@@ -160,6 +173,7 @@ function releaseClaim({
       });
       result.calls.push('put');
       result.outcome = 'released';
+      if (sweptFrom) result.sweptFrom = sweptFrom;
     } catch (err) {
       if (!isAlreadyReleasedError(err)) { result.error = errorText(err); return result; }
       // A write CONFLICT is not by itself evidence that this claim was already
@@ -187,10 +201,13 @@ function releaseClaim({
         if (after.state === 'live' || after.state === 'stale') {
           let holderAfter = null;
           try { holderAfter = JSON.parse(fresh.content).runId; } catch { holderAfter = null; }
-          if (holderAfter === runId) {
+          // Under a sweep, "still held by the ORIGINAL holder" is the same
+          // fail-closed shape as "still held by this run" in the ordinary
+          // case below — either way the tombstone never actually landed.
+          if (holderAfter === runId || (sweptFrom && holderAfter === sweptFrom)) {
             // Nothing about THIS claim changed — the conflict came from unrelated
             // branch activity. The tombstone was never written; the claim is still held.
-            result.error = `write conflict releasing #${issueNumber}, but the claim is still held by this run (${runId}) — the release did NOT happen (unrelated claims-registry activity lost us the compare-and-swap; retry): ${errorText(err)}`;
+            result.error = `write conflict releasing #${issueNumber}, but the claim is still held by ${holderAfter === runId ? 'this run' : `the original holder (${holderAfter})`} — the release did NOT happen (unrelated claims-registry activity lost us the compare-and-swap; retry): ${errorText(err)}`;
             return result;
           }
         } else if (after.state === 'unreadable') {

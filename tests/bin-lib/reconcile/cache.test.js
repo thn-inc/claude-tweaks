@@ -7,7 +7,7 @@ const path = require('path');
 const {
   readCache, writeCache, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS,
   RESIDUE_ESCALATE_THRESHOLD, recordResidueFailure, recordResidueSuccess, listResidueFailures,
-  trackResidue,
+  trackResidue, pruneResidueFailures,
 } = require('../../../plugin/bin/lib/reconcile/cache');
 
 function tmpRoot() {
@@ -196,4 +196,71 @@ test('trackResidue: never throws when escalate itself throws (best-effort)', () 
   for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
     assert.doesNotThrow(() => trackResidue(root, 'o/r', 'removal-failed', '/x/wt-throws', { failed: true, lastError: 'x' }, { escalate }));
   }
+});
+
+// #1892 Deliverable 3 — pruneResidueFailures drops any entry whose live path
+// is gone, regardless of reason (reason-agnostic by design — #1811's
+// structurally-stuck prune shares this same call).
+test('pruneResidueFailures: drops a non-escalated entry whose path is absent on disk, without calling resolve', () => {
+  const root = tmpRoot();
+  const gonePath = path.join(root, 'never-existed');
+  recordResidueFailure(root, 'move-failed', gonePath, { now: 1 });
+  assert.equal(listResidueFailures(root).length, 1);
+
+  const calls = [];
+  const resolve = (args) => { calls.push(args); return { status: 'closed', number: 1 }; };
+  pruneResidueFailures(root, 'o/r', { resolve });
+
+  assert.deepEqual(listResidueFailures(root), []);
+  assert.equal(calls.length, 0, 'a non-escalated entry must never trigger a resolution call');
+});
+
+test('pruneResidueFailures: keeps an entry whose path still exists on disk', () => {
+  const root = tmpRoot();
+  const stillLivePath = fs.mkdtempSync(path.join(root, 'still-live-'));
+  recordResidueFailure(root, 'move-failed', stillLivePath, { now: 1 });
+
+  pruneResidueFailures(root, 'o/r');
+
+  assert.equal(listResidueFailures(root).length, 1);
+});
+
+test('pruneResidueFailures: an escalated entry whose path is gone triggers exactly one resolve call, naming the reason and path, and is still dropped', () => {
+  const root = tmpRoot();
+  const gonePath = path.join(root, 'gone-escalated');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    recordResidueFailure(root, 'move-failed', gonePath, { now: 100 + i });
+  }
+  assert.equal(listResidueFailures(root)[0].escalated, true);
+
+  const calls = [];
+  const resolve = (args) => { calls.push(args); return { status: 'closed', number: 7 }; };
+  pruneResidueFailures(root, 'o/r', { resolve });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].repo, 'o/r');
+  assert.equal(calls[0].reason, 'move-failed');
+  assert.equal(calls[0].targetPath, gonePath);
+  assert.deepEqual(listResidueFailures(root), []);
+});
+
+test('pruneResidueFailures: a resolve failure (gh absent / network) still drops the cache entry, never throws', () => {
+  const root = tmpRoot();
+  const gonePath = path.join(root, 'gone-resolve-fails');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    recordResidueFailure(root, 'move-failed', gonePath, { now: 200 + i });
+  }
+  const resolve = () => { throw new Error('gh not found'); };
+  assert.doesNotThrow(() => pruneResidueFailures(root, 'o/r', { resolve }));
+  assert.deepEqual(listResidueFailures(root), []);
+});
+
+test('pruneResidueFailures: reason-agnostic — a structurally-stuck entry whose path is gone is pruned the same way', () => {
+  const root = tmpRoot();
+  const gonePath = path.join(root, 'gone-stuck');
+  recordResidueFailure(root, 'structurally-stuck', gonePath, { now: 1 });
+
+  pruneResidueFailures(root, 'o/r');
+
+  assert.deepEqual(listResidueFailures(root), []);
 });

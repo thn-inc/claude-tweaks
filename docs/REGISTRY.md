@@ -22,7 +22,7 @@
 | docs/incident-log.md | Post-mortems behind each `[IL-nn]`-tagged Don't in CLAUDE.md | CLAUDE.md `## Don'ts`, docs/donts.md |
 | docs/shipped-versions.tsv | Authoritative record of every shipped version + date | `plugin/.claude-plugin/plugin.json`, `CHANGELOG.md` |
 | docs/decisions/*.md | Architecture Decision Records — hard-to-reverse, surprising trade-offs | *(no auto-detect — written deliberately by /wrap-up's ADR gate)* |
-| docs/diagrams/*.html | Generated visual diagrams | *(no auto-detect — generated on demand by `/claude-tweaks:visualize`)* |
+| docs/diagrams/*.html | Generated visual diagrams — the directory does not exist until the first `/claude-tweaks:visualize` run creates it, so a missing `docs/diagrams/` is not a registry break | *(no auto-detect — generated on demand by `/claude-tweaks:visualize`)* |
 | docs/journeys/*.md | User/developer journeys backing agent e2e testing | *(no auto-detect — see per-journey `files:` frontmatter instead)* |
 | docs/plans/*.md | Per-run pipeline ledgers (spec/record scoping, resolve-gate state) | *(no auto-detect — generated per pipeline run by `/claude-tweaks:ledger`)* |
 | docs/superpowers/plans/*.md, docs/superpowers/specs/*.md | Execution plans and design docs produced and consumed by the pipeline (`/superpowers:writing-plans`, `/superpowers:brainstorming`) | *(no auto-detect — generated per run; consumed artifacts are deleted at wrap-up)* |

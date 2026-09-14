@@ -2,7 +2,7 @@
 //
 // Pure(ish) filesystem helpers for the session-scoped model-failure
 // blacklist (#763) — the code twin of
-// skills/_shared/subagent-output-contract.md's Model Selection section's
+// skills/_shared/subagent-dispatch-core.md's Model Selection section's
 // "record-failure" note. Mirrors bin/lib/issues/record-snapshot.js's
 // session-file convention exactly: one file per session under os.tmpdir(),
 // keyed by CLAUDE_CODE_SESSION_ID. No network; resolve-profile.js owns

@@ -21,7 +21,7 @@ For each dimension (maturity, doc-tier), rate the signal strength:
 When `auto` mode is set AND both dimensions classify with confidence `high` AND signals are internally consistent:
 
 1. Auto-confirm the detected classification
-2. Log to the active pipeline's `decisions.md` using the resolution order in `_shared/pipeline-run-dir.md`. `/init` is on the standalone-auto allowlist — if `PIPELINE_RUN_DIR` is unset and no recent run matches, create a standalone run dir at `.claude-tweaks/pipelines/{ISO-timestamp}-init-standalone/` and append the entry there. Never suppress the audit-log write.
+2. Log to the active pipeline's `decisions.md` using the resolution order in `_shared/run-dir-resolution.md`. `/init` is on the standalone-auto allowlist — if `PIPELINE_RUN_DIR` is unset and no recent run matches, create a standalone run dir at `.claude-tweaks/pipelines/{ISO-timestamp}-init-standalone/` and append the entry there. Never suppress the audit-log write.
    ```
    AUTO {time} — Phase 3: classification auto-confirmed. Maturity: {value} (confidence: high). Doc tier: {value} (confidence: high). Proceed to Phase 4.
    ```

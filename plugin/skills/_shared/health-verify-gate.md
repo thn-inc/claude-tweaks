@@ -32,6 +32,12 @@ finding schema):
    reason field should ground the claimed tier, not just assert one.
 5. **Is effort (where the schema carries it) consistent with the fix field?** A one-line fix
    should not carry a high-effort tier, and vice versa.
+6. **Does the replacement text conform to the contract that governs the target?** (Only where the
+   schema carries literal replacement text — `oldString`/`newString`.) When the edit writes into a
+   structured field whose vocabulary is defined elsewhere in the repo (a ledger `Status` cell, a
+   policy key, a frontmatter facet, a label name), locate that definition and check the proposed
+   value against it. A finding can be real, actionable, and reproducible and still emit an
+   out-of-enum value — the first five questions never look at conformance.
 
 Drop any finding that fails any question, and log the drop reason. A smaller set of high-quality
 findings is always preferable to a larger set with noise. This is a judgment step, not a
@@ -44,7 +50,9 @@ failure mode it exists to prevent.
 `journey-health/SKILL.md`'s VERIFY GATE step each inline their own version of the questions
 above, worded against their own finding schema and covering every question that schema carries
 — question 5 is explicitly conditional on an `effort` field, so a skill whose findings derive
-`effort` mechanically rather than carrying it as a judged field inlines the rest without it.
+`effort` mechanically rather than carrying it as a judged field inlines the rest without it, and
+question 6 is likewise conditional on a schema carrying literal replacement text (today only
+`docs-health`'s `oldString`/`newString`).
 When one skill's copy changes, check the other
 two against this file's canonical shape rather than assuming the change was skill-specific — the
 discipline itself has no per-skill behavioral variation, only the field names referenced in each

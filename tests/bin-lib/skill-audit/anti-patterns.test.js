@@ -620,5 +620,18 @@ test('every shipped skill has a parseable Anti-Patterns table', () => {
   //   exit code alone", "Leaving the test issue open after a failed run for
   //   debugging"). Measured by RUNNING the parser on the working tree (actual
   //   403), not by adding 5 to 398 (`[IL-99]`).
-  assert.strictEqual(total, 403);
+  //
+  //   403 -> 411, #2256 (new `/claude-tweaks:release` skill). A brand-new
+  //   SKILL.md, not a diff to an existing one — its own `## Anti-Patterns`
+  //   table ships with the rows "Running the engine without Step 3's
+  //   review", "Treating a missing hook run as success at Step 6",
+  //   "Rendering a release recommendation or a shipped-record row from an
+  //   unverified premise", "Honouring `--allow-blocking` under `--train`",
+  //   "Reading `integration-model` afresh instead of the pack's `engine`
+  //   field", "Reporting a landed-but-unverified release as `HELD`",
+  //   "Continuing past a degraded `engine`, `unreleased` or
+  //   `proposedVersion` field", and the `failed`-vs-`PARTIAL` row. Measured
+  //   by RUNNING the parser on the working tree (actual 411), not by adding
+  //   the row count to 403 (`[IL-99]`).
+  assert.strictEqual(total, 411);
 });

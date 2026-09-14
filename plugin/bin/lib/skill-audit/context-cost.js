@@ -7,13 +7,14 @@
 // corpus reached 931 KB before anyone looked. Phases 1-3 removed ~150 KB; this
 // module exists so the next 150 KB does not accumulate unnoticed.
 //
-// The ceiling is CLAUDE.md's own 40 KB soft ceiling per SKILL.md. After the
-// Phase 3 extraction several files sit within a kilobyte of it, so a regression
-// is one added paragraph away — which is precisely when an automated check earns
-// its keep over periodic manual measurement.
+// The ceiling is a 45 KB soft ceiling per SKILL.md (raised from 40 KB — see
+// docs/donts.md). After the Phase 3 extraction several files sit within a
+// kilobyte of it, so a regression is one added paragraph away — which is
+// precisely when an automated check earns its keep over periodic manual
+// measurement.
 //
-// Since #1990, the per-file 40 KB ceiling is a warning tier, not a hard gate:
-// the number a reader actually pays is the composed bundle at a compose call
+// Since #1990, the per-file ceiling is a warning tier, not a hard gate: the
+// number a reader actually pays is the composed bundle at a compose call
 // site (`composedBytesReport`, Task 4), not any one source file in isolation.
 // Per-file bytes are CRLF-normalized and marker-stripped (`measuredBytes`) so
 // a `core.autocrlf=true` checkout or an unrendered `<!-- when: ... -->` marker
@@ -27,7 +28,7 @@ const {
   stripMarkers, MarkerError, parseMarkers, compose, KEYS, VOCAB, UNRESOLVED,
 } = require('../compose-context/compose');
 
-const CEILING_BYTES = 40 * 1024;
+const CEILING_BYTES = 45 * 1024;
 
 // Frontmatter `description:` budget (#394). Every description loads into every
 // session of every project with the plugin enabled, regardless of whether that
@@ -59,7 +60,15 @@ const DESCRIPTION_CEILING_CHARS = 260;
 // "integration test", "claim race", "cross-session" — nothing spare to trim
 // without weakening skill selection). Bumped to 7900, not the bare 7864
 // minimum, for the same next-legitimate-addition headroom reason.
-const DESCRIPTION_TOTAL_CEILING_CHARS = 7900;
+//
+// 7900 -> 8200, #2256 (new `/claude-tweaks:release` skill, 260 chars).
+// Corpus was at 8131/7900 once this description was added -- the same shape
+// as the two bumps above: an already-tight per-skill description (Keywords
+// tokens for a genuinely new trigger vocabulary — "release", "tag",
+// "changelog", "release-please", "release train", "Release-As" — nothing
+// spare to trim without weakening skill selection). Bumped to 8200, not the
+// bare 8131 minimum, for the same next-legitimate-addition headroom reason.
+const DESCRIPTION_TOTAL_CEILING_CHARS = 8200;
 
 function skillsDir(repoRoot) {
   return path.join(repoRoot, 'skills');
@@ -144,7 +153,7 @@ function overCeiling(entries) {
   return entries.filter((e) => e.bytes > CEILING_BYTES);
 }
 
-// The per-file 40 KB ceiling is a warning tier since #1990 — the hard gate is
+// The per-file ceiling is a warning tier since #1990 — the hard gate is
 // composed bytes per compose call site (`overComposedCeiling`, Task 4).
 function overCeilingWarnings(entries) {
   return overCeiling(entries).map((e) => `${e.name || e.file} ${(e.bytes / 1024).toFixed(1)} KB`);
@@ -347,18 +356,25 @@ function findComposeCallSites(repoRoot) {
   return out;
 }
 
-// #1989's PR-time measurement (parent #1987 promise F4) reported 55,995 B
-// under pr-first+gh — but that was one combination, not the worst case: the
-// real corpus's actual max across all four integration-model x transport
-// combinations is 58,755 B, at local-merge+mcp, and the `unresolved`
-// both-branches row a standalone run reads is 58,761 B (measured here at
-// #1990's authoring time; run the informational test to reconfirm). Either way it's
-// over CEILING_BYTES before this record exists. This record's Non-Goals say
-// it only measures, so the gate cannot demand a restructure it forbids;
-// restructuring the merge bundle is #2002 (filed at this record's wrap-up).
-// The stale-exception test below removes this entry's
-// reason to exist the moment `merge` fits under CEILING_BYTES on its own.
-const COMPOSED_STEP_EXCEPTIONS = { merge: 59 * 1024 };
+// #2002 removed the `merge` exception: the reader-need split of
+// `_shared/pr-early-run-lifecycle.md` (run-start-only Steps 1-4/Root
+// cause/Resume kept there; the merge-time content — Phase-checklist update,
+// Pre-merge title/description refresh, and the merge-time gh-absent degrade
+// row — moved to the new `_shared/pr-checklist-refresh.md`) brought the
+// `merge` step's real max to 39,917 B, under CEILING_BYTES on its own. See
+// `_shared/pr-checklist-refresh.md` and the two updated compose call sites
+// (`wrap-up/auto-merge-short-circuit.md`, `wrap-up/review-console.md`).
+//
+// scan-procedures.md's expanded transport-fallback paragraph had pushed the
+// `claims` step's measured max to 42,506 B, over the old 40 KB CEILING_BYTES
+// — a `claims: 45 * 1024` stopgap exception (#2289's predecessor) unblocked
+// #2073's PR rather than blocking it on a prose-restructuring pass. The
+// ceiling was raised to 45 KB afterward, and 42,506 B now fits under it on
+// its own — per this file's own stale-exception rule, the entry is removed
+// rather than carried forward at a now-redundant value (#2289 is moot unless
+// a later edit pushes the step back over the raised ceiling). No entry
+// remains: this evaluates to `{}` until a real regression adds one back.
+const COMPOSED_STEP_EXCEPTIONS = {};
 
 // One row per compose call site in the shipped skill prose — the producer
 // set the composed-bytes hard gate (`overComposedCeiling`) runs over.

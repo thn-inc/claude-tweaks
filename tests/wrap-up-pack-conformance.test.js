@@ -6,6 +6,7 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const { CEILING_BYTES } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'skill-audit', 'context-cost'));
 
 test('wrap-up SKILL.md calls wrap-up-pack.js --run exactly once, in Phase 3, and stays under the ceiling (#1930 AC5)', () => {
   const skill = read('plugin/skills/wrap-up/SKILL.md');
@@ -14,7 +15,7 @@ test('wrap-up SKILL.md calls wrap-up-pack.js --run exactly once, in Phase 3, and
   const phase4 = skill.indexOf('## Phase 4');
   const call = skill.indexOf('wrap-up-pack.js" --run');
   assert.ok(phase3 < call && call < phase4, 'the call lives in Phase 3');
-  assert.ok(Buffer.byteLength(skill, 'utf8') <= 40960);
+  assert.ok(Buffer.byteLength(skill, 'utf8') <= CEILING_BYTES);
 });
 
 test('every pack-reading sub-file cites wrap-up-pack.json and states the absent-file fallback (#1930 AC5)', () => {

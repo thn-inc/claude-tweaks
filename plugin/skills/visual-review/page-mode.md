@@ -34,7 +34,7 @@ agent-browser batch --session <session> \
 
 > **Parallel execution (conditional):** When the review covers 3+ independent pages (different URLs with no shared state or navigation dependency), dispatch page reviews as parallel Task agents. Each agent owns its own session, runs its own batch, and returns findings in the `| Severity | Path:Line | Finding | Evidence |` format (see the output template below). The dispatcher maps these rows into the Step 6 Report & Route table using the column mapping documented immediately above. When pages share state (form submission on page A affects page B) or there are fewer than 3 pages, review sequentially.
 >
-> **Contract:** Each agent follows `_shared/subagent-output-contract.md` — minimal input, status line first, output template inlined verbatim below. Dispatch shape: single-assistant-message rule (`_shared/subagent-output-contract.md`'s fan-out section) applies.
+> **Contract:** Each agent follows `_shared/subagent-output-contract.md` — minimal input, status line first, output template inlined verbatim below. Dispatch shape: single-assistant-message rule (`_shared/subagent-dispatch-core.md`'s fan-out section) applies.
 >
 > **Model profile:** [Use: Standard] — per-page review agents run Steps 1-5 (health, first impressions, persona walk, structured analysis, reimagine) which require integration across snapshot, screenshot, vitals, and source context. Upgrade to Capable only when the page's "reimagine" pass is the primary deliverable and creative synthesis dominates the work. Resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard` (contract § Model Selection).
 >

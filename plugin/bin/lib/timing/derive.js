@@ -12,7 +12,8 @@
 // (an unrecognized skill gets its own attributed span rather than silently
 // nesting into an unrelated phase). A maintainer adding a new nested-skill
 // call site inside review/wrap-up/build must add its name here, or every
-// run will grow a spurious top-level phase.
+// run will grow a spurious top-level phase — tests/timing-nested-parent-roster.test.js
+// pins this against the corpus.
 'use strict';
 
 const PHASES = ['call-1', 'call-2', 'build', 'plan', 'tasks', 'test', 'review', 'polish', 'wrap-up', 'merge'];

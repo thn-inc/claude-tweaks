@@ -2,7 +2,7 @@
 // bin/release-claim.js — release a claims-registry claim in one command.
 //   node bin/release-claim.js <issue> --run <run-dir> --reason <reason> [--link <url>] \
 //     [--remove-grants] [--remove-in-progress] [--keep-in-progress-label] [--repo owner/name] \
-//     [--section "/<skill>"] [--step <text>] [--help]
+//     [--sweep] [--section "/<skill>"] [--step <text>] [--help]
 // Performs wrap-up/cleanup-procedures.md Section E steps 3-8 for one issue: read the
 // blob, ownership check (never delete a successor's claim), releasePayload -> tombstone
 // PUT carrying the read sha, release comment; --remove-grants strips auto:build/auto:merge;
@@ -12,7 +12,17 @@
 // omitted the flag silently left the label in place, with labelsRemoved/labelsFailed both
 // reporting empty and no error). --remove-in-progress is still accepted as a no-op for any
 // existing call site that still passes it explicitly. --keep-in-progress-label is the new
-// (rarely needed) opt-out. One AUTO line is appended to
+// (rarely needed) opt-out.
+// --sweep (#2090) is for a /tidy sweep releasing a claim it does not own — the ownership
+// check above only lets a run release its OWN claim, which by construction a sweep never
+// holds. With --sweep, this CLI resolves the issue's own open/closed state (`gh issue view
+// --json state`) and passes it through as `sweep.issueClosed`; the library then permits the
+// release when the blob classifies 'stale' (unconditionally) or 'live' AND the issue is
+// closed — a 'live' claim on an OPEN issue is never swept. --reason must start with
+// `swept:` when --sweep is set (validated before any gh call). The resulting tombstone
+// carries the ORIGINAL holder's runId as `sweptFrom` — never a fake owner — and this CLI's
+// JSON/decisions.md line name it. Without --sweep, behavior is byte-for-byte unchanged.
+// One AUTO line is appended to
 // <run-dir>/decisions.md when that directory exists AND resolves as anchored under the
 // main checkout (resolveTarget — a worktree-local shadow is refused, never silently
 // written, matching bin/log-decision.js's guard [IL-127]). runId = basename(<run-dir>).
@@ -37,9 +47,9 @@ const { execFileSync } = require('child_process');
 const release = require('./lib/release-claim/release');
 const { formatEntry, appendEntry, resolveTarget } = require('./lib/log-decision/append');
 const { defaultRunner: gitDefaultRunner } = require('./lib/issues/claims-git-cas');
-const { parseRepo } = require('./lib/repo-resolve');
+const { parseRepo, ghAvailable } = require('./lib/repo-resolve');
 
-const USAGE = 'usage: release-claim.js <issue> --run <run-dir> --reason <reason> [--link <url>] [--remove-grants] [--remove-in-progress] [--keep-in-progress-label] [--repo owner/name] [--section "/<skill>"] [--step <text>] [--help]\n';
+const USAGE = 'usage: release-claim.js <issue> --run <run-dir> --reason <reason> [--link <url>] [--remove-grants] [--remove-in-progress] [--keep-in-progress-label] [--repo owner/name] [--sweep] [--section "/<skill>"] [--step <text>] [--help]\n';
 const EXIT = { released: 0, 'already-released': 3, 'skipped-not-owner': 4, unreadable: 5, failed: 1 };
 
 // bot:in-progress removal is opt-out, not opt-in (#1631) — parseArgs models this as two
@@ -48,7 +58,7 @@ const EXIT = { released: 0, 'already-released': 3, 'skipped-not-owner': 4, unrea
 // one a caller actually passed without either flag silently overriding a default.
 function parseArgs(argv) {
   const o = {
-    issue: null, run: null, reason: null, link: null, removeGrants: false, removeInProgress: false, keepInProgressLabel: false, repo: null, section: null, step: null, help: false,
+    issue: null, run: null, reason: null, link: null, removeGrants: false, removeInProgress: false, keepInProgressLabel: false, repo: null, sweep: false, section: null, step: null, help: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -61,6 +71,7 @@ function parseArgs(argv) {
     else if (a === '--remove-in-progress') o.removeInProgress = true;
     else if (a === '--keep-in-progress-label') o.keepInProgressLabel = true;
     else if (a === '--repo') o.repo = next();
+    else if (a === '--sweep') o.sweep = true;
     else if (a === '--section') o.section = next();
     else if (a === '--step') o.step = next();
     else if (/^--/.test(a)) return { error: `unknown argument: ${a}` };
@@ -70,10 +81,18 @@ function parseArgs(argv) {
   return o;
 }
 
+// #2090: resolve whether the target issue is currently open or closed, for a
+// sweep's `sweep.issueClosed` decision. Never assumes closed on a failed
+// read — the caller must abort the release rather than guess.
+function resolveIssueState(runner, owner, repo, issue) {
+  const out = runner(['issue', 'view', String(issue), '--repo', `${owner}/${repo}`, '--json', 'state', '-q', '.state']);
+  return String(out).trim().toUpperCase();
+}
+
 const realDeps = {
   runner: release.defaultRunner,
   gitRunner: gitDefaultRunner,
-  ghAvailable: () => { try { execFileSync('gh', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } },
+  ghAvailable,
   remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }),
   now: () => Date.now(),
   cwd: () => process.cwd(),
@@ -87,7 +106,8 @@ function decisionText(issue, r, reason, link) {
   if (r.outcome === 'unreadable') return `skipped release of issue #${issue}: claim blob is corrupt/unreadable — cannot determine ownership (not a competing claim; repair or force-release required, see _shared/issue-claims.md's "Repairing an unreadable claim blob" section)`;
   if (r.outcome === 'skipped-not-owner') return `skipped release of issue #${issue}: claim held by run ${r.holder}`;
   const detail = r.outcome === 'already-released' ? ' — already released or swept' : '';
-  let text = `released claim on #${issue} (${reason})${link ? `; link ${link}` : ''}${detail}`;
+  const sweptNote = r.sweptFrom ? ` (swept from run ${r.sweptFrom})` : '';
+  let text = `released claim on #${issue} (${reason})${sweptNote}${link ? `; link ${link}` : ''}${detail}`;
   if (r.labelsRemoved.length) text += `; labels removed: ${r.labelsRemoved.join(', ')}`;
   if (r.labelsFailed.length) text += `; label removal failed: ${r.labelsFailed.join(', ')}`;
   return text;
@@ -103,6 +123,12 @@ function run(argv, deps = realDeps) {
   if (!o.run) { deps.stderr('release-claim.js: --run <run-dir> is required (its basename is the claim runId)\n' + USAGE); return 2; }
   if (!o.reason || !o.reason.trim()) { deps.stderr('release-claim.js: --reason is required\n' + USAGE); return 2; }
   if (o.removeInProgress && o.keepInProgressLabel) { deps.stderr('release-claim.js: --remove-in-progress and --keep-in-progress-label are contradictory\n' + USAGE); return 2; }
+  // #2090: validated before any gh call — a sweep's reason must self-document
+  // as a sweep, never silently reuse an ordinary release's reason vocabulary.
+  if (o.sweep && !o.reason.trim().startsWith('swept:')) {
+    deps.stderr('release-claim.js: --sweep requires --reason to start with "swept:"\n' + USAGE);
+    return 2;
+  }
   if (!deps.ghAvailable()) {
     deps.stderr('release-claim.js: `gh` is required — in a gh-absent environment run the same read-classify-write over the MCP tools per _shared/github-write-transport.md and _shared/issue-claims.md ("The lock").\n');
     return 2;
@@ -140,8 +166,17 @@ function run(argv, deps = realDeps) {
       deps.stderr(`release-claim.js: decisions.md not written — run dir does not exist: ${runDir}\n`);
     }
   }
+  let sweep;
+  if (o.sweep) {
+    let state;
+    try { state = resolveIssueState(deps.runner, repoSpec.owner, repoSpec.repo, issue); } catch (err) {
+      deps.stderr(`release-claim.js: --sweep could not resolve #${issue}'s open/closed state — aborting rather than assuming closed: ${err && err.message}\n`);
+      return 1;
+    }
+    sweep = { issueClosed: state === 'CLOSED' };
+  }
   const r = release.releaseClaim({
-    owner: repoSpec.owner, repo: repoSpec.repo, issueNumber: issue, runId, reason, link: o.link || undefined,
+    owner: repoSpec.owner, repo: repoSpec.repo, issueNumber: issue, runId, reason, link: o.link || undefined, sweep,
     removeGrants: o.removeGrants, removeInProgress, runner: deps.runner, gitRunner: deps.gitRunner, now: deps.now(),
   });
   for (const label of r.labelsFailed) {
@@ -158,6 +193,7 @@ function run(argv, deps = realDeps) {
   deps.stdout(JSON.stringify({
     issue, runId, reason, link: o.link || null, outcome: r.outcome, holder: r.holder || null, commentPosted: r.commentPosted,
     labelsRemoved: r.labelsRemoved, labelsFailed: r.labelsFailed, note: r.note || null, error: r.error || null, logged,
+    sweep: o.sweep, sweptFrom: r.sweptFrom || null,
   }, null, 2) + '\n');
   return EXIT[r.outcome] ?? 1;
 }

@@ -14,8 +14,23 @@ test('decideRemotePrune: merged PR + cherry-equivalent -> delete', () => {
 test('decideRemotePrune: open PR -> skip, even when cherry-equivalent', () => {
   assert.strictEqual(decideRemotePrune({ branch: 'build/x', cherryEquivalent: true, prState: { number: 3, state: 'OPEN' } }).reason, 'pr-open');
 });
-test('decideRemotePrune: merged PR but not cherry-equivalent (rebased remnant) -> skip', () => {
-  assert.strictEqual(decideRemotePrune({ branch: 'build/x', cherryEquivalent: false, prState: { number: 3, state: 'MERGED' } }).reason, 'not-cherry-equivalent');
+// #2252 supersedes #1082's "no new per-branch reasons" pin for exactly one
+// rename: `not-cherry-equivalent` -> `not-proven-merged`, because the skip
+// now means "neither cherry-equivalence nor squash provenance proved it",
+// and adds the delete-side `merged-pr-squash-merged`. Deliberate,
+// documented exception — see docs/reconcile-checks.md's Merged-proof section.
+test('decideRemotePrune: merged PR but neither proof (rebased remnant) -> skip not-proven-merged', () => {
+  assert.strictEqual(decideRemotePrune({ branch: 'build/x', cherryEquivalent: false, prState: { number: 3, state: 'MERGED' } }).reason, 'not-proven-merged');
+  assert.strictEqual(decideRemotePrune({ branch: 'build/x', cherryEquivalent: false, squashMerged: false, prState: { number: 3, state: 'MERGED' } }).reason, 'not-proven-merged');
+});
+test('decideRemotePrune: merged PR + squash provenance (not cherry-equivalent) -> delete', () => {
+  const r = decideRemotePrune({ branch: 'build/x', cherryEquivalent: false, squashMerged: true, prState: { number: 3, state: 'MERGED' } });
+  assert.strictEqual(r.action, 'delete');
+  assert.strictEqual(r.reason, 'merged-pr-squash-merged');
+});
+test('decideRemotePrune: squash provenance never outranks OPEN or a missing merged PR', () => {
+  assert.strictEqual(decideRemotePrune({ branch: 'build/x', cherryEquivalent: false, squashMerged: true, prState: { number: 3, state: 'OPEN' } }).reason, 'pr-open');
+  assert.strictEqual(decideRemotePrune({ branch: 'build/x', cherryEquivalent: false, squashMerged: true, prState: null }).reason, 'no-merged-pr');
 });
 test('decideRemotePrune: cherry-equivalent but no PR / closed-unmerged PR -> skip (no merged-PR corroboration)', () => {
   assert.strictEqual(decideRemotePrune({ branch: 'build/x', cherryEquivalent: true, prState: null }).reason, 'no-merged-pr');
@@ -137,7 +152,7 @@ test('pruneRemote: refreshes origin before judging — a branch advanced from an
   const r = pruneRemote({ cwd: dir, integration: 'main', dryRun: false, resolvePr: () => ({ number: 1, state: 'MERGED' }), resolvePrBulk: permissiveScreen });
   const entry = r.entries.find((e) => e.name === 'build/stale');
   assert.strictEqual(entry.action, 'skip');
-  assert.strictEqual(entry.reason, 'not-cherry-equivalent'); // the internal fetch pulled the new commit in
+  assert.strictEqual(entry.reason, 'not-proven-merged'); // the internal fetch pulled the new commit in
   assert.match(git(dir, 'ls-remote', 'origin', 'refs/heads/build/stale'), /build\/stale/); // unfetched work survives
 });
 
@@ -159,10 +174,93 @@ test('pruneRemote: unmerged remote branch and non-namespace remote branch are ne
   git(dir, 'branch', '-D', 'feature/out-of-scope');
 
   const r = pruneRemote({ cwd: dir, integration: 'main', dryRun: false, resolvePr: () => ({ number: 1, state: 'MERGED' }), resolvePrBulk: permissiveScreen });
-  assert.strictEqual(r.entries.find((e) => e.name === 'build/unmerged').reason, 'not-cherry-equivalent');
+  assert.strictEqual(r.entries.find((e) => e.name === 'build/unmerged').reason, 'not-proven-merged');
   assert.strictEqual(r.entries.find((e) => e.name === 'feature/out-of-scope'), undefined); // silent scope guard
   assert.match(git(dir, 'ls-remote', 'origin', 'refs/heads/build/unmerged'), /build\/unmerged/);
   assert.match(git(dir, 'ls-remote', 'origin', 'refs/heads/feature/out-of-scope'), /feature\/out-of-scope/);
+});
+
+// #2252 — the squash-merge shape `gh pr merge --squash` leaves on origin's
+// main: a two-commit branch collapsed into one commit whose patch-id matches
+// neither branch commit, so `git cherry` reads it as unmerged. The confirm's
+// mergeCommit oid is what proves it.
+function buildSquashMergedFixture() {
+  const dir = makeRepoWithOrigin();
+  git(dir, 'checkout', '-b', 'build/squashed');
+  fs.writeFileSync(path.join(dir, 's1.txt'), 's1\n');
+  git(dir, 'add', 's1.txt');
+  git(dir, 'commit', '-m', 'first');
+  fs.writeFileSync(path.join(dir, 's2.txt'), 's2\n');
+  git(dir, 'add', 's2.txt');
+  git(dir, 'commit', '-m', 'second');
+  git(dir, 'push', 'origin', 'build/squashed');
+  git(dir, 'checkout', 'main');
+  const preSquash = git(dir, 'rev-parse', 'HEAD').trim();
+  git(dir, 'merge', '--squash', 'build/squashed');
+  git(dir, 'commit', '-m', 'feat: squashed (#2251)');
+  const squash = git(dir, 'rev-parse', 'HEAD').trim();
+  git(dir, 'branch', '-D', 'build/squashed'); // local branch disposed; remote lingers
+  return { dir, preSquash, squash };
+}
+const mergedVia = (oid) => ({ number: 1, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', mergeCommit: { oid } });
+
+test('pruneRemote: squash-merged multi-commit branch (MERGED PR + mergeCommit on the tip) is deleted on origin — AC 1', () => {
+  const { dir, squash } = buildSquashMergedFixture();
+  const r = pruneRemote({ cwd: dir, integration: 'main', dryRun: false, resolvePr: () => mergedVia(squash), resolvePrBulk: permissiveScreen });
+  const entry = r.entries.find((e) => e.name === 'build/squashed');
+  assert.strictEqual(entry.action, 'delete');
+  assert.strictEqual(entry.reason, 'merged-pr-squash-merged');
+  assert.strictEqual(git(dir, 'ls-remote', 'origin', 'refs/heads/build/squashed').trim(), ''); // gone on origin
+});
+
+test('pruneRemote: same squash shape but no merged PR -> skip not-proven-merged, branch survives — AC 2', () => {
+  const { dir } = buildSquashMergedFixture();
+  const r = pruneRemote({ cwd: dir, integration: 'main', dryRun: false, resolvePr: () => null, resolvePrBulk: permissiveScreen });
+  const entry = r.entries.find((e) => e.name === 'build/squashed');
+  assert.strictEqual(entry.action, 'skip');
+  assert.strictEqual(entry.reason, 'not-proven-merged');
+  assert.match(git(dir, 'ls-remote', 'origin', 'refs/heads/build/squashed'), /build\/squashed/);
+});
+
+test('pruneRemote: MERGED PR whose mergeCommit is no longer on the rewritten tip -> skip not-proven-merged, never deleted — AC 5', () => {
+  const { dir, preSquash, squash } = buildSquashMergedFixture();
+  git(dir, 'checkout', '--detach');
+  git(dir, 'branch', '-f', 'main', preSquash); // force-pushed/rewritten integration history: the squash commit is gone
+  git(dir, 'checkout', 'main');
+  const r = pruneRemote({ cwd: dir, integration: 'main', dryRun: false, resolvePr: () => mergedVia(squash), resolvePrBulk: permissiveScreen });
+  const entry = r.entries.find((e) => e.name === 'build/squashed');
+  assert.strictEqual(entry.action, 'skip');
+  assert.strictEqual(entry.reason, 'not-proven-merged');
+  assert.match(git(dir, 'ls-remote', 'origin', 'refs/heads/build/squashed'), /build\/squashed/);
+});
+
+// #2252 review F1: a squash merge only proves the PR's own mergeCommit sat
+// on the integration branch at some point — it says nothing about commits
+// pushed to the branch AFTER that merge. Same shape as the "refreshes origin
+// before judging" test above (a second clone pushes work this checkout
+// never saw), but here the branch is ALREADY proven merged via squash
+// provenance and gains a commit afterward — the fetch pulls that commit in,
+// and the third (tree-equality) condition is what catches it.
+test('pruneRemote: branch advanced after its squash merge (another clone pushed a commit; PR still MERGED with the squash oid) -> skip not-proven-merged, remote ref survives — F1', () => {
+  const { dir, squash } = buildSquashMergedFixture();
+  const originUrl = git(dir, 'remote', 'get-url', 'origin').trim();
+
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-remote-clone3-'));
+  git(other, 'clone', originUrl, 'c');
+  const clone = path.join(other, 'c');
+  git(clone, 'config', 'user.email', 't@t');
+  git(clone, 'config', 'user.name', 't');
+  git(clone, 'checkout', 'build/squashed');
+  fs.writeFileSync(path.join(clone, 's3.txt'), 's3\n');
+  git(clone, 'add', 's3.txt');
+  git(clone, 'commit', '-m', 'third, pushed after the squash merge');
+  git(clone, 'push', 'origin', 'build/squashed');
+
+  const r = pruneRemote({ cwd: dir, integration: 'main', dryRun: false, resolvePr: () => mergedVia(squash), resolvePrBulk: permissiveScreen });
+  const entry = r.entries.find((e) => e.name === 'build/squashed');
+  assert.strictEqual(entry.action, 'skip');
+  assert.strictEqual(entry.reason, 'not-proven-merged');
+  assert.match(git(dir, 'ls-remote', 'origin', 'refs/heads/build/squashed'), /build\/squashed/); // survives
 });
 
 test('pruneRemote: integration branch is excluded even when it sits inside the plugin namespace', () => {

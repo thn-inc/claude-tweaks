@@ -10,6 +10,22 @@ const LINE_TOLERANCE_DEBATE = 5;
 const REPRODUCTION_AGENT_COUNT = 2;
 const DEBATE_AGENT_COUNT = 2;
 
+// #1980: minimum token-Jaccard similarity for two findings' `text` to count
+// as "the same substance" — a second signal alongside location, so a
+// same-location pair that is NOT the same underlying issue no longer gets
+// silently merged by categoriseReproduction (see sameSubstance below).
+const SUBSTANCE_SIMILARITY_MIN = 0.4;
+
+// Minimal stop-word list for sameSubstance's tokenizer — just enough to keep
+// common connective words from diluting the Jaccard score; not a general NLP
+// tool, so no attempt at completeness.
+const SUBSTANCE_STOP_WORDS = new Set([
+  'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'to', 'of', 'in', 'on', 'at', 'for', 'with', 'and', 'or', 'but', 'not',
+  'no', 'this', 'that', 'it', 'its', 'as', 'by', 'from', 'into', 'than',
+  'then', 'so', 'do', 'does', 'did',
+]);
+
 const SEVERITY_BUCKETS = {
   critical: 'high',
   high: 'high',
@@ -66,7 +82,7 @@ function severityRank(severity) {
   return idx === -1 ? 0 : idx;
 }
 
-// Template A (skills/_shared/subagent-output-contract.md) mandates dispatched
+// Template A (skills/_shared/subagent-dispatch-core.md) mandates dispatched
 // agents return findings as a markdown table with a single combined
 // "Path:Line" column (e.g. "src/auth.ts:42"), not separate path/line fields.
 // findingsMatch/categoriseReproduction/detectCrossLensOverlap below compare
@@ -96,6 +112,22 @@ function parsePathLine(pathLine) {
   return { path: pathLine.slice(0, idx), line };
 }
 
+// #1980: pulls a finding's substance text out of whichever key actually
+// carries it — the lens agents' JSON column is `Finding` (Template A's
+// combined-string transcription convention, mirrored by parsePathLine's own
+// `Path:Line`/`Severity` handling above), while test fixtures and some
+// callers use plain `text`. First present of text/finding/Finding/summary/
+// Summary, trimmed; `null` when none of them hold a string — "unknown", not
+// "empty", so sameSubstance below can tell the two apart.
+function extractText(finding) {
+  if (typeof finding.text === 'string') return finding.text.trim();
+  const keys = ['finding', 'Finding', 'summary', 'Summary'];
+  for (const key of keys) {
+    if (typeof finding[key] === 'string') return finding[key].trim();
+  }
+  return null;
+}
+
 function normalizeFinding(finding) {
   if (!finding || typeof finding !== 'object') return finding;
   // `.line` must actually be a real, finite number for the "already split"
@@ -104,7 +136,16 @@ function normalizeFinding(finding) {
   // into findingsMatch's guard below.
   const hasNumericLine = typeof finding.line === 'number' && !Number.isNaN(finding.line);
   const hasSeparateFields = finding.path !== undefined && hasNumericLine;
-  if (hasSeparateFields) return finding;
+  if (hasSeparateFields) {
+    // Only allocate a new object when there is actually a normalized `text`
+    // to add (an alternate key, or a `text` value that needed trimming) —
+    // a finding with no text-bearing key at all must come back as the exact
+    // same reference, pinned by the "already-split findings pass through
+    // untouched" test.
+    const text = extractText(finding);
+    if (text === null || text === finding.text) return finding;
+    return { ...finding, text };
+  }
   // finding.path may itself hold the combined "path:line" string (a naive
   // transcription that never split it out), or the combined string may be
   // sitting under the literal table-header key "Path:Line" (a transcription
@@ -112,6 +153,7 @@ function normalizeFinding(finding) {
   const rawPathLine = finding.path !== undefined ? finding.path : finding['Path:Line'];
   const parsed = parsePathLine(rawPathLine);
   const severity = finding.severity !== undefined ? finding.severity : finding.Severity;
+  const text = extractText(finding);
   if (parsed.line === undefined) {
     // No usable location could be recovered — either the combined-string
     // parse failed, or `.line` held a non-numeric value with no colon-
@@ -119,9 +161,9 @@ function normalizeFinding(finding) {
     // leaving whatever garbage was there) so downstream guards see this as
     // unlocated instead of quietly falling through with a value that looks
     // present but isn't a real number.
-    return { ...finding, line: undefined, severity };
+    return { ...finding, line: undefined, severity, text };
   }
-  return { ...finding, path: parsed.path, line: parsed.line, severity };
+  return { ...finding, path: parsed.path, line: parsed.line, severity, text };
 }
 
 // Shared "do these two normalized findings refer to the same location?"
@@ -140,10 +182,65 @@ function sameLocation(na, nb, tolerance) {
   return Math.abs(na.line - nb.line) <= tolerance;
 }
 
+// #1980: tokenizer for sameSubstance's Jaccard comparison — lowercase,
+// strip any embedded `path:line` fragment (so two findings that both quote
+// the same file location in their text don't inflate the score on that
+// alone), strip punctuation, drop stop words.
+function tokenizeSubstance(text) {
+  const withoutLocations = text.replace(/\S+:\d+/g, ' ');
+  return withoutLocations
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((word) => !SUBSTANCE_STOP_WORDS.has(word));
+}
+
+function jaccard(tokensA, tokensB) {
+  const setA = new Set(tokensA);
+  const setB = new Set(tokensB);
+  if (setA.size === 0 || setB.size === 0) return 0;
+  let intersection = 0;
+  for (const token of setA) if (setB.has(token)) intersection += 1;
+  const union = new Set([...setA, ...setB]).size;
+  return union === 0 ? 0 : intersection / union;
+}
+
+// Returns a similarity score in [0, 1], or `null` when either normalized
+// finding has no usable `.text` — "unknown", not "zero similarity", so
+// callers (sameSubstance, categoriseReproduction's best-candidate pick) can
+// tell "we don't know" apart from "we know, and it's different."
+function substanceSimilarity(na, nb) {
+  const ta = na && typeof na.text === 'string' ? na.text : null;
+  const tb = nb && typeof nb.text === 'string' ? nb.text : null;
+  if (ta === null || tb === null) return null;
+  const normA = ta.trim().toLowerCase();
+  const normB = tb.trim().toLowerCase();
+  if (normA.length === 0 || normB.length === 0) return null;
+  if (normA === normB) return 1;
+  if (normA.startsWith(normB) || normA.endsWith(normB) || normB.startsWith(normA) || normB.endsWith(normA)) {
+    return 1;
+  }
+  return jaccard(tokenizeSubstance(ta), tokenizeSubstance(tb));
+}
+
+// Tri-state: `true` (at/above SUBSTANCE_SIMILARITY_MIN, or a prefix/suffix
+// match), `false` (both texts known, similarity below the floor), or `null`
+// (unknown — one or both sides carry no text). `null` behaves like `true`
+// for pairing purposes (categoriseReproduction below) — a missing text
+// column must never discard a location-only match, matching today's
+// pre-#1980 behavior for that case.
+function sameSubstance(na, nb) {
+  const score = substanceSimilarity(na, nb);
+  if (score === null) return null;
+  return score >= SUBSTANCE_SIMILARITY_MIN;
+}
+
 function findingsMatch(a, b, tolerance = LINE_TOLERANCE_REPRODUCTION) {
   const na = normalizeFinding(a);
   const nb = normalizeFinding(b);
   if (!sameLocation(na, nb, tolerance)) return false;
+  if (sameSubstance(na, nb) === false) return false;
   return severityBucket(na.severity) === severityBucket(nb.severity);
 }
 
@@ -173,24 +270,69 @@ function reconcileSeverity(fa, fb) {
 function categoriseReproduction(agentAFindings, agentBFindings) {
   const confirmed = [];
   const unconfirmed = [];
-  const matchedB = new Set();
+  const matchedB = new Set(); // B indices that ended up paired into a confirmed entry
+  const consumedB = new Set(); // B indices already emitted (near-location case) — never pair, never re-emit
+  const normalizedB = agentBFindings.map((rawFb) => normalizeFinding(rawFb));
 
   for (const rawFa of agentAFindings) {
     const fa = normalizeFinding(rawFa);
-    const matchIdx = agentBFindings.findIndex(
-      (fb, i) => !matchedB.has(i) && sameLocation(fa, normalizeFinding(fb), LINE_TOLERANCE_REPRODUCTION),
-    );
-    if (matchIdx === -1) {
+    // #1980: gather every same-location B candidate not already spoken for,
+    // rather than stopping at the first (location-only) match — location
+    // alone is no longer sufficient to pick a pairing.
+    const candidates = [];
+    normalizedB.forEach((fb, i) => {
+      if (matchedB.has(i) || consumedB.has(i)) return;
+      if (!sameLocation(fa, fb, LINE_TOLERANCE_REPRODUCTION)) return;
+      candidates.push({ index: i, finding: fb, substance: sameSubstance(fa, fb), score: substanceSimilarity(fa, fb) });
+    });
+
+    if (candidates.length === 0) {
       unconfirmed.push({ ...fa, source: 'A' });
+      continue;
+    }
+
+    // A candidate is eligible to pair unless its substance is known to
+    // differ (`false`) — `true` and `null` (unknown) both pair, per
+    // sameSubstance's contract above.
+    const eligible = candidates.filter((candidate) => candidate.substance !== false);
+
+    if (eligible.length > 0) {
+      // Prefer the best-matching candidate (highest known similarity; an
+      // unknown/`null` score never outranks a real one) rather than the
+      // first in array order, so an actual same-substance pair is never
+      // lost to an earlier unrelated same-location neighbour.
+      let best = eligible[0];
+      for (const candidate of eligible.slice(1)) {
+        const bestScore = best.score === null ? -1 : best.score;
+        const candidateScore = candidate.score === null ? -1 : candidate.score;
+        if (candidateScore > bestScore) best = candidate;
+      }
+      confirmed.push(reconcileSeverity(fa, best.finding));
+      matchedB.add(best.index);
     } else {
-      const fb = normalizeFinding(agentBFindings[matchIdx]);
-      confirmed.push(reconcileSeverity(fa, fb));
-      matchedB.add(matchIdx);
+      // Every same-location candidate is substantively different — this is
+      // the coincidence #1980 fixes: do NOT merge. Both sides surface in
+      // unconfirmed, each pointing at the other via `nearLocation`, so a
+      // reviewer sees the coincidence instead of one finding silently
+      // vanishing.
+      const chosen = candidates[0];
+      unconfirmed.push({
+        ...fa,
+        source: 'A',
+        nearLocation: { source: 'B', path: chosen.finding.path, line: chosen.finding.line },
+      });
+      unconfirmed.push({
+        ...chosen.finding,
+        source: 'B',
+        nearLocation: { source: 'A', path: fa.path, line: fa.line },
+      });
+      consumedB.add(chosen.index);
     }
   }
 
-  agentBFindings.forEach((rawFb, i) => {
-    if (!matchedB.has(i)) unconfirmed.push({ ...normalizeFinding(rawFb), source: 'B' });
+  normalizedB.forEach((fb, i) => {
+    if (matchedB.has(i) || consumedB.has(i)) return;
+    unconfirmed.push({ ...fb, source: 'B' });
   });
 
   return { confirmed, unconfirmed };
@@ -288,12 +430,15 @@ module.exports = {
   REPRODUCTION_AGENT_COUNT,
   DEBATE_AGENT_COUNT,
   RED_TEAM_PERSONAS,
+  SUBSTANCE_SIMILARITY_MIN,
   // Comparison / aggregation logic
   severityBucket,
   severityRank,
   parsePathLine,
   normalizeFinding,
   sameLocation,
+  sameSubstance,
+  substanceSimilarity,
   findingsMatch,
   categoriseReproduction,
   detectCrossLensOverlap,

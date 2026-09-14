@@ -8,7 +8,9 @@ const path = require('path');
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'resolve');
 const { classifyStagedItem, resolveAll, SECTION_STANCES, SECTION_MAP } = require(MOD);
 
-function fixture({ decisions = '', staged = {}, engineState = null, pack = null, headers = [] } = {}) {
+function fixture({
+  decisions = '', staged = {}, engineState = null, pack = null, headers = [], manifest = null, specHeaders = {},
+} = {}) {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-'));
   fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
   fs.mkdirSync(path.join(runDir, 'work'), { recursive: true });
@@ -17,6 +19,12 @@ function fixture({ decisions = '', staged = {}, engineState = null, pack = null,
   if (engineState) fs.writeFileSync(path.join(runDir, 'engine-state.json'), JSON.stringify(engineState));
   if (pack) fs.writeFileSync(path.join(runDir, 'wrap-up-pack.json'), JSON.stringify(pack));
   for (const n of headers) fs.writeFileSync(path.join(runDir, 'work', `${n}-spec.md`), `---\nrecord: ${n}\n---\n`);
+  if (manifest) fs.writeFileSync(path.join(runDir, 'manifest.yml'), manifest);
+  for (const [specId, nums] of Object.entries(specHeaders)) {
+    const specWork = path.join(runDir, `spec-${specId}`, 'work');
+    fs.mkdirSync(specWork, { recursive: true });
+    for (const n of nums) fs.writeFileSync(path.join(specWork, `${n}-spec.md`), `---\nrecord: ${n}\n---\n`);
+  }
   return runDir;
 }
 
@@ -159,6 +167,30 @@ test('members come from wrap-up-pack.json inputs.records when present (#1932 dec
   const runDir = fixture({ staged: { 'reflect-1.md': 'x' }, pack: { inputs: { records: [41, 42] } }, headers: [7] });
   resolveAll({ runDir, policy: 'console-auto', deps: deps({ readGrants: (n) => { calls.push(n); return Object.fromEntries(n.map((x) => [x, { labels: ['auto:merge'], pendingSince: null }])); } }) });
   assert.deepStrictEqual(calls, [[41, 42]]);
+});
+
+test('a multi-spec parent run dir with no wrap-up-pack.json resolves members via manifest.yml + spec-*/work/ headers, never members-unresolved (#2028)', () => {
+  const calls = [];
+  const manifest = [
+    'multispec:',
+    '  parent: .claude-tweaks/pipelines/2026-09-11T143147-record-41-42/',
+    '  specs:',
+    '    - id: 41',
+    '      status: complete',
+    '      subdir: spec-41/',
+    '    - id: 42',
+    '      status: complete',
+    '      subdir: spec-42/',
+    '',
+  ].join('\n');
+  const runDir = fixture({
+    staged: { 'reflect-1.md': 'x' },
+    manifest,
+    specHeaders: { 41: [41], 42: [42] },
+  });
+  const r = resolveAll({ runDir, policy: 'console-auto', deps: deps({ readGrants: (n) => { calls.push(n); return Object.fromEntries(n.map((x) => [x, { labels: ['auto:merge'], pendingSince: null }])); } }) });
+  assert.deepStrictEqual(calls, [[41, 42]]);
+  assert.notDeepStrictEqual(r.merge, { resolution: 'leave-open', reason: 'members-unresolved' });
 });
 
 test('a staged patch that fails git apply --check resolves to stale with its Invariant echoed, never apply (#1932 AC4)', () => {

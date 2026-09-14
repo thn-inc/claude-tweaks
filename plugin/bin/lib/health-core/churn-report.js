@@ -20,7 +20,7 @@ function makeCmdChurnReport({ readDurableState, computeChurn }) {
       threshold = parseFloat(args['fail-on-high-churn']);
       if (!Number.isFinite(threshold)) {
         process.stderr.write(`churn-report: invalid --fail-on-high-churn value: ${args['fail-on-high-churn']}\n`);
-        process.exit(2);
+        return 2;
       }
     }
     const rows = [['runId', 'runAt', 'findings', 'appeared', 'disappeared', 'ratio']];
@@ -44,7 +44,7 @@ function makeCmdChurnReport({ readDurableState, computeChurn }) {
     }
     if (exceeded) {
       process.stdout.write(`\nhigh churn: one or more runs >= ${threshold}\n`);
-      process.exit(1);
+      return 1;
     }
   };
 }

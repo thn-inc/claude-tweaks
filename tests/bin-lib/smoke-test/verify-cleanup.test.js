@@ -43,3 +43,16 @@ test('renderCleanupTable renders the header alone for an empty run', () => {
   const table = renderCleanupTable([]);
   assert.strictEqual(table, '| Artifact | Cleanup claimed | Verified absent |\n|---|---|---|');
 });
+
+test('renderCleanupTable escapes a literal pipe in the artifact string, keeping the row three columns', () => {
+  const table = renderCleanupTable([
+    { artifact: 'branch fix|nitpick', claimed: true, verifiedAbsent: true },
+  ]);
+  const rowLine = table.split('\n')[2];
+  // Split on unescaped `|` only -- a `\|` inside a cell is escaped content,
+  // not a column delimiter (see tests/reference-card-argument-hint.test.js's
+  // parseTakesRows for the same convention).
+  const columns = rowLine.split(/(?<!\\)\|/).filter((_, i, arr) => i > 0 && i < arr.length - 1);
+  assert.strictEqual(columns.length, 3);
+  assert.match(rowLine, /branch fix\\\|nitpick/);
+});

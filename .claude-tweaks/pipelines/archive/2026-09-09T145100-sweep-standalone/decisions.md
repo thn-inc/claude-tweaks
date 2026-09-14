@@ -1,0 +1,1 @@
+AUTO 2026-09-10T05:55:44Z — tidy --approve Step 7.5: run audit trail (decisions.md, report.md, staged/) committed via scratch worktree, PR #2219 opened and armed --merge (housekeeping-auto-merge: true, tidy-aggressiveness: moderate) — merged immediately (no pending checks).

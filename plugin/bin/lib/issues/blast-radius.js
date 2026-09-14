@@ -72,10 +72,26 @@ function isSensitivePath(path, sensitivePaths) {
   return sensitivePaths.some((glob) => globToRegExp(glob).test(path));
 }
 
+// #1906: pipeline-generated bookkeeping paths — a materialized spec
+// (flow/materialize.md's single-record `{run-id}/work/{n}-spec.md` and
+// multi-record `{run-id}/spec-{a}/work/{a}-spec.md` shapes) and a
+// superpowers:writing-plans implementation plan doc
+// (docs/superpowers/plans/*.md) — are conflated with real implementation
+// risk if counted as impl lines/files. These globs are fixed claude-tweaks
+// plugin conventions (not project-specific config), so they're hardcoded
+// here rather than read from policy, the same way TEST_PATH_RE/TEST_SUFFIX_RE
+// are hardcoded conventions rather than configurable.
+const PIPELINE_ARTIFACT_GLOBS = ['.claude-tweaks/pipelines/**/work/*-spec.md', 'docs/superpowers/plans/*.md'];
+
+function isPipelineArtifactPath(path) {
+  return PIPELINE_ARTIFACT_GLOBS.some((glob) => globToRegExp(glob).test(path));
+}
+
 function classifyDiffFiles(files, sensitivePaths = []) {
   return (files || []).map((f) => ({
     path: f.path,
     isTest: isTestPath(f.path),
+    isPipelineArtifact: isPipelineArtifactPath(f.path),
     isSensitive: isSensitivePath(f.path, sensitivePaths),
     additions: f.additions || 0,
     deletions: f.deletions || 0,
@@ -88,11 +104,16 @@ function blastRadiusSummary(classifiedFiles) {
     testLines: 0,
     implFiles: 0,
     testFiles: 0,
+    pipelineArtifactLines: 0,
+    pipelineArtifactFiles: 0,
     sensitiveFilesTouched: [],
   };
   for (const f of classifiedFiles || []) {
     const lines = f.additions + f.deletions;
-    if (f.isTest) {
+    if (f.isPipelineArtifact) {
+      summary.pipelineArtifactLines += lines;
+      summary.pipelineArtifactFiles += 1;
+    } else if (f.isTest) {
       summary.testLines += lines;
       summary.testFiles += 1;
     } else {

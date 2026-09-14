@@ -74,3 +74,17 @@ test('flow/multi-spec.md states the bookkeeping-only delta exactly once; steps-a
   assert.ok(sg.includes('**Re-verify scoping:**'));
   assert.ok(sg.includes('test/verification.md'));
 });
+
+test('test/design-gate.md resolves <changed-files> via verify.js --changed-files, not a hand-rolled bare git diff --name-only, for the gate-input step (#2005)', () => {
+  const gate = read('plugin/skills/test/design-gate.md');
+  const invocation = gate.slice(gate.indexOf('## Invocation'), gate.indexOf('## Result handling'));
+  assert.ok(
+    !invocation.includes('Resolve `<changed-files>` from `git diff --name-only`'),
+    'the gate-input resolution step must not hand-roll bare git diff --name-only',
+  );
+  assert.match(invocation, /verify\.js["'`]? --changed-files/);
+  assert.ok(invocation.includes('--integration-branch'));
+  // The exit-1 degrade path may still cite git diff --name-only in a ranged/working-tree
+  // form — that's a documented fallback, not the primary resolution this test guards.
+  assert.match(invocation, /exit 1.*git diff --name-only HEAD~1\.\.HEAD/s);
+});

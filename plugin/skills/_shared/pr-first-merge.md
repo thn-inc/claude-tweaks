@@ -2,7 +2,8 @@
 
 Canonical for every merge site under `integration-model: pr-first` (`_shared/integration-model.md`):
 `dispatch/settle-and-merge.md`'s Auto-merge gate, `wrap-up/review-console.md`'s Auto-merge
-short-circuit, and `flow/worktree-merge.md`'s multi-branch reconciliation. Supersedes and closes
+short-circuit, `flow/worktree-merge.md`'s reconciliation, and `release/execute.md`
+Step 5. Supersedes and closes
 #335 (the two independently-authored auto-merge implementations these three files carried) and
 #299 (the fast-lane `git -C "$RUN_DIR"` worktree/branch anchoring defect — obsolete once merge
 needs no checkout at all).
@@ -70,7 +71,7 @@ row(s) is the remedy — this guard only detects the gap, it does not repair it.
 
 ## Step 2: Mark the PR ready
 
-First, run `_shared/pr-early-run-lifecycle.md`'s "Pre-merge title/description refresh" section —
+First, run `_shared/pr-checklist-refresh.md`'s "Pre-merge title/description refresh" section —
 an unconditional `AUTO` step, never a stop — so the title and phase checklist are current before
 the merge attempt below.
 
@@ -120,7 +121,7 @@ overlay applied to another's merge.
 
 <!-- when: transport=mcp -->
 `gh` absent → the lever is unenforceable; proceed as `off` and disclose at **warn** tier per
-`_shared/pr-early-run-lifecycle.md`'s degrade table (its "gh absent at merge time" row). Under
+`_shared/pr-checklist-refresh.md`'s "Merge-time gh-absent degrade" section. Under
 pr-first this is near-unreachable: no `gh` means no PR, so this procedure's own precondition
 already fails.
 <!-- /when -->
@@ -162,7 +163,7 @@ Classify from the JSON, in this order:
 Then, per resolved value:
 
 **Why `--auto` alone is not a wait (Task 0, captured on this repo).** On a repository with no
-required status checks, `gh pr merge --auto --merge` **merges immediately** — exit `0`, empty stdout
+required status checks, `gh pr merge --auto --squash` **merges immediately** — exit `0`, empty stdout
 and stderr, `autoMergeRequest: null`, the PR `MERGED` while its `test` check was still `pending`.
 There is no distinguishing signature: `--auto`'s success looks identical whether it armed or merged.
 That is the #540 mechanism itself. So "arm `--auto`" is a genuine wait **only when the state read
@@ -174,7 +175,7 @@ must not lean on it. That is why the pending column below keys on `mergeStateSta
 | Value | Green | Pending | Red |
 |---|---|---|---|
 | `merge-when-green` | Step 3 as written — arm/merge (identical outcome when checks are already green) | `mergeStateStatus: BLOCKED` → Step 3 as written — arm `--auto` (the forge holds it; outcome `armed`). Any other value (`CLEAN`, `UNSTABLE`, `BEHIND`, `UNKNOWN`, …) → arming would merge immediately: **degrade to the `wait` row** — never to an immediate merge | Red path |
-| `wait` | Re-read (`gh pr view … --json state,mergeStateStatus,headRefOid`); if `headRefOid` changed since the first read or `state` is no longer `OPEN`, re-enter this step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`) — never merge blind; otherwise merge via Step 3's immediate `--merge` form | **Bounded watch** below | Red path |
+| `wait` | Re-read (`gh pr view … --json state,mergeStateStatus,headRefOid`); if `headRefOid` changed since the first read or `state` is no longer `OPEN`, re-enter this step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`) — never merge blind; otherwise merge via Step 3's immediate `--squash` form (re-run its composer call first) | **Bounded watch** below | Red path |
 | `off` | Step 3 as written (today's behavior, unchanged) | Step 3 as written (today's behavior — this is the #540-shaped race the lever exists to close; a repo derives `off` only when it has no PR CI or a non-default integration branch, `_shared/policy-schema-coverage.md`'s coverage block) | Step 3 as written; the red read is logged for the summary |
 
 **Bounded watch (`wait`, and `merge-when-green` when arming would not hold) — 15 minutes, fixed.**
@@ -202,7 +203,7 @@ done
 - `RC=0` → **green**: re-read state (`gh pr view … --json state,mergeStateStatus,headRefOid`); if
   `headRefOid` changed since the first read (a new push landed) or `state` is not `OPEN`, re-enter this
   step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`)
-  — never merge blind; otherwise merge via Step 3's immediate `--merge` form (outcome `merged`,
+  — never merge blind; otherwise merge via Step 3's immediate `--squash` form (re-run its composer call first) (outcome `merged`,
   then Step 4).
 - `RC=1` (a check failed during the watch) → **Red path**, reason `check-failed:{names}` (names from
   the `fail` rows of `/tmp/pr-checks-{n}.txt`).
@@ -214,7 +215,7 @@ done
 **Red path — never merge; park.**
 
 1. Do not run any `gh pr merge`. Leave the PR ready (already undrafted; never re-draft).
-2. Park the run on the work-record issue(s): bootstrap-then-add `bot:blocked` (`_shared/label-bootstrap.md`)
+2. Park the run on the work-record issue(s): bootstrap-then-add `bot:parked` (`_shared/label-bootstrap.md`)
    on every record in `{issue-list}` — dispatch's existing `bot:*` home; `run-state.json` statuses are
    untouched (parking surfaces via label + log, not run-state) — and post one comment naming the
    failing check(s), the PR, and the reason:
@@ -229,13 +230,13 @@ done
    (`$REASON` holds the check names read from `/tmp/pr-checks-{n}.txt`'s `fail` rows, or the
    pending-timeout phrase — passed as a `printf` argument, never expanded inside the format string.)
    **Verify the label landed** — re-read each record's labels (`gh issue view {n} --json labels`)
-   after the add; a missing `bot:blocked` is retried once. If it is still missing, the park has no
+   after the add; a missing `bot:parked` is retried once. If it is still missing, the park has no
    lock the `[pr-unarmed]` sweep (`_shared/github-pr-scan.md`) would honor, so fall back to the one
    lock the sweep always honors: re-draft the PR (`gh pr ready {pr-number} --repo {owner}/{repo}
    --undo` — the sole exception to item 1's never-re-draft, taken only because the label failed) and
    say so in the log line below. Never report a park the label read did not confirm.
 3. Log to `decisions.md` per `_shared/auto-decision-log.md` (an action taken autonomously — parked, not asked):
-   `AUTO {HH:MM:SS} — Step 2.5 (merge-verification gate): parked — {reason: check-failed:{names} | checks-pending-timeout} on PR #{n}; bot:blocked applied to #{issue-list} {— or: bot:blocked NOT applied to #{list} ({error}); PR re-drafted as the fallback lock}. Reversibility: high (label removal + resume). [lever: merge-verification={value} ({source})]`
+   `AUTO {HH:MM:SS} — Step 2.5 (merge-verification gate): parked — {reason: check-failed:{names} | checks-pending-timeout} on PR #{n}; bot:parked applied to #{issue-list} {— or: bot:parked NOT applied to #{list} ({error}); PR re-drafted as the fallback lock}. Reversibility: high (label removal + resume). [lever: merge-verification={value} ({source})]`
 4. Report outcome `pending-review`. This is a HARD-GATE-class stop written as park-and-surface — the
    `_shared/auto-mode-contract.md` strict rule holds: never a mid-pipeline prompt here; the human-facing
    surface is dispatch's resume confirmation (`dispatch/SKILL.md`, "Confirm before resuming").
@@ -273,9 +274,10 @@ merge (capture (a)), so the confirmation itself carries the choice: wait for gre
 **Creation-time caller:** `tidy/SKILL.md`'s Step 7.5 `pr-first` branch invokes only this step's initial `gh pr merge --auto` call at PR-creation time, with the degrade chain below replaced by leave-unarmed + report — see that step's own text for the full routing.
 
 ```bash
-gh pr merge {pr-number} --repo {owner}/{repo} --auto --merge \
-  -t "[{tag}] {one-line summary}" \
-  -b "$(printf 'Fixes #%s\n' {issue-list})"
+SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --shell) || exit 1
+eval "$SUBJECT_EXPORTS"
+gh pr merge {pr-number} --repo {owner}/{repo} --auto --squash \
+  -t "$SUBJECT_TITLE" -b "$SUBJECT_BODY"
 ```
 
 `{tag}` is `auto-merge` for the dispatch/headless path (`dispatch/settle-and-merge.md`'s Auto-merge
@@ -284,14 +286,15 @@ label, or `manifesto-authorized` for the same short-circuit triggered instead by
 `merge-authorization` Manifesto lever with no label present (`wrap-up/review-console.md`,
 `wrap-up/manifesto-authorized-merge.md`) — preserving all three tags' meanings — `/help`'s
 auto-merged-this-week metric (`_shared/github-pr-scan.md` `triage-queue` item 3) keys on all
-three. `{issue-list}` is one `Fixes #{n}` per record — the manifest's `complete` specs only for a
-bundle (#2015; rest release via their own `never-started:`/`abandoned:` reason). Same set the
-PR body's own `Fixes` lines already carry
-(`_shared/pr-early-run-lifecycle.md`'s pre-merge refresh), restated here because the
-merge commit's own message is what GitHub scans for closing keywords on a non-default
-integration branch, where the PR body's keywords don't fire (GitHub only auto-closes from a
-merge commit's message, or a PR body merged into the *default* branch — an explicit merge
-commit message is what makes closing work on any integration branch).
+three. `{issue-list}` is the record numbers — the manifest's `complete` specs only for a bundle
+(#2015; rest release via their own `never-started:`/`abandoned:` reason). The composer writes
+the Conventional-Commits subject and one `Fixes #{n}` line per record. Same set the
+PR body's own `Fixes` lines already carry (`_shared/pr-checklist-refresh.md`'s pre-merge
+refresh), restated here because the merge commit's own message is what GitHub scans for
+closing keywords on a non-default integration branch, where the PR body's keywords don't
+fire (GitHub only auto-closes from a merge commit's message, or a PR body merged into the
+*default* branch — an explicit merge commit message is what makes closing work on any
+integration branch). `--squash` keeps one conventional commit per PR.
 
 **This call always either arms or performs the merge — `--auto` never blocks or polls.** Classify
 the result:
@@ -307,9 +310,10 @@ the result:
      behavior):
 
      ```bash
-     gh pr merge {pr-number} --repo {owner}/{repo} --merge \
-       -t "[{tag}] {one-line summary}" \
-       -b "$(printf 'Fixes #%s\n' {issue-list})"
+     SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --shell) || exit 1
+     eval "$SUBJECT_EXPORTS"
+     gh pr merge {pr-number} --repo {owner}/{repo} --squash \
+       -t "$SUBJECT_TITLE" -b "$SUBJECT_BODY"
      ```
 
    - under `merge-when-green` or `wait` — do not merge immediately: degrade to Step 2.5's `wait`
@@ -322,7 +326,7 @@ the result:
 2. **Command failed with a checks-pending or checks-failing signature** (stderr contains
    `not mergeable` alongside `required status check`, `review`, or `checks`): checks are red or
    still running and this repo has no auto-merge to arm around it (already ruled out by reaching
-   here from branch 1, or `--auto` itself isn't what failed — a plain `--merge` attempt hit this
+   here from branch 1, or `--auto` itself isn't what failed — a plain `--squash` attempt hit this
    directly). → **degrade to ready+comment** (Step 5), outcome `pending-review`. If Step 2.5's
    state read had shown `mergeStateStatus: BLOCKED` with a green rollup, this rejection is the
    Forge-cooperation case — arm `--auto` per Step 2.5 (the forge holds the merge until it is
@@ -407,7 +411,7 @@ Replaces `ready-to-merge` (folded into `merged`/`armed` — see Step 3.6) and `p
 |---|---|---|
 | `merged` | Confirmed synchronously via `gh pr view` | Step 4's reconcile call |
 | `armed` | `--auto` armed, checks still pending | None — reconciler completes it later |
-| `pending-review` | Checks red, conflict unresolvable headlessly, permission denied, or an unrecognized error, checks red or still pending at Step 2.5's bound (parked with bot:blocked, reason check-failed:{names} or checks-pending-timeout), pr-not-open, moving-target | None — PR stays ready, human decides |
+| `pending-review` | Checks red, conflict unresolvable headlessly, permission denied, or an unrecognized error, checks red or still pending at Step 2.5's bound (parked with bot:parked, reason check-failed:{names} or checks-pending-timeout), pr-not-open, moving-target | None — PR stays ready, human decides |
 | `failed` | This run never reached the merge attempt at all (upstream HARD-GATE) | Handled entirely by Settle, before this procedure is ever invoked |
 
 ## Comment ordering

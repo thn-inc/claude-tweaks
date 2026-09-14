@@ -220,8 +220,8 @@ test('extractFingerprint returns null for null, undefined, and empty-string bodi
 
 test('parseRecordFacets: by:capture + parked', () => {
   assert.deepStrictEqual(parseRecordFacets(['by:capture', 'parked']), {
-    origin: 'capture', risk: null, size: null, ceremony: null, solutionUnjustified: false, needsDefinition: false, priority: null, stage: 'parked',
-    grants: { build: false, merge: false }, bot: { inProgress: false, blocked: false },
+    origin: 'capture', risk: null, size: null, ceremony: null, solutionUnjustified: false, breaking: false, needsDefinition: false, priority: null, stage: 'parked',
+    grants: { build: false, merge: false }, bot: { inProgress: false, blocked: false, parked: false },
     acceptance: null, isParentIssue: false, notPlanned: false, shapedHeadless: false,
   });
 });
@@ -230,7 +230,7 @@ test('parseRecordFacets: ready + auto:build + bot:in-progress', () => {
   const result = parseRecordFacets(['ready', 'auto:build', 'bot:in-progress']);
   assert.strictEqual(result.stage, 'ready');
   assert.deepStrictEqual(result.grants, { build: true, merge: false });
-  assert.deepStrictEqual(result.bot, { inProgress: true, blocked: false });
+  assert.deepStrictEqual(result.bot, { inProgress: true, blocked: false, parked: false });
   assert.strictEqual(result.origin, null);
 });
 
@@ -239,15 +239,20 @@ test('parseRecordFacets: auto:build + auto:merge grants both build and merge', (
   assert.deepStrictEqual(result.grants, { build: true, merge: true });
 });
 
-test('parseRecordFacets: bot:blocked sets bot.blocked without bot.inProgress', () => {
+test('parseRecordFacets: bot:blocked sets bot.blocked without bot.inProgress or bot.parked', () => {
   const result = parseRecordFacets(['bot:blocked']);
-  assert.deepStrictEqual(result.bot, { inProgress: false, blocked: true });
+  assert.deepStrictEqual(result.bot, { inProgress: false, blocked: true, parked: false });
+});
+
+test('parseRecordFacets: bot:parked sets bot.parked without bot.inProgress or bot.blocked', () => {
+  const result = parseRecordFacets(['bot:parked']);
+  assert.deepStrictEqual(result.bot, { inProgress: false, blocked: false, parked: true });
 });
 
 test('parseRecordFacets: empty label list', () => {
   assert.deepStrictEqual(parseRecordFacets([]), {
-    origin: null, risk: null, size: null, ceremony: null, solutionUnjustified: false, needsDefinition: false, priority: null, stage: 'backlog',
-    grants: { build: false, merge: false }, bot: { inProgress: false, blocked: false },
+    origin: null, risk: null, size: null, ceremony: null, solutionUnjustified: false, breaking: false, needsDefinition: false, priority: null, stage: 'backlog',
+    grants: { build: false, merge: false }, bot: { inProgress: false, blocked: false, parked: false },
     acceptance: null, isParentIssue: false, notPlanned: false, shapedHeadless: false,
   });
 });
@@ -549,6 +554,13 @@ test('buildLinkedPRQuery aliases each number and requests closedByPullRequestsRe
   assert.match(q, /closedByPullRequestsReferences\(first:10\)/);
   assert.match(q, /state/);
   assert.match(q, /repository\(owner:\$owner,name:\$repo\)/);
+});
+
+test('buildLinkedPRQuery also requests the cross-reference timeline, same-repo PR sources only (#1984)', () => {
+  const q = buildLinkedPRQuery([1224]);
+  assert.match(q, /timelineItems\(itemTypes:\[CROSS_REFERENCED_EVENT\], first:20\)/);
+  assert.match(q, /\.\.\. on CrossReferencedEvent \{ source \{ \.\.\. on PullRequest/);
+  assert.match(q, /merged mergedAt repository \{ nameWithOwner \}/);
 });
 
 test('buildLinkedPRQuery returns null for an empty array', () => {
@@ -944,4 +956,18 @@ test('extractVerifiedAsOf: null when absent, when body is empty, and for non-str
 test('extractVerifiedAsOf: is line-anchored — prose mentioning a commit elsewhere does not match', () => {
   const body = 'See commit abc1234 for background.\n\n## Current State\nx';
   assert.strictEqual(extractVerifiedAsOf(body), null);
+});
+
+test('parseRecordFacets: breaking label sets facets.breaking to true (presence-only Compatibility axis, #2251)', () => {
+  assert.strictEqual(parseRecordFacets(['breaking']).breaking, true);
+  assert.strictEqual(parseRecordFacets([{ name: 'breaking' }]).breaking, true);
+});
+
+test('parseRecordFacets: facets.breaking defaults to false, never undefined', () => {
+  assert.strictEqual(parseRecordFacets([]).breaking, false);
+  assert.strictEqual(parseRecordFacets(['ready', 'type:feature']).breaking, false);
+});
+
+test('LABELS.BREAKING is exported and matches the canonical bootstrap row', () => {
+  assert.strictEqual(LABELS.BREAKING, 'breaking');
 });

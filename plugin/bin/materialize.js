@@ -40,7 +40,7 @@ const {
 } = require('./lib/issues/record');
 const { shapeGate, liftMetadata, composeHeader, composeFile } = require('./lib/issues/materialize-format');
 const wtDetect = require('./lib/hooks/worktree-detect');
-const { parseRepo } = require('./lib/repo-resolve');
+const { parseRepo, ghAvailable } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: materialize.js <n> --run-dir <dir> [--repo owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]\n';
 
@@ -109,7 +109,7 @@ function parseArgs(argv) {
 
 const realDeps = {
   ghView: (owner, repo, n) => execFileSync('gh', ['issue', 'view', String(n), '--repo', `${owner}/${repo}`, '--json', 'number,title,body,labels,url'], { encoding: 'utf8' }),
-  ghAvailable: () => { try { execFileSync('gh', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } },
+  ghAvailable,
   remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }),
   // #117: commit distance from a record's Verified-as-of: stamp to current
   // HEAD, and that commit's own date — both scoped to computeDrift above.

@@ -5,7 +5,9 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 
-const { gatherPack, resolveInputs, PROBE_NAMES } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js'));
+const {
+  gatherPack, resolveInputs, PROBE_NAMES, resolveRecords, headerRecords,
+} = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js'));
 
 // A fixture run dir: run-state.json (pr + worktree), one materialized header, config.yml.
 function fixtureRunDir({ withPr = true, records = [1535] } = {}) {
@@ -187,6 +189,22 @@ test('resolveInputs (c): a parent multi-spec run dir resolves records from manif
   assert.deepStrictEqual(inputs.records, [1930, 1931, 1932]);
   assert.strictEqual(inputs.record, null, 'several records → no single record');
   assert.strictEqual(inputs.sources.records, 'manifest');
+});
+
+test('pack.js exports resolveRecords (and headerRecords) so console/resolve.js can share the ladder instead of copying it (#2028)', () => {
+  assert.strictEqual(typeof resolveRecords, 'function');
+  assert.strictEqual(typeof headerRecords, 'function');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-export-'));
+  fs.writeFileSync(path.join(dir, 'manifest.yml'), [
+    'multispec:', '  parent: 1904', '  specs:',
+    '    - id: 1930', '      status: complete', '      subdir: spec-1930',
+    '    - id: 1931', '      status: pending', '      subdir: spec-1931',
+    '',
+  ].join('\n'));
+  const deps = { readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
+  const { records, source } = resolveRecords(deps, dir, null);
+  assert.deepStrictEqual(records, [1930, 1931]);
+  assert.strictEqual(source, 'manifest');
 });
 
 test('resolveInputs: no headers anywhere and no manifest → records [] and sources.records unavailable (#1930 review C1)', () => {
@@ -448,7 +466,9 @@ test('the release probe is gone — pre-merge it is a constant and its consumer 
 // pack-fed value would be exactly the stale prediction that step forbids.
 test('the mergeSize probe is gone — its consumer must measure after its own fetch (#1930 fix round 4)', () => {
   assert.ok(!PROBE_NAMES.includes('mergeSize'));
-  const lifecycle = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-early-run-lifecycle.md'), 'utf8');
+  // #2002 moved the pre-merge step (which runs this probe) from pr-early-run-lifecycle.md into
+  // the new pr-checklist-refresh.md.
+  const lifecycle = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-checklist-refresh.md'), 'utf8');
   assert.ok(!lifecycle.includes('pack.mergeSize'), 'the pre-merge step no longer reads a pack-fed merge size');
   assert.ok(lifecycle.includes('bin/merge-size-probe.js'), 'it still runs the probe CLI itself');
 });

@@ -4,6 +4,9 @@ const fs = require('fs');
 const path = require('path');
 const wtDetect = require('./worktree-detect');
 const { writeFileAtomic } = require('../atomic-write');
+const { runGit } = require('./git-exec');
+const { parseWorktreeList } = require('./worktree-reap');
+const runDirResolve = require('./run-dir-resolve');
 
 function readStdin() {
   try { return fs.readFileSync(0, 'utf8'); } catch { return ''; }
@@ -529,6 +532,56 @@ function writeRunState(runDir, patch) {
   }
 }
 
+// Ad-hoc run-dir stamping for a PreToolUse gate denial with no owned run dir
+// yet (#2351). post-tool-use.js's own stampAdHocRunDir (the #500/#1333
+// mechanism) fires only on an EnterWorktree call or a session's cwd resolving
+// to a NON-main worktree — deliberately excluding the main checkout, since
+// firing on every ordinary main-checkout hook call would be pure noise. A
+// gate denial is a narrower, safer trigger: it only fires when a real deny is
+// about to be logged, so it can cover the main checkout too without that
+// noise risk — a session running /claude-tweaks:wrap-up entirely in the main
+// checkout (no worktree at all) still needs its wd-deny/gate-denial events to
+// land somewhere (friction-events.js's Friction Lens input), or appendEvent's
+// own null-runDir no-op silently drops them, exactly the gap two real
+// denials (a push deny, a teardown-gate deny) hit in run
+// 2026-09-13T101924-dispatch-drain-merge-release-v6123-standalone.
+//
+// Called from pre-tool-use.js's own denial sites, immediately before an
+// appendEvent call whose target dir would otherwise be null. Mirrors
+// stampAdHocRunDir's own minting mechanics (runDirResolve + writeRunState +
+// the same-session collision guard) but keys the `worktree` field on
+// whatever `ctx.cwd` resolves to in `git worktree list`, main checkout
+// included, rather than excluding it — the narrower trigger above is what
+// makes that safe.
+function stampAdHocRunDirForDenial(ctx) {
+  if (ctx.ownedRun && ctx.ownedRun.dir) return ctx.ownedRun.dir;
+  const sessionId = ctx.input && ctx.input.session_id;
+  if (typeof sessionId !== 'string' || !sessionId) return null;
+  const cwd = ctx.cwd;
+  if (typeof cwd !== 'string' || !cwd) return null;
+  try {
+    const { stdout, failure } = runGit(['worktree', 'list', '--porcelain'], cwd);
+    if (failure || stdout === null) return null;
+    const entries = parseWorktreeList(stdout);
+    const idx = entries.findIndex((e) => e.path === cwd);
+    if (idx === -1) return null; // cwd isn't a listed worktree at all — nothing to key the stamp on
+    const worktreePath = entries[idx].path;
+    // Deliberately NOT process.env — a stray PIPELINE_RUN_DIR left over from
+    // an unrelated earlier command in this shell must never redirect this
+    // stamp onto someone else's run dir (same rationale as stampAdHocRunDir).
+    const result = runDirResolve.resolve({ cwd, env: {}, create: true, standalone: 'adhoc' });
+    if (!result.ok) return null;
+    // Never let this stamp clobber a DIFFERENT session's already-written
+    // ownership on a same-second sibling-session collision (mirrors
+    // stampAdHocRunDir's identical guard).
+    const existing = readRunState(result.path);
+    if (existing && typeof existing.sessionId === 'string' && existing.sessionId && existing.sessionId !== sessionId) return null;
+    const written = writeRunState(result.path, { worktree: path.resolve(worktreePath), status: 'active', sessionId });
+    if (!written) { rollbackMint(result.path); return null; }
+    return result.path;
+  } catch { return null; }
+}
+
 // events.jsonl scan for skill_invoked / claude-tweaks:wrap-up events; missing
 // file or unreadable -> null (indeterminate). Shared by run-integrity.js's
 // checkRunIntegrity and close-run-state.js's closeRunState — the single
@@ -573,5 +626,5 @@ function appendEvent(runDir, type, data, attribution) {
 module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
   readRunState, writeRunState, appendEvent, scanWrapupEvents, findRunByWorktreePath, findRunsByWorktreePath, RUN_ID_RE, findNonCanonicalRunDirs,
-  rollbackMint, isStaleClaim,
+  rollbackMint, isStaleClaim, stampAdHocRunDirForDenial,
 };

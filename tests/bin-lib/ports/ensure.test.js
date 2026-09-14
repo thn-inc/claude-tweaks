@@ -74,6 +74,51 @@ test('ensure: a bound port with a current region keeps the lease (assumed to be 
   }
 });
 
+// #2031 AC1: on the existing-lease-not-free branch (the same branch the test
+// above exercises), ensure() must read .env.local at most once for the
+// managed-region check — regionBefore's own read, never a second independent
+// read+parse inside the isRegionCurrent/regionIsCurrent call. A second,
+// unrelated read of the same file still happens once per call, inside
+// registry.allocate's own writeEnvFiles (env-file.js's existing-content
+// comparison before an idempotent write) — that read predates this record
+// and is not what AC1 targets, so the true portable count on this branch is
+// 2 (regionBefore + writeEnvFiles), not 1. Comparing via realpath (rather
+// than the raw checkout path the test constructs) matters because
+// registry.allocate resolves realPath = fs.realpathSync(checkoutPath) before
+// calling writeEnvFiles: on macOS, os.tmpdir() sits under a symlinked
+// /var -> /private/var, so a raw-path string comparison silently misses that
+// second read entirely — passing locally with count 1 while CI (Linux, no
+// such symlink layer) correctly observes 2 and fails. Normalizing both sides
+// through realpathSync makes the count agree across platforms.
+test('ensure: reads .env.local at most once for the managed-region check on the existing-lease-not-free branch', async () => {
+  const home = tmpHome();
+  const checkout = tmpCheckout(home, 'read-count');
+  const first = await ensure(checkout, { home, policyServices: ['web'], resolveRoot: () => checkout, probe: async () => true });
+  assert.equal(first.reallocated, null);
+
+  const envPath = path.join(checkout, '.env.local');
+  const realEnvPath = fs.realpathSync(envPath);
+  const server = await listenOn(first.base);
+  const originalReadFileSync = fs.readFileSync;
+  let envLocalReads = 0;
+  fs.readFileSync = function (target, ...rest) {
+    if (typeof target === 'string' && target.endsWith('.env.local')) {
+      let real;
+      try { real = fs.realpathSync(target); } catch { real = target; }
+      if (real === realEnvPath) envLocalReads += 1;
+    }
+    return originalReadFileSync.call(fs, target, ...rest);
+  };
+  try {
+    const second = await ensure(checkout, { home, policyServices: ['web'], resolveRoot: () => checkout });
+    assert.equal(second.reallocated, null);
+    assert.equal(envLocalReads, 2, '.env.local should be read exactly twice: once for the managed-region check (regionBefore), once inside writeEnvFiles\'s pre-write comparison — never a third, redundant read for the check itself');
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+    server.close();
+  }
+});
+
 // AC5: lease present, a port bound, and the region is absent -> reallocate.
 test('ensure: a bound port with no managed region reallocates to a fresh block', async () => {
   const home = tmpHome();

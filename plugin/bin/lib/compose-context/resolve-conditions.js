@@ -14,9 +14,9 @@
 // against a composer regenerated per step. An unpinned key resolves
 // 'unresolved' instead (below), never a guess.
 //
-// The `gh --version` probe (transport) is therefore this module's only
-// shell-out, injected via deps.execFileSync so tests never spawn
-// (gh-api-module-pattern's injectable-runner seam).
+// The `gh --version` probe (transport) now calls the shared ghAvailable()
+// helper (the six-call-site consolidation, #2017), with deps.execFileSync
+// injected so tests never spawn (gh-api-module-pattern's injectable-runner seam).
 //
 // A key nobody set resolves to 'unresolved' — never a guessed default — so the
 // composer keeps both branches for it (the record's unresolvable-key rule).
@@ -30,8 +30,7 @@ const path = require('path');
 const { execFileSync: realExecFileSync } = require('child_process');
 const { parseFlatLines, resolvePolicyKeys } = require('../policy-schema');
 const { KEYS, VOCAB, UNRESOLVED } = require('./compose');
-
-const GH_TIMEOUT_MS = 5000; // remote-contacting seam convention; --version is local, but the bound is free
+const { ghAvailable } = require('../repo-resolve');
 
 const realDeps = {
   readFile: (p, enc) => fs.readFileSync(p, enc),
@@ -70,14 +69,7 @@ function resolveConditions({ runDir, repoRoot }, deps = {}) {
     ? (policy.autonomy.value === 'unattended' ? 'headless' : 'attended')
     : UNRESOLVED;
 
-  let transport;
-  try {
-    d.execFileSync('gh', ['--version'], { encoding: 'utf8', stdio: 'pipe', timeout: GH_TIMEOUT_MS });
-    transport = 'gh';
-  } catch {
-    transport = 'mcp';
-  }
-  conditions.transport = transport;
+  conditions.transport = ghAvailable({ execFileSync: d.execFileSync }) ? 'gh' : 'mcp';
 
   conditions['worktree-policy'] = isSet(policy['worktree-always'])
     ? (policy['worktree-always'].value === true ? 'always' : 'optional')

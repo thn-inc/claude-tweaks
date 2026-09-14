@@ -24,6 +24,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
+const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve');
+const { fetchNativeParent } = require('../issues/native-dependencies');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
@@ -369,13 +371,15 @@ registerCheck('reference-repairs', ({ runDir, base, deps, cwd }) => {
 });
 
 // ---- gh availability probe ------------------------------------------------
+// Delegates to the shared plugin/bin/lib/repo-resolve.js helper (the
+// six-call-site consolidation, #2017) via a one-call adapter: this module's
+// own deps.gh(args, cwd) seam takes a cwd the shared helper's
+// deps.execFileSync(cmd, args, opts) shape has no slot for, so the adapter
+// closes over cwd and discards the shared helper's own cmd/opts arguments
+// (deps.gh always means "gh", and this module's own makeDefaultRunner
+// already carries the timeout bound).
 function ghAvailable(deps, cwd) {
-  try {
-    deps.gh(['--version'], cwd);
-    return true;
-  } catch {
-    return false;
-  }
+  return sharedGhAvailable({ execFileSync: (_cmd, args) => deps.gh(args, cwd) });
 }
 
 // ---- parent resolution + pr-first pointer helpers ---------------------------
@@ -383,23 +387,39 @@ function ghAvailable(deps, cwd) {
 // `verification-brief.md`'s Routing section: a resolvable-parent sub-issue
 // never carries its own `demo:pending` -- its parent carries one gate for
 // all of them. Callers must redirect to the parent before checking labels/
-// comments. Returns { ok:false, error } instead of throwing so a gh/JSON
-// failure folds into the check's own `fail` detail line rather than
-// aborting the whole check.
+// comments. Returns { ok:false, error } instead of throwing so a gather
+// failure can be distinguished from a genuine labeling mismatch by the
+// caller -- the acceptance-labeling check below renders 'unknown', never
+// 'fail', for an { ok: false } result.
+//
+// GraphQL, not `gh issue view --json parent`: that REST field is unknown to
+// gh <2.96 (#1841), while Issue.parent via GraphQL works on every gh version
+// that can run GraphQL at all. A GraphQL variable can't be filled by gh's
+// {owner}/{repo} placeholder substitution (gh-api-module-pattern skill) --
+// the repo slug has to be resolved locally first, via the same `deps.git`
+// seam every other check in this file already uses.
 function resolveParent(n, deps, cwd) {
-  let raw;
+  let remote;
   try {
-    raw = deps.gh(['issue', 'view', String(n), '--json', 'parent'], cwd);
+    remote = deps.git(['remote', 'get-url', 'origin'], cwd);
   } catch (err) {
-    return { ok: false, error: `gh issue view (parent) failed for #${n} (${err.message})` };
+    return { ok: false, error: `git remote get-url failed for #${n} (${err.message})` };
   }
-  let parsed;
+  const repoSpec = parseRepo(remote);
+  if (!repoSpec) {
+    return { ok: false, error: `could not resolve owner/repo for #${n}` };
+  }
   try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { ok: false, error: `could not parse parent JSON for #${n}` };
+    const parent = fetchNativeParent({
+      number: n,
+      owner: repoSpec.owner,
+      repo: repoSpec.repo,
+      runner: (args) => deps.gh(args, cwd),
+    });
+    return { ok: true, parent };
+  } catch (err) {
+    return { ok: false, error: `gh api graphql (parent) failed for #${n} (${err.message})` };
   }
-  return { ok: true, parent: parsed.parent ? parsed.parent.number : null };
 }
 
 // `verify`'s --run-dir may be the parent pipeline run directory, or (in a
@@ -454,12 +474,20 @@ registerCheck('acceptance-labeling', ({ runDir, deps, cwd }) => {
   // otherwise), deduping by target -- two sub-issues sharing one parent
   // must only be checked once, both to avoid redundant gh calls and to
   // avoid redundant identical detail lines.
+  //
+  // A gather failure here (GraphQL error, unresolvable owner/repo, an
+  // unparseable response) is a tooling gap, not evidence of a labeling
+  // mismatch -- it renders the whole check 'unknown', matching this file's
+  // other could-not-gather rows, and returns before any label/comment read
+  // runs (a real labeling mismatch on a successfully resolved record still
+  // reaches the loop below and can still render 'fail').
   const targets = [];
   const seenTargets = new Set();
+  const gatherFailures = [];
   for (const n of issues) {
     const resolved = resolveParent(n, deps, cwd);
     if (!resolved.ok) {
-      failing.push(`#${n}: ${resolved.error}`);
+      gatherFailures.push(`#${n}: ${resolved.error}`);
       continue;
     }
     const target = resolved.parent || n;
@@ -467,6 +495,7 @@ registerCheck('acceptance-labeling', ({ runDir, deps, cwd }) => {
     seenTargets.add(target);
     targets.push(target);
   }
+  if (gatherFailures.length) return { result: 'unknown', detail: gatherFailures.join('; ') };
 
   const prNumber = resolvePrNumber(runDir);
 
@@ -653,6 +682,7 @@ function renderVerifyTable(rows) {
 module.exports = {
   runVerify,
   renderVerifyTable,
+  sanitizeCell,
   resolveArchivedRunDir,
   registerCheck,
   defaultGit,

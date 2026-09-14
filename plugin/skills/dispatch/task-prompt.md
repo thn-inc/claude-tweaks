@@ -2,7 +2,7 @@
 
 Referenced by `skills/dispatch/SKILL.md` Step 5. Unlike `sequential-execution.md` and `deprecated-aliases.md` (background detail, read for understanding), **each of this file's two templates must be inlined verbatim into its own `Task()` tool call** when dispatching a group — they are the operative templates, not supplementary reading. Never inline both into one call. Copy each fenced block below exactly, substituting `{issue list}`, `{minted-run-dir}`, `{plugin-root}`, `{context-pack}`, etc. as SKILL.md's Step 5 directs.
 
-Each group is dispatched as **two sequential `Task()` calls**, not one (per `_shared/subagent-output-contract.md`'s input discipline — minimal input, literal output template inlined, no conversation history). The single-assistant-message rule (`_shared/subagent-output-contract.md`'s fan-out section) creates no batching decision here — these two calls are sequential by design, never emitted together.
+Each group is dispatched as **two sequential `Task()` calls**, not one (per `_shared/subagent-output-contract.md`'s input discipline — minimal input, literal output template inlined, no conversation history). The single-assistant-message rule (`_shared/subagent-dispatch-core.md`'s fan-out section) creates no batching decision here — these two calls are sequential by design, never emitted together.
 
 ## Context pack (#1542 — resolve once, substitute into both calls)
 
@@ -44,7 +44,7 @@ each template's own "CRITICAL"/re-derive-from-artifacts language, unchanged by t
 into the minted run directory, one physical line each:
 `node "{plugin-root}/bin/compose-context.js" --run "{minted-run-dir}" --step claims "{plugin-root}/skills/_shared/issue-claims.md"`
 and
-`node "{plugin-root}/bin/compose-context.js" --run "{minted-run-dir}" --step merge "{plugin-root}/skills/_shared/pr-first-merge.md" "{plugin-root}/skills/_shared/pr-early-run-lifecycle.md"`.
+`node "{plugin-root}/bin/compose-context.js" --run "{minted-run-dir}" --step merge "{plugin-root}/skills/_shared/pr-first-merge.md" "{plugin-root}/skills/_shared/pr-checklist-refresh.md"`.
 The directory needs nothing else to compose into: Step 4 minted it mkdir-only, and `mode` is
 unresolved at this point (no `config.yml` yet) — neither bundle's sources branch on that key
 today. `integration-model` resolves only from `.claude-tweaks/policy.yml`'s pin — on a repo that
@@ -69,7 +69,25 @@ once, comma-joined. Stop after the test gate -- do not proceed to review, polish
 a separate Task call handles those. If you reference any of these issue numbers in an
 intermediate commit message, write "refs #N" -- never "closes #N" or "fixes #N".
 
+Foreground execution (required): run `npm test` and every other long-running command in the
+foreground of this turn, output redirected to a file if it's long -- never with
+`run_in_background`. Never end this turn waiting on a background test run, fix-round, or child
+agent's completion notification; a dispatched agent that yields this way is never re-woken and
+the run stalls silently (#1965).
+
 {context-pack}
+
+Ephemeral dev server (only if this run's steps include a browser-driving step in a later,
+separate call -- review or stories/QA): if this call starts an ephemeral worktree dev server (a
+background dev command on a free port, recorded in `ephemeral-server.txt`), start it detached --
+POSIX: launch under `setsid` (e.g. `setsid {dev command} > {log} 2>&1 &`); Windows: no detach
+primitive exists, record `detached: no` instead -- and append a fourth field to the recorded
+line (`detached:yes`/`detached:no`). Write this record via a plain Bash redirect (e.g. `printf '%s
+%s %s detached:%s\n' "$PID" "$PORT" "$WORKTREE_ROOT" "$DETACHED" > "{minted-run-dir}/ephemeral-server.txt"`),
+never the Edit/Write tool -- the run dir is anchored under the main checkout, and this worktree
+session's Edit/Write attempt against it is refused by the harness's own cross-checkout
+write-pinning, while a plain Bash write into `.claude-tweaks/pipelines/` is not. Never delete `ephemeral-server.txt` at the end of this call, whether or not the server is still alive -- the record belongs to the run, not to this call, and the second call's own liveness re-check depends
+on it still being there.
 
 If the build or test step hits a HARD-GATE, handle it per
 skills/dispatch/settle-and-merge.md's Settle procedure (claim ownership check against
@@ -101,10 +119,7 @@ worktree of this checkout, so it can pop or clobber a sibling worktree's in-flig
 compare against a baseline without mutating the tree, use `git show <rev>:<path>`; to set your
 own work aside, make a temporary WIP commit instead.
 
-Status line (required): First line of your reply must be one of: DONE / DONE_WITH_CONCERNS
-/ NEEDS_CONTEXT / BLOCKED.
-
-OUTPUT FORMAT (required), after the status line -- return ONLY these lines, no preamble:
+OUTPUT FORMAT (required) -- return ONLY these lines, no preamble:
 
 GROUP: {comma-joined issue numbers}
 OUTCOME: {build-test-ok | build-test-failed | build-test-blocked}
@@ -114,6 +129,10 @@ MANIFEST: {absolute path to this group's run-dir manifest.yml/decisions.md -- a
 
 One line per issue in this group that hit a HARD-GATE (omit if none):
 ISSUE #{n}: failed:{gate}
+
+Status line (required): on its own trailing line, after everything above -- the reply's last
+non-empty line -- write exactly `STATUS: {WORD}`, where {WORD} is one of: DONE /
+DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
 
 [Use: Standard] -- this dispatch wraps build+test execution, not analysis; the pipeline's own
 steps select their own models as usual. Resolve via `node "{plugin-root}/bin/resolve-profile.js" standard`
@@ -137,11 +156,27 @@ review,polish,wrap-up`. Bundle -> run `PIPELINE_RUN_DIR="{minted-run-dir}"
 {minted-run-dir} value substituted into those commands is the same run directory dispatch
 minted before either call and the first call's own /flow invocation adopted; passing it on
 the command line is what makes this call resume that exact run rather than start a new one --
-_shared/pipeline-run-dir.md's resolution order step 1 (the env var, its documented preferred
+_shared/run-dir-resolution.md's resolution order step 1 (the env var, its documented preferred
 path) feeding flow/SKILL.md Step 3's adopt-if-set branch. You need no other input about what
 the prior call did or found.
 
+Foreground execution (required): run `npm test` and every other long-running command in the
+foreground of this turn, output redirected to a file if it's long -- never with
+`run_in_background`. Never end this turn waiting on a background test run, fix-round, or child
+agent's completion notification; a dispatched agent that yields this way is never re-woken and
+the run stalls silently (#1965).
+
 {context-pack}
+
+Ephemeral dev server liveness (only if `{minted-run-dir}/ephemeral-server.txt` exists): before
+the first browser-driving step, and again before any `trace stop`, verify the recorded pid
+answers on the recorded port. On a dead pid, start a fresh server the same way the plugin's own
+Ephemeral server start procedure does (re-resolve the port lease, launch detached, poll until
+reachable), rewrite `ephemeral-server.txt` via a plain Bash redirect (never the Edit/Write tool --
+same reason as the first call's own record write: this run dir is anchored under the main
+checkout, and Edit/Write against it is refused by the harness's cross-checkout write-pinning),
+and log `AUTO {time} -- ephemeral server restarted:
+recorded pid {old} dead, new pid {new} on port {port}`.
 
 CRITICAL: your review step must re-derive its verdict from raw artifacts -- the actual diff,
 the actual test-output log in the run directory -- never from a prior claim, whether that
@@ -184,8 +219,9 @@ worktree of this checkout, so it can pop or clobber a sibling worktree's in-flig
 compare against a baseline without mutating the tree, use `git show <rev>:<path>`; to set your
 own work aside, make a temporary WIP commit instead.
 
-Status line (required): First line of your reply must be one of: DONE / DONE_WITH_CONCERNS
-/ NEEDS_CONTEXT / BLOCKED.
+Status line (required): the last non-empty line of your reply, after the OUTPUT FORMAT block
+below, must read exactly `STATUS: {WORD}`, where {WORD} is one of: DONE / DONE_WITH_CONCERNS /
+NEEDS_CONTEXT / BLOCKED.
 
 This state-check applies when choosing among `merged`/`armed`/`pending-review`/`ready-to-merge` --
 `failed`/`blocked` are already decided by the HARD-GATE outcome above, and Settle's own step 2 has
@@ -205,7 +241,7 @@ this run, or is not `live`, or `bot:in-progress` is already gone -- another sess
 this record since your run started; report `pending-review` and note the discrepancy rather than
 reporting `merged`/`armed`/`ready-to-merge` against a claim you no longer hold.
 
-OUTPUT FORMAT (required), after the status line -- return ONLY these lines, no preamble:
+OUTPUT FORMAT (required), before the trailing status line -- return ONLY these lines, no preamble:
 
 GROUP: {comma-joined issue numbers}
 OUTCOME: {merged | armed | pending-review | ready-to-merge | failed | blocked}
@@ -242,8 +278,9 @@ session completes all three (worktree removal, claim release, run-dir archival) 
 per `settle-and-merge.md`'s Dispatching-session merge execution (local-merge fallback) section.
 
 `pending-review` also covers what `pr-opened` used to name separately: under pr-first the PR
-already exists from run start (`{minted-run-dir}/context/merge.md`, which composes
-`_shared/pr-early-run-lifecycle.md`; if that bundle is absent, read `_shared/pr-early-run-lifecycle.md` directly), so there is no longer a
+already exists from run start (a separate, run-start-only concern from
+`{minted-run-dir}/context/merge.md`'s merge-time bundle above, which composes `pr-first-merge.md`
+and `pr-checklist-refresh.md`), so there is no longer a
 distinct "the branch reached its finish decision, a PR just opened" transition to report — a
 run that reaches the Review Console with nobody answering it is `pending-review` regardless of
 how long the PR has already existed.
@@ -253,4 +290,4 @@ pipeline's own steps select their own models as usual. Resolve via
 `node "{plugin-root}/bin/resolve-profile.js" standard` (contract § Model Selection).
 ```
 
-None of Templates A/B/C in `_shared/subagent-output-contract.md` fit an agent that executes pipeline stages rather than returning findings/locations/a yes-no, so these are their own minimal templates, inlined verbatim at every dispatch site. The universal parts of the contract still apply: the four-value status line, minimal input, and literal (not referenced) output format.
+None of Templates A/B/C (A in `_shared/subagent-dispatch-core.md`; B/C in `_shared/subagent-output-contract.md`) fit an agent that executes pipeline stages rather than returning findings/locations/a yes-no, so these are their own minimal templates, inlined verbatim at every dispatch site. The universal parts of the contract still apply: the four-value status line, minimal input, and literal (not referenced) output format.

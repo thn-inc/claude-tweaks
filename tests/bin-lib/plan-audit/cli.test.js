@@ -8,6 +8,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'plan-audit.js');
+const { CEILING_BYTES } = require(path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'skill-audit', 'context-cost'));
 
 function makeTmpRepo() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'plan-audit-cli-'));
@@ -74,7 +75,7 @@ test('AC3: a fixture plan adding prose to a near-ceiling governed file gets a so
   const rel = 'plugin/skills/build/plan-audit.md';
   const abs = path.join(repo, rel);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, 'x'.repeat(40 * 1024 - 500));
+  fs.writeFileSync(abs, 'x'.repeat(CEILING_BYTES - 500));
   try {
     const plan = writePlan(repo, [
       '### Task 1: Add prose',
@@ -98,7 +99,7 @@ test('AC4: a fixture plan adding prose to a governed file already over the ceili
   const rel = 'plugin/skills/build/SKILL.md';
   const abs = path.join(repo, rel);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, 'x'.repeat(40 * 1024 + 1));
+  fs.writeFileSync(abs, 'x'.repeat(CEILING_BYTES + 1));
   try {
     const plan = writePlan(repo, [
       '### Task 1: Add prose',
@@ -165,6 +166,42 @@ test('AC6: a fixture plan whose Step 2 command already passes despite declaring 
   }
 });
 
+// AC1/AC2/AC3 from #1594's own spec — the real drift shape recovered from
+// docs/superpowers/plans/2026-08-26-sweep-residue-needs-decision-marker.md
+// (deleted at commit a9d11d408; recovered from commit 3abba9020) before its
+// own regex-matching fix: a Step 2 heading worded "confirm FAIL" whose
+// command sits in a fenced ```bash code block with no `Run:` label.
+test('#1594: a fixture plan reproducing the real fenced-code-block Step 2 drift produces a checkC warning, not a silent no-op, and still exits 0', () => {
+  const repo = makeTmpRepo();
+  try {
+    const plan = writePlan(repo, [
+      '### Task 1: Add the needs:decision label',
+      '**Files:**',
+      '- Modify: `plan.md`',
+      '',
+      '- [ ] **Step 2: Run it to confirm FAIL**',
+      '',
+      '```bash',
+      'node --test tests/work-record-needs-decision-conformance.test.js',
+      '```',
+      '',
+      'Expected: FAIL on the first four tests (the go-red control test passes immediately).',
+      '',
+      '- [ ] **Step 3: Add the row**',
+    ].join('\n'));
+    const { exitCode, stdout } = runCli(plan, repo);
+    assert.strictEqual(exitCode, 0);
+    const report = JSON.parse(stdout.split('\n')[0]);
+    assert.strictEqual(report.checkC.ok, true);
+    assert.deepStrictEqual(report.checkC.findings, []);
+    assert.strictEqual(report.checkC.warnings.length, 1);
+    assert.strictEqual(report.checkC.warnings[0].task, '1');
+    assert.match(report.checkC.warnings[0].raw, /Step 2: Run it to confirm FAIL/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test('a task declaring Expected: FAIL whose command genuinely fails pre-dispatch is not a Check C finding', () => {
   const repo = makeTmpRepo();
   try {
@@ -225,6 +262,82 @@ test('AC7: a fixture plan touching a compose call site with a malformed sibling 
     assert.strictEqual(report.headroom.composedErrors.length, 1);
     assert.strictEqual(report.headroom.composedErrors[0].step, 'demo');
     assert.match(summaryLine, /Composed: 1 unmeasured/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// #1999 — an append-shaped task (Step 1 appends to an existing, passing
+// test file named by both a Modify: bullet and Step 2's Run: command)
+test('AC8 (#1999): an append-shaped task reports appendShaped and the summary line names the count, still exits 0', () => {
+  const repo = makeTmpRepo();
+  fs.mkdirSync(path.join(repo, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'tests', 'existing.test.js'), '// existing, passes today\n');
+  try {
+    const plan = writePlan(repo, [
+      '### Task 1: Append tests',
+      '**Files:**',
+      '- Modify: `tests/existing.test.js`',
+      '',
+      '- [ ] **Step 1: Append the new cases**',
+      '',
+      'Append cases to `tests/existing.test.js`.',
+      '',
+      '- [ ] **Step 2: Run test to verify it fails**',
+      '',
+      'Run: `node --test tests/existing.test.js`',
+      'Expected: FAIL — new cases not yet true',
+    ].join('\n'));
+    const { exitCode, stdout } = runCli(plan, repo);
+    assert.strictEqual(exitCode, 0);
+    const [jsonLine, summaryLine] = stdout.split('\n');
+    const report = JSON.parse(jsonLine);
+    assert.strictEqual(report.checkC.ok, true);
+    assert.strictEqual(report.checkC.appendShaped.length, 1);
+    assert.match(summaryLine, /append-shaped/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// #2000 — Check D wired into the full envelope and the --bytes verb
+test('#2000: a fixture plan with a raw NUL fails checkD and exits 1 under both the full audit and --bytes', () => {
+  const repo = makeTmpRepo();
+  try {
+    const plan = path.join(repo, 'plan.md');
+    fs.writeFileSync(plan, Buffer.from(`### Task 1: X\n**Files:**\n- Modify: \`plan.md\`\n\nsecond${'\0'}line\n`));
+    const full = runCli(plan, repo);
+    assert.notStrictEqual(full.exitCode, 0);
+    const fullReport = JSON.parse(full.stdout.split('\n')[0]);
+    assert.strictEqual(fullReport.checkD.ok, false);
+    assert.strictEqual(fullReport.checkD.findings[0].line, 5);
+
+    let bytesResult;
+    try {
+      execFileSync('node', [CLI, plan, '--bytes'], { encoding: 'utf8' });
+      assert.fail('expected --bytes to exit non-zero');
+    } catch (err) {
+      bytesResult = err;
+    }
+    assert.strictEqual(bytesResult.status, 1);
+    const bytesReport = JSON.parse((bytesResult.stdout || '').split('\n')[0]);
+    assert.strictEqual(bytesReport.checkD.ok, false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#2000: a clean plan reports checkD.ok === true under the full audit and --bytes', () => {
+  const repo = makeTmpRepo();
+  fs.mkdirSync(path.join(repo, 'plugin', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'plugin', 'bin', 'existing.js'), '// existing\n');
+  try {
+    const plan = writePlan(repo, ['### Task 1: Do a thing', '**Files:**', '- Modify: `plugin/bin/existing.js`'].join('\n'));
+    const { stdout } = runCli(plan, repo);
+    const report = JSON.parse(stdout.split('\n')[0]);
+    assert.strictEqual(report.checkD.ok, true);
+    const bytesOut = execFileSync('node', [CLI, plan, '--bytes'], { encoding: 'utf8' });
+    assert.deepStrictEqual(JSON.parse(bytesOut.trim()), { checkD: { ok: true, findings: [] } });
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }

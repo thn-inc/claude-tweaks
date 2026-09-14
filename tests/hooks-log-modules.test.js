@@ -80,11 +80,19 @@ test('subagent-stop flags a missing status line as contract violation (warn, non
   assert.strictEqual(readEvents(run)[0].type, 'contract-violation');
 });
 
-test('subagent-stop accepts a compliant status line silently', () => {
+// #2265: the canonical status position moved to a trailing "STATUS: {WORD}"
+// line; a bare word as the literal FIRST line (the old shape) is now
+// lenient-compliant, not canonical — still no dispatcher-facing warning, but
+// an informational contract-violation variant IS logged so a stale
+// old-format dispatch site stays visible. See tests/hooks-subagent-stop.test.js
+// for the full canonical/lenient/violation matrix this migration added.
+test('subagent-stop accepts an old-format (bare-word-first) status line leniently, logging an informational variant', () => {
   const run = mkRun();
   const out = substop.run({ input: { agent_transcript_path: transcript('DONE\nAll checks green.') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
-  assert.deepStrictEqual(out, {});
-  assert.ok(!fs.existsSync(path.join(run, 'events.jsonl')));
+  assert.deepStrictEqual(out, {}, 'lenient compliance never returns a dispatcher-facing warning');
+  const ev = readEvents(run);
+  assert.strictEqual(ev[0].type, 'contract-violation');
+  assert.strictEqual(ev[0].variant, 'lenient', 'old-format first-line is lenient, not a hard violation');
 });
 
 function multiTurnTranscript(texts) {
@@ -110,8 +118,10 @@ test('subagent-stop checks the LAST assistant message, not an earlier non-compli
   const run = mkRun();
   const t = multiTurnTranscript(['still investigating', 'DONE\nAll checks green.']);
   const out = substop.run({ input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  // Old-format (bare-word-first) LAST turn — lenient-compliant, informational
+  // event only (#2265); see the dedicated old-format test above.
   assert.deepStrictEqual(out, {});
-  assert.ok(!fs.existsSync(path.join(run, 'events.jsonl')));
+  assert.strictEqual(readEvents(run)[0].variant, 'lenient');
 });
 
 function toolOnlyLastTurnTranscript() {
@@ -248,18 +258,22 @@ test('#1431: a fallback-attributed owned run still receives the event, tagged at
 // NEEDS_CONTEXT" — a bold, colon-prefixed bullet line, not claude-tweaks'
 // own bare-word contract. An SDD-dispatched implementer correctly following
 // ITS OWN template must not be flagged as violating a DIFFERENT contract.
+// #2265: the bolded "**Status:**" line is off-position here (not the reply's
+// last non-empty line), so it's now lenient-compliant rather than fully
+// canonical — still accepted with no dispatcher-facing warning, but an
+// informational variant is logged.
 test('subagent-stop accepts the bolded "**Status:** DONE" line from superpowers SDD\'s implementer template (#750)', () => {
   const run = mkRun();
   const out = substop.run({ input: { agent_transcript_path: transcript('**Status:** DONE\nCommits: abc123 fix thing') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   assert.deepStrictEqual(out, {});
-  assert.ok(!fs.existsSync(path.join(run, 'events.jsonl')));
+  assert.strictEqual(readEvents(run)[0].variant, 'lenient');
 });
 
 test('subagent-stop accepts the bolded "- **Status:** DONE" bulleted form exactly as the SDD template renders it (#750)', () => {
   const run = mkRun();
   const out = substop.run({ input: { agent_transcript_path: transcript('- **Status:** DONE\n- Commits: abc123 fix thing') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   assert.deepStrictEqual(out, {});
-  assert.ok(!fs.existsSync(path.join(run, 'events.jsonl')));
+  assert.strictEqual(readEvents(run)[0].variant, 'lenient');
 });
 
 test('subagent-stop accepts the bolded status line for all four contract words (#750)', () => {
@@ -267,19 +281,43 @@ test('subagent-stop accepts the bolded status line for all four contract words (
     const run = mkRun();
     const out = substop.run({ input: { agent_transcript_path: transcript(`**Status:** ${word}\nmore detail`) }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
     assert.deepStrictEqual(out, {}, `expected ${word} to be accepted`);
-    assert.ok(!fs.existsSync(path.join(run, 'events.jsonl')), `expected no event for ${word}`);
+    assert.strictEqual(readEvents(run)[0].variant, 'lenient', `expected lenient variant for ${word}`);
   }
 });
 
-// AC3 regression guard: the widened pattern must not swallow a genuine
-// violation — a reviewer narrating before its verdict (bold or not) is
-// still neither a bare-word nor a "**Status:**"-prefixed first line, and
-// must still be flagged.
-test('subagent-stop still flags a reviewer narrating before its verdict as a contract violation, bold prefix widening notwithstanding (#750 AC3)', () => {
+// #2265: this exact shape — narration first, bolded status line LAST — is
+// now the intentionally-rewarded case: the status marker sits in the new
+// canonical trailing POSITION, just still in the old SDD bold format rather
+// than the new "STATUS: {WORD}" text. Lenient-compliant, not a violation.
+// (The old assertion here predated the trailing-line migration, when only
+// the first line was ever checked.)
+test('subagent-stop accepts narration followed by a trailing bolded status line as lenient-compliant (#2265, formerly #750 AC3)', () => {
   const run = mkRun();
   const out = substop.run({ input: { agent_transcript_path: transcript('Let me check the diff first before giving a verdict.\n**Status:** DONE') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  assert.deepStrictEqual(out, {});
+  assert.strictEqual(readEvents(run)[0].variant, 'lenient');
+});
+
+// The genuine regression this AC guarded against survives in a different
+// shape: a status word buried in the MIDDLE of a long reply — outside both
+// the first-3 and last-3 non-empty-line windows — must still be flagged.
+test('subagent-stop still flags a status word buried outside the first-or-last-3 window as a contract violation (#2265)', () => {
+  const run = mkRun();
+  const body = [
+    'Investigating the report.',
+    'Reading the relevant files now.',
+    'Found the likely cause.',
+    '**Status:** DONE', // line 4 of 8 — outside first-3 (1-3) and last-3 (6-8)
+    'Double-checking before concluding.',
+    'Confirmed the fix is correct.',
+    'Writing up the summary.',
+    'Nothing further to add.',
+  ].join('\n');
+  const out = substop.run({ input: { agent_transcript_path: transcript(body) }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   assert.match(out.json.systemMessage, /status line/i);
-  assert.strictEqual(readEvents(run)[0].type, 'contract-violation');
+  const ev = readEvents(run)[0];
+  assert.strictEqual(ev.type, 'contract-violation');
+  assert.strictEqual(ev.variant, undefined, 'a genuine violation carries no lenient variant field');
 });
 
 // A bold label that is NOT "Status:" (e.g. a differently-shaped report) must
@@ -343,4 +381,35 @@ test('#1928 AC5: transcript_path alone appends no contract-violation event', () 
   const out = substop.run({ input: { transcript_path: transcript('I did some things.') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   assert.deepStrictEqual(out, {});
   assert.strictEqual(fs.existsSync(path.join(run, 'events.jsonl')), false);
+});
+
+// #2036: SubagentStop's agent_transcript_path identical to the same event's
+// own transcript_path is a known-unreliable attribution (claude-code#27755) —
+// the dispatching session's own async-wait status narration
+// (agent-tool-async-wait-pattern.md: status message, no tool call, while
+// awaiting an Agent-tool dispatch's async notification), not a distinct
+// subagent's final reply. AC1: no contract-violation event or systemMessage.
+test('#2036 AC1: agent_transcript_path identical to transcript_path appends no contract-violation event', () => {
+  const run = mkRun();
+  const t = transcript('Waiting on the code-simplifier subagent to return before proceeding.');
+  const out = substop.run({
+    input: { agent_transcript_path: t, transcript_path: t },
+    runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x',
+  });
+  assert.deepStrictEqual(out, {});
+  assert.strictEqual(fs.existsSync(path.join(run, 'events.jsonl')), false);
+});
+
+// #2036 AC2: a genuine subagent stop — a DISTINCT agent_transcript_path from
+// transcript_path, whose own final reply omits the status line — must still
+// be flagged. The #2036 fix narrows the false-positive without disabling the
+// real check.
+test('#2036 AC2: a genuinely distinct agent transcript missing the status line still logs a contract-violation, even when transcript_path is also present', () => {
+  const run = mkRun();
+  const out = substop.run({
+    input: { agent_transcript_path: transcript('I did some things.'), transcript_path: '/main-session/transcript.jsonl' },
+    runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x',
+  });
+  assert.match(out.json.systemMessage, /status line/i);
+  assert.strictEqual(readEvents(run)[0].type, 'contract-violation');
 });

@@ -25,6 +25,11 @@ const REVIEW_SKILL =
 const STEPS_AND_GATES = read('plugin', 'skills', 'flow', 'steps-and-gates.md');
 const WRAP_EXEC = read('plugin', 'skills', 'wrap-up', 'execution-and-verification.md');
 const HOOKS_JS = read('plugin', 'bin', 'hooks.js');
+// #2002 split the Phase-checklist update / Pre-merge title-description refresh procedures
+// (and the merge-time gh-absent degrade row) out of LIFECYCLE into their own file — every
+// phase-exit citer names both files now: the phase-exit push rule stays in LIFECYCLE's sibling
+// `git-discipline.md`, but the checklist-update procedure itself lives here.
+const CHECKLIST_REFRESH = read('plugin', 'skills', '_shared', 'pr-checklist-refresh.md');
 
 test('the run marker is the unconditional first line of the PR body, with its plain-text companion immediately after', () => {
   assert.match(
@@ -50,10 +55,20 @@ test('the push at run start is its own Bash call, never chained', () => {
 test('run start checks for an existing PR by state before creating one, and distinguishes open from closed/merged', () => {
   assert.match(
     LIFECYCLE,
-    /gh pr list --repo \{owner\}\/\{repo\} --head \{branch\} --state all --json number,url,state,isDraft/,
+    /gh pr list --repo \{host\}\/\{owner\}\/\{repo\} --head \{branch\} --state all --json number,url,state,isDraft/,
     'a resumed or retried run must not duplicate a PR — state:all is required to see the closed/merged case and fall through to creation rather than misreading it as a live match',
   );
   assert.match(LIFECYCLE, /Never flip an already-non-draft open PR back to draft/);
+});
+
+test('identity resolution is host-qualified, so every --repo in this file works on GitHub Enterprise (#2021)', () => {
+  assert.match(LIFECYCLE, /Resolve `\{host\}\/\{owner\}\/\{repo\}` once: `gh repo view --json nameWithOwner,url`/);
+  assert.match(LIFECYCLE, /gh pr create --repo \{host\}\/\{owner\}\/\{repo\} --draft --base \{integration-branch\}/);
+  assert.doesNotMatch(
+    LIFECYCLE,
+    /--repo \{owner\}\/\{repo\}/,
+    'no --repo in this file should still be the bare (non-host-qualified) form',
+  );
 });
 
 test('the phase checklist is delimited by HTML-comment markers for reliable re-composition', () => {
@@ -73,13 +88,13 @@ test('Fixes lines are safe because the PR stays draft until gates pass, not beca
 test('the resume path re-verifies a recorded PR against GitHub before trusting it', () => {
   assert.match(
     LIFECYCLE,
-    /gh pr view \{recorded-number\} --repo \{owner\}\/\{repo\} --json state,isDraft,url/,
+    /gh pr view \{recorded-number\} --repo \{host\}\/\{owner\}\/\{repo\} --json state,isDraft,url/,
     'the branch could have been force-pushed or the PR closed since an earlier phase recorded it — trusting run-state.json blindly would silently skip the checklist update',
   );
 });
 
 test('phase-checklist updates degrade the same way phase-exit pushes do: log and continue, never block', () => {
-  assert.match(LIFECYCLE, /Best-effort, like the phase-exit push it follows/);
+  assert.match(CHECKLIST_REFRESH, /Best-effort, like the phase-exit push it follows/);
 });
 
 test('the skip/degrade table names local-merge, push failure, gh-create failure, gh-absent, and offline as distinct rows', () => {
@@ -138,13 +153,13 @@ test('every phase-exit citation (build, test, review, polish via steps-and-gates
     ['flow/steps-and-gates.md (polish)', STEPS_AND_GATES],
   ]) {
     assert.match(text, /_shared\/git-discipline\.md/, `${label} must cite the phase-exit push rule`);
-    assert.match(text, /_shared\/pr-early-run-lifecycle\.md/, `${label} must cite the checklist-update procedure`);
+    assert.match(text, /_shared\/pr-checklist-refresh\.md/, `${label} must cite the checklist-update procedure`);
   }
 });
 
 test('wrap-up\'s phase exit explicitly defers merge-readiness to the merge-path sub-issue, not this one', () => {
   assert.match(WRAP_EXEC, /_shared\/git-discipline\.md/);
-  assert.match(WRAP_EXEC, /_shared\/pr-early-run-lifecycle\.md/);
+  assert.match(WRAP_EXEC, /_shared\/pr-checklist-refresh\.md/);
   assert.match(
     WRAP_EXEC,
     /does not mark the PR ready for merge or touch its draft state — that\s*\ntransition belongs to the merge-path sub-issue/,
@@ -157,6 +172,15 @@ test('wrap-up does not duplicate the Fixes lines already carried by the draft PR
     /no `Fixes` line here/,
     'the draft PR already carries one Fixes line per record from run start — a second, differently-scoped set here would risk disagreeing with it',
   );
+});
+
+test('#2002: pr-checklist-refresh.md carries the Phase-checklist update, Pre-merge refresh, and merge-time gh-absent degrade sections split out of LIFECYCLE', () => {
+  assert.match(CHECKLIST_REFRESH, /## Phase-checklist update \(every phase exit\)/);
+  assert.match(CHECKLIST_REFRESH, /## Pre-merge title\/description refresh/);
+  assert.match(CHECKLIST_REFRESH, /## Merge-time gh-absent degrade/);
+  // LIFECYCLE itself no longer carries these sections — moved, not duplicated.
+  assert.doesNotMatch(LIFECYCLE, /## Phase-checklist update \(every phase exit\)/);
+  assert.doesNotMatch(LIFECYCLE, /## Pre-merge title\/description refresh/);
 });
 
 test('bin/hooks.js record-pr verb writes run-state.json.pr through writeRunState, mirroring record-worktree', () => {

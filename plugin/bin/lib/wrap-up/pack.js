@@ -143,6 +143,7 @@ function headerRecords(deps, dir) {
 // pr-first run they exist only here — never in the main-checkout run dir the
 // CLI anchors --run to (#1930 review C1).
 function worktreeMirror(runDir, worktree) {
+  if (typeof worktree !== 'string') return null;
   const parts = path.resolve(runDir).split(path.sep);
   const i = parts.lastIndexOf('.claude-tweaks');
   if (i === -1 || parts[i + 1] !== 'pipelines') return null;
@@ -393,10 +394,10 @@ function buildProbes(inputs, deps) {
     recordLabels: async () => {
       backendOrThrow(); forgeOrThrow(); recordsOrThrow();
       const out = {};
-      for (const n of inputs.records) {
+      await Promise.all(inputs.records.map(async (n) => {
         const { stdout } = await gh(['issue', 'view', String(n), '--json', 'labels']);
         out[n] = JSON.parse(stdout).labels.map((l) => l.name);
-      }
+      }));
       return out;
     },
     claim: async () => {
@@ -456,4 +457,6 @@ async function gatherPack({ runDir, cwd = process.cwd(), only = null, deps: over
   return pack;
 }
 
-module.exports = { gatherPack, resolveInputs, wrapProbe, parseLedger, PROBE_NAMES };
+module.exports = {
+  gatherPack, resolveInputs, wrapProbe, withTimeout, parseLedger, PROBE_NAMES, resolveRecords, headerRecords,
+};

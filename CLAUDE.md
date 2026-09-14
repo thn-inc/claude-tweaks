@@ -34,17 +34,16 @@ SKILL.md structure, Interaction patterns (incl. the canonical CSC template), Fro
 
 - Version lives in `plugin/.claude-plugin/plugin.json`
 - Bump minor version for feature additions, patch for fixes
-- Commit message style: `{Verb} {what} — {detail}` (imperative, no conventional commit prefixes)
+- Commit message style: `{Verb} {what} — {detail}` (imperative, no conventional commit prefixes) — for hand-written commits; merge commits the plugin composes at merge time are Conventional-Commits shaped (`bin/compose-subject.js`, #2251)
 
 ### Releasing (two repos)
 
-Invocation: `node plugin/bin/release.js <minor|patch> "<summary>"` from clean `main`. The whole-branch review gates the bump — run it before the version bump, not as a later task in the same plan. Full procedure, judgment calls, and the shipped-vs-never-shipped renumber split: `docs/releasing.md`.
+Invocation: `node plugin/bin/release.js <minor|patch> "<summary>"` from clean `main` — this repo's own path, never the consumer-facing `/claude-tweaks:release` + `bin/release-local.js` the plugin now ships (#2254/#2256), which tags and closes records on a repo whose versions are keyed off `docs/shipped-versions.tsv`; migrating this repo onto it is #2259. The whole-branch review gates the bump — run it before the version bump, not as a later task in the same plan. Full procedure, judgment calls, and the shipped-vs-never-shipped renumber split: `docs/releasing.md`.
 
 ### Cross-references
 
 - Every relationship between skills is stated **once**, in `docs/skill-graph.md`. Adding or changing a skill means adding or updating its edges there. Do not restate an edge inside a `SKILL.md`: the bidirectional convention this replaces required each edge in two places, and the two copies drifted
 - `/help`'s workflow diagrams must list all skills, and its artifact lifecycle diagram must stay in sync with `README.md`'s
-- Prefer describing a list's size by reference ("see the table below") over restating it as a literal count — see the cardinality rule in `## Don'ts`
 - A skill reference inside actionable instruction text (a `## Step N` body, a `## Next Actions` block) MUST use the fully-qualified `/claude-tweaks:{skill}` form — the `Skill` tool requires it, and a bare `/{skill}` there fails with "Unknown skill" at invocation time. Bare short-form references (`/{skill}`) are reserved for descriptive prose and Relationship-to-Other-Skills tables, where they're never passed to a tool call.
 
 ### Hooks
@@ -101,7 +100,7 @@ Skills that dispatch parallel Task agents must reference `plugin/skills/_shared/
 
 ### Auto-Mode Contract + Bookend Architecture (v4.6+)
 
-claude-tweaks pipelines have at most two stops in `auto` mode: a **Pipeline Config Manifesto** at the start (one structured numbered-options block collecting all policy levers in a single message) and a **Wrap-Up Review Console** at the end (one batch table consolidating everything auto-decided or staged). Everything in between is policy-driven automation logged to the auto-decision log.
+claude-tweaks pipelines have at most two stops in `auto` mode: a **Pipeline Config Manifesto** at the start (one structured numbered-options block collecting all policy levers in a single message) and a **Wrap-Up Review Console** at the end (one batch table consolidating everything auto-decided or staged). The two-stop ceiling isn't a floor: in default `auto`, the Manifesto renders as a **read-only FYI** (displays levers, doesn't gate), so the everyday run has effectively **one** user-facing stop — the end Review Console. Pass `confirm` (or `hybrid`) to turn the Manifesto into a real approval gate. Everything in between is policy-driven automation logged to the auto-decision log.
 
 **Single source of truth:** `plugin/skills/_shared/auto-mode-contract.md` — defines mode states, decision precedence (CLI arg > pipeline config > project policy > skill default), reversibility/confidence floors and a severity ceiling, the HARD-GATE exemption list, and what `auto` never silences (ledger resolve Phase 2, work-record creation — new backlog or parked records, governance gates) — except the narrow, explicit `autonomy` ceiling's bookkeeping capabilities (see `_shared/autonomy-ceiling.md`), which let floor-clearing ledger residue, queue writes, and ops-ack resolve without a click at `trusted`/`unattended`, and — at `unattended` only — let the Review Console's memory, queue-write, and upstream-filing approvals resolve with zero clicks under `consoleAutoResolve`.
 
@@ -132,6 +131,8 @@ work-types: labels
 ## claude-tweaks Pipeline
 
 **Artifacts:** design doc (one file, phases = `## Phase N` sections) → spec (one per work unit, via `/claude-tweaks:specify`) → `/claude-tweaks:flow`. No multi-phase plan files (`*-P1.md`, `*-P2.md`, …); a single plan per spec via `/superpowers:writing-plans`, stopped before its execution-choice offer, is expected and normal.
+
+**Spec close-out:** `specs/` is a working directory, not a permanent historical index — once a spec ships and is verified, promote any durable reference content to `docs/reference/*.md` or a skill, repoint by-number citations elsewhere in the repo to the closing commit or PR, then delete the spec file. A permanent tracker file (e.g. `specs/INDEX.md`) is an anti-pattern here, not a convention to preserve.
 
 **Entry point:** `/claude-tweaks:specify` — accepts a topic (calls `/superpowers:brainstorming`), design-doc path, or a backlog work-record ref.
 

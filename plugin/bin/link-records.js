@@ -12,7 +12,7 @@
 const { execFileSync } = require('child_process');
 const link = require('./lib/issues/link');
 const { invalidateSnapshot } = require('./lib/issues/record-snapshot');
-const { parseRepo } = require('./lib/repo-resolve');
+const { parseRepo, ghAvailable } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: link-records.js [--parent <n> --subs <n,n,...>] [--blocked-by "<dependent:blocker>,..."] [--repo owner/name] [--help]\n       at least one of --parent+--subs or --blocked-by is required\n';
 
@@ -47,7 +47,7 @@ function parseArgs(argv) {
 
 const realDeps = {
   runner: link.defaultRunner,
-  ghAvailable: () => { try { execFileSync('gh', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } },
+  ghAvailable,
   remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }),
   invalidateSnapshot,
   stdout: (s) => process.stdout.write(s),

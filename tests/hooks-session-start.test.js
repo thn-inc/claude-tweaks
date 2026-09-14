@@ -184,6 +184,27 @@ test('close-run hint substitutes CLAUDE_PLUGIN_ROOT when set, else keeps the lit
   }
 });
 
+// #2070: a single process.env.CLAUDE_PLUGIN_ROOT read feeds both the
+// build-line message (resolveBuildLine) and the stale-runs report line's
+// fallback — set it once and confirm both derived values track that one
+// source, in the same run() call.
+test('#2070: the build line and the close-run hint derive from the same single CLAUDE_PLUGIN_ROOT read', async () => {
+  const root = tmpPluginRoot('6.120.0');
+  const project = tmpProject();
+  mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
+  const orig = process.env.CLAUDE_PLUGIN_ROOT;
+  try {
+    process.env.CLAUDE_PLUGIN_ROOT = root;
+    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const ctx = out.json.hookSpecificOutput.additionalContext;
+    assert.match(ctx, new RegExp(`claude-tweaks v6\\.120\\.0 @ ${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), 'build line uses the captured root');
+    assert.match(ctx, new RegExp(`${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/bin/hooks\\.js`), 'close-run hint uses the same captured root');
+  } finally {
+    if (orig === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
+    else process.env.CLAUDE_PLUGIN_ROOT = orig;
+  }
+});
+
 test('no stale runs and no deps warnings -> no json output', async () => {
   const project = tmpProject();
   mkRun(project, '2026-07-01T090000-spec-1', { status: 'clean' });
@@ -265,7 +286,8 @@ test('run() includes the resolved-build line in additionalContext, unconditional
   try {
     process.env.CLAUDE_PLUGIN_ROOT = root;
     const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
-    assert.match(out.json.hookSpecificOutput.additionalContext, /claude-tweaks: claude-tweaks v9\.9\.9 @ /);
+    assert.match(out.json.hookSpecificOutput.additionalContext, /claude-tweaks v9\.9\.9 @ /);
+    assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /claude-tweaks: claude-tweaks v/);
   } finally {
     if (orig === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
     else process.env.CLAUDE_PLUGIN_ROOT = orig;
@@ -1012,6 +1034,54 @@ test('#1927: the SessionStart ports line omits CLAUDE_TWEAKS_LEASE from the pare
     const portsLine = lines.find((l) => l.startsWith('claude-tweaks: ports '));
     assert.match(portsLine, /^claude-tweaks: ports 20000-20009 \(PORT=20000 API_PORT=20001\)$/);
     assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /CLAUDE_TWEAKS_LEASE/);
+  } finally {
+    portsEnsureMod.ensure = original;
+  }
+});
+
+// #2027: a failed .env.local write is silent today — ensure() computes
+// envWriteError but session-start.js never reads it. AC1: the ports line is
+// followed by a warning naming the error; AC2 (the #1792 cases above) stays
+// unchanged when envWriteError is absent/null.
+test('#2027: an active result carrying envWriteError renders the ports line followed by an env-file-write warning', async () => {
+  const project = gitProject();
+  withPolicy(project, 'port-services: web,api\n');
+  const original = portsEnsureMod.ensure;
+  portsEnsureMod.ensure = async () => ({
+    active: true, base: 20000, ports: [20000, 20001, 20002, 20003, 20004, 20005, 20006, 20007, 20008, 20009],
+    vars: [['PORT', '20000'], ['API_PORT', '20001']], reallocated: null, envWriteError: 'EACCES: permission denied',
+  });
+  try {
+    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const lines = out.json.hookSpecificOutput.additionalContext.split('\n\n');
+    const portsLineIndex = lines.findIndex((l) => l.startsWith('claude-tweaks: ports 20000-20009'));
+    const warningLineIndex = lines.findIndex((l) => l.startsWith('claude-tweaks: ports — env file write failed'));
+    assert.notEqual(portsLineIndex, -1, 'the ports line still renders');
+    assert.notEqual(warningLineIndex, -1, 'the warning line renders');
+    assert.ok(warningLineIndex > portsLineIndex, 'the warning follows the ports line');
+    assert.match(
+      lines[warningLineIndex],
+      /^claude-tweaks: ports — env file write failed \(EACCES: permission denied\); the lease is recorded in the registry, re-run node ".*\/bin\/ports\.js" env after fixing the file$/,
+    );
+  } finally {
+    portsEnsureMod.ensure = original;
+  }
+});
+
+// #2027 AC1 (inactive branch guard): envWriteError must never render when
+// the result is not active — active gates the whole ports block already,
+// but this pins the guard explicitly against a stray active:false + stray
+// envWriteError combination.
+test('#2027: envWriteError on an inactive result never renders the warning', async () => {
+  const project = gitProject();
+  withPolicy(project, 'port-services: web\n');
+  const original = portsEnsureMod.ensure;
+  portsEnsureMod.ensure = async () => ({ active: false, envWriteError: 'should never be read' });
+  try {
+    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    if (out.json) {
+      assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /env file write failed/);
+    }
   } finally {
     portsEnsureMod.ensure = original;
   }

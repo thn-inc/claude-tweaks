@@ -25,7 +25,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  gitTargets, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand,
 } = require('./git-command');
 const ctxLib = require('./context');
 const policy = require('../policy');
@@ -536,6 +536,32 @@ function checkTeardownGate(ctx, teardownWarnings = []) {
       continue;
     }
     // Same session ('mine'), or identity/binding unprovable ('indeterminate') -> deny.
+    // #2351: logged to THIS session's own run dir (never hit.runDir — that's
+    // the unrelated TARGET run being torn down, bound to a different
+    // worktree entirely; the friction being recorded belongs to the session
+    // hitting this gate, not the run it's trying to tear down). A plain
+    // `ownedRun.dir` is NOT trusted here when it carries `attribution:
+    // 'fallback'` — resolveRun's newest-non-terminal guess, with no run dir
+    // of this session's own to resolve, would otherwise frequently guess
+    // exactly `hit.runDir` itself (the only run dir under this main
+    // checkout at the moment a teardown gets denied is often the very one
+    // being torn down), silently reproducing the same misattribution this
+    // fix exists to close. Prefer a genuine ad-hoc stamp in that case; fall
+    // back to the guess only if minting one fails outright (best-effort —
+    // never lose the event entirely over this).
+    const ownedRun = ctx.ownedRun || {};
+    const trustedOwnedDir = (ownedRun.dir && ownedRun.attribution !== 'fallback') ? ownedRun.dir : null;
+    // stampAdHocRunDirForDenial's own early-return guard short-circuits on
+    // ANY truthy ctx.ownedRun.dir, fallback-attributed or not — pass it a
+    // ctx with ownedRun stripped whenever the real one isn't trusted, so it
+    // actually proceeds to mint instead of handing back the same guess.
+    const stamped = trustedOwnedDir ? null : ctxLib.stampAdHocRunDirForDenial({ ...ctx, ownedRun: {} });
+    const denialRunDir = trustedOwnedDir || stamped || ownedRun.dir;
+    // A freshly minted stamp is this session's own, genuine ownership — never
+    // 'fallback' (that would mislabel a real mint as an unreliable guess);
+    // otherwise carry through whatever ownedRun.attribution already was.
+    const denialAttribution = stamped ? undefined : ownedRun.attribution;
+    ctxLib.appendEvent(denialRunDir, 'wd-deny', { path: target, assignedRun: path.basename(hit.runDir) }, denialAttribution);
     return denyResult(
       `claude-tweaks teardown gate: worktree ${target} is still assigned to non-terminal pipeline run ` +
       `${hit.runDir}. Tearing it down now skips the documented cleanup sequence (skills/wrap-up/cleanup-procedures.md ` +
@@ -622,36 +648,46 @@ function checkPipelineShadowGuard(ctx) {
   return {};
 }
 
-// git-stash worktree-hazard warn gate (#1967): the stash stack is
-// repository-wide, shared by every linked worktree of the same main
-// checkout — `git stash` / `git stash pop` run from inside a linked
-// worktree can push onto, or pop, an entry a SIBLING worktree's session
-// created and still expects to find. The #1864 review call proved this by
-// popping a sibling worktree's WIP stash while comparing test discrimination
-// against a baseline. This is a WARN, never a deny: unlike E1/
-// worktree-required, there is no provable "whose stash entry is this" signal
-// to gate on — only a heads-up pointing at a non-mutating alternative.
-// Scoped to the bare/`pop` shapes only — `stash list`/`show`/`drop`/`apply`/
-// etc. don't reach for the shared stack the same destructive way and are left
-// alone, mirroring git-command.js's own PLUMBING_WRITE_SUBCOMMANDS comment on
-// why `stash` was deliberately excluded from its one-level subcommand check:
-// a second token has to be resolved to tell the mutating shape from a
-// read-only one. Needs no pipeline run state — this fires regardless of
-// whether a run is active, same as the worktree-required gate below.
-function checkGitStashWarn(ctx, command, warnings) {
-  // Caller only ever passes a non-empty string here when ctx.input.tool_name
-  // is already 'Bash' (runInner's own `command` derivation) — re-checked
+// git-stash worktree-hazard warn gate (#1967, widened #2065): the stash
+// stack is repository-wide, shared by every linked worktree of the same main
+// checkout — `git stash` and every explicit stack-mutating spelling of it
+// (`stash push`, `stash push -u`/`-m ...`, the flag-first bare forms
+// `stash -u`/`stash -m ...`, and the deprecated-but-live `stash save`) run
+// from inside a linked worktree can push onto, or pop, an entry a SIBLING
+// worktree's session created and still expects to find. The #1864 review
+// call proved this by popping a sibling worktree's WIP stash while comparing
+// test discrimination against a baseline; #2065 closed the gap where only
+// the bare/`pop` spellings were covered — the exact hazard, reachable
+// through the equally common explicit `stash push`/`-u`/`-m` forms. This is
+// a WARN, never a deny: unlike E1/worktree-required, there is no provable
+// "whose stash entry is this" signal to gate on — only a heads-up pointing
+// at a non-mutating alternative. `list`/`show`/`apply`/`drop`/`clear`/
+// `branch` stay silent — mirroring git-command.js's own
+// PLUMBING_WRITE_SUBCOMMANDS comment on why `stash` was deliberately
+// excluded from its one-level subcommand check: a second token has to be
+// resolved to tell the mutating shape from a read-only one; `next.startsWith('-')`
+// also lets a harmless `git stash --help` warn (narrowing it would mean
+// enumerating stash's flag set — left as-is, an extra warning, never a
+// miss). Needs no pipeline run state — this fires regardless of whether a
+// run is active, same as the worktree-required gate below. Consumes the
+// segments run() already resolved once via resolvedGitSegments — no
+// forEachCommandSegment/resolveGitCommand call of its own (#2065's second
+// half: the second full traversal this file used to pay on every Bash call).
+function checkGitStashWarn(segments, warnings) {
+  // Caller only ever passes a real array here when ctx.input.tool_name is
+  // already 'Bash' (runInner's own `segments` derivation) — re-checked
   // defensively rather than trusted, since a future caller could pass this
-  // command through from a different tool_name branch.
-  if (typeof command !== 'string' || !command) return;
-  forEachCommandSegment(command, ctx.cwd, (t, effCwd) => {
-    const resolved = resolveGitCommand(t, effCwd);
-    if (!resolved || t[resolved.index] !== 'stash') return;
-    const next = t[resolved.index + 1];
-    if (next !== undefined && next !== 'pop') return; // only bare `stash` or `stash pop`
-    if (!resolved.dir) return;
-    const { isLinkedWorktree, indeterminate } = wtDetect.repoInfo(resolved.dir);
-    if (indeterminate || !isLinkedWorktree) return;
+  // through from a different tool_name branch.
+  if (!Array.isArray(segments)) return;
+  for (const { tokens: t, index, dir } of segments) {
+    if (t[index] !== 'stash') continue;
+    const next = t[index + 1];
+    const mutatesStack = next === undefined || next === 'pop' || next === 'push'
+      || next === 'save' || (typeof next === 'string' && next.startsWith('-'));
+    if (!mutatesStack) continue;
+    if (!dir) continue;
+    const { isLinkedWorktree, indeterminate } = wtDetect.repoInfo(dir);
+    if (indeterminate || !isLinkedWorktree) continue;
     warnings.push(
       'claude-tweaks: git stash is repository-wide, shared by every linked worktree of this '
       + "checkout — running it here can push onto or pop a SIBLING worktree's stash entry. "
@@ -659,7 +695,7 @@ function checkGitStashWarn(ctx, command, warnings) {
       + 'or set your own work aside with a temporary WIP commit (`git commit -m wip`, then apply '
       + 'it elsewhere by SHA — `git show <sha>` / `git cherry-pick <sha>`) rather than stash.',
     );
-  });
+  }
 }
 
 // worktree-required policy gate: unlike E1 below, this needs no pipeline run
@@ -813,12 +849,13 @@ function checkWorktreeRequired(ctx, precomputedGitTargets, indeterminateTargets 
     // resolveRun's session/env attribution) — writing to the unfiltered
     // newest-non-terminal ctx.runDir would risk stamping another session's
     // audit trail with this session's own denied write ([IL-96]). Ad-hoc work
-    // with no owned run dir records nothing here — appendEvent's own
-    // try/catch turns a null runDir (path.join throws) into a silent no-op,
-    // which is exactly the documented, accepted gap: a failed breadcrumb is
-    // strictly less bad than a failed tool call, and this hook must never
-    // throw on a deny.
+    // with no owned run dir stamps one now (#2351's stampAdHocRunDirForDenial
+    // — a denial is a safe, narrow trigger even in the main checkout, unlike
+    // the periodic per-hook-call check that deliberately excludes it) so this
+    // event has somewhere to land instead of appendEvent's null-runDir no-op
+    // silently dropping it.
     const ownedRun = ctx.ownedRun || {};
+    const denialRunDir = ownedRun.dir || ctxLib.stampAdHocRunDirForDenial(ctx);
     // #1337: the test suite exercises this exact deny path against synthetic
     // repos (tests/hooks-dispatcher.test.js's runHook sets CT_HOOKS_TEST_MODE
     // for every pre-tool-use invocation it spawns), and those denials landed
@@ -830,7 +867,7 @@ function checkWorktreeRequired(ctx, precomputedGitTargets, indeterminateTargets 
     // only its downstream aggregation (friction-events.js's readEvents)
     // should exclude it.
     const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
-    ctxLib.appendEvent(ownedRun.dir, 'gate-denial', { tool: toolName, path: targetPath, ...testTag }, ownedRun.attribution);
+    ctxLib.appendEvent(denialRunDir, 'gate-denial', { tool: toolName, path: targetPath, ...testTag }, ownedRun.attribution);
 
     const retryGuidance = action === 'push'
       ? `If you're trying to delete a branch whose worktree is already gone, there is nothing to ` +
@@ -1467,12 +1504,13 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
   const command = ctx.input && ctx.input.tool_name === 'Bash' && ctx.input.tool_input
     && typeof ctx.input.tool_input.command === 'string' ? ctx.input.tool_input.command : null;
 
-  checkGitStashWarn(ctx, command, warnings);
-
-  // Shared by checkWorktreeRequired's Bash branch above and the E1 loop
-  // below — parsing the same command/cwd through gitTargets twice per
-  // invocation was pure repeated work.
-  const commandGitTargets = command ? gitTargets(command, ctx.cwd) : null;
+  // #2065: the one resolvedGitSegments walk shared by checkGitStashWarn,
+  // checkWorktreeRequired's Bash branch above, and the E1 loop below —
+  // parsing the same command/cwd through a quote-aware segment/token walk
+  // three times per invocation (once per consumer) was pure repeated work.
+  const segments = command ? resolvedGitSegments(command, ctx.cwd) : null;
+  checkGitStashWarn(segments, warnings);
+  const commandGitTargets = segments ? gitTargetsFrom(segments) : null;
 
   const gate = checkWorktreeRequired(ctx, commandGitTargets, indeterminateTargets);
   if (gate.json) return gate;

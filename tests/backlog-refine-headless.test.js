@@ -53,10 +53,11 @@ test('refine-headless.md: ceiling gate, breaker sweep, audit marker, cap trackin
   // The reset question (`--reset-breaker`'s interactive "Reset it?" confirm,
   // merge-lane-reset.md's own text) is never offered in this posture — the
   // breaker sweep here only trips automatically; resetting stays human-present-only.
+  // #1887 folded the standalone `#N` single-record form into the Resolve lane
+  // (a filter, not its own mode) — this list now names Resolve instead, and
+  // --reset-breaker remains the one form still standing on its own.
   assert.ok(
-    source.includes(
-      'the `#N` single-record form, and `--reset-breaker` all remain\nhuman-present-only',
-    ),
+    source.includes('and `--reset-breaker`\nall remain human-present-only'),
     'expected --reset-breaker (the reset question) to be stated as human-present-only, never offered headlessly',
   );
   assert.doesNotMatch(source, /Reset it\?/, 'refine-headless.md must never render the interactive reset question itself');

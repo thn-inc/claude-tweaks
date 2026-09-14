@@ -103,6 +103,30 @@ function resolvePrState(repoRoot, branch, opts) {
   );
 }
 
+// #1962: archive-merged.js's main sweep derives a branch name to query by
+// (`resolvePrState` above needs one), but a run dir whose worktree is
+// confirmably gone AND whose branch has since been deleted has no branch
+// left to derive — `gh pr list --head {branch}` has nothing to query.
+// `run-state.json`'s `pr.number` (stamped once at PR-early lifecycle time,
+// never cleared) survives that branch deletion, so probe by number directly
+// instead of giving up. Same JSON shape as `resolvePrState`'s governing PR
+// (`{number, state, mergedAt, updatedAt, mergeCommit}`) — no tie-break
+// needed, since a PR number resolves to at most one PR.
+function resolvePrStateByNumber(repoRoot, number) {
+  if (!number) return null;
+  return runClassified(
+    () => {
+      const stdout = execFileSync(
+        'gh',
+        ['pr', 'view', String(number), '--json', 'number,state,mergedAt,updatedAt,mergeCommit'],
+        { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true },
+      );
+      return JSON.parse(stdout);
+    },
+    classifyExecError,
+  );
+}
+
 // Deliberately no opts/preferOpen here — no destructive async caller exists (#664); add it only when one does.
 //
 // Async twin of resolvePrState — a real (non-blocking) execFile, so a caller
@@ -193,5 +217,5 @@ function resolvePrStatesBulk(repoRoot, branches, opts = {}) {
 }
 
 module.exports = {
-  resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, FETCH_TIMEOUT_MS, BULK_CHUNK,
+  resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, FETCH_TIMEOUT_MS, BULK_CHUNK,
 };

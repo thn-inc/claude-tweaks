@@ -1,7 +1,7 @@
 // bin/lib/ports/ensure.js — turns Unit 1's registry on for a project (#1792).
 // Called from SessionStart when the `port-services` policy resolves
 // non-empty: allocates (idempotently) a block for this checkout, then
-// decides whether that block is still trustworthy — see isRegionCurrent's
+// decides whether that block is still trustworthy — see regionIsCurrent's
 // header comment for the "stale region vs bound port" rule this exists to
 // implement.
 'use strict';
@@ -31,6 +31,16 @@ function sameServices(a, b) {
 // list) is STALE — see #1792's Technical Approach for why: a changed
 // `port-services` list moves URLs the same way a foreign-takeover
 // reallocation does, so it gets the same loud treatment, not a silent skip.
+// Same comparison isRegionCurrent has always made, split out so ensure()
+// can pass an already-parsed region instead of forcing a second read+parse
+// of .env.local on the hot existing-lease-not-free path (#2031).
+function regionIsCurrent(region, base, leaseServices, policyServices) {
+  if (!region) return false;
+  const portEntry = region.find(([k]) => k === 'PORT');
+  if (!portEntry || Number(portEntry[1]) !== base) return false;
+  return sameServices(leaseServices, policyServices);
+}
+
 function isRegionCurrent(checkoutRoot, base, leaseServices, policyServices) {
   let text;
   try {
@@ -38,11 +48,7 @@ function isRegionCurrent(checkoutRoot, base, leaseServices, policyServices) {
   } catch {
     return false;
   }
-  const region = readManagedRegion(text);
-  if (!region) return false;
-  const portEntry = region.find(([k]) => k === 'PORT');
-  if (!portEntry || Number(portEntry[1]) !== base) return false;
-  return sameServices(leaseServices, policyServices);
+  return regionIsCurrent(readManagedRegion(text), base, leaseServices, policyServices);
 }
 
 // (cwd, { home, policyServices, probe, resolveRoot }) ->
@@ -87,7 +93,7 @@ async function ensure(cwd, {
     const stillFree = await probe(base, { size: registry.BLOCK_SIZE });
     if (stillFree) {
       result = await registry.allocate(checkoutRoot, { services: policyServices, home, probe });
-    } else if (isRegionCurrent(checkoutRoot, base, lease.services, policyServices)) {
+    } else if (regionIsCurrent(regionBefore, base, lease.services, policyServices)) {
       // Bound, but the region is current — assume it's this checkout's own
       // already-running dev server, not a foreign takeover. Keep the lease.
       result = await registry.allocate(checkoutRoot, { services: policyServices, home, probe });

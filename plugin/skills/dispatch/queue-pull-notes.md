@@ -12,4 +12,15 @@ The **first** pull (`--label auto:build`, `--limit 500`) is the actual candidate
 
 The same fallback also triggers when `gh` itself is absent — there is no GraphQL passthrough on the MCP path, so a `work-links: native` project running headless without `gh` degrades to no native filtering for that run, identically to any other query failure. This is not a new code path — it's the existing on-error fallback reached via a capability check instead of a failed call.
 
+**Re-selection guard for a `pr-opened:`-released record (#2073).** A record whose claim was
+released with reason `pr-opened: spec {n}` (`_shared/issue-claims.md`'s Release triggers table)
+correctly carries no claim and no `bot:in-progress` afterward — `bin/lib/release-claim/release.js`
+strips that label on every release by default (#1631), including this one. What actually keeps
+such a record off the queue is **not** `bot:in-progress` but the open-linked-PR exclusion
+described above (`partitionByOpenLinkedPR`, `dispatch-open-pr-excluded.json`): the record's open
+PR still closes it, so the first pull's exclusion removes it from `dispatch-groups.json` before
+any selection form reads the pool, the same as any other in-flight-PR candidate. Reading the
+label state alone (no `bot:in-progress`, `auto:build`/`auto:merge` still present) as "this record
+looks re-selectable" misses that exclusion — check `dispatch-open-pr-excluded.json` first.
+
 **The cross-PR overlap report's open-PR pull (#1579)** is a separate, third bulk call (`gh pr list --state open --json number,files,closingIssuesReferences --limit 100`), unrelated to the two pulls above — it feeds `SKILL.md` Step 3's Cross-PR overlap report, not eligibility. Same truncation posture as the first pull: `--limit 100` caps it to the 100 most-recently-updated open PRs, with the identical exact-cap stderr warning convention. Since this report is informational only (never a gate), a truncated pull or an outright `gh pr list` failure both degrade to a smaller (or empty) result set rather than a fallback query — there is nothing more targeted to fall back to for "which open PRs exist," unlike the per-dependency existence check above.

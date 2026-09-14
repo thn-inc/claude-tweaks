@@ -17,8 +17,10 @@ BACKLOG ──/specify shapes──► READY ──human grants──► AUTHORI
    │ │          │              │      (remove ready)                                         ├──► retry ceiling: bot:blocked,
    │ │   born-ready (health    │                                                             │    grants removed → needs re-triage
    │ │   skills file straight  └──────── parked (trigger set) ──► wakes on trigger           │
-   │ │   into READY)                                                                         └──► failure: auto:merge revoked unless transient;
+   │ │   into READY)                                                                         ├──► failure: auto:merge revoked unless transient;
    │ └── parked record wakes (trigger fires, parked removed)                                  auto:build retries next firing
+   │                                                                                         └──► merge-verification park: bot:parked,
+   │                                                                                              grants intact → human re-triages the red PR
    └──── closed as not-planned (wontfix / duplicate / absorbed) at any stage
 ```
 
@@ -47,7 +49,7 @@ Stage vocabulary is exactly these three words — **backlog** (absence of stage 
 | **Scoring** | `risk:low\|medium\|high` × `size:low\|medium\|high` | Labels — at most one of each family |
 | **Stage** | backlog (no label) \| `parked` \| `ready` | Labels — backlog is the absence of stage labels |
 | **Authorization** | `auto:build`, `auto:merge`, `auto:merge-pending` | Labels — human-granted, except `auto:merge-pending` (machine-only waypoint, see Grant semantics) — absence of all three is the default not-authorized state |
-| **Bot state** | `bot:in-progress`, `bot:blocked` | Labels — machinery-owned visibility layer |
+| **Bot state** | `bot:in-progress`, `bot:blocked`, `bot:parked` | Labels — machinery-owned visibility layer. `bot:blocked` = hit the retry ceiling (grants revoked); `bot:parked` = merge-verification gate parked it on a red/timed-out PR check (grants stay intact) — the two never overlap on one record |
 | **Acceptance** | `demo:pending` \| `demo:approved` \| `demo:changes-requested` — or no label | Labels — `demo:pending` is written by every skill the permission matrix below grants it to (more than one, and the matrix is the list; do not restate a single writer here), resolved to `demo:approved`/`demo:changes-requested` by `/claude-tweaks:demo` alone; independent of Stage and of the issue's own open/closed state |
 | **Acceptance provenance** | `demo:approved-batch` — a modifier, always stacked alongside `demo:approved`, never on its own | Label — written only when `/claude-tweaks:demo` resolves the verdict via a `#N,#M` batch invocation rather than a dedicated single-record session (both run the same per-item walkthrough — this distinguishes invocation shape, not whether one happened); absent means single-record-backed (including every `demo:approved` label applied before this modifier existed). Sole consumer: `bin/lib/issues/trust.js`'s coverage/verdict computation, via `bin/lib/issues/acceptance.js`'s `approvalProvenance` |
 
@@ -86,13 +88,14 @@ are about to apply.
 | Ceremony (2) | `ceremony:fast-lane`, `ceremony:standard` | Ceremony depth — cross-cutting, not one of the axes; stamped by `/specify` alongside Scoring, always explicit (no unscored state) |
 | Stage (2) | `parked`, `ready` | Stage |
 | Grants (3) | `auto:build`, `auto:merge`, `auto:merge-pending` | Authorization |
-| Bot state (2) | `bot:in-progress`, `bot:blocked` | Bot state |
+| Bot state (3) | `bot:in-progress`, `bot:blocked`, `bot:parked` | Bot state |
 | Acceptance (3) | `demo:pending`, `demo:approved`, `demo:changes-requested` | Acceptance |
 | Acceptance provenance (1) | `demo:approved-batch` | Modifier stacked alongside `demo:approved` — batch-invocation-sourced vs. single-record-backed (absent) |
 | Closure (1) | `wontfix` | re-filing suppression |
 | Upstream (1) | `upstream-candidate` | marks a record whose real destination is the claude-tweaks plugin, filed locally only because a headless run could not clear `/claude-tweaks:feedback`'s confirmation gate |
 | Structure (1) | `parent-issue` | Structure: parent issue — carries the acceptance gate for its sub-issues. Marks a `/claude-tweaks:specify` decomposition parent — the only thing that makes it enumerable for `/claude-tweaks:tidy`'s `parent-gate` sweep (`_shared/github-pr-scan-acceptance.md`); never carried by a sub-issue |
 | Justification (1) | `solution:unjustified` | Marks a record whose stated problem names a solution that was never traded off; stamped by `/specify` via `/claude-tweaks:challenge`'s `framing-check`, absent means the framing read clean. Non-gating: the remedy is a one-line human call — `/claude-tweaks:challenge #{n}` resolves it in one step (supply evidence or accept the risk); re-running `/specify #N` also clears it, but only if the re-shape changes the framing itself. Pre-rename spelling `framing:baked` stays readable forever (`[IL-85]`), never emitted |
+| Compatibility (1) | `breaking` | Presence-only, like `solution:unjustified`: the record's Acceptance Criteria name a contract change (CLAUDE.md's expand-contract discipline). Stamped by `/specify` shaping mode from that AC language, or by hand — never inferred from a diff; absent means "not breaking". Read by `bin/lib/release/subject.js`'s merge-subject composer (`!` suffix + `BREAKING CHANGE:` footer sourced from the record's `## Breaking Change` section) |
 | Definition (2) | `needs:definition`, `needs:decision` | Marks a record naming a genuine open choice with no tradeoff made yet (`needs:definition`, stamped by `/capture`/`/feedback` at filing time — a content judgment), or a record where a headless unit proposed an action it may not take alone (`needs:decision` — the proposal and its command are in the record's newest unresolved decision comment; stamped by `/backlog refine`'s Grant lane, in either posture — interactively, or the headless posture's gate-4 refusal, see `backlog/grant-lane-decision.md`) |
 | Provenance (1) | `shaped:headless` | Marks a record shaped by `/specify`'s headless `next` unit with no human review of the resulting spec body — absent means either a human shaped it, or it predates this feature. Writer: `/specify` `next` mode only, applied in the same call as `ready` — never on an interactively-shaped record. Readers: the grant gate (`evaluateGrantGate`, #969), `/backlog attention`, and `/assess-agent-autonomy`'s `grant-check.md` Step 2 Judge (weighs this provenance toward a conservative verdict, #969). Never blocks an interactive human grant. |
 | Priority (3, optional) | `priority:high`, `priority:medium`, `priority:low` | dispatch ordering |
@@ -431,7 +434,7 @@ dispatch/auto-merge/fetch/staleness/promise-register thresholds the Consumers be
 | `/flow`, `/build` | Executors — materialize the record into `{run-dir}/work/{n}-spec.md` and build it |
 | `/wrap-up` | Closes the loop — carrier commit (close-via-merge), claim release, leftover records; applies `demo:pending` + posts the Verification Brief |
 | `/demo` | Resolves the Acceptance axis — `demo:pending` → `demo:approved`/`demo:changes-requested`; files a linked follow-up backlog record on changes-requested |
-| `/tidy` | Hygiene — stale backlog records, parked-trigger wakes, unsynced local records, `bot:blocked` surfacing; also the two acceptance backstops, each of which is a `github-pr-scan-acceptance.md` scope under `github-issues` and a Step 1 shape (`tidy/step-1-records.md`) under `local-files` — `acceptance-gap` surfaces closed records with no disposition and mutates nothing, while `parent-gate` surfaces complete-but-un-gated parent issues and carries the `Open parent gate` action, which applies `demo:pending` to the parent and attaches its Verification Brief |
+| `/tidy` | Hygiene — stale backlog records, parked-trigger wakes, unsynced local records, `bot:blocked` / `bot:parked` surfacing; also the two acceptance backstops, each of which is a `github-pr-scan-acceptance.md` scope under `github-issues` and a Step 1 shape (`tidy/step-1-records.md`) under `local-files` — `acceptance-gap` surfaces closed records with no disposition and mutates nothing, while `parent-gate` surfaces complete-but-un-gated parent issues and carries the `Open parent gate` action, which applies `demo:pending` to the parent and attaches its Verification Brief |
 | `/help` | Dashboard — live counts by stage / grants / bot state / acceptance |
 | `/init` | Provisions the system — `work-backend` flag, label bootstrap, capability probes (`work-types`, `work-links`) |
 | `/visualize` | Read-only — `record-graph` type renders the live open-record queue (stage columns, dependency edges, six-axis badges) as a diagram; never writes labels or body content |

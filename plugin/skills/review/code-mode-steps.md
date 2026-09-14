@@ -21,6 +21,8 @@ the runnable invocation lives in that hatch, refs #1376) — unchanged. Full rat
 Skip this step entirely under `ceremony-profile: fast-lane` (roster tag `review-step-1`,
 `_shared/ceremony-profile.md`) — proceed directly to Step 1.5.
 
+Skip it too on a `base:{ref}` scope (Input rule 9): no spec exists to verify — proceed to Step 1.5 with "no spec — base-ref scope" in Step 7's summary.
+
 If a spec number was provided, read the spec file and verify the implementation meets it:
 
 > **Parallel execution:** Use parallel tool calls aggressively — all Grep/Glob/Read operations searching the codebase for each deliverable's implementation and each criterion's verifiability are independent and should run concurrently.
@@ -55,6 +57,8 @@ If blocked, skip the rest of the review. Present the gap analysis so the user kn
 ## Step 1.5: Test Gate
 
 Verify that `/claude-tweaks:test` has passed before proceeding to analytical review. Reviewing code quality on code that doesn't work is wasted effort.
+
+**Under a `base:{ref}` scope the tree this gate verifies must be `origin/{integration-branch}`** — the gate runs from a checkout already standing at that tip (the caller asserts it before invoking), never from a feature-branch worktree's HEAD, whose stamp would verify a tree the reviewed range does not contain.
 
 `PASS_WITH_CAVEATS` counts as passed — caveats are informational observations (e.g., minor UX roughness, non-blocking warnings) and do not block review. QA caveats are included in the findings table (Step 3 Routing) for visibility but have status `observation`, not `open`.
 
@@ -104,6 +108,8 @@ read `cross-spec-promise-check.md` in this skill's directory.
 ## Step 2: Identify What Changed
 
 **Resolving `{base}`:** never trust a bare local branch name for `{base}` — a long-lived worktree's local tracking branch (commonly `main`) routinely drifts behind its remote. Resolve it via `git fetch origin {base}` then use `origin/{base}` in every command below, or otherwise confirm `git log -1 {base}` matches `git log -1 origin/{base}` before trusting the diff scope.
+
+On a `base:{ref}` scope, `{base}` is the given ref and `{branch}` is `origin/{integration-branch}`. **This paragraph overrides the `origin/{base}` rule above it**: a `base:{ref}` ref is a tag (`v6.48.0`) or a sha, neither of which has an `origin/` form, so it is used exactly as given — after `git fetch --tags origin`, so the tag resolves locally. Only `{branch}` takes the `origin/` prefix on this scope. The change set is `git log --first-parent {base}..{branch}` / `git diff {base}..{branch}` — the first-parent line of the integration branch, so each squash-merged PR is one commit and a `--no-ff` merge counts once.
 
 ### Merge-Provenance Check
 
@@ -329,7 +335,7 @@ At the end of the summary, include a `### Key Learnings` section with 1-3 insigh
 
 If no notable learnings emerged, state: "No key learnings — straightforward review."
 
-**Phase exit (`worktree` mode, `integration-model: pr-first` — `_shared/integration-model.md`):** push the branch and flip this phase's PR checklist row — `_shared/git-discipline.md`'s Phase-exit push section and `_shared/pr-early-run-lifecycle.md`'s Phase-checklist update section. A no-op under `local-merge` or `current-branch` mode.
+**Phase exit (`worktree` mode, `integration-model: pr-first` — `_shared/integration-model.md`):** push the branch and flip this phase's PR checklist row — `_shared/git-discipline.md`'s Phase-exit push section and `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. A no-op under `local-merge` or `current-branch` mode.
 
 ## Important Notes
 

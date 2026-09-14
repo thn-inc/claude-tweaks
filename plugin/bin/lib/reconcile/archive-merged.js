@@ -13,9 +13,10 @@ const { parseWorktreeList } = require('../hooks/worktree-reap');
 const {
   iterRunDirsWithState, writeRunState, readRunState, RUN_ID_RE,
 } = require('../hooks/context');
-const { resolvePrState } = require('./pr-state');
-const { recordResidueSuccess, trackResidue } = require('./cache');
+const { resolvePrState, resolvePrStateByNumber } = require('./pr-state');
+const { recordResidueSuccess, trackResidue, pruneResidueFailures } = require('./cache');
 const { escalateResidue } = require('./escalate-residue');
+const { isWorktreeAlwaysOn } = require('../policy');
 const { repoSlugOf } = require('./release-merged');
 const { closeRunState } = require('../hooks/close-run-state');
 const { checkRunIntegrity, fallbackBranch } = require('../hooks/run-integrity');
@@ -88,6 +89,28 @@ function isAdHocStandaloneSuperseded(dir, state, worktrees, now = Date.now()) {
   return (now - mtimeMs) > ADHOC_SUPERSEDED_TTL_MS;
 }
 
+// #2227: a state-less run dir can still hold git-tracked content — a
+// materialized work/{n}-spec.md whose run-state.json only ever existed in
+// the worktree copy (record #1594's shape; materialize.md commits work/ on
+// the branch, and it reaches the main checkout by merge with none of the
+// gitignored state files alongside it). archiveOrphanedMint's bare
+// fs.renameSync would leave that as an unstaged deletion nothing commits;
+// archiveRunDir's git mv + commit is what tracked content needs, and it
+// does not require run-state.json. `git ls-files -- <dir>` lists nothing
+// for a genuinely untracked mint, which keeps that case on the fs-only path.
+// Only a successful, empty listing proves "untracked". Any probe failure —
+// indeterminate (timeout/spawn/no-git, git-exec.js's isIndeterminate) or a
+// definitive git-error (a corrupt index, an unreadable object store) — is
+// not that proof: assume tracked and let archiveRunDir refuse visibly (its
+// own ls-files guard fails closed on any failure, `ls-files-failed`) rather
+// than let this helper be the one place a failed probe quietly selects the
+// bare fs rename.
+function hasTrackedContent(root, dir) {
+  const listed = runGit(['ls-files', '--', dir], root);
+  if (listed.failure) return true;
+  return (listed.stdout || '').length > 0;
+}
+
 // A minted run dir that never got adopted: no config.yml (flow's Manifesto
 // is what writes it), not an ad-hoc-standalone mint (see above — that check
 // now reads run-state.json for corroboration, #1604), and older than the
@@ -104,10 +127,12 @@ function isOrphanedMint(dir, now = Date.now()) {
   return (now - mtimeMs) > ORPHAN_MINT_TTL_MS;
 }
 
-// An orphaned mint has nothing to git-mv (no work/, since flow never got far
-// enough to materialize into it) and nothing to finalize as terminal (no
-// run-state.json, since record-worktree never ran on it) — moving each
-// top-level entry into its archive twin is the whole operation.
+// An orphaned mint that reaches this function has nothing to git-mv and
+// nothing to finalize as terminal (no run-state.json, since record-worktree
+// never ran on it) — moving each top-level entry into its archive twin is
+// the whole operation. A state-less dir that DOES carry tracked content (a
+// materialized work/ spec) never gets here: archiveMerged's orphaned-mint
+// branch routes it to archiveRunDir instead (#2227, hasTrackedContent above).
 //
 // Entry-by-entry, not a single whole-dir fs.renameSync: the archive twin can
 // already exist and be non-empty by the time this runs — a prior attempt
@@ -411,6 +436,184 @@ function isTracked(root, targetPath) {
   return !untracked.failure && !untracked.stdout;
 }
 
+// #1892: a whole-dir `git mv` onto an already-existing, non-empty
+// destination is not idempotent (the same ENOTEMPTY class #1713/#1714 fixed
+// one level up, for the plain-fs-rename loops) — a `work/` archive twin can
+// already exist by the time this runs: a prior partial archival attempt, or
+// a merged worktree PR that completed the tracked-header move directly
+// (see this file's header comment and #1892's own Gotchas). Every file
+// under `dir` (recursively — `work/` normally holds exactly one
+// `{n}-spec.md`, but this generalizes rather than assuming that), relative
+// paths only. Empty for an unreadable/missing dir — never throws.
+function listFilesRecursive(dir) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  let out = [];
+  for (const e of entries) {
+    const abs = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      out = out.concat(listFilesRecursive(abs).map((rel) => path.join(e.name, rel)));
+    } else if (e.isFile()) {
+      out.push(e.name);
+    }
+  }
+  return out;
+}
+
+// `git hash-object` computes a file's blob sha regardless of whether either
+// copy is tracked (unlike `git diff`, which needs both sides in the index or
+// working tree in a comparable way) — the comparison the twin-resolution
+// logic below needs to tell "identical content, safe to dedupe" from
+// "genuinely diverged, refuse rather than guess" (the Technical Approach's
+// own choice of tool). Null on any failure (unreadable file, no git) — a
+// caller treats null as "not provably identical," never as a match.
+function fileHashObject(root, filePath) {
+  const r = runGit(['hash-object', filePath], root);
+  if (r.failure) return null;
+  const hash = (r.stdout || '').trim();
+  return hash || null;
+}
+
+// Compares every file under `srcDir` against its counterpart under
+// `destDir` (the archive twin). A file missing at the twin path counts as
+// differing — it still needs to actually move, not merely be discarded — as
+// does a hash-object failure on either side (fail toward "not identical"
+// rather than silently treating an unreadable file as a safe dedupe).
+// -> { identical: boolean, differing: string[] } (relative paths).
+function compareWorkTwin(root, srcDir, destDir) {
+  const differing = [];
+  for (const rel of listFilesRecursive(srcDir)) {
+    const srcFile = path.join(srcDir, rel);
+    const destFile = path.join(destDir, rel);
+    if (!fs.existsSync(destFile)) { differing.push(rel); continue; }
+    const srcHash = fileHashObject(root, srcFile);
+    const destHash = fileHashObject(root, destFile);
+    if (!srcHash || !destHash || srcHash !== destHash) differing.push(rel);
+  }
+  return { identical: differing.length === 0, differing };
+}
+
+// Resolves an ALREADY-CONFIRMED-identical work twin: the archive copy holds
+// the same content, so the live copy is redundant and is removed through git
+// (never a plain fs delete) so history stays intact. `git rm` when the
+// twin's own copy is already tracked at its path — the ordinary case, since
+// every prior archival commits `work/` at the archive path via `git mv` —
+// `git mv -f` onto the twin path when the twin copy is untracked (content
+// matches, but nothing has staged it there yet). Every resolved file is
+// recorded in `resolved` (oldest-first) so a later failure in this same
+// batch can be undone via `revertStagedOps` below.
+// -> { ok: true, resolved: [{kind, srcFile, destFile}] } |
+//    { ok: false, reason, lastError, resolved (partial) }
+function resolveIdenticalWorkTwin(root, srcDir, destDir) {
+  const resolved = [];
+  for (const rel of listFilesRecursive(srcDir)) {
+    const srcFile = path.join(srcDir, rel);
+    const destFile = path.join(destDir, rel);
+    if (isTracked(root, destFile)) {
+      const rm = runGit(['rm', '-q', '--', srcFile], root);
+      if (rm.failure) return { ok: false, reason: 'work-twin-resolve-failed', lastError: rm.stderr, resolved };
+      resolved.push({ kind: 'twin-rm', srcFile, destFile });
+    } else {
+      const mv = runGit(['mv', '-f', srcFile, destFile], root);
+      if (mv.failure) return { ok: false, reason: 'work-twin-resolve-failed', lastError: mv.stderr, resolved };
+      resolved.push({ kind: 'twin-mv', srcFile, destFile });
+    }
+  }
+  return { ok: true, resolved };
+}
+
+// One combined undo stack for every git operation `archiveRunDir` stages
+// before its single closing commit — plain `git mv` pairs (`kind: 'mv'`,
+// `revertWorkMoves`' own pair shape) alongside the per-file twin resolutions
+// above (`twin-rm`/`twin-mv`) — so a failure anywhere in the batch (a later
+// pair's `git mv`, or the commit itself) can undo everything already staged
+// as one LIFO unit, not just the sub-batch that happened to fail. Best-effort
+// and never throws, matching every other revert helper in this file; returns
+// whether every operation in `ops` ended back at its original state.
+function revertStagedOps(root, ops) {
+  let fullyReverted = true;
+  for (const op of [...ops].reverse()) {
+    if (op.kind === 'mv') {
+      if (!revertWorkMoves(root, [[op.src, op.dest]])) fullyReverted = false;
+    } else if (op.kind === 'twin-rm') {
+      // `git rm` only staged the removal (nothing committed yet) — checking
+      // out HEAD's copy restores both the index entry and the working file.
+      const co = runGit(['checkout', 'HEAD', '--', op.srcFile], root);
+      if (co.failure) fullyReverted = false;
+    } else if (op.kind === 'twin-mv') {
+      const reset = runGit(['reset', '--', op.srcFile, op.destFile], root);
+      if (reset.failure) { fullyReverted = false; continue; }
+      try {
+        // Pre-op, srcFile and destFile were two independent physical files
+        // (identical content, but the twin's copy at destFile already
+        // existed on disk before this batch touched anything — that's what
+        // made it a twin). `git mv -f` is a single rename: only one physical
+        // file survives the forward operation, at destFile. Reverting with
+        // a rename back to srcFile would silently delete that pre-existing
+        // destFile copy — a `copyFileSync` restores srcFile while leaving
+        // destFile exactly as it was before this op, matching the real
+        // pre-op state (both files present).
+        fs.mkdirSync(path.dirname(op.srcFile), { recursive: true });
+        fs.copyFileSync(op.destFile, op.srcFile);
+      } catch {
+        fullyReverted = false;
+      }
+    }
+  }
+  return fullyReverted;
+}
+
+// #1892 Deliverable 2: the split state itself — a run dir whose gitignored
+// half already archived (a prior pass, or a merged worktree PR that
+// completed that half) while its git-tracked `work/` headers are still live.
+// The ordinary decideArchive path never reaches this case: no run-state.json
+// survives at the live path once the gitignored half moved, so there is
+// nothing to resolve a branch/PR from. Detected whenever the archive twin
+// exists AND every entry still live under `dir` is a git-tracked `work/` (or
+// `spec-{n}/work/`) path — nothing gitignored remains. Sits beside
+// `isOrphanedMint` — same "answer a narrow structural question, no I/O
+// beyond what answering it requires" shape.
+function isArchivedPendingTrackedMove(root, dir) {
+  const runId = path.basename(dir);
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  if (!fs.existsSync(archiveDir)) return false;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return false;
+  }
+  if (entries.length === 0) return false;
+  const specDirs = listSpecDirs(dir);
+  return entries.every((name) => {
+    if (name === 'work') return true;
+    if (!specDirs.includes(name)) return false;
+    let subEntries;
+    try {
+      subEntries = fs.readdirSync(path.join(dir, name));
+    } catch {
+      return false;
+    }
+    return subEntries.length > 0 && subEntries.every((n) => n === 'work');
+  });
+}
+
+// The paste-ready command a human (or a worktree/PR-driven follow-up) runs
+// to complete a split-state archival that this sweep declined to do
+// in-process (`worktree-always: true` — see the skip site's own comment for
+// why). `bin/hooks.js archive-run --run <dir>` is the existing, documented
+// direct-archival verb (hooks.js's own `archive-run` handler already
+// supports running from inside a worktree whose tracked content has since
+// merged to the main checkout) — reused here rather than inventing a second
+// completion path.
+function archivedPendingTrackedMoveCommand(dir) {
+  return `node "\${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "${dir}"`;
+}
+
 function archiveRunDir(root, runDir) {
   const runId = path.basename(runDir);
   const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
@@ -452,8 +655,41 @@ function archiveRunDir(root, runDir) {
   // same mechanism as the top-level case the rest of this function already
   // handled.
   const workMoves = [];
+  // #1892: entries whose destination already exists (a pre-existing archive
+  // twin) never join `workMoves` — a whole-dir `git mv` onto a non-empty
+  // destination is not idempotent. Each is instead diffed via
+  // `compareWorkTwin`: identical content queues here for per-file
+  // `git rm`/`git mv -f` resolution below; a genuine content difference
+  // aborts the whole archival immediately (`work-twin-conflict`, moves
+  // nothing) rather than guessing which copy is canonical.
+  const twinPlan = [];
+  // #1323: `runDir` can itself already equal its own `archiveDir` (a caller
+  // — e.g. teardown-run's AC7 — passing an already-archived path as `runDir`
+  // directly, where `path.basename` round-trips to the same archive twin).
+  // `topWork === topWorkDest` there, and comparing a directory against
+  // itself trivially reads "identical," which would route straight into
+  // `resolveIdenticalWorkTwin`'s `git rm` — destroying the only copy. Twin
+  // detection only applies when the destination is a genuinely different,
+  // pre-existing path; the same-path case falls through to the ordinary
+  // `workMoves` `git mv`, which git itself refuses ("can not move directory
+  // into itself") — the pre-existing, correct behavior for that case.
   const topWork = path.join(runDir, 'work');
-  if (fs.existsSync(topWork)) workMoves.push([topWork, path.join(archiveDir, 'work')]);
+  if (fs.existsSync(topWork)) {
+    const topWorkDest = path.join(archiveDir, 'work');
+    if (path.resolve(topWork) !== path.resolve(topWorkDest) && fs.existsSync(topWorkDest)) {
+      const twin = compareWorkTwin(root, topWork, topWorkDest);
+      if (!twin.identical) {
+        return {
+          ok: false,
+          reason: 'work-twin-conflict',
+          conflict: { src: topWork, dest: topWorkDest, differing: twin.differing },
+        };
+      }
+      twinPlan.push([topWork, topWorkDest]);
+    } else {
+      workMoves.push([topWork, topWorkDest]);
+    }
+  }
   // #1493/#1494: a `*-tidy-standalone*` (or, since sweep's shared run dir,
   // `*-sweep-standalone*` — sweep's Step 1 runs tidy inside it) run dir's own
   // audit files (SKILL.md's pr-first Step 7.5 addition, `.gitignore`'s
@@ -516,42 +752,85 @@ function archiveRunDir(root, runDir) {
     } catch {
       return { ok: false, reason: 'mkdir-failed' };
     }
-    workMoves.push([specWork, path.join(specArchiveDir, 'work')]);
+    const specWorkDest = path.join(specArchiveDir, 'work');
+    // #1323: same same-path guard as topWork above.
+    if (path.resolve(specWork) !== path.resolve(specWorkDest) && fs.existsSync(specWorkDest)) {
+      const twin = compareWorkTwin(root, specWork, specWorkDest);
+      if (!twin.identical) {
+        return {
+          ok: false,
+          reason: 'work-twin-conflict',
+          conflict: { src: specWork, dest: specWorkDest, differing: twin.differing },
+        };
+      }
+      twinPlan.push([specWork, specWorkDest]);
+    } else {
+      workMoves.push([specWork, specWorkDest]);
+    }
   }
-  if (workMoves.length) {
+  if (workMoves.length || twinPlan.length) {
+    // One combined undo unit for everything staged below (twin resolutions
+    // AND plain `git mv` pairs) — a failure on e.g. the 2nd of 3 `git mv`
+    // pairs, or the closing commit itself, reverts every op already staged
+    // in this pass, oldest-last (revertStagedOps' own LIFO order), never
+    // just the sub-batch that happened to fail.
+    const stagedOps = [];
+    for (const [src, dest] of twinPlan) {
+      const result = resolveIdenticalWorkTwin(root, src, dest);
+      stagedOps.push(...result.resolved);
+      if (!result.ok) {
+        const fullyReverted = revertStagedOps(root, stagedOps);
+        return {
+          ok: false,
+          reason: fullyReverted ? result.reason : 'work-twin-resolve-failed-partial-revert',
+          lastError: result.lastError,
+        };
+      }
+      // `resolveIdenticalWorkTwin` already removed every file under `src`
+      // (via `git rm`/`git mv -f`) — the directory itself is not a git
+      // object, so it's just an empty leftover on disk now.
+      try { fs.rmdirSync(src); } catch { /* best-effort — non-empty for an unexpected reason, or already gone */ }
+      movedEntries.push(path.relative(runDir, src));
+    }
     // Pairs that succeeded before a later pair's `git mv` fails mid-loop —
-    // tracked separately from `workMoves` so a failure on e.g. the 2nd of 3
-    // pairs only attempts to revert the 1st (already-moved), never the 2nd
-    // (assumed not mutated — `git mv` renames on disk before it writes the
-    // index, so a failure partway through its own operation could in
-    // principle leave the file physically moved with the index untouched;
-    // treated as "not moved" rather than attempting a revert against an
-    // unknown partial state) or 3rd (never even attempted). Same
-    // partial-revert reasoning as the commit-failure branch below, applied
-    // one loop iteration earlier.
-    const succeededMoves = [];
+    // recorded in the same `stagedOps` unit as the twin resolutions above
+    // (assumed not mutated on a mid-operation failure — `git mv` renames on
+    // disk before it writes the index, so a failure partway through its own
+    // operation could in principle leave the file physically moved with the
+    // index untouched; treated as "not moved" rather than attempting a
+    // revert against an unknown partial state). Same partial-revert
+    // reasoning as the commit-failure branch below, applied one loop
+    // iteration earlier.
     for (const [src, dest] of workMoves) {
       const mv = runGit(['mv', src, dest], root);
       if (mv.failure) {
-        const fullyReverted = revertWorkMoves(root, succeededMoves);
+        const fullyReverted = revertStagedOps(root, stagedOps);
         return { ok: false, reason: fullyReverted ? 'git-mv-failed' : 'git-mv-failed-partial-revert' };
       }
-      succeededMoves.push([src, dest]);
+      stagedOps.push({ kind: 'mv', src, dest });
       movedEntries.push(path.relative(runDir, src));
     }
-    // The git mv above only stages the rename — this check runs headlessly
+    // The git mv/rm above only stage the change — this check runs headlessly
     // (SessionStart, dispatch's queue pull) with no interactive session
-    // guaranteed to commit anything afterward, so an uncommitted rename
+    // guaranteed to commit anything afterward, so an uncommitted change
     // would otherwise sit in the shared main checkout's index indefinitely.
-    const commit = runGit(['commit', '-m', `[reconcile] archive run ${runId}`], root);
+    // #2241: scoped to exactly the paths this call staged (every workMoves
+    // src/dest pair — the work/ rename(s) plus, on a tidy/sweep-standalone
+    // run, the audit files folded into the same batch above) via a `--`
+    // pathspec, so `git commit` picks only those changes out of the index
+    // rather than sweeping whatever else a human or sibling session happens
+    // to have staged in this shared main checkout at the same moment.
+    const commitPaths = workMoves.flatMap(([src, dest]) => [src, dest]);
+    const commit = runGit(['commit', '-m', `[reconcile] archive run ${runId}`, '--', ...commitPaths], root);
     if (commit.failure) {
-      // A partial revert (some pairs' `git reset` or disk move failed) is a
-      // distinct outcome from a clean one: the retry guard below keys on
-      // `fs.existsSync(workSrc)`, which only sees a pair again once it's
-      // genuinely back at its original path. `commit-failed-partial-revert`
-      // makes that distinction visible to callers/logs rather than
-      // collapsing both into the same reason string.
-      const fullyReverted = revertWorkMoves(root, workMoves);
+      // A partial revert (some ops' `git reset`/`git checkout` or disk move
+      // failed) is a distinct outcome from a clean one: the retry guard
+      // below keys on `fs.existsSync(workSrc)`, which only sees a pair again
+      // once it's genuinely back at its original path.
+      // `commit-failed-partial-revert` makes that distinction visible to
+      // callers/logs rather than collapsing both into the same reason
+      // string.
+      const fullyReverted = revertStagedOps(root, stagedOps);
       return { ok: false, reason: fullyReverted ? 'commit-failed' : 'commit-failed-partial-revert' };
     }
   }
@@ -847,11 +1126,48 @@ function archiveMerged({ cwd, dryRun = false, sessionId = process.env.CLAUDE_COD
   const worktrees = wtList.failure ? [] : parseWorktreeList(wtList.stdout);
 
   for (const { dir, state } of iterRunDirsWithState(root)) {
+    // #1892 Deliverable 2: the split state — archive twin already exists,
+    // live path holds only tracked `work/` headers — sits ahead of every
+    // other branch below, regardless of age: `isOrphanedMint`'s own
+    // hasTrackedContent routing would eventually reach archiveRunDir's now-
+    // idempotent twin-comparison fix (Deliverable 1) too, but only once the
+    // dir is old enough AND config.yml is absent, and only by accident of
+    // that unrelated gate. Checked unconditionally here instead. Under
+    // `worktree-always: true`, this project's convention is that a git-
+    // tracked commit against the main checkout goes out via a worktree/PR,
+    // not straight from this in-process sweep — surface a distinct,
+    // actionable skip with the completing command rather than committing
+    // here; the reason is never tracked toward `move-failed` escalation
+    // (Deliverable 2's own AC). Without `worktree-always`, archive it
+    // directly via archiveRunDir, same as any other archival.
+    if (isArchivedPendingTrackedMove(root, dir)) {
+      if (isWorktreeAlwaysOn(root)) {
+        skipped.push({
+          runDir: dir,
+          reason: 'archived-pending-tracked-move',
+          command: archivedPendingTrackedMoveCommand(dir),
+        });
+        continue;
+      }
+      if (dryRun) { archived.push(dir); continue; }
+      const result = archiveRunDir(root, dir);
+      trackArchiveResult(root, repoSlug, dir, result);
+      if (!result.ok) { skipped.push({ runDir: dir, reason: result.reason }); continue; }
+      archived.push(dir);
+      continue;
+    }
+
     // iterRunDirsWithState already excludes status: 'clean' — every dir
     // reached here is genuinely non-terminal.
     if (isOrphanedMint(dir)) {
       if (dryRun) { archived.push(dir); continue; }
-      const result = archiveOrphanedMint(root, dir);
+      // #2227: tracked content (a materialized work/ spec) needs archiveRunDir's
+      // git mv + commit — same (root, dir) signature and {ok, reason} contract,
+      // so the result handling below is shared. A bare mint with nothing
+      // tracked keeps the fs-only move; see hasTrackedContent above.
+      const result = hasTrackedContent(root, dir)
+        ? archiveRunDir(root, dir)
+        : archiveOrphanedMint(root, dir);
       trackArchiveResult(root, repoSlug, dir, result);
       if (!result.ok) { skipped.push({ runDir: dir, reason: result.reason }); continue; }
       archived.push(dir);
@@ -932,12 +1248,15 @@ function archiveMerged({ cwd, dryRun = false, sessionId = process.env.CLAUDE_COD
     // returns false while the worktree still resolves, regardless of age.
     if (isAdHocStandaloneSuperseded(dir, state, worktrees)) {
       if (dryRun) { archived.push(dir); continue; }
-      // archiveRunDir, not archiveOrphanedMint: unlike a true orphaned mint, an
-      // ad-hoc-standalone dir is a real dev session that can have materialized a
-      // spec (a git-tracked work/ subtree) before being abandoned. archiveOrphanedMint
-      // is a bare fs.renameSync with no tracked-entry guard — archiveRunDir's #593
-      // guard (git-mv work/ + commit, refuse on any other tracked entry) is what this
-      // path actually needs; same (root, dir) signature and {ok, reason} contract.
+      // archiveRunDir, not archiveOrphanedMint: an ad-hoc-standalone dir is a
+      // real dev session that can have materialized a spec (a git-tracked work/
+      // subtree) before being abandoned. archiveOrphanedMint is a bare
+      // fs.renameSync with no tracked-entry guard — archiveRunDir's #593 guard
+      // (git-mv work/ + commit, refuse on any other tracked entry) is what this
+      // path needs; same (root, dir) signature and {ok, reason} contract. The
+      // orphaned-mint branch above makes the same choice per-dir via
+      // hasTrackedContent (#2227) — this branch is unconditional because an
+      // ad-hoc dir is always a real session, tracked spec or not.
       const result = archiveRunDir(root, dir);
       trackArchiveResult(root, repoSlug, dir, result);
       if (!result.ok) { skipped.push({ runDir: dir, reason: result.reason }); continue; }
@@ -965,6 +1284,47 @@ function archiveMerged({ cwd, dryRun = false, sessionId = process.env.CLAUDE_COD
     const branch = (wtEntry && wtEntry.branch) || fallbackBranch(root, dir, state);
     if (!branch) {
       const reason = stampedWorktree ? 'no-branch' : 'no-worktree';
+      // #1962: a run dir whose branch can't be derived at all (fallbackBranch
+      // above already tried and failed) has nothing to query `resolvePrState`
+      // with — but run-state.json's `pr.number` (stamped once at PR-early
+      // lifecycle time, never cleared) still names the PR. Probe it directly
+      // by number instead of skipping 'no-branch'/'no-worktree' forever.
+      // #2228: this fires whenever `state.pr.number` exists, regardless of
+      // whether `stampedWorktree` was ever set — a run whose worktree was
+      // never stamped in the first place (the #1684 gap) deserves the same
+      // by-number probe as one whose stamped worktree just got torn down.
+      // #2226: a closed-unmerged PR has nothing to wait for (no merge commit
+      // to catch up on) and archives immediately once its console (if any)
+      // is resolved; a MERGED PR reaches the same archive path, but only
+      // once `localHasMerge` confirms the local checkout has actually caught
+      // up on its merge commit — mirroring the general merged-PR path below.
+      if (state && state.pr && state.pr.number) {
+        const byNumber = resolvePrStateByNumber(root, state.pr.number);
+        if (byNumber && typeof byNumber === 'object' && (byNumber.state === 'CLOSED' || byNumber.state === 'MERGED')) {
+          if (byNumber.state === 'MERGED') {
+            const hasMerge = localHasMerge(root, byNumber.mergeCommit);
+            if (hasMerge !== true) {
+              skipped.push({ runDir: dir, reason: hasMerge === false ? 'local-behind-merge' : 'merge-commit-unknown' });
+              continue;
+            }
+          }
+          const consoleState = readConsoleState(dir);
+          if (consoleState === 'unresolved') {
+            skipped.push({ runDir: dir, reason: 'console-unresolved' });
+            continue;
+          }
+          if (consoleState === 'none') {
+            skipped.push({ runDir: dir, reason: 'console-never-rendered' });
+            continue;
+          }
+          if (dryRun) { archived.push(dir); continue; }
+          const result = archiveRunDir(root, dir);
+          trackArchiveResult(root, repoSlug, dir, result);
+          if (!result.ok) { skipped.push({ runDir: dir, reason: result.reason }); continue; }
+          archived.push(dir);
+          continue;
+        }
+      }
       skipped.push({ runDir: dir, reason });
       trackStuckSkip(root, repoSlug, dir, reason);
       continue;
@@ -1021,6 +1381,14 @@ function archiveMerged({ cwd, dryRun = false, sessionId = process.env.CLAUDE_COD
     archived.push(dir);
   }
 
+  // #1892 Deliverable 3: prune residueFailures entries whose live path no
+  // longer exists — after every archival attempt this pass made, so a path
+  // this very pass just archived is pruned via recordResidueSuccess above,
+  // never re-examined here. A real GitHub write (closing an escalated
+  // record) belongs behind the same dry-run guard every other outward write
+  // in this module already respects.
+  if (!dryRun) pruneResidueFailures(root, repoSlug);
+
   return { archived, skipped };
 }
 
@@ -1030,4 +1398,6 @@ module.exports = {
   localHasMerge, lastOwnEventMs, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
   isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS,
+  isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand,
+  compareWorkTwin, resolveIdenticalWorkTwin, listFilesRecursive,
 };

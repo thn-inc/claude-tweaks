@@ -64,6 +64,64 @@ const PRE_CHANGE_VERDICT_BODY = `    const fs = require("fs");
     const drift = installed === "none" || (expected !== "unversioned" && installed !== expected);
     console.log([installed, expected, drift ? "DRIFT" : "ok", (entry && entry.installPath) || "-"].join("\\t"));`;
 
+// The exact pre-#1779 VERDICT body (git HEAD at the time #1779 was picked up): the sha-resolution
+// fetch's catch swallows a failure with a comment only (no stderr), and the fetch itself is
+// attempted unconditionally regardless of source.url's host. Frozen the same way
+// PRE_CHANGE_VERDICT_BODY is above, so the go-red proof for #1779's two announced-warning fixes
+// survives any later edit to the live script. Copied verbatim from `git show HEAD:scripts/
+// claude-cloud-setup.sh` before this change landed.
+const PRE_1779_VERDICT_BODY = `    const fs = require("fs");
+    const spec = process.argv[1];
+    // The two session-scoped snapshot paths reach the script as process.argv args rather
+    // than spliced into this single-quoted JS source (_shared/session-tmp-root.md) — a
+    // path containing a quote character would otherwise break out of the string literal,
+    // the same reason code-health/focus-mode.mds F1 block passes its own values that way.
+    const installedPath = process.argv[2];
+    const marketplacesPath = process.argv[3];
+    const [pluginName, marketplaceName] = spec.split("@");
+    const read = (p) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return null; } };
+
+    // The installed directory decides what a session loads. \`claude plugin list\`s own
+    // \`version\` is metadata recorded beside that directory rather than read out of it, and
+    // \`installed_plugins.json\`s \`gitCommitSha\` is not refreshed by \`claude plugin update\`
+    // at all — neither can be trusted to describe the files actually on disk.
+    const entry = (read(installedPath) || []).find((p) => p.id === spec);
+    const manifest = entry && read(entry.installPath + "/.claude-plugin/plugin.json");
+    const installed = (manifest && manifest.version) || "none";
+
+    const mkt = (read(marketplacesPath) || []).find((m) => m.name === marketplaceName);
+    const catalog = mkt && read(mkt.installLocation + "/.claude-plugin/marketplace.json");
+    const declared = catalog && (catalog.plugins || []).find((p) => p.name === pluginName);
+    // Not every marketplace declares a per-plugin version (claude-plugins-official does not).
+    // An absent declaration is nothing to compare against, not evidence of drift — but that
+    // guard must not also swallow a total non-install. On a cold sandbox, the marketplace
+    // list/read above can fail for the same underlying reason nothing got installed (first-run
+    // race, marketplace not yet resolvable), which degrades \`expected\` to "unversioned" too —
+    // indistinguishable, by this variable alone, from a marketplace that legitimately has no
+    // version field. \`installed === "none"\` is unambiguous either way and must win.
+    let expected = (declared && declared.version) || null;
+    // A git-subdir-sourced entry (claude-tweaks, post-#418) carries no entry-level version at
+    // all: the payload plugin.json is the single version authority, and the catalog only pins
+    // a release commit sha. Resolve that sha to a version by reading the manifest the source
+    // repo actually shipped at that commit, instead of treating a missing version field as
+    // nothing to compare (claude-tweaks #860, which used to make claude-tweaks drift permanently
+    // unverifiable via this comparison).
+    if (!expected && declared && declared.source && declared.source.source === "git-subdir" && declared.source.sha && declared.source.url) {
+      try {
+        const rawBase = declared.source.url.replace(/^https:\\/\\/github\\.com\\//, "https://raw.githubusercontent.com/");
+        const rawUrl = rawBase + "/" + declared.source.sha + "/" + declared.source.path + "/.claude-plugin/plugin.json";
+        const atSha = JSON.parse(require("child_process").execFileSync("curl", ["-fsSL", rawUrl], { encoding: "utf8", timeout: 10000 }));
+        if (atSha && atSha.version) expected = atSha.version;
+      } catch {
+        // Network failure, missing manifest at that path, or unexpected shape: fall through to
+        // "unversioned" below, the same fail-open posture as an unresolvable catalog entry.
+      }
+    }
+    expected = expected || "unversioned";
+
+    const drift = installed === "none" || (expected !== "unversioned" && installed !== expected);
+    console.log([installed, expected, drift ? "DRIFT" : "ok", (entry && entry.installPath) || "-"].join("\\t"));`;
+
 function tmpDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
@@ -115,7 +173,7 @@ function runVerdict(body, spec, curlDir) {
   });
   assert.strictEqual(result.status, 0, `node -e exited nonzero (stderr: ${result.stderr})`);
   const [installed, expected, status, installPath] = result.stdout.trim().split('\t');
-  return { installed, expected, status, installPath };
+  return { installed, expected, status, installPath, stderr: result.stderr };
 }
 
 const SPEC = 'claude-tweaks@claude-tweaks-marketplace';
@@ -218,4 +276,109 @@ test('go-red proof: the pre-#860 VERDICT body reports "unversioned"/ok on the sa
   const verdict = runVerdict(PRE_CHANGE_VERDICT_BODY, SPEC, curlDir);
   assert.strictEqual(verdict.expected, 'unversioned', 'pre-change code should have degraded to "unversioned" on a sha-pinned entry');
   assert.strictEqual(verdict.status, 'ok', 'pre-change code should have silently reported no drift despite the real version mismatch');
+});
+
+// #1779: two more silent-swallow defects in the same VERDICT block, plus an unguarded `set -u`
+// expansion crash a few lines above it in the plugin-freshness block.
+
+test('non-github.com catalog source url: skip the raw-manifest fetch and announce why, instead of fetching a meaningless rewrite', () => {
+  const NON_GITHUB_ENTRY = {
+    name: 'claude-tweaks',
+    source: { source: 'git-subdir', url: 'https://gitlab.com/thomasholknielsen/claude-tweaks', path: 'plugin', sha: SHA },
+  };
+  // Must not be consulted at all -- the host gate should skip the fetch before any curl call.
+  const curlDir = makeCurlStub({});
+  writeFixtures({
+    pluginId: SPEC,
+    installedVersion: '6.97.0',
+    catalogPlugin: NON_GITHUB_ENTRY,
+    marketplaceName: 'claude-tweaks-marketplace',
+  });
+  const verdict = runVerdict(liveSnippet, SPEC, curlDir);
+  assert.strictEqual(verdict.expected, 'unversioned');
+  assert.match(
+    verdict.stderr,
+    /\[claude-cloud-setup\] WARNING: could not resolve the pinned version of claude-tweaks@claude-tweaks-marketplace at [a-f0-9]+ \(non-github\.com source url\) — freshness unverified\./,
+  );
+});
+
+test('github.com source url: a failed raw-manifest fetch announces a WARNING naming the spec and sha, instead of swallowing it', () => {
+  const curlDir = makeCurlStub({}); // unregistered URL -> stub exits 22, matching real curl -f on a 404
+  writeFixtures({
+    pluginId: SPEC,
+    installedVersion: '6.97.0',
+    catalogPlugin: SHA_PINNED_CATALOG_ENTRY,
+    marketplaceName: 'claude-tweaks-marketplace',
+  });
+  const verdict = runVerdict(liveSnippet, SPEC, curlDir);
+  assert.strictEqual(verdict.expected, 'unversioned');
+  assert.match(
+    verdict.stderr,
+    new RegExp(`\\[claude-cloud-setup\\] WARNING: could not resolve the pinned version of ${SPEC.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} at ${SHA} \\(.*\\) — freshness unverified\\.`),
+  );
+});
+
+test('go-red proof: the pre-#1779 VERDICT body swallows both the fetch-failure and non-github cases with zero stderr', () => {
+  const curlDir = makeCurlStub({});
+  writeFixtures({
+    pluginId: SPEC,
+    installedVersion: '6.97.0',
+    catalogPlugin: SHA_PINNED_CATALOG_ENTRY,
+    marketplaceName: 'claude-tweaks-marketplace',
+  });
+  const verdict = runVerdict(PRE_1779_VERDICT_BODY, SPEC, curlDir);
+  assert.strictEqual(verdict.expected, 'unversioned');
+  assert.strictEqual(verdict.stderr.trim(), '', 'pre-#1779 code should have swallowed the fetch failure with no stderr output');
+});
+
+// The session-id guard lives a few lines above the VERDICT block, in the plugin-freshness
+// block's CC_TMP_DIR resolution -- extracted and run standalone under `set -euo pipefail` (the
+// script's own header) so the go-red proof exercises the real `set -u` abort, not a simulation.
+function extractTmpDirBlock(scriptSource) {
+  const m = scriptSource.match(/(CC_TMP_DIR="\$\{TMPDIR:-\/tmp\}"\n[\s\S]*?\nfi)\nCC_INSTALLED=/);
+  assert.ok(
+    m,
+    'extraction pattern is out of sync with scripts/claude-cloud-setup.sh — the CC_TMP_DIR block moved or was reworded',
+  );
+  return m[1];
+}
+
+const PRE_1779_TMPDIR_BLOCK = `CC_TMP_DIR="\${TMPDIR:-/tmp}"
+if [ -n "$CLAUDE_CODE_SESSION_ID" ]; then
+  CC_TMP_DIR="$CC_TMP_DIR/ct-session-$CLAUDE_CODE_SESSION_ID"
+  mkdir -p "$CC_TMP_DIR"
+fi`;
+
+function runTmpDirBlock(block, sessionId) {
+  const env = { ...process.env };
+  delete env.CLAUDE_CODE_SESSION_ID;
+  if (sessionId !== undefined) env.CLAUDE_CODE_SESSION_ID = sessionId;
+  env.TMPDIR = tmpDir('cloud-setup-tmpdir-test-');
+  const script = `set -euo pipefail\n${block}\necho "$CC_TMP_DIR"`;
+  const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env, timeout: 5000 });
+  return { ...result, tmpdir: env.TMPDIR };
+}
+
+test('session-id guard: CLAUDE_CODE_SESSION_ID unset does not abort under set -u, CC_TMP_DIR stays unscoped', () => {
+  const scriptSource = fs.readFileSync(SCRIPT_PATH, 'utf8');
+  const block = extractTmpDirBlock(scriptSource);
+  const result = runTmpDirBlock(block, undefined);
+  assert.strictEqual(result.status, 0, `expected the guarded block to run clean under set -u (stderr: ${result.stderr})`);
+  assert.strictEqual(result.stdout.trim(), result.tmpdir);
+});
+
+test('session-id guard: CLAUDE_CODE_SESSION_ID exported still resolves the ct-session-{id} subdirectory unchanged', () => {
+  const scriptSource = fs.readFileSync(SCRIPT_PATH, 'utf8');
+  const block = extractTmpDirBlock(scriptSource);
+  const result = runTmpDirBlock(block, 'abc123');
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const expectedDir = `${result.tmpdir}/ct-session-abc123`;
+  assert.strictEqual(result.stdout.trim(), expectedDir);
+  assert.ok(fs.existsSync(expectedDir), 'the ct-session-{id} subdirectory should have been created');
+});
+
+test('go-red proof: the pre-#1779 unguarded session-id test aborts with "unbound variable" under set -u', () => {
+  const result = runTmpDirBlock(PRE_1779_TMPDIR_BLOCK, undefined);
+  assert.notStrictEqual(result.status, 0, 'pre-#1779 code should abort when CLAUDE_CODE_SESSION_ID is unset under set -u');
+  assert.match(result.stderr, /unbound variable/);
 });

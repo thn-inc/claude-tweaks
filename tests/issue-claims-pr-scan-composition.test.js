@@ -104,6 +104,9 @@ const GH_CLI_BULLET = '- **gh CLI:**';
 const MCP_BULLET = '- **MCP:**';
 const REPAIR_STEP1 = '1. Read the blob at';
 const ISSUE_COMMENT_CMD = 'gh issue comment "$ISSUE"';
+const MIRROR_MCP_FORM = '`add_issue_comment` with the issue number';
+const WRAPPER_EXTRACT_JQ = "jq -r '.content'";
+const MCP_NO_WRAPPER_SENTENCE = 'nothing to extract';
 // The end of repair step 1 — the discrimination test closes its doctored fence right after it.
 const REPAIR_STEP1_END = 'This step never depends on the content parsing.';
 
@@ -113,19 +116,19 @@ test('issue-claims.md: REPAIR_STEP1 and ISSUE_COMMENT_CMD literals exist in the 
   assert.ok(claimsContent.includes(REPAIR_STEP1_END), 'fixture assumption: the discrimination test\'s fence-close anchor is no longer in the file verbatim');
 });
 
-test('issue-claims.md under gh: gh-only bullets present, mcp-only bullets absent, repair step 1 and the comment command present', () => {
+test('issue-claims.md under gh: gh-only bullets present, mcp-only bullets absent, repair step 1 and the comment command present, the jq extraction stays, no MCP mirror form', () => {
   const bundle = bundleFor(CLAIMS_FILE, 'gh', claimsContent);
   assert.deepEqual(
-    presence(bundle, [GH_CLI_BULLET, MCP_BULLET, REPAIR_STEP1, ISSUE_COMMENT_CMD]),
-    { [GH_CLI_BULLET]: true, [MCP_BULLET]: false, [REPAIR_STEP1]: true, [ISSUE_COMMENT_CMD]: true },
+    presence(bundle, [GH_CLI_BULLET, MCP_BULLET, REPAIR_STEP1, ISSUE_COMMENT_CMD, WRAPPER_EXTRACT_JQ, MIRROR_MCP_FORM, MCP_NO_WRAPPER_SENTENCE]),
+    { [GH_CLI_BULLET]: true, [MCP_BULLET]: false, [REPAIR_STEP1]: true, [ISSUE_COMMENT_CMD]: true, [WRAPPER_EXTRACT_JQ]: true, [MIRROR_MCP_FORM]: false, [MCP_NO_WRAPPER_SENTENCE]: false },
   );
 });
 
-test('issue-claims.md under mcp: mcp-only bullets present, gh-only bullets absent, repair step 1 and the comment command present', () => {
+test('issue-claims.md under mcp: mcp-only bullets present, gh-only bullets and the gh comment command absent, repair step 1 present, the add_issue_comment mirror form present, no unqualified wrapper-object instruction', () => {
   const bundle = bundleFor(CLAIMS_FILE, 'mcp', claimsContent);
   assert.deepEqual(
-    presence(bundle, [GH_CLI_BULLET, MCP_BULLET, REPAIR_STEP1, ISSUE_COMMENT_CMD]),
-    { [GH_CLI_BULLET]: false, [MCP_BULLET]: true, [REPAIR_STEP1]: true, [ISSUE_COMMENT_CMD]: true },
+    presence(bundle, [GH_CLI_BULLET, MCP_BULLET, REPAIR_STEP1, ISSUE_COMMENT_CMD, WRAPPER_EXTRACT_JQ, MIRROR_MCP_FORM, MCP_NO_WRAPPER_SENTENCE]),
+    { [GH_CLI_BULLET]: false, [MCP_BULLET]: true, [REPAIR_STEP1]: true, [ISSUE_COMMENT_CMD]: false, [WRAPPER_EXTRACT_JQ]: false, [MIRROR_MCP_FORM]: true, [MCP_NO_WRAPPER_SENTENCE]: true },
   );
 });
 

@@ -70,6 +70,17 @@ else
   export FETCH_LIMIT="$LIMIT"
   FIELDS=$(node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js').UNION_FIELDS)")
   gh issue list --state all --json "$FIELDS" --limit "$LIMIT" > {tmp-records-file}
+  UNION_LEN=$(node -e "console.log(require('{tmp-records-file}').length)")
+  if [ "$UNION_LEN" = "$LIMIT" ]; then
+    echo "WARNING: the --state all snapshot hit backlog-fetch-limit ($LIMIT); open records were completed by a second open-only fetch — closed-record coverage is truncated at the $LIMIT newest" >&2
+    gh issue list --state open --json "$FIELDS" --limit "$LIMIT" > {tmp-open-only-file}
+    node -e "
+      const { mergeOpenIntoUnion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js');
+      const union = require('{tmp-records-file}');
+      const open = require('{tmp-open-only-file}');
+      require('fs').writeFileSync('{tmp-records-file}', JSON.stringify(mergeOpenIntoUnion(union, open)));
+    "
+  fi
   [ -n "$SNAPSHOT" ] && cp {tmp-records-file} "$SNAPSHOT"
 fi
 ```
@@ -80,6 +91,27 @@ since the union already carries every field any consumer has ever needed. A cons
 existing contract wants only open records (the base `github-issues` fetch below, unchanged for
 `/help`/`/tidy`/`/backlog`/`/visualize`) filters `state === 'OPEN'` out of `{tmp-records-file}` in
 its own facet-parse pass rather than re-fetching narrower.
+
+**Union-cap completion (#1919).** When the `--state all` union comes back at exactly `LIMIT` rows,
+the cap may have silently dropped the oldest open records — closed records newer than them fill
+every remaining slot, and the union's own open subset then undercounts the true open set with no
+signal (the base fetch's own truncation check, below, only fires on the *open* count hitting the
+limit, which can't happen in this shape while the open subset stays far under it). The block above
+detects this by comparing the union's length against `LIMIT` and, when equal, performs one
+additional `--state open` fetch, sized to the same `LIMIT`, and merges any open records missing
+from the union (deduped by `number` via
+`record-snapshot.js`'s `mergeOpenIntoUnion`, which keeps the union row's full field set on a
+collision) directly into `{tmp-records-file}` before it's cached to `$SNAPSHOT`. The open-only
+fetch itself is still subject to the same cap — a repo with more than `LIMIT` open records needs a
+raised `backlog-fetch-limit` regardless of this completion step.
+
+**Invariant for direct `{tmp-records-file}` consumers.** Once the completion above has run,
+`{tmp-records-file}`'s row count is no longer bounded by `LIMIT` — it can be `LIMIT` plus however
+many missing open records the merge added. A consumer that reads `{tmp-records-file}` directly
+(rather than through the open-filtered `{tmp-faceted-file}` below) and runs its own truncation
+check against `Number(process.env.FETCH_LIMIT)` must compare with `>=`, not `===`: an exact-equality
+check silently stops firing on exactly the runs where the merge fired, which is exactly when
+truncation still occurred (closed-record coverage capped at `LIMIT`).
 
 ## `work-backend: github-issues` fetch
 
@@ -151,7 +183,7 @@ git -C "{REPO_ROOT}" log -1 --format=%cI -- "{path}"
 
 An empty result — an uncommitted/brand-new record — is treated as fresh, not stale.
 `{REPO_ROOT}` resolves via `git rev-parse --show-toplevel` in the dispatcher before the agent
-fires (see Working Directory Discipline in `_shared/subagent-output-contract.md`).
+fires (see Working Directory Discipline in `_shared/subagent-dispatch-core.md`).
 
 ### Threshold resolution
 

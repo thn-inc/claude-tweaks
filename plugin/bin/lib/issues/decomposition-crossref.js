@@ -20,6 +20,7 @@
 // a human did by hand in the original incident.
 
 const { extractKeyFilesSection } = require('./grouping');
+const { escapeRegExp } = require('../shared-primitives');
 
 const ANY_HEADING_RE = /^#{1,6}[ \t]/;
 const BACKTICK_RE = /`([^`]+)`/g;
@@ -58,6 +59,34 @@ function crossReferenceKeyFiles(units, grep) {
   const list = Array.isArray(units) ? units : [];
   const results = [];
 
+  // Each `other`'s Gotchas+Prerequisites text doesn't depend on the outer
+  // `unit`, so compute it once per `other` here rather than once per
+  // unit x other pair inside the double loop below.
+  const sectionTextByOther = new Map();
+  for (const other of list) {
+    if (!other) continue;
+    sectionTextByOther.set(
+      other,
+      `${extractSection(other.body, 'Gotchas')}\n${extractSection(other.body, 'Prerequisites')}`,
+    );
+  }
+
+  // Memoize grep results across the whole batch — the same identifier can be
+  // named in multiple units' Gotchas/Prerequisites text, and re-spawning the
+  // injected grep subprocess for each occurrence is avoidable cost.
+  const grepCache = new Map();
+  const memoizedGrep = (ident) => {
+    if (grepCache.has(ident)) return grepCache.get(ident);
+    let files = [];
+    try {
+      files = grep(ident) || [];
+    } catch {
+      files = [];
+    }
+    grepCache.set(ident, files);
+    return files;
+  };
+
   for (const unit of list) {
     const additions = new Map(); // path -> note
 
@@ -65,22 +94,17 @@ function crossReferenceKeyFiles(units, grep) {
       if (other === unit || !other || !unit) continue;
       const title = String(unit.title || '');
       if (!title) continue;
-      const text = `${extractSection(other.body, 'Gotchas')}\n${extractSection(other.body, 'Prerequisites')}`;
-      const titleLower = title.toLowerCase();
+      const text = sectionTextByOther.get(other) || '';
+      const titleRe = new RegExp(`\\b${escapeRegExp(title)}\\b`, 'i');
 
       for (const line of text.split('\n')) {
-        if (!line.toLowerCase().includes(titleLower)) continue;
+        if (!titleRe.test(line)) continue;
         const idents = [...line.matchAll(BACKTICK_RE)]
           .map((m) => m[1])
           .filter((token) => IDENTIFIER_LIKE_RE.test(token));
 
         for (const ident of idents) {
-          let files = [];
-          try {
-            files = grep(ident) || [];
-          } catch {
-            files = [];
-          }
+          const files = memoizedGrep(ident);
           for (const file of files) {
             if (TEST_PATH_RE.test(file) || TEST_FILE_RE.test(file)) continue;
             if (!additions.has(file)) {

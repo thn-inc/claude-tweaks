@@ -39,11 +39,25 @@ test('create-and-update.md #68: Step 7 preview states an email fires on every fi
   );
 });
 
-test('create-and-update.md #68: Step 8 guided-creation path issues a follow-up RemoteTrigger update with notifications', () => {
+test('create-and-update.md #1301: Step 8 no longer issues the non-functional follow-up RemoteTrigger update for notifications', () => {
+  // Live probe (record #1301) confirmed update has no notifications parameter and
+  // silently drops an unsupported notifications value rather than applying or rejecting it —
+  // the follow-up call this test used to require would appear to succeed while doing nothing.
   assert.ok(
-    createAndUpdate.includes(
+    !createAndUpdate.includes(
       'RemoteTrigger {action: "update", trigger_id, body: {"notifications": {"channel": {"email": true, "push": false, "slack": false}}}}'
-    )
+    ),
+    'Step 8 must not issue the confirmed-non-functional follow-up update call'
   );
-  assert.ok(/immediately after receiving `trigger_id` back/.test(createAndUpdate));
+});
+
+test('create-and-update.md #1301: Step 8 documents the live-confirmed limitation and the manual fallback', () => {
+  assert.ok(
+    /Confirmed live \(#1301\)/.test(createAndUpdate),
+    'Step 8 must cite the live probe that found update cannot set notifications'
+  );
+  assert.ok(
+    /must turn it on manually at the routine's console URL/.test(createAndUpdate),
+    'Step 8 must direct the user to the manual fallback'
+  );
 });

@@ -50,7 +50,7 @@ Extract from the prompt:
 - **Auth (legacy)** — from `**Auth (legacy):**` (optional, resolved url/username/password from a legacy `auth.yml`; only present when no vault is configured)
 - **Setup block** — from `**Setup:**` (YAML, optional)
 - **Teardown block** — from `**Teardown:**` (YAML, optional)
-- **Viewport** — from `**Viewport:**` (optional, e.g. `1440x900`)
+- **Viewport** — from `**Viewport:**` (optional, e.g. `1440x900`; defaults to `1440x1600` when absent — see Setup step 2d)
 - **Steps** — the YAML step array from `**Steps:**`
 - **SCREENSHOT_PATH** — from `**SCREENSHOT_PATH:**` (the directory to write screenshots to for this run)
 
@@ -67,7 +67,7 @@ agent-browser --session <story-id> trace start
 ```
 Recording must start here, before any step runs — `trace stop <path>` (Section 6 Step 1) can only save what was recorded, and a failure with no recording started yields no trace.
 
-d. **Set viewport** (if specified). The flag is cross-platform — no shell-specific env-var workarounds needed.
+d. **Set viewport.** Use the story's `**Viewport:**` value when specified; otherwise default to `1440x1600` — a below-the-fold control (e.g. a form's conditional fields expanding the page) is otherwise unreachable, since `click`/`find ... click` never auto-scrolls a target into view (`skills/browse/agent-browser-reference.md`'s Operation vocabulary note). The flag is cross-platform — no shell-specific env-var workarounds needed.
 ```
 agent-browser --session <story-id> set viewport <width> <height>
 ```
@@ -221,7 +221,7 @@ Return the structured report as detailed in the "Report" section below. If `reco
 ## Workflow — Legacy Format
 
 1. **Parse** the user story into discrete, sequential steps (support all legacy formats in the Examples section). Also parse `**Auth (vault):**` and `**Auth (legacy):**` if present.
-2. **Setup:** create the screenshot directory and the trace directory (`{TRACES_BASE}/<story-id>`); open the session at the story URL and start trace recording (`trace start`) immediately after `open`; if a viewport is set, apply it via `set viewport`; apply auth (vault preferred, legacy fallback) — see Structured Format Step 2.
+2. **Setup:** create the screenshot directory and the trace directory (`{TRACES_BASE}/<story-id>`); open the session at the story URL and start trace recording (`trace start`) immediately after `open`; apply viewport via `set viewport` (the story's value if set, else the `1440x1600` default); apply auth (vault preferred, legacy fallback) — see Structured Format Step 2.
 3. **Execute each step sequentially** (maintain a `caveats` array, initially empty):
    a. Resolve the target via `find` using a semantic locator inferred from the free-text step.
    b. Execute the action via the appropriate `agent-browser` command. Free-text-derived values (the story's narrative/checklist/BDD text) are spliced into double-quoted Bash arguments the same way structured-format `<value>`/`<text>` fields are — apply the escaping rule from "Escaping story-supplied strings" (Structured Format, Section 4 Step 1) before splicing any such string into a command.
@@ -233,6 +233,8 @@ Return the structured report as detailed in the "Report" section below. If `reco
 5. **Return** the structured report (with `TRACE:` line if a trace was captured).
 
 ## Report
+
+**Status line (required, the true last line of your reply, after the `REPORT_JSON` comment):** `STATUS: {word}`, one of `DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED` (`bin/lib/hooks/subagent-stop.js`'s canonical format, #2265; #2350) — this is the Subagent Contract's own status word, distinct from this report's `PASS`/`PASS_WITH_CAVEATS`/`FAIL` vocabulary above it. Mapping: `PASS` → `DONE`; `PASS_WITH_CAVEATS` → `DONE_WITH_CONCERNS`; `FAIL` → `DONE_WITH_CONCERNS` (execution completed normally — `FAIL` is a real finding the dispatcher must act on); a `BLOCKED`/`NEEDS_CONTEXT` verdict per `qa-prompts.md`'s own criteria (infrastructure failure vs. missing required input) overrides this mapping when Setup itself never reached a PASS/FAIL judgment at all.
 
 **Canonical schema.** The nested `page_inventories` shape shown in the `REPORT_JSON` examples below (`interactive_elements`/`forms`/`navigation`/`accessibility`/`layout`) is the canonical schema for that structure. `skills/test/qa-prompts.md`'s dispatch prompt templates and `skills/test/qa-reporting.md`'s aggregated `report.json` schema both re-specify this same nested shape (required by `qa-prompts.md`'s own no-sibling-file-references contract, since each template is copied verbatim into a dispatched Task agent's prompt and that agent never sees this file) — any future change to the `page_inventories` shape must be mirrored byte-for-byte across all three locations: both `qa-prompts.md` templates and `qa-reporting.md`. The rest of the `REPORT_JSON` envelope shown in the examples below (`id`/`status`/`steps_passed`/`steps_total`/`error`/`trace`) illustrates this agent's full internal state, not a separate cross-file contract: the `REPORT_JSON` comment actually emitted by the dispatch templates in `qa-prompts.md` carries only `caveats`/`recovered_locators`/`page_inventories`, since `id`/`status`/`steps_passed`/`steps_total`/`error`/`trace` are already carried by the separate `RESULT:`/`TRACE:` lines that `qa-reporting.md`'s Phase 4 parses independently.
 
@@ -261,6 +263,8 @@ PASS
 RESULT: PASS | ID: <story-id> | Steps: N/N
 
 <!-- REPORT_JSON {"id":"<story-id>","status":"PASS","steps_passed":2,"steps_total":2,"error":null,"caveats":[],"recovered_locators":[],"trace":null,"page_inventories":[{"url":"...","interactive_elements":{"buttons":3,"links":12,"inputs":0,"selects":0,"checkboxes":0},"forms":{"count":0,"fields_per_form":[]},"navigation":{"nav_elements":1,"breadcrumbs":false,"tabs":0},"accessibility":{"aria_landmarks":2,"heading_levels":[1,2],"missing_labels":0},"layout":{"viewport_overflow":false,"scroll_height":900}}]} -->
+
+STATUS: DONE
 ```
 
 ### On success with caveats
@@ -293,6 +297,8 @@ PASS_WITH_CAVEATS
 RESULT: PASS_WITH_CAVEATS | ID: <story-id> | Steps: N/N
 
 <!-- REPORT_JSON {"id":"<story-id>","status":"PASS_WITH_CAVEATS","steps_passed":2,"steps_total":2,"error":null,"caveats":["Missing aria-label on 3 interactive element(s)","Page load took 4.2s"],"recovered_locators":[],"trace":null,"page_inventories":[{"url":"...","interactive_elements":{"buttons":5,"links":8,"inputs":2,"selects":1,"checkboxes":0},"forms":{"count":1,"fields_per_form":[3]},"navigation":{"nav_elements":1,"breadcrumbs":true,"tabs":3},"accessibility":{"aria_landmarks":3,"heading_levels":[1,2,3],"missing_labels":3},"layout":{"viewport_overflow":false,"scroll_height":1200}}]} -->
+
+STATUS: DONE_WITH_CONCERNS
 ```
 
 ### On failure
@@ -328,6 +334,8 @@ RESULT: FAIL | ID: <story-id> | Steps: X/N
 TRACE: {TRACES_BASE}/<story-id>/<timestamp>.zip
 
 <!-- REPORT_JSON {"id":"<story-id>","status":"FAIL","steps_passed":1,"steps_total":3,"error":"Step 2: <brief error>","caveats":[],"recovered_locators":[],"trace":".claude-tweaks/artifacts/traces/<story-id>/<timestamp>.zip","page_inventories":[{"url":"...","interactive_elements":{"buttons":2,"links":5,"inputs":1,"selects":0,"checkboxes":0},"forms":{"count":1,"fields_per_form":[2]},"navigation":{"nav_elements":1,"breadcrumbs":false,"tabs":0},"accessibility":{"aria_landmarks":1,"heading_levels":[1,2],"missing_labels":1},"layout":{"viewport_overflow":false,"scroll_height":800}}]} -->
+
+STATUS: DONE_WITH_CONCERNS
 ```
 
 The orchestrator's Phase 4 collector reads the `RESULT:` and `TRACE:` lines and the `REPORT_JSON` comment to assemble the run report. Use these exact line formats.

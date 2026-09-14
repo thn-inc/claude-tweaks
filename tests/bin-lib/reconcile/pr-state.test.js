@@ -5,7 +5,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, BULK_CHUNK } = require('../../../plugin/bin/lib/reconcile/pr-state');
+const {
+  resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, BULK_CHUNK,
+} = require('../../../plugin/bin/lib/reconcile/pr-state');
 
 // resolvePrState/resolvePrStateAsync both shell to `gh pr list` — neither is
 // injectable (mirrors the module's pre-existing design), so tests intercept
@@ -272,6 +274,46 @@ test('resolvePrStatesBulk: hasNextPage:false (the normal case) still resolves th
 test('resolvePrStatesBulk: response missing an alias key classifies network-failure — never a silent null', () => {
   const oneOfTwo = JSON.stringify({ data: { repository: { b0: null } } }); // b1 absent
   assert.equal(resolvePrStatesBulk('/tmp', ['a', 'b'], { runner: () => oneOfTwo, repoSlug: 'o/r' }), 'network-failure');
+});
+
+// #1962: archive-merged.js's sweep falls back to this when a run dir's
+// stamped worktree is gone AND its branch has since been deleted (no branch
+// left for resolvePrState's `--head` query) — `run-state.json`'s `pr.number`
+// still names the PR, so probe it directly.
+test('resolvePrStateByNumber: no number -> null, no gh call', () => {
+  assert.equal(resolvePrStateByNumber('/tmp', null), null);
+  assert.equal(resolvePrStateByNumber('/tmp', undefined), null);
+});
+
+test('resolvePrStateByNumber: resolves the single PR by number (no tie-break needed)', () => {
+  const pr = { number: 42, state: 'CLOSED', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z', mergeCommit: null };
+  const wrapper = installGhWrapper(pr);
+  try {
+    const result = resolvePrStateByNumber('/tmp', 42);
+    assert.equal(result.number, 42);
+    assert.equal(result.state, 'CLOSED');
+  } finally {
+    wrapper.restore();
+  }
+});
+
+test('resolvePrStateByNumber: gh absent -> gh-absent, no throw', () => {
+  const originalPath = process.env.PATH;
+  process.env.PATH = '/nonexistent-path-with-no-gh';
+  try {
+    assert.equal(resolvePrStateByNumber('/tmp', 42), 'gh-absent');
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});
+
+test('resolvePrStateByNumber: malformed gh output -> network-failure, no throw', () => {
+  const wrapper = installGhWrapper('#!/bin/sh\necho "not json"\n');
+  try {
+    assert.equal(resolvePrStateByNumber('/tmp', 42), 'network-failure');
+  } finally {
+    wrapper.restore();
+  }
 });
 
 test('resolvePrStatesBulk: unresolvable repo slug classifies network-failure (fail closed, no spawn)', () => {

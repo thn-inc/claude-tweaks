@@ -7,6 +7,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const SKILLS = path.join(ROOT, 'plugin', 'skills');
 const ROSTER = path.join(SKILLS, '_shared', 'ceremony-profile.md');
+const { CEILING_BYTES } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'skill-audit', 'context-cost'));
 
 function walk(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -82,9 +83,9 @@ test('build/dispatch.md gates the single-task skip on all three conditions and c
   assert.ok(fs.readFileSync(path.join(SKILLS, 'flow', 'summary-template.md'), 'utf8').includes('Skipped — fast-lane'));
 });
 
-test('every touched skill file stays under the 40,960-byte ceiling (#1926 AC7)', () => {
+test('every touched skill file stays under the byte ceiling (#1926 AC7)', () => {
   for (const rel of ['build/SKILL.md', 'flow/SKILL.md', 'wrap-up/SKILL.md', 'review/code-mode-steps.md', 'build/dispatch.md', 'flow/steps-and-gates.md', '_shared/ceremony-profile.md']) {
     const bytes = Buffer.byteLength(fs.readFileSync(path.join(SKILLS, rel), 'utf8'), 'utf8');
-    assert.ok(bytes <= 40960, `${rel} is ${bytes} bytes`);
+    assert.ok(bytes <= CEILING_BYTES, `${rel} is ${bytes} bytes`);
   }
 });

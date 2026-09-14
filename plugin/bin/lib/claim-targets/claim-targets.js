@@ -33,7 +33,9 @@ const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep
   + '  exit 2 = malformed invocation or missing dependency\n'
   + '  exit 3 = contested, or a pr-opened tombstone whose linked PR is still open\n'
   + '           (contested: {contested:[{issue,holder}], ...}; in-flight: {inFlight:[{issue,link}], ...})\n'
-  + '  exit 4 = transient gh failure\n';
+  + '  exit 4 = transient gh failure\n'
+  + '  exit 5 = claim write reported success but the post-write read-back did not\n'
+  + '           confirm it (a live claim carrying this runId) — {unverified:[{issue}], ...}\n';
 
 function errText(e) {
   return String((e && e.message) || e);
@@ -109,6 +111,26 @@ function holderFromFreshRead(deps, repoSlug, issue) {
   const classified = classifyClaimBlob(fresh.content, deps.now());
   if (classified.state !== 'live') return null;
   return parseJsonOrNull(fresh.content);
+}
+
+// #2073: a claim write can report `ok: true` without the blob actually
+// landing (the git-CAS push confirms the push itself, not that a later read
+// sees it — the #1973 incident this closes). Re-read the just-written blob
+// through the same read path (`readClaimBlob`, `knownTip` when the write was
+// a git-CAS success so this costs no extra fetch) and confirm it classifies
+// `'live'` with `runId` equal to this run's — anything else (a failed read,
+// an absent/tombstoned/unreadable blob, or a live blob some other runId
+// owns) means the write cannot be trusted and the caller must not treat this
+// target as claimed. Never throws — `readClaimBlob`'s own contract already
+// guarantees that.
+function verifyClaimLanded(deps, repoSlug, issue, runId, knownTip) {
+  const verify = claimStore.readClaimBlob(deps, repoSlug, issue, knownTip);
+  if (verify.failure) return false;
+  const content = verify.absent ? null : verify.content;
+  const classified = classifyClaimBlob(content, deps.now());
+  if (classified.state !== 'live') return false;
+  const identity = parseJsonOrNull(content);
+  return !!(identity && identity.runId === runId);
 }
 
 // All-or-abort release of every target this invocation claimed, before a
@@ -369,6 +391,17 @@ function run(argv, deps) {
     // "trace which transport actually wrote" question a future incident
     // investigation would otherwise need temporary logging to answer.
     transportByIssue[issue] = typeof write.commitSha === 'string' ? 'git' : 'contents-api';
+
+    // Post-write verification (#2073): a write the store reported `ok: true`
+    // is not yet a confirmed claim — re-read before trusting it. `knownTip`
+    // is the tip this same write just produced (git-CAS success) or `null`
+    // (contents-API success, nothing to chain), matching the read this loop
+    // would perform for the next target anyway.
+    if (!verifyClaimLanded(deps, repoSlug, issue, opts.runId, knownTip)) {
+      const stop = stopOrSkip(issue, 'unverified', 'unverified', 5, {});
+      if (stop !== null) return stop;
+      continue;
+    }
 
     claimedThisRun.push(issue);
 

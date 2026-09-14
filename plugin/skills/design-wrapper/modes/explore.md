@@ -96,8 +96,6 @@ Each dispatch prompt also carries the **principles layer**, assembled at composi
 Templates A/B/C don't fit a file-producing builder, so the output format is defined explicitly here, inlined literally in every dispatch prompt:
 
 ```
-Status line (required): first line of your reply is one of DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
-
 OUTPUT FORMAT (required):
 SKIN: {path to the CSS file you wrote, relative to the explore directory}
 DIRECTION: {display name of the direction you skinned}
@@ -107,6 +105,9 @@ CONCERNS: (up to 3 bullet lines; omit this line entirely if none)
 Restyle the shared markup only — do not add, remove, or reorder elements. If this direction cannot be
 faithfully expressed as a pure restyle of the shared markup, report DONE_WITH_CONCERNS and name what
 could not be expressed rather than restructuring around it.
+
+Status line (required): after everything above, on its own trailing line — the last non-empty
+line of your reply — write exactly one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
 ```
 
 **Degraded variant slot:** a `BLOCKED`/failed builder, or one that reports `DONE_WITH_CONCERNS` because its direction cannot be faithfully expressed as a pure restyle, still gets a slot in the switcher — counted in the "1 / N" indicator, visibly naming the direction and the failure or concern — but that slot is **not pickable** as a winner in the Verdict step below.

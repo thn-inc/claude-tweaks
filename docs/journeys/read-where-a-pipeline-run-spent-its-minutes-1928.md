@@ -51,5 +51,5 @@ files:
 - **URL:** `events.jsonl`, `type: "contract-violation"`
 - **Action:** Read the count after a run that dispatched subagents.
 - **Should feel:** Only real subagent replies are graded; an orchestrator's own narration turns no longer show up.
-- **Should understand:** The SubagentStop hook grades `agent_transcript_path` only; when the harness omits it, the hook does nothing rather than falling back to the parent session's transcript.
-- **Red flags:** Zero violations on a run where an agent clearly replied without a status line — the harness stopped sending `agent_transcript_path`, and the check is silently off.
+- **Should understand:** The SubagentStop hook grades `agent_transcript_path` only, and only when it names a file *distinct* from the same firing's own `transcript_path`. Two shapes are a deliberate no-op rather than a graded turn: the field absent entirely (no fallback to the parent session's transcript), and the field present but identical to `transcript_path` — the dispatching session's own file, which the harness sometimes sends while a main session ends its turn waiting on an async dispatch. A genuine subagent stop always carries its own distinct transcript, so neither no-op can hide a real violation.
+- **Red flags:** Zero violations on a run where an agent clearly replied without a status line — either the harness stopped sending `agent_transcript_path`, or it is sending this session's own `transcript_path` under that name. Compare the two fields in the firing before concluding the check is simply off.

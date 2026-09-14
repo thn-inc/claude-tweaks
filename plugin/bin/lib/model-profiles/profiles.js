@@ -1,7 +1,7 @@
 // bin/lib/model-profiles/profiles.js
 //
 // Canonical work-profile data. The markdown table in
-// skills/_shared/subagent-output-contract.md §Model Selection is pinned to
+// skills/_shared/subagent-dispatch-core.md §Model Selection is pinned to
 // PROFILES by tests/bin-lib/model-profiles/table-pinning.test.js — change
 // them together or the suite goes red.
 //
@@ -150,6 +150,33 @@ function resolve(profile, opts = {}) {
       ({ model, effort } = { ...PROFILES[tier] });
       source = 'degraded:session-failure';
     }
+  }
+
+  // #1912: a downward-only bound from the run's own measured diff size —
+  // never an upward risk signal (see docs/decisions/ alongside #361's
+  // declined UI-surface signal). Applies only to a `capable` REQUEST
+  // (the two singleton slots pinned to `resolve-profile.js capable`:
+  // SDD's whole-branch review and wrap-up's full-mode reflect dispatch) —
+  // never to `frontier` (a singleton-slot judgment, unchanged) and never
+  // to a lens fan-out, which never requests `capable` here in the first
+  // place since those already scale by `review-effort`. A tiny diff
+  // (<=1 impl file, <60 total lines — `ceremony-derive.js`'s
+  // `computeDiffFacts` shape) caps the resolved tier at `standard`; a
+  // larger diff, an already-lower tier, or an explicit cliOverride (same
+  // "an explicit ask always wins" precedent the model-ceiling stage
+  // above already follows) is untouched — this can only ever lower,
+  // never raise, what stages 1-7 already resolved.
+  const diffFacts = opts.diffFacts;
+  if (
+    profile === 'capable' &&
+    !cliNames &&
+    diffFacts &&
+    diffFacts.implFiles <= 1 &&
+    diffFacts.totalLines < 60 &&
+    PROFILE_ORDER.indexOf(profileOfModel(model)) > PROFILE_ORDER.indexOf('standard')
+  ) {
+    ({ model, effort } = { ...PROFILES.standard });
+    source = 'diff-ceiling';
   }
 
   return { model, effort, source, effortLine: effortLine(effort) };

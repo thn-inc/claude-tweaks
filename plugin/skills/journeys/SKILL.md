@@ -158,7 +158,7 @@ Commit journey files separately from implementation code. When a single invocati
 
 ### Working Directory Discipline
 
-Apply the Working Directory Discipline rule from `_shared/subagent-output-contract.md` before any `git` command. On mismatch, return **BLOCKED** to the caller; do not commit from the wrong directory. Also follow `_shared/git-discipline.md` for the Git Rules.
+Apply the Working Directory Discipline rule from `_shared/subagent-dispatch-core.md` before any `git` command. On mismatch, return **BLOCKED** to the caller; do not commit from the wrong directory. Also follow `_shared/git-discipline.md` for the Git Rules.
 
 ### Commit commands
 

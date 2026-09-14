@@ -46,8 +46,8 @@ what a *read* returns to the LLM — `create_pull_request`/`update_pull_request`
 `body` parameter straight through, unsanitized. A caller composing a PR body with
 `_shared/pr-early-run-lifecycle.md`'s dual-marker scheme (HTML comment + plain-text
 companion) can use either transport interchangeably for creation/update; only a *later read*
-of that body needs to pick its marker form per-transport (same file, Phase-checklist update
-section).
+of that body needs to pick its marker form per-transport (`_shared/pr-checklist-refresh.md`'s
+Phase-checklist update section).
 
 **Never use `search_issues` (or `gh issue list --search`) for a find-by-marker/dedup lookup.**
 Both ride an eventually-consistent search index — this caused three real duplicate-digest

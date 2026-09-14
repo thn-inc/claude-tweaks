@@ -7,7 +7,8 @@
 // six pre-existing copies (link-records.js, release-claim.js,
 // preflight-records.js, file-feedback.js, materialize.js, claims.js) have
 // since migrated to this module too (#1177) — this is now the one parseRepo
-// definition in the codebase.
+// definition in the codebase. ghAvailable is the injectable, canonical
+// `gh --version` probe (the six-call-site consolidation).
 'use strict';
 const { execFileSync } = require('child_process');
 
@@ -19,9 +20,15 @@ function parseRepo(url) {
   return m ? { owner: m[1], repo: m[2] } : null;
 }
 
-function ghAvailable() {
+// gh-api-module-pattern: bound every remote-contacting call on the seam.
+// --version is local-only, but the bound is free and keeps this the one
+// options object every call site below now shares.
+const GH_TIMEOUT_MS = 5000;
+
+function ghAvailable(deps = {}) {
+  const exec = deps.execFileSync || execFileSync;
   try {
-    execFileSync('gh', ['--version'], { stdio: 'ignore' });
+    exec('gh', ['--version'], { stdio: 'ignore', timeout: GH_TIMEOUT_MS });
     return true;
   } catch {
     return false;

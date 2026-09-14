@@ -194,7 +194,7 @@ result.
 **(e) Dispatch.** One `Task()` per available critic.
 
 > **Parallel execution:** Dispatch the available critics as parallel Task agents — each runs independently and returns findings in Template A format (with the extra `Target` column below). Assemble results after all agents complete.
-> **Contract:** Each agent follows the Subagent Contract (`../../_shared/subagent-output-contract.md`) — minimal input (scope + paths + output template, no conversation), one of {DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED} as its first line, then the table. Profile: Standard (`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard` — the placeholder is model-resolved per `docs/skill-authoring.md`'s Plugin-root references; contract §Model Selection) — a review-style fan-out, never Frontier. Dispatch shape: single-assistant-message rule (`../../_shared/subagent-output-contract.md`'s fan-out section) applies. Inline the template literally; reject and re-prompt on format violations.
+> **Contract:** Each agent follows the Subagent Contract (`../../_shared/subagent-output-contract.md`) — minimal input (scope + paths + output template, no conversation), one of {DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED} as its first line, then the table. Profile: Standard (`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard` — the placeholder is model-resolved per `docs/skill-authoring.md`'s Plugin-root references; `../../_shared/subagent-dispatch-core.md` §Model Selection) — a review-style fan-out, never Frontier. Dispatch shape: single-assistant-message rule (`../../_shared/subagent-dispatch-core.md`'s fan-out section) applies. Inline the template literally; reject and re-prompt on format violations.
 
 `subagent_type: general-purpose`. Do **not** pass `isolation: "worktree"` — this mode routinely runs
 inside a worktree already set up for the task, and a second one orphans everything written into it
@@ -219,8 +219,6 @@ this mode's other findings, never a path *to* the critic skill in place of its t
 5. The status-line protocol and the findings template — this literal block:
 
 ```
-Status line (required): First line of your reply must be one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
-
 OUTPUT FORMAT (required):
 Return ONLY a markdown table, no preamble:
 
@@ -234,6 +232,9 @@ Severity scale: critical / high / medium / low / info
 If no findings: return literal text "No findings."
 Return at most 15 rows, highest severity first; if more were found, append a final row reading "+N more" with the count in place of N — never omit this row when findings exceed the cap.
 Do not add narration, headers, or summaries before or after the table.
+
+After the table, on its own trailing line — the last non-empty line of your reply — write exactly
+one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
 
 [Use: Standard]
 ```

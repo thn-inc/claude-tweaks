@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const REPO_ROOT = path.join(__dirname, '..', '..', '..');
 const { run, realDeps } = require('../../../plugin/bin/release-claim');
 const claimsGitCas = require('../../../plugin/bin/lib/issues/claims-git-cas');
 const release = require('../../../plugin/bin/lib/release-claim/release');
@@ -15,9 +16,11 @@ const isGet = (a) => a[0] === 'api' && String(a[1]).startsWith('repos/acme/w/con
 const isPut = (a) => a[0] === 'api' && a[1] === '--method' && a[2] === 'PUT';
 const isComment = (a) => a[0] === 'issue' && a[1] === 'comment';
 const isEdit = (a) => a[0] === 'issue' && a[1] === 'edit';
+const isView = (a) => a[0] === 'issue' && a[1] === 'view';
 // One gh call -> its step name; a label edit reports the label it removed.
 function callKind(a) {
   if (isGet(a)) return 'get';
+  if (isView(a)) return 'view';
   if (isPut(a)) return 'put';
   if (isComment(a)) return 'comment';
   return a[a.indexOf('--remove-label') + 1];
@@ -36,7 +39,7 @@ function mkRun() {
 // matches the real repo that mainCheckoutRoot(process.cwd()) would resolve to.
 function rootOf(runDir) { return path.dirname(path.dirname(path.dirname(runDir))); }
 function deps({
-  content, putThrows, gh = true, out, mainRoot, editFailLabel, contentAfterConflict,
+  content, putThrows, gh = true, out, mainRoot, editFailLabel, contentAfterConflict, issueState, viewThrows,
 }) {
   const calls = [];
   let getCount = 0;
@@ -54,6 +57,10 @@ function deps({
       const c = (getCount > 1 && contentAfterConflict !== undefined) ? contentAfterConflict : content;
       if (c === null) throw new Error('HTTP 404');
       return JSON.stringify({ content: c, sha: 'blobsha1' });
+    }
+    if (isView(a)) {
+      if (viewThrows) throw new Error(viewThrows);
+      return `${issueState || 'OPEN'}\n`;
     }
     if (isPut(a)) { if (putThrows) throw new Error(putThrows); return '{}'; }
     if (isEdit(a)) {
@@ -300,4 +307,103 @@ test('malformed invocation / gh absent exit 2 with the MCP fallback named; --hel
   const { d: h } = deps({ content: null, out: help });
   assert.equal(run(['--help'], h), 0);
   assert.match(help[0][1], /usage: release-claim\.js/);
+});
+
+// ---- #2090: --sweep -------------------------------------------------------
+
+test('#2090: --sweep with a --reason not prefixed "swept:" exits 2 before any gh call', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { calls, d } = deps({ content: live('someone-else'), out });
+  const code = run(['999', '--run', runDir, '--reason', 'merged: spec 999', '--sweep'], d);
+  assert.equal(code, 2);
+  assert.match(stderrOf(out), /--sweep requires --reason to start with "swept:"/);
+  assert.deepEqual(calls, [], 'no gh call at all — rejected before repo resolution or the issue-state query');
+});
+
+// A stale foreign claim: --sweep queries the issue's open/closed state
+// exactly once and passes it through as `sweep.issueClosed` — here OPEN, so
+// (per release.js) the sweep still proceeds since a 'stale' claim is
+// unconditionally sweepable; the state query itself is the thing under test.
+test('#2090: --sweep queries issue state once and threads it through; the sweep tombstone names the original holder', () => {
+  const HOLDER = '2026-08-10T090000-spec-1';
+  const staleForeign = JSON.stringify({
+    runId: HOLDER, sessionId: 's', claimedAt: '2026-08-12T12:00:00.000Z', ttlHours: 72, host: 'h',
+  });
+  const runDir = mkRun();
+  const out = [];
+  const { calls, d } = deps({
+    content: staleForeign, issueState: 'OPEN', out, mainRoot: rootOf(runDir),
+  });
+  const code = run(['999', '--run', runDir, '--reason', 'swept: stale claim', '--sweep'], d);
+  assert.equal(code, 0);
+  assert.equal(calls.filter(isView).length, 1, 'exactly one issue-state query');
+  assert.deepEqual(calls.map(callKind).filter((k) => k !== 'view'), ['get', 'put', 'comment', 'bot:in-progress']);
+  const env = envelope(out);
+  assert.equal(env.outcome, 'released');
+  assert.equal(env.sweep, true);
+  assert.equal(env.sweptFrom, HOLDER);
+  const log = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+  assert.match(log, new RegExp(`swept from run ${HOLDER}`), "the decisions.md line names the original holder");
+});
+
+// A LIVE foreign claim: --sweep must resolve the issue's real state and only
+// proceed when it reads CLOSED — never assume, and never sweep a live claim
+// on an issue that's still open.
+test('#2090: --sweep on a LIVE foreign claim releases only when the issue reads CLOSED', () => {
+  const HOLDER = '2026-08-16T113000-spec-2';
+  const runDirOpen = mkRun();
+  const outOpen = [];
+  const { calls: callsOpen, d: dOpen } = deps({ content: live(HOLDER), issueState: 'OPEN', out: outOpen });
+  const codeOpen = run(['999', '--run', runDirOpen, '--reason', 'swept: issue closed', '--sweep'], dOpen);
+  assert.equal(codeOpen, 4, 'skipped-not-owner — a live claim on an open issue is never swept');
+  assert.deepEqual(callsOpen.filter(isPut), []);
+
+  const runDirClosed = mkRun();
+  const outClosed = [];
+  const { calls: callsClosed, d: dClosed } = deps({
+    content: live(HOLDER), issueState: 'CLOSED', out: outClosed, mainRoot: rootOf(runDirClosed),
+  });
+  const codeClosed = run(['999', '--run', runDirClosed, '--reason', 'swept: issue closed', '--sweep'], dClosed);
+  assert.equal(codeClosed, 0);
+  assert.ok(callsClosed.some(isPut), 'the PUT proceeds once the issue is confirmed closed');
+  assert.equal(envelope(outClosed).sweptFrom, HOLDER);
+});
+
+// A failed issue-state read must abort the release rather than assume
+// closed — sweeping a live claim on an issue whose state couldn't be
+// confirmed risks breaking a claim that is, in fact, still legitimately in
+// progress on an open issue.
+test('#2090: a failed issue-state read aborts the sweep rather than assuming closed', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { calls, d } = deps({ content: live('someone-else'), out, viewThrows: 'HTTP 500' });
+  const code = run(['999', '--run', runDir, '--reason', 'swept: issue closed', '--sweep'], d);
+  assert.equal(code, 1);
+  assert.match(stderrOf(out), /could not resolve #999's open\/closed state/);
+  assert.deepEqual(calls.filter(isPut), [], 'no release attempted without a confirmed issue state');
+});
+
+// Without --sweep, the flag and its state query never fire at all —
+// byte-identical to pre-#2090 behavior.
+test('#2090: without --sweep, no issue-state query is ever made', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { calls, d } = deps({ content: live(RUN_DIR_NAME), out, mainRoot: rootOf(runDir) });
+  const code = run(['999', '--run', runDir, '--reason', 'merged: spec 999'], d);
+  assert.equal(code, 0);
+  assert.equal(calls.filter(isView).length, 0);
+  assert.equal(envelope(out).sweep, false);
+  assert.equal(envelope(out).sweptFrom, null);
+});
+
+// Conformance: `/tidy` Step 4.7's Release action must name the CLI's
+// --sweep flag literally, so the executor can never drift back to prose
+// describing the write instead of invoking it (#2090).
+test('#2090 conformance: scan-procedures.md names the --sweep invocation as the Release executor', () => {
+  const scanProcedures = fs.readFileSync(path.join(REPO_ROOT, 'plugin', 'skills', 'tidy', 'scan-procedures.md'), 'utf8');
+  assert.match(scanProcedures, /release-claim\.js"\s+<n>\s+--run\s+<tidy-run-dir>\s+--sweep\s+--reason/, 'Step 4.7 must invoke release-claim.js --sweep literally, not describe the write in prose');
+  const actionsGithubIssues = fs.readFileSync(path.join(REPO_ROOT, 'plugin', 'skills', 'tidy', 'actions-github-issues.md'), 'utf8');
+  assert.match(actionsGithubIssues, /## Release claim/, 'actions-github-issues.md must name a Release claim action for the [claim] Release rows');
+  assert.match(actionsGithubIssues, /--sweep/);
 });

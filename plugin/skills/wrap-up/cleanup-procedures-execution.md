@@ -28,7 +28,7 @@ Cleanup is silent — no user prompt. The caches are pipeline state, not user-au
 
 ## B. Pipeline run directory (v4.6.0)
 
-If a pipeline run directory exists for this work (see `_shared/pipeline-run-dir.md` for the resolution order and bash snippet):
+If a pipeline run directory exists for this work (see `_shared/run-dir-resolution.md` for the resolution order and bash snippet):
 
 1. **Multi-spec defer check:** if `MULTISPEC_REVIEW_DEFER=1` is set, **skip this section entirely**. The parent `/flow` orchestration owns archival of the multi-spec parent dir after its consolidated Review Console completes. The per-spec subdirectory stays in place under the parent.
 2. Verify the Review Console ran and applied/dismissed all staged items. Since #1130 this precondition is also code-enforced at both archival call sites — the reconcile sweep skips a run whose console was never rendered or is unresolved (decideArchive), and the archive-run verb below refuses a rendered-but-unresolved console.
@@ -194,7 +194,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    months is longer than any worktree in this repo's history has stayed live, and a
    pre-anchoring run still sitting in a worktree by then is abandoned state, not live state.
 3.6. **Close the pipeline run — the sanctioned exit the teardown gate checks for.** If a pipeline
-   run directory resolves for this work (see `_shared/pipeline-run-dir.md`'s resolution order),
+   run directory resolves for this work (see `_shared/run-dir-resolution.md`'s resolution order),
    run `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_DIR"` now, from inside the
    worktree, **before step 4 removes it.** This clears the run's recorded worktree assignment,
    which is exactly what `bin/lib/hooks/pre-tool-use.js`'s teardown gate (`checkTeardownGate`)
@@ -258,11 +258,12 @@ If no worktree exists for this spec, skip this section silently.
 
 ## D. Ephemeral dev server (v4.11.0)
 
-If `/visual-review` or `/stories` auto-started a dev server during this run (`dev-url-detection.md` "Ephemeral server start"), it recorded the PID, port, and worktree root in `{run-dir}/ephemeral-server.txt`.
+If `/visual-review` or `/stories` auto-started a dev server during this run (`dev-url-detection.md` "Ephemeral server start"), it recorded the PID, port, worktree root, and detach state in `{run-dir}/ephemeral-server.txt` — read whatever it currently names, per that file's liveness-handle rule, since a dispatched second call may have restarted the server and rewritten this record since it was first written.
 
 1. **Multi-spec defer check:** if `MULTISPEC_REVIEW_DEFER=1` is set, **skip this section** — the server is shared across all specs in the run. The parent `/flow` kills it once after the consolidated Review Console (otherwise each later spec's visual review would have to restart it).
-2. Read `{run-dir}/ephemeral-server.txt`. Stop the process: `kill {pid}` — with a port-isolation lease (#1795), the recorded port is known and the PID kill alone is sufficient; the `lsof -ti tcp:{port} | xargs kill` fallback for a stale PID is a no-lease/POSIX-only path (see `dev-url-detection.md`'s Step 0.5).
-3. Confirm the port is free, then delete `ephemeral-server.txt`.
+2. Read `{run-dir}/ephemeral-server.txt` (`{pid} {port} {worktree-root} detached:{yes|no}`). Stop the process: `kill {pid}` — with a port-isolation lease (#1795), the recorded port is known and the PID kill alone is sufficient; the `lsof -ti tcp:{port} | xargs kill` fallback for a stale PID is a no-lease/POSIX-only path (see `dev-url-detection.md`'s Step 0.5). When the fourth field reads `detached:yes`, also kill the process group (`kill -- -{pid}`, the negative-pid form) so a detached dev command's own children don't outlive their leader — never do this when the field reads `detached:no`, since a non-detached server shares its process group with whatever spawned it and a group kill there could take down the caller's own shell.
+3. **An already-gone pid is not an error.** `kill {pid}` failing with "no such process" means the server already stopped (a prior cleanup attempt, or the process died on its own) — log "already stopped: pid {pid}" and continue; never surface this as a cleanup failure.
+4. Confirm the port is free, then delete `ephemeral-server.txt`.
 
 This only stops servers *this pipeline started*. A dev server the user was already running (or one on the main checkout) is never touched — it was never recorded in `ephemeral-server.txt`.
 

@@ -230,6 +230,33 @@ test('clear-failures with no CLAUDE_CODE_SESSION_ID exits 1 naming the problem',
   );
 });
 
+test('--diff-facts caps a capable resolution to standard on a tiny diff', () => {
+  const dir = tmpProject(null);
+  const r = run(['capable', '--diff-facts', JSON.stringify({ implFiles: 1, totalLines: 20 })], dir);
+  assert.strictEqual(r.model, 'sonnet');
+  assert.strictEqual(r.source, 'diff-ceiling');
+});
+
+test('--diff-facts is inert on a larger diff and absent entirely', () => {
+  const dir = tmpProject(null);
+  const larger = run(['capable', '--diff-facts', JSON.stringify({ implFiles: 3, totalLines: 20 })], dir);
+  assert.strictEqual(larger.model, 'opus');
+  const absent = run(['capable'], dir);
+  assert.strictEqual(absent.model, 'opus');
+  assert.strictEqual(absent.source, 'default');
+});
+
+test('malformed --diff-facts JSON exits 1 naming the problem, with no stack trace', () => {
+  const dir = tmpProject(null);
+  assert.throws(
+    () => execFileSync('node', [CLI, 'capable', '--diff-facts', '{not json'], { cwd: dir, env: isolatedEnv(), encoding: 'utf8' }),
+    (e) => {
+      const err = String(e.stderr);
+      return e.status === 1 && /--diff-facts is not valid JSON/.test(err) && !/\n\s+at /.test(err);
+    },
+  );
+});
+
 test('clear-failures on a session with no blacklist is a harmless no-op', () => {
   const dir = tmpProject(null);
   const sessionId = `cli-test-${process.pid}-clear-absent`;

@@ -18,6 +18,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
+const { FRICTION_EVENT_TYPES } = require('../plugin/bin/lib/friction-lens-vocab');
 
 const ROOT = path.join(__dirname, '..');
 const FULL_MODE_PATH = path.join(ROOT, 'plugin', 'skills', 'reflect', 'full-mode.md');
@@ -26,7 +27,10 @@ const HOOKS_DIR = path.join(ROOT, 'plugin', 'bin', 'lib', 'hooks');
 const BEGIN = '<!-- friction-lens-vocab:begin -->';
 const END = '<!-- friction-lens-vocab:end -->';
 
-const EVENT_TYPES = ['wd-deny', 'gate-denial', 'bookkeeping-stamp-deny', 'contract-violation', 'ask-user-question'];
+// The CLI's own filter list (bin/friction-events.js, via bin/lib/friction-lens-vocab.js) is the
+// list under test here, not a second hardcoded copy — a divergence between the shared constant
+// and the doc block below is exactly what this suite exists to catch (#2016).
+const EVENT_TYPES = FRICTION_EVENT_TYPES;
 
 function vocabBlock() {
   const text = fs.readFileSync(FULL_MODE_PATH, 'utf8');
@@ -66,10 +70,10 @@ test('full-mode.md declares a non-empty friction-lens-vocab block', () => {
   assert.ok(vocabBlock().trim().length > 0);
 });
 
-test('the friction-lens-vocab block declares exactly the five event types the Friction Lens reads', () => {
+test('the friction-lens-vocab block declares exactly the five event types bin/friction-events.js filters to', () => {
   const declared = parseVocab(vocabBlock());
   assert.deepStrictEqual(Object.keys(declared).sort(), [...EVENT_TYPES].sort(),
-    'full-mode.md\'s friction-lens-vocab block and the Friction Lens\'s covered event types have diverged');
+    'full-mode.md\'s friction-lens-vocab block and bin/lib/friction-lens-vocab.js\'s FRICTION_EVENT_TYPES (the CLI\'s own filter list) have diverged');
 });
 
 for (const eventType of EVENT_TYPES) {

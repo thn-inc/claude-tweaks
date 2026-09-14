@@ -267,3 +267,46 @@ test('a gh failure while reading grants leaves the PR open with reason grants-un
   const cj = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
   assert.deepStrictEqual(cj.merge, { resolution: 'leave-open', reason: 'grants-unreadable' });
 });
+
+// #2007: flow/multispec-review-console.md's short-circuit fans this CLI out over one
+// `--run {dir}` call per spec-{N}/ subdirectory plus the parent — never a single call over
+// the whole tree. Each call is an independent process invocation over its own directory with
+// no shared state, so one directory's failure (here: an unparseable console.json, the same
+// exit-5 fail-closed case pinned above) cannot affect a sibling directory's own call. This is
+// the mechanism the skill prose's "per-call isolation" instruction relies on — proved directly
+// against the real CLI rather than asserted only in prose.
+test('multi-spec fan-out isolation: one spec dir\'s unparseable console.json does not affect a sibling spec dir\'s own resolution (#2007)', async () => {
+  const fx = mainCheckoutWithRun({ staged: THREE });
+  // Build a second, independent run dir under the SAME main checkout root, simulating a
+  // sibling `spec-{N}/` directory in a multi-spec parent run — same root, same policy.yml,
+  // different `.claude-tweaks/pipelines/{id}` directory, so it is anchored under $RUN_ROOT
+  // exactly as spec-1's fixture dir already is.
+  const okDir = path.join(fx.root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-8');
+  fs.mkdirSync(path.join(okDir, 'staged'), { recursive: true });
+  fs.mkdirSync(path.join(okDir, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(okDir, 'work', '8-spec.md'), '---\nrecord: 8\n---\n');
+  fs.writeFileSync(path.join(okDir, 'decisions.md'), '');
+  fs.writeFileSync(path.join(okDir, 'staged', 'wrap-up-memory-1.md'), 'm');
+
+  // Mark the FIRST fixture dir's console.json as already-unparseable — this is what makes
+  // that one directory's call fail with exit 5.
+  fs.writeFileSync(path.join(fx.runDir, 'console.json'), '{ not json');
+
+  const { d: badDeps, err: badErr } = baseDeps(fx, []);
+  const badCode = await run(['--run', fx.runDir, '--policy', 'console-auto'], badDeps);
+  assert.strictEqual(badCode, 5, 'the malformed directory fails closed');
+  assert.match(badErr(), /does not parse as JSON/);
+
+  // The sibling directory's own call is a separate process invocation with no shared state —
+  // it must resolve normally regardless of the other call's failure, whichever order they run in.
+  const { d: okDeps } = baseDeps(fx, []);
+  const okCode = await run(['--run', okDir, '--policy', 'console-auto'], okDeps);
+  assert.strictEqual(okCode, 0, 'the sibling directory is unaffected by the other call\'s failure');
+  const okConsole = JSON.parse(fs.readFileSync(path.join(okDir, 'console.json'), 'utf8'));
+  assert.strictEqual(okConsole.resolved, true);
+  assert.strictEqual(okConsole.items.length, 1);
+
+  // And the failed directory's own console.json is untouched (never clobbered) by the sibling's
+  // successful call — each call only ever writes its own `--run` directory.
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), '{ not json');
+});

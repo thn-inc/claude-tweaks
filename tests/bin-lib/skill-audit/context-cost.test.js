@@ -150,27 +150,60 @@ test('overCeilingWarnings: a synthetic SKILL.md over 40 KB is warned about, not 
   assert.ok(warnings[0].includes('KB'), `expected a KB suffix in: ${warnings[0]}`);
 });
 
-test('per-file ceiling is a warning tier now (#1990): report, never fail', () => {
+test('per-file ceiling is a warning tier for sub-files (#1990): report, never fail', () => {
   // A stub citing a sub-file pays the whole file — Read has no section
   // granularity. This is the shape that let init/bootstrap-steps.md reach 86 KB
-  // behind 18 stubs (IL-70), while the per-SKILL.md rule was followed exactly.
-  // Neither guard fails the suite any more: the hard gate moved to composed
-  // bytes per compose call site (Task 4).
-  const skillHits = overCeiling(measureSkills(REPO));
+  // behind 18 stubs (IL-70). Sub-files stay warning-tier: the hard gate for
+  // them moved to composed bytes per compose call site (Task 4). SKILL.md
+  // itself is no longer covered by this test — see "no shipped SKILL.md
+  // exceeds CEILING_BYTES" below (#2020): an invocation unit has no compose
+  // call site or lazy-read path to gate it instead, so its raw bytes are a
+  // hard gate, not a warning.
   const subFileHits = overCeiling(measureSubFiles(REPO));
 
   // A composition check, mirroring the nearCeiling test's shape: every entry
   // overCeilingWarnings reports must really be over CEILING_BYTES.
-  for (const hit of [...skillHits, ...subFileHits]) {
-    assert.ok(hit.bytes > CEILING_BYTES, `${hit.name || hit.file} should be over the ceiling`);
+  for (const hit of subFileHits) {
+    assert.ok(hit.bytes > CEILING_BYTES, `${hit.file} should be over the ceiling`);
   }
 
-  const warnings = overCeilingWarnings([...skillHits, ...subFileHits]);
+  const warnings = overCeilingWarnings(subFileHits);
   if (warnings.length > 0) {
-    console.warn(`    WARNING: ${warnings.length} file(s) over the ${kb(CEILING_BYTES)} KB per-file `
+    console.warn(`    WARNING: ${warnings.length} sub-file(s) over the ${kb(CEILING_BYTES)} KB per-file `
       + 'ceiling (warning tier since #1990 — extract a section to a sub-file, or fence with `when:`):');
     for (const w of warnings) console.warn(`      ${w}`);
   }
+});
+
+// ── SKILL.md invocation-unit hard ceiling (#2020). Unlike a sub-file (composed
+// or lazily read) or a `_shared/*.md` (composed), a SKILL.md loads in full on
+// every invocation of its skill with no lazy path around its own bytes — the
+// composed-bytes gate (Task 4) only covers files that feed a compose call
+// site, so leaving SKILL.md at warning tier left three shipped files sitting
+// a single paragraph away from a silent, unenforced regression (`[IL-153]`).
+// This replaces the thirteen deleted ad-hoc per-file pins with one central
+// gate instead of zero.
+
+test('no shipped SKILL.md exceeds CEILING_BYTES (#2020: invocation units keep a hard ceiling)', () => {
+  const over = overCeiling(measureSkills(REPO));
+  assert.deepStrictEqual(
+    over.map((s) => `${s.name} ${kb(s.bytes)} KB`),
+    [],
+    `a SKILL.md loads in full on every invocation of its skill and has no compose call site or `
+      + `lazy-read path to gate it instead — extract a section to a sub-file, or fence with `
+      + `\`when:\` markers. Ceiling is ${kb(CEILING_BYTES)} KB ([IL-153]).`,
+  );
+});
+
+test('the SKILL.md hard ceiling actually goes red on a doctored 41 KB fixture (#2020 AC)', () => {
+  const root = tmpRoot('skill-ceiling-fixture');
+  const skillDir = path.join(root, 'skills', 'huge-skill');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), 'x'.repeat(CEILING_BYTES + 100));
+  const over = overCeiling(measureSkills(root));
+  assert.strictEqual(over.length, 1, 'expected the doctored fixture to trip the hard gate');
+  assert.strictEqual(over[0].name, 'huge-skill');
+  assert.ok(over[0].bytes > CEILING_BYTES);
 });
 
 test('no measured skill file carries a marker error', () => {
@@ -230,11 +263,12 @@ test('reports the payload total and the tightest headroom', () => {
     + `(${tightest.free} B under the ceiling)`);
 
   assert.ok(total > 0);
-  // Warning tier since #1990 (the hard gate is composed bytes per call site): a
-  // negative headroom is reported, never failed — the same treatment the
-  // per-file ceiling test above gives it.
+  // Defensive only: "no shipped SKILL.md exceeds CEILING_BYTES" above (#2020)
+  // already hard-fails before this branch could ever trigger on real corpus
+  // data — kept as a second signal in case that gate is ever weakened without
+  // this one being updated to match.
   if (tightest.free < 0) {
-    console.warn(`    WARNING: ${tightest.name} is ${-tightest.free} B over the per-file ceiling (warning tier since #1990)`);
+    console.warn(`    WARNING: ${tightest.name} is ${-tightest.free} B over the per-file ceiling`);
   }
 });
 
@@ -363,13 +397,13 @@ test('the corpus-wide description total stays under budget', () => {
 // decomposition's call sites (the function's own comment says so).
 
 test('parseComposeCallLine: the production merge call parses to step + two plugin-root sources', () => {
-  // Copied verbatim from plugin/skills/wrap-up/auto-merge-short-circuit.md line 154.
-  const line = '`issue-list` this one record, `summary` the record\'s own title. Read that procedure as one composed bundle: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step merge "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-first-merge.md" "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-early-run-lifecycle.md"`, then read `$PIPELINE_RUN_DIR/context/merge.md`; if the compose command is unavailable or exits non-zero, read the named source files directly. No checkout is needed — `gh pr';
+  // Copied verbatim from plugin/skills/wrap-up/auto-merge-short-circuit.md line 156.
+  const line = '`issue-list` this one record, `summary` the record\'s own title. Read that procedure as one composed bundle: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step merge "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-first-merge.md" "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-checklist-refresh.md"`, then read `$PIPELINE_RUN_DIR/context/merge.md`; if the compose command is unavailable or exits non-zero, read the named source files directly. No checkout is needed — `gh pr';
   assert.deepStrictEqual(parseComposeCallLine(line, '/r'), {
     step: 'merge',
     sources: [
       '/r/skills/_shared/pr-first-merge.md',
-      '/r/skills/_shared/pr-early-run-lifecycle.md',
+      '/r/skills/_shared/pr-checklist-refresh.md',
     ],
   });
 });

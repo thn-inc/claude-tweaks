@@ -78,6 +78,12 @@ How to execute any task here. These apply project-wide unless a more specific ru
 
 {Commit convention, branch strategy, PR process}
 
+## Releasing
+
+{Engine in use — release-please via `.github/workflows/release-please.yml` under `pr-first`, or the local engine under `local-merge`; where the publish/deploy hook lives — the `release: published` workflow (PAT required), or the `release-hook` policy command. The local engine (`bin/release-local.js`) and the `/claude-tweaks:release` skill land with later units of the release family (#2250); until they ship, this section names the files the bootstrap wrote.}
+
+Cut a release: `/claude-tweaks:release`
+
 ## claude-tweaks Pipeline
 
 **Artifacts:** design doc (one file, phases = `## Phase N` sections) → spec (one per work unit, via `/claude-tweaks:specify`) → `/claude-tweaks:flow`. No multi-phase plan files (`*-P1.md`, `*-P2.md`, …); a single plan per spec via `/superpowers:writing-plans`, stopped before its execution-choice offer, is expected and normal.

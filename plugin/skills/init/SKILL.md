@@ -44,7 +44,7 @@ Otherwise, `$ARGUMENTS` splits on whitespace into tokens. Each token classifies 
 - `journeys` — run Phases 0 + 8 (bootstrap + journey discovery)
 - `docs` — run Phases 0 + 2 + 3 + 8.5 (bootstrap + doc registry)
 
-**Enhancement filter tokens** — one per Optional Enhancement step: `github-remote`, `issue-form`, `design-integration`, `diagram-suggestions`, `shadcn-integration`, `cloud-parity`, `routines`, `branch-tracking`, `work-backend`, `autonomy`, `emil-skills`, `integration-model`. Each narrows Phase 0's Optional Enhancements (Steps 9 onward) to *only* the named step(s), whether or not a Phase scope is also present; with none given, Phase 0 offers every one of them (or none, under `--core-only`). Several silently run Step 9 (or Step 14) first. For the token → step table with dependency notes and worked examples, read `input-grammar.md` in this skill's directory.
+**Enhancement filter tokens** — one per Optional Enhancement step: `github-remote`, `issue-form`, `design-integration`, `diagram-suggestions`, `shadcn-integration`, `cloud-parity`, `routines`, `branch-tracking`, `work-backend`, `autonomy`, `emil-skills`, `integration-model`, `release`. Each narrows Phase 0's Optional Enhancements (Steps 9 onward) to *only* the named step(s), whether or not a Phase scope is also present; with none given, Phase 0 offers every one of them (or none, under `--core-only`). Several silently run Step 9 (or Step 14) first. For the token → step table with dependency notes and worked examples, read `input-grammar.md` in this skill's directory.
 
 A description of the project context (e.g., "Ruby on Rails monolith, team of 5") is still accepted as free text — see "Unrecognized and conflicting tokens" for how this is distinguished from an attempted-but-unmatched keyword.
 
@@ -181,6 +181,10 @@ When frontend signals are detected (same detection as Step 11), offer `npx skill
 ### Step 20: Integration Model (Optional)
 
 On a GitHub-reachable project, offers pinning `integration-model: pr-first` to policy.yml (`_shared/integration-model.md`) so it resolves the same across environments instead of via per-session forge detection. Read `bootstrap/step-20-integration-model.md` for the full procedure.
+
+### Step 21: Release Bootstrap (Optional)
+
+Detects existing release automation (`fresh` / `already-bootstrapped` / `conflict`) and, on a fresh repo, writes the release-please config, manifest, and — `pr-first` only, per Step 20's `integration-model` (`_shared/integration-model.md`) — the workflow, plus the two commented-out `release-*` policy rows; refuses on a conflicting tool. Read `bootstrap/step-21-release.md` for the full procedure.
 
 ---
 

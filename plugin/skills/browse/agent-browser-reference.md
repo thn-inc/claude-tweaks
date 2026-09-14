@@ -108,7 +108,11 @@ session/description convention above already does this).
 **not** auto-scroll the target into view — a below-the-fold click reports success
 but lands nowhere. Pin a tall viewport (`set viewport <width> <height>`, below) so
 the elements a story walk clicks stay in the visible area, rather than relying on
-click to scroll for you.
+click to scroll for you. `plugin/agents/qa-agent.md`'s Setup step already applies
+this as a `1440x1600` default whenever a story's `**Viewport:**` is unset, so this
+note is enforced for `/claude-tweaks:test qa`'s own execution path, not advisory
+only — a caller driving agent-browser outside that path still needs to set its own
+viewport explicitly.
 
 ## Viewport and device
 

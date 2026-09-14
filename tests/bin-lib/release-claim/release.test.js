@@ -397,3 +397,92 @@ test('releaseClaim: a held claim by this run writes the tombstone through claim-
   // reintroducing the false-contest/lost-update bug in production.
   assert.equal(writeSpy.mock.calls[0].arguments[3].expectedContent, blobContent, "writeTombstone's expectedContent must be the exact content releaseClaim's own read returned");
 });
+
+// ---- #2090: --sweep -----------------------------------------------------
+// A /tidy sweep's own runId is never the holder's — the ordinary ownership
+// check would refuse every one of these releases as skipped-not-owner.
+// `sweep` narrows that refusal: a 'stale' foreign claim may always be swept;
+// a 'live' foreign claim may only be swept when the caller has independently
+// confirmed the issue itself is closed (`sweep.issueClosed`).
+const staleForeign = (runId) => JSON.stringify({
+  runId, sessionId: 's', claimedAt: '2026-08-12T12:00:00.000Z', ttlHours: 72, host: 'h', // 100h before NOW
+});
+const SWEEP_RUN = '2026-08-16T120000-tidy-standalone';
+
+test('#2090 sweep releases a STALE foreign blob unconditionally: PUT with the read sha, comment, bot:in-progress removed', () => {
+  const HOLDER = '2026-08-10T090000-spec-1';
+  const f = fakeRunner({ content: staleForeign(HOLDER), sha: 'stalesha1' });
+  const r = releaseClaim({
+    owner: 'acme', repo: 'w', issueNumber: 999, runId: SWEEP_RUN, reason: 'swept: stale claim', sweep: { issueClosed: false }, runner: f.runner, now: NOW,
+  });
+  assert.equal(r.outcome, 'released');
+  assert.equal(r.sweptFrom, HOLDER);
+  assert.ok(isPut(f.calls[1]));
+  assert.equal(fieldOf(f.calls[1], 'sha'), 'stalesha1');
+  const tomb = JSON.parse(Buffer.from(fieldOf(f.calls[1], 'content'), 'base64').toString('utf8'));
+  assert.equal(tomb.runId, SWEEP_RUN, "the tombstone's own runId is the SWEEP run, never a fake owner");
+  assert.equal(tomb.sweptFrom, HOLDER, 'the tombstone names the original holder');
+  assert.ok(isComment(f.calls[2]));
+  assert.equal(f.calls[3][f.calls[3].indexOf('--remove-label') + 1], 'bot:in-progress');
+});
+
+test('#2090 sweep releases a LIVE foreign blob only when the issue is closed', () => {
+  const HOLDER = '2026-08-16T113000-spec-2';
+  // issueClosed: false -> still refused, exactly like a non-sweep release.
+  const fOpen = fakeRunner({ content: live(HOLDER) });
+  const rOpen = releaseClaim({
+    owner: 'acme', repo: 'w', issueNumber: 999, runId: SWEEP_RUN, reason: 'swept: issue closed', sweep: { issueClosed: false }, runner: fOpen.runner, now: NOW,
+  });
+  assert.equal(rOpen.outcome, 'skipped-not-owner', 'a live claim on an OPEN issue is never swept, sweep flag or not');
+  assert.equal(rOpen.holder, HOLDER);
+  assert.equal(fOpen.calls.length, 1, 'only the read — no PUT attempted');
+
+  // issueClosed: true -> the sweep proceeds.
+  const fClosed = fakeRunner({ content: live(HOLDER), sha: 'livesha2' });
+  const rClosed = releaseClaim({
+    owner: 'acme', repo: 'w', issueNumber: 999, runId: SWEEP_RUN, reason: 'swept: issue closed', sweep: { issueClosed: true }, runner: fClosed.runner, now: NOW,
+  });
+  assert.equal(rClosed.outcome, 'released');
+  assert.equal(rClosed.sweptFrom, HOLDER);
+  assert.ok(isPut(fClosed.calls[1]));
+  assert.equal(fieldOf(fClosed.calls[1], 'sha'), 'livesha2');
+});
+
+test('#2090: without --sweep, the same stale-foreign fixture is still refused as skipped-not-owner — ownership rule unchanged for non-sweep callers', () => {
+  const HOLDER = '2026-08-10T090000-spec-1';
+  const f = fakeRunner({ content: staleForeign(HOLDER) });
+  const r = releaseClaim({
+    owner: 'acme', repo: 'w', issueNumber: 999, runId: SWEEP_RUN, reason: 'merged: spec 999', runner: f.runner, now: NOW,
+  });
+  assert.equal(r.outcome, 'skipped-not-owner', "'stale' is held-and-ownership-checked exactly like 'live' for an ordinary (non-sweep) release — only --sweep narrows that");
+  assert.equal(r.holder, HOLDER);
+  assert.equal(r.sweptFrom, undefined, 'sweptFrom is never set on a non-sweep release');
+  assert.equal(f.calls.length, 1, 'only the read — no PUT attempted');
+});
+
+test('#2090: without --sweep, a live foreign blob still refuses as skipped-not-owner (unaffected by the new sweep param existing)', () => {
+  const HOLDER = '2026-08-16T113000-spec-2';
+  const f = fakeRunner({ content: live(HOLDER) });
+  const r = releaseClaim({
+    owner: 'acme', repo: 'w', issueNumber: 999, runId: SWEEP_RUN, reason: 'merged: spec 999', runner: f.runner, now: NOW,
+  });
+  assert.equal(r.outcome, 'skipped-not-owner');
+  assert.equal(r.sweptFrom, undefined);
+});
+
+// The conflict re-verification safety net extends the same fail-closed
+// posture to a sweep: "still held by the ORIGINAL holder" after a rejected
+// PUT must fail closed exactly like "still held by this run" does for an
+// ordinary release — the tombstone never landed either way.
+test('#2090: a sweep write conflict whose re-read shows the ORIGINAL holder still holds it fails closed, never already-released', (t) => {
+  const HOLDER = '2026-08-10T090000-spec-1';
+  t.mock.method(claimStore, 'readClaimBlob', () => ({ content: staleForeign(HOLDER), sha: 'tip1', failure: null, absent: false }));
+  t.mock.method(claimStore, 'writeClaimBlob', () => ({ ok: false, conflict: true, failure: null }));
+  const calls = [];
+  const r = releaseClaim({
+    owner: 'acme', repo: 'w', issueNumber: 999, runId: SWEEP_RUN, reason: 'swept: stale claim', sweep: { issueClosed: false }, runner: (a) => { calls.push(a); return ''; }, gitRunner: () => '', now: NOW,
+  });
+  assert.equal(r.outcome, 'failed');
+  assert.match(r.error, /still held by the original holder/);
+  assert.deepEqual(calls, [], 'no release comment — the sweep release did not actually happen');
+});

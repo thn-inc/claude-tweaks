@@ -40,36 +40,41 @@ test('writes a declined status to the cache and echoes it on stdout', () => {
   assert.strictEqual(printed.status, 'declined');
 });
 
-test('exits non-zero with a usage message for an invalid status', () => {
+// #2053: cmdMark no longer calls process.exit() directly (a pending stderr
+// write right before process.exit() can truncate it for a piped consumer --
+// the caller's own main() applies the returned code to process.exitCode
+// instead). These two tests assert the returned value rather than mocking
+// process.exit.
+
+test('returns 2 with a usage message for an invalid status', () => {
   const store = fakeCacheStore();
   const cmdMark = makeCmdMark({ readCache: store.readCache, writeCache: store.writeCache, toolName: 'docs-health' });
-  const origExit = process.exit;
   const origErr = process.stderr.write;
-  let exitCode = null;
   let errOut = '';
-  process.exit = (code) => { exitCode = code; throw new Error('__exit__'); };
   process.stderr.write = (chunk) => { errOut += chunk; return true; };
+  let code;
   try {
-    assert.throws(() => cmdMark({ _: ['mark', 'fp-1', 'bogus'], root: '/tmp' }), /__exit__/);
+    code = cmdMark({ _: ['mark', 'fp-1', 'bogus'], root: '/tmp' });
   } finally {
-    process.exit = origExit;
     process.stderr.write = origErr;
   }
-  assert.strictEqual(exitCode, 2);
+  assert.strictEqual(code, 2);
   assert.match(errOut, /usage: docs-health\.js mark/);
   assert.deepStrictEqual(store.get(), {}, 'cache must not be written on an invalid status');
 });
 
-test('exits non-zero when the fingerprint positional is missing', () => {
+test('returns 2 when the fingerprint positional is missing', () => {
   const store = fakeCacheStore();
   const cmdMark = makeCmdMark({ readCache: store.readCache, writeCache: store.writeCache, toolName: 'harness-health' });
-  const origExit = process.exit;
-  process.exit = (code) => { throw new Error(`__exit_${code}__`); };
+  const origErr = process.stderr.write;
+  process.stderr.write = () => true;
+  let code;
   try {
-    assert.throws(() => cmdMark({ _: ['mark'], root: '/tmp' }), /__exit_2__/);
+    code = cmdMark({ _: ['mark'], root: '/tmp' });
   } finally {
-    process.exit = origExit;
+    process.stderr.write = origErr;
   }
+  assert.strictEqual(code, 2);
 });
 
 // --- optional atomic local write (updateCache) and durable persistence

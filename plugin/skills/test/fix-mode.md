@@ -4,7 +4,7 @@ Fix Mode (Auto + Interactive) — invocation and reporting for `/claude-tweaks:t
 
 ## Auto mode
 
-When a pipeline run directory exists, apply the `/claude-tweaks:test` row from the silences table in `_shared/auto-mode-contract.md`. Resolve `auto-fix-threshold` — `AUTO_FIX_THRESHOLD=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values --run "$PIPELINE_RUN_DIR" auto-fix-threshold)` (run dir per `_shared/pipeline-run-dir.md`; the resolver serves the run's Manifesto answer, then `policy.yml`, then the schema default) and route per the `/claude-tweaks:test` row in `_shared/auto-mode-contract.md`. QA failures never auto-fix — they always stage.
+When a pipeline run directory exists, apply the `/claude-tweaks:test` row from the silences table in `_shared/auto-mode-contract.md`. Resolve `auto-fix-threshold` — `AUTO_FIX_THRESHOLD=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values --run "$PIPELINE_RUN_DIR" auto-fix-threshold)` (run dir per `_shared/run-dir-resolution.md`; the resolver serves the run's Manifesto answer, then `policy.yml`, then the schema default) and route per the `/claude-tweaks:test` row in `_shared/auto-mode-contract.md`. QA failures never auto-fix — they always stage.
 
 **Auto-fix flow:** make the changes, re-run the failed checks. On re-verification pass, log `AUTO {time} — Step 3: auto-fixed {N} {type} failures. Reversibility: high; commit: {hash}.` and proceed. On re-verification fail or new issues, downgrade to STAGED and surface at Review Console.
 

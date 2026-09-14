@@ -35,8 +35,11 @@ function block(tag, n) {
 //   is clean -- no conflict, just size growth from both sides).
 // Each of `main` (base+sibling) and `feature` (base+feature) alone stays
 // under CEILING_BYTES; merging them does not.
-const BASE_SIZE = 39000;
-const ADD_SIZE = 1200; // base+add = 40200, under ceiling; base+add+add = 41400, over it.
+// Relative to CEILING_BYTES (not hardcoded) so this fixture stays correct
+// whatever the ceiling is: base+add stays comfortably under it, base+add+add
+// pushes just over it.
+const BASE_SIZE = CEILING_BYTES - 1960;
+const ADD_SIZE = 1200;
 
 function makeFixtureRepo(featureAddSize) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'merge-size-probe-'));
@@ -90,7 +93,7 @@ test('e2e: two branches each green alone; merge pushes the shared file over the 
 // AC3 (#641): a branch that stays under ceiling both alone AND merged with
 // main must pass with no false-positive overflow.
 test('e2e: a branch under ceiling alone and merged reports zero overflow (no false positive)', () => {
-  const smallAdd = 100; // base+sibling(1200)+small(100) = 40300, still under CEILING_BYTES.
+  const smallAdd = 100; // base+sibling(1200)+small(100) stays comfortably under CEILING_BYTES.
   const { dir } = makeFixtureRepo(smallAdd);
 
   const res = spawnSync(

@@ -113,6 +113,15 @@ test('composeOrderBlob: states the blob field list once', () => {
   });
 });
 
+test('composeOrderBlob: carries an optional bundles field through unchanged', () => {
+  const blob = composeOrderBlob({
+    computedAt: '2026-09-11T00:00:00Z', runId: 'spec-2066', freshnessSignal: { issues: [] }, groups: [], excluded: [], bundles: [{ records: [10, 11] }],
+  });
+  assert.deepStrictEqual(blob, {
+    computedAt: '2026-09-11T00:00:00Z', runId: 'spec-2066', freshnessSignal: { issues: [] }, groups: [], excluded: [], bundles: [{ records: [10, 11] }],
+  });
+});
+
 // --- readOrder / writeOrder wiring ---
 
 test('readOrder: resolves null against a genuinely never-written namespace (missing ref)', () => {
@@ -146,6 +155,34 @@ test('writeOrder: writes the given blob unconditionally, ignoring any existing n
   const result = writeOrder('/repo', blob, { run, sleep: () => {} });
   assert.deepStrictEqual(result, { ok: true });
   assert.deepStrictEqual(JSON.parse(written.value), blob);
+});
+
+test('readOrder/writeOrder: a bundles field round-trips through the cache unchanged', () => {
+  const blob = {
+    computedAt: 'now', runId: 'r', freshnessSignal: { issues: [] }, groups: [], excluded: [], bundles: [{ records: [1, 2] }],
+  };
+  const { run: writeRun } = fakeRunner(baseWriteRules());
+  const writeResult = writeOrder('/repo', blob, { run: writeRun, sleep: () => {} });
+  assert.deepStrictEqual(writeResult, { ok: true });
+
+  const { run: readRun } = fakeRunner([
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'fetch'), returns: '' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'show'), returns: JSON.stringify(blob) },
+  ]);
+  const readBack = readOrder('/repo', { run: readRun, sleep: () => {} });
+  assert.deepStrictEqual(readBack.bundles, [{ records: [1, 2] }]);
+});
+
+test('readOrder: a pre-upgrade blob with no bundles field reads back with bundles undefined (caller applies the [] fallback)', () => {
+  const blob = {
+    computedAt: 'x', runId: 'y', freshnessSignal: { issues: [] }, groups: [], excluded: [],
+  };
+  const { run } = fakeRunner([
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'fetch'), returns: '' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'show'), returns: JSON.stringify(blob) },
+  ]);
+  const order = readOrder('/repo', { run, sleep: () => {} });
+  assert.equal(order.bundles, undefined);
 });
 
 test('writeOrder: a persistent write failure returns {ok:false}, never throws — a cache write is best-effort', () => {

@@ -21,7 +21,16 @@ dependencies:
       run: "npx --no-install impeccable --version"
       root: "npm root -g"
       root-suffix: "impeccable"
-    pinned: "3.5.0"
+    pinned: "3.6.0"
+    # This is a shared dev host: other sessions running bare `npx impeccable`
+    # (no --no-install, no version pin) periodically refresh npm's local npx
+    # cache to whatever is then "latest" on the registry, and `npx --no-install`
+    # here resolves against that cache non-deterministically — this drifted
+    # exact-pin twice (#1900, then #2277) with no behavioral change between
+    # 3.6.0 and 4.1.0 either time. `floor` accepts any installed version >= the
+    # pin instead of requiring an exact match; a real behavioral break is still
+    # caught by this dependency's own fixtures below, which run regardless.
+    version-mode: floor
     upstream:
       repo: "pbakaus/impeccable"
       tag-prefix: "cli-v"

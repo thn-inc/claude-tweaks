@@ -46,6 +46,8 @@ observation          (informational, non-blocking — e.g., QA caveats)
 
 **Non-terminal status:** `open` — these items block pipeline completion.
 
+**The status enum is closed.** Those five terminal values plus `open` are the only values a Status cell may hold — there is no `resolved`, `staged`, `done`, or `closed` status. "Resolved" in this file's own prose describes the *condition* of a terminal item, never a value to write into the column; an item that is settled takes the terminal status that says *how* (`fixed`, `deferred`, `accepted`, `acknowledged`), and a staged proposal is `deferred` with the staging path in its Resolution text. Writing an out-of-enum value does not fail loudly — `parseLedger` (`bin/lib/wrap-up/pack.js`) counts only `open` as blocking, so anything it does not recognize is silently treated as terminal.
+
 **Resolution-text requirements.** `open` moves only to a terminal status, and only with resolution text (`observation` excepted). Terminal statuses are final — a wrong fix gets a new item, never a reopen. Per status: `fixed` includes the commit hash or file reference; `deferred` includes origin, affected files, and the trigger for when to revisit; `accepted` includes the stated reason why this is acceptable.
 
 User-facing "Drop" choice in the resolve gate maps to status `accepted` with reason `dropped per user` (see this file's Resolve Gate section, Phase 3, for the full disposition table).

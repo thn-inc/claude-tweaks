@@ -135,6 +135,22 @@ sweep* — the entry going stale is the success case for the work the exemption 
 
 When a resolver has a deliberate special case that excludes one source from precedence entirely (a config layer that must never win even though it normally would — `merge-authorization`'s exclusion of `.claude-tweaks/policy.yml`, `bin/lib/policy-schema.js`), assert the excluded source is actually ignored, not just what the resolver ultimately returns. `tests/resolve-policy-lib.test.js`'s four `merge-authorization` tests are the instance: unset resolves to default, run-config wins over an unset policy value, a set policy.yml value is discarded (falls to default, not `source: 'policy'`), and run-config still wins even when policy.yml is also set. The third case is the one a same-final-value assertion alone would miss — a resolver that merely deprioritized policy.yml instead of excluding it could pass every other assertion while silently letting policy.yml win whenever run-config is absent.
 
+### Doctor by structural boundary, not a magic line-span regex
+
+A discrimination proof that removes an anchor paragraph to prove the sniff can go red needs a
+doctoring transform that survives the file's real line-wrap and line-ending shape — a regex
+guessing how many lines the paragraph spans (`[^\r\n]*(?:\r?\n[^\r\n]*){0,4}`) is brittle twice
+over: the magic span number silently stops matching if the paragraph rewraps, and on a
+CRLF-normalized file a join-based `assert.notEqual(doctored, text)` guard can pass without the
+doctoring actually having removed anything. `tests/foreground-execution-instruction.test.js`
+(#1965) replaced that shape with a blank-line paragraph split (`text.split(/\r?\n\r?\n/)`) filtered
+on the anchor, guarded by an exact removed-paragraph count
+(`paragraphs.length - kept.length === 2`) rather than a same-string inequality — both stronger
+(pins that *exactly* the expected number of paragraphs vanished, not merely that *something*
+changed) and simpler than the line-span form it replaced. Reach for a structural split over a
+line-count regex whenever the doctored unit is a whole paragraph, list item, or fenced block —
+anything with its own natural delimiter — rather than counting lines to guess where it ends.
+
 ## Decision Framework
 
 | The prose you want to assert on | Do this |
@@ -191,6 +207,7 @@ A varying failure count across runs on byte-identical code tracks machine load f
 | Merging on a green branch without re-running the full suite post-merge | Byte-pinning suites are the class that goes red only at the merge combination |
 | Anchoring a snippet-extraction regex on a prose sentence | The sentence is the part of the doc most likely to be reworded, so the suite goes red on its own anchor instead of on the procedure — and the tempting fix is to loosen the regex, which quietly stops pinning the fence at all |
 | Proving a prose pin discriminates by mutating the tree (revert the fix, delete the pinned sentence) and re-running | The mutation is live working-tree state with no owner but the running agent — one killed mid-cycle leaves it sitting in the tree, reading as ordinary work in progress to whoever looks next. `git show {base}:{file}` proves the same thing with zero mutation — see "Proving discrimination without editing the tree" below. Where a real mutation is unavoidable, commit first and drive the whole cycle from one script, and `git status` after any agent death |
+| Authoring a new pin against a multi-file concatenated corpus without checking for an existing single-file pin of the same property | The same literal often exists in more than one concatenated member, so the new pin can silently match the wrong file, and a stronger pin scoped to the real source file may already exist elsewhere in the suite. `#2022` hit both variants in one record: build's own SCRATCH pin initially matched the wrong template inside the concatenation, and review's Simplify pass then found a newly-authored CALIBRATION byte-identical pin duplicating, more weakly, an existing correctly-scoped one in a sibling test file — grep the suite for the property first |
 
 ## Proving discrimination without editing the tree
 
@@ -217,6 +234,8 @@ checks on top of it, and was corrected only at whole-branch review (`e971acc4d`,
 - **Quote a diff that actually contains the row.** `git diff -- 'plugin/skills/*/SKILL.md' | grep -E '^[-+]\|'` must return exactly the rows you claim and no others — but it returns *nothing* once the row is already committed, which is the ordinary case whenever the pin is bumped in a later commit than the row it counts. Quote the row's own commit instead (`git show {sha} -- 'plugin/skills/*/SKILL.md' | grep -E '^[-+]\|'`) or the branch range (`git diff {base}...HEAD -- 'plugin/skills/*/SKILL.md' | grep -E '^[-+]\|'`), and say in the comment which form you used. A grep that returns nothing is not evidence of a clean delta; it is evidence you ran the wrong grep.
 
 Rows *reworded in place* change no count and need no bump — but they still belong in the comment, because the next bumper reconciling a delta against the diff will otherwise have to re-derive why the numbers moved by less than the `+`/`-` lines suggest.
+
+**This is not the only repo-wide pin a new skill trips, and none of them live in the edited skill's own suite.** Adding one `SKILL.md`, or editing one `argument-hint`, moves at least four counters that no task-scoped test run will show: the Anti-Patterns total above; `plugin/bin/lib/skill-audit/context-cost.js`'s `DESCRIPTION_TOTAL_CEILING_CHARS` — the summed `description:` length across every shipped skill, bumped by the *same* two rules and carrying the same running comment (7900 → 8200 when `/claude-tweaks:release` landed, #2256, with that description already at 260/260 and no headroom to trim); `tests/reference-card-argument-hint.test.js`'s `| Command | What it does | Takes |` column, which an `argument-hint` edit desyncs; and `tests/skill-catalog-completeness.test.js`, which requires the new skill in `help/reference-card.md`, `help/context-flow.md` and `docs/getting-started.md`. Treat the full `npm test` as part of such a task's own completion check, not as a later gate — #2256 paid two controller commits after the fact for exactly this (ledger rows 92 and 99, `c00c3a11e`, `a1425d275`).
 
 ## Choosing a pin/sniff signal empirically
 

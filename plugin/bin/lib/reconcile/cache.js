@@ -18,7 +18,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { escalateResidue } = require('./escalate-residue');
+const { escalateResidue, resolveResidue } = require('./escalate-residue');
 
 const CACHE_FILENAME = 'reconcile-cache.json';
 const DEFAULT_TTL_MS = 7 * 60 * 1000;
@@ -185,8 +185,39 @@ function listResidueFailures(root) {
   });
 }
 
+// #1892 Deliverable 3: a residueFailures entry whose live path is gone —
+// archived, reaped, or resolved by any means other than this sweep's own
+// success path (a merged worktree PR, a human cleanup) — is pure clutter: it
+// can never fail or succeed again at that path, so it neither converges
+// through recordResidueSuccess's own reset (nothing ever runs against a path
+// that no longer exists) nor deserves to keep counting toward a fresh
+// escalation streak. Reason-agnostic by design (#1811's `structurally-stuck`
+// prune shares this same call rather than duplicating it) — every entry, not
+// only `move-failed`, is checked the same way. Best-effort and never throws:
+// a resolution failure (gh absent, network) still drops the cache entry —
+// the path itself is gone either way — leaving the filed issue open for a
+// human to close manually later, same posture as escalateResidue's own
+// never-breaks-a-session contract.
+function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue } = {}) {
+  const cache = readCache(root);
+  const failures = { ...cache.residueFailures };
+  let changed = false;
+  for (const [key, entry] of Object.entries(cache.residueFailures)) {
+    const sep = key.indexOf(':');
+    const reason = sep === -1 ? key : key.slice(0, sep);
+    const targetPath = sep === -1 ? '' : key.slice(sep + 1);
+    if (!targetPath || fs.existsSync(targetPath)) continue;
+    delete failures[key];
+    changed = true;
+    if (entry && entry.escalated) {
+      try { resolve({ repo: repoSlug, reason, targetPath }); } catch { /* best-effort */ }
+    }
+  }
+  if (changed) writeCache(root, { ...cache, residueFailures: failures });
+}
+
 module.exports = {
   readCache, writeCache, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS, cachePath,
   RESIDUE_ESCALATE_THRESHOLD, residueKey, recordResidueFailure, recordResidueSuccess, listResidueFailures,
-  trackResidue,
+  trackResidue, pruneResidueFailures,
 };

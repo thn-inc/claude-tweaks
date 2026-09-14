@@ -20,7 +20,7 @@ After per-lens reproduction completes, scan for contradictions across lenses bef
 
 2. **Filter to contradictions.** Each overlap pair already has a finding from both lenses (by construction of step 1) — keep only those where the two findings' severities don't match. Pairs where the severities match (both lenses agree) produce no debate.
 
-3. **Dispatch debate (Mode 2 — 2 agents, 1 round, parallel).** For each contradiction, dispatch 2 agents using the original lens-agents' identity (re-dispatch the affected lens's reviewer with the *stripped opposing finding* as input — no model identity, no reasoning chain, just finding text + evidence). Both judges return `agree | disagree | partial` plus one paragraph of reasoning. Resolve the model per `_shared/subagent-output-contract.md`'s Model Selection dispatch procedure (`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" frontier --run-dir "$PIPELINE_RUN_DIR"`, once per judge) — this pair is the contract's contract-enumerated verdict-gate exception to the general singleton-only rule: it is a fixed, contradiction-bounded 2-agent shape, not an N-way fan-out over a variable candidate set (see the contract's Model Selection section). Degrades per the resolver's own preconditions (contract § Model Selection) — never enumerated locally here. Inline this template literally in each `Task()` prompt:
+3. **Dispatch debate (Mode 2 — 2 agents, 1 round, parallel).** For each contradiction, dispatch 2 agents using the original lens-agents' identity (re-dispatch the affected lens's reviewer with the *stripped opposing finding* as input — no model identity, no reasoning chain, just finding text + evidence). Both judges return `agree | disagree | partial` plus one paragraph of reasoning. Resolve the model per the composed review-dispatch bundle's (or, standalone, `_shared/subagent-dispatch-core.md`'s) Model Selection dispatch procedure (`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" frontier --run-dir "$PIPELINE_RUN_DIR"`, once per judge) — this pair is the contract's contract-enumerated verdict-gate exception to the general singleton-only rule: it is a fixed, contradiction-bounded 2-agent shape, not an N-way fan-out over a variable candidate set (see that Model Selection section). Degrades per the resolver's own preconditions (that same Model Selection section) — never enumerated locally here. Inline this template literally in each `Task()` prompt:
 >
 >    ```
 >    Two lenses disagreed on this region. Review the conflicting findings below and return:
@@ -34,6 +34,7 @@ After per-lens reproduction completes, scan for contradictions across lenses bef
 >
 >    [Use: Frontier — debate agent. Independent run; do not see the other judge's reasoning.
 >    Degrades per the resolver's preconditions (contract § Model Selection).]
+>    Read-only.
 >    ```
 
 4. **Resolve.** Apply `resolveDebate`:
@@ -72,7 +73,7 @@ This pass is the only place in the skill where an unbounded fan-out would meet t
 
    Overflow candidates, like floor-skipped ones, stay `confirmed` and route normally. Also write: `AUTO {HH:MM:SS} — Refutation: fan-out capped at 10; +{N} confirmed findings not refuted, proceeding as confirmed. Reversibility: high.`
 
-   Worst case after the floor and cap: **10 Capable-tier agents per review, regardless of finding count** (refutation stays `[Use: Capable]` unconditionally — it is a variable-N fan-out over confirmed candidates, which Frontier structurally forbids), **plus at most `frontier-run-cap` (default 3 — `.claude-tweaks/policy.yml`, `_shared/subagent-output-contract.md`'s Model Selection section) Frontier singleton dispatches per run** from the gap-sweep and cross-lens debate slots above. A 25-confirmed-finding review previously fanned out to 25 unbounded Capable-tier agents; it now dispatches at most 10 Capable refutation agents — a ~60% cut to this pass's worst case, and the first bound of any kind on it — plus whatever the run's Frontier cap allows for the two verdict-gate slots, tracked independently in `frontier-tally.log`.
+   Worst case after the floor and cap: **10 Capable-tier agents per review, regardless of finding count** (refutation stays `[Use: Capable]` unconditionally — it is a variable-N fan-out over confirmed candidates, which Frontier structurally forbids), **plus at most `frontier-run-cap` (default 3 — `.claude-tweaks/policy.yml`, the composed review-dispatch bundle's / `_shared/subagent-dispatch-core.md`'s Model Selection section) Frontier singleton dispatches per run** from the gap-sweep and cross-lens debate slots above. A 25-confirmed-finding review previously fanned out to 25 unbounded Capable-tier agents; it now dispatches at most 10 Capable refutation agents — a ~60% cut to this pass's worst case, and the first bound of any kind on it — plus whatever the run's Frontier cap allows for the two verdict-gate slots, tracked independently in `frontier-tally.log`.
 
    Typical runs cost well under that worst case, because the `medium` floor is applied *before* the cap is consulted: the cap only binds on a review that surfaces 10 or more `medium`-or-higher `confirmed` findings, which is the tail rather than the norm. The floor is doing most of the work here and the cap is the backstop — so tightening the cap further buys little, while lowering the floor would quietly undo both.
 
@@ -91,6 +92,8 @@ This pass is the only place in the skill where an unbounded fan-out would meet t
 >    Severity: {severity}  Category: {category}
 >    Finding: {finding text}
 >    Cached evidence: {evidence text}
+>
+>    SCRATCH: {ctx-dir}/agent-scratch/{agent-id} — any probe script or fixture you create to verify this finding goes there (never in the repository tree) and must be deleted before your status word (`_shared/subagent-output-contract.md`'s Scratch rule).
 >
 >    [Use: Capable — refutation agent. Independent run; fresh file read, not the
 >    lens's original context. Resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" capable` (contract § Model Selection).]
@@ -114,7 +117,7 @@ After Step 3.5, every finding has a final bucket — `confirmed`, `unconfirmed`,
 
 Each of lenses 3a-3i is angle-scoped by construction — 3b only looks for security issues, 3e only architecture, and so on — so a real defect that doesn't cleanly fit any single lens's angle can pass through every lens unflagged. This step asks the question none of them do: what did every lens, collectively, miss? This was caught concretely during the #45 native-review prototype: its own final "what did we miss" fresh-eyes pass caught 2 of 4 real findings that none of the angle-based finders surfaced.
 
-Dispatch **exactly one** `[Use: Frontier]` agent — **not a reproduction pair**. A fresh-eyes pass loses its value if paired/averaged against a second identical fresh-eyes agent, so resist the urge to "fix" this into a pair even though the pattern immediately above (Cross-Lens Debate, Per-Candidate Refutation Pass) dispatches multiple agents per unit of work — this step is deliberately single-source, which is exactly the singleton shape Frontier requires. Resolve the model per `_shared/subagent-output-contract.md`'s Model Selection dispatch procedure (`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" frontier --run-dir "$PIPELINE_RUN_DIR"`); it degrades per the resolver's own preconditions (contract § Model Selection) — never enumerated locally here. Give the agent: the diff scope from Step 2 (the branch's-own-work scope when the Merge-Provenance Check found merge commits) and a compact list of what lenses 3a-3i already flagged — `path:line` + one-line summary for every `confirmed` and `unconfirmed` finding so far, after Step 3.5's debate and refutation have both resolved. Inline this template literally in the `Task()` prompt, per the Subagent Contract (`_shared/subagent-output-contract.md`) — Template A output:
+Dispatch **exactly one** `[Use: Frontier]` agent — **not a reproduction pair**. A fresh-eyes pass loses its value if paired/averaged against a second identical fresh-eyes agent, so resist the urge to "fix" this into a pair even though the pattern immediately above (Cross-Lens Debate, Per-Candidate Refutation Pass) dispatches multiple agents per unit of work — this step is deliberately single-source, which is exactly the singleton shape Frontier requires. Resolve the model per the composed review-dispatch bundle's (or, standalone, `_shared/subagent-dispatch-core.md`'s) Model Selection dispatch procedure (`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" frontier --run-dir "$PIPELINE_RUN_DIR"`); it degrades per the resolver's own preconditions (that same Model Selection section) — never enumerated locally here. Give the agent: the diff scope from Step 2 (the branch's-own-work scope when the Merge-Provenance Check found merge commits) and a compact list of what lenses 3a-3i already flagged — `path:line` + one-line summary for every `confirmed` and `unconfirmed` finding so far, after Step 3.5's debate and refutation have both resolved. Inline this template literally in the `Task()` prompt, per the Subagent Contract (the composed review-dispatch bundle, or standalone `_shared/subagent-dispatch-core.md`) — Template A output:
 
 ```
 You are a fresh-eyes reviewer. The following lenses have already reviewed this diff and
@@ -125,6 +128,8 @@ already cover. If you find nothing beyond what's already flagged, return "No fin
 [... CALIBRATION + OUTPUT FORMAT block, byte-identical to the per-lens dispatch contract
 in step3-lens-dispatch.md ...]
 
+SCRATCH: {ctx-dir}/agent-scratch/gap-sweep — any probe script or fixture you create to verify a finding goes there (never in the repository tree) and must be deleted before your status word (`_shared/subagent-output-contract.md`'s Scratch rule).
+
 [Use: Frontier — gap-sweep agent. Independent run; single dispatch, not a
 reproduction pair. Degrades per the resolver's preconditions (contract § Model Selection).]
 ```
@@ -132,3 +137,7 @@ reproduction pair. Degrades per the resolver's preconditions (contract § Model 
 Findings returned are tagged with an internal `source: gap-sweep` marker (parallel to how lenses tag findings with their own lens name for Step 3 Routing's Category column) and inserted directly into the `unconfirmed` bucket — the same confidence tier a single-source, non-reproduction-paired lens finding gets. They are **not** auto-promoted to `confirmed` — there's no second agent to reproduce them against, by design. This reuses `step3-routing.md`'s existing `xhigh`/`max` inline-visibility rules (unconfirmed findings surface inline at `xhigh`+) — no new routing table needed. Write `STAGED {HH:MM:SS} — Gap-sweep: {path}:{line} — {one-line finding}. Staged to Review Console as low-confidence (gap-sweep, single-source by design). Reversibility: high.`
 
 Check the agent's status line first, per the Subagent Contract: a `BLOCKED`/`NEEDS_CONTEXT` status, or a response that parses as neither a findings table nor the literal `No findings.`, means the sweep did not actually complete — write `STAGED {HH:MM:SS} — Gap-sweep: dispatch failed ({status}), sweep not genuinely performed. Reversibility: high.` so a persistently broken dispatch stays visible rather than silently reading as "we checked and found nothing." Only a genuine `DONE`/`DONE_WITH_CONCERNS` response with literal `No findings.` text logs nothing further, per the existing per-lens convention — no decision-log entry is needed for an actually-completed zero-findings pass.
+
+## Post-fan-out sweep (this file's own closing step)
+
+`step3-lens-dispatch.md` defines the post-fan-out untracked-file sweep procedure and captures the pre-dispatch baseline (`{ctx-dir}/pre-dispatch-status.txt`) before Step 3's first dispatch; that file's own sweep only runs itself at `low`/`medium` tier, since this file never loads there. At every tier that loads this file (`high` and above), run that sweep exactly once — here, after Cross-Lens Debate at `high` (this file's Step 3.5/3.6 refutation and gap-sweep never run at that tier), or after Gap-Sweep (Step 3.6) at `xhigh`/`max` — before proceeding to Step 3 Routing.

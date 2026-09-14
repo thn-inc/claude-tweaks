@@ -4,7 +4,7 @@ QA parallel dispatch + agent prompt templates — Phase 3. Read `qa-procedures.m
 
 This phase dispatches qa-agent subagents in parallel — one per story, bounded by `MAX_PARALLEL` and tier dependencies from Phase 2. Each agent owns a single `agent-browser` session named after the story id (kebab-case). One session per agent — never share a session across parallel stories.
 
-> **Parallel execution:** Dispatch each tier's stories as parallel Task agents — each runs independently against its own `agent-browser` session and returns a `RESULT:` summary line (plus optional `TRACE:` line and `REPORT_JSON` comment). Assemble results after all agents in the tier complete. Follow the subagent contract in `skills/_shared/subagent-output-contract.md`: inline the prompt template below verbatim per agent (no references to sibling files), pick `[Use: Standard]` (qa-agent work is browser-driven step execution, not deep analysis — resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard`, contract § Model Selection), and treat the agent's first reply line as its status (`DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED`). Dispatch shape: single-assistant-message rule (`_shared/subagent-output-contract.md`'s fan-out section) applies.
+> **Parallel execution:** Dispatch each tier's stories as parallel Task agents — each runs independently against its own `agent-browser` session and returns a `RESULT:` summary line (plus optional `TRACE:` line and `REPORT_JSON` comment). Assemble results after all agents in the tier complete. Follow the subagent contract in `skills/_shared/subagent-output-contract.md`: inline the prompt template below verbatim per agent (no references to sibling files), pick `[Use: Standard]` (qa-agent work is browser-driven step execution, not deep analysis — resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard`, `skills/_shared/subagent-dispatch-core.md` § Model Selection), and treat the agent's trailing `STATUS: {WORD}` line (`DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED`) as its status — the last non-empty line of the reply, after `RESULT`/`TRACE`/`REPORT_JSON`, per `bin/lib/hooks/subagent-stop.js`'s canonical format (#2265). Dispatch shape: single-assistant-message rule (`_shared/subagent-dispatch-core.md`'s fan-out section) applies.
 >
 > **Working directory discipline:** Resolve `{SCREENSHOT_PATH}` and `{TRACES_BASE}` to absolute paths *before* substituting them into each agent's prompt — relative paths cannot reach the agent's working directory reliably. The dispatch also anchors the working directory by inlining a "Working directory" line at the top of each agent's prompt body (see templates below).
 >
@@ -111,13 +111,13 @@ Instructions:
 - On success, if `Teardown` is present, execute its steps now, before closing the session.
 - On success, close the session at the end: `agent-browser --session {story.id} close`.
 - Report each step as PASS or FAIL with a brief explanation.
-- **Status line (required, line 1 of your reply):** emit exactly one of `DONE` | `DONE_WITH_CONCERNS` | `NEEDS_CONTEXT` | `BLOCKED`. Mapping:
+- **Decide your status word:** exactly one of `DONE` | `DONE_WITH_CONCERNS` | `NEEDS_CONTEXT` | `BLOCKED`. Mapping:
   - `PASS` → `DONE`
   - `PASS_WITH_CAVEATS` → `DONE_WITH_CONCERNS`
   - `FAIL` → `DONE_WITH_CONCERNS` (your execution completed normally — `FAIL` is a real finding the dispatcher must act on, and the status line carries that signal)
   - Cannot open the browser, server unreachable, or other infrastructure failure that prevents step execution → `BLOCKED`
   - Required input missing (auth vault not configured, env var not set, locator references something that doesn't exist in the prompt) → `NEEDS_CONTEXT`
-- Use this exact format for your final summary line (after the status line):
+- Use this exact format for your summary line:
   RESULT: {PASS|PASS_WITH_CAVEATS|FAIL} | ID: {story.id} | Steps: {passed}/{total}
 - If a trace was captured, append a second line:
   TRACE: {trace path}
@@ -126,6 +126,7 @@ Instructions:
   <!-- REPORT_JSON: {"caveats": ["{observation 1}", "{observation 2}"], "recovered_locators": [{"step_index": {N}, "original_locator": "{old}", "recovered_locator": "{new}", "reason": "{description}"}], "page_inventories": [{"url": "{absolute URL}", "interactive_elements": {"buttons": {N}, "links": {N}, "inputs": {N}, "selects": {N}, "checkboxes": {N}}, "forms": {"count": {N}, "fields_per_form": [{N}, {N}]}, "navigation": {"nav_elements": {N}, "breadcrumbs": {bool}, "tabs": {N}}, "accessibility": {"aria_landmarks": {N}, "heading_levels": [1, 2, 3], "missing_labels": {N}}, "layout": {"viewport_overflow": {bool}, "scroll_height": {N}}}]} -->
   ```
   All three arrays are required keys (use `[]` when empty — never omit). `caveats` is non-empty only when RESULT is `PASS_WITH_CAVEATS`. `recovered_locators` lists any locators the agent auto-recovered during step execution. `page_inventories` is one entry per unique URL visited; use snapshot/snapshot-i data to populate interactive element counts, form structure, navigation, accessibility, and layout details. Keep the entire comment on a single line so downstream parsing can use a simple regex.
+- **Status line (required, the true last line of your reply, after the `REPORT_JSON` comment):** `STATUS: {word}` — the same word you decided above (`bin/lib/hooks/subagent-stop.js`'s canonical format, #2265).
 ```
 
 **Legacy format prompt:**
@@ -151,13 +152,13 @@ Instructions:
 - Take an annotated screenshot after each significant step: `screenshot --annotate {SCREENSHOT_PATH}/<NN>_<step>.png` (path is positional — no `--filename` flag).
 - On any failure: `agent-browser --session <session> trace stop {TRACES_BASE}/<session>/<timestamp>.zip`, then `close`. Include the trace path in the report.
 - On success: `agent-browser --session <session> close` at the end.
-- **Status line (required, line 1 of your reply):** emit exactly one of `DONE` | `DONE_WITH_CONCERNS` | `NEEDS_CONTEXT` | `BLOCKED`. Mapping:
+- **Decide your status word:** exactly one of `DONE` | `DONE_WITH_CONCERNS` | `NEEDS_CONTEXT` | `BLOCKED`. Mapping:
   - `PASS` → `DONE`
   - `PASS_WITH_CAVEATS` → `DONE_WITH_CONCERNS`
   - `FAIL` → `DONE_WITH_CONCERNS` (execution completed normally — `FAIL` is a real finding the dispatcher must act on, and the status line carries that signal)
   - Browser cannot open, server unreachable, or other infrastructure failure → `BLOCKED`
   - Missing auth vault, missing required env var, or workflow refers to undefined state → `NEEDS_CONTEXT`
-- Use this exact format for your final summary line (after the status line):
+- Use this exact format for your summary line:
   RESULT: {PASS|PASS_WITH_CAVEATS|FAIL} | ID: {story.id or "legacy-" + slugified-name} | Steps: {passed}/{total}
 - If a trace was captured, append a second line:
   TRACE: {trace path}
@@ -166,6 +167,7 @@ Instructions:
   <!-- REPORT_JSON: {"caveats": ["{observation 1}", "{observation 2}"], "recovered_locators": [{"step_index": {N}, "original_locator": "{old}", "recovered_locator": "{new}", "reason": "{description}"}], "page_inventories": [{"url": "{absolute URL}", "interactive_elements": {"buttons": {N}, "links": {N}, "inputs": {N}, "selects": {N}, "checkboxes": {N}}, "forms": {"count": {N}, "fields_per_form": [{N}, {N}]}, "navigation": {"nav_elements": {N}, "breadcrumbs": {bool}, "tabs": {N}}, "accessibility": {"aria_landmarks": {N}, "heading_levels": [1, 2, 3], "missing_labels": {N}}, "layout": {"viewport_overflow": {bool}, "scroll_height": {N}}}]} -->
   ```
   All three arrays are required keys (use `[]` when empty — never omit). `caveats` is non-empty only when RESULT is `PASS_WITH_CAVEATS`. Legacy stories typically have no `recovered_locators` — use `[]`. `page_inventories` is one entry per unique URL visited; populate it from snapshot data at each URL transition (interactive element counts, form structure, navigation, accessibility, layout details). Keep the entire comment on a single line so downstream parsing can use a simple regex.
+- **Status line (required, the true last line of your reply, after the `REPORT_JSON` comment):** `STATUS: {word}` — the same word you decided above (`bin/lib/hooks/subagent-stop.js`'s canonical format, #2265).
 ```
 
 20. **Record start time** for each story when it is dispatched and elapsed time when it completes (wall-clock seconds). Store timing data alongside the result for use in Phase 5.

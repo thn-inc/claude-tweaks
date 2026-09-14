@@ -84,6 +84,20 @@ function invalidateSnapshot(sessionId) {
   }
 }
 
+// Completes a capped `--state all` union with any open records the cap pushed
+// out (#1919) — the seven-oldest-open-records gap: when the union fetch hits
+// backlog-fetch-limit, closed records newer than the oldest open ones fill
+// every remaining slot, so the union's open subset silently undercounts the
+// true open set. Pure merge: union rows are kept as-is (their full field set
+// wins on a duplicate number), and any open row whose number isn't already in
+// the union is appended. No-op (returns union unchanged) when open is empty.
+function mergeOpenIntoUnion(union, open) {
+  if (!open || open.length === 0) return union;
+  const unionNumbers = new Set(union.map((r) => r.number));
+  const missing = open.filter((r) => !unionNumbers.has(r.number));
+  return union.concat(missing);
+}
+
 module.exports = {
   UNION_FIELDS,
   resolveSessionId,
@@ -94,4 +108,5 @@ module.exports = {
   readSnapshot,
   writeSnapshot,
   invalidateSnapshot,
+  mergeOpenIntoUnion,
 };

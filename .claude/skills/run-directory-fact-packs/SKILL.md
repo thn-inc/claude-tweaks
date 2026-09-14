@@ -8,10 +8,13 @@ description: Use when adding a fact pack for a pipeline phase, adding a probe to
 A fact pack replaces N ad-hoc reads scattered through a skill's prose with one deterministic
 process: a CLI gathers everything that phase needs, writes one JSON document into the run dir,
 and the prose reads fields out of it. The runner owns execution and bounding; the skill owns
-judgment. Two are shipped — `plugin/bin/lib/wrap-up/pack.js` + `plugin/bin/wrap-up-pack.js`
-(wrap-up Phases 3-4, eight probes) and `plugin/bin/lib/flow/preflight.js` +
-`plugin/bin/flow-preflight.js` (`/flow`'s second call) — and they agree on every rule below.
-Read both before writing a third.
+judgment. Three are shipped — `plugin/bin/lib/wrap-up/pack.js` + `plugin/bin/wrap-up-pack.js`
+(wrap-up Phases 3-4, eight probes), `plugin/bin/lib/flow/preflight.js` +
+`plugin/bin/flow-preflight.js` (`/flow`'s second call) and
+`plugin/bin/lib/release-preflight/pack.js` + `plugin/bin/release-preflight.js`
+(release preflight, eight probes) — and they agree on every rule below
+except selective-probe filtering (see the `--only` bullet).
+Read them before writing a fourth.
 
 ## The shape
 
@@ -32,7 +35,21 @@ Read both before writing a third.
   claim, archives, posts, or edits a record — a pack is re-runnable at any point in the phase.
 - **Write atomically** (`lib/atomic-write.js`), because a consumer may be reading the previous
   pack while this one is written.
-- **`--only <probe,...>`** so a consumer that needs one field does not pay for eight.
+- **`--only <probe,...>`** so a consumer that needs one field does not pay for eight —
+  `wrap-up-pack.js`/`pack.js` and `release-preflight.js` only; `flow-preflight.js` has no `--only` flag, and
+  `flow/preflight.js`'s `gatherPreflight` computes every probe unconditionally regardless of
+  `--steps` (its own parse-error text calls `--steps` "metadata — every field is computed
+  regardless"), since `/flow`'s second call always needs the full set.
+- **A pack proposes; it never decides.** Any field an engine or a forge will later own — a version,
+  a merge state, a PR number — is labelled a *proposal* in the consumer's prose, is re-read from
+  that engine after the engine acts, and the reconciliation is written **once**, at the consumer,
+  never per use site. `release-preflight`'s `proposedVersion` is the shipped instance (#2256): the
+  pack never fetches, release-please reads config the pack does not, and a sibling release can land
+  between the gather and the engine's run, so the pack's number is the *gating* version and the
+  engine's return is the *shipped* one (`plugin/skills/release/execute.md`'s "Two versions"
+  section). Treating the proposal as the number to verify and to book cost two fix waves on one
+  confusion; this is the freshness question of the next section asked one level up — not "is the
+  value stale?" but "whose value is it?".
 
 ## Every field owes a location, a freshness, and a phase — traced before it is written
 

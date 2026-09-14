@@ -36,7 +36,16 @@ function installGhWrapper(prsJson) {
 // run-state.json names that worktree — the join reapMerged's own audit-trail
 // write (review finding) needs to find the owning run.
 function buildReapableFixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-root-'));
+  // realpathSync immediately, like every other fixture root in this suite
+  // (e.g. tests/run-integrity.test.js, tests/reconcile.test.js) — on macOS
+  // os.tmpdir() resolves through the /var -> /private/var symlink, and
+  // reapMerged's own `real` (safeReal(wt.path), used both for the domain
+  // check and the value passed to releasePorts) is always realpath'd. A
+  // non-realpath'd root here made this fixture's own `wtPath` — built by
+  // joining onto the un-resolved root — a different string from the one
+  // reapMerged actually hands to releasePorts, so the #1793 assertions
+  // below never matched on a real Mac (#1900).
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-root-')));
   git(root, 'init', '-q', '-b', 'main');
   git(root, 'config', 'user.email', 't@t');
   git(root, 'config', 'user.name', 't');

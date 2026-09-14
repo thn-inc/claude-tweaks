@@ -21,18 +21,28 @@
 // `--worktree` defaults to process.cwd() — the caller (reflect, running
 // inside the worktree it's evaluating) does not usually need to pass it
 // explicitly.
-// Output: one JSON array on stdout, each element the parsed events.jsonl
-// entry plus `_source` ("primary" | "adhoc") and `_runDir` (which run dir
-// it came from) — so the lens's Evidence line can name where a given
-// finding was actually logged. Malformed lines are skipped, never thrown.
-// Exit 0 on success (including an empty array — no events is not an
-// error); 1 on a malformed invocation (missing --run); 2 when --run does
-// not resolve to a real, readable directory.
+// Output: one JSON array on stdout, filtered to the five event types
+// skills/reflect/full-mode.md's friction-lens-vocab block declares the
+// Friction Lens reads (`wd-deny`, `gate-denial`, `bookkeeping-stamp-deny`,
+// `contract-violation`, `ask-user-question` — bin/lib/friction-lens-vocab.js
+// is the shared source of truth for that list, #2016). Every other event
+// type the run logged (`commit`, `push`, `pre-compact`, `session-end`,
+// `skill_invoked`, …) is dropped here rather than left for each lens run to
+// re-filter. Each surviving element is the parsed events.jsonl entry plus
+// `_source` ("primary" | "adhoc") and `_runDir` (which run dir it came
+// from) — so the lens's Evidence line can name where a given finding was
+// actually logged. Malformed lines are skipped, never thrown. Exit 0 on
+// success (including an empty array — no events is not an error); 1 on a
+// malformed invocation (missing --run); 2 when --run does not resolve to a
+// real, readable directory.
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 const ctxLib = require('./lib/hooks/context');
+const { FRICTION_EVENT_TYPES } = require('./lib/friction-lens-vocab');
+
+const FRICTION_TYPES = new Set(FRICTION_EVENT_TYPES);
 
 const USAGE = 'usage: friction-events.js --run <run-dir> [--worktree <path>] [--help]\n';
 
@@ -71,6 +81,17 @@ function parseArgs(argv) {
 // this run's own evidence only, and ambiguous-provenance noise is worse for
 // that than an undercount. `adhoc`-sourced events are unaffected — those
 // already passed a worktree-binding check via findRunsByWorktreePath.
+//
+// #2350: a `contract-violation` event carrying `variant: 'lenient'` is, by
+// subagent-stop.js's own two-tier design, a COMPLIANT reply (a dispatch
+// template still using the pre-#2265 status-line shape) — logged only so a
+// stale dispatch site stays visible for migration, never a real breach. The
+// Friction lens counted every `contract-violation`-typed event identically,
+// so a clean run using an old-shape template (e.g. superpowers'
+// subagent-driven-development bullet) accumulated dozens of false friction
+// hits. Dropped here, at the same read boundary as the #1337/#1402 filters
+// above, rather than at the vocabulary filter in run() below, since this is
+// about event fidelity (is this actually friction?), not event type.
 function readEvents(runDir, source) {
   let raw;
   try { raw = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'); } catch { return []; }
@@ -82,6 +103,7 @@ function readEvents(runDir, source) {
       if (!parsed || typeof parsed !== 'object') continue;
       if (parsed.type === 'gate-denial' && parsed.test === true) continue;
       if (source === 'primary' && parsed.attribution === 'fallback') continue;
+      if (parsed.type === 'contract-violation' && parsed.variant === 'lenient') continue;
       out.push({ ...parsed, _source: source, _runDir: runDir });
     } catch { /* skip malformed line, keep reading */ }
   }
@@ -113,11 +135,12 @@ function run(argv, deps = realDeps) {
   for (const { runDir: siblingDir } of siblings) {
     events.push(...deps.readEvents(siblingDir, 'adhoc'));
   }
+  const friction = events.filter((e) => FRICTION_TYPES.has(e.type));
 
-  deps.stdout(`${JSON.stringify(events)}\n`);
+  deps.stdout(`${JSON.stringify(friction)}\n`);
   return 0;
 }
 
-module.exports = { run, parseArgs, readEvents };
+module.exports = { run, parseArgs, readEvents, FRICTION_EVENT_TYPES };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

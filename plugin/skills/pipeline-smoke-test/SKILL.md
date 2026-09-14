@@ -84,7 +84,7 @@ Re-query every artifact Step 5 claims to have removed:
 - The claim-state read from Step 4 now shows no live claim for `{n}` (tombstoned or absent).
 - `git worktree list --porcelain` no longer contains `$RUN_ID`.
 
-`bin/lib/smoke-test/verify-cleanup.js`'s `verifyCleanupTable`/`renderCleanupTable` compute and render this exactly: `| Artifact | Cleanup claimed | Verified absent |` — a row where `claimed` is `yes` but `verifiedAbsent` is `no` is the failure condition Acceptance Criteria names explicitly ("verified by checking their absence afterward, not merely by the cleanup step reporting success"), and stops the skill with a **BLOCKED** card naming the leaked artifact for manual removal, rather than reporting a clean pass.
+`bin/lib/smoke-test/verify-cleanup.js`'s `verifyCleanupTable(rows)`/`renderCleanupTable(rows)` compute and render this exactly: `| Artifact | Cleanup claimed | Verified absent |` — a row where `claimed` is `yes` but `verifiedAbsent` is `no` is the failure condition Acceptance Criteria names explicitly ("verified by checking their absence afterward, not merely by the cleanup step reporting success"), and stops the skill with a **BLOCKED** card naming the leaked artifact for manual removal, rather than reporting a clean pass.
 
 ## Output
 

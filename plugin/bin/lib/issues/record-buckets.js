@@ -19,6 +19,10 @@ function isBotBlocked(record) {
   return record.facets.bot.blocked === true;
 }
 
+function isBotParked(record) {
+  return record.facets.bot.parked === true;
+}
+
 function isBotInProgress(record) {
   return record.facets.bot.inProgress === true;
 }
@@ -41,4 +45,4 @@ function classifyStaleness(ageMs, thresholdMs) {
   return 'stale';
 }
 
-module.exports = { isBacklog, isParked, isBotBlocked, isBotInProgress, classifyStaleness };
+module.exports = { isBacklog, isParked, isBotBlocked, isBotParked, isBotInProgress, classifyStaleness };

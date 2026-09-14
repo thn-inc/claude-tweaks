@@ -19,6 +19,8 @@ Detect the shape up front — before attempting to enter group N's worktree at a
 
 A top-level dispatching session (the common case, and the one the rest of this file describes) never hits this — its own cwd is not pinned, so it enters each group's worktree directly and both Task calls inherit it, exactly as below.
 
+**Don't reach for `isolation: "worktree"` plus a joining `EnterWorktree(path=)` as a shortcut here.** A cwd-pinned dispatching session might be tempted to launch the first Task call with `Agent(isolation: "worktree")` to get it worktree-isolated on its own, then have the second call join that same worktree via `EnterWorktree(path: <first call's worktree>)` instead of adopting the `cd`-prefix mechanism above. This reported success while leaving the second call's actual Bash execution sandbox pinned to whatever worktree it inherited at its own launch, refusing every subsequent command (`docs/incident-log.md`'s `IL-155`, from #1875). `EnterWorktree`'s own current tool documentation describes `path`-based redirection working for a pinned agent, but that claim is unverified against this exact two-call shape — until a live dispatch confirms it, use the `cd {worktree-path} &&` mechanism above instead of this join pattern.
+
 ## The loop
 
 For group N, enter **one** fresh worktree, then run that group's whole dispatch sequence inside it: both of its Task calls (`build,test`, then — gated — `review,polish,wrap-up`; see `two-call-gate.md`) inherit that single cwd, and each reports its own terminal status line (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) plus an OUTCOME line. One worktree per group, entered once and torn down once — never one per call.

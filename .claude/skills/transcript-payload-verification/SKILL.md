@@ -87,6 +87,15 @@ built-in with no namespace), so the namespaced `plugin:agent-name` form that
 `plugin/bin/lib/hooks/subagent-stop.js`'s `isExemptAgentType` branches on (#1596) rests on the
 hooks reference doc alone, with no captured instance behind it.
 
+**A second branch on the same footing (#2036).** That same file now also no-ops a `SubagentStop`
+whose `agent_transcript_path` equals the same event's own `transcript_path`. The shape was
+inferred from the *symptom* — `events.jsonl` `contract-violation` entries whose `firstLine` was
+plainly the dispatcher's own async-wait narration — and pinned by hand-built fixtures in
+`tests/hooks-log-modules.test.js`, never read off a captured hook-input envelope. Two branches in
+one file now rest on inference, and the throwaway-hook recipe above settles both in a single
+capture session: run it the next time `subagent-stop.js` is opened, with one scenario per branch
+(a real dispatched subagent, and a dispatcher ending its turn on an async wait).
+
 ## A fixture is a claim, not ground truth
 
 The same gap one level over: a fixture's literal values are an assertion about the real shape,

@@ -59,13 +59,13 @@ Visual-reference: {scaffold path}]
 [$ORIGIN_RECORD_NUM: {value} — omit unless this run entered via the needs:definition redirect]
 Run context: work-backend={value}, PIPELINE_RUN_DIR={value}
 
-Status line (required): First line of your reply must be one of: DONE / DONE_WITH_CONCERNS /
-NEEDS_CONTEXT / BLOCKED.
-
 OUTPUT FORMAT (required): Return the Step 9 summary exactly as `decomposition-mode-closeout.md`'s
 own Step 9 template renders it (Work Units Created table, Collapse outcome line, Existing Records
 Modified, Artifacts Removed, Diagram suggestions when present, Actions Performed table) — no
 paraphrase, so the caller can relay it without having watched the work happen.
+
+Status line (required): after the summary above, on its own trailing line — the last non-empty
+line of your reply — write exactly one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
 ```
 
 `[Use: Standard]` — resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard`.

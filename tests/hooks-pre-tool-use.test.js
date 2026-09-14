@@ -1210,3 +1210,30 @@ test('#1967: an unrelated git command from a linked worktree is silent', () => {
   const { wt } = mainAndWorktree();
   assert.deepStrictEqual(pre.run({ input: bashInput('git status', wt), runDir: null, runState: null, cwd: wt }), {});
 });
+
+// #2065: the guard widened to every explicit stack-mutating spelling, not
+// just bare `stash`/`stash pop` — `stash push` (with or without `-u`/`-m`),
+// the flag-first bare forms, and `stash save` all push onto the same
+// repository-wide stack the bare form does.
+test('#2065: `git stash push -m "wip"` and `git stash push -u` from a linked worktree emit the same warning bare `git stash` produces', () => {
+  const { wt } = mainAndWorktree();
+  const bare = pre.run({ input: bashInput('git stash', wt), runDir: null, runState: null, cwd: wt });
+  const pushM = pre.run({ input: bashInput('git stash push -m "wip"', wt), runDir: null, runState: null, cwd: wt });
+  const pushU = pre.run({ input: bashInput('git stash push -u', wt), runDir: null, runState: null, cwd: wt });
+  assert.strictEqual(pushM.json.systemMessage, bare.json.systemMessage);
+  assert.strictEqual(pushU.json.systemMessage, bare.json.systemMessage);
+});
+
+test('#2065: `git stash -u`, `git stash -m "wip"`, and `git stash save wip` from a linked worktree also warn', () => {
+  const { wt } = mainAndWorktree();
+  for (const cmd of ['git stash -u', 'git stash -m "wip"', 'git stash save wip']) {
+    const out = pre.run({ input: bashInput(cmd, wt), runDir: null, runState: null, cwd: wt });
+    assert.match(out.json.systemMessage, /git stash is repository-wide/, `expected a warning for: ${cmd}`);
+  }
+});
+
+test('#2065: `git stash apply` and `git stash drop` from a linked worktree stay silent', () => {
+  const { wt } = mainAndWorktree();
+  assert.deepStrictEqual(pre.run({ input: bashInput('git stash apply', wt), runDir: null, runState: null, cwd: wt }), {});
+  assert.deepStrictEqual(pre.run({ input: bashInput('git stash drop', wt), runDir: null, runState: null, cwd: wt }), {});
+});

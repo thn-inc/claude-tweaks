@@ -75,8 +75,8 @@ test('build/dispatch.md: instructs subagent-driven-development to forbid git sta
   );
   assert.match(
     BUILD_DISPATCH,
-    /_shared\/subagent-output-contract\.md`'s no-stash rule/,
-    "build/dispatch.md must cite _shared/subagent-output-contract.md's no-stash rule rather than " +
-      're-restating the mechanism text inline.',
+    /_shared\/subagent-dispatch-core\.md`'s no-stash rule/,
+    "build/dispatch.md must cite _shared/subagent-dispatch-core.md's no-stash rule (moved from " +
+      'subagent-output-contract.md at #2019) rather than re-restating the mechanism text inline.',
   );
 });

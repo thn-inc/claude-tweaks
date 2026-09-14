@@ -117,3 +117,46 @@ test('consumers cite Step 2.7 by reference only, never restating lsof/probe-upwa
     assert.doesNotMatch(content, /lsof -nP -iTCP|lsof -a -p .PID. -d cwd/, `${file} must not restate the lsof PID/cwd mechanics`);
   }
 });
+
+// #1937 — dispatch two-call hand-off: ownership, detach, and the fourth
+// record-line field.
+test('Ephemeral server start states the ownership rule (background task dies with the spawning turn) and the POSIX/Windows detach split', () => {
+  const doc = read(DOC);
+  const idx = doc.indexOf('#### Ephemeral server start');
+  const whenStartingIdx = doc.indexOf('When starting a server');
+  assert.ok(idx !== -1 && whenStartingIdx !== -1 && idx < whenStartingIdx);
+  const body = doc.slice(idx, whenStartingIdx);
+
+  assert.match(body, /\*\*Ownership\.\*\*/);
+  assert.match(body, /belongs to the agent turn that spawned it/);
+  assert.match(body, /\*\*POSIX:\*\*.*setsid/s);
+  assert.match(body, /Record `detached: yes`/);
+  assert.match(body, /\*\*Windows:\*\*.*Record `detached: no`/s);
+});
+
+test("Ephemeral server start's record line names a fourth `detached:{yes|no}` field", () => {
+  const doc = read(DOC);
+  const idx = doc.indexOf('#### Ephemeral server start');
+  const outputIdx = doc.indexOf('### Output');
+  assert.ok(idx !== -1 && outputIdx !== -1 && idx < outputIdx);
+  const body = doc.slice(idx, outputIdx);
+  assert.match(body, /`\{pid\} \{port\} \{worktree-root\} detached:\{yes\|no\}`/);
+});
+
+test("Step 4's record line is called the liveness handle, not a promise the server is up", () => {
+  const doc = read(DOC);
+  const idx = doc.indexOf('#### Ephemeral server start');
+  const outputIdx = doc.indexOf('### Output');
+  const body = doc.slice(idx, outputIdx);
+  assert.match(body, /\*\*liveness handle\*\*/);
+  assert.match(body, /not a promise that it is/);
+});
+
+test('the Cleanup section reads whatever ephemeral-server.txt currently names, not the value recorded at start time', () => {
+  const doc = read(DOC);
+  const idx = doc.indexOf('### Cleanup');
+  assert.notEqual(idx, -1);
+  const body = doc.slice(idx);
+  assert.match(body, /liveness-handle rule/);
+  assert.match(body, /not necessarily the value recorded at start time/);
+});

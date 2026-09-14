@@ -169,7 +169,7 @@ Read `report-templates.md` for the full templates, the `PASS_WITH_CAVEATS` propa
 
 If tests fail and the failures look straightforward (type errors, lint violations, simple test failures), read `fix-mode.md` in this skill's directory for the full procedure. Auto mode routes per `_shared/auto-mode-contract.md` — auto-fix and re-verify, or stage the fix to `staged/test-fix-{n}.patch` per `_shared/staged-patch.md`, validated with `git apply --check` before logging. Interactive mode asks via `AskUserQuestion`, with reproduce-first debugging for behavioral and QA failures.
 
-**Phase exit (`worktree` mode, `integration-model: pr-first` — `_shared/integration-model.md`):** push the branch and flip this phase's PR checklist row — `_shared/git-discipline.md`'s Phase-exit push section and `_shared/pr-early-run-lifecycle.md`'s Phase-checklist update section. A no-op under `local-merge` or `current-branch` mode.
+**Phase exit (`worktree` mode, `integration-model: pr-first` — `_shared/integration-model.md`):** push the branch and flip this phase's PR checklist row — `_shared/git-discipline.md`'s Phase-exit push section and `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. A no-op under `local-merge` or `current-branch` mode.
 
 ## Next Actions
 

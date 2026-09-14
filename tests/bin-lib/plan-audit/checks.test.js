@@ -6,7 +6,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { checkA, checkB, checkC, headroomCheck, looksPassing, isGovernedMdPath } = require('../../../plugin/bin/lib/plan-audit/checks');
+const {
+  checkA, checkB, checkC, checkD, headroomCheck, looksPassing, isGovernedMdPath,
+} = require('../../../plugin/bin/lib/plan-audit/checks');
 const { CEILING_BYTES, composedBytesReport } = require('../../../plugin/bin/lib/skill-audit/context-cost');
 
 function makeTmpRepo() {
@@ -66,6 +68,77 @@ test('checkA treats Test like Create — parent dir suffices for a brand-new tes
   try {
     const result = checkA([{ type: 'Test', path: 'tests/new.test.js' }], repo);
     assert.strictEqual(result.ok, true);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// #1999: Check A gains plan-awareness — a Create:/Test: bullet's missing
+// parent is satisfied by ANOTHER entry in the same plan (never by itself
+// alone — see this plan's own Deviation note on AC1's "first creation"
+// parenthetical, which would otherwise make every lone Create trivially
+// pass and contradict the pinned "even the parent directory is missing"
+// case above).
+test('checkA passes a Create bullet whose missing parent is created by ANOTHER Create bullet in the same plan (#1999)', () => {
+  const repo = makeTmpRepo();
+  try {
+    const result = checkA([
+      { type: 'Create', path: 'newdir/nested/subdir/FILE.md' },
+      { type: 'Create', path: 'newdir/nested/subdir/OTHER.md' },
+    ], repo);
+    assert.strictEqual(result.ok, true);
+    assert.deepStrictEqual(result.missing, []);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('checkA still fails a lone, unsupported Create bullet with a missing parent (#1999)', () => {
+  const repo = makeTmpRepo();
+  try {
+    const result = checkA([{ type: 'Create', path: 'nowhere/new.js' }], repo);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(result.missing, ['nowhere/new.js']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('checkA passes a two-new-level Create bullet supported by another bullet at the same deepest directory (#1999)', () => {
+  const repo = makeTmpRepo();
+  try {
+    const result = checkA([
+      { type: 'Create', path: 'newdir/nested/subdir/FILE.md' },
+      { type: 'Test', path: 'newdir/nested/subdir/FILE.test.md' },
+    ], repo);
+    assert.strictEqual(result.ok, true);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('checkA: a Modify under a plan-created directory still fails — Modify needs the file today (#1999)', () => {
+  const repo = makeTmpRepo();
+  try {
+    const result = checkA([
+      { type: 'Create', path: 'newdir/nested/subdir/A.md' },
+      { type: 'Create', path: 'newdir/nested/subdir/OTHER.md' },
+      { type: 'Modify', path: 'newdir/nested/subdir/FILE.md' },
+    ], repo);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(result.missing, ['newdir/nested/subdir/FILE.md']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('checkA missingDetail names the nearest existing ancestor for a still-missing parent (#1999)', () => {
+  const repo = makeTmpRepo();
+  try {
+    const result = checkA([{ type: 'Create', path: 'nowhere/new.js' }], repo);
+    assert.strictEqual(result.missingDetail.length, 1);
+    assert.strictEqual(result.missingDetail[0].path, 'nowhere/new.js');
+    assert.strictEqual(result.missingDetail[0].nearestExistingAncestor, '.');
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
@@ -172,6 +245,112 @@ test('checkC does not flag a command that errors or cleanly fails pre-dispatch',
 test('checkC with no verification checks passes trivially', () => {
   const result = checkC([], '/repo', { run: () => { throw new Error('must not be called'); } });
   assert.strictEqual(result.ok, true);
+});
+
+test('checkC returns an empty warnings array when no unparseable Step 2s are passed', () => {
+  const result = checkC([], '/repo', { run: () => { throw new Error('must not be called'); } });
+  assert.deepStrictEqual(result.warnings, []);
+});
+
+test('checkC surfaces unparseable Step 2s as warnings without affecting ok or findings', () => {
+  const unparseableStep2s = [
+    { taskNumber: '3', title: 'Add the row', raw: '- [ ] **Step 2: Run it to confirm FAIL**\n\n```bash\nnode --test x.test.js\n```' },
+  ];
+  const result = checkC([], '/repo', {}, unparseableStep2s);
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(result.findings, []);
+  assert.strictEqual(result.warnings.length, 1);
+  assert.strictEqual(result.warnings[0].task, '3');
+  assert.strictEqual(result.warnings[0].title, 'Add the row');
+  assert.match(result.warnings[0].raw, /Step 2: Run it to confirm FAIL/);
+});
+
+test('checkC: a real finding and an unparseable warning coexist independently', () => {
+  const deps = { run: () => ({ exitCode: 0, output: 'PASS\n' }) };
+  const result = checkC(
+    [{ taskNumber: '1', title: 'A', command: 'node -e "process.exit(0)"', expected: 'FAIL' }],
+    '/repo', deps,
+    [{ taskNumber: '2', title: 'B', raw: 'raw text' }],
+  );
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.findings.length, 1);
+  assert.strictEqual(result.warnings.length, 1);
+  assert.strictEqual(result.warnings[0].task, '2');
+});
+
+// #1999: Check C's append-to-existing exception.
+test('checkC: append-shaped task with a passing pre-run is not a finding — reported under appendShaped (#1999)', () => {
+  const repo = makeTmpRepo();
+  fs.mkdirSync(path.join(repo, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'tests', 'existing.test.js'), '// existing, passes today\n');
+  const deps = { run: () => ({ exitCode: 0, output: '# pass 3\n' }) };
+  const check = {
+    taskNumber: '1', title: 'Append tests', command: 'node --test tests/existing.test.js', expected: 'FAIL',
+    step1Text: 'Append cases to `tests/existing.test.js`.',
+    taskFileEntries: [{ type: 'Modify', path: 'tests/existing.test.js' }],
+    appendMarker: false,
+  };
+  try {
+    const result = checkC([check], repo, deps);
+    assert.strictEqual(result.ok, true);
+    assert.deepStrictEqual(result.findings, []);
+    assert.strictEqual(result.appendShaped.length, 1);
+    assert.strictEqual(result.appendShaped[0].task, '1');
+    assert.strictEqual(result.appendShaped[0].path, 'tests/existing.test.js');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('checkC: same shape without a matching Modify/Test bullet is still a finding (#1999)', () => {
+  const repo = makeTmpRepo();
+  fs.mkdirSync(path.join(repo, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'tests', 'existing.test.js'), '// existing\n');
+  const deps = { run: () => ({ exitCode: 0, output: '# pass 3\n' }) };
+  const check = {
+    taskNumber: '1', title: 'No Files bullet', command: 'node --test tests/existing.test.js', expected: 'FAIL',
+    step1Text: 'Append cases to `tests/existing.test.js`.',
+    taskFileEntries: [],
+    appendMarker: false,
+  };
+  try {
+    const result = checkC([check], repo, deps);
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.findings.length, 1);
+    assert.deepStrictEqual(result.appendShaped, []);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('checkC: the explicit "FAIL after Step 1" marker passes without the path heuristic (#1999)', () => {
+  const repo = makeTmpRepo();
+  const deps = { run: () => ({ exitCode: 0, output: '# pass\n' }) };
+  const check = {
+    taskNumber: '1', title: 'Marked', command: 'node --test whatever.test.js', expected: 'FAIL after Step 1',
+    step1Text: null,
+    taskFileEntries: [],
+    appendMarker: true,
+  };
+  try {
+    const result = checkC([check], repo, deps);
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.appendShaped.length, 1);
+    assert.strictEqual(result.appendShaped[0].path, null);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('checkC: the existing AC6 non-discriminating fixture still fails (no append shape, no marker) (#1999)', () => {
+  const deps = { run: () => ({ exitCode: 0, output: 'PASS\n' }) };
+  const result = checkC(
+    [{ taskNumber: '1', title: 'A', command: 'node -e "process.exit(0)"', expected: 'FAIL with "guard not present"' }],
+    '/repo', deps,
+  );
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.findings.length, 1);
+  assert.deepStrictEqual(result.appendShaped, []);
 });
 
 // ── Headroom ─────────────────────────────────────────────────────────────
@@ -416,4 +595,43 @@ test('headroomCheck yields composed: [] and unchanged per-file results when the 
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
+});
+
+// ── Check D — control-byte scan (#2000) ─────────────────────────────────
+
+test('checkD flags a raw NUL mid-line with its line, column, and codePoint', () => {
+  const text = 'line one\nsecond\0line\n';
+  const result = checkD(text);
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.findings.length, 1);
+  assert.strictEqual(result.findings[0].line, 2);
+  assert.strictEqual(result.findings[0].column, 7);
+  assert.strictEqual(result.findings[0].codePoint, 'U+0000');
+});
+
+test('checkD flags a form feed and an escape byte as findings', () => {
+  const text = 'a\x0Cb\x1Bc';
+  const result = checkD(text);
+  assert.strictEqual(result.ok, false);
+  assert.deepStrictEqual(result.findings.map((f) => f.codePoint), ['U+000C', 'U+001B']);
+});
+
+test('checkD does not flag tab, LF, or CR', () => {
+  const result = checkD('a\tb\nc\rd');
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(result.findings, []);
+});
+
+test('checkD does not flag multi-byte UTF-8 text or a literal backslash-zero escape', () => {
+  const result = checkD('café 中文 test("\\0")');
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(result.findings, []);
+});
+
+test('checkD caps findings at 20 and sets truncated: true beyond that', () => {
+  const text = '\0'.repeat(25);
+  const result = checkD(text);
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.findings.length, 20);
+  assert.strictEqual(result.truncated, true);
 });

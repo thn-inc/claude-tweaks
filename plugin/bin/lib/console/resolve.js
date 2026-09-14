@@ -9,6 +9,7 @@
 
 const path = require('path');
 const { evaluateMaturation } = require('../issues/grant-maturation');
+const { resolveRecords } = require('../wrap-up/pack');
 
 // Section names exactly as the console renders them (console-template.md;
 // engine-render.js's SECTION_SPECS for the five curation sections).
@@ -99,20 +100,16 @@ function readJson(deps, file) {
 }
 
 // Members: the fact pack's resolved record list when a pack exists (#1930
-// gathers it before the console), else the run dir's materialized headers.
+// gathers it before the console), else pack.js's shared resolveRecords
+// ladder (run dir's own headers, the worktree mirror, a parent multi-spec
+// run's manifest.yml + spec-*/work/ headers — #2028).
 function readMembers(deps, runDir) {
   const pack = readJson(deps, path.join(runDir, 'wrap-up-pack.json'));
   const fromPack = pack && pack.inputs && Array.isArray(pack.inputs.records) ? pack.inputs.records.map(Number).filter(Number.isFinite) : [];
   if (fromPack.length) return fromPack;
-  const nums = [];
-  for (const name of deps.readdir(path.join(runDir, 'work'))) {
-    const m = /^(\d+)-spec\.md$/.exec(name);
-    if (!m) continue;
-    const text = readText(deps, path.join(runDir, 'work', name)) || '';
-    const rec = /^record:\s*(\d+)\s*$/m.exec(text);
-    nums.push(Number(rec ? rec[1] : m[1]));
-  }
-  return [...new Set(nums)].sort((a, b) => a - b);
+  const state = readJson(deps, path.join(runDir, 'run-state.json'));
+  const worktree = state && typeof state.worktree === 'string' ? state.worktree : null;
+  return resolveRecords(deps, runDir, worktree).records;
 }
 
 function parseInvariant(patchText) {

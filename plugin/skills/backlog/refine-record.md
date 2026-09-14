@@ -1,10 +1,16 @@
-# Backlog Refine — Record Resolver (`#N`) and Breaker Reset
+# Backlog Refine — Resolve Lane and Breaker Reset
 
-Loaded by `SKILL.md`'s Input routing for two human-present-only forms — `refine #N[,#M...]` and
-`refine --reset-breaker` — split out into their own file rather than added to `refine-mode.md`
-(already at its 40,960-byte per-file ceiling). `refine-mode.md`'s whole-queue sweep never loads
-this file, and this file never runs that sweep: `#N[,#M...]` resolves exactly the named
-record(s)' own unresolved decision comments, nothing else in the queue.
+Two human-present-only procedures, split out into their own file rather than added to
+`refine-mode.md` (already close to its 46,080-byte per-file ceiling): the **Resolve lane**'s
+batch-table render and write mechanics, and the standalone `--reset-breaker` reset (#1887 retitled
+this file from "Record Resolver (`#N`)" — `#N` is now a filter over the whole-queue sweep, not a
+separate mode, so this file is no longer `#N`'s own entry point).
+
+`refine-mode.md` Step 4 reads this file for the Resolve lane on **every** `refine` invocation —
+whole-queue (bare `refine`) or `#N[,#M...]`-filtered — resolving exactly the fetched population's
+own unresolved decision comments and `bot:blocked` state, never a separate sweep of its own.
+`SKILL.md`'s Input routing still loads this file directly for the standalone `--reset-breaker`
+form, unaffected by the fold-in above.
 
 ## `--reset-breaker` (standalone)
 
@@ -18,18 +24,22 @@ processed this run (e.g. "#{n}, #{m}: not processed — `--reset-breaker` exits 
 worklist fetch; re-run `/claude-tweaks:backlog refine #{n},#{m}` to resolve them") — never a
 silent discard of the named numbers.
 
-`/claude-tweaks:backlog` is already on `_shared/pipeline-run-dir.md`'s standalone-auto allowlist,
+`/claude-tweaks:backlog` is already on `_shared/run-dir-resolution.md`'s standalone-auto allowlist,
 so this resolves the same `{ISO}-backlog-standalone` run directory any other standalone `backlog`
 invocation does — no new run-directory mechanism needed. `merge-lane-reset.md`'s own Reset branch
 writes its one `decisions.md` AUTO line into that directory, in its own existing log-line format
 (quoted there, not restated here).
 
-## `#N[,#M...]` — per-record decision resolver
+## The Resolve lane
 
 ### Step 1: Fetch
 
-Fetch each named number directly by number — never by label — so a record still carrying only the
-pre-migration comment-only marker (no label at all) stays reachable:
+`refine-mode.md`'s own Resolve fetch (Step 1 there) supplies this population: every record in the
+run's fetched worklist (whole-queue, or narrowed to `#N[,#M...]` when filtered) — never a `--label`
+query, so a record still carrying only the pre-migration comment-only marker (no label at all)
+stays reachable. A run reached directly at this file's own `#N[,#M...]` entry (a caller resolving
+straight to the Resolve lane without going through `refine-mode.md`'s other populations) fetches
+each named number directly instead:
 
 ```bash
 for n in {N...}; do gh issue view "$n" --json number,title,labels,body,comments; done
@@ -66,8 +76,8 @@ a record carrying `bot:blocked` with **no** live proposal at all still gets one 
 the re-authorize choice, so a `bot:blocked` record with no decision comment stays reachable through
 this same command.
 
-Render one table for the whole `#N,#M` list (columns: `#`, `Record`, `Unit`, `Choices`,
-`Evidence`). Choices per row:
+Render one table for the whole Resolve population (columns: `#`, `Record`, `Unit`, `Choices`,
+`Evidence`) — the whole queue, or the `#N,#M` list when filtered. Choices per row:
 
 - **grant anyway** — adds `auto:build` (human-confirmed — the `/backlog refine` row's already-authorized
   write in `_shared/work-record-permission-matrix.md`).
@@ -103,15 +113,15 @@ evidence line.
 
 ### Step 2.5: Empty batch
 
-When Step 2 yields zero rows for every named record — no unresolved decision comment ((a)/(b))
-and no `bot:blocked` (c) on any of them — skip Step 3's confirm gate entirely (there is nothing to
-confirm) and report exactly that: which named record(s) were checked and that neither an
-unresolved decision comment nor `bot:blocked` was found on any of them. For a record in the named
-list that is `ready` + `shaped:headless` with no `auto:build` grant — the one ungranted-headless
-case this resolver's own fetch doesn't classify — route the human onward to bare
-`/claude-tweaks:backlog refine`'s Grant lane (the sweep, not this per-record resolver) rather than
-implying this command itself has a grant path for it: this file's Step 1 fetch never checks for
-that condition, so never claim it was found clean.
+When Step 2 yields zero Resolve-lane rows for every named record — no unresolved decision comment
+((a)/(b)) and no `bot:blocked` (c) on any of them — this lane alone has nothing to confirm; report
+that plainly (which named record(s) were checked and that neither condition was found). This no
+longer means the whole `refine #{n}` invocation found nothing: since #1887, `#N` filters every lane
+of `refine-mode.md`'s unified sweep, not just this one — a `ready` + `shaped:headless` record with
+no `auto:build` grant still reaches the Grant lane (`refine-mode.md` Step 3), restricted to the
+named number(s), and Step 4's confirm gate covers whichever lanes the filtered population actually
+populated. Only when *every* lane's filtered population is empty is there truly nothing to
+confirm for `refine #{n}`.
 
 ### Step 3: Confirm
 
@@ -197,6 +207,6 @@ For each resolved row (skip a row the human's answer left untouched):
 |---|---|
 | Restating `_shared/work-record.md`'s Decision-comment template or Resolution rule inline | Cite it — two copies drift (`CLAUDE.md`'s Cross-references rule) |
 | Removing `needs:decision` while another unit's comment on the same record is still unresolved | The Resolution rule is explicit: only when zero unresolved `needs-decision:*` comments remain |
-| Running `refine-mode.md`'s whole-queue sweep from this file, or vice versa | Distinct scopes — targeted-by-number vs. every open record; never merge them |
-| A Routine firing `refine #N` or `refine --reset-breaker` | Both are human-present-only forms, exactly like bare `refine` — `SKILL.md`'s Component-Skill Contract |
+| Treating `#N[,#M...]` as a separate mode from bare `refine`, post-#1887 | One procedure (`refine-mode.md`) — `#N` only narrows every lane's population; restating this file's Resolve-lane render as its own sweep re-forks what the fold-in unified |
+| A Routine firing `refine #N`, bare `refine`'s Resolve lane, or `refine --reset-breaker` | All three are human-present-only forms, exactly like bare `refine`'s other human-decision lanes — `SKILL.md`'s Component-Skill Contract, `refine-headless.md`'s Resolve skip |
 | Duplicating `merge-lane-reset.md`'s question text or write mechanics for `--reset-breaker` | Call that file's existing procedure directly — it is the one write path that ever clears a trip |
