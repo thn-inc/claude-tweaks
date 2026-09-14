@@ -69,6 +69,8 @@ Materialize the record into a spec-shaped build file via `skills/flow/materializ
 
 ### Spec Step 2: Check for Existing Plan
 
+**Premise-check routing first (#1829).** Read `premise.satisfiedAtBase` from the materialize envelope (`skills/flow/materialize.md`'s "Premise check" paragraph) before searching for a plan. When `true` — the record's own `Premise-check:` command exited non-zero at this checkout's base, meaning the Current State claim it named no longer holds — do not search for a plan or proceed to Spec Step 3: route directly to the Wrap-Up Review Console's staged-close surface (the `staged/premise-satisfied-{n}.md` proposal materialize.js already wrote) rather than planning a build against a premise that is already gone. When `premise` is `null` (no `Premise-check:` line, or the check itself couldn't run), this paragraph is a no-op — proceed below exactly as before.
+
 Search `docs/superpowers/plans/` for a plan matching this spec (by number, topic, or date) — this is where `/superpowers:writing-plans` actually writes execution plans (see Spec Step 3 below); `docs/plans/` holds claude-tweaks pipeline state (ledger, audit caches), not plans.
 
 #### If a plan exists:

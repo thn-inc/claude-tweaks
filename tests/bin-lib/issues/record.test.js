@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   recordPayload, TYPE_LABELS, CLASSIFICATION_SCORING, LABELS, DEFER_REASONS,
-  extractFingerprint, extractVerifiedAsOf, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
+  extractFingerprint, extractVerifiedAsOf, extractPremiseCheck, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
   buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, buildNativeSubIssuesQuery,
   buildNativeParentQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
@@ -956,6 +956,50 @@ test('extractVerifiedAsOf: null when absent, when body is empty, and for non-str
 test('extractVerifiedAsOf: is line-anchored — prose mentioning a commit elsewhere does not match', () => {
   const body = 'See commit abc1234 for background.\n\n## Current State\nx';
   assert.strictEqual(extractVerifiedAsOf(body), null);
+});
+
+// --- specShapedBody / extractPremiseCheck (#1829) ---
+
+test('specShapedBody: omitting premiseCheck is byte-identical to the pre-change composition', () => {
+  const body = specShapedBody({
+    header: 'H', ...BASE, acceptanceCriteria: 'a', verifiedAsOf: 'abcdef1',
+  });
+  assert.ok(!body.includes('Premise-check:'));
+});
+
+test('specShapedBody: premiseCheck renders right after Verified-as-of, before Origin', () => {
+  const body = specShapedBody({
+    header: 'H', ...BASE, acceptanceCriteria: 'a', verifiedAsOf: 'abcdef1', premiseCheck: 'test $(wc -l < CLAUDE.md) -gt 150', provenance: { origin: 'o' },
+  });
+  assert.ok(body.startsWith('H\n\nVerified-as-of: abcdef1\n\nPremise-check: test $(wc -l < CLAUDE.md) -gt 150\n\nOrigin: o\n\n## Current State'));
+});
+
+test('specShapedBody: premiseCheck alone (no verifiedAsOf) renders with no stray blanks', () => {
+  const body = specShapedBody({ ...BASE, acceptanceCriteria: 'a', premiseCheck: 'test 1 -gt 0' });
+  assert.ok(body.startsWith('Premise-check: test 1 -gt 0\n\n## Current State'));
+});
+
+test('specShapedBody: premiseCheck rejects a multi-line command', () => {
+  assert.throws(
+    () => specShapedBody({
+      ...BASE, acceptanceCriteria: 'a', premiseCheck: 'line one\nline two',
+    }),
+    /premiseCheck must be a single-line command/,
+  );
+});
+
+test('extractPremiseCheck: reads the command back off a composed body', () => {
+  const body = specShapedBody({
+    header: 'H', ...BASE, acceptanceCriteria: 'a', premiseCheck: 'test $(wc -l < CLAUDE.md) -gt 150',
+  });
+  assert.strictEqual(extractPremiseCheck(body), 'test $(wc -l < CLAUDE.md) -gt 150');
+});
+
+test('extractPremiseCheck: null when absent, when body is empty, and for non-string input', () => {
+  assert.strictEqual(extractPremiseCheck('## Current State\nno premise check here'), null);
+  assert.strictEqual(extractPremiseCheck(''), null);
+  assert.strictEqual(extractPremiseCheck(null), null);
+  assert.strictEqual(extractPremiseCheck(undefined), null);
 });
 
 test('parseRecordFacets: breaking label sets facets.breaking to true (presence-only Compatibility axis, #2251)', () => {

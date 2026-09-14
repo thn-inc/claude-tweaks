@@ -30,7 +30,9 @@
 const { execFileSync } = require('child_process');
 const { composeSubject, ComposeSubjectError, TYPE_PREFIX } = require('./release/subject');
 const { parseRecordFacets, normalizeLabelNames } = require('./issues/record');
-const { parseRepo, ghAvailable, remoteUrl } = require('./repo-resolve');
+const {
+  parseRepo, ghAvailable, remoteUrl, repoSlug,
+} = require('./repo-resolve');
 
 const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--shell] [--help]\n';
 const GH_TIMEOUT_MS = 5000;
@@ -138,7 +140,7 @@ function run(argv, deps = realDeps) {
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
   const repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
   if (!repoSpec) { deps.stderr('compose-subject.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
-  const slug = `${repoSpec.owner}/${repoSpec.repo}`;
+  const slug = repoSlug(repoSpec);
 
   const records = [];
   for (const n of opts.numbers) {

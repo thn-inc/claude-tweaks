@@ -168,6 +168,30 @@ test('--resolve-retries: a failing REST retry call exits 3, names the parent, an
   assert.deepStrictEqual(d.out, []);
 });
 
+// #2240: parseRepo now returns { host, owner, repo } for a GitHub Enterprise Server
+// remote (not just github.com), and the REST retry call threads --hostname when
+// host !== 'github.com' -- mirroring #2021's fix for _shared/pr-run-comments.md's
+// `gh api graphql` calls. `--repo` still hard-wraps as `github.com/${opts.repo}` (a
+// separate, pre-existing gap outside this record's scope), so this exercises the
+// remote-URL fallback path, which already preserves the real host.
+test('#2240: --resolve-retries on a GitHub Enterprise Server remote threads --hostname into the REST retry call', () => {
+  const d = deps({
+    remoteUrl: () => 'git@ghe.example.com:acme/widget.git',
+    runner(args) {
+      d.calls.push(args);
+      const q = args.find((a) => a.startsWith('query='));
+      if (q && q.includes('__type')) return probeOk;
+      if (q) {
+        return JSON.stringify({ data: { repository: { i5: { number: 5, subIssues: { nodes: [{ number: 6 }], pageInfo: { hasNextPage: true } } } } } });
+      }
+      assert.deepStrictEqual(args, ['api', '--paginate', 'repos/acme/widget/issues/5/sub_issues', '--jq', '.[].number', '--hostname', 'ghe.example.com']);
+      return '6\n9\n';
+    },
+  });
+  assert.strictEqual(run(['5', '--resolve-retries'], d), 0);
+  assert.deepStrictEqual(JSON.parse(d.out.join('')), { byParent: { 5: [6, 9] }, retry: [] });
+});
+
 test('--resolve-retries with an empty retry array is a no-op (unaffected output)', () => {
   const d = deps();
   assert.strictEqual(run(['5', '--repo', 'o/r', '--resolve-retries'], d), 0);
