@@ -1,11 +1,11 @@
 {
-  "computedAt": "2026-09-14T18:09:29.584Z",
+  "computedAt": "2026-09-14T18:51:36.717Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
       {
         "number": 2458,
-        "updatedAt": "2026-09-14T17:47:34Z",
+        "updatedAt": "2026-09-14T18:22:12Z",
         "state": "OPEN"
       },
       {
@@ -280,7 +280,7 @@
       },
       {
         "number": 2221,
-        "updatedAt": "2026-09-13T12:41:23Z",
+        "updatedAt": "2026-09-14T18:31:12Z",
         "state": "OPEN"
       },
       {
@@ -349,11 +349,6 @@
         "state": "OPEN"
       },
       {
-        "number": 1890,
-        "updatedAt": "2026-09-13T13:23:26Z",
-        "state": "OPEN"
-      },
-      {
         "number": 1873,
         "updatedAt": "2026-09-14T07:54:59Z",
         "state": "OPEN"
@@ -390,7 +385,7 @@
       },
       {
         "number": 1800,
-        "updatedAt": "2026-09-14T17:47:42Z",
+        "updatedAt": "2026-09-14T18:27:13Z",
         "state": "OPEN"
       },
       {
@@ -409,16 +404,6 @@
         "state": "OPEN"
       },
       {
-        "number": 1782,
-        "updatedAt": "2026-09-14T11:40:11Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 1780,
-        "updatedAt": "2026-09-14T11:40:05Z",
-        "state": "OPEN"
-      },
-      {
         "number": 1778,
         "updatedAt": "2026-09-14T13:36:26Z",
         "state": "OPEN"
@@ -429,18 +414,8 @@
         "state": "OPEN"
       },
       {
-        "number": 1753,
-        "updatedAt": "2026-09-14T11:39:57Z",
-        "state": "OPEN"
-      },
-      {
         "number": 1752,
-        "updatedAt": "2026-09-14T11:04:43Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 1751,
-        "updatedAt": "2026-09-14T11:39:50Z",
+        "updatedAt": "2026-09-14T18:11:28Z",
         "state": "OPEN"
       },
       {
@@ -450,7 +425,7 @@
       },
       {
         "number": 1732,
-        "updatedAt": "2026-09-14T17:56:09Z",
+        "updatedAt": "2026-09-14T18:48:43Z",
         "state": "OPEN"
       },
       {
@@ -513,12 +488,6 @@
             "color": "F9D0C4"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
             "id": "LA_kwDORUwzVM8AAAACsXHcvg",
             "name": "priority:low",
             "description": "Priority: dispatch picks last among prioritized records",
@@ -528,7 +497,7 @@
         "number": 2458,
         "state": "OPEN",
         "title": "Tighten release-bootstrap's --release-type/--extra-file override validation seam",
-        "updatedAt": "2026-09-14T17:47:34Z",
+        "updatedAt": "2026-09-14T18:22:12Z",
         "facets": {
           "origin": "capture",
           "risk": "low",
@@ -541,7 +510,7 @@
           "stage": "ready",
           "grants": {
             "build": true,
-            "merge": true
+            "merge": false
           },
           "bot": {
             "inProgress": false,
@@ -708,94 +677,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n`/claude-tweaks:dispatch` keeps four session-scoped exclusion files, each with its own shape, producer, reader, and report:\n\n| File | Shape | Written by | Read by |\n|---|---|---|---|\n| `dispatch-blocked-excluded.json` | `{number, blockedBy: number[]}[]` | `queue-pull-script.md` (removed from the pool) | `blocked-exclusion-report.md` |\n| `dispatch-open-pr-excluded.json` | `{number, pr}[]` | `queue-pull-script.md` (removed from the pool) | `open-pr-exclusion-report.md`; SKILL.md's `#N` / `#N,#M` forms (reason lookup, #1973) |\n| `dispatch-oversized-excluded.json` | `{records: number[], size, threshold}[]` | `queue-pull-script.md` (stays in the pool) | `next-ranking.md` (excludes), `oversized-group-report.md` |\n| `dispatch-firing-excluded.json` | `number[]` | SKILL.md's Loop per `firing-exclusion.md` (append per iteration) | `next-ranking.md` (excludes) |\n\nEvery one is read with an inline `fs.existsSync(p) ? require(p) : []` and filtered with hand-written `Set` logic inside a `node -e` block embedded in the skill's markdown; `next-ranking.md`'s bash block alone carries two different key derivations (`keyOf(g)` for oversized record-sets, member membership for firing numbers). The next exclusion reason (a residue class, a maintainer deny-list, a freshness veto) copies the pattern a fifth time or forces this refactor later. No `bin/` module owns the concept: `bin/lib/dispatch/` holds `artifact-verdict.js`, `ceremony-derive.js`, `queue-order.js` only.\n\n## Deliverables\n- [ ] `bin/lib/dispatch/exclusions.js`: one module owning the shape and the file — `readExclusions(path)` → `{ reason, records: number[], detail }[]` (absent/unreadable → `[]`), `appendExclusion(path, entry)`, `excludedNumbers(entries, reasons)` → `Set<number>`, and `groupIsExcluded(group, entries, reasons)` (true when any member is in the set, the semantics `firing-exclusion.md` and `next-ranking.md` already use), with unit tests in `tests/bin-lib/dispatch/exclusions.test.js`.\n- [ ] One session-scoped `dispatch-exclusions.json` replacing the four files: `queue-pull-script.md` writes `blocked` (`detail: { blockedBy }`), `open-pr` (`detail: { pr }`), and `oversized` (`detail: { size, threshold }`) entries through `appendExclusion` after truncating the file at the start of its run; SKILL.md's Loop appends `firing` entries through the same call per `firing-exclusion.md`'s rule (unchanged trigger conditions).\n- [ ] `next-ranking.md`'s script filters with `groupIsExcluded(g, entries, ['oversized', 'firing'])` — one derivation, no `keyOf` vs member split; the `#N` / `#N,#M` reason lookup reads `open-pr` entries from the same file.\n- [ ] The three report files and `blocked-exclusion-report.md` read the one file filtered by reason, rendering byte-identical lines to today; `firing-exclusion.md` and `dispatch/SKILL.md` name the new file and the reason vocabulary.\n- [ ] `tests/dispatch-firing-exclusion.test.js` (which extracts and executes `next-ranking.md`'s bash block) updated to seed `dispatch-exclusions.json` entries instead of two files; `tests/session-tmp-root-migration.test.js` and `tests/node-e-snippet-syntax.test.js` stay green (they scan the same blocks).\n- [ ] `docs/plugin-structure.md` gains the new module wherever it lists `bin/lib/{name}/` modules (it names the directory convention, not each file, today — add a line only if a per-module list exists); `_shared/session-tmp-root.md` enumerates no dispatch file names, so it needs no edit.\n\n## Acceptance Criteria\n1. Exactly one session-scoped exclusion file is written or read anywhere under `plugin/skills/dispatch/`; `grep -rn \"excluded.json\" plugin/skills` returns no match.\n2. All four reasons survive with their current pool semantics: `blocked` and `open-pr` still remove candidates from `dispatch-groups.json` in the queue pull; `oversized` and `firing` still leave groups in the pool and are excluded only by the ranking script.\n3. Each report renders the same line text as before for the same inputs; the `#N` form still names the linked PR for an `open-pr` exclusion.\n4. `tests/dispatch-firing-exclusion.test.js`'s four scenarios (absent file, one excluded group, all excluded → `null`, bundle-member match) pass against the new shape; `exclusions.js` has its own unit coverage; `npm test` is green.\n5. Adding a fifth reason requires one `appendExclusion` call site and one report, no new file or filter logic — demonstrated by a test that seeds an unknown reason and shows the ranking ignores it while `readExclusions` returns it.\n\n## Technical Approach\nMove the concept into code and leave the skills as callers: the markdown scripts already shell out to `node -e` with `${CLAUDE_PLUGIN_ROOT}/bin/lib/...` requires, so `require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js')` inside those blocks is the same pattern `session-tmp.js` is loaded with today. One file rather than one-per-reason: the readers already differ only by reason, and a single array with a `reason` field is what makes the fifth reason a one-line append. Keep the pool split (`blocked`/`open-pr` removed at queue pull; `oversized`/`firing` filtered at ranking) exactly as is — the record is about the file mechanism, not the exclusion semantics.\n\n### Key Files\n- `plugin/skills/dispatch/queue-pull-script.md` — the `files` map and the three producer writes.\n- `plugin/skills/dispatch/next-ranking.md` — the `files` map, the `firingExcluded`/`oversizedKeys` filter.\n- `plugin/skills/dispatch/firing-exclusion.md` — the append rule.\n- `plugin/skills/dispatch/SKILL.md` — Loop paragraph; `#N` / `#N,#M` bullets (#1973 reason lookup).\n- `plugin/skills/dispatch/blocked-exclusion-report.md`, `open-pr-exclusion-report.md`, `oversized-group-report.md` — readers.\n- `plugin/bin/lib/dispatch/` — new `exclusions.js` beside `queue-order.js`.\n- `tests/dispatch-firing-exclusion.test.js`, `tests/bin-lib/dispatch/` — script-executing test and new unit test.\n\n## Gotchas\n- `dispatch-blocked-excluded-body.json` is an intermediate of the body-text blocker pass, not an exclusion list; leave it alone.\n- The reports' \"drain + zero-eligible silence\" exception keys on report content, not file presence; reading one file for all reasons must not change when a report is omitted.\n- `tests/dispatch-firing-exclusion.test.js` extracts the bash block by a fenced-code regex; keep the block's fence and the `eval \"$(node -e …)\"` prologue shape so the extraction still matches.\n- Truncate-then-append in the queue pull must happen once at the start of `queue-pull-script.md`, before the blocked pass — the firing entries appended by the Loop live in the same file and must survive the per-iteration re-pull, so the truncation drops only non-`firing` entries (`readExclusions` → filter → rewrite), never the whole file.\n\n## Original request\n\nWhole-branch pre-release review finding (v6.113.0 -> origin/main, d68ffa7d9..7036ce768): the next exclusion reason will either copy this one-off pattern a fifth time or require a larger later refactor to unify what should have been one mechanism from the start.\n\n",
-        "createdAt": "2026-08-31T20:18:30Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1752,
-        "state": "OPEN",
-        "title": "dispatch/next-ranking.md: unify ad hoc per-reason exclusion-list files into one mechanism",
-        "updatedAt": "2026-09-14T11:04:43Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
@@ -2563,90 +2444,6 @@
     ],
     [
       {
-        "body": "**Skill:** shared-contract-extraction | **Section:** Gotchas | **Category:** drift | **Classification:** additive | **Confidence:** high\n\nVerified-as-of: 39c3b46bd5b903eb1f9862f557a5c6276b4cb5b6\n\n## Current State\n\ndocs/plugin-structure.md's `_shared` row (lines 94 and 100) was amended by commit 399981c52 (\"ceremony-profile.md rowed in plugin-structure\", refs #1926) after a whole-branch review lens flagged its absence — the opposite outcome from the #1995 `dispatch-waiting.md` case this skill cites as its only worked example, so the skill's unconditional \"needs nothing\" claim no longer matches actual reviewed practice.\n\n## Deliverables\n\n**Current:**\n```\n- **A new `_shared/*.md` file registers in `docs/skill-graph.md` only — `docs/plugin-structure.md` needs nothing.** Step 3's \"cross-reference `docs/plugin-structure.md`'s per-skill sub-file table as a registration site\" is right for a skill's *own* lazy-loaded sub-file and wrong for a `_shared` contract: that doc carries one curated row for the whole directory (`plugin/skills/_shared/*.md → Cross-skill shared content … — see the directory listing`), not a per-file table, so adding a row there is drift, not registration. Step 4's edge is still owed, including when no skill names the new file directly — file the graph row under the section for the reader it addresses and say so in the row. #1995's `_shared/dispatch-waiting.md` is the worked case: one `docs/skill-graph.md` row filed under `dispatch` (\"cited only from the contract's one-line pointer — no skill names it directly … for want of a section for contract-owned files\"), no `plugin-structure.md` edit, ruling narrowed from the plan's first draft at whole-branch review.\n```\n\n**Proposed:**\n```\n- **A new `_shared/*.md` file's `docs/skill-graph.md` edge is mandatory; a `docs/plugin-structure.md` mention is a judgment call, not a given.** Step 3's \"cross-reference `docs/plugin-structure.md`'s per-skill sub-file table as a registration site\" is right for a skill's *own* lazy-loaded sub-file and wrong to apply unmodified to a `_shared` contract: that doc carries one curated row for the whole directory (`plugin/skills/_shared/*.md → Cross-skill shared content … — see the directory listing`), not a per-file table, so adding a *new dedicated row* there is drift, not registration. Step 4's edge is still owed, including when no skill names the new file directly — file the graph row under the section for the reader it addresses and say so in the row. #1995's `_shared/dispatch-waiting.md` is the worked case for staying out of `plugin-structure.md` entirely: one `docs/skill-graph.md` row filed under `dispatch` (\"cited only from the contract's one-line pointer — no skill names it directly … for want of a section for contract-owned files\"), no `plugin-structure.md` edit, ruling narrowed from the plan's first draft at whole-branch review. That is not the only outcome, though: #1926's `_shared/ceremony-profile.md` was added *into* the curated row itself on a review finding (\"the curated `_shared` row lists ceremony-profile.md\", `399981c52`) — the row's own self-description (\"a curated subset … only the fragments worth calling out here\") makes whether to fold the new file into that curated list an explicit judgment call each extraction has to make, not a rule that always resolves to \"nothing.\"\n```\n\n## Acceptance Criteria\n\nThe Gotchas section's absolute claim that a new `_shared/*.md` file never needs a `docs/plugin-structure.md` mention is contradicted by #1926's `_shared/ceremony-profile.md`, which a whole-branch review explicitly required adding to that doc's curated `_shared` row.\n\n_Filed by `/claude-tweaks:harness-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n\n<!-- work-fingerprint: harnesshealth-7f78d679 -->\nwork-fingerprint: harnesshealth-7f78d679",
-        "createdAt": "2026-09-11T05:19:35Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACvj9UVg",
-            "name": "by:harness-health",
-            "description": "",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACvj9UWQ",
-            "name": "harness-health:additive",
-            "description": "",
-            "color": "ededed"
-          }
-        ],
-        "number": 2221,
-        "state": "OPEN",
-        "title": "Skill drift: shared-contract-extraction — Gotchas",
-        "updatedAt": "2026-09-13T12:41:23Z",
-        "facets": {
-          "origin": "harness-health",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Filed by wrap-up reflect (light mode, record #1971's run, refs #1971).\n\n## Current State\n\n`bin/set-config.js` writes exactly one `config.yml` lever per invocation (`--key <lever> --value\n<value>`). The documented recovery path for an inherited run directory that reached `/flow`'s Step\n3 with no `config.yml` yet (`flow/steps-and-gates.md`'s \"Adopting an inherited run directory\", case\n3) requires computing and writing all 13 canonical Manifesto levers before the pipeline can\nproceed. Record #1971's own wrap-up run hit exactly that case and needed 13 sequential\n`set-config.js` invocations to backfill the Manifesto.\n\nEvidence: run `2026-09-08T115203-record-1971`'s own Step 3 recovery — 13 separate\n`node bin/set-config.js --run ... --key ... --value ...` Bash calls to write `mode`,\n`scope-creep`, `overlap`, `design-intent`, `leftover-default`, `auto-fix-threshold`,\n`review-auto-apply-ceiling`, `tidy-aggressiveness`, `ceremony-profile`, `model-stance`,\n`merge-verification`, `design-critique`, `merge-authorization`.\n\n## Deliverables\n\n- [ ] `bin/set-config.js` accepts a batch form (e.g. repeated `--key X --value Y` pairs, or a\n      `--from-json <file>` of `{lever: value}` pairs) that validates and writes every pair in one\n      invocation, using the same per-lever validation (`validateLever`) it already runs today.\n- [ ] The single-pair form (`--key <lever> --value <value>`) keeps working unchanged — this is\n      additive, not a breaking CLI change.\n- [ ] `flow/steps-and-gates.md`'s case 3 recovery procedure references the batch form once it\n      exists.\n\n## Acceptance Criteria\n\n- A caller can write all 13 canonical Manifesto levers via one `set-config.js` invocation instead\n  of 13.\n- Existing single-key callers (the Ceremony escape hatch, `flow/manifesto.md`'s per-lever writes)\n  are unaffected.\n\nDefer-reason: tangential",
         "createdAt": "2026-09-08T12:42:32Z",
         "labels": [
@@ -3053,90 +2850,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\n\nThe record's premise is half wrong, and the correction changes the deliverable. `checkBookkeepingStampsGate` (`plugin/bin/lib/hooks/pre-tool-use.js`) already gates PR-early lifecycle completion: once this run's materialize commit has landed and the worktree stamp is present, any covered call (Edit/Write/NotebookEdit or a Bash git write, including a push) is denied under `integration-model: pr-first` while `run-state.json` has no `pr` and `decisions.md` carries no `PR-early run lifecycle: … FAILED` degrade line (`hasLoggedPrDegrade`), with a remediation message in the same shape as the IL-131 worktree-stamp deny. Pinned by `tests/hooks-bookkeeping-stamps-gate.test.js` (\"worktree stamped, pr-first, no PR recorded → deny\"; \"degrade already logged → allow\").\n\nThe one hole is deliberate and is exactly where #903 fell through: the #989 exemption (`hasNoUpstreamYet`) lets a push that establishes the branch on `origin` for the first time through the PR-stamp branch unconditionally, because that push *is* `pr-early-run-lifecycle.md` Step 2. It does not check that Step 1 ran first. Step 1 is the `gh pr list --head {branch} --state all` reuse/reopen check that would have found the stale, still-open draft PR from the tombstoned earlier attempt at #903 before any push; but Step 1 logs to `decisions.md` only on its reopen path (`PR-early run lifecycle: reopened PR #{n} for retry`), never on its no-match or reuse-open paths, so a gate cannot tell \"Step 1 ran and found nothing\" from \"Step 1 never ran\". In dispatch run `2026-09-03T041741-record-903`, the first Task call skipped both stamps; the second call's test phase-exit push was that branch's first push, was exempted, and collided with the stale PR (non-fast-forward against unrelated history), needing a manual force-push and reconcile.\n\nThe ledger half holds as filed: `/claude-tweaks:flow` Step 1.8 creates the open-items ledger at run start (`flow/SKILL.md`), `ledger/SKILL.md`'s Create operation is \"called by `/flow` Step 1 or `/build` on first item\", and `review/code-mode-steps.md` merges `test/qa` ledger entries into the findings table by reading the file. A missing ledger file at review time reads as \"no entries\" with no note. Nothing logs a reason when Step 1.8 is skipped.\n\n## Deliverables\n\n- [ ] **Step 1 always logs.** `_shared/pr-early-run-lifecycle.md` Step 1: add a `decisions.md` line on each outcome that currently logs nothing — `AUTO {time} — PR-early run lifecycle: no existing PR for {branch}; creating. Reversibility: n/a.` on the no-match path and `… reusing open PR #{n} for {branch}. Reversibility: high.` on the reuse-open path — so every Step 1 completion leaves a `PR-early run lifecycle:` line before Step 2's push.\n- [ ] **Tighten the #989 exemption to \"Step 1 ran\".** In `checkBookkeepingStampsGate`'s `!runState.pr` branch, the first-push exemption additionally requires a `PR-early run lifecycle:` line in this run's `decisions.md` (any of the Step 1 lines above, or a reopen line). Absent: deny with a message in IL-131's shape naming Step 1's `gh pr list --head {branch} --state all` check and the log line the gate looks for. Present: allow exactly as today. A resolved `local-merge` model is unaffected (that branch never reaches the exemption).\n- [ ] **Ledger presence note at review.** In `review/code-mode-steps.md`, where `test/qa` ledger entries are merged: when no ledger file exists for the spec's `{feature}` and `decisions.md` has no line matching `ledger` creation or an explicit skip, append one `SKIP {time} — review: no open-items ledger found for {feature} and no logged creation/skip; QA entries could not be merged. Reversibility: n/a.` line and render one sentence in the review summary's findings preamble. Soft: never a deny, never a stop. `flow/SKILL.md` Step 1.8 gains the matching one-line `AUTO … — flow: created open-items ledger {path}` log so the check has a positive signal to find.\n- [ ] **Tests.** `tests/hooks-bookkeeping-stamps-gate.test.js`: first push with no `PR-early run lifecycle:` line → deny naming Step 1; first push with a Step 1 no-match line → allow; the existing #989 and #1860 cases updated to seed the line (their intent is unchanged). A prose pin (sized like the existing review conformance tests) asserting `pr-early-run-lifecycle.md` Step 1 carries both new log lines, `code-mode-steps.md` carries the ledger-absence `SKIP` line, and `flow/SKILL.md` Step 1.8 carries the creation log line.\n- [ ] `docs/hooks.md`: extend the bookkeeping-stamps gate paragraph by one sentence naming the Step 1 precondition on the first-push exemption.\n\n## Acceptance Criteria\n\n1. `pr-early-run-lifecycle.md` Step 1 documents a `PR-early run lifecycle:` log line for the no-match, reuse-open, and reopen outcomes.\n2. Gate fixture: worktree stamped, `pr-first` stubbed, branch with no upstream, `decisions.md` without any `PR-early run lifecycle:` line → a push is denied and the message names Step 1; same fixture with the no-match line → allowed; a push of an already-tracked branch with no PR still denied (existing case unchanged).\n3. `code-mode-steps.md` states the ledger-absence `SKIP` line and the summary sentence; `flow/SKILL.md` Step 1.8 states the creation log line.\n4. `npm test` green; every existing case in `tests/hooks-bookkeeping-stamps-gate.test.js` passes with at most the seeded-line change described above.\n5. `docs/hooks.md` names the Step 1 precondition once.\n6. Re-running #903's sequence (materialize, skip Step 1, first push) in a fixture is denied before the push; the PR description quotes the deny message.\n\n## Technical Approach\n\nDo not add a second gate; extend the existing one's exemption predicate with a `decisions.md` regex read, the same file read `hasLoggedPrDegrade` already performs (share the read, match two patterns). Keep the exemption one-shot and unpersisted. The ledger check is prose in the review step plus a `SKIP` log line, matching `_shared/auto-decision-log.md`'s status vocabulary (a `SKIP` needs no artifact). Cross-check the prior-art dimensions the #989 and #1860 tests established (git-error upstream, inherited `origin/main` upstream, already-tracked branch) and keep each covered with the new precondition seeded.\n\n### Key Files\n\n- `plugin/bin/lib/hooks/pre-tool-use.js` — `!runState.pr` branch: Step 1-line precondition on the #989 exemption; deny message; shared `decisions.md` read with `hasLoggedPrDegrade`\n- `plugin/skills/_shared/pr-early-run-lifecycle.md` — Step 1 no-match and reuse-open log lines\n- `plugin/skills/review/code-mode-steps.md` — ledger-absence `SKIP` line and summary sentence\n- `plugin/skills/flow/SKILL.md` — Step 1.8 creation log line\n- `tests/hooks-bookkeeping-stamps-gate.test.js` — new deny/allow cases; seeded line in #989/#1860 cases\n- `docs/hooks.md` — one sentence on the precondition\n\n## Gotchas\n\n- The exemption must stay one-shot: never persist a \"Step 1 ran\" flag into `run-state.json`; the regex read is cheap and the file is the audit trail.\n- A retried run reuses `decisions.md` across attempts; a Step 1 line from a *previous* attempt would satisfy the precondition. Match the line's branch name against the push's branch to keep it attempt-specific.\n- `hasLoggedPrDegrade`'s regex is case-insensitive and unanchored; keep the new patterns equally tolerant of the `AUTO {time} —` prefix variations `log-decision.js` emits.\n- The record's original Deliverable 1 asked for a check \"before the first phase-exit push\"; the existing gate already covers every push except the first-push exemption, so the change is a precondition on that exemption, not a new phase-exit hook.\n\n## Original request\n\nDefer-reason: pre-existing-outside-diff\n\nOrigin: reflect full mode (Near-misses lens) from #903's wrap-up, dispatch run 2026-09-03T041741-record-903\n\n## Current State\n\n`/claude-tweaks:dispatch`'s two-call model splits a group's `/flow` run across two Task calls\n(`build,test` then `review,polish,wrap-up`). The first call's build phase is documented to run\ntwo required steps before or alongside the materialize commit: `pr-early-run-lifecycle.md`'s \"Run\nstart\" procedure (Callers table: `build/worktree-setup.md` Step 6, \"once per run, immediately\nafter the materialize commit, before Spec Step 2\") and `/claude-tweaks:flow` Step 1.8 (\"create the\nopen items ledger\"). Neither has a completion gate — nothing checks, before the run proceeds past\nbuild, that either step actually ran.\n\n`build/worktree-setup.md` Step 4.5's `record-worktree` stamp is a sibling required step in the\nsame phase, and it *does* have one (IL-131): a later Edit/Write inside the worktree is denied\noutright with an explicit remediation command until the stamp lands. The other two steps have no\nanalogous check.\n\nReproduced live in dispatch run `2026-09-03T041741-record-903` (#903's build): the first Task\ncall's `decisions.md` section for `build,test` shows the Step 2.8 claim and the Manifesto adoption,\nthen jumps straight to `### Step 4: build (#903)` with no PR-early-lifecycle or ledger-creation log\nline anywhere. The consequence surfaced two phases later, in the second Task call's own test\nphase-exit push: this run's freshly-built branch collided with a stale, still-open draft PR from\nan earlier, tombstoned attempt at the same record (branch name reused deterministically, no shared\ncommit ancestry), requiring a manual force-push-and-reconcile that an early gate would have caught\nimmediately after the first call's build phase, before any divergence could accumulate. Separately,\n`record-worktree`'s own IL-131 gate *did* fire mid-way through this same second call (denied a\n`stage-item.js` write with \"this run's worktree assignment was never recorded\"), confirming the\nfirst call also skipped that stamp — but self-corrected via its existing gate, unlike the other two.\n\n## Deliverables\n\n- A mechanical check — plausibly alongside the existing bookkeeping-stamps gate, or as a new\n  `flow`/`build` post-condition — that a run reaching its first phase-exit push (`/claude-tweaks:test`'s\n  or `/claude-tweaks:review`'s) must show *some* `PR-early run lifecycle:` decision-log line\n  (success, degrade-to-local-only, or an explicit `local-merge`/`current-branch` skip reason) before\n  that push proceeds.\n- A soft warning (not necessarily a hard gate) when a run reaches `/claude-tweaks:review` with no\n  ledger file for its spec and no logged reason the creation step was skipped.\n\n## Acceptance Criteria\n\n1. A run whose build phase never logs a `PR-early run lifecycle:` decision entry is caught before\n   its first phase-exit push under `integration-model: pr-first`, with a remediation path (not\n   necessarily a hard stop — a soft warning is acceptable given #903's own resolution showed the\n   condition is recoverable) analogous to IL-131's existing message shape.\n2. A run reaching `/claude-tweaks:review` with no ledger file and no logged skip reason surfaces a\n   visible note (ledger check, phase-trace, or console) rather than silently proceeding as though\n   nothing was ever open.\n3. Regression coverage under `tests/` pinning both new checks, matching the existing\n   `hooks-bookkeeping-stamps-gate` suite's style for the first one.\n\n_Filed by `/claude-tweaks:wrap-up` (Review Console auto-resolution, unattended) from dispatch run\n2026-09-03T041741-record-903._\n\n",
-        "createdAt": "2026-09-03T04:52:41Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1800,
-        "state": "OPEN",
-        "title": "pr-early-run-lifecycle and open-items ledger creation have no completion gate, unlike record-worktree's IL-131 check",
-        "updatedAt": "2026-09-14T17:47:42Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: reflect full-mode from #1076\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:build` Common Step 2 executes plans via `/superpowers:subagent-driven-development`, whose own Finish step deletes the plan's SDD workspace (`.superpowers/sdd/{plan}/`) once the final review is clean — including `progress.md`, where SDD convention ledgers deferred-minor review findings. claude-tweaks' wrap-up reads only the run ledger (`docs/plans/*-ledger.md`), so any observation ledgered solely in the SDD workspace is structurally lost at the seam. Observed in run 2026-08-20T154419-spec-1076: a scoped re-review's out-of-scope observation survived only because a later hindsight pass happened to re-surface it.\n\n## Deliverables\n\n- [ ] `plugin/skills/build/SKILL.md` Common Step 2 (or the SDD invocation instruction it composes) directs the controller to copy any surviving SDD deferred-minor / parked-finding ledger lines into the run ledger (phase `build/*`, status `deferred` or `observation`) before the SDD workspace is deleted.\n- [ ] The instruction names the source (`{workspace}/progress.md` lines matching `minor (deferred)` / `parked`) and the destination table's column shape.\n\n## Acceptance Criteria\n\n1. After a `/build` run whose SDD pass recorded at least one deferred minor, the run ledger contains those lines and the SDD workspace is deleted — verifiable by inspecting `docs/plans/{run}-ledger.md` post-build.\n2. A conformance check (or the existing suite pattern) pins the instruction's presence in `build/SKILL.md`.\n\n_Filed by `reflect` via wrap-up upstream-row self-reference collapse._\n",
         "createdAt": "2026-08-20T19:15:08Z",
         "labels": [
@@ -3200,84 +2913,6 @@
           "grants": {
             "build": true,
             "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: ledger resolve gate\n\nDefer-reason: blocked-dependency\n\n## Current State\n\nRecord #1302 built the WEBHOOK-TRIGGER mode (`plugin/skills/routine/webhook-trigger.md`), the `webhook_triggers` schema field, the filter grammar, and both preconditions -- all documented from `create_webhook_trigger`'s own tool description, since `RemoteTrigger` was confirmed unavailable via `ToolSearch select:RemoteTrigger` in that build session. This is the 4th consecutive session (2026-08-23 x2, 2026-08-26, 2026-09-05) to confirm the same unavailability. AC2 (\"verified against a real (or explicitly documented dry-run) call\") remains unmet: the request/response shape has never actually been confirmed against a live `create_webhook_trigger` call.\n\nA prior follow-up for this same gap, #1485, was filed and closed on 2026-08-31 -- but the closing commit (`e0d4aded`, \"[fast-lane] Dispatch-queue, worktree-guard, reconcile, and process-hygiene fixes (19 records)\") bundled 19 unrelated record numbers via `Fixes #N` and contains no work touching `webhook-trigger.md`, `RemoteTrigger`, or live-call verification. #1485 appears to have been swept into an unrelated batch closure rather than substantively resolved -- its own acceptance criterion (a live or explicit-dry-run `create_webhook_trigger` call) was never actually satisfied. This record exists so the gap is not lost a second time to the same failure mode; whoever picks this up should close it only against real evidence of a live (or explicit dry-run) call, not a batch commit that doesn't mention the file.\n\n## Deliverables\n\n- Re-run `ToolSearch select:RemoteTrigger` in a session where the tool may be reachable -- 4 consecutive interactive-session misses is a strong signal worth testing in a different session type (cloud/routine) if one becomes available.\n- Once reachable, call `create_webhook_trigger` against a real (or an explicit, logged dry-run) routine and record its actual required fields, response shape, and any App-not-installed error text.\n- Diff the actual response against what `plugin/skills/routine/webhook-trigger.md` currently documents (Step 5's assembled body, the `routine_trigger_id` field, the App-not-installed error detection) and correct any mismatch.\n- Before closing, verify the closing commit/PR actually touches `webhook-trigger.md` or names the live-verification evidence directly -- do not let this close via an unrelated batch sweep the way #1485 did.\n\n## Acceptance Criteria\n\n- A live (or explicit dry-run) `create_webhook_trigger` call has been made and its actual request/response shape is confirmed to match (or has been corrected to match) `plugin/skills/routine/webhook-trigger.md`.\n- The closing commit or PR description names this evidence directly (a transcript excerpt, a diff to `webhook-trigger.md`, or an explicit \"confirmed matching, no changes needed\" note) rather than a bare `Fixes #N` in an unrelated batch.\n\n## Technical Approach\n\nStart with `ToolSearch select:RemoteTrigger` in whichever session type is available at build time. If reachable, make one real or explicit-dry-run `create_webhook_trigger` call and capture its actual request/response shape verbatim before touching the docs. Then diff that captured shape against `webhook-trigger.md`'s current documentation section by section (assembled body, `routine_trigger_id`, App-not-installed error detection) and correct only what actually differs.\n\n### Key Files\n\n- `plugin/skills/routine/webhook-trigger.md` -- the documented request/response shape to verify and correct\n\n## Gotchas\n\n- If `RemoteTrigger`/`create_webhook_trigger` is still unreachable in whatever session builds this record, do not fabricate a \"verified\" result and do not close this record -- report the continued unavailability plainly (a 5th consecutive miss is itself a useful data point) and leave it open.\n- Do not let this close via a bulk/batch commit that references this issue number without actually touching the files above -- that is exactly how #1485 was lost.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
-        "createdAt": "2026-09-05T09:42:23Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          }
-        ],
-        "number": 1890,
-        "state": "OPEN",
-        "title": "Live-verify create_webhook_trigger request/response shape (#1302 follow-up, 4th recurrence)",
-        "updatedAt": "2026-09-13T13:23:26Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
           },
           "bot": {
             "inProgress": false,
