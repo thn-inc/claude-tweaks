@@ -46,6 +46,8 @@ const CONFLICT_MARKERS = [
   { tool: 'semantic-release', test: (name, isDir) => !isDir && /^release\.config\..+$/.test(name) },
   { tool: 'changesets', test: (name, isDir) => isDir && name === '.changeset' },
   { tool: 'goreleaser', test: (name, isDir) => !isDir && /^\.goreleaser\..+$/.test(name) },
+  { tool: 'goreleaser', test: (name, isDir) => !isDir && /^goreleaser\.ya?ml$/.test(name) },
+  { tool: 'standard-version', test: (name, isDir) => !isDir && /^\.versionrc(\..+)?$/.test(name) },
 ];
 
 const CONFIG_FILE = 'release-please-config.json';
@@ -125,6 +127,15 @@ function detectReleaseProcess(root, { integrationModel } = {}) {
   for (const { name, isDir } of entries) {
     for (const marker of CONFLICT_MARKERS) {
       if (marker.test(name, isDir)) return { verdict: 'conflict', tool: marker.tool, evidence: isDir ? `${name}/` : name };
+    }
+  }
+  // Second pass: semantic-release configured under package.json's `release` key — this needs
+  // file content, not just a name match, so it runs once here rather than as a CONFLICT_MARKERS
+  // entry (whose `test(name, isDir)` signature only ever sees the bare directory listing).
+  if (entries.some((e) => !e.isDir && e.name === 'package.json')) {
+    const { parsed } = readJson(path.join(root, 'package.json'));
+    if (parsed && typeof parsed === 'object' && parsed.release && typeof parsed.release === 'object') {
+      return { verdict: 'conflict', tool: 'semantic-release', evidence: 'package.json' };
     }
   }
   if (entries.some((e) => !e.isDir && e.name === CONFIG_FILE)) {
