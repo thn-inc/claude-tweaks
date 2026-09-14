@@ -28,9 +28,10 @@ rather than silently substituted. Never creates a directory unless `--create` is
   `/flow` (`flow/steps-and-gates.md` case 4), `/claude-tweaks:dispatch` (`dispatch/SKILL.md` Step
   4), and `flow/claim-targets.md`'s direct-invocation mint use — `config.yml`/`decisions.md` are
   written later, by whichever step actually initializes the run.
-- `--create` with `--standalone <name>`: step 4's standalone-auto-fallback shape —
-  `{ISO-timestamp}-{name}-standalone/`, pre-populated with `decisions.md` and `staged/`. Pass
-  `--mode auto` too when the caller is on the standalone-auto allowlist above (the command then
+- `--create` with `--standalone <name>`: `_shared/run-dir-resolution.md`'s step 4
+  standalone-auto-fallback shape — `{ISO-timestamp}-{name}-standalone/`, pre-populated with
+  `decisions.md` and `staged/`. Pass `--mode auto` too when the caller is on that step's
+  standalone-auto allowlist (the command then
   refuses to create outside auto mode); omit `--mode` entirely for a caller that creates in every
   mode regardless — the two documented exceptions, `/claude-tweaks:wrap-up` and
   `/claude-tweaks:release`, each with its own clause above.
@@ -63,8 +64,9 @@ Two consequences, both load-bearing:
   `session-start.js`) safe. Run directories that predate anchoring are the one exception, and
   `skills/wrap-up/cleanup-procedures-execution.md` Section C step 3.5 carries the transitional guard that
   copies them out before a worktree is removed.
-- **`work/{n}-spec.md` is the exception** and stays inside the worktree. It is git-tracked
-  and must be committed onto the feature branch; it reaches the main checkout by merge.
+- **`work/{n}-spec.md` is the first of two exceptions** and stays inside the worktree. It is
+  git-tracked and must be committed onto the feature branch; it reaches the main checkout by
+  merge.
 - **A `*-tidy-standalone*` run's own audit files are the second exception (#1493)** — under
   `pr-first`, `decisions.md`, `report.md`, and `staged/**` are copied into the worktree's own
   copy of the run dir (`tidy/SKILL.md` Step 7.5) and committed there, the same shape as
