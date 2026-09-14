@@ -134,5 +134,9 @@
   "skill:release": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1789400074395
+  },
+  "skill:harness-health": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1789400077489
   }
 }
