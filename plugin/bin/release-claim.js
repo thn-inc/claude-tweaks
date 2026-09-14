@@ -176,7 +176,7 @@ function run(argv, deps = realDeps) {
     sweep = { issueClosed: state === 'CLOSED' };
   }
   const r = release.releaseClaim({
-    owner: repoSpec.owner, repo: repoSpec.repo, issueNumber: issue, runId, reason, link: o.link || undefined, sweep,
+    owner: repoSpec.owner, repo: repoSpec.repo, host: repoSpec.host, issueNumber: issue, runId, reason, link: o.link || undefined, sweep,
     removeGrants: o.removeGrants, removeInProgress, runner: deps.runner, gitRunner: deps.gitRunner, now: deps.now(),
   });
   for (const label of r.labelsFailed) {

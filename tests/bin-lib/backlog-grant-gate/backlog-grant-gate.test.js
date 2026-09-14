@@ -96,6 +96,48 @@ test('resolveSubIssueNumbers (native): batches fetchNativeSubIssues and REST-ret
   assert.deepStrictEqual(Array.from(nums).sort((a, b) => a - b), [11, 21, 22]);
 });
 
+// #2240: the REST retry call for a truncated batch page threads --hostname
+// for a GitHub Enterprise Server host — same pattern fetch-sub-issues.js's
+// own REST retry loop already applies. The batched GraphQL probe/query call
+// is unchanged (matches that file's scope).
+test('#2240: resolveSubIssueNumbers (native) passes --hostname on the REST retry for a non-github.com host', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (args[0] === 'issue') return JSON.stringify([{ number: 20 }]);
+    if (args[0] === 'api' && args[1] === 'graphql') {
+      const q = args.find((a) => a.startsWith('query='));
+      if (q.includes('__type')) return JSON.stringify({ data: { __type: { fields: [{ name: 'subIssues' }] } } });
+      return JSON.stringify({ data: { repository: { i20: { number: 20, subIssues: { nodes: [], pageInfo: { hasNextPage: true } } } } } });
+    }
+    if (args[0] === 'api' && args[1] === '--paginate') return '21\n';
+    throw new Error(`unexpected call: ${JSON.stringify(args)}`);
+  };
+  resolveSubIssueNumbers({
+    workLinks: 'native', limit: 100, runner, owner: 'o', repo: 'r', host: 'ghe.example.com',
+  });
+  const retryCall = calls.find((a) => a[0] === 'api' && a[1] === '--paginate');
+  assert.deepEqual(retryCall.slice(-2), ['--hostname', 'ghe.example.com']);
+  const graphqlCall = calls.find((a) => a[0] === 'api' && a[1] === 'graphql' && a.some((v) => typeof v === 'string' && v.startsWith('query=') && !v.includes('__type')));
+  assert.doesNotMatch(graphqlCall.join(' '), /--hostname/);
+});
+
+test('#2240: resolveSubIssueNumbers (native) omits --hostname for github.com or no host', () => {
+  const runner = (args) => {
+    if (args[0] === 'issue') return JSON.stringify([{ number: 20 }]);
+    if (args[0] === 'api' && args[1] === 'graphql') {
+      const q = args.find((a) => a.startsWith('query='));
+      if (q.includes('__type')) return JSON.stringify({ data: { __type: { fields: [{ name: 'subIssues' }] } } });
+      return JSON.stringify({ data: { repository: { i20: { number: 20, subIssues: { nodes: [], pageInfo: { hasNextPage: true } } } } } });
+    }
+    if (args[0] === 'api' && args[1] === '--paginate') { assert.doesNotMatch(args.join(' '), /--hostname/); return '21\n'; }
+    throw new Error(`unexpected call: ${JSON.stringify(args)}`);
+  };
+  resolveSubIssueNumbers({
+    workLinks: 'native', limit: 100, runner, owner: 'o', repo: 'r', host: 'github.com',
+  });
+});
+
 // --- computeOutlook: the full Step 0 -> Step 2 Phase A pipeline ---
 
 // computeOutlook's three gh fetches, keyed by args[3]. There is deliberately

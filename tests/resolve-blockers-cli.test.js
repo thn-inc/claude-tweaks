@@ -144,6 +144,25 @@ test('--repo owner/name overrides the git remote', () => {
   assert.match(q, /-f owner=someone -f repo=else/);
 });
 
+// #2240: a GitHub Enterprise Server origin remote threads --hostname onto
+// the one gh call this CLI makes (the --repo flag always resolves against
+// github.com by this codebase's existing convention — only the auto-detected
+// remote can carry a non-github.com host).
+test('#2240: a GitHub Enterprise Server origin remote passes --hostname on the graphql call', () => {
+  const deps = fakeDeps({ remoteUrl: () => 'https://ghe.example.com/acme/widgets.git' });
+  const code = run(['720'], deps);
+  assert.equal(code, 0);
+  const q = deps.calls.runner[0];
+  assert.deepEqual(q.slice(-2), ['--hostname', 'ghe.example.com']);
+});
+
+test('#2240: a plain github.com remote omits --hostname', () => {
+  const deps = fakeDeps();
+  const code = run(['720'], deps);
+  assert.equal(code, 0);
+  assert.doesNotMatch(deps.calls.runner[0].join(' '), /--hostname/);
+});
+
 // --- success / output shape ----------------------------------------------
 
 test('success: one runner call, a number-keyed JSON line on stdout, exit 0', () => {
