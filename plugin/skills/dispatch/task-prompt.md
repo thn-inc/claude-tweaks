@@ -147,6 +147,11 @@ required pattern the moment the call returns, and treats a missing or malformed 
 of backgrounded/yielded execution — never trust to this clause's own wording without also keeping
 that check current.
 
+This call's own `decisions.md` writes (`log-decision.js`, called throughout `/flow`'s steps) are
+also what `sequential-execution.md`'s Heartbeat section (#2427) points a "still waiting?" user at
+for a long-running call like this one — a passive read of this group's run directory, never a
+reason to relax the Foreground execution clause above or have this call check in mid-turn.
+
 ## Second call — review,polish,wrap-up (gated on the first call)
 
 **Only dispatch this call if the first call's status line was DONE or DONE_WITH_CONCERNS AND its OUTCOME was `build-test-ok`.** A `NEEDS_CONTEXT`/`BLOCKED` status, an `OUTCOME` of `build-test-failed`/`build-test-blocked`, or no parseable report at all means this second call is never dispatched — the first call's own agent settles its own failure (its template above instructs it to), and the dispatching session takes the terminal path in `two-call-gate.md` section 5 (fail-loud reporting plus the `/claude-tweaks:wrap-up {target} cleanup-only` teardown call).
