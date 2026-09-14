@@ -1,4 +1,4 @@
-# PR-Early Run Lifecycle — draft PR at run start, phase-checklist updates
+# PR-Early Run Lifecycle — draft PR at run start, root cause, resume
 
 Canonical procedure for making a `pr-first` (`_shared/integration-model.md`) pipeline run
 **born public**: a draft PR opens immediately after the worktree exists and the materialize
