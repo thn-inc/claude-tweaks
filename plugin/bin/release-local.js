@@ -34,6 +34,7 @@ const { renderSection, prependSection, parseGitHubRemote } = require('./lib/rele
 const { precheck } = require('./lib/release/precheck.js');
 const { guardReleasableTree, pushAfterAncestryCheck } = require('./lib/release/run.js');
 const { resolvePolicyKeys } = require('./lib/policy-schema.js');
+const { withIndexLockRetry } = require('./lib/git-retry.js');
 
 const USAGE = [
   'usage: release-local.js [--dry-run] [--root <dir>] [--branch <name>]',
@@ -187,7 +188,10 @@ function run(argv, deps) {
     manifest.applyVersion(targets, version, deps.readFile, trackedWrite);
     trackedWrite('CHANGELOG.md', prependSection(deps.readFile('CHANGELOG.md'), section));
     deps.git(['add', '--', ...editedPaths]);
-    deps.git(['commit', '-m', `chore(release): v${version}`]);
+    // #2346: bounded-retry a transient index.lock collision (a sibling agent's
+    // git call, or a PostToolUse hook, in the same checkout) rather than
+    // hard-failing the release on it.
+    withIndexLockRetry(deps.git)(['commit', '-m', `chore(release): v${version}`]);
     stage = 'committed';
     deps.git(['tag', '-a', `v${version}`, '-m', `v${version}`]);
     stage = 'tagged';

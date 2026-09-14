@@ -3,6 +3,7 @@ const { precheck } = require('./precheck.js');
 const { unnamedRecordsGate } = require('./unnamed-records.js');
 const { bumpManifest, stubChangelogEntry, RELEASE_FILES } = require('./compose.js');
 const { mirrorRelease } = require('./mirror.js');
+const { withIndexLockRetry } = require('../git-retry.js');
 
 // Reused by bin/release-local.js (#2254): the branch/clean-tree guard, and the
 // fetch → ancestry re-check → push ordering. `onDiverged` is the caller's own
@@ -78,7 +79,11 @@ function runRelease(deps, { part, summary, date, dryRun, log, allowUnnamed = [] 
   const allowNote = gate.allowed.length > 0
     ? `\n\nallow-unnamed: ${gate.allowed.map((n) => `#${n}`).join(', ')}`
     : '';
-  deps.git(['commit', '-m', `Release v${version} — ${summary}${allowNote}`]);
+  // #2346: a sibling agent's own git call (or a PostToolUse hook) in the same
+  // checkout can hold .git/index.lock for the fraction of a second this
+  // commit needs it too — bounded-retry the commit rather than hard-failing
+  // the release on a transient collision.
+  withIndexLockRetry(deps.git)(['commit', '-m', `Release v${version} — ${summary}${allowNote}`]);
   // The marketplace pins the payload subdirectory at a commit, so the mirror needs
   // the release commit's sha — read after the commit lands, never before, or the
   // pin names the previous release. Reading it here rather than after the push is

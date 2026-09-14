@@ -31,6 +31,7 @@ These apply in ALL modes. They exist because multiple processes may commit to th
 | **Stage specific files only** | Never `git add -A` or `git add .`. |
 | **Verify commits landed** | Always `git log --oneline -3` after committing. |
 | **Never `--no-verify` / `--no-gpg-sign`** | Skipping hooks or signing bypasses safety the user opted into. If a hook fails, fix the underlying issue. |
+| **On `index.lock: File exists`, retry — never `rm` the lock** | Transient contention from a sibling process's own git call (or a hook) in the same checkout — every observed collision has cleared on a plain retry a couple of seconds later. `bin/lib/git-retry.js`'s `withIndexLockRetry` (~15 attempts, 2s apart, #2346) is the canonical shape every plugin commit call site now routes through — retry a hand-written `git commit` the same way rather than growing an ad-hoc loop, and never delete the lock file itself. |
 
 ## Phase-exit push (`integration-model: pr-first` only)
 
