@@ -9,6 +9,8 @@ files:
   - plugin/skills/_shared/staged-patch.md
   - plugin/skills/wrap-up/curation-engine.md
   - plugin/bin/wrap-up-engine.js
+  - plugin/skills/dispatch/drain-pr-overlap.md
+  - tests/console-autoresolve-drain-overlap-carveout.test.js
 ---
 
 # Review and Approve a Multi-Spec /flow Run
@@ -65,4 +67,5 @@ files:
 - Updated during build of #693 ("Add teardown ordering invariant + own-cwd guard for worktree removal") — Step 3's auto-skip red flag extended to cover the shared worktree-removal row (Shared teardown step 6), not just the per-spec claim-release/grant-removal/label-cleanup rows.
 - Updated during build of #906 ("Review Console: tier staged-diff display by reversibility") — Step 1's red flags now cover the reversibility-tiered patch display; `flow/multispec-console-template.md` and `wrap-up/console-template.md` (the canonical rule this journey's console cites) added to `files:`.
 - Updated during build of #1179 ("Needs-human carve-out (merge-check precedence)") — Step 3's list of what makes the dependent cleanup rows auto-skip now also covers the `consoleAutoResolve` path resolving the merge half to leave-PR-open when a `merge-check` verdict of `needs-human` exists for the run.
-- Related specs: #286 (Engine: multi-spec console section merging — the CLI call Step 1 references), #287, #350, #674, #675, #688, #693, #716, #906
+- Updated during build of #2299 ("Give console-resolve.js's mergeResolution a live drain-overlap-hold carve-out") — a third carve-out mirrored into `flow/multispec-review-console.md`'s Auto-resolution short-circuit: when `dispatch/drain-pr-overlap.md`'s own Auto-merge-gate hold (#1985) logged a group (or, for a bundle, any member group) as overlapping a still-open PR from earlier in the same drain firing, the merge half resolves to leave-PR-open while that PR is still genuinely open (re-checked live, never trusted as a persisted hold) and resolves normally once it merges or closes — this is the case the bundle path exists to protect, since the drain hold's own `group [{issues}]` wording targets exactly a dispatched group.
+- Related specs: #286 (Engine: multi-spec console section merging — the CLI call Step 1 references), #287, #350, #674, #675, #688, #693, #716, #906, #1179, #1985, #2299
