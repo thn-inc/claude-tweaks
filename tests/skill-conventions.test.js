@@ -9,13 +9,9 @@ const { listSkillDirs, KNOWN_SKILLS } = require('../plugin/bin/lib/skill-audit/s
 const SKILLS_DIR = path.join(__dirname, '..', 'plugin', 'skills');
 const ROOT = path.join(__dirname, '..');
 
-const CANONICAL_DIRECTIVE =
-  '> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked ' +
-  'Recommended. Multi-item → batch table with recommendations pre-filled, then one ' +
-  '`AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each ' +
-  'before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified ' +
-  'commands, recommended first and bold, one per line — `AskUserQuestion` there only for a ' +
-  'documented machine-consumed decision, named inline.';
+// #1909: the canonical text now lives in one place — imported, not re-typed —
+// so this file can't drift from the real copy the SessionStart hook injects.
+const { INTERACTION_STYLE_DIRECTIVE: CANONICAL_DIRECTIVE } = require('../plugin/bin/lib/hooks/interaction-style');
 
 function skillNames() {
   return listSkillDirs(path.join(ROOT, 'plugin'));
@@ -33,9 +29,14 @@ test('every skill directory with a SKILL.md is discovered', () => {
   }
 });
 
-test('every skill carries the canonical compressed interaction directive', () => {
+// #1909: retargeted from "every skill carries" to "no skill carries" — the
+// directive moved out of 35+ per-SKILL.md copies into one SessionStart-hook
+// injection (interaction-style.js, wired in session-start.js); the
+// hook-output side is pinned by tests/hooks-session-start.test.js. This test
+// now guards against a skill silently reintroducing its own inline copy.
+test('no skill carries its own inline copy of the interaction directive', () => {
   for (const name of skillNames()) {
-    assert.ok(read(name).includes(CANONICAL_DIRECTIVE), `${name} missing canonical directive`);
+    assert.ok(!read(name).includes(CANONICAL_DIRECTIVE), `${name} re-embeds the canonical directive inline`);
   }
 });
 
@@ -48,11 +49,13 @@ test('no skill retains the superseded long-form directive', () => {
   }
 });
 
-test('the directive keeps the prefix five existing tests assert on', () => {
+// #1909: was "the directive keeps the prefix five existing tests assert on" —
+// guarding against drift across five separately-typed copies of the prefix.
+// There is now exactly one copy (interaction-style.js), so the drift this
+// test caught can no longer happen; it's replaced by the module-shape check
+// below plus the corpus-wide absence check above.
+test('the canonical directive module still exports the documented prefix', () => {
   assert.ok(CANONICAL_DIRECTIVE.startsWith('> **Interaction style:**'));
-  for (const name of skillNames()) {
-    assert.ok(read(name).includes('> **Interaction style:**'), `${name} lost the prefix`);
-  }
 });
 
 const LINEAR_DIAGRAM_SKILLS = [

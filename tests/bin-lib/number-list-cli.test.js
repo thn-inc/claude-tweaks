@@ -134,3 +134,25 @@ test('success: --repo override is parsed and passed to fetch as owner/repo', () 
   assert.equal(seen.owner, 'someone');
   assert.equal(seen.repo, 'else');
 });
+
+// #2240: a GitHub Enterprise Server origin remote's resolved host reaches
+// `fetch` too, not just owner/repo — a caller whose only gh call is the one
+// `fetch` performs (resolve-blockers.js, resolve-linked-prs.js) has nowhere
+// else to pick it up.
+test('#2240: a GitHub Enterprise Server origin remote passes host to fetch', () => {
+  let seen = null;
+  const { run } = buildCli({ fetch: (args) => { seen = args; return new Map([[720, 'x']]); } });
+  const deps = fakeDeps({ remoteUrl: () => 'https://ghe.example.com/acme/widgets.git' });
+  const code = run(['720'], deps);
+  assert.equal(code, 0);
+  assert.equal(seen.host, 'ghe.example.com');
+});
+
+test('#2240: a plain github.com remote passes host: "github.com" to fetch', () => {
+  let seen = null;
+  const { run } = buildCli({ fetch: (args) => { seen = args; return new Map([[720, 'x']]); } });
+  const deps = fakeDeps();
+  const code = run(['720'], deps);
+  assert.equal(code, 0);
+  assert.equal(seen.host, 'github.com');
+});

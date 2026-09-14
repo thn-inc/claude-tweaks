@@ -72,14 +72,20 @@ function fetchAllRecords({ limit, runner, sessionId, ttlSeconds, now = Date.now(
   return records;
 }
 
-// { workLinks, limit, runner, owner, repo, probeFn } -> Set<number> of every
+// { workLinks, limit, runner, owner, repo, host, probeFn } -> Set<number> of every
 // closed record that is a decomposed sub-issue (trust.js's `hasParent`
 // input) — _shared/trust-table.md's `work-links` branch. `body-text` reads
 // every parent-issue's own task list with no extra network shape beyond the
 // one list call; `native` batches the sub_issues GraphQL probe
 // (fetchNativeSubIssues) with a per-parent REST retry for anything the batch
-// couldn't resolve in one page, mirroring that file's retry ladder.
-function resolveSubIssueNumbers({ workLinks, limit, runner, owner, repo, probeFn = probeSchemaStrict }) {
+// couldn't resolve in one page, mirroring that file's retry ladder. `host`
+// (optional, omitted/`github.com` = no flag) threads `--hostname` onto the
+// REST retry's `gh api` call — #2240, the same GitHub Enterprise Server
+// pattern fetch-sub-issues.js's own REST retry loop already applies; the
+// batched GraphQL probe above is unchanged, matching that file's scope.
+function resolveSubIssueNumbers({
+  workLinks, limit, runner, owner, repo, host, probeFn = probeSchemaStrict,
+}) {
   if (workLinks === 'native') {
     const parents = jsonOut(runner, ['issue', 'list', '--label', 'parent-issue', '--state', 'all', '--json', 'number', '--limit', String(limit)]);
     const numbers = parents.map((p) => p.number);
@@ -98,7 +104,9 @@ function resolveSubIssueNumbers({ workLinks, limit, runner, owner, repo, probeFn
       retryParents.push(...numbers);
     }
     for (const parentNumber of retryParents) {
-      const out = runner(['api', '--paginate', `repos/${owner}/${repo}/issues/${parentNumber}/sub_issues`, '--jq', '.[].number']);
+      const apiArgs = ['api', '--paginate', `repos/${owner}/${repo}/issues/${parentNumber}/sub_issues`, '--jq', '.[].number'];
+      if (host && host !== 'github.com') apiArgs.push('--hostname', host);
+      const out = runner(apiArgs);
       out.trim().split('\n').filter(Boolean).forEach((n) => all.add(Number(n)));
     }
     return all;
@@ -170,7 +178,7 @@ function computeOutlook(policy, fetch) {
   }
 
   const {
-    limit, workLinks, integrationBranch, owner, repo, runner, gitRunner, probeFn, sessionId, ttlSeconds,
+    limit, workLinks, integrationBranch, owner, repo, host, runner, gitRunner, probeFn, sessionId, ttlSeconds,
   } = fetch;
 
   // One `--state all` fetch (session-cached) supplies both this run's
@@ -184,7 +192,9 @@ function computeOutlook(policy, fetch) {
   const readyIssues = fetchReadyCandidates({ limit, runner });
   const candidates = filterCandidates(readyIssues, openNumbers);
 
-  const subIssueNumbers = resolveSubIssueNumbers({ workLinks, limit, runner, owner, repo, probeFn });
+  const subIssueNumbers = resolveSubIssueNumbers({
+    workLinks, limit, runner, owner, repo, host, probeFn,
+  });
   const gitLog = fetchGitLog({ integrationBranch, gitRunner });
   const records = allRecords.map((r) => ({
     ...r,

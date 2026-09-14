@@ -48,3 +48,32 @@ test('unparseable gh output does not run, rather than throwing', () => {
   assert.strictEqual(r.ran, false);
   assert.match(r.reason, /could not parse/);
 });
+
+// #1781: pr-first's own recorded PR is open by design until Phase 4's merge
+// decision — not residue. Keyed on the recorded PR number, not head-branch
+// equality, so a *different* stale PR on the same head branch is untouched.
+test('#1781: the recorded own PR is excluded from findings and reported on ownPr', () => {
+  const { findings, ownPr } = probeForge({ scope: SCOPE, run: stubRunner({ [PR_LIST]: PRS }), ownPr: 198 });
+  assert.ok(!findings.some((f) => f.subject === 'PR #198'), 'the recorded own PR must not appear as a finding');
+  assert.deepStrictEqual(ownPr, { number: 198, headRefName: 'worktree-feat' });
+  // The other open PR is untouched by the carve-out.
+  assert.ok(findings.some((f) => f.subject === 'PR #182'));
+});
+
+test('#1781: a second open PR on the same head branch with a different number still reports as blast-radius', () => {
+  const prs = JSON.stringify([
+    { number: 198, title: 'Recorded own PR', headRefName: 'worktree-feat' },
+    { number: 250, title: 'A forgotten draft from an earlier phase', headRefName: 'worktree-feat' },
+  ]);
+  const { findings, ownPr } = probeForge({ scope: SCOPE, run: stubRunner({ [PR_LIST]: prs }), ownPr: 198 });
+  assert.deepStrictEqual(ownPr, { number: 198, headRefName: 'worktree-feat' });
+  const forgotten = findings.find((f) => f.subject === 'PR #250');
+  assert.ok(forgotten, 'the non-recorded same-head-branch PR must still be reported');
+  assert.strictEqual(forgotten.scope, 'blast-radius');
+});
+
+test('#1781: ownPr unset (default) keeps existing "this work is reported" behavior and ownPr is null', () => {
+  const { findings, ownPr } = probeForge({ scope: SCOPE, run: stubRunner({ [PR_LIST]: PRS }) });
+  assert.ok(findings.some((f) => f.subject === 'PR #198'));
+  assert.strictEqual(ownPr, null);
+});

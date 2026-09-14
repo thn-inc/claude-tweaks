@@ -1,4 +1,4 @@
-# PR-Early Run Lifecycle — draft PR at run start, phase-checklist updates
+# PR-Early Run Lifecycle — draft PR at run start, root cause, resume
 
 Canonical procedure for making a `pr-first` (`_shared/integration-model.md`) pipeline run
 **born public**: a draft PR opens immediately after the worktree exists and the materialize
@@ -234,18 +234,33 @@ instead. Neither form is ever removed once written, so a run that starts `gh`-ab
 later gains `gh` (or vice versa) never loses recognition.
 
 **Phase checklist rows are delimited by `<!-- phases-start -->`/`<!-- phases-end -->` HTML
-comments** so the phase-checklist update procedure below can re-compose reliably (read body,
+comments** so `_shared/pr-checklist-refresh.md`'s phase-checklist update procedure can re-compose reliably (read body,
 replace only the content between the markers, write back) instead of parsing prose. Both
 delimiter pairs bracket the same checklist rows — the HTML-comment pair outermost, the
 plain-text pair immediately inside it (see the template above) — so either reader finds an
 unambiguous, non-overlapping span to replace. Start every row unchecked — `- [ ] {phase}` —
 even for steps this run's step-list argument will skip (e.g. `no-polish`); a skipped phase's
 row is removed at that phase's own would-be exit rather than predicted at creation, since Step
-1's own step-list resolution can still change before then in `interactive`/`hybrid` mode.
+1's own step-list resolution can still change before then in `interactive`/`hybrid` mode. This
+would-be-exit removal is immediate in a **single-record** run, unchanged from before. In a
+**multi-spec** run (dispatch bundle or `/flow` multi-spec — multiple records share one PR, see
+"Multi-spec runs share one PR" below), a spec's would-be polish exit never removes the row on its
+own: the row stays `- [ ] polish` until either some spec in the run reaches a real polish exit
+and flips it to `- [x] polish`, or `_shared/pr-checklist-refresh.md`'s Pre-merge title/description
+refresh removes it once it's confirmed no spec in the run ever ran polish (see
+`flow/multispec-pr-checklist.md` for the full rationale).
 
-Omit a `polish` row when the record's `surface:` is `backend` (polish never runs) — the same
-frontend/backend split `flow/steps-and-gates.md`'s own polish decision tree already makes; don't
-duplicate that logic, just skip the row when it will never happen.
+Omit a `polish` row only when **every** record in the run has `surface: backend` (polish never
+runs for any of them) — the same frontend/backend split `flow/steps-and-gates.md`'s own polish
+decision tree already makes; don't duplicate that logic, just skip the row when it will never
+happen for any record. A single-record run checks that one record's `surface:`, unchanged from
+before. A multi-spec run (dispatch bundle or `/flow` multi-spec — see "Multi-spec runs share one
+PR" below) reads every record's `surface:` facet from the parent `manifest.yml`'s `specs[]` list
+— the same list this step already walks to emit one `Fixes #{m}` line per record (see "One
+`Fixes #{n}` line per record" below) — and omits the row only when every entry is `backend`. An
+absent `surface:` facet counts as "can run polish" (only an explicit `backend` omits); the real
+polish decision is made at runtime by `flow/steps-and-gates.md`'s decision tree and detection
+layer 2, and creation must never pre-empt it toward omission.
 
 **One `Fixes #{n}` line per record.** A single-record run gets one line. A dispatch bundle
 (`dispatch/SKILL.md`'s file-overlap grouping) enumerates every record from the parent

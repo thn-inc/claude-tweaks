@@ -3,8 +3,6 @@ name: intake
 description: Sort a mixed braindump — pasted text or a file — onto this repo's shelves. Keywords - intake, braindump, gatekeeper.
 argument-hint: "[<dump text>] [--file <path>]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
-
 
 # Intake — Sort a braindump onto this repo's shelves
 

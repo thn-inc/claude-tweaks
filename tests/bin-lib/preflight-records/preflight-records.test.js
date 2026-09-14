@@ -69,6 +69,26 @@ test('fetchNativeDependencies: one batched aliased GraphQL call, -f owner/repo/q
   assert.deepEqual(deps.get(721), { blockedBy: [], openBlocker: false, openBlockerIds: [] });
 });
 
+// #2240: a non-github.com host threads --hostname onto this call — the only
+// gh-invoking call resolve-blockers.js / preflight-records.js's native mode
+// makes, so it's the flag's sole attachment point (no separate REST call).
+test('#2240: fetchNativeDependencies passes --hostname on a non-github.com host, omits it for github.com/unset', () => {
+  const response = () => JSON.stringify({ data: { repository: { i720: { number: 720, blockedBy: { nodes: [] } } } } });
+  const ghe = []; const dotcom = []; const unset = [];
+  fetchNativeDependencies({
+    numbers: [720], owner: 'a', repo: 'b', host: 'ghe.example.com', runner: (args) => { ghe.push(args); return response(); },
+  });
+  fetchNativeDependencies({
+    numbers: [720], owner: 'a', repo: 'b', host: 'github.com', runner: (args) => { dotcom.push(args); return response(); },
+  });
+  fetchNativeDependencies({
+    numbers: [720], owner: 'a', repo: 'b', runner: (args) => { unset.push(args); return response(); },
+  });
+  assert.deepEqual(ghe[0].slice(-2), ['--hostname', 'ghe.example.com']);
+  assert.doesNotMatch(dotcom[0].join(' '), /--hostname/);
+  assert.doesNotMatch(unset[0].join(' '), /--hostname/);
+});
+
 test('fetchNativeDependencies: a closed-only blockedBy list still reports the numbers, openBlocker false', () => {
   const runner = () => JSON.stringify({
     data: { repository: { i720: { number: 720, blockedBy: { nodes: [{ number: 700, state: 'CLOSED' }] } } } },

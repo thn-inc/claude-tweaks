@@ -326,6 +326,29 @@ test('CLI: 2-draft batch with a dedup-hit and a clean file exits 0, one line per
   assert.deepEqual(lines, ['dedup-hit #601', 'filed #602']);
 });
 
+// #2240: a GitHub Enterprise Server remote's `repo` value is repoSlug's
+// host-qualified `{host}/{owner}/{repo}` for gh's `-R/--repo` flag — a bare
+// `owner/repo` (repoSpec.host discarded) would silently target github.com.
+test('#2240: a GitHub Enterprise Server remote passes the host-qualified --repo value to every gh call', () => {
+  const draft = makeDraft();
+  const fp = feedback.computeFingerprint(draft);
+  const marker = `<!-- fingerprint: ${fp} -->`;
+  const repos = [];
+  const runner = (args) => {
+    repos.push(flagValue(args, '--repo'));
+    if (isList(args)) return JSON.stringify([]);
+    if (isCreate(args)) return 'https://ghe.example.com/acme/w/issues/900\n';
+    if (isView(args)) return JSON.stringify({ title: draft.title, body: `body\n${marker}\n` });
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out } = cliDeps({ runner, remoteUrl: 'https://ghe.example.com/acme/w.git', readDraftsFile: () => [draft] });
+  const code = run(['--drafts', 'drafts.json'], deps);
+  assert.equal(code, 0);
+  assert.deepEqual(out.join('').trim().split('\n'), ['filed #900']);
+  assert.ok(repos.length > 0);
+  for (const r of repos) assert.equal(r, 'ghe.example.com/acme/w');
+});
+
 test('CLI: a read-back mismatch in one draft exits 1 but still reports the sibling clean draft', () => {
   const draftA = makeDraft({ title: 'Draft A: will mismatch', fingerprintBasis: { component: 'skills/a', summary: 'mismatch finding' } });
   const draftB = makeDraft({ title: 'Draft B: files cleanly', fingerprintBasis: { component: 'skills/b', summary: 'clean finding' } });
@@ -550,9 +573,11 @@ test('validateDraft: flags a missing title, body, and fingerprintBasis fields in
   assert.equal(validateDraft({ title: 't', body: 'b', fingerprintBasis: { component: 'c', summary: 's' } }, 0), null);
 });
 
-test('parseRepo: extracts owner/repo from github.com/owner/repo and github.com:owner/repo.git forms', () => {
-  assert.deepEqual(parseRepo('github.com/owner/repo'), { owner: 'owner', repo: 'repo' });
-  assert.deepEqual(parseRepo('github.com:owner/repo.git'), { owner: 'owner', repo: 'repo' });
-  assert.deepEqual(parseRepo('https://github.com/owner/repo.git'), { owner: 'owner', repo: 'repo' });
-  assert.equal(parseRepo('https://gitlab.com/owner/repo'), null);
+test('parseRepo: extracts host/owner/repo from github.com/owner/repo and github.com:owner/repo.git forms', () => {
+  assert.deepEqual(parseRepo('github.com/owner/repo'), { host: 'github.com', owner: 'owner', repo: 'repo' });
+  assert.deepEqual(parseRepo('github.com:owner/repo.git'), { host: 'github.com', owner: 'owner', repo: 'repo' });
+  assert.deepEqual(parseRepo('https://github.com/owner/repo.git'), { host: 'github.com', owner: 'owner', repo: 'repo' });
+  // #2240: parseRepo now widens to an arbitrary host (GitHub Enterprise Server support) —
+  // a non-github.com host is no longer rejected, it's captured.
+  assert.deepEqual(parseRepo('https://gitlab.com/owner/repo'), { host: 'gitlab.com', owner: 'owner', repo: 'repo' });
 });

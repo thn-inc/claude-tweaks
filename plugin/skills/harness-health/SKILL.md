@@ -4,7 +4,6 @@ description: Use to check whether skills, rules, CLAUDE.md match codebase, templ
 argument-hint: "[--target <id>] [--kind skill|rule|claude-md|design-artifact|memory] [--memory-dir <path>] [--budget <n>] [--min-confidence low|med|high] [--force-gap-scan] [--dry-run] [--root <dir>]"
 allowed-tools: Read, Grep, Glob, Bash, AskUserQuestion
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
 
 # Harness Health — Keep Skills, Rules, and CLAUDE.md Honest
 
@@ -86,6 +85,14 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/harness-health-override-scan.js" --root .
 
 This parses every `route(s) to \`/X\`, never \`/Y\`` clause out of CLAUDE.md (`bin/lib/harness-health/override-bypass.js`'s `parseDeclaredOverrides` — the one prose shape this repo's own override already uses; a differently-worded override is silently not recognized, never misread) and checks the `skill_invoked` event ledger (`bin/lib/hooks/skill-invocation.js`) across every pipeline run directory under `.claude-tweaks/pipelines/` (active and archived) for a case where `/Y` was invoked at least once and `/X` was never invoked anywhere in that evidence — the exact shape of the incident #809 describes. An empty `bypasses` array is the expected, common case, not a gap in coverage. For each entry in `bypasses`, file one work-record issue (origin `by:harness-health`, `risk:low` + `size:low` — a detection finding, not a code fix) titled `"CLAUDE.md override bypassed: {forbidden} invoked without {substitute}"`, body naming the declared override's exact clause, the `forbiddenCount`, and the `evidence` run directories/timestamps, and recommending the human either strengthen the override's phrasing, add enforcement for this specific override, or accept that the declared substitute was never actually needed here. Dedup against open `by:harness-health` issues the same way the Policy schema check above does (reuse Step 5's fetch when reached this firing; the same standalone `gh issue list` fetch otherwise); skip filing entirely under `--dry-run`, printing what would be filed instead.
 
+**Composed-bytes-per-step check (#1909, reporting only — no issue filed, runs every firing).** Surfaces `context-cost.js`'s own composed-bytes-per-step measurement (#1990) rather than re-deriving it; the hard gate on that measurement already lives in `tests/bin-lib/skill-audit/context-cost.test.js`'s `overComposedCeiling` suite, so this check never files a finding — a breach there is a test failure, not a harness-health discovery. Call:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/context-cost-report.js" --plugin-root "${CLAUDE_PLUGIN_ROOT}"
+```
+
+Include the per-step `bytes.max` values (one line per `step`, sorted descending) in Step 8's SUMMARIZE report — this is the standing answer to "how many bytes does each pipeline step load" that a session or a maintainer can otherwise only get by running the CLI by hand. An `error` row (an unparsed compose call, a missing/unreadable source) is reported the same way, naming the file:line rather than a byte count.
+
 Read the `why` field on whichever target(s) came back:
 - If both `target`/`targets` are empty and `gapScanDue` is `false`: nothing is due this firing. Report this to the user and stop.
 - `why: "stale"` — this target has not been audited in over 90 days regardless of domain churn.
@@ -166,7 +173,7 @@ Read `filing.md` in this skill's directory and apply it. It owns the whole filin
 
 **Step 8 — SUMMARIZE.**
 
-Report: which target(s) were audited (or that only the gap scan ran), how many findings were emitted, how many filed vs skipped by dedup. List any new issue URLs. Always include the throttle line per `_shared/health-filing-digest.md`'s SUMMARIZE step: `filed: N, digested: M, cap: {CAP}, materiality: K` — report it even when `M` and `K` are both `0`, so the throttle is visible rather than inferred.
+Report: which target(s) were audited (or that only the gap scan ran), how many findings were emitted, how many filed vs skipped by dedup. List any new issue URLs. Always include the throttle line per `_shared/health-filing-digest.md`'s SUMMARIZE step: `filed: N, digested: M, cap: {CAP}, materiality: K` — report it even when `M` and `K` are both `0`, so the throttle is visible rather than inferred. Always include the composed-bytes-per-step line from the check above: `bytes/step (max): {step}={bytes} B, ...` sorted descending by bytes.
 
 ## Routine Configuration
 

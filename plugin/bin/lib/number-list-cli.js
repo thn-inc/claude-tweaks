@@ -88,11 +88,13 @@ function makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote, runn
     if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
     const repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
     if (!repoSpec) { deps.stderr(`${name}: could not resolve owner/repo — pass --repo owner/name\n`); return 2; }
-    const { owner, repo } = repoSpec;
+    const { owner, repo, host } = repoSpec;
 
     let fetched;
     try {
-      fetched = fetch({ numbers, owner, repo, runner: deps.runner });
+      fetched = fetch({
+        numbers, owner, repo, host, runner: deps.runner,
+      });
     } catch (err) {
       deps.stderr(`${name}: ${err && err.message ? err.message : String(err)}\n`);
       return 3;
