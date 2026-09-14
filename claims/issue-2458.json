@@ -1,7 +1,6 @@
 {
+  "released": true,
   "runId": "2026-09-14T181109-record-2458",
-  "sessionId": "07e991cc-5982-4bc6-89d2-6b737d91505b",
-  "claimedAt": "2026-09-14T18:14:27.353Z",
-  "ttlHours": 72,
-  "host": "Thomass-MacBook-Pro-3376.local"
+  "reason": "premise-invalid: #2458 is a follow-up to #2324, which is still an open, unbuilt work record — the --release-type/--extra-file override this record's deliverables describe editing does not exist in the codebase",
+  "releasedAt": "2026-09-14T18:19:00.995Z"
 }
