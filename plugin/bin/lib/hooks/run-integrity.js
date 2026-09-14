@@ -167,10 +167,10 @@ function mergedEvidence(root, branch, integration) {
   // origin/-prefixed) below, since the actual merge-base/cherry calls
   // benefit from that freshness the same way they did before #1861.
   if (branch === bareIntegrationName(integration)) return null;
-  const anc = runGit(['merge-base', '--is-ancestor', branch, integration], root);
+  const anc = runGit(['merge-base', '--is-ancestor', '--end-of-options', branch, integration], root);
   if (!anc.failure) return 'ancestor';
   if (anc.failure !== 'git-error') return null;
-  const cherry = runGit(['cherry', integration, branch], root);
+  const cherry = runGit(['cherry', '--end-of-options', integration, branch], root);
   if (cherry.failure || cherry.stdout === null) return null;
   const lines = cherry.stdout.split('\n').filter(Boolean);
   // Defensive: an empty cherry list should already have been caught above —
