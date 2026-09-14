@@ -52,13 +52,13 @@ Before filing, bootstrap only the label families this run applies, with real des
 
 ```bash
 # Bootstrap per _shared/label-bootstrap.md, LABELS_JSON =
-# [["by:harness-health", "Origin: filed by the harness-health skill"],
-#  ["risk:low",          "Scoring: low blast radius — safe for autonomous build"],
-#  ["risk:medium",       "Scoring: moderate blast radius — review before merge recommended"],
-#  ["size:low",          "Scoring: small, agent-sized change"],
-#  ["size:high",         "Scoring: large change — consider decomposition before building"],
-#  ["ready",             "Stage: spec-shaped and agent-sized — in the authorization gate's worklist"],
-#  ["upstream-candidate", "A headless health-sweep finding about claude-tweaks — forward via /claude-tweaks:feedback"],
+# [["by:harness-health", "Origin: filed by the harness-health skill", "BFD4F2"],
+#  ["risk:low",          "Scoring: low blast radius — safe for autonomous build", "0E8A16"],
+#  ["risk:medium",       "Scoring: moderate blast radius — review before merge recommended", "FBCA04"],
+#  ["size:low",          "Scoring: small, agent-sized change", "D4C5F9"],
+#  ["size:high",         "Scoring: large change — consider decomposition before building", "5319E7"],
+#  ["ready",             "Stage: spec-shaped and agent-sized — in the authorization gate's worklist", "2EA44F"],
+#  ["upstream-candidate", "A headless health-sweep finding about claude-tweaks — forward via /claude-tweaks:feedback", "0052CC"],
 #  ["harness-health:additive",     "Safe, mechanical patch - additive change with no removed behavior"],
 #  ["harness-health:restructural", "Structural change requiring human review before applying"],
 #  ["harness-health:new-skill",    "Proposes a new skill candidate surfaced by harness-health"],
