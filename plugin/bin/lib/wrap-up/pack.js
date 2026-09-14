@@ -16,7 +16,7 @@ const { promisify } = require('util');
 const { resolvePolicyConfig } = require('../policy-schema');
 const { parseManifestYaml } = require('../flow/manifest');
 const { parseDependencies } = require('../issues/record');
-const { parseRepo } = require('../repo-resolve');
+const { parseRepo, repoSlug } = require('../repo-resolve');
 
 const PROBE_NAMES = ['residue', 'state', 'blastRadius', 'pr', 'recordLabels', 'claim', 'ledger', 'unblocked'];
 const BIN = path.join(__dirname, '..', '..');
@@ -439,7 +439,7 @@ function buildProbes(inputs, deps) {
         let repoArgs = [];
         try {
           const repoSpec = parseRepo(git(['remote', 'get-url', 'origin']));
-          if (repoSpec) repoArgs = ['--repo', `${repoSpec.owner}/${repoSpec.repo}`];
+          if (repoSpec) repoArgs = ['--repo', repoSlug(repoSpec)];
         } catch { /* no origin remote — resolve-blockers.js's own fallback applies unchanged */ }
         const res = await deps.execFile('node', [path.join(BIN, 'resolve-blockers.js'), records.map((r) => r.number).join(','), ...repoArgs], { cwd: inputs.worktree, ...EXEC_OPTS });
         const byNumber = JSON.parse(res.stdout.trim());

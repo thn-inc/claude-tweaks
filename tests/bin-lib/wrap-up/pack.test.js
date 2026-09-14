@@ -263,7 +263,12 @@ test('#2425: unblocked (work-links: native) passes --repo, resolved from `origin
   assert.strictEqual(calls.length, 1);
   const repoIdx = calls[0].indexOf('--repo');
   assert.notStrictEqual(repoIdx, -1, `resolve-blockers.js must be called with --repo: ${JSON.stringify(calls[0])}`);
-  assert.strictEqual(calls[0][repoIdx + 1], 'acme/widgets');
+  // Host-qualified, not bare owner/repo — a bare slug here silently drops
+  // which GHE host to query, which is the whole point of this fix (see the
+  // review finding this replaced: passing bare 'acme/widgets' for a GHE
+  // remote made resolve-blockers.js/number-list-cli.js re-resolve against
+  // github.com instead of the real host).
+  assert.strictEqual(calls[0][repoIdx + 1], 'ghe.example.com/acme/widgets');
 });
 
 test('#2425 AC 2: on a plain github.com remote, --repo is still passed (additive) with the same owner/repo shape, and unblocked\'s value is unchanged', async () => {
