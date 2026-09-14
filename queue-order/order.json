@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T00:38:06.969Z",
+  "computedAt": "2026-09-14T01:45:31.449Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -171,11 +171,6 @@
       {
         "number": 2306,
         "updatedAt": "2026-09-13T13:33:08Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2299,
-        "updatedAt": "2026-09-13T13:31:55Z",
         "state": "OPEN"
       },
       {
@@ -3793,84 +3788,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Defer-reason: genuinely-larger\n\n## Current State\n\n#1985 (unmerged, PR #2298) adds a \"Drain-overlap hold\" to `plugin/skills/dispatch/settle-and-merge.md`'s Auto-merge gate: before Authorization/Content judgment, `drain-pr-overlap.md`'s Step 6 checks whether this group's PR overlaps a still-open PR opened earlier by the same drain firing, and if so, explicitly **skips Authorization and Content judgment** and \"fall[s] back to the normal Review Console for this group,\" logging:\n\n```\nAUTO {time} — Auto-merge gate: group [{issues}] held — overlaps drain PR #{pr} on {files}; merge order is a human call. Reversibility: n/a.\n```\n\nSeparately, `plugin/bin/lib/console/resolve.js`'s `needsHumanVerdict()` (the ONLY mechanism `mergeResolution()` consults to decide `leave-open` before falling through to a plain grant check) is:\n\n```js\nfunction needsHumanVerdict(decisions) {\n  return decisionLines(decisions).find((l) => /needs-human/i.test(l) && /merge-check|assess-agent-autonomy/i.test(l)) || null;\n}\n```\n\nThis regex requires BOTH `needs-human` AND (`merge-check`|`assess-agent-autonomy`) on the same `decisions.md` line — a signal that only ever comes from `assess-agent-autonomy`'s Content-judgment Layer 2 (`settle-and-merge.md`, around the `2. **Content judgment**` step). Because the drain-overlap hold explicitly *skips* Content judgment, no such verdict is ever computed or logged for a drain-held group. `mergeResolution()` therefore finds no needs-human verdict, falls through to its grant check, and if every group member carries `auto:merge` or a matured `auto:merge-pending`, returns `{resolution: 'merge', reason: 'every member carries auto:merge...'}`.\n\nTraced (not yet reproduced live): under `autonomy: unattended`, `wrap-up/review-console.md`'s Auto-resolution short-circuit invokes exactly this `console-resolve.js` merge resolution with zero human interaction. A group held back by the #1985 drain-overlap hold would reach the Review Console, and — because the hold produces no signal `needsHumanVerdict()` recognizes — the unattended auto-resolver would compute `resolution: 'merge'` and merge it anyway, silently defeating the entire purpose of the #1985 hold for exactly the operating mode (`unattended`) most likely to run a multi-group drain unattended. This is one layer downstream of the original #1480/#1596 incident #1985 was filed to prevent.\n\n## Deliverables\n\n- [ ] Give `console-resolve.js`'s merge-resolution path a way to recognize a live drain-overlap hold and resolve to `leave-open` for it, analogous to the existing `needs-human` carve-out — but the semantics differ: the existing carve-out (`assess-agent-autonomy` verdict) is treated as **permanent** (\"authoritative all the way down,\" per `settle-and-merge.md`), while `drain-pr-overlap.md`'s own Step 6 hold is explicitly **not** persisted — it re-reads the overlapping PR's current state every time it runs and self-heals once that PR merges/closes. A naive regex addition that treats any historical \"held — overlaps drain PR\" decisions.md line as permanent would make the unattended resolver *more* conservative than #1985's own design intends. The real fix likely needs `console-resolve.js` to re-run (or receive as an already-fresh input) the same `detectCrossPRFileOverlap` check drain-pr-overlap.md's Step 6 performs, rather than trusting a historical log line — design thought needed on where that fresh state comes from at console-resolve time (a fact-pack field? a re-invocation of the check inline in resolve.js?).\n- [ ] Tests: a fixture where a group's decisions.md carries a \"held — overlaps drain PR\" line and the overlapping PR is still open -> `mergeResolution` returns `leave-open`; the same fixture with the overlapping PR now merged/closed -> returns `merge` (assuming grants otherwise satisfy).\n\n## Acceptance Criteria\n\n1. Under `autonomy: unattended`, a group held by #1985's drain-overlap hold is never auto-merged by `console-resolve.js` while the overlapping drain PR is still open, even when every member otherwise carries `auto:merge`.\n2. Once the overlapping drain PR merges or closes, the same group's next Review Console evaluation resolves normally (no permanent lockout).\n3. `npm test` green; existing `tests/bin-lib/console/resolve.test.js` cases unaffected.\n\n## Technical Approach\n\nNeeds design thought (hence deferred): the cleanest shape is probably a new field in the run's fact pack (or `console.json`) that records the *live* drain-overlap state at Review-Console-render time, since the console's own render already runs after the Auto-merge gate would have logged the hold — the resolver could read that field instead of re-deriving from decisions.md text. Alternatively, a literal-but-honest log-line addition (e.g. `drain-overlap-hold: live` vs `drain-overlap-hold: resolved`) that `console-resolve.js` re-validates against current PR state before trusting.\n\n### Key Files\n\n- `plugin/bin/lib/console/resolve.js` — `needsHumanVerdict()`/`mergeResolution()`\n- `plugin/skills/dispatch/drain-pr-overlap.md` — Step 6, the hold's own log line\n- `plugin/skills/wrap-up/review-console.md` — Auto-resolution short-circuit's carve-out list\n- `tests/bin-lib/console/resolve.test.js`\n\n## Gotchas\n\n- Do not just make the hold's log line match the existing `needs-human`+`merge-check` regex — that would be dishonest (it isn't an `assess-agent-autonomy` verdict) and would inherit the \"permanent\" semantics that don't fit this hold's self-healing design.\n- This gap does not affect #1944/#1984/#1985's own PR #2298 (none of the three carry `auto:merge`, so this run's own merge decision never reaches `mergeResolution()`'s grant-check branch) — it only affects a *future* group that both carries `auto:merge` and gets caught by the #1985 hold in a live unattended drain.\n\n## Original request\n\nFound during `/claude-tweaks:review` of #1944/#1984/#1985 (dispatch pre-build safety checks bundle, PR #2298) — self-referential review of dispatch's own merge-gating machinery surfaced this cross-cutting gap between #1985's new hold and the pre-existing unattended console auto-resolver.\n\n**Related:** #1944, #1984, #1985",
-        "createdAt": "2026-09-12T09:43:00Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          }
-        ],
-        "number": 2299,
-        "state": "OPEN",
-        "title": "dispatch drain-PR overlap hold (#1985) is invisible to console-resolve.js unattended auto-merge resolution",
-        "updatedAt": "2026-09-13T13:31:55Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
         }
       }
     ],
