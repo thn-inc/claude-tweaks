@@ -205,11 +205,22 @@ function prepare({ deps, rootArg, runDir }) {
   // the reader, so the base describes the ref the pack reports on, not the
   // working tree. A path that is absent at that ref reads as "no version"; any
   // other git error (a bad ref) propagates and degrades the field.
+  // Memoized per path: readConfig (via manifestVersion, inside versionBase)
+  // and readBumpFlags both read CONFIG_FILE at the same tipRef moments apart
+  // — cache the `git show` result rather than spawning it twice. Only a
+  // resolved result (including the path-absent `null`) is cached; a
+  // propagating error re-spawns on the next call, same as before.
+  const showAtTipCache = new Map();
   const showAtTip = (p) => {
-    try { return deps.git(['show', `${tipRef}:${p}`]); } catch (err) {
-      if (PATH_ABSENT_RE.test(String(err.message || err))) return null;
-      throw err;
+    if (showAtTipCache.has(p)) return showAtTipCache.get(p);
+    let result;
+    try {
+      result = deps.git(['show', `${tipRef}:${p}`]);
+    } catch (err) {
+      if (PATH_ABSENT_RE.test(String(err.message || err))) { result = null; } else { throw err; }
     }
+    showAtTipCache.set(p, result);
+    return result;
   };
   const manifestVersion = () => {
     const config = readConfig(showAtTip);
