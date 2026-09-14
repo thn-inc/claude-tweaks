@@ -52,6 +52,13 @@ land in between (ledger rows 93, 104-105).
 - Say which is which at every render: a console row, a commit subject, a `Shipped in v{x}` comment.
 - The producing artifact carries the same rule from its own side — see
   `.claude/skills/run-directory-fact-packs/SKILL.md`'s "A pack proposes; it never decides".
+- **An operator override splits the *validation*, not the two values.** A `--as`-style flag lets the
+  skill pick the number, so the two are merely expected to agree — a disagreement is still `PARTIAL`.
+  Split the checking by who can perform it: the skill validates the flag's shape before the run
+  (`^\d+\.\d+\.\d+$`), the engine validates its semantics against state only the engine resolves
+  (ahead of the derived base) and reports that on its existing *usage* exit code, so the driver's
+  exit table absorbs it with no new outcome word (#2326, `plugin/skills/release/execute.md`'s `--as`
+  passthrough). A skill that pre-checks the semantic half re-derives engine state it was told not to.
 
 ## Provenance of every rendered premise
 
