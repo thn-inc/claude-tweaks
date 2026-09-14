@@ -41,11 +41,18 @@ test('shaping-mode.md read-back verification asserts no needs:* label survived t
 // the closed issue today). This is AC4's own named historical scenario.
 //
 // The pre-change stamp bullets below are read live from the last commit that touched
-// shaping-mode.md before this task's own edit landed (140ff9d7b is that file's immediate parent
-// commit, verified via `git log --oneline -- plugin/skills/specify/shaping-mode.md`) — not typed
-// by hand — so this control can actually go red if the historical claim it grounds turns out to
-// be wrong.
-const PRE_CHANGE_COMMIT = '140ff9d7b4da1265185f93a51b728e3f3b7b0918';
+// shaping-mode.md before this task's own edit landed — not typed by hand — so this control can
+// actually go red if the historical claim it grounds turns out to be wrong. The original pin
+// (140ff9d7b, a commit on the feature branch that later became PR #1488/#1499) was never
+// reachable from origin/main once that branch squash-merged — a fresh clone (CI's
+// fetch-depth: 0 included; it only fetches what origin's refs reach) can't resolve it, so
+// `git show {sha}:{path}` fails with "exists on disk, but not in {sha}" even though the path is
+// real. Repinned to d111b1474 — the immediate parent, on origin/main's own history, of e2f499095
+// (the squash-merged commit that added the needs:* removal bullet to shaping-mode.md) — which is
+// reachable and carries the file's `parked`/`ready` bullets with no needs:* removal step between
+// them, same as the original pin intended (verified: its `parked`/`ready` bullet pair matches the
+// regex below with nothing in between).
+const PRE_CHANGE_COMMIT = 'd111b14742e935487e64a7afa7949cd24e71b8d8';
 const PRE_CHANGE_SHAPING_MODE = execFileSync(
   'git',
   ['show', `${PRE_CHANGE_COMMIT}:plugin/skills/specify/shaping-mode.md`],
