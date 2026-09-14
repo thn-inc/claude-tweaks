@@ -141,6 +141,12 @@ steps select their own models as usual. Resolve via `node "{plugin-root}/bin/res
 (contract § Model Selection).
 ```
 
+The Foreground execution clause above is backed by a mechanical check, not prose alone (#2429):
+`sequential-execution.md`'s "The loop" section verifies this call's `STATUS:` line against the
+required pattern the moment the call returns, and treats a missing or malformed one as evidence
+of backgrounded/yielded execution — never trust to this clause's own wording without also keeping
+that check current.
+
 ## Second call — review,polish,wrap-up (gated on the first call)
 
 **Only dispatch this call if the first call's status line was DONE or DONE_WITH_CONCERNS AND its OUTCOME was `build-test-ok`.** A `NEEDS_CONTEXT`/`BLOCKED` status, an `OUTCOME` of `build-test-failed`/`build-test-blocked`, or no parseable report at all means this second call is never dispatched — the first call's own agent settles its own failure (its template above instructs it to), and the dispatching session takes the terminal path in `two-call-gate.md` section 5 (fail-loud reporting plus the `/claude-tweaks:wrap-up {target} cleanup-only` teardown call).
@@ -291,5 +297,12 @@ how long the PR has already existed.
 pipeline's own steps select their own models as usual. Resolve via
 `node "{plugin-root}/bin/resolve-profile.js" standard` (contract § Model Selection).
 ```
+
+Same mechanical status-line check applies to this call. The Auto-merge gate's `merge-check`
+clause this call runs (`settle-and-merge.md`'s Content judgment step) is backed by its own
+mechanical check too (#2429): a verdict is logged to `decisions.md` whether it passes or falls
+back, and the merge action that follows re-reads that log rather than proceeding on having just
+run the loop — see that step's own "Mechanically verify every member's entry" paragraph. Keep
+both current if either clause's wording changes.
 
 None of Templates A/B/C (A in `_shared/subagent-dispatch-core.md`; B/C in `_shared/subagent-output-contract.md`) fit an agent that executes pipeline stages rather than returning findings/locations/a yes-no, so these are their own minimal templates, inlined verbatim at every dispatch site. The universal parts of the contract still apply: the four-value status line, minimal input, and literal (not referenced) output format.
