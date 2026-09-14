@@ -1786,8 +1786,9 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
       // requires every target's branch to carry a Step 1 outcome line in
       // decisions.md before the push it precedes is let through.
       if (model !== 'pr-first') return {};
-      const branch = currentBranchName(commandGitTargets[0].dir);
-      if (branch && commandGitTargets.every((t) => currentBranchName(t.dir) === branch)
+      const branches = commandGitTargets.map((t) => currentBranchName(t.dir));
+      const [branch] = branches;
+      if (branch && branches.every((b) => b === branch)
         && hasLoggedPrEarlyStep1(ctx.runDir, branch)) {
         return {};
       }
