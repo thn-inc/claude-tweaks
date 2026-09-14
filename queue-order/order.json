@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T17:05:58.606Z",
+  "computedAt": "2026-09-14T17:35:18.833Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -49,11 +49,6 @@
         "state": "OPEN"
       },
       {
-        "number": 2367,
-        "updatedAt": "2026-09-14T13:29:42Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2366,
         "updatedAt": "2026-09-14T11:08:24Z",
         "state": "OPEN"
@@ -75,7 +70,7 @@
       },
       {
         "number": 2347,
-        "updatedAt": "2026-09-14T14:38:00Z",
+        "updatedAt": "2026-09-14T17:08:52Z",
         "state": "OPEN"
       },
       {
@@ -106,11 +101,6 @@
       {
         "number": 2338,
         "updatedAt": "2026-09-14T00:28:41Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2337,
-        "updatedAt": "2026-09-14T14:08:00Z",
         "state": "OPEN"
       },
       {
@@ -170,7 +160,7 @@
       },
       {
         "number": 2324,
-        "updatedAt": "2026-09-13T13:32:55Z",
+        "updatedAt": "2026-09-14T17:32:25Z",
         "state": "OPEN"
       },
       {
@@ -279,11 +269,6 @@
         "state": "OPEN"
       },
       {
-        "number": 2240,
-        "updatedAt": "2026-09-14T16:32:48Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2221,
         "updatedAt": "2026-09-13T12:41:23Z",
         "state": "OPEN"
@@ -311,11 +296,6 @@
       {
         "number": 2041,
         "updatedAt": "2026-09-13T20:09:51Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2032,
-        "updatedAt": "2026-09-14T13:29:49Z",
         "state": "OPEN"
       },
       {
@@ -369,18 +349,8 @@
         "state": "OPEN"
       },
       {
-        "number": 1869,
-        "updatedAt": "2026-09-14T14:08:07Z",
-        "state": "OPEN"
-      },
-      {
         "number": 1863,
         "updatedAt": "2026-09-14T14:38:08Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 1853,
-        "updatedAt": "2026-09-14T13:29:55Z",
         "state": "OPEN"
       },
       {
@@ -404,11 +374,6 @@
         "state": "OPEN"
       },
       {
-        "number": 1829,
-        "updatedAt": "2026-09-14T16:32:54Z",
-        "state": "OPEN"
-      },
-      {
         "number": 1798,
         "updatedAt": "2026-09-13T20:22:11Z",
         "state": "OPEN"
@@ -426,11 +391,6 @@
       {
         "number": 1782,
         "updatedAt": "2026-09-14T11:40:11Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 1781,
-        "updatedAt": "2026-09-14T13:30:01Z",
         "state": "OPEN"
       },
       {
@@ -474,11 +434,6 @@
         "state": "OPEN"
       },
       {
-        "number": 1712,
-        "updatedAt": "2026-09-14T14:08:14Z",
-        "state": "OPEN"
-      },
-      {
         "number": 1676,
         "updatedAt": "2026-09-14T16:25:03Z",
         "state": "OPEN"
@@ -491,11 +446,6 @@
       {
         "number": 1135,
         "updatedAt": "2026-09-13T13:14:27Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 496,
-        "updatedAt": "2026-09-14T16:33:00Z",
         "state": "OPEN"
       },
       {
@@ -1668,96 +1618,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n**Related:** #1350, #1769, #1839, #1853, #2081, #2331, #2333 (near-duplicate screen hits — shared file-path/anchor mentions only, not confirmed duplicates of this record's own topic)\n\n## Current State\n\n- `#1886` shipped a new static policy key `design-ceremony` ({fast-lane, standard}, default\n  standard) and wired it into `/claude-tweaks:specify`'s three brainstorming-invocation call\n  sites via `plugin/skills/specify/brainstorming-ceremony.md`,\n  `plugin/bin/compose-brainstorm-args.js`, and `plugin/bin/lib/specify/brainstorming-ceremony.js`.\n- `plugin/skills/capture/routing.md` documents `/claude-tweaks:capture --route=brainstorm` as\n  invoking `/superpowers:brainstorming` with \"the issue title + body as input\" — the identical\n  input shape `/specify`'s case 1 uses — but this call site is not wired to `design-ceremony`\n  (confirmed: zero mentions of `design-ceremony`/`brainstorming-ceremony` in `capture/routing.md`).\n  `#1886`'s own Current State derived \"these three are the only claude-tweaks-owned call sites\"\n  from the Lifecycle diagram, not a repo-wide grep — a scoping miss in the original record, not a\n  regression it introduced.\n- No test in `tests/` asserts that `plugin/skills/specify/SKILL.md`'s case 1 and case 4\n  paragraphs still cite `brainstorming-ceremony.md`, or that the sub-file still names\n  `compose-brainstorm-args.js` (confirmed: only `tests/bin-lib/specify/brainstorming-ceremony.test.js`\n  and `tests/compose-brainstorm-args-cli.test.js` exist, and both verify the\n  pure-function/CLI layer only, never the prose wiring that actually invokes it).\n- `design-ceremony` (values `fast-lane`/`standard`) and the pre-existing, unrelated\n  `ceremony-profile` (`plugin/skills/_shared/ceremony-profile.md`, a diff-derived per-run\n  concept) share the literal value token \"fast-lane\" across two genuinely different mechanisms —\n  confirmed still true and already worked around: `brainstorming-ceremony.md`'s own comment\n  states it \"avoids the literal word `fast-lane` in its wording\" specifically to prevent\n  `tests/ceremony-profile-roster.test.js`'s line-level heuristic from false-positiving. The\n  underlying naming decision (rename vs. accept-and-document) has not been made.\n- `plugin/bin/compose-brainstorm-args.js` collapses two distinct failure classes (malformed argv\n  vs. an unreadable `--input-file`) onto exit code 2, unlike its closest sibling\n  `plugin/bin/compose-context.js`, which separates them (2 malformed, 1 filesystem failure).\n- `brainstorming-ceremony.md`'s documented procedure pays a full resolve-policy +\n  scratchpad-write + subprocess cost even on the `standard` (default, every existing project)\n  path, where the result is always a byte-identical no-op passthrough.\n\n**Correction to the original filing — verified live at this shaping pass, not just re-cited:**\nthe record's fourth-bullet claim that `policy-schema.md` had \"664 bytes of headroom\" under a\n40,960-byte ceiling is now **stale**. Running the actual governing tests\n(`tests/policy-schema-metadata.test.js`, `tests/dispatch-sequential-execution-conformance.test.js`)\nconfirms both pass cleanly today: the strict per-file 40KB pin on `policy-schema.md` was already\nretired by #1997 (per that test file's own comment: \"the per-file tier is a warning since #1990\nand these files have no compose call site\"), and the general `CEILING_BYTES` constant those tests\nnow import was separately raised from 40KB to 45KB (46080 bytes) by commit `ca82a1097`.\n`policy-schema.md` is currently 41,341 bytes — under the current 46080-byte ceiling with real\nheadroom, not the near-breach the original filing described. **The byte-ceiling-split deliverable\nbelow is downgraded from a hard requirement to optional hygiene** for this reason.\n\n## Deliverables\n\n- Wire `/claude-tweaks:capture`'s `--route=brainstorm` execution path through the same\n  `brainstorming-ceremony.md` procedure (`resolve-policy.js --values design-ceremony`, then\n  `compose-brainstorm-args.js`) that `/specify`'s three sites already use, so all four\n  claude-tweaks-owned `/superpowers:brainstorming` call sites honor the policy consistently.\n- Add a prose-conformance test (per the `skill-prose-conformance-tests` pattern already used by\n  `tests/ceremony-profile-roster.test.js`) asserting `specify/SKILL.md`'s case 1 and case 4\n  paragraphs still cite `brainstorming-ceremony.md`, and that the sub-file still names\n  `compose-brainstorm-args.js` — so a routine future prose edit can't silently revert the feature\n  to always-`standard` behind a green suite.\n- Decide, deliberately, and record the decision: either rename `design-ceremony`'s `fast-lane`\n  value to something that doesn't collide with `ceremony-profile`'s vocabulary (a breaking change\n  to `#1886`'s shipped Acceptance Criterion 1 — needs explicit sign-off), or accept the collision\n  and document `tests/ceremony-profile-roster.test.js`'s false-positive risk more thoroughly at\n  both call sites so future editors don't rediscover it by trial.\n- (Optional hygiene, no longer urgent — see the Current State correction above) If touching\n  `policy-schema.md` for this record's other changes happens to push it close to the current\n  45KB ceiling again, consider splitting its \"Auto-mode levers\" section into a cited sub-file;\n  otherwise skip this — the byte-ceiling pressure that motivated it in the original filing no\n  longer exists.\n- (Minor, bundled rather than filed separately) Align `compose-brainstorm-args.js`'s exit codes\n  with its `compose-context.js` sibling (2 malformed, 1 filesystem failure) if this CLI's\n  contract is ever revisited; gate `brainstorming-ceremony.md`'s Steps 2-3 on Step 1 having\n  actually returned `fast-lane`, removing the resolve+scratchpad+subprocess overhead from the\n  default `standard` path.\n\n## Acceptance Criteria\n\n1. `/claude-tweaks:capture --route=brainstorm` invokes `/superpowers:brainstorming` with the\n   same `design-ceremony`-composed args `/specify`'s three sites use, verified by a test/fixture\n   mirroring `#1886`'s own AC2/AC3 pattern.\n2. A prose-conformance test fails if `specify/SKILL.md`'s brainstorming-ceremony.md citations are\n   removed or the sub-file's CLI reference is renamed without updating the test.\n3. The `fast-lane` value-collision decision is recorded (either a rename landed with a migration\n   note, or a documented rationale for keeping the collision plus roster-test guidance at both\n   current and any newly-wired call sites).\n4. `npm test` passes with no regressions.\n\nNone of these are regressions of default behavior — `design-ceremony` defaults to `standard`,\nbyte-identical to pre-`#1886` behavior on every existing project. These are hardening/completeness\ngaps at the new feature's edges, explicitly out of `#1886`'s own Non-Goals scope (no\nclaude-tweaks-owned design wrapper beyond `/specify`'s three owned call sites).\n\n## Technical Approach\n\nFor the capture wiring gap: mirror exactly how `/specify`'s three call sites invoke\n`brainstorming-ceremony.md` (`resolve-policy.js --values design-ceremony` then\n`compose-brainstorm-args.js`) at `capture/routing.md`'s `--route=brainstorm` invocation point —\nthis should be closer to a call-site addition than new logic, since the procedure itself already\nexists and is shared. For the prose-conformance test: follow\n`tests/ceremony-profile-roster.test.js`'s own pattern (grep the live skill-prose corpus for the\ncitation strings) rather than inventing a new test style. For the fast-lane collision: this is\nthe one deliverable requiring an actual decision — read both `ceremony-profile.md`'s roster and\n`brainstorming-ceremony.md`'s existing workaround comment before choosing; a rename is a breaking\nchange to `#1886`'s own shipped AC1 and needs explicit sign-off, so default to the\naccept-and-document path unless sign-off is actually sought and obtained.\n\n### Key Files\n\n- `plugin/skills/capture/routing.md` — wire `--route=brainstorm` through\n  `brainstorming-ceremony.md`\n- `tests/` — new prose-conformance test (name chosen at build time, following `ceremony-profile-roster.test.js`'s\n  pattern)\n- `plugin/skills/specify/brainstorming-ceremony.md` — the fast-lane collision decision's\n  documentation (if accept-and-document is chosen) or the rename (if chosen instead)\n- `plugin/skills/_shared/ceremony-profile.md` — read-only reference for the collision decision\n- `plugin/bin/compose-brainstorm-args.js` — bundled minor exit-code alignment (optional, per\n  Deliverables' own \"if this CLI's contract is ever revisited\" framing)\n\n## Gotchas\n\n- The original filing's byte-ceiling claim (policy-schema.md near a 40KB breach) is stale —\n  verified live at this shaping pass: the strict per-file pin was retired (#1997) and the general\n  ceiling was raised to 45KB (`ca82a1097`) since this record was filed. Do not treat the\n  byte-ceiling deliverable as urgent; it's optional hygiene only, per the Current State\n  correction above.\n- A rename of `design-ceremony`'s `fast-lane` value is a breaking change to `#1886`'s own shipped\n  Acceptance Criterion 1 and needs explicit sign-off before landing — don't rename unilaterally\n  as part of this record without that sign-off; the accept-and-document path is the safe default.\n- This record's own Deliverables note the exit-code/gating items are \"bundled rather than filed\n  separately\" and optional (\"if this CLI's contract is ever revisited\") — don't treat them as\n  hard requirements equal to the first three deliverables.\n\n## Original request\n\nOrigin: build #1886 (final whole-branch review findings, deferred per Non-Goals scope)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n- `#1886` shipped a new static policy key `design-ceremony` ({fast-lane, standard}, default standard) and wired it into `/claude-tweaks:specify`'s three brainstorming-invocation call sites via `plugin/skills/specify/brainstorming-ceremony.md`, `plugin/bin/compose-brainstorm-args.js`, and `plugin/bin/lib/specify/brainstorming-ceremony.js`.\n- `plugin/skills/capture/routing.md` (~lines 19, 55) documents `/claude-tweaks:capture --route=brainstorm` as invoking `/superpowers:brainstorming` with \"the issue title + body as input\" — the identical input shape `/specify`'s case 1 uses — but this call site is not wired to `design-ceremony`. `#1886`'s own Current State derived \"these three are the only claude-tweaks-owned call sites\" from the Lifecycle diagram, not a repo-wide grep — a scoping miss in the original record, not a regression it introduced.\n- No test in `tests/` asserts that `plugin/skills/specify/SKILL.md`'s case 1 and case 4 paragraphs still cite `brainstorming-ceremony.md`, or that the sub-file still names `compose-brainstorm-args.js` — `#1886`'s own tests (`tests/bin-lib/specify/brainstorming-ceremony.test.js`, `tests/compose-brainstorm-args-cli.test.js`) verify the pure-function/CLI layer only, never the prose wiring that actually invokes it.\n- `plugin/skills/_shared/policy-schema.md` is now 40296 bytes against `plugin/bin/lib/skill-audit/context-cost.js`'s 40960-byte `CEILING_BYTES` — 664 bytes of headroom, less than the byte size of the median existing row in its own \"Auto-mode levers\" table (the section `#1886`'s new row landed in).\n- `design-ceremony` (values `fast-lane`/`standard`) and the pre-existing, unrelated `ceremony-profile` (`plugin/skills/_shared/ceremony-profile.md`, a diff-derived per-run concept) now share the literal value token \"fast-lane\" across two genuinely different mechanisms. This already produced one concrete symptom during `#1886`'s build: `tests/ceremony-profile-roster.test.js`'s line-level fast-lane+skip heuristic false-positived on unrelated prose in `specify/SKILL.md` because the word \"fast-lane\" appeared on the same line as an unrelated \"skip it\" phrase, forcing a wording workaround (documented in `brainstorming-ceremony.md`'s own note) rather than a clean fix.\n- `plugin/bin/compose-brainstorm-args.js` collapses two distinct failure classes (malformed argv vs. an unreadable `--input-file`) onto exit code 2, unlike its closest sibling `plugin/bin/compose-context.js`, which separates them (2 malformed, 1 filesystem failure).\n- `brainstorming-ceremony.md`'s documented procedure pays a full resolve-policy + scratchpad-write + subprocess cost even on the `standard` (default, every existing project) path, where the result is always a byte-identical no-op passthrough.\n\n## Deliverables\n\n- [ ] Wire `/claude-tweaks:capture`'s `--route=brainstorm` execution path through the same `brainstorming-ceremony.md` procedure (`resolve-policy.js --values design-ceremony`, then `compose-brainstorm-args.js`) that `/specify`'s three sites already use, so all four claude-tweaks-owned `/superpowers:brainstorming` call sites honor the policy consistently.\n- [ ] Add a prose-conformance test (per the `skill-prose-conformance-tests` pattern already used by `tests/ceremony-profile-roster.test.js`) asserting `specify/SKILL.md`'s case 1 and case 4 paragraphs still cite `brainstorming-ceremony.md`, and that the sub-file still names `compose-brainstorm-args.js` — so a routine future prose edit can't silently revert the feature to always-`standard` behind a green suite.\n- [ ] Split `plugin/skills/_shared/policy-schema.md`'s \"Auto-mode levers\" section (or another section, whichever measurement favors) into a cited sub-file, restoring meaningful headroom under the 40960-byte ceiling before the next policy key addition is blocked by it.\n- [ ] Decide, deliberately, and record the decision: either rename `design-ceremony`'s `fast-lane` value to something that doesn't collide with `ceremony-profile`'s vocabulary (a breaking change to `#1886`'s shipped Acceptance Criterion 1 — needs explicit sign-off), or accept the collision and document `tests/ceremony-profile-roster.test.js`'s false-positive risk more thoroughly at both call sites so future editors don't rediscover it by trial.\n- [ ] (Minor, bundled rather than filed separately) Align `compose-brainstorm-args.js`'s exit codes with its `compose-context.js` sibling (2 malformed, 1 filesystem failure) if this CLI's contract is ever revisited; gate `brainstorming-ceremony.md`'s Steps 2-3 on Step 1 having actually returned `fast-lane`, removing the resolve+scratchpad+subprocess overhead from the default `standard` path.\n\n## Acceptance Criteria\n\n1. `/claude-tweaks:capture --route=brainstorm` invokes `/superpowers:brainstorming` with the same `design-ceremony`-composed args `/specify`'s three sites use, verified by a test/fixture mirroring `#1886`'s own AC2/AC3 pattern.\n2. A prose-conformance test fails if `specify/SKILL.md`'s brainstorming-ceremony.md citations are removed or the sub-file's CLI reference is renamed without updating the test.\n3. `plugin/skills/_shared/policy-schema.md` has meaningfully more than 664 bytes of headroom under the 40960-byte ceiling after the split.\n4. The `fast-lane` value-collision decision is recorded (either a rename landed with a migration note, or a documented rationale for keeping the collision plus roster-test guidance at both current and any newly-wired call sites).\n5. `npm test` passes with no regressions.\n\nNone of these are regressions of default behavior — `design-ceremony` defaults to `standard`, byte-identical to pre-`#1886` behavior on every existing project. These are hardening/completeness gaps at the new feature's edges, explicitly out of `#1886`'s own Non-Goals scope (no claude-tweaks-owned design wrapper beyond `/specify`'s three owned call sites), safe to defer to a follow-up build.\n\n_Filed by `capture` via specShapedBody._\n",
-        "createdAt": "2026-09-12T17:51:12Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2347,
-        "state": "OPEN",
-        "title": "Design-ceremony hardening: wire /capture's brainstorm route, add prose-conformance test, fix policy-schema.md headroom, resolve fast-lane value collision",
-        "updatedAt": "2026-09-14T14:38:00Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review. Two independently-merged PRs each shipped their\nown Jaccard-similarity tokenizer and threshold constant, with no shared source and no test\nimporting either exported constant — so a change to one can silently invalidate the other's\ntests without either noticing:\n\n- `plugin/bin/lib/coordination.js` (confirmed, line 17, #1980): `SUBSTANCE_SIMILARITY_MIN = 0.4`\n  + `SUBSTANCE_STOP_WORDS` (line 22).\n- `plugin/bin/lib/issues/near-duplicate.js` (confirmed, line 24, #1944):\n  `DEFAULT_TITLE_SIMILARITY_THRESHOLD = 0.5` + `STOP_WORDS` (line 30).\n\nA search of `tests/` for either constant name returns zero hits —\n`tests/bin-lib/issues/near-duplicate.test.js:66` hardcodes \"0.5\" in a test name/reasoning\n(`'title similarity below the default 0.5 threshold does not fire'`) instead of importing the\nreal constant.\n\n## Deliverables\n\n- Decide whether these two similarity checks are conceptually the same primitive (in which case\n  consolidate into one shared tokenizer/threshold module both import) or genuinely distinct\n  enough to justify separate constants (in which case document why, and have each test import\n  its own module's real constant instead of hardcoding the value).\n- Update `near-duplicate.test.js` to import `DEFAULT_TITLE_SIMILARITY_THRESHOLD` rather than\n  hardcoding 0.5.\n\n## Acceptance Criteria\n\nNo test hardcodes either threshold as a bare numeric literal; both are imported from their\nsource module.\n\n## Technical Approach\n\nRead both modules' full similarity-scoring logic (`coordination.js`'s substance-similarity check\nand `near-duplicate.js`'s title-similarity check) to judge whether they're the same primitive\napplied to different inputs (substance text vs. titles) or genuinely distinct enough to warrant\nseparate stop-word lists and thresholds — this is the actual judgment call the Deliverables ask\nfor, not a mechanical decision this shaping pass can make without reading both algorithms'\nfull bodies. If consolidating: extract a shared tokenizer/stop-word/threshold module both import,\npreserving each call site's own threshold value unless the investigation finds a reason to unify\nthose too. If keeping them separate: add a one-line comment at each constant's definition site\nstating why the two are conceptually distinct, and fix the test regardless — the test-hardcoding\nfix (Deliverable 2) applies either way. Update `near-duplicate.test.js:66` to import\n`DEFAULT_TITLE_SIMILARITY_THRESHOLD` and interpolate it into the test name/assertion instead of\nthe bare literal `0.5`.\n\n### Key Files\n\n- `plugin/bin/lib/coordination.js` — `SUBSTANCE_SIMILARITY_MIN`/`SUBSTANCE_STOP_WORDS`, possible\n  consolidation target\n- `plugin/bin/lib/issues/near-duplicate.js` — `DEFAULT_TITLE_SIMILARITY_THRESHOLD`/`STOP_WORDS`,\n  possible consolidation target\n- `tests/bin-lib/issues/near-duplicate.test.js` (line 66) — fix the hardcoded `0.5`\n\n## Gotchas\n\n- Per a standing memory in this codebase, similarity scores are normalization-sensitive —\n  consolidating the two tokenizers is only safe if their actual normalization behavior (case\n  folding, punctuation handling, stop-word removal order) genuinely matches; verify with a\n  substitution+diff test before assuming they're interchangeable, not just by reading the\n  constant values.\n- If consolidating, do not silently change either module's effective threshold — a Jaccard\n  score computed by a merged tokenizer can differ from the original even at the \"same\" nominal\n  threshold value if the tokenization itself changes; re-verify both modules' existing test\n  suites still pass with real (not just literal-matching) behavior preserved.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review. Two independently-merged PRs each shipped their own Jaccard-similarity tokenizer and threshold constant, with no shared source and no test importing either exported constant — so a change to one can silently invalidate the other's tests without either noticing:\n\n- `plugin/bin/lib/coordination.js` (~line 17, #1980): `SUBSTANCE_SIMILARITY_MIN = 0.4` + `SUBSTANCE_STOP_WORDS`.\n- `plugin/bin/lib/issues/near-duplicate.js` (~line 24, #1944): `DEFAULT_TITLE_SIMILARITY_THRESHOLD = 0.5` + `STOP_WORDS`.\n\nA search of tests/ for either constant name returns zero hits — tests/bin-lib/issues/near-duplicate.test.js hardcodes \"0.5\" in a test name/reasoning instead of importing the real constant.\n\n## Deliverables\n- Decide whether these two similarity checks are conceptually the same primitive (in which case consolidate into one shared tokenizer/threshold module both import) or genuinely distinct enough to justify separate constants (in which case document why, and have each test import its own module's real constant instead of hardcoding the value).\n- Update near-duplicate.test.js to import DEFAULT_TITLE_SIMILARITY_THRESHOLD rather than hardcoding 0.5.\n\n## Acceptance Criteria\nNo test hardcodes either threshold as a bare numeric literal; both are imported from their source module.\n",
         "createdAt": "2026-09-12T16:44:34Z",
         "labels": [
@@ -2137,7 +1997,7 @@
         "number": 2324,
         "state": "OPEN",
         "title": "Release bootstrap: explicit --release-type / --extra-file override for repos whose real manifest is not the root stack manifest",
-        "updatedAt": "2026-09-13T13:32:55Z",
+        "updatedAt": "2026-09-14T17:32:25Z",
         "facets": {
           "origin": null,
           "risk": "low",
