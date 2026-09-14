@@ -245,6 +245,62 @@ test('gatherPack: every probe ok → eight envelopes with ok:true, plus inputs/g
   assert.ok(!('mergeSize' in pack), 'the mergeSize probe was removed (#1930 fix round 4)');
 });
 
+test('#2425: unblocked (work-links: native) passes --repo, resolved from `origin`, to resolve-blockers.js — including on a GitHub Enterprise remote', async () => {
+  const calls = [];
+  const deps = okDeps({
+    git: (args) => (args[0] === 'remote' ? 'git@ghe.example.com:acme/widgets.git\n' : okDeps().git(args)),
+    execFile: async (cmd, args) => {
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) {
+        calls.push(args);
+        return { stdout: JSON.stringify({ 1600: { blockedBy: [1535], openBlocker: false } }), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+  assert.strictEqual(calls.length, 1);
+  const repoIdx = calls[0].indexOf('--repo');
+  assert.notStrictEqual(repoIdx, -1, `resolve-blockers.js must be called with --repo: ${JSON.stringify(calls[0])}`);
+  assert.strictEqual(calls[0][repoIdx + 1], 'acme/widgets');
+});
+
+test('#2425 AC 2: on a plain github.com remote, --repo is still passed (additive) with the same owner/repo shape, and unblocked\'s value is unchanged', async () => {
+  const calls = [];
+  const deps = okDeps({
+    git: (args) => (args[0] === 'remote' ? 'https://github.com/acme/widgets.git\n' : okDeps().git(args)),
+    execFile: async (cmd, args) => {
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) {
+        calls.push(args);
+        return { stdout: JSON.stringify({ 1600: { blockedBy: [1535], openBlocker: false } }), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+  const repoIdx = calls[0].indexOf('--repo');
+  assert.strictEqual(calls[0][repoIdx + 1], 'acme/widgets');
+});
+
+test('#2425: no resolvable `origin` remote falls back to calling resolve-blockers.js without --repo (additive, never a hard failure)', async () => {
+  const calls = [];
+  const deps = okDeps({
+    git: (args) => { if (args[0] === 'remote') throw new Error('fatal: No such remote \'origin\''); return okDeps().git(args); },
+    execFile: async (cmd, args) => {
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) {
+        calls.push(args);
+        return { stdout: JSON.stringify({ 1600: { blockedBy: [1535], openBlocker: false } }), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.ok(!calls[0].includes('--repo'), `must not pass --repo when origin can't be resolved: ${JSON.stringify(calls[0])}`);
+});
+
 // The two assertions above compare a probe's value against the fake's own
 // return, so a fake that has drifted from the real module's output shape makes
 // them green against a shape the pack never actually produces. Each fake's key
