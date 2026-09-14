@@ -1,6 +1,6 @@
 ---
 name: shared-contract-extraction
-description: Use when extracting a cross-skill contract into a new `plugin/skills/_shared/*.md` file and migrating existing consumers to cite it — the consumer-list derivation, what each consumer keeps versus surrenders, the retirement sweep, and the conformance suite that pins the migration. Keywords - shared contract, `_shared`, extraction, consolidation, consumer migration, citation sweep, retired clause, conformance suite, IL-66, IL-70.
+description: Use when extracting a cross-skill contract into a new `plugin/skills/_shared/*.md` file and migrating existing consumers to cite it, or when consolidating a set of ad hoc per-reason runtime sidecar files into one `bin/lib/` module and migrating its call sites — the consumer-list derivation, what each consumer keeps versus surrenders, the retirement sweep, and the conformance suite that pins the migration. Keywords - shared contract, `_shared`, extraction, consolidation, consumer migration, citation sweep, retired clause, conformance suite, runtime sidecar consolidation, entry lifecycle, IL-66, IL-70.
 ---
 
 # Shared contract extraction
@@ -37,6 +37,13 @@ The steps above describe a first extraction. The shape this repo now runs more o
   in-scope-or-not verdict — expect prose false positives (a carve-out saying the label must *not* apply to some record class)
   and classify them rather than edit them. A two-item enumeration goes wrong silently the moment a third item exists: nothing
   about adding the third makes the other two go red.
+
+## Variant: consolidating runtime sidecar files, not prose
+
+The steps above assume the consolidated artifact is prose. #1752 ran the same recipe one medium over: four (six by build time — #1983/#1984 landed while the record sat in the backlog) ad hoc per-reason `dispatch-*-excluded.json` session-scoped files collapsed into one `dispatch-exclusions.json` of `{reason, records, detail}` entries behind `plugin/bin/lib/dispatch/exclusions.js`. Steps 1, 2, 5 and 6 transfer literally — the retired vocabulary is the old file names *and* their env-var manifest entries (`DISPATCH_BLOCKED_EXCLUDED`, `DISPATCH_OVERSIZED_EXCLUDED`, …), and the consumers are `node -e` snippets inside skill prose, so step 5's pins are `skill-prose-conformance-tests`' extract-and-run anchors — which must be retargeted when the snippet's own *code* changes, not only when its prose is reworded (`tests/dispatch-named-target-exclusion-fixture.test.js`'s `END_ANCHOR` moved from `"$DISPATCH_TARGET_MISSING_EXCLUDED"` to `"$DISPATCH_EXCLUSIONS"`). Steps 3 and 4 do not apply: a `bin/lib/` module has no `_shared` byte ceiling and no `docs/skill-graph.md` edge. Two rules the prose steps have no analog for:
+
+- **The file boundary was carrying lifecycle differences for free — re-encode them explicitly.** Separate files can have separate lifetimes without anyone deciding so; one merged file cannot. Five of dispatch's reasons are recomputed on every re-pull, while `firing` entries are appended *between* re-runs within one firing (`firing-exclusion.md`) and must survive them — so `queue-pull-script.md` now opens with an explicit truncate-preserving-`firing` step. Omitting it would have silently restored the infinite re-dispatch loop that file exists to prevent. Enumerate each merged input's reset cadence before writing the reset step, and pin the preserved class (`tests/bin-lib/dispatch/exclusions.test.js`). The shipped analog one level up is `wrap-up/cleanup-procedures-execution.md`'s carve-out of `score-history.jsonl` from a bulk cleanup.
+- **A persisted consumer keeps its own schema; convert at the boundary and say so there.** Not every reader of the old shape is in scope. The queue-order disk cache (`bin/lib/dispatch/queue-order.js`) keeps its pre-#1752 `{number, blockedBy}[]` `excluded` field, and `queue-pull-script.md` converts in both directions at exactly the two points the schemas meet — cache-hit materialization and write-back — each with a comment saying that is what it is. Migrating the persisted blob instead would have invalidated every existing cache, for a file that is rebuilt from scratch on every miss anyway.
 
 ## Project conventions
 
