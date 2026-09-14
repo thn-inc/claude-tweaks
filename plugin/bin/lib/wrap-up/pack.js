@@ -48,17 +48,21 @@ const POLICY_KEYS = ['integration-branch', 'work-links'];
 // bin/lib, so this three-line one stays local.
 const WORK_BACKEND_RE = /^work-backend:\s*(\S+)\s*$/m;
 
-// stderr is piped rather than inherited or ignored: a failing git call cannot
+// stderr is piped rather than inherited or ignored: a failing call cannot
 // spray the CLI's own stderr, and its diagnostic still survives on
 // `err.stderr` for any consumer module that classifies a failure by message.
-function defaultGit(args, { cwd } = {}) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+function execSync(bin, args, { cwd } = {}) {
+  return execFileSync(bin, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+function defaultGit(args, opts) {
+  return execSync('git', args, opts);
 }
 
 // Synchronous sibling of defaultGit, for the one ladder rank (#2385) that
 // needs `gh` before resolveInputs has anything async to await.
-function defaultGhSync(args, { cwd } = {}) {
-  return execFileSync('gh', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+function defaultGhSync(args, opts) {
+  return execSync('gh', args, opts);
 }
 
 // In-process replacement for `node resolve-policy.js --values <key>` (#1930
