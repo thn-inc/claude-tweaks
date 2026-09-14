@@ -26,7 +26,7 @@ files:
 
 ### 2. Detection — one verdict, three outcomes
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/release-bootstrap.js" --integration-model pr-first --branch main` (called by the step; one JSON line back)
-- **Action:** The CLI scans the repo root for competing release tooling (`.releaserc*`, `release.config.*`, `.changeset/`, `.goreleaser.*`, a foreign `release-please-config.json`) and for this step's own earlier output, and returns `fresh`, `already-bootstrapped`, or `conflict` with the tool and its evidence path.
+- **Action:** The CLI scans the repo root for competing release tooling (`.releaserc*`, `release.config.*` / a `package.json` `release` key (semantic-release), `.changeset/`, `.goreleaser.*` / bare `goreleaser.yaml`/`goreleaser.yml` (goreleaser), `.versionrc*` (standard-version), a foreign `release-please-config.json`) and for this step's own earlier output, and returns `fresh`, `already-bootstrapped`, or `conflict` with the tool and its evidence path.
 - **Should feel:** Honest — the existing `v1.9.0`, `v1.10.0` tags do not read as a conflict; only a real second engine does.
 - **Should understand:** `conflict` writes nothing and names the file (`release: conflict — changesets`); removing that tool and re-running clears it. `already-bootstrapped` needs *both* the shaped config and the manifest — a half-written earlier run reads as `fresh` and completes itself. A mistyped `--root` is a usage error (exit 2), never a phantom bootstrap.
 - **Red flags:** A conflict verdict with no evidence path; `already configured` reported while the manifest is missing; a JSON line whose `verdict` is not one of the four documented values.
