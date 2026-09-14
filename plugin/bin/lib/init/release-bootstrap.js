@@ -177,7 +177,9 @@ function findSimpleExtraFile(root, entries) {
 
 function resolveReleaseType(root, override) {
   if (override && (override.releaseType !== undefined || override.extraFile !== undefined)) {
-    // Both or neither: if one is set, both must be set
+    // Both or neither: if one is set, both must be set. Past this check,
+    // the entry condition above (at least one defined) plus this parity
+    // check together guarantee both fields are defined.
     const hasReleaseType = override.releaseType !== undefined;
     const hasExtraFile = override.extraFile !== undefined;
     if (hasReleaseType !== hasExtraFile) {
@@ -186,15 +188,10 @@ function resolveReleaseType(root, override) {
     if (!RELEASE_TYPE_VALUES.has(override.releaseType)) {
       throw new Error(`invalid release-type override: ${override.releaseType}`);
     }
-    const extraFiles = override.extraFile
-      ? [{ type: 'json', path: override.extraFile, jsonpath: '$.version' }]
-      : [];
-    if (override.extraFile !== undefined) {
-      if (versionOfJson(path.join(root, override.extraFile)) === null) {
-        throw new Error(`--extra-file names no readable JSON manifest with a semver version: ${override.extraFile}`);
-      }
+    if (versionOfJson(path.join(root, override.extraFile)) === null) {
+      throw new Error(`--extra-file names no readable JSON manifest with a semver version: ${override.extraFile}`);
     }
-    return { releaseType: override.releaseType, extraFiles };
+    return { releaseType: override.releaseType, extraFiles: [{ type: 'json', path: override.extraFile, jsonpath: '$.version' }] };
   }
   const entries = rootEntries(root);
   const matched = RELEASE_STACK_TABLE.filter((row) => row.markers.some((m) => markerMatches(m, entries)));
