@@ -1,6 +1,7 @@
 {
-  "released": true,
-  "runId": "2026-09-12T181554-record-1890",
-  "reason": "failed: blocked-dependency (create_webhook_trigger tool unreachable in this session; 9th consecutive miss)",
-  "releasedAt": "2026-09-12T18:19:46.631Z"
+  "runId": "2026-09-14T181636-record-1890",
+  "sessionId": "8cd6ed34-ee2c-406d-bfe8-280b7435a0d0",
+  "claimedAt": "2026-09-14T18:20:26.205Z",
+  "ttlHours": 72,
+  "host": "Thomass-MacBook-Pro-3376.local"
 }
