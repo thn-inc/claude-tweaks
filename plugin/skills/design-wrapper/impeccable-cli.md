@@ -21,7 +21,7 @@ npx impeccable detect --json <file1> <file2> ... <fileN>
 | `--json` | Machine-readable output — required for parsing |
 | `<files>` | Space-separated list of files to scan; passed positionally |
 
-`--fast` was removed from this invocation. At the pinned 3.6.0 it is still deprecated and ignored, and passing it writes `Note: --fast is deprecated and ignored. The full scan is fast now and runs every rule.` to stderr on every call — noise in a stream the parser reads. At 2.1.8 it was not a no-op at all: it forced regex-only scanning and skipped linked stylesheets entirely, which is the degradation CLI 3.5.0's own release notes describe as turning eighteen findings into one.
+`--fast` was removed from this invocation. At the pinned 4.1.0 it is still deprecated and ignored, and passing it writes `Note: --fast is deprecated and ignored. The full scan is fast now and runs every rule.` to stderr on every call — noise in a stream the parser reads. At 2.1.8 it was not a no-op at all: it forced regex-only scanning and skipped linked stylesheets entirely, which is the degradation CLI 3.5.0's own release notes describe as turning eighteen findings into one.
 
 ### Arguments resolution
 
@@ -111,7 +111,7 @@ The schema above is the pinned CLI version's real, verified output shape — the
 {
   "mode": "test",
   "skipped": "Impeccable CLI returned malformed output",
-  "install_hint": "Verify the pin: `npx impeccable --version` should print 3.6.0"
+  "install_hint": "Verify the pin: `npx impeccable --version` should print 4.1.0"
 }
 ```
 
