@@ -19,6 +19,14 @@ function fakeDeps(o = {}) {
         const key = args.join(' ');
         calls.git.push(key);
         if (key === 'rev-parse --show-toplevel') return `${ROOT}\n`;
+        if (key === 'symbolic-ref --short refs/remotes/origin/HEAD') {
+          if (o.noSymbolicRef) throw new Error('fatal: ref refs/remotes/origin/HEAD is not a symbolic ref');
+          return `${o.originHead === undefined ? 'origin/main' : o.originHead}\n`;
+        }
+        if (key === 'remote show origin') {
+          if (o.noRemoteShow) throw new Error('fatal: could not query remote');
+          return `* remote origin\n  Fetch URL: git@github.com:o/r.git\n  HEAD branch: ${o.remoteShowHead === undefined ? 'main' : o.remoteShowHead}\n`;
+        }
         if (key.startsWith('rev-parse --verify --quiet refs/remotes/origin/')) { if (o.noOriginRef) throw new Error('fatal: Needed a single revision'); return `${SHA}\n`; }
         if (key.startsWith('rev-parse ')) return `${SHA}\n`;
         if (key.startsWith('describe')) { if (o.noTag) throw new Error('fatal: No names found, cannot describe anything.'); return 'v1.2.0\n'; }
@@ -106,6 +114,27 @@ test('ruling 3: without origin/{branch} the tip is refs/heads/{branch}; integrat
   assert.strictEqual(pack.branch, 'develop');
   assert.strictEqual(pack.tipRef, 'refs/heads/develop');
   assert.ok(calls.git.some((c) => c === 'rev-parse --verify --quiet refs/remotes/origin/develop'));
+});
+
+test('#2422 AC 1: no integration-branch policy key + non-main default branch → resolves via origin/HEAD, never falls back to a literal "main"', async () => {
+  const { deps } = fakeDeps({ policy: 'integration-model: local-merge\n', originHead: 'origin/master' });
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps });
+  assert.strictEqual(pack.branch, 'master');
+  assert.strictEqual(pack.tipRef, 'origin/master');
+});
+
+test('#2422: symbolic-ref refs/remotes/origin/HEAD unset locally falls back to `git remote show origin`\'s HEAD branch', async () => {
+  const { deps, calls } = fakeDeps({ policy: 'integration-model: local-merge\n', noSymbolicRef: true, remoteShowHead: 'trunk' });
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps });
+  assert.strictEqual(pack.branch, 'trunk');
+  assert.ok(calls.git.includes('remote show origin'));
+});
+
+test('#2422: no policy key and no resolvable origin/HEAD degrades every probe (preamble failure) rather than guessing "main"', async () => {
+  const { deps } = fakeDeps({ policy: 'integration-model: local-merge\n', noSymbolicRef: true, noRemoteShow: true });
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps });
+  assert.strictEqual(pack.branch, null);
+  assert.match(pack.engine.error, /preamble failed: .*integration branch unresolved/);
 });
 
 test('ruling 12: the base is the highest of the v* tags, the manifest at tipRef and the first-parent tag — never a guessed 0.0.0', async () => {
