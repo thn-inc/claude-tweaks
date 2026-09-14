@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T21:25:29.286Z",
+  "computedAt": "2026-09-14T21:42:11.810Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -30,17 +30,12 @@
       },
       {
         "number": 2405,
-        "updatedAt": "2026-09-14T11:47:10Z",
+        "updatedAt": "2026-09-14T21:40:43Z",
         "state": "OPEN"
       },
       {
         "number": 2404,
-        "updatedAt": "2026-09-14T11:47:05Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2402,
-        "updatedAt": "2026-09-14T11:46:57Z",
+        "updatedAt": "2026-09-14T21:28:46Z",
         "state": "OPEN"
       },
       {
@@ -61,11 +56,6 @@
       {
         "number": 2366,
         "updatedAt": "2026-09-14T11:08:24Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2363,
-        "updatedAt": "2026-09-13T13:32:26Z",
         "state": "OPEN"
       },
       {
@@ -280,7 +270,7 @@
       },
       {
         "number": 2028,
-        "updatedAt": "2026-09-14T17:03:08Z",
+        "updatedAt": "2026-09-14T21:30:44Z",
         "state": "OPEN"
       },
       {
@@ -581,8 +571,8 @@
     ],
     [
       {
-        "body": "**CLAUDE.md:** CLAUDE | **Section:** ## claude-tweaks Pipeline | **Category:** template-conformance | **Classification:** additive | **Confidence:** high\n\nVerified-as-of: 1941be706a53ea4f6dbd5c9b4c385991cc72811e\n\n## Current State\n\n`skills/init/claude-md-template.md` (the installed plugin's own generator, v6.120.0) includes a 'Spec close-out' bullet immediately after 'Artifacts' in every generated `## claude-tweaks Pipeline` section; CLAUDE.md's copy of this section omits it entirely. `specs/` in this repo currently holds one file, so the discipline this bullet establishes (delete after shipping, don't accumulate a permanent index) is directly applicable, not dead weight.\n\n## Deliverables\n\n**Current:**\n```\n**Artifacts:** design doc (one file, phases = `## Phase N` sections) → spec (one per work unit, via `/claude-tweaks:specify`) → `/claude-tweaks:flow`. No multi-phase plan files (`*-P1.md`, `*-P2.md`, …); a single plan per spec via `/superpowers:writing-plans`, stopped before its execution-choice offer, is expected and normal.\n```\n\n**Proposed:**\n```\n**Artifacts:** design doc (one file, phases = `## Phase N` sections) → spec (one per work unit, via `/claude-tweaks:specify`) → `/claude-tweaks:flow`. No multi-phase plan files (`*-P1.md`, `*-P2.md`, …); a single plan per spec via `/superpowers:writing-plans`, stopped before its execution-choice offer, is expected and normal.\n\n**Spec close-out:** `specs/` is a working directory, not a permanent historical index — once a spec ships and is verified, promote any durable reference content to `docs/reference/*.md` or a skill, repoint by-number citations elsewhere in the repo to the closing commit or PR, then delete the spec file. A permanent tracker file (e.g. `specs/INDEX.md`) is an anti-pattern here, not a convention to preserve.\n```\n\n## Acceptance Criteria\n\nCLAUDE.md's `## claude-tweaks Pipeline` section is missing the 'Spec close-out' convention that the currently installed claude-tweaks v6.120.0 plugin's own `claude-md-template.md` mandates for every generated CLAUDE.md, and this repo actively uses `specs/` (one file present) so the missing convention is not merely theoretical.\n\n_Filed by `/claude-tweaks:harness-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n\n<!-- work-fingerprint: harnesshealth-6ac3a5eb -->\nwork-fingerprint: harnesshealth-6ac3a5eb",
-        "createdAt": "2026-09-14T05:15:47Z",
+        "body": "Surface: infra\n\n## Current State\n\n`bin/lib/wrap-up/pack.js`'s `resolveRecords` ladder has three rungs: (a) the run dir's own\n`work/*-spec.md` headers, (b) the worktree's mirror of that same run dir (via `worktreeMirror`),\nand (c) a parent multi-spec run's `manifest.yml` ids plus any `spec-*/work/` headers found by\n`deps.readdir(runDir)`. Only rungs (a) and (b) apply worktree-mirroring; rung (c) reads `spec-*`\nsubdirectories directly from `runDir` (the main-checkout path `--run` anchors to), never from the\nworktree.\n\nFor a `/claude-tweaks:dispatch` file-overlap group (2+ records sharing one worktree/branch/PR),\n`materialize.md` writes each record's header to `{run-dir}/spec-{n}/work/{n}-spec.md` and commits\nit on the feature branch -- so on a real pr-first run it exists only inside the worktree's own\nworking tree, never in the main-checkout run dir, exactly the same reason rungs (a)/(b) already\nmirror. Observed live on run `2026-09-14T000308-record-2283-2338` (group #2283,#2338):\n`node bin/wrap-up-pack.js --run \"$RUN_DIR\"` returned `recordLabels`, `claim`, `ledger`, and\n`unblocked` all as `{ok: false, error: \"records unresolved -- no materialized header or manifest\nfound\"}` even though both `spec-2283/work/2283-spec.md` and `spec-2338/work/2338-spec.md` existed\nand were readable inside the worktree.\n\n## Deliverables\n\nExtend rung (c) in `resolveRecords` (`bin/lib/wrap-up/pack.js`) to also check\n`worktreeMirror(runDir, worktree)` for `spec-*/work/` headers and the mirrored `manifest.yml`,\nthe same way rung (b) mirrors rung (a) -- falling back to the existing `runDir`-only read when no\nworktree resolves or the mirror has nothing.\n\n## Acceptance Criteria\n\n- A fixture reproducing this run's shape (main-checkout run dir with no `work/` or `spec-*/`\n  entries; a separate worktree dir carrying `spec-{n}/work/{n}-spec.md` for 2+ records) resolves\n  `records` via a new `worktree-manifest`-shaped source, not `unavailable`.\n- The four probes that depend on `resolveRecords` (`recordLabels`, `claim`, `ledger`, `unblocked`)\n  succeed against that fixture instead of returning `records unresolved`.\n- Existing `resolveRecords`/`wrap-up-pack` tests continue to pass unchanged.\n\n## Technical Approach\n\nMirror rung (b)'s existing pattern (`worktreeMirror(runDir, worktree)`) into rung (c): when the\ndirect `runDir`-anchored `spec-*/work/` read finds nothing, resolve the worktree mirror path the\nsame helper rung (b) already uses, and re-run the same `spec-*/work/` + `manifest.yml` read\nagainst that mirrored path before falling back to `unavailable`. No new mirroring mechanism --\nreuse the existing `worktreeMirror` helper rungs (a)/(b) already call.\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/pack.js` -- `resolveRecords`'s rung (c), and the `worktreeMirror` helper\n  to reuse\n- test fixture covering the group-overlap shape this record reports (main-checkout run dir empty,\n  worktree carrying `spec-{n}/work/{n}-spec.md` for 2+ records)\n\n## Gotchas\n\n- The fix must preserve rung (c)'s existing `runDir`-only behavior for the common single-record\n  or no-worktree case -- the worktree-mirror check is an additional fallback, not a replacement\n  for the direct read.\n- Origin: 2026-09-14T000308-record-2283-2338 (Defer-reason: pre-existing-outside-diff) -- filed\n  as a follow-up capture while wrapping up that unrelated run, not a defect introduced by it.\n\n## Original request\n\nwrap-up-pack.js resolveRecords spec-* rung never worktree-mirrors materialized headers\n\nOrigin: 2026-09-14T000308-record-2283-2338\nDefer-reason: pre-existing-outside-diff\n\n`bin/lib/wrap-up/pack.js`'s `resolveRecords` ladder has three rungs: (a) the run dir's own\n`work/*-spec.md` headers, (b) the worktree's mirror of that same run dir (via `worktreeMirror`),\nand (c) a parent multi-spec run's `manifest.yml` ids plus any `spec-*/work/` headers found by\n`deps.readdir(runDir)`. Only rungs (a) and (b) apply worktree-mirroring; rung (c) reads `spec-*`\nsubdirectories directly from `runDir` (the main-checkout path `--run` anchors to), never from the\nworktree.\n\nFor a `/claude-tweaks:dispatch` file-overlap group (2+ records sharing one worktree/branch/PR),\n`materialize.md` writes each record's header to `{run-dir}/spec-{n}/work/{n}-spec.md` and commits\nit on the feature branch -- so on a real pr-first run it exists only inside the worktree's own\nworking tree, never in the main-checkout run dir, exactly the same reason rungs (a)/(b) already\nmirror. Observed live on run `2026-09-14T000308-record-2283-2338` (group #2283,#2338):\n`node bin/wrap-up-pack.js --run \"$RUN_DIR\"` returned `recordLabels`, `claim`, `ledger`, and\n`unblocked` all as `{ok: false, error: \"records unresolved -- no materialized header or manifest\nfound\"}` even though both `spec-2283/work/2283-spec.md` and `spec-2338/work/2338-spec.md` existed\nand were readable inside the worktree.\n\n_Filed by `capture` via specShapedBody._\n",
+        "createdAt": "2026-09-14T00:27:13Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -601,178 +591,6 @@
             "name": "size:low",
             "description": "Scoring: small, agent-sized change",
             "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACvj9UVg",
-            "name": "by:harness-health",
-            "description": "",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACvj9UWQ",
-            "name": "harness-health:additive",
-            "description": "",
-            "color": "ededed"
-          }
-        ],
-        "number": 2405,
-        "state": "OPEN",
-        "title": "CLAUDE.md structure: CLAUDE — ## claude-tweaks Pipeline",
-        "updatedAt": "2026-09-14T11:47:10Z",
-        "facets": {
-          "origin": "harness-health",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      },
-      {
-        "body": "**CLAUDE.md:** CLAUDE | **Section:** ### Reconcile | **Category:** drift | **Classification:** additive | **Confidence:** high\n\nVerified-as-of: 1941be706a53ea4f6dbd5c9b4c385991cc72811e\n\n## Current State\n\nAlso affects: `### Versioning`\n\n`ls`/`test -f` confirm `bin/lib/reconcile/` and `bin/compose-subject.js` do not exist relative to the repo root (where CLAUDE.md is read from), while `plugin/bin/lib/reconcile/` and `plugin/bin/compose-subject.js` do — matching every sibling reference in the Structure and Hooks sections (`plugin/bin/`, `plugin/bin/hooks.js`, `plugin/bin/lib/hooks/`). The Versioning subsection's `(\\`bin/compose-subject.js\\`, #2251)` reference has the same defect and should be fixed alongside this one (`plugin/bin/compose-subject.js`).\n\n## Deliverables\n\n**Current:**\n```\nAdding a new `bin/lib/reconcile/` convergence check touches multiple registration sites — the full procedure is in `docs/reconcile-checks.md`. Read it before touching `bin/lib/reconcile/` or `bin/hooks.js`'s `reconcile` command.\n```\n\n**Proposed:**\n```\nAdding a new `plugin/bin/lib/reconcile/` convergence check touches multiple registration sites — the full procedure is in `docs/reconcile-checks.md`. Read it before touching `plugin/bin/lib/reconcile/` or `plugin/bin/hooks.js`'s `reconcile` command.\n```\n\n## Acceptance Criteria\n\nThe Reconcile and Versioning subsections reference `bin/lib/reconcile/`, `bin/hooks.js`, and `bin/compose-subject.js` without the `plugin/` prefix every other path reference in this file uses, so the bare form does not resolve from the repo root where CLAUDE.md lives.\n\n_Filed by `/claude-tweaks:harness-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n\n<!-- work-fingerprint: harnesshealth-219b4921 -->\nwork-fingerprint: harnesshealth-219b4921",
-        "createdAt": "2026-09-14T05:15:39Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACvj9UVg",
-            "name": "by:harness-health",
-            "description": "",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACvj9UWQ",
-            "name": "harness-health:additive",
-            "description": "",
-            "color": "ededed"
-          }
-        ],
-        "number": 2404,
-        "state": "OPEN",
-        "title": "CLAUDE.md drift: CLAUDE — ### Reconcile",
-        "updatedAt": "2026-09-14T11:47:05Z",
-        "facets": {
-          "origin": "harness-health",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "## Current State\n\nDuring a scheduled Routine firing of `/claude-tweaks:dispatch next` in a gh-absent cloud sandbox, the queue pull correctly fell back to a persisted queue-order cache match (avoiding a fresh gh-based pull), but per `skills/dispatch/mcp-transport.md`'s documented gap, `dispatch-open-pr-excluded.json` was written as `{}` unconditionally since there's no confirmed MCP mapping for `bin/resolve-linked-prs.js`'s batched `closedByPullRequestsReferences` query. This let record #1841 through dispatch's Step 3 ranking and Step 5 dispatch despite already having an open draft PR (#2382, \"Resolve acceptance-labeling parent via GraphQL (#1841)\") with all four phases (build/test/review/wrap-up) checked complete, parked awaiting a human at wrap-up.\n\nThe dispatched `/claude-tweaks:flow #1841 build,test` Task call safely stopped at Step 2.8's claim-contest check (the record's live claim, held by a different, non-expired run, correctly blocked a second claim) and deduplicated against an existing self-report (#2394) from an earlier firing that hit the identical contest ~2 hours prior. No data was lost and no destructive git action occurred — the dispatching session's own newly-created worktree (also coincidentally named `worktree-record-1841`, since `EnterWorktree`'s naming keyed off the same record number) held zero commits beyond `origin/main`'s tip and was safely discarded after an ancestry check.\n\nSo the claim-contest safety net worked as designed, but it's a slower, more expensive catch than the open-PR exclusion this record's own `mcp-transport.md` gap left disabled — the record was picked at all, a worktree was minted, project setup plus a full baseline `npm test` ran (~150s), and a Task-tool subagent dispatch was spent, all for a record dispatch's own queue pull should have excluded up front had the MCP mapping existed.\n\n## Deliverables\n\n- A confirmed MCP mapping (or a documented reason none is feasible) for `bin/resolve-linked-prs.js`'s batched `closedByPullRequestsReferences` query across a candidate set, following the same verification bar `mcp-transport.md`'s other confirmed mappings cite (a live cloud Routine run, per the dispatch MCP bridge plan's Task 2 precedent).\n- Update `skills/dispatch/mcp-transport.md`'s \"Step 2 — open-linked-PR exclusion (#1224)\" section once bridged, removing the \"not yet bridged\" language.\n- Optionally: since the claim-contest self-report path already surfaces the open-PR fact (issue #2382's number) once discovered mid-flight, consider whether `_shared/headless-self-report.md`'s claim-contest report could name the open PR directly when one exists, saving a future firing's dispatching session the same PR lookup this incident required by hand.\n\n## Acceptance Criteria\n\n- On the MCP transport (`gh` absent), a record with an open, unmerged, closing PR is excluded from `dispatch-groups.json` before ranking, matching the `gh`-transport's existing behavior — not just caught later by the claim-contest safety net.\n- `npm test` passes.\n\n## Original request\n\nFiled by a `/claude-tweaks:dispatch --budget 1` scheduled Routine firing, 2026-09-14, after directly observing this documented gap cause a real (safely-contained) mis-dispatch of #1841 against open PR #2382.\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-09-14T04:35:38Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACry2myw",
@@ -803,17 +621,35 @@
             "name": "priority:low",
             "description": "Priority: dispatch picks last among prioritized records",
             "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXTZ8w",
+            "name": "demo:pending",
+            "description": "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo",
+            "color": "1D76DB"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
           }
         ],
-        "number": 2402,
+        "number": 2391,
         "state": "OPEN",
-        "title": "Bridge dispatch's MCP-transport gap for the open-linked-PR exclusion check (#1224)",
-        "updatedAt": "2026-09-14T11:46:57Z",
+        "title": "wrap-up-pack.js resolveRecords spec-* rung never worktree-mirrors materialized headers",
+        "updatedAt": "2026-09-14T17:02:51Z",
         "facets": {
           "origin": "capture",
           "risk": "low",
-          "size": "medium",
-          "ceremony": null,
+          "size": "low",
+          "ceremony": "fast-lane",
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
@@ -828,10 +664,110 @@
             "blocked": false,
             "parked": false
           },
-          "acceptance": null,
+          "acceptance": "pending",
           "isParentIssue": false,
           "notPlanned": false,
-          "shapedHeadless": false
+          "shapedHeadless": true
+        }
+      },
+      {
+        "body": "Surface: infra\n\n**Related:** #2422 (same hardcoded-`main`-vs-integration-branch-ladder theme, different file)\n\n## Current State\n\n`bin/lib/wrap-up/pack.js`'s `resolveHeader` (the function backing `bin/wrap-up-pack.js`'s\n`residue`, `state`, and `blastRadius` probes) resolves the integration branch at line 233-238:\n\n```js\nconst policy = {\n  integrationBranch: values['integration-branch'] || '',\n  ...\n};\nconst integrationBranch = policy.integrationBranch || 'main';\nsources.integrationBranch = policy.integrationBranch ? 'policy' : 'default';\n```\n\nIt only ever consults `resolvePolicy`'s `integration-branch` key. When that key is unset (no\n`.claude-tweaks/policy.yml` pin), it falls straight to the literal string `'main'` -- never\nconsulting `skills/_shared/integration-branch.md`'s canonical ladder (routine template ->\npolicy.yml -> CLAUDE.md prose -> git/`gh repo view` default -> per-consumer fallback), which\nexists precisely so callers don't each hardcode their own guess.\n\nOn a repository whose actual default branch is not `main` (e.g. `master`), with no\n`integration-branch:` policy key set, this causes `residue`/`state`/`blastRadius` to fail:\n`could not resolve merge base of \"main\" and HEAD\"` (`blastRadius`) or `\"base unresolved -- no\nmerge-base against the integration branch\"` (`residue`/`state`). `sources.integrationBranch`\nthen reports `\"default\"` -- i.e. the pack's own provenance trace correctly shows it never\nconsulted policy.yml, CLAUDE.md, or git/gh at all.\n\n`skills/wrap-up/residue-sweep.md` already documents the correct pattern for a sibling caller:\n\"`--integration-branch` must always be passed explicitly -- never rely on the CLI's own\ndefault... resolve `{ref}` via `skills/_shared/integration-branch.md`'s canonical ladder before\ninvoking the CLI.\" `pack.js`'s `resolveHeader` is the one caller that still bypasses this.\n\n## Deliverables\n\n- `resolveHeader` in `bin/lib/wrap-up/pack.js` resolves `integrationBranch` via\n  `skills/_shared/integration-branch.md`'s canonical ladder (minus the routine-template rank,\n  which has no meaning inside this CLI -- policy.yml -> CLAUDE.md prose -> git/`gh repo view`\n  default), not a bare `policy.integrationBranch || 'main'` fallback.\n- `sources.integrationBranch` reports which ladder rank actually resolved the value (e.g.\n  `'policy'`, `'git-default'`), not just the binary `'policy'`/`'default'` it reports today --\n  so a reader of the pack's own provenance trace can tell which rank fired.\n\n## Acceptance Criteria\n\n- On a repository whose actual default branch is not `main`, with no `integration-branch:` key\n  in `.claude-tweaks/policy.yml`, running `node bin/wrap-up-pack.js --run <run-dir>` resolves the\n  real default branch (via git/`gh repo view`) instead of hardcoding `main`, and the\n  `residue`/`state`/`blastRadius` probes run to completion instead of failing on an unresolved\n  merge base.\n- `inputs.sources.integrationBranch` in the pack's output reflects the actual resolution source,\n  never silently reporting `'default'` when a real ladder rank (git/gh, or CLAUDE.md prose) fired.\n- A repository that already sets `integration-branch:` in `.claude-tweaks/policy.yml` is\n  unaffected -- this fix only changes what happens when that key is absent.\n- Existing tests covering `pack.js`'s header resolution still pass; add a test covering the\n  non-`main`-default, no-policy-key case this record reports.\n\n## Technical Approach\n\nReplace `pack.js`'s bare `policy.integrationBranch || 'main'` fallback with a call into\n`skills/_shared/integration-branch.md`'s canonical resolution -- the same git/`gh repo view`\ndefault-branch lookup `residue-sweep.md` already instructs its own callers to perform before\ninvoking `bin/residue.js` directly. Reuse whatever resolver function backs that lookup elsewhere\nin `bin/lib/` (check for an existing `resolveIntegrationBranch`-shaped helper before writing a\nnew one -- `bin/lib/reconcile/` and `bin/resolve-policy.js` both touch this same ladder and may\nalready export a reusable piece). Thread the resolved value's source rank through to\n`sources.integrationBranch` so the pack's own provenance trace stays accurate.\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/pack.js` -- `resolveHeader`'s integration-branch fallback (line ~233-238)\n- `plugin/skills/_shared/integration-branch.md` -- the canonical ladder this fix must follow, not restate\n- `plugin/skills/wrap-up/residue-sweep.md` -- the existing sibling-caller pattern to mirror\n\n## Gotchas\n\n- Workaround used to file this record: invoking `bin/residue.js` and `bin/blast-radius.js`\n  directly with an explicit `--base`/`--integration-branch master`, bypassing `pack.js`'s own\n  (broken) resolution for those two fields -- confirms the underlying probes work correctly once\n  given the right branch name; the defect is isolated to `pack.js`'s own resolution step.\n- `merge-size-probe.js`, `release/precheck.js`, and `release-preflight/pack.js` carry similar\n  `|| 'main'` fallbacks (found via a repo-wide grep while shaping this record) -- out of scope\n  for this record, which is filed specifically against `wrap-up-pack.js`'s probes; worth a\n  follow-up capture if they prove to have the same defect.\n\n## Original request\n\nwrap-up-pack.js: residue/state/blastRadius probes hardcode \"main\" instead of the canonical integration-branch ladder\n\n**Summary:** `bin/wrap-up-pack.js`'s `residue`, `state`, and `blastRadius` probes all failed on a repository whose default branch is not literally named `main`, with `could not resolve merge base of \"main\" and HEAD`. `skills/_shared/integration-branch.md` documents a canonical resolution ladder (explicit arg -> routine template -> `policy.yml`'s `integration-branch:` key -> CLAUDE.md prose -> git/`gh repo view` default -> per-consumer fallback) specifically so callers don't each hardcode their own guess, but this tool's `main` fallback bypasses that ladder entirely.\n\n**Kind:** Defect\n\n**Affected component:** `bin/wrap-up-pack.js`\n\n**Repro steps:**\n1. In a repository whose actual default branch is `master` (not `main`), with no `integration-branch:` key set in `.claude-tweaks/policy.yml`.\n2. Run `node bin/wrap-up-pack.js --run <a valid pipeline run dir>`.\n\n**Expected vs. actual:**\nExpected: the tool resolves the integration branch via `_shared/integration-branch.md`'s ladder (landing on the repo's actual default via `gh repo view --json defaultBranchRef` / `git remote show origin`) and the `residue`/`state`/`blastRadius` probes run normally.\nActual: all three probes fail with `error: \"could not resolve merge base of \\\"main\\\" and HEAD\"` (`blastRadius`) or `\"base unresolved -- no merge-base against the integration branch\"` (`residue`/`state`), and the pack's own `inputs.sources.integrationBranch` reports `\"default\"` -- i.e. it never consulted policy.yml, CLAUDE.md, or git/gh at all.\n\n**Definition:** Clear -- cite `_shared/integration-branch.md` in `wrap-up-pack.js` the same way `residue-sweep.md` already instructs its own caller to resolve `{ref}` before invoking `bin/residue.js` directly. Workaround used this run: invoke `bin/residue.js` and `bin/blast-radius.js` directly with an explicit `--base`/`--integration-branch master`, bypassing the pack's own (broken) resolution for those fields.\n\n**Plugin version:** 6.123.0\n<!-- fingerprint: feedback-a696904f -->\n\n",
+        "createdAt": "2026-09-13T22:11:33Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
+            "name": "bug",
+            "description": "Something isn't working",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXTZ8w",
+            "name": "demo:pending",
+            "description": "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo",
+            "color": "1D76DB"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 2385,
+        "state": "OPEN",
+        "title": "wrap-up-pack.js: residue/state/blastRadius probes hardcode \"main\" instead of the canonical integration-branch ladder",
+        "updatedAt": "2026-09-14T17:02:47Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": "pending",
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
         }
       }
     ],
@@ -902,90 +838,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: /claude-tweaks:feedback session-evaluation (self-assessment, degraded from a failed Frontier judge dispatch), self-referential run (this repo's own origin is thomasholknielsen/claude-tweaks) — routed to a normal backlog record per Step 3 rather than filed as upstream feedback.\n\n## Current State\n\n`node plugin/bin/release.js <minor|patch> \"<summary>\" --dry-run` (and the live invocation) emits roughly 490 lines of `fatal: path '<path>' exists on disk, but not in '<sha>'` git stderr noise while walking history to locate the last version-bump commit, before reaching its actual result. In one observed run, 492 of 497 total output lines were this noise; only the final ~5 lines (`[dry-run] would bump ...`) were the actual answer, forcing the output to be redirected to a file and tailed rather than read directly.\n\n## Deliverables\n\nEither suppress/redirect the walk's expected-to-fail probe commands' stderr internally in `plugin/bin/lib/release/` (the history-walk implementation), or stop the walk as soon as a version-bump commit is found rather than continuing all the way to the repo root.\n\n## Acceptance Criteria\n\n- `node plugin/bin/release.js <minor|patch> \"<summary>\" --dry-run` produces output whose vast majority is the actual result (the bump preview lines), with no `fatal: ...` git stderr noise reaching stdout/stderr for commits before the file existed at its current path.\n",
-        "createdAt": "2026-09-13T12:08:47Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2363,
-        "state": "OPEN",
-        "title": "release.js history-walk emits ~490 lines of git stderr noise on every dry-run",
-        "updatedAt": "2026-09-13T13:32:26Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -1324,94 +1176,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n`plugin/bin/lib/console/resolve.js`'s `readMembers` (the `unattended` Review Console resolver behind `bin/console-resolve.js`, #1932) takes the member list from `wrap-up-pack.json`'s `inputs.records` when a pack exists, else scans `{runDir}/work/*-spec.md` headers only. `plugin/bin/lib/wrap-up/pack.js`'s `resolveRecords` is the producer of that same list and climbs a three-rung ladder: the run dir's own `work/` headers, the worktree's mirror of the run dir (`worktreeMirror`), then a parent multi-spec run's `manifest.yml` ids plus every `spec-*/work/` header (`source: 'manifest'`). `resolveRecords` and `headerRecords` are module-private — `pack.js` exports only `gatherPack`, `resolveInputs`, `wrapProbe`, `parseLedger`, `PROBE_NAMES` — so `readMembers` carries a hand-copied first rung and nothing else.\n\nConsequence: against a multi-spec parent run dir (headers under `spec-{a}/work/`, `spec-{b}/work/`) at any point where `wrap-up-pack.json` is absent or unparseable, `readMembers` returns `[]`, `readSnapshot` skips `readGrants`, and `resolveAll` resolves the merge half to `leave-open` with reason `members-unresolved` even when every member carries `auto:merge`. The single-spec fallback (`{runDir}/work/`) works today and must keep working byte-for-byte.\n\nBoth modules read through the same `deps` shape (`readFile`, `readdir` — `console-resolve.js` wires `fs.readFileSync`/`fs.readdirSync` with a catch-to-`[]` readdir, identical to `pack.js`'s default deps), so the ladder can be shared rather than copied a second time.\n\n## Deliverables\n- [ ] `plugin/bin/lib/wrap-up/pack.js` exports `resolveRecords` (and `headerRecords`) alongside the existing exports; no behavior change inside `pack.js`.\n- [ ] `readMembers` in `plugin/bin/lib/console/resolve.js` replaces its inline `work/` scan with a call to `resolveRecords(deps, runDir, worktree)` and returns its `records`, keeping the pack-first branch (`inputs.records` wins whenever it is non-empty) unchanged.\n- [ ] The worktree argument for the second rung comes from `{runDir}/run-state.json`'s `worktree` string when present (read via the existing `readJson`), else `null` — and `worktreeMirror` in `pack.js` returns `null` for a non-string worktree instead of throwing from `path.join`, so the console path with no run-state file degrades to rungs one and three.\n- [ ] Regression tests in `tests/bin-lib/console/resolve.test.js` using its existing `fixture` helper (extend it with `manifest`/`specHeaders` options): (a) a multi-spec parent run dir with no `wrap-up-pack.json`, `manifest.yml` listing two spec ids and headers under `spec-*/work/`, resolves `members` to those ids and no longer yields `members-unresolved`; (b) the existing single-spec header case and the pack-wins case stay green unchanged.\n- [ ] One export-shape assertion in `tests/bin-lib/wrap-up/pack.test.js` (or its conformance sibling) that `resolveRecords` is exported and still reports `source: 'manifest'` for the parent-run fixture, so the shared ladder cannot silently regress to private again.\n\n## Acceptance Criteria\n1. With no `wrap-up-pack.json` and members only under `spec-*/work/` (plus `manifest.yml` ids), `readSnapshot(...).members` equals the sorted unique union `resolveRecords` reports for the same run dir.\n2. With no pack and headers under `{runDir}/work/` only, `members` is byte-identical to today's output (same order, same de-duplication, `record:` frontmatter still wins over the filename).\n3. With a non-empty `inputs.records` in the pack, `members` is taken from the pack and the ladder is never consulted.\n4. `resolve.js` contains no second copy of the header-scanning regex after the change; `pack.js`'s `resolveRecords` is the only implementation of the ladder.\n5. `readMembers` never throws on a run dir with no `run-state.json` or a `run-state.json` without a `worktree` string.\n6. `npm test` is green.\n\n## Technical Approach\nExport, don't copy: the drift exists because the first rung was transcribed into `resolve.js`; adding the third rung by transcription would leave the second rung (worktree mirror, #1930 review C1) missing and set up the next drift. `resolveRecords` already returns `{ records, source }`; `readMembers` keeps its pack-first branch and delegates the fallback:\n\n```js\nconst state = readJson(deps, path.join(runDir, 'run-state.json'));\nconst worktree = state && typeof state.worktree === 'string' ? state.worktree : null;\nreturn resolveRecords(deps, runDir, worktree).records;\n```\n\n`pack.js` requires `../flow/manifest` for `parseManifestYaml` already; `resolve.js` requiring `../wrap-up/pack` is a one-way dependency (pack.js does not import the console module), so no cycle.\n\n### Key Files\n- `plugin/bin/lib/console/resolve.js` — `readMembers` (fallback scan to replace), `readJson`/`readText` helpers, `readSnapshot` (the `members.length` guard around `readGrants`).\n- `plugin/bin/lib/wrap-up/pack.js` — `headerRecords`, `worktreeMirror`, `resolveRecords`, `module.exports` line.\n- `plugin/bin/console-resolve.js` — `resolverDeps` wiring (`readFile`, `readdir`); no change expected.\n- `tests/bin-lib/console/resolve.test.js` — fixture helper writes `wrap-up-pack.json` and `work/{n}-spec.md`; extend for `manifest.yml` + `spec-*/work/`.\n- `tests/bin-lib/wrap-up/pack.test.js` — the `resolveInputs (c)` parent multi-spec case (#1930 review C1) is the ladder's existing coverage; add the export assertion beside it.\n\n## Gotchas\n- `worktreeMirror(runDir, null)` throws today (`path.join` on `null`), but only `resolveRecords` calls it and today's sole caller always passes a string; the null-guard is what makes the console path safe, so it is part of this change, not an optional nicety.\n- `readMembers` deliberately ignores the pack when `inputs.records` is empty (`fromPack.length` check) — keep that: an empty pack list falls through to the ladder, as before.\n- `pack.js`'s `readText` and `resolve.js`'s `readText` are byte-identical helpers; do not try to share them — the deps object is what is shared, and each module's helper stays with it.\n- `manifest.yml` is parsed with `parseManifestYaml` from `bin/lib/flow/manifest.js`; the fixture needs a `multispec.specs[].id` shape, not a flat list.\n\n## Original request\nFound by the pre-v6.119.0 whole-branch review (range e7d6d9331..4db32e020): a producer/consumer drift between wrap-up/pack.js's record-discovery and console-resolve.js's own fallback copy.\n\nDefer-reason: tangential\n\n",
-        "createdAt": "2026-09-07T10:31:52Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACq41dsw",
-            "name": "backlog:category-technical",
-            "description": "technical-category backlog item",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2028,
-        "state": "OPEN",
-        "title": "console-resolve.js's readMembers fallback misses multi-spec parent run dirs (manifest.yml, spec-*/work/)",
-        "updatedAt": "2026-09-14T17:03:08Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
@@ -1901,108 +1665,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\n\n`bin/lib/wrap-up/pack.js`'s `resolveRecords` ladder has three rungs: (a) the run dir's own\n`work/*-spec.md` headers, (b) the worktree's mirror of that same run dir (via `worktreeMirror`),\nand (c) a parent multi-spec run's `manifest.yml` ids plus any `spec-*/work/` headers found by\n`deps.readdir(runDir)`. Only rungs (a) and (b) apply worktree-mirroring; rung (c) reads `spec-*`\nsubdirectories directly from `runDir` (the main-checkout path `--run` anchors to), never from the\nworktree.\n\nFor a `/claude-tweaks:dispatch` file-overlap group (2+ records sharing one worktree/branch/PR),\n`materialize.md` writes each record's header to `{run-dir}/spec-{n}/work/{n}-spec.md` and commits\nit on the feature branch -- so on a real pr-first run it exists only inside the worktree's own\nworking tree, never in the main-checkout run dir, exactly the same reason rungs (a)/(b) already\nmirror. Observed live on run `2026-09-14T000308-record-2283-2338` (group #2283,#2338):\n`node bin/wrap-up-pack.js --run \"$RUN_DIR\"` returned `recordLabels`, `claim`, `ledger`, and\n`unblocked` all as `{ok: false, error: \"records unresolved -- no materialized header or manifest\nfound\"}` even though both `spec-2283/work/2283-spec.md` and `spec-2338/work/2338-spec.md` existed\nand were readable inside the worktree.\n\n## Deliverables\n\nExtend rung (c) in `resolveRecords` (`bin/lib/wrap-up/pack.js`) to also check\n`worktreeMirror(runDir, worktree)` for `spec-*/work/` headers and the mirrored `manifest.yml`,\nthe same way rung (b) mirrors rung (a) -- falling back to the existing `runDir`-only read when no\nworktree resolves or the mirror has nothing.\n\n## Acceptance Criteria\n\n- A fixture reproducing this run's shape (main-checkout run dir with no `work/` or `spec-*/`\n  entries; a separate worktree dir carrying `spec-{n}/work/{n}-spec.md` for 2+ records) resolves\n  `records` via a new `worktree-manifest`-shaped source, not `unavailable`.\n- The four probes that depend on `resolveRecords` (`recordLabels`, `claim`, `ledger`, `unblocked`)\n  succeed against that fixture instead of returning `records unresolved`.\n- Existing `resolveRecords`/`wrap-up-pack` tests continue to pass unchanged.\n\n## Technical Approach\n\nMirror rung (b)'s existing pattern (`worktreeMirror(runDir, worktree)`) into rung (c): when the\ndirect `runDir`-anchored `spec-*/work/` read finds nothing, resolve the worktree mirror path the\nsame helper rung (b) already uses, and re-run the same `spec-*/work/` + `manifest.yml` read\nagainst that mirrored path before falling back to `unavailable`. No new mirroring mechanism --\nreuse the existing `worktreeMirror` helper rungs (a)/(b) already call.\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/pack.js` -- `resolveRecords`'s rung (c), and the `worktreeMirror` helper\n  to reuse\n- test fixture covering the group-overlap shape this record reports (main-checkout run dir empty,\n  worktree carrying `spec-{n}/work/{n}-spec.md` for 2+ records)\n\n## Gotchas\n\n- The fix must preserve rung (c)'s existing `runDir`-only behavior for the common single-record\n  or no-worktree case -- the worktree-mirror check is an additional fallback, not a replacement\n  for the direct read.\n- Origin: 2026-09-14T000308-record-2283-2338 (Defer-reason: pre-existing-outside-diff) -- filed\n  as a follow-up capture while wrapping up that unrelated run, not a defect introduced by it.\n\n## Original request\n\nwrap-up-pack.js resolveRecords spec-* rung never worktree-mirrors materialized headers\n\nOrigin: 2026-09-14T000308-record-2283-2338\nDefer-reason: pre-existing-outside-diff\n\n`bin/lib/wrap-up/pack.js`'s `resolveRecords` ladder has three rungs: (a) the run dir's own\n`work/*-spec.md` headers, (b) the worktree's mirror of that same run dir (via `worktreeMirror`),\nand (c) a parent multi-spec run's `manifest.yml` ids plus any `spec-*/work/` headers found by\n`deps.readdir(runDir)`. Only rungs (a) and (b) apply worktree-mirroring; rung (c) reads `spec-*`\nsubdirectories directly from `runDir` (the main-checkout path `--run` anchors to), never from the\nworktree.\n\nFor a `/claude-tweaks:dispatch` file-overlap group (2+ records sharing one worktree/branch/PR),\n`materialize.md` writes each record's header to `{run-dir}/spec-{n}/work/{n}-spec.md` and commits\nit on the feature branch -- so on a real pr-first run it exists only inside the worktree's own\nworking tree, never in the main-checkout run dir, exactly the same reason rungs (a)/(b) already\nmirror. Observed live on run `2026-09-14T000308-record-2283-2338` (group #2283,#2338):\n`node bin/wrap-up-pack.js --run \"$RUN_DIR\"` returned `recordLabels`, `claim`, `ledger`, and\n`unblocked` all as `{ok: false, error: \"records unresolved -- no materialized header or manifest\nfound\"}` even though both `spec-2283/work/2283-spec.md` and `spec-2338/work/2338-spec.md` existed\nand were readable inside the worktree.\n\n_Filed by `capture` via specShapedBody._\n",
-        "createdAt": "2026-09-14T00:27:13Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXTZ8w",
-            "name": "demo:pending",
-            "description": "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo",
-            "color": "1D76DB"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2391,
-        "state": "OPEN",
-        "title": "wrap-up-pack.js resolveRecords spec-* rung never worktree-mirrors materialized headers",
-        "updatedAt": "2026-09-14T17:02:51Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": "pending",
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: infra\n\n## Current State\n\n`fileMatchesFrontendPredicate` (`plugin/bin/lib/design-detect/index.js`, the Layer 3 sniff) returns true when a file's extension is in `TRIGGER_EXTENSIONS` or when any path segment is in `TRIGGER_PATH_SEGMENTS = ['components', 'pages', 'app', 'routes', 'views', 'ui']`. The segment rule exists so app-router `page.ts`/`layout.ts` files without a rendering extension are still caught. It has no exclusion, so Next.js API route handlers — `app/api/**/route.{ts,js}` (app router) and `pages/api/**` (pages router) — match on the `app`/`pages` segment even though they render nothing. `skills/design-wrapper/frontend-detection.md`'s Match rule (two positive clauses, no exclusion) and its Negative cases list (which names `.ts`/`.js` \"outside any trigger path\" only) describe the same behavior, so the sniff and its documentation agree with each other and are both wrong for this case.\n\nObserved on plugin 6.114.0: a record whose diff was two `app/api/**/route.ts` handlers, one vitest file, and four markdown files, with no `Surface:` header (filed before that field existed, so Layer 2 could not rule), returned `{\"decision\":\"proceed\",\"track\":\"web\"}` from `design-detect.js` in `review`, `polish`, and `survey` modes. The run overrode the verdict by hand three times, each logged as a deviation, while `/build`'s own design pre-build step on the same run had already been skipped as \"no frontend surface\". Layer 3 is a fallback that runs only when nothing was declared (`layer3Applies`), so the false positive costs exactly the records that most need the sniff to be right.\n\nTests: `tests/bin-lib/design-detect/index.test.js` (245 lines) covers \"trigger path segments match regardless of extension\" and the zero-match skip; no case exercises an API route path.\n\n## Deliverables\n\n- [ ] Add an API-route exclusion to `fileMatchesFrontendPredicate`: after the extension check (a `.tsx` under `app/api/` still matches on extension) and before the segment scan, return false when the normalized path contains `app/api/` or `pages/api/` as adjacent segments (`(^|/)(app|pages)/api/`), so the `app`/`pages` segment rule never fires for a Next.js API route. Keep `TRIGGER_PATH_SEGMENTS` unchanged; the exclusion is a named constant (`API_ROUTE_SEGMENTS` or a regex) with a comment citing this record and the two Next.js conventions.\n- [ ] `frontend-detection.md`: add a third clause to the Match rule stating the exclusion (segment matches under `app/api/` or `pages/api/` do not count; extension matches still do), and add \"Next.js API route handlers — `app/api/**/route.{ts,js}`, `pages/api/**`\" to the Negative cases list, so the sniff and its documentation agree.\n- [ ] `tests/bin-lib/design-detect/index.test.js`: `app/api/users/route.ts` and `pages/api/health.ts` do not match; `src/app/api/x/route.js` does not match; `app/api/x/page.tsx` still matches (extension wins); `app/dashboard/page.ts` still matches (segment rule intact); `layer3` over the observed file list (two `app/api/**/route.ts`, one `.test.ts`, four `.md`) returns the sniff skip.\n- [ ] `docs/incident-log.md` / `CLAUDE.md` untouched; if `docs/plugin-structure.md`'s `design-detect` line enumerates the trigger tables, leave it — the tables themselves did not change.\n\n## Acceptance Criteria\n\n1. `fileMatchesFrontendPredicate('app/api/users/route.ts')`, `('pages/api/health.ts')`, and `('src/app/api/x/route.js')` return false; `('app/api/x/page.tsx')` and `('app/dashboard/page.ts')` return true.\n2. `layer3([...two app/api route.ts, one .test.ts, four .md])` returns `{ proceed: false, reason: SKIP_REASONS.NON_FRONTEND_SNIFF }`; `node bin/design-detect.js --mode review` over the same list returns a skip decision, not `proceed`.\n3. Every existing case in `tests/bin-lib/design-detect/index.test.js` and `cli.test.js` passes unchanged.\n4. `frontend-detection.md`'s Match rule has the exclusion clause and its Negative cases list names Next.js API route handlers with both path shapes.\n5. `npm test` green.\n\n## Technical Approach\n\nOne predicate change, no new layer: the exclusion is scoped to the two Next.js API conventions the report observed, applied only to the segment rule so the extension rule keeps precedence. Do not generalise to `routes/` (SvelteKit `+server.ts`, Remix resource routes) in this record — those are a different convention with a different marker and belong in a follow-up if observed; name that boundary in the code comment.\n\n### Key Files\n\n- `plugin/bin/lib/design-detect/index.js` — exclusion constant + check in `fileMatchesFrontendPredicate`, above the segment scan\n- `plugin/skills/design-wrapper/frontend-detection.md` — Match rule clause 3; Negative cases bullet\n- `tests/bin-lib/design-detect/index.test.js` — the cases in Deliverables\n\n## Gotchas\n\n- Normalize backslashes before matching (the function already does); the exclusion regex must run on the normalized string so Windows paths behave.\n- `pages/api/` under a `src/` prefix and `app/api/` nested inside a monorepo package path (`packages/web/app/api/...`) must both be excluded; anchor on the adjacent segment pair, not on path start.\n- A `.tsx` under `app/api/` is exotic but possible (a handler that renders an OG image with JSX); the extension rule keeps it frontend on purpose, and the test pins that.\n- `frontend-detection.md`'s trigger tables are cited as \"web-only\" by the native track's routing paragraph; the exclusion does not change that property, so no native-track text needs editing.\n\n## Original request\n\n**Summary:** `design-detect.js`'s Layer 3 path sniff marks Next.js app-router API route handlers (`app/api/**/route.ts`) as frontend, so a backend-only record without a `Surface:` header returns `proceed` for review, polish and survey.\n\n**Kind:** Gap\n\n**Affected component:** bin/lib/design-detect (Layer 3 file-extension / path-segment sniff) and skills/design-wrapper/frontend-detection.md\n\n**Use case:**\nLayer 3's trigger-path table treats any file under a `/app/` segment as frontend so that app-router `page.ts`/`layout.ts` files without a `.tsx` extension are still caught. That rule also matches `app/api/**/route.ts` — Next.js app-router API route handlers, which render nothing. On a record whose diff was two Next.js API route handler files (`app/api/**/route.ts`) plus a vitest file and four markdown files, with no `Surface:` header (a code-health-filed record predating that field), `design-detect.js --mode review`, `--mode polish` and `--mode survey` all returned `{\"decision\":\"proceed\",\"track\":\"web\"}`. The caller then either pays for Impeccable critique/audit over request handlers, or overrides the CLI's verdict by hand — which is what the run did, three times, each as a logged deviation — while `/build`'s own design pre-build step on the same run had already been skipped for \"no frontend surface, two backend API route files\".\n\nSuggested change: exclude `**/app/api/**/route.{ts,js}` (and `pages/api/**`) from the `/app/` and `/pages/` path triggers, or require a rendering extension when the only match is a path segment and the file is a `route.ts`; add \"Next.js API route handlers\" to `frontend-detection.md`'s Negative cases list so the sniff and its documentation agree.\n\n**Definition:** Clear\n\n**Plugin version:** 6.114.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-85c00f04 -->\n\n",
         "createdAt": "2026-09-02T11:41:30Z",
         "labels": [
@@ -2095,106 +1757,6 @@
           "notPlanned": false,
           "shapedHeadless": true
         }
-      },
-      {
-        "body": "Surface: infra\n\n**Related:** #2422 (same hardcoded-`main`-vs-integration-branch-ladder theme, different file)\n\n## Current State\n\n`bin/lib/wrap-up/pack.js`'s `resolveHeader` (the function backing `bin/wrap-up-pack.js`'s\n`residue`, `state`, and `blastRadius` probes) resolves the integration branch at line 233-238:\n\n```js\nconst policy = {\n  integrationBranch: values['integration-branch'] || '',\n  ...\n};\nconst integrationBranch = policy.integrationBranch || 'main';\nsources.integrationBranch = policy.integrationBranch ? 'policy' : 'default';\n```\n\nIt only ever consults `resolvePolicy`'s `integration-branch` key. When that key is unset (no\n`.claude-tweaks/policy.yml` pin), it falls straight to the literal string `'main'` -- never\nconsulting `skills/_shared/integration-branch.md`'s canonical ladder (routine template ->\npolicy.yml -> CLAUDE.md prose -> git/`gh repo view` default -> per-consumer fallback), which\nexists precisely so callers don't each hardcode their own guess.\n\nOn a repository whose actual default branch is not `main` (e.g. `master`), with no\n`integration-branch:` policy key set, this causes `residue`/`state`/`blastRadius` to fail:\n`could not resolve merge base of \"main\" and HEAD\"` (`blastRadius`) or `\"base unresolved -- no\nmerge-base against the integration branch\"` (`residue`/`state`). `sources.integrationBranch`\nthen reports `\"default\"` -- i.e. the pack's own provenance trace correctly shows it never\nconsulted policy.yml, CLAUDE.md, or git/gh at all.\n\n`skills/wrap-up/residue-sweep.md` already documents the correct pattern for a sibling caller:\n\"`--integration-branch` must always be passed explicitly -- never rely on the CLI's own\ndefault... resolve `{ref}` via `skills/_shared/integration-branch.md`'s canonical ladder before\ninvoking the CLI.\" `pack.js`'s `resolveHeader` is the one caller that still bypasses this.\n\n## Deliverables\n\n- `resolveHeader` in `bin/lib/wrap-up/pack.js` resolves `integrationBranch` via\n  `skills/_shared/integration-branch.md`'s canonical ladder (minus the routine-template rank,\n  which has no meaning inside this CLI -- policy.yml -> CLAUDE.md prose -> git/`gh repo view`\n  default), not a bare `policy.integrationBranch || 'main'` fallback.\n- `sources.integrationBranch` reports which ladder rank actually resolved the value (e.g.\n  `'policy'`, `'git-default'`), not just the binary `'policy'`/`'default'` it reports today --\n  so a reader of the pack's own provenance trace can tell which rank fired.\n\n## Acceptance Criteria\n\n- On a repository whose actual default branch is not `main`, with no `integration-branch:` key\n  in `.claude-tweaks/policy.yml`, running `node bin/wrap-up-pack.js --run <run-dir>` resolves the\n  real default branch (via git/`gh repo view`) instead of hardcoding `main`, and the\n  `residue`/`state`/`blastRadius` probes run to completion instead of failing on an unresolved\n  merge base.\n- `inputs.sources.integrationBranch` in the pack's output reflects the actual resolution source,\n  never silently reporting `'default'` when a real ladder rank (git/gh, or CLAUDE.md prose) fired.\n- A repository that already sets `integration-branch:` in `.claude-tweaks/policy.yml` is\n  unaffected -- this fix only changes what happens when that key is absent.\n- Existing tests covering `pack.js`'s header resolution still pass; add a test covering the\n  non-`main`-default, no-policy-key case this record reports.\n\n## Technical Approach\n\nReplace `pack.js`'s bare `policy.integrationBranch || 'main'` fallback with a call into\n`skills/_shared/integration-branch.md`'s canonical resolution -- the same git/`gh repo view`\ndefault-branch lookup `residue-sweep.md` already instructs its own callers to perform before\ninvoking `bin/residue.js` directly. Reuse whatever resolver function backs that lookup elsewhere\nin `bin/lib/` (check for an existing `resolveIntegrationBranch`-shaped helper before writing a\nnew one -- `bin/lib/reconcile/` and `bin/resolve-policy.js` both touch this same ladder and may\nalready export a reusable piece). Thread the resolved value's source rank through to\n`sources.integrationBranch` so the pack's own provenance trace stays accurate.\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/pack.js` -- `resolveHeader`'s integration-branch fallback (line ~233-238)\n- `plugin/skills/_shared/integration-branch.md` -- the canonical ladder this fix must follow, not restate\n- `plugin/skills/wrap-up/residue-sweep.md` -- the existing sibling-caller pattern to mirror\n\n## Gotchas\n\n- Workaround used to file this record: invoking `bin/residue.js` and `bin/blast-radius.js`\n  directly with an explicit `--base`/`--integration-branch master`, bypassing `pack.js`'s own\n  (broken) resolution for those two fields -- confirms the underlying probes work correctly once\n  given the right branch name; the defect is isolated to `pack.js`'s own resolution step.\n- `merge-size-probe.js`, `release/precheck.js`, and `release-preflight/pack.js` carry similar\n  `|| 'main'` fallbacks (found via a repo-wide grep while shaping this record) -- out of scope\n  for this record, which is filed specifically against `wrap-up-pack.js`'s probes; worth a\n  follow-up capture if they prove to have the same defect.\n\n## Original request\n\nwrap-up-pack.js: residue/state/blastRadius probes hardcode \"main\" instead of the canonical integration-branch ladder\n\n**Summary:** `bin/wrap-up-pack.js`'s `residue`, `state`, and `blastRadius` probes all failed on a repository whose default branch is not literally named `main`, with `could not resolve merge base of \"main\" and HEAD`. `skills/_shared/integration-branch.md` documents a canonical resolution ladder (explicit arg -> routine template -> `policy.yml`'s `integration-branch:` key -> CLAUDE.md prose -> git/`gh repo view` default -> per-consumer fallback) specifically so callers don't each hardcode their own guess, but this tool's `main` fallback bypasses that ladder entirely.\n\n**Kind:** Defect\n\n**Affected component:** `bin/wrap-up-pack.js`\n\n**Repro steps:**\n1. In a repository whose actual default branch is `master` (not `main`), with no `integration-branch:` key set in `.claude-tweaks/policy.yml`.\n2. Run `node bin/wrap-up-pack.js --run <a valid pipeline run dir>`.\n\n**Expected vs. actual:**\nExpected: the tool resolves the integration branch via `_shared/integration-branch.md`'s ladder (landing on the repo's actual default via `gh repo view --json defaultBranchRef` / `git remote show origin`) and the `residue`/`state`/`blastRadius` probes run normally.\nActual: all three probes fail with `error: \"could not resolve merge base of \\\"main\\\" and HEAD\"` (`blastRadius`) or `\"base unresolved -- no merge-base against the integration branch\"` (`residue`/`state`), and the pack's own `inputs.sources.integrationBranch` reports `\"default\"` -- i.e. it never consulted policy.yml, CLAUDE.md, or git/gh at all.\n\n**Definition:** Clear -- cite `_shared/integration-branch.md` in `wrap-up-pack.js` the same way `residue-sweep.md` already instructs its own caller to resolve `{ref}` before invoking `bin/residue.js` directly. Workaround used this run: invoke `bin/residue.js` and `bin/blast-radius.js` directly with an explicit `--base`/`--integration-branch master`, bypassing the pack's own (broken) resolution for those fields.\n\n**Plugin version:** 6.123.0\n<!-- fingerprint: feedback-a696904f -->\n\n",
-        "createdAt": "2026-09-13T22:11:33Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXTZ8w",
-            "name": "demo:pending",
-            "description": "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo",
-            "color": "1D76DB"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2385,
-        "state": "OPEN",
-        "title": "wrap-up-pack.js: residue/state/blastRadius probes hardcode \"main\" instead of the canonical integration-branch ladder",
-        "updatedAt": "2026-09-14T17:02:47Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": "pending",
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
       }
     ]
   ],
@@ -2230,12 +1792,5 @@
       ]
     }
   ],
-  "bundles": [
-    {
-      "records": [
-        1786,
-        2385
-      ]
-    }
-  ]
+  "bundles": []
 }
