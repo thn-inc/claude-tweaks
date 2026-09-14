@@ -1,6 +1,7 @@
 {
-  "released": true,
-  "runId": "2026-09-11T143147-record-2028",
-  "reason": "merged: reconciled from PR #2234",
-  "releasedAt": "2026-09-12T13:54:50.752Z"
+  "runId": "2026-09-14T212627-record-2028",
+  "sessionId": "c9a06541-f88f-456f-a5aa-57862fd052ce",
+  "claimedAt": "2026-09-14T21:30:38.223Z",
+  "ttlHours": 72,
+  "host": "b0a263198ed9"
 }
