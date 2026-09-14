@@ -20,6 +20,7 @@ const { LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
 const { PRIORITIES, TIERS, parseRecordFacets } = require('./record');
 const { blockersOf } = require('./ranking');
 const { evaluateGrantGate } = require('./grant-gate');
+const { isBotParked } = require('./record-buckets');
 
 // Urgency order shared by both bands (high first). Values are validated
 // against record.js's canonical PRIORITIES/TIERS vocabulary before this
@@ -205,7 +206,7 @@ function funnelBuckets(records) {
     // rankNextToBuild (refs #514).
     const inSetBlockers = blockersOf(r).filter((id) => openIds.has(id));
     if (f.bot.inProgress) buckets.inFlight.push(r);
-    else if (f.bot.parked) buckets.botParked.push(r);
+    else if (isBotParked(r)) buckets.botParked.push(r);
     else if (f.stage === 'parked') buckets.parked.push(r);
     else if (f.notPlanned) buckets.notPlanned.push(r);
     else if (f.isParentIssue) buckets.parents.push(r);
