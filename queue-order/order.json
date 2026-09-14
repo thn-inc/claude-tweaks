@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T15:13:41.087Z",
+  "computedAt": "2026-09-14T15:36:17.067Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -365,7 +365,7 @@
       },
       {
         "number": 1892,
-        "updatedAt": "2026-09-14T14:38:05Z",
+        "updatedAt": "2026-09-14T15:34:56Z",
         "state": "OPEN"
       },
       {
@@ -2808,6 +2808,566 @@
     ],
     [
       {
+        "body": "Surface: infra\n\n## Current State\n\n`plugin/bin/lib/reconcile/archive-merged.js`'s by-number escape hatch (lines ~1295-1314) exists\nto unstick a run whose worktree and branch are both gone (`#1962`): it re-resolves the run's PR\ndirectly by `state.pr.number` via `resolvePrStateByNumber`, and archives immediately **only when\n`byNumber.state === 'CLOSED'`** (an unmerged close has nothing to catch up on). There is no\nbranch at all for `byNumber.state === 'MERGED'` — the most common real-world case, since GitHub\nauto-deletes a branch after merge and a worktree is routinely reaped after that. A merged-but-\nunhandled run falls straight through to the plain `no-branch` skip, which after\n`STRUCTURALLY_STUCK_TTL_MS` (7 days) of no further mtime activity gets classified\n`isStructurallyStuck()` and escalated by `escalate-residue.js` into a GitHub issue titled\n`reconcile: structurally-stuck stuck on {path}` (see #644) — permanently, since nothing in the\nsweep ever revisits a `no-branch` skip once escalated.\n\nConfirmed against the currently-open instances of this exact escalation: `#2225` (this record,\npath `.../2026-09-01T125854-record-1452`, PR #1763 MERGED 2026-09-01), plus nine more open\nissues whose referenced run dirs each stamp a `state.pr.number` for a PR that has since merged —\n`#2226` (PR #1761), `#2228` (PR #1760), `#2229` (PR #1759), `#2354` (PR #1901), `#2355` (PR\n#1850), `#2356` (PR #1842), `#2357` (PR #1525), `#2358` (PR #1907), `#2359` (PR #1891) — all\nconfirmed `MERGED` via `gh pr view {n} --json state,mergedAt`. Ten separate, independently-filed\nGitHub issues are symptoms of this one code gap, not ten unrelated problems.\n\n(Two further open issues in this same title family — `#2230` and `#2231` — reference PRs that\nare `CLOSED` but unmerged (#1509, #1497). Those already match the *existing* CLOSED branch's\ncondition, so they are a different, still-open question (their run dirs have no `console.json`\nat all, so `readConsoleState` reads `'none'`/`console-never-rendered`, which the CLOSED branch\nalso currently skips on) — **out of scope for this record**; tracked separately, not fixed here.)\n\n## Deliverables\n\n- Add a `byNumber.state === 'MERGED'` branch to the by-number escape hatch in\n  `archive-merged.js`, mirroring the existing branch-based merged-PR path immediately below it\n  (`resolvePrState` → `decideArchive` → `localHasMerge` → `archiveRunDir`): gate on the same\n  `readConsoleState`/`decideArchive` resolved-console check the CLOSED branch already applies,\n  then run the identical `localHasMerge(root, byNumber.mergeCommit)` fast-forward check the\n  branch-based merged path uses before calling `archiveRunDir`, using `byNumber.mergeCommit` in\n  place of `prState.mergeCommit` (the by-number lookup carries the same field — verify this\n  against `pr-state.js`'s `resolvePrStateByNumber` return shape before wiring it in).\n- Add a test case to `tests/bin-lib/reconcile/archive-merged.test.js`, alongside the existing\n  by-number `CLOSED`/`OPEN` cases (~line 1723), covering `byNumber.state === 'MERGED'` with a\n  local fast-forward past the merge commit — asserting the run archives.\n- Once this fix ships and the next reconcile sweep runs against the live repo, verify it clears\n  the ten currently-escalated `no-branch` issues named in Current State (or as many as still have\n  their run dir present — some may since have been manually archived).\n\n## Acceptance Criteria\n\n- `archiveMerged()` archives a run whose worktree and branch are both gone, whose\n  `state.pr.number` resolves (via `resolvePrStateByNumber`) to a `MERGED` PR, and whose local\n  checkout is fast-forward of that PR's merge commit — the identical outcome the existing\n  branch-based merged-PR path already produces for a run that still has a resolvable branch.\n- The same run is still skipped (not archived) when `localHasMerge` returns `false` (local\n  checkout behind the merge commit) or `undefined` (merge commit unknown) — the by-number MERGED\n  branch must not skip this safety check just because it takes a different code path to get\n  there.\n- The existing by-number `CLOSED` and `OPEN` behaviors (archive immediately / fall through to\n  `no-branch` skip, respectively) are unchanged — this is a strict addition, not a rewrite of the\n  existing branch.\n- The new test in `archive-merged.test.js` fails if the `MERGED` branch is removed, proving it\n  actually exercises the new code path.\n- `#2230` and `#2231` (the CLOSED-but-console-never-rendered case) are explicitly out of scope —\n  this record's fix must not attempt to also resolve those two.\n\n## Technical Approach\n\nIn `plugin/bin/lib/reconcile/archive-merged.js`, inside the `if (stampedWorktree && state &&\nstate.pr && state.pr.number)` block (~line 1295), add a sibling branch to the existing\n`if (byNumber && ... byNumber.state === 'CLOSED')` check:\n\n```js\nif (byNumber && typeof byNumber === 'object' && byNumber.state === 'MERGED') {\n  const consoleState = readConsoleState(dir);\n  const decision = decideArchive(byNumber, consoleState);\n  if (decision.action === 'skip') {\n    skipped.push({ runDir: dir, reason: decision.reason });\n    continue;\n  }\n  const hasMerge = localHasMerge(root, byNumber.mergeCommit);\n  if (hasMerge !== true) {\n    skipped.push({ runDir: dir, reason: hasMerge === false ? 'local-behind-merge' : 'merge-commit-unknown' });\n    continue;\n  }\n  if (dryRun) { archived.push(dir); continue; }\n  const result = archiveRunDir(root, dir);\n  trackArchiveResult(root, repoSlug, dir, result);\n  if (!result.ok) { skipped.push({ runDir: dir, reason: result.reason }); continue; }\n  archived.push(dir);\n  continue;\n}\n```\n\nVerify `resolvePrStateByNumber`'s actual return shape (`pr-state.js`) carries `mergeCommit` under\nthe same field name `resolvePrState` does before wiring this in — this snippet assumes parity but\nthat assumption needs a one-line confirmation against the real implementation, not a rewrite of\n`pr-state.js` itself. `decideArchive`'s own signature already accepts a `prState`-shaped object\ngenerically (it's already called with both `resolvePrState`'s and the by-number lookup's outputs\nelsewhere in this same file for the CLOSED case's sibling logic), so reusing it here should not\nrequire changing its signature.\n\n### Key Files\n\n- `plugin/bin/lib/reconcile/archive-merged.js` — add the `MERGED` branch to the by-number escape\n  hatch (~line 1295-1314)\n- `plugin/bin/lib/reconcile/pr-state.js` — read-only reference: confirm `resolvePrStateByNumber`'s\n  return shape carries `mergeCommit`\n- `tests/bin-lib/reconcile/archive-merged.test.js` — add the `MERGED` case test (~near line 1723,\n  alongside the existing `CLOSED`/`OPEN` by-number tests)\n\n## Gotchas\n\n- Ten currently-open GitHub issues (`#2226`, `#2228`, `#2229`, `#2354`, `#2355`, `#2356`, `#2357`,\n  `#2358`, `#2359`, plus this record `#2225`) are symptoms of this exact gap, confirmed by\n  checking each referenced PR's merge state directly — they are not being independently shaped\n  into their own build specs by this sweep, to avoid ten redundant PRs fixing the identical\n  one-function gap. Once this fix merges, close the other nine as duplicates (referencing this\n  record) once reconcile's next sweep confirms their run dirs actually archive — do not close\n  them pre-emptively before that confirmation, since a run dir that still doesn't archive after\n  this fix ships means the gap wasn't fully understood and those issues should stay open.\n- `#2230`/`#2231` are a different, still-open sub-problem (CLOSED-unmerged PRs whose run dirs\n  never got a `console.json` at all) — do not fold a fix for that into this record; it needs its\n  own diagnosis of why `console-never-rendered` isn't itself eligible for archival.\n- This fix only prevents *future* silent accumulation and lets already-escalated instances heal\n  on the next reconcile sweep — it does not retroactively touch the GitHub issues themselves;\n  closing them is a separate, manual (or tidy-driven) step once the sweep confirms each path\n  actually cleared.\n\n## Original request\n\nreconcile: structurally-stuck stuck on /Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-09-01T125854-record-1452\n\nReconcile has failed `structurally-stuck` on this path for 3 consecutive passes (first observed 2026-09-10T19:55:46.188Z).\n\n**Path:** `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-09-01T125854-record-1452`\n**Reason:** `structurally-stuck`\n**Last error:** stuck at no-branch\n\nFiled automatically by `bin/lib/reconcile` — see #644.\n\n<!-- fingerprint: reconcile-residue-d3b77c80 -->\n",
+        "createdAt": "2026-09-11T13:10:10Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
+            "name": "bug",
+            "description": "Something isn't working",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 2225,
+        "state": "OPEN",
+        "title": "reconcile: structurally-stuck stuck on /Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-09-01T125854-record-1452",
+        "updatedAt": "2026-09-14T14:37:54Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      },
+      {
+        "body": "Surface: infra\n\n## Current State\n`plugin/bin/lib/hooks/session-start.js` walks `.claude-tweaks/pipelines/` twice per session start. The stale-runs report pulls up to `MAX_REPORTED` entries from `context.js`'s `iterRunDirsWithState(ctx.cwd)`, which anchors to the main checkout, sorts newest-first, reads each `run-state.json`, skips `status: 'clean'` runs, and skips runs whose `archive/{name}` twin is `clean` or freshly `archiving`. The #1493 AC5 staged-proposals scan, a few lines below, needs the opposite status filter (only `clean` runs, name-matched to `-(tidy|sweep)-standalone`, with a non-empty `staged/`) and therefore re-implements the walk by hand: its own `mainCheckoutRoot` anchor, its own `readdirSync` + name filter + sort + reverse, its own `JSON.parse(fs.readFileSync(run-state.json))` per dir, and its own early-break at `MAX_REPORTED`. Its comment says why: the iterator \"deliberately excludes status `clean` runs … so it needs its own directory read\". The hand-rolled copy also lacks the iterator's archive-twin and `archiving`-claim skips, so a clean standalone run whose archival is mid-flight can still be listed. Both blocks then build the same advisory shape by hand: `- {name} — {detail}` lines, a header sentence, and the #803 relay trailer.\n\n`bin/lib/reconcile/archive-merged.js`'s `iterCleanRunDirs` (#1733) is a third copy of the same clean-only walk, without the anchor and without the twin skips.\n\n## Deliverables\n- [ ] `iterRunDirsWithState(cwd, { status } = {})` in `context.js`: an optional `status` filter — `'clean'` yields only clean runs, absent keeps today's exclude-clean behavior byte-for-byte — applied at the one existing status check so the anchor, ordering, archive-twin skip, and `archiving`-claim skip are shared by both shapes. `listRunDirsWithState`/`listRunDirs` pass the option through unchanged in their default form.\n- [ ] `session-start.js`'s staged-proposals scan becomes a `for … of iterRunDirsWithState(ctx.cwd, { status: 'clean' })` loop that keeps only its own two concerns: the `-(tidy|sweep)-standalone` name test on `path.basename(dir)` and the non-empty `staged/` read, with the existing `MAX_REPORTED` early break. The hand-rolled `readdirSync`/sort/`run-state.json` read is deleted.\n- [ ] One `advisoryBanner(header, lines, trailer)` helper in `session-start.js` used by both the stale-runs and staged-proposals blocks, producing byte-identical strings to today's inline concatenation (the tests below are the proof).\n- [ ] `archive-merged.js`'s `iterCleanRunDirs(root)` reduced to `[...iterRunDirsWithState(root, { status: 'clean' })]`, so the third copy disappears; its callers and the `{ dir, state }` shape are unchanged.\n- [ ] Tests: `tests/hooks-context.test.js` cases for the option (default excludes clean; `{ status: 'clean' }` yields only clean; both shapes honor the archive-twin skip); the existing #1493/#1494 cases in `tests/hooks-session-start.test.js` pass unmodified; one new session-start case that a clean `-tidy-standalone` run with a `clean` archive twin is not listed (the skip the hand-rolled walk lacked).\n\n## Acceptance Criteria\n1. `session-start.js` contains no `fs.readdirSync` of the pipelines directory and no direct `run-state.json` parse; both advisory scans iterate `iterRunDirsWithState`.\n2. With no option, `iterRunDirsWithState` yields exactly what it yields today for every existing fixture (the `hooks-context`, `session-start`, `archive-merged`, `console-execute`, and residue-probe suites are the proof).\n3. The two banners' rendered text is byte-identical to today's for the existing fixtures.\n4. `iterCleanRunDirs` in `archive-merged.js` no longer walks the directory itself; the #1544 clean-status sweep cases pass unmodified.\n5. `npm test` is green.\n\n## Technical Approach\nAn opt-in filter, not a widened yield: #1733 declined changing the iterator's *default* output because eight callers rely on the clean exclusion; an option that leaves the default untouched changes nothing for them and lets the two clean-only walkers stop re-deriving the anchor and skips. Implement the option at the single `if (state && state.status === 'clean') continue;` line — `const wantClean = opts.status === 'clean'; if (Boolean(state && state.status === 'clean') !== wantClean) continue;` — so the archive-twin and `archiving` checks below it apply to both shapes. Land after #1733 (which touches `iterCleanRunDirs`'s caller) so the swap here is a contained one-line body replacement.\n\n### Key Files\n- `plugin/bin/lib/hooks/context.js` — `iterRunDirsWithState`, `listRunDirsWithState`, `listRunDirs`, `RUN_ID_RE`.\n- `plugin/bin/lib/hooks/session-start.js` — the stale-runs block and the #1493 AC5 staged-proposals block (both under `run()`), `MAX_REPORTED`.\n- `plugin/bin/lib/reconcile/archive-merged.js` — `iterCleanRunDirs`.\n- `tests/hooks-session-start.test.js` — #1493 AC5 / I2 / I4 / #1494 cases; `tests/hooks-context.test.js`; `tests/bin-lib/reconcile/archive-merged.test.js` (#1544 cases).\n\n## Gotchas\n- The hand-rolled scan swallows an unreadable `run-state.json` with `continue`; the iterator yields `state: null` for such a dir and the `status` check must treat `null` as not-clean under both shapes, so the swap keeps skipping it.\n- `MAX_REPORTED` applies after the name and `staged/` filters in the staged-proposals scan (it counts approvable entries, not candidates); keep the early break on `approvable.length`, not on iteration count.\n- The long #1493 comment block explaining why the scan needed its own read must be rewritten, not deleted: the reason it cites is exactly what the option removes.\n- `docs/hooks.md` mentions the stale-run report by behavior only; no docs change unless the iterator's option is worth a sentence there (judgment call at build).\n\n## Original request\n## Current State\nThe #1493 AC5 staged-proposals advisory scan in `plugin/bin/lib/hooks/session-start.js` (~line 88) hand-rolls its own `fs.readdirSync` + filter + sort + per-dir-state-read loop instead of extending `context.js`'s `iterRunDirsWithState` (already used a few lines above for the stale-runs report) — because that iterator hardcodes skipping 'clean' status runs and this scan wants only clean ones. It also duplicates the advisory-banner-building pattern (MAX_REPORTED capping, \"- name — detail\" lines, templated trailer) of the block just above it.\n\n## Deliverables\nAdd an `includeClean` option to `iterRunDirsWithState` (or equivalent) so session-start.js's clean-only scan reuses the shared iterator instead of a second, differently-filtered directory-walking implementation.\n\n## Acceptance Criteria\n- [ ] session-start.js's staged-proposals scan uses the shared iterator rather than a standalone readdir/sort/per-dir-read loop.\n- [ ] Existing session-start hook tests pass unchanged.\n- [ ] Full `npm test` passes.\n\nDefer-reason: genuinely-larger — changes iterRunDirsWithState's shared contract, not a localized single-file change; found by the pre-v6.112.0 whole-branch review.\n",
+        "createdAt": "2026-08-31T11:30:19Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACq41dsw",
+            "name": "backlog:category-technical",
+            "description": "technical-category backlog item",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Size: medium effort",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: standard review",
+            "color": "c5def5"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 1738,
+        "state": "OPEN",
+        "title": "session-start.js: #1493 AC5 staged-proposals scan duplicates context.js's directory-walking instead of extending iterRunDirsWithState",
+        "updatedAt": "2026-09-14T11:05:17Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      },
+      {
+        "body": "Surface: infra\n\n## Current State\n`isAbandonedInterrupted(runDir, state, sessionId, now)` in `plugin/bin/lib/reconcile/archive-merged.js` calls `hasReadableEventsLog(runDir)` and then `lastOwnEventMs(runDir)` back to back. Each does its own `fs.readFileSync(path.join(runDir, 'events.jsonl'))`: the first only to learn whether the read succeeds (an unreadable or absent log is UNKNOWN evidence, per #1673 F9, never proof of staleness), the second to parse every line, drop `attribution === 'fallback'` events, and return the newest parseable `ts`. Two reads of the same file per candidate run dir, per reconcile pass. `hasReadableEventsLog` exists only because `lastOwnEventMs`'s `null` conflates \"unreadable\" with \"readable but no qualifying event\".\n\n`plugin/bin/lib/hooks/context.js`'s `scanWrapupEvents(runDir)` is documented as \"the single reader for the paired appendEvent writer\", but it is not a drop-in: it returns `{ any, wrapup }` over `skill_invoked` events only, carries no timestamps, and deliberately does not filter fallback-attributed lines — the comment above `lastOwnEventMs` says the two filters are intentionally asymmetric and must not be reconciled. So the record's \"ideally reuse `scanWrapupEvents`\" half cannot be taken literally; what can be shared is the raw read-and-parse below both consumers.\n\n## Deliverables\n- [ ] A shared line reader in `context.js`, `readEventLines(runDir)` → `null` when `events.jsonl` is absent or unreadable, else an array of parsed event objects (unparseable lines skipped), exported alongside `scanWrapupEvents`; `scanWrapupEvents` reimplemented on top of it with identical output.\n- [ ] `archive-merged.js`: `hasReadableEventsLog` and `lastOwnEventMs` replaced by one `ownEventRecency(runDir)` → `{ readable: boolean, lastOwnMs: number | null }` built on `readEventLines`, keeping the fallback-attribution filter and the `Date.parse` skip exactly as `lastOwnEventMs` has them; `isAbandonedInterrupted` calls it once. `lastOwnEventMs` stays exported as a thin wrapper (`tests/bin-lib/reconcile/archive-merged.test.js` imports it) returning `ownEventRecency(runDir).lastOwnMs`.\n- [ ] The asymmetry comment above `lastOwnEventMs` moves onto `ownEventRecency` unchanged in substance; the `hasReadableEventsLog` comment's \"UNKNOWN evidence, not proof of staleness\" rationale is kept on the `readable` field.\n- [ ] Tests: `readEventLines` unit cases in `tests/hooks-context.test.js` (absent → `null`; empty file → `[]`; mixed valid/invalid lines → only the valid ones); an `archive-merged.test.js` case asserting one `readFileSync` of `events.jsonl` per `isAbandonedInterrupted` call (spy on `fs.readFileSync` via the test's existing fixture or count with a wrapped `fs`); existing `isAbandonedInterrupted` and #1673 AC cases unmodified.\n\n## Acceptance Criteria\n1. `isAbandonedInterrupted` performs at most one read of `events.jsonl` per call, pinned by a test.\n2. `archive-merged.js` contains no `fs.readFileSync(... 'events.jsonl' ...)` of its own; `context.js`'s `readEventLines` is the only raw reader for the file, and `scanWrapupEvents`'s output is unchanged for every existing fixture.\n3. For an absent/unreadable log `isAbandonedInterrupted` returns `false` (unchanged); for a readable log with only fallback-attributed lines it still classifies as abandoned once past `STALE_INTERRUPTED_TTL_MS` (the documented asymmetry with `checkRunIntegrity` holds).\n4. All existing cases in `tests/bin-lib/reconcile/archive-merged.test.js` pass unmodified; `npm test` is green.\n\n## Technical Approach\nShare the read, keep the two filters. `readEventLines` is the primitive both consumers already implement inline (read, split, skip blanks, `JSON.parse` per line, skip failures); neither consumer's semantics change because each keeps its own filter on the returned array. The `readable`/`lastOwnMs` pair replaces the two-call dance without losing the distinction #1673 F9 introduced. `checkRunIntegrity` (called at the same main-loop site, and itself a `scanWrapupEvents` consumer) will then read the file a second time per candidate; collapsing that into one read across the two callers is a separate change with a wider contract and is out of scope here. Same file as #1732/#1733/#1734: sequence, never build in parallel; no ordering dependency on them.\n\n### Key Files\n- `plugin/bin/lib/reconcile/archive-merged.js` — `lastOwnEventMs`, `hasReadableEventsLog`, `isAbandonedInterrupted`, `module.exports`.\n- `plugin/bin/lib/hooks/context.js` — `scanWrapupEvents`, `appendEvent` (the paired writer; unchanged), `module.exports`.\n- `plugin/bin/lib/hooks/run-integrity.js` — `checkRunIntegrity` (consumer of `scanWrapupEvents`; unchanged, output must not move).\n- `tests/bin-lib/reconcile/archive-merged.test.js` — `lastOwnEventMs` import and the events.jsonl fixtures.\n\n## Gotchas\n- `scanWrapupEvents` returns `null` for an unreadable file and `{ any: false, wrapup: false }` for an empty one; `readEventLines` must preserve that split (`null` vs `[]`) or `closeRunState` and `checkRunIntegrity` change behavior.\n- The `attribution === 'fallback'` filter belongs to `ownEventRecency` only; do not add it to `readEventLines` or `scanWrapupEvents` (see the asymmetry comment).\n- `docs/hooks.md` describes `events.jsonl` at the contract level and enumerates no reader list; no docs change.\n\n## Original request\n## Current State\n`lastOwnEventMs()` and `hasReadableEventsLog()` (`plugin/bin/lib/reconcile/archive-merged.js`, ~line 147) each independently `fs.readFileSync` the same `events.jsonl` file, and `isAbandonedInterrupted` (~line 209) calls both back-to-back on every invocation — reading the same file from disk twice, per run dir, per reconcile pass — while `plugin/bin/lib/hooks/context.js`'s `scanWrapupEvents` is documented elsewhere in this codebase as \"the single reader\" for events.jsonl.\n\n## Deliverables\nConsolidate `lastOwnEventMs`/`hasReadableEventsLog` onto a single read (ideally reusing `context.js`'s `scanWrapupEvents`/its underlying reader) instead of two independent events.jsonl-parsing implementations.\n\n## Acceptance Criteria\n- [ ] `isAbandonedInterrupted` reads events.jsonl at most once per call.\n- [ ] Existing `tests/bin-lib/reconcile/archive-merged.test.js` behavior is preserved.\n- [ ] Full `npm test` passes.\n\nDefer-reason: genuinely-larger — touches the events.jsonl reading contract shared with context.js, not a localized change; found by the pre-v6.112.0 whole-branch review.\n",
+        "createdAt": "2026-08-31T11:30:10Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACq41dsw",
+            "name": "backlog:category-technical",
+            "description": "technical-category backlog item",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: standard review",
+            "color": "c5def5"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 1737,
+        "state": "OPEN",
+        "title": "archive-merged.js: isAbandonedInterrupted reads events.jsonl twice per call",
+        "updatedAt": "2026-09-14T11:05:19Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      },
+      {
+        "body": "Surface: infra\n\n## Current State\nThree functions in `plugin/bin/lib/reconcile/archive-merged.js` carry the same directory-staleness stanza: `let mtimeMs; try { mtimeMs = fs.statSync(dir).mtimeMs; } catch { return false; } return (now - mtimeMs) > TTL;` — `isAdHocStandaloneSuperseded` against `ADHOC_SUPERSEDED_TTL_MS` (30d), `isOrphanedMint` against `ORPHAN_MINT_TTL_MS` (24h), and `isStructurallyStuck` against `STRUCTURALLY_STUCK_TTL_MS` (7d). Each takes `now = Date.now()` as its last parameter and treats an unstat-able directory as not stale (fail toward \"keep\"). The copies are byte-for-byte the same logic, so a change to the staleness basis (ctime instead of mtime, tolerating clock skew, treating `ENOENT` differently from `EACCES`) has to be made three times, and `isAbandonedInterrupted`, which uses the events log rather than the stat, is the reminder that a fourth copy would be the path of least resistance for the next detector. The related consolidation records (#1732 classifier, #1733 loop extraction) both build on this primitive existing first.\n\n## Deliverables\n- [ ] `isStaleDir(dir, ttlMs, now = Date.now())` in `archive-merged.js`: the one stat-and-compare, returning `false` on any stat failure, `true` iff `(now - mtimeMs) > ttlMs`; exported alongside the existing predicates.\n- [ ] `isAdHocStandaloneSuperseded`, `isOrphanedMint`, and `isStructurallyStuck` each reduce to their own guard clauses plus one `isStaleDir(dir, <their constant>, now)` call; their signatures, exports, and `now` defaults unchanged.\n- [ ] Unit tests for the primitive in `tests/bin-lib/reconcile/archive-merged.test.js` beside the existing `fs.utimesSync`-backdated fixtures: stale past TTL → `true`; exactly at TTL → `false` (strict `>` preserved); fresh → `false`; missing directory → `false`.\n- [ ] The three predicates' existing cases stay green unmodified.\n\n## Acceptance Criteria\n1. `archive-merged.js` contains exactly one `fs.statSync(...).mtimeMs` expression, inside `isStaleDir`.\n2. The three predicates call `isStaleDir` with their own TTL constant; the constants' names and values are unchanged and still exported.\n3. `isStaleDir` is exported and has its own test cases for the four outcomes above, including the boundary (`now - mtimeMs === ttlMs` is not stale).\n4. All existing cases in `tests/bin-lib/reconcile/archive-merged.test.js` pass without modification; `npm test` is green.\n\n## Technical Approach\nA mechanical extraction: the stanza's only free variables are `dir`, the TTL constant, and `now`. Keep the comparison strict (`>`) and the catch-to-`false` posture identical; both are load-bearing (`isStructurallyStuck`'s comment: \"pure except for the one mtime stat\", and the orphan-mint comment's fail-toward-keep rationale). Land first among the four `archive-merged.js` records: #1732's classifier calls this helper, and #1733/#1737 are independent of it but touch the same file, so sequence, never parallel.\n\n### Key Files\n- `plugin/bin/lib/reconcile/archive-merged.js` — `isAdHocStandaloneSuperseded`, `isOrphanedMint`, `isStructurallyStuck`, `module.exports`.\n- `tests/bin-lib/reconcile/archive-merged.test.js` — backdated-`utimesSync` fixtures for the orphan-mint and structurally-stuck cases are the template.\n\n## Gotchas\n- Other `statSync(...).mtimeMs` sites in the plugin (`file-lock.js`'s lock age, `residue/probes/artifacts.js`'s basis, `visual-decide/server.js`'s signature) compare against different things or for different purposes; they are out of scope and must not be routed through this helper.\n- `isAbandonedInterrupted` is not a stat-based detector (events-log recency); do not force it onto `isStaleDir`.\n- Do not change the fail-closed direction: an unreadable directory is \"not stale\" everywhere today, and `archiveMerged()` relies on that to leave a permission-broken run dir alone.\n\n## Original request\n\n## Current State\n`isStructurallyStuck` (~line 664, `plugin/bin/lib/reconcile/archive-merged.js`) reimplements the identical \"fs.statSync(dir).mtimeMs, catch->false, compare (now-mtimeMs) > TTL\" stanza already present in `isAdHocStandaloneSuperseded` (~line 85) and `isOrphanedMint` (~line 97), each against its own TTL constant.\n\n## Deliverables\nA single `isStaleDir(dir, ttlMs, now)` helper collapsing the three copies of the same try/catch staleness check into one tested primitive, used by all three call sites.\n\n## Acceptance Criteria\n- [ ] `isStructurallyStuck`, `isAdHocStandaloneSuperseded`, and `isOrphanedMint` all call the same shared staleness helper.\n- [ ] Existing `tests/bin-lib/reconcile/archive-merged.test.js` behavior is preserved.\n- [ ] Full `npm test` passes.\n\nDefer-reason: genuinely-larger — bundled with the related consolidation findings (#1732, #1733) rather than landed piecemeal mid-release; found by the pre-v6.112.0 whole-branch review.\n\n",
+        "createdAt": "2026-08-31T11:28:51Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACq41dsw",
+            "name": "backlog:category-technical",
+            "description": "technical-category backlog item",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 1734,
+        "state": "OPEN",
+        "title": "archive-merged.js: extract a shared isStaleDir(dir, ttlMs, now) helper",
+        "updatedAt": "2026-09-14T11:05:22Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      },
+      {
+        "body": "Surface: infra\n\n## Current State\n`archiveMerged()` in `plugin/bin/lib/reconcile/archive-merged.js` ends with two loops that run the same merged-PR archive sequence: the main loop over `iterRunDirsWithState(root)` and the #1544 clean-status sweep over `iterCleanRunDirs(root)`. Both do `resolvePrState(root, branch)` → `readConsoleState(dir)` → `decideArchive(prState, consoleState)` → skip on `decision.action === 'skip'` → `localHasMerge(root, prState.mergeCommit)` with the `local-behind-merge` / `merge-commit-unknown` skip reasons → `dryRun` short-circuit → `archiveRunDir(root, dir)` → `trackArchiveResult(root, repoSlug, dir, result)` → push to `archived`/`skipped`. The copies already differ in one place that the duplication hides: the main loop's `decideArchive` skip also calls `trackStuckSkip(root, repoSlug, dir, decision.reason)` (#1613's structurally-stuck visibility), the clean loop's does not.\n\nThe two loops need different inputs only at the front: the main loop derives `branch` from the worktree list (with the structurally-stuck skip on `no-worktree`/`no-branch`), the clean loop from `fallbackBranch(root, dir, state)` because a `clean` run's `state.worktree` is null by construction. `iterCleanRunDirs` exists because `iterRunDirsWithState` in `bin/lib/hooks/context.js` skips `status: 'clean'` by design, and that generator has eight callers (hooks dispatcher, session-start, console-execute, the residue probe, the stray-run-dir sweep, reconcile's index) that all rely on the exclusion.\n\n## Deliverables\n- [ ] One helper in `archive-merged.js`, `archiveMergedRun({ root, repoSlug, dir, branch, dryRun, onSkip })` → `{ outcome: 'archived' | 'skipped', reason? }`, holding the full sequence from `resolvePrState` through `trackArchiveResult`; `onSkip(reason)` is the hook the main loop uses to call `trackStuckSkip` on a `decideArchive` skip, so the one existing difference becomes an explicit parameter rather than a divergence.\n- [ ] Both loops call the helper: the main loop after its worktree-derived `branch` and structurally-stuck handling, the clean loop after `fallbackBranch`; each keeps only its branch derivation and its `archived`/`skipped` push.\n- [ ] `iterRunDirsWithState`'s contract is unchanged and `iterCleanRunDirs` stays as the clean-status enumerator; the record's alternative (a state-tagged tuple from the shared iterator) is declined — see Technical Approach.\n- [ ] `tests/bin-lib/reconcile/archive-merged.test.js`: existing cases unmodified and green; one new case that a clean-status run whose `decideArchive` skips reports the skip reason without invoking `trackStuckSkip` (pins the `onSkip` asymmetry as intended, so a later reader does not \"fix\" it), and one that a main-loop skip still does.\n\n## Acceptance Criteria\n1. `archive-merged.js` contains exactly one call site each for `resolvePrState`, `decideArchive`, `localHasMerge`, and `archiveRunDir` inside `archiveMerged()`'s merged-PR path (the helper); neither loop body calls them directly.\n2. For every existing fixture, `archiveMerged({ dryRun: true })` returns the same `archived`/`skipped` sets as before the change.\n3. `iterRunDirsWithState` in `bin/lib/hooks/context.js` is byte-identical; no other caller changes.\n4. The `trackStuckSkip`-on-main-loop-only behavior is preserved and pinned by a test.\n5. `npm test` is green.\n\n## Technical Approach\nShare the sequence at the caller, not the iterator. Widening `iterRunDirsWithState` to yield `clean` runs behind a tag would touch a generator that every hook invocation drives (`context.js`'s own comment: it \"drives both the fallback event-attribution scan and every reconcile check's enumeration\") and force each of its other callers to filter the new tuple, for a benefit that is entirely local to `archiveMerged()`. The helper is a pure extraction: move the shared block into a function whose only free variables are the ones both loops already have in scope. Land this before #1732 where possible — #1732's per-kind action switch then dispatches the `merged` kind straight to this helper instead of inlining the sequence a third time. Same file as #1732, #1734, #1737: sequence, never build in parallel.\n\n### Key Files\n- `plugin/bin/lib/reconcile/archive-merged.js` — `archiveMerged` (both loops), `iterCleanRunDirs`, `decideArchive`, `localHasMerge`, `archiveRunDir`, `trackArchiveResult`, `trackStuckSkip`.\n- `plugin/bin/lib/hooks/context.js` — `iterRunDirsWithState` (read for the contract; unchanged).\n- `plugin/bin/lib/hooks/run-integrity.js` — `fallbackBranch` (clean loop's branch source; unchanged).\n- `tests/bin-lib/reconcile/archive-merged.test.js` — the #1544 clean-status fixture (around the `status: 'clean', worktree: null, pr: { branch: … }` case) is the template for the new pins.\n\n## Gotchas\n- `resolvePrState` (imported from `pr-state.js`) reads the reconcile PR cache; keep it inside the helper so a future change to its caching cannot land in one loop only.\n- The clean loop's comment block (#1544 rationale: why `state.worktree` is null and why `fallbackBranch` is the right source) must stay on the clean loop, not move into the helper — it explains the input, not the sequence.\n- `dryRun` pushes to `archived` without touching disk in both loops today; the helper returns `outcome: 'archived'` for that case and the caller pushes, so the dry-run contract stays identical.\n\n## Original request\n## Current State\n`iterCleanRunDirs()` and its consuming loop (`plugin/bin/lib/reconcile/archive-merged.js`, ~line 734/897) duplicate the main loop's `prState`/`decideArchive`/`localHasMerge`/`archiveRunDir`/`trackArchiveResult` sequence almost verbatim, added because `iterRunDirsWithState` excludes 'clean' status runs by design rather than generalizing the iterator/caller to yield a state-tagged tuple both loops could share.\n\n## Deliverables\nGeneralize the iterator (or the caller) so both the main loop and the clean-run-dir loop share one archive-decision sequence instead of two independently maintained copies.\n\n## Acceptance Criteria\n- [ ] Only one implementation of the prState/decideArchive/localHasMerge/archiveRunDir/trackArchiveResult sequence exists.\n- [ ] Existing `tests/bin-lib/reconcile/archive-merged.test.js` behavior is preserved.\n- [ ] Full `npm test` passes.\n\nDefer-reason: genuinely-larger — requires reshaping the shared iterator's contract, not a localized change; found by the pre-v6.112.0 whole-branch review.\n",
+        "createdAt": "2026-08-31T11:28:43Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACq41dsw",
+            "name": "backlog:category-technical",
+            "description": "technical-category backlog item",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Size: medium effort",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: standard review",
+            "color": "c5def5"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 1733,
+        "state": "OPEN",
+        "title": "archive-merged.js: iterCleanRunDirs() loop duplicates the main loop's archive sequence",
+        "updatedAt": "2026-09-14T11:05:24Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      },
+      {
+        "body": "Surface: backend\n\n## Current State\n\n`plugin/bin/lib/hooks/run-integrity.js`'s `mergedEvidence()` passes a caller-derived ref name as a bare positional argument to git at two call sites:\n\n- `runGit(['merge-base', '--is-ancestor', branch, integration], root)`\n- `runGit(['cherry', integration, branch], root)`\n\nThis repo's `gh-api-module-pattern` skill states the rule directly: a caller-supplied value beginning with `-` is still read as an option, and for `git` the separator is `--end-of-options`, not `--` (`--` only guards the pathspec argument slot, a different position). `docs/incident-log.md` carries the same rule for `rev-parse`/`merge-base`.\n\nRecord #1463 added a third call in the same file (`hasCommitSinceRunStart`'s `git log`) and adopted `--end-of-options` there, per CLAUDE.md's \"adopt new conventions in new code first, then migrate existing ones deliberately\". These two call sites are the deliberate migration that convention-adoption implies.\n\n## Deliverables\n\n- [ ] `mergedEvidence()`'s `merge-base --is-ancestor` call places `--end-of-options` before the two ref arguments.\n- [ ] `mergedEvidence()`'s `git cherry` call does the same.\n- [ ] No behavior change for any ref name git can actually produce — the existing `tests/run-integrity.test.js` AC1/AC2/AC3a cases stay green unchanged.\n\n## Acceptance Criteria\n\n1. Both call sites in `mergedEvidence()` pass their ref arguments after an `--end-of-options` separator.\n2. `node --test tests/run-integrity.test.js` passes with no test edits required.\n3. `npm test` passes.\n\n## Technical Approach\nTwo argument-array edits, no logic change: insert `'--end-of-options'` immediately before the first ref argument in each call — `['merge-base', '--is-ancestor', '--end-of-options', branch, integration]` and `['cherry', '--end-of-options', integration, branch]`. `hasCommitSinceRunStart`'s `git log` call in the same file is the in-file model (it already places `--end-of-options` before `branch`, followed by `--` for the pathspec slot); `git cherry` takes no pathspec, so no trailing `--` there.\n\n### Key Files\n- `plugin/bin/lib/hooks/run-integrity.js` — `mergedEvidence()` (the `merge-base --is-ancestor` and `cherry` calls), `hasCommitSinceRunStart()` (existing `--end-of-options` example).\n- `tests/run-integrity.test.js` — AC1 (ancestor), AC2 (cherry), AC3a (unmerged) cases pin the behavior; no edits expected.\n\n## Gotchas\n- Not exploitable today: `branch` reaches these calls only from `deriveBranch()`'s parse of `git worktree list --porcelain`, and git refuses to create a ref beginning with `-`.\n- `--end-of-options` requires git 2.24+; the file's existing `rev-parse --verify --quiet --end-of-options` and `git log … --end-of-options` calls already assume it, so this adds no new floor.\n- The guard just above the calls compares `branch` to `bareIntegrationName(integration)` (#1861/#1862) but passes `integration` through unnormalized; the separator protects the argument slot and changes nothing about that comparison.\n\n## Original request\n\nOrigin: `/claude-tweaks:review #1463`, Step 3 — both dispatched lenses (3b Security, 3c Error Handling) independently reported the same location; 3c cited this repo's own `gh-api-module-pattern` skill for the rule. Staged rather than fixed inside #1463 because those two call sites are untouched by that record's diff and fixing them there would have widened it beyond its declared scope, against this project's surgical-changes rule. Filed via the `/claude-tweaks:flow #1463,#1672,#1673,#1674` consolidated Review Console.\n\n",
+        "createdAt": "2026-08-29T21:03:36Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 1686,
+        "state": "OPEN",
+        "title": "run-integrity.js: migrate mergedEvidence()'s two git calls to --end-of-options",
+        "updatedAt": "2026-09-14T12:11:24Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      }
+    ],
+    [
+      {
         "body": "**Skill:** shared-contract-extraction | **Section:** Gotchas | **Category:** drift | **Classification:** additive | **Confidence:** high\n\nVerified-as-of: 39c3b46bd5b903eb1f9862f557a5c6276b4cb5b6\n\n## Current State\n\ndocs/plugin-structure.md's `_shared` row (lines 94 and 100) was amended by commit 399981c52 (\"ceremony-profile.md rowed in plugin-structure\", refs #1926) after a whole-branch review lens flagged its absence — the opposite outcome from the #1995 `dispatch-waiting.md` case this skill cites as its only worked example, so the skill's unconditional \"needs nothing\" claim no longer matches actual reviewed practice.\n\n## Deliverables\n\n**Current:**\n```\n- **A new `_shared/*.md` file registers in `docs/skill-graph.md` only — `docs/plugin-structure.md` needs nothing.** Step 3's \"cross-reference `docs/plugin-structure.md`'s per-skill sub-file table as a registration site\" is right for a skill's *own* lazy-loaded sub-file and wrong for a `_shared` contract: that doc carries one curated row for the whole directory (`plugin/skills/_shared/*.md → Cross-skill shared content … — see the directory listing`), not a per-file table, so adding a row there is drift, not registration. Step 4's edge is still owed, including when no skill names the new file directly — file the graph row under the section for the reader it addresses and say so in the row. #1995's `_shared/dispatch-waiting.md` is the worked case: one `docs/skill-graph.md` row filed under `dispatch` (\"cited only from the contract's one-line pointer — no skill names it directly … for want of a section for contract-owned files\"), no `plugin-structure.md` edit, ruling narrowed from the plan's first draft at whole-branch review.\n```\n\n**Proposed:**\n```\n- **A new `_shared/*.md` file's `docs/skill-graph.md` edge is mandatory; a `docs/plugin-structure.md` mention is a judgment call, not a given.** Step 3's \"cross-reference `docs/plugin-structure.md`'s per-skill sub-file table as a registration site\" is right for a skill's *own* lazy-loaded sub-file and wrong to apply unmodified to a `_shared` contract: that doc carries one curated row for the whole directory (`plugin/skills/_shared/*.md → Cross-skill shared content … — see the directory listing`), not a per-file table, so adding a *new dedicated row* there is drift, not registration. Step 4's edge is still owed, including when no skill names the new file directly — file the graph row under the section for the reader it addresses and say so in the row. #1995's `_shared/dispatch-waiting.md` is the worked case for staying out of `plugin-structure.md` entirely: one `docs/skill-graph.md` row filed under `dispatch` (\"cited only from the contract's one-line pointer — no skill names it directly … for want of a section for contract-owned files\"), no `plugin-structure.md` edit, ruling narrowed from the plan's first draft at whole-branch review. That is not the only outcome, though: #1926's `_shared/ceremony-profile.md` was added *into* the curated row itself on a review finding (\"the curated `_shared` row lists ceremony-profile.md\", `399981c52`) — the row's own self-description (\"a curated subset … only the fragments worth calling out here\") makes whether to fold the new file into that curated list an explicit judgment call each extraction has to make, not a rule that always resolves to \"nothing.\"\n```\n\n## Acceptance Criteria\n\nThe Gotchas section's absolute claim that a new `_shared/*.md` file never needs a `docs/plugin-structure.md` mention is contradicted by #1926's `_shared/ceremony-profile.md`, which a whole-branch review explicitly required adding to that doc's curated `_shared` row.\n\n_Filed by `/claude-tweaks:harness-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n\n<!-- work-fingerprint: harnesshealth-7f78d679 -->\nwork-fingerprint: harnesshealth-7f78d679",
         "createdAt": "2026-09-11T05:19:35Z",
         "labels": [
@@ -3120,96 +3680,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\n\n`bin/lib/reconcile/archive-merged.js`'s `archiveRunDir` no longer renames a run directory whole — #1713/#1714 made the gitignored half move entry-by-entry and the per-spec loop skip whole `spec-{n}/` renames, and `tests/bin-lib/reconcile/archive-merged.test.js` pins the `ENOTEMPTY` case. The split state this record describes still wedges, one level down. Live evidence at 2026-09-09: `.claude-tweaks/pipelines/2026-08-29T153740-spec-1296-1336/` holds only the two git-tracked headers `spec-1296/work/1296-spec.md` and `spec-1336/work/1336-spec.md`; its archive twin already holds `config.yml`, `decisions.md`, `events.jsonl`, `manifest.yml`, `run-state.json`, `staged/`, and `spec-1296/`/`spec-1336/` subtrees. `reconcile --json` reports the directory `move-failed` on every pass, and `.claude-tweaks/reconcile-cache.json`'s `residueFailures` entry for it reads `ENOTEMPTY: directory not empty, rename '…/spec-1296-1336/spec-12…'` with a count of 58 — the per-spec loop's move of `spec-{n}/work` onto a twin that already has a `work/`. The tracked headers can only leave the live path through a `git mv` plus commit, which under `worktree-always: true` is a gated write from the main checkout and lands only via a worktree PR; nothing in the sweep recognizes \"archive twin complete, live path holds only tracked `work/` headers\" as a distinct state.\n\nThe residue bookkeeping compounds it. `residueFailures` still carries sixteen `move-failed` entries, all `escalated: true`, for paths that no longer exist live — `2026-08-31T182808-record-1679`, `2026-08-26T054601-record-1214`, `2026-08-26T055917-record-1219` (archived, zero tracked files) among them — because `recordResidueSuccess` fires only when this sweep itself archives the directory, never when a PR or a human moves it. Escalation dedups against open records only, so once a per-path record closes (the four open instances today are #1889, #1741, #1716, #1715; #1713/#1714 already closed the same way) a later pass with a stale cache entry files a fresh one for the same path.\n\n## Deliverables\n\n- Make the tracked-header move idempotent against an existing archive twin: when `spec-{n}/work` (or a top-level `work/`) already exists under the archive directory, compare each tracked file's blob with the twin's copy — identical → `git rm --cached`-free path: `git mv` is unnecessary, remove the live copy through git so history stays intact (`git mv` onto the twin path when the twin copy is untracked, `git rm` when the twin already tracks it); different → return a new reason `work-twin-conflict` naming both paths, never a generic `move-failed`.\n- Detect the split state before any move: archive twin exists AND `git ls-files <runDir>` lists only `work/` headers AND no gitignored entries remain → classify as `archived-pending-tracked-move` (a skip reason with its own row in `docs/reconcile-checks.md`), and under `worktree-always: true` emit the paste-ready worktree/PR command that completes the move instead of counting toward `move-failed` escalation.\n- Prune `residueFailures`: on every pass, drop any `move-failed`/`structurally-stuck` entry whose live path no longer exists, and when the entry was escalated, post one resolution comment on the open record (found by the existing fingerprint marker) and close it — the path resolved by other means.\n- Dedup escalation against all states: `escalateResidue` searches the marker across open **and closed** records and, on a closed match whose path is still live, comments on the closed record and reopens it rather than filing a new one.\n- Close #1741 (this split-state instance) when its directory archives, and close #1889/#1716/#1715 as resolved-by-other-means once the prune lands.\n\n## Acceptance Criteria\n\n- A fixture run directory whose archive twin already contains `spec-1/work/1-spec.md` with identical content and whose live path holds only that tracked header archives cleanly on one pass; a differing twin copy returns `work-twin-conflict` and moves nothing — both pinned in `tests/bin-lib/reconcile/archive-merged.test.js`.\n- The split-state fixture under `worktree-always: true` reports `archived-pending-tracked-move` with the completing command in `skipped[]`, and its `residueFailures` count does not increment.\n- `tests/bin-lib/reconcile/cache.test.js` pins that a `residueFailures` entry whose path is absent on disk is pruned and, when escalated, triggers exactly one close call on the marker-matched record.\n- `tests/bin-lib/reconcile/escalate-residue.test.js` pins that a closed marker-matched record is reopened and commented, not duplicated.\n- On this checkout, `node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" reconcile --json` reports no `move-failed` entry for `2026-08-29T153740-spec-1296-1336` after the tracked headers land in `archive/` via a PR, and `reconcile-cache.json` holds no `move-failed` entry for a non-existent path.\n- `npm test` passes.\n\n## Technical Approach\n\nKeep the moves-first, close-last invariant and the `revertPlainMoves` rollback. Add the twin comparison in the `workMoves` assembly (before the per-spec loop) using `git hash-object` on both copies; the split-state predicate reads `fs.readdirSync(runDir)` minus tracked paths and the twin's existence, and sits beside `isOrphanedMint`. For pruning, iterate `residueFailures` keys in `cache.js` after `archiveMerged` returns, `fs.existsSync` each path, and delegate the record close to `escalate-residue.js`'s runner seam so tests inject it. For dedup, extend the marker lookup to `--state all` (the same `findByMarker` idiom `_shared/headless-self-report.md` uses) and add the reopen branch. Document the two new reasons and the prune step in `docs/reconcile-checks.md`.\n\n### Key Files\n\n- `plugin/bin/lib/reconcile/archive-merged.js` — `archiveRunDir`'s `workMoves` twin comparison, per-spec loop, new `archived-pending-tracked-move` and `work-twin-conflict` reasons\n- `plugin/bin/lib/reconcile/cache.js` — `residueFailures` prune after each pass\n- `plugin/bin/lib/reconcile/escalate-residue.js` — all-state marker dedup, reopen branch, resolution comment + close\n- `tests/bin-lib/reconcile/archive-merged.test.js` — twin-identical, twin-conflict, split-state cases\n- `tests/bin-lib/reconcile/cache.test.js` — prune + close-once case\n- `tests/bin-lib/reconcile/escalate-residue.test.js` — reopen-not-duplicate case\n- `docs/reconcile-checks.md` — reason vocabulary and prune step\n\n## Gotchas\n\n- `revertPlainMoves` must be able to undo a partial twin merge; a `git rm` of a live tracked copy is not a plain move — do it last, after every gitignored entry has moved, so a failure before it leaves history untouched.\n- Reconcile runs in-process, so its `git mv`/`git rm` are not gated by the PreToolUse hook — but the resulting commit still needs to land on `main` via the sweep's own commit path, and under `pr-first` the main checkout may lag origin (the record's step 5); read `mirror.state` before deciding the split state is stale.\n- The `structurally-stuck` prune interacts with #1811 (consolidated escalation for that reason); keep the prune reason-agnostic so both classes benefit without duplicating logic.\n- Reopening a closed record is an outward write reconcile already performs (filing), but it is more visible; comment first, reopen second, so a failed reopen leaves an explanatory comment.\n\n## Original request\n\nbin/lib/reconcile archive-merged.js: split-state run dir makes archival fail with ENOTEMPTY forever and re-files the residue record\n\n**Summary:** `archive-merged.js`'s `fs.renameSync(dir, archiveDir)` is not idempotent for a run directory whose gitignored half was already archived while its git-tracked `spec-*/work/*-spec.md` headers stayed under the live path — every later reconcile pass fails with `ENOTEMPTY`, and the auto-filed residue record is re-filed after the first one closes.\n\n**Kind:** Defect\n\n**Affected component:** `bin/lib/reconcile` — `archive-merged.js` (the `archive` check), plus the `move-failed` auto-file path in `bin/lib/reconcile`\n\n**Repro steps:**\n1. Finish a multi-spec `/flow` run whose per-spec `spec-{n}/work/{n}-spec.md` headers are committed (the normal `flow/materialize.md` audit-trail rule).\n2. Let an archival pass move the run dir's gitignored half (`config.yml`, `decisions.md`, `events.jsonl`, `manifest.yml`, `staged/`, `spec-*/` scratch) into `.claude-tweaks/pipelines/archive/{run-id}/`, but leave the tracked headers in place under the live path — this is what happens under `worktree-always: true`, where a `git mv` from the main checkout is a gated write and the tracked half can only move through a worktree PR.\n3. Run `node bin/hooks.js reconcile --json` repeatedly.\n4. Observe `runs[]` reporting `reason: move-failed` with `ENOTEMPTY: directory not empty, rename '.../pipelines/{run-id}' -> '.../pipelines/archive/{run-id}'` on every pass; after 3 passes reconcile auto-files a `move-failed` record.\n5. Close that record via a PR that `git mv`s the four headers into the archive path. If the main checkout has not yet fast-forwarded to that merge (its local integration branch still tracks the headers under the live path), the next passes hit the same `ENOTEMPTY` and reconcile files a second record for the same path (observed as two consecutive records in a private project).\n\n**Expected vs. actual:**\nExpected: the archive check merges into an existing archive directory — move the remaining entries individually, or detect the split state (archive dir exists AND the live dir holds only git-tracked `work/` headers) and either complete the tracked half through a worktree/PR or classify the dir as \"archived pending checkout catch-up\" instead of `move-failed`. A live dir left with only tracked headers should not re-trigger the auto-file after its record has already been closed by a merged PR.\nActual: permanent `move-failed` + `ENOTEMPTY` on every pass, and a duplicate auto-filed record once the first one closes.\n\n**Related (not duplicates):** the open per-path `reconcile: move-failed stuck on …` records (#1889, #1741, #1716, #1715) are instances this defect can keep producing; #1613 covered the skip vocabulary for non-move-failed dirs, not this rename path.\n\n**Definition:** Clear — the ask is a single behavior (merge-into-existing-archive / split-state detection), not an open design choice.\n\n**Plugin version:** 6.114.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-6a532642 -->\n\n",
-        "createdAt": "2026-09-05T10:20:30Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1892,
-        "state": "OPEN",
-        "title": "bin/lib/reconcile archive-merged.js: split-state run dir makes archival fail with ENOTEMPTY forever and re-files the residue record",
-        "updatedAt": "2026-09-14T14:38:05Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: infra\n\n## Current State\n\n`plugin/skills/design-wrapper/modes/review.md` Step 3.8 dispatches each project-local craft critic with, per (e), the critic's `SKILL.md` inlined verbatim (item 1, \"a path string reaches nothing\") and the decisions layer — `DESIGN.md` then `.impeccable/design.json` — inlined verbatim (item 3). On a project with a ~25 KB `DESIGN.md` and a ~20 KB sidecar, plus `emil-design-eng`'s ~28 KB `SKILL.md`, that is ~73 KB of prompt per critic, read into the dispatching context and written back out before the critic sees a changed line. Step 3.8 (b) selects the critic whenever `design-critique` resolves `auto`, the track is `web`, and decisions are present — it never asks whether the diff has any design surface: a 20-line change to fetch/refresh control flow in one React component (no JSX, CSS, template, or copy lines touched) dispatches the full critic exactly like a component rewrite would.\n\nObserved on 2026-09-04 (plugin 6.114.1): the critic was fanned out alongside the Impeccable critique/audit runner and the code-simplifier; the dispatching session hit an API session limit mid-flight, all three subagent output files were 0 bytes, the critic's findings survived only via a coordinating session's relay, and re-dispatching the other two moved Impeccable's critique score from 30/40 to 25/40 on identical input. `_shared/subagent-output-contract.md`'s Failed-agent retrieval section documents the session-limit signature but not that a parent-terminated subagent leaves a 0-byte output file, so \"read its transcript tail\" is not a recovery path in that case.\n\n## Deliverables\n\n- Add a design-surface gate to Step 3.8 (b): before selecting a critic, classify the changed UI files' hunks; when no changed line is JSX/TSX markup, CSS/style, template, or user-facing copy — control-flow-only edits — skip the critic with a `SCANNED` line naming the gate, the same posture Layer 3 already takes for non-frontend files. Implement the classification as a small deterministic helper beside `bin/lib/design-detect/` (line-level, extension- and syntax-keyed) rather than prose judgment, so the gate is testable.\n- Replace the verbatim inlining of the decisions layer in Step 3.8 (e) item 3 with an instructed read: pass the absolute paths of `DESIGN.md` and the sidecar with an explicit \"Read these files first, before judging\" sentence, and keep only the critic's `SKILL.md` inline (item 1). Re-word the \"a path string reaches nothing\" rationale to what it actually guards — an unnamed, uninstructed path — so the instruction stays honest about the contract.\n- Add the 0-byte-output observation to `_shared/subagent-output-contract.md`'s Failed-agent retrieval section: a subagent whose parent session is terminated leaves an empty output file; the only record is a relay from a coordinating session, and the dispatcher must treat an empty file as \"no result,\" never as \"no findings.\"\n- Update `critics.md`'s dispatch notes and `docs/skill-graph.md` only if the gate changes the caller edge (it should not); keep `docs/plugin-structure.md`'s sub-file table in sync if a helper file is added.\n\n## Acceptance Criteria\n\n- A fixture diff touching only control-flow lines in a `.tsx` file produces no craft-critic dispatch and one `SCANNED … design-surface gate: no JSX/CSS/template/copy lines changed` line in `decisions.md`; the same file with one JSX attribute change dispatches the critic — both pinned by a unit test on the helper and a conformance test on `review.md`'s Step 3.8 text.\n- A dispatched critic prompt contains the critic's `SKILL.md` inline, the two absolute paths with the \"Read these files first\" instruction, and no verbatim `DESIGN.md`/sidecar content; a conformance test asserts the prompt template's byte size for the reference fixture drops below 35 KB.\n- `_shared/subagent-output-contract.md` names the empty-output-file case and its handling; `tests/` conformance for that file passes.\n- `npm test` passes.\n\n## Technical Approach\n\nThe gate is a line classifier over `git diff -U0` hunks for the files Step 2 resolved: extension first (`.css`/`.scss`/`.module.*` → style; `.html`/`.vue`/`.svelte` → template), then per-line syntax for `.jsx`/`.tsx` (a line inside a JSX return/element, a `className`/`style` attribute, or a string literal rendered as text counts as surface; imports, hooks, fetch calls, and conditionals do not). Put it in `plugin/bin/lib/design-detect/surface-lines.js` with a tiny CLI entry in `plugin/bin/design-detect.js` (`--surface-lines <diff>`), so Step 3.8 (b) calls one command and branches on its JSON. For the prompt change, edit (e) items 1 and 3 and the rationale sentence together, and leave the direction-contract block (Step 3.7's `impeccable-finish-reviewer` input) untouched — it is a different dispatch with its own contract. The contract note is one paragraph under Failed-agent retrieval.\n\n### Key Files\n\n- `plugin/skills/design-wrapper/modes/review.md` — Step 3.8 (b) gate, (e) items 1/3 and the \"path reaches nothing\" rationale\n- `plugin/skills/design-wrapper/critics.md` — dispatch note for the instructed-read shape\n- `plugin/skills/_shared/design-craft.md` — the \"Subagent Contract compliance\" paragraph item 1's rationale cites; reword it alongside item 1\n- `plugin/bin/lib/design-detect/surface-lines.js` — new line classifier (new file)\n- `plugin/bin/design-detect.js` — `--surface-lines` entry\n- `plugin/skills/_shared/subagent-output-contract.md` — Failed-agent retrieval: empty-output-file case\n- `tests/bin-lib/design-detect/` — classifier unit tests (new file beside the existing suite)\n- `docs/plugin-structure.md` — sub-file/CLI table entry for the new helper\n\n## Gotchas\n\n- Do not gate on file extension alone: the incident's file was `.tsx`, which Layer 3 correctly classifies as frontend — the gate has to look at changed lines, not file type.\n- The instructed-read shape depends on the critic agent having the `Read` tool; `critics.md`'s roster entries are project-local `.claude/agents/*.md` files whose tool lists may restrict it — check each roster row and fall back to inlining for a critic without `Read`.\n- Impeccable's own critique score is non-deterministic across runs (30 → 25 on identical input); do not let the conformance test assert on critique output.\n- Step 3.7's finish-reviewer dispatch is a third-party exempt agent with its own input contract; this record changes only Step 3.8.\n\n## Original request\n\ndesign-wrapper review: craft-critic dispatch inlines ~70 KB per critic; a 3-agent fan-out on a 20-line control-flow diff tripped an API session limit\n\n**Summary:** design-wrapper review Step 3.8 inlines ~70 KB per craft critic (SKILL.md + DESIGN.md + sidecar verbatim); a three-agent review fan-out on a 20-line control-flow diff tripped an API session limit and lost every in-flight result.\n\n**Kind:** Gap\n\n**Affected component:** design-wrapper (modes/review.md, Step 3.8 craft-critic dispatch)\n\n**Use case:** Reviewing a 20-line diff in one React client component where only fetch/refresh control flow changed (no JSX, CSS, or copy lines) in a project that has a DESIGN.md (~25 KB) and an `.impeccable/design.json` sidecar (~20 KB). Under `design-critique: auto` with decisions present, Step 3.8 (b) selects `emil-design-eng`, and (e) requires the critic's SKILL.md (~28 KB), DESIGN.md, and the sidecar to be inlined verbatim into the Task prompt (\"a path string reaches nothing\"). That is ~73 KB of prompt read into the dispatching context and written back out before the critic sees a single changed line, for a diff with no design surface to judge.\n\nWhat happened: the dispatching session fanned out the critic alongside the Impeccable critique/audit runner and the code-simplifier and was terminated by an API session limit mid-flight. All three subagent output files were 0 bytes; the critic's findings survived only because a coordinating session had relayed a summary, and the other two agents had to be re-dispatched (Impeccable's critique score moved 30/40 -> 25/40 between the two runs on identical input).\n\nEither of these would close the gap:\n\n1. Let the dispatch reference the three files by absolute path with an explicit \"Read these first\" instruction, keeping only the (small) SKILL.md inline. The \"path reaches nothing\" concern is about an unnamed path, not an instructed read.\n2. Add a scope gate to Step 3.8 (b): skip the critic when the changed UI files contain no JSX/CSS/template/copy line changes -- a control-flow-only diff has no design surface for a craft critic to judge -- the same way Layer 3 already skips non-frontend files.\n\nRelated observation for `_shared/subagent-output-contract.md`: a subagent whose parent is terminated leaves a 0-byte output file, so \"read its transcript\" is not a recovery path in that case -- a relay from a coordinating session is the only record.\n\n**Definition:** Clear\n\n**Plugin version:** 6.114.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-6b6f82b9 -->\n\n",
         "createdAt": "2026-09-04T19:24:05Z",
         "labels": [
@@ -3478,378 +3948,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\n`plugin/bin/lib/hooks/session-start.js` walks `.claude-tweaks/pipelines/` twice per session start. The stale-runs report pulls up to `MAX_REPORTED` entries from `context.js`'s `iterRunDirsWithState(ctx.cwd)`, which anchors to the main checkout, sorts newest-first, reads each `run-state.json`, skips `status: 'clean'` runs, and skips runs whose `archive/{name}` twin is `clean` or freshly `archiving`. The #1493 AC5 staged-proposals scan, a few lines below, needs the opposite status filter (only `clean` runs, name-matched to `-(tidy|sweep)-standalone`, with a non-empty `staged/`) and therefore re-implements the walk by hand: its own `mainCheckoutRoot` anchor, its own `readdirSync` + name filter + sort + reverse, its own `JSON.parse(fs.readFileSync(run-state.json))` per dir, and its own early-break at `MAX_REPORTED`. Its comment says why: the iterator \"deliberately excludes status `clean` runs … so it needs its own directory read\". The hand-rolled copy also lacks the iterator's archive-twin and `archiving`-claim skips, so a clean standalone run whose archival is mid-flight can still be listed. Both blocks then build the same advisory shape by hand: `- {name} — {detail}` lines, a header sentence, and the #803 relay trailer.\n\n`bin/lib/reconcile/archive-merged.js`'s `iterCleanRunDirs` (#1733) is a third copy of the same clean-only walk, without the anchor and without the twin skips.\n\n## Deliverables\n- [ ] `iterRunDirsWithState(cwd, { status } = {})` in `context.js`: an optional `status` filter — `'clean'` yields only clean runs, absent keeps today's exclude-clean behavior byte-for-byte — applied at the one existing status check so the anchor, ordering, archive-twin skip, and `archiving`-claim skip are shared by both shapes. `listRunDirsWithState`/`listRunDirs` pass the option through unchanged in their default form.\n- [ ] `session-start.js`'s staged-proposals scan becomes a `for … of iterRunDirsWithState(ctx.cwd, { status: 'clean' })` loop that keeps only its own two concerns: the `-(tidy|sweep)-standalone` name test on `path.basename(dir)` and the non-empty `staged/` read, with the existing `MAX_REPORTED` early break. The hand-rolled `readdirSync`/sort/`run-state.json` read is deleted.\n- [ ] One `advisoryBanner(header, lines, trailer)` helper in `session-start.js` used by both the stale-runs and staged-proposals blocks, producing byte-identical strings to today's inline concatenation (the tests below are the proof).\n- [ ] `archive-merged.js`'s `iterCleanRunDirs(root)` reduced to `[...iterRunDirsWithState(root, { status: 'clean' })]`, so the third copy disappears; its callers and the `{ dir, state }` shape are unchanged.\n- [ ] Tests: `tests/hooks-context.test.js` cases for the option (default excludes clean; `{ status: 'clean' }` yields only clean; both shapes honor the archive-twin skip); the existing #1493/#1494 cases in `tests/hooks-session-start.test.js` pass unmodified; one new session-start case that a clean `-tidy-standalone` run with a `clean` archive twin is not listed (the skip the hand-rolled walk lacked).\n\n## Acceptance Criteria\n1. `session-start.js` contains no `fs.readdirSync` of the pipelines directory and no direct `run-state.json` parse; both advisory scans iterate `iterRunDirsWithState`.\n2. With no option, `iterRunDirsWithState` yields exactly what it yields today for every existing fixture (the `hooks-context`, `session-start`, `archive-merged`, `console-execute`, and residue-probe suites are the proof).\n3. The two banners' rendered text is byte-identical to today's for the existing fixtures.\n4. `iterCleanRunDirs` in `archive-merged.js` no longer walks the directory itself; the #1544 clean-status sweep cases pass unmodified.\n5. `npm test` is green.\n\n## Technical Approach\nAn opt-in filter, not a widened yield: #1733 declined changing the iterator's *default* output because eight callers rely on the clean exclusion; an option that leaves the default untouched changes nothing for them and lets the two clean-only walkers stop re-deriving the anchor and skips. Implement the option at the single `if (state && state.status === 'clean') continue;` line — `const wantClean = opts.status === 'clean'; if (Boolean(state && state.status === 'clean') !== wantClean) continue;` — so the archive-twin and `archiving` checks below it apply to both shapes. Land after #1733 (which touches `iterCleanRunDirs`'s caller) so the swap here is a contained one-line body replacement.\n\n### Key Files\n- `plugin/bin/lib/hooks/context.js` — `iterRunDirsWithState`, `listRunDirsWithState`, `listRunDirs`, `RUN_ID_RE`.\n- `plugin/bin/lib/hooks/session-start.js` — the stale-runs block and the #1493 AC5 staged-proposals block (both under `run()`), `MAX_REPORTED`.\n- `plugin/bin/lib/reconcile/archive-merged.js` — `iterCleanRunDirs`.\n- `tests/hooks-session-start.test.js` — #1493 AC5 / I2 / I4 / #1494 cases; `tests/hooks-context.test.js`; `tests/bin-lib/reconcile/archive-merged.test.js` (#1544 cases).\n\n## Gotchas\n- The hand-rolled scan swallows an unreadable `run-state.json` with `continue`; the iterator yields `state: null` for such a dir and the `status` check must treat `null` as not-clean under both shapes, so the swap keeps skipping it.\n- `MAX_REPORTED` applies after the name and `staged/` filters in the staged-proposals scan (it counts approvable entries, not candidates); keep the early break on `approvable.length`, not on iteration count.\n- The long #1493 comment block explaining why the scan needed its own read must be rewritten, not deleted: the reason it cites is exactly what the option removes.\n- `docs/hooks.md` mentions the stale-run report by behavior only; no docs change unless the iterator's option is worth a sentence there (judgment call at build).\n\n## Original request\n## Current State\nThe #1493 AC5 staged-proposals advisory scan in `plugin/bin/lib/hooks/session-start.js` (~line 88) hand-rolls its own `fs.readdirSync` + filter + sort + per-dir-state-read loop instead of extending `context.js`'s `iterRunDirsWithState` (already used a few lines above for the stale-runs report) — because that iterator hardcodes skipping 'clean' status runs and this scan wants only clean ones. It also duplicates the advisory-banner-building pattern (MAX_REPORTED capping, \"- name — detail\" lines, templated trailer) of the block just above it.\n\n## Deliverables\nAdd an `includeClean` option to `iterRunDirsWithState` (or equivalent) so session-start.js's clean-only scan reuses the shared iterator instead of a second, differently-filtered directory-walking implementation.\n\n## Acceptance Criteria\n- [ ] session-start.js's staged-proposals scan uses the shared iterator rather than a standalone readdir/sort/per-dir-read loop.\n- [ ] Existing session-start hook tests pass unchanged.\n- [ ] Full `npm test` passes.\n\nDefer-reason: genuinely-larger — changes iterRunDirsWithState's shared contract, not a localized single-file change; found by the pre-v6.112.0 whole-branch review.\n",
-        "createdAt": "2026-08-31T11:30:19Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACq41dsw",
-            "name": "backlog:category-technical",
-            "description": "technical-category backlog item",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1738,
-        "state": "OPEN",
-        "title": "session-start.js: #1493 AC5 staged-proposals scan duplicates context.js's directory-walking instead of extending iterRunDirsWithState",
-        "updatedAt": "2026-09-14T11:05:17Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n`isAbandonedInterrupted(runDir, state, sessionId, now)` in `plugin/bin/lib/reconcile/archive-merged.js` calls `hasReadableEventsLog(runDir)` and then `lastOwnEventMs(runDir)` back to back. Each does its own `fs.readFileSync(path.join(runDir, 'events.jsonl'))`: the first only to learn whether the read succeeds (an unreadable or absent log is UNKNOWN evidence, per #1673 F9, never proof of staleness), the second to parse every line, drop `attribution === 'fallback'` events, and return the newest parseable `ts`. Two reads of the same file per candidate run dir, per reconcile pass. `hasReadableEventsLog` exists only because `lastOwnEventMs`'s `null` conflates \"unreadable\" with \"readable but no qualifying event\".\n\n`plugin/bin/lib/hooks/context.js`'s `scanWrapupEvents(runDir)` is documented as \"the single reader for the paired appendEvent writer\", but it is not a drop-in: it returns `{ any, wrapup }` over `skill_invoked` events only, carries no timestamps, and deliberately does not filter fallback-attributed lines — the comment above `lastOwnEventMs` says the two filters are intentionally asymmetric and must not be reconciled. So the record's \"ideally reuse `scanWrapupEvents`\" half cannot be taken literally; what can be shared is the raw read-and-parse below both consumers.\n\n## Deliverables\n- [ ] A shared line reader in `context.js`, `readEventLines(runDir)` → `null` when `events.jsonl` is absent or unreadable, else an array of parsed event objects (unparseable lines skipped), exported alongside `scanWrapupEvents`; `scanWrapupEvents` reimplemented on top of it with identical output.\n- [ ] `archive-merged.js`: `hasReadableEventsLog` and `lastOwnEventMs` replaced by one `ownEventRecency(runDir)` → `{ readable: boolean, lastOwnMs: number | null }` built on `readEventLines`, keeping the fallback-attribution filter and the `Date.parse` skip exactly as `lastOwnEventMs` has them; `isAbandonedInterrupted` calls it once. `lastOwnEventMs` stays exported as a thin wrapper (`tests/bin-lib/reconcile/archive-merged.test.js` imports it) returning `ownEventRecency(runDir).lastOwnMs`.\n- [ ] The asymmetry comment above `lastOwnEventMs` moves onto `ownEventRecency` unchanged in substance; the `hasReadableEventsLog` comment's \"UNKNOWN evidence, not proof of staleness\" rationale is kept on the `readable` field.\n- [ ] Tests: `readEventLines` unit cases in `tests/hooks-context.test.js` (absent → `null`; empty file → `[]`; mixed valid/invalid lines → only the valid ones); an `archive-merged.test.js` case asserting one `readFileSync` of `events.jsonl` per `isAbandonedInterrupted` call (spy on `fs.readFileSync` via the test's existing fixture or count with a wrapped `fs`); existing `isAbandonedInterrupted` and #1673 AC cases unmodified.\n\n## Acceptance Criteria\n1. `isAbandonedInterrupted` performs at most one read of `events.jsonl` per call, pinned by a test.\n2. `archive-merged.js` contains no `fs.readFileSync(... 'events.jsonl' ...)` of its own; `context.js`'s `readEventLines` is the only raw reader for the file, and `scanWrapupEvents`'s output is unchanged for every existing fixture.\n3. For an absent/unreadable log `isAbandonedInterrupted` returns `false` (unchanged); for a readable log with only fallback-attributed lines it still classifies as abandoned once past `STALE_INTERRUPTED_TTL_MS` (the documented asymmetry with `checkRunIntegrity` holds).\n4. All existing cases in `tests/bin-lib/reconcile/archive-merged.test.js` pass unmodified; `npm test` is green.\n\n## Technical Approach\nShare the read, keep the two filters. `readEventLines` is the primitive both consumers already implement inline (read, split, skip blanks, `JSON.parse` per line, skip failures); neither consumer's semantics change because each keeps its own filter on the returned array. The `readable`/`lastOwnMs` pair replaces the two-call dance without losing the distinction #1673 F9 introduced. `checkRunIntegrity` (called at the same main-loop site, and itself a `scanWrapupEvents` consumer) will then read the file a second time per candidate; collapsing that into one read across the two callers is a separate change with a wider contract and is out of scope here. Same file as #1732/#1733/#1734: sequence, never build in parallel; no ordering dependency on them.\n\n### Key Files\n- `plugin/bin/lib/reconcile/archive-merged.js` — `lastOwnEventMs`, `hasReadableEventsLog`, `isAbandonedInterrupted`, `module.exports`.\n- `plugin/bin/lib/hooks/context.js` — `scanWrapupEvents`, `appendEvent` (the paired writer; unchanged), `module.exports`.\n- `plugin/bin/lib/hooks/run-integrity.js` — `checkRunIntegrity` (consumer of `scanWrapupEvents`; unchanged, output must not move).\n- `tests/bin-lib/reconcile/archive-merged.test.js` — `lastOwnEventMs` import and the events.jsonl fixtures.\n\n## Gotchas\n- `scanWrapupEvents` returns `null` for an unreadable file and `{ any: false, wrapup: false }` for an empty one; `readEventLines` must preserve that split (`null` vs `[]`) or `closeRunState` and `checkRunIntegrity` change behavior.\n- The `attribution === 'fallback'` filter belongs to `ownEventRecency` only; do not add it to `readEventLines` or `scanWrapupEvents` (see the asymmetry comment).\n- `docs/hooks.md` describes `events.jsonl` at the contract level and enumerates no reader list; no docs change.\n\n## Original request\n## Current State\n`lastOwnEventMs()` and `hasReadableEventsLog()` (`plugin/bin/lib/reconcile/archive-merged.js`, ~line 147) each independently `fs.readFileSync` the same `events.jsonl` file, and `isAbandonedInterrupted` (~line 209) calls both back-to-back on every invocation — reading the same file from disk twice, per run dir, per reconcile pass — while `plugin/bin/lib/hooks/context.js`'s `scanWrapupEvents` is documented elsewhere in this codebase as \"the single reader\" for events.jsonl.\n\n## Deliverables\nConsolidate `lastOwnEventMs`/`hasReadableEventsLog` onto a single read (ideally reusing `context.js`'s `scanWrapupEvents`/its underlying reader) instead of two independent events.jsonl-parsing implementations.\n\n## Acceptance Criteria\n- [ ] `isAbandonedInterrupted` reads events.jsonl at most once per call.\n- [ ] Existing `tests/bin-lib/reconcile/archive-merged.test.js` behavior is preserved.\n- [ ] Full `npm test` passes.\n\nDefer-reason: genuinely-larger — touches the events.jsonl reading contract shared with context.js, not a localized change; found by the pre-v6.112.0 whole-branch review.\n",
-        "createdAt": "2026-08-31T11:30:10Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACq41dsw",
-            "name": "backlog:category-technical",
-            "description": "technical-category backlog item",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1737,
-        "state": "OPEN",
-        "title": "archive-merged.js: isAbandonedInterrupted reads events.jsonl twice per call",
-        "updatedAt": "2026-09-14T11:05:19Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n`archiveMerged()` in `plugin/bin/lib/reconcile/archive-merged.js` ends with two loops that run the same merged-PR archive sequence: the main loop over `iterRunDirsWithState(root)` and the #1544 clean-status sweep over `iterCleanRunDirs(root)`. Both do `resolvePrState(root, branch)` → `readConsoleState(dir)` → `decideArchive(prState, consoleState)` → skip on `decision.action === 'skip'` → `localHasMerge(root, prState.mergeCommit)` with the `local-behind-merge` / `merge-commit-unknown` skip reasons → `dryRun` short-circuit → `archiveRunDir(root, dir)` → `trackArchiveResult(root, repoSlug, dir, result)` → push to `archived`/`skipped`. The copies already differ in one place that the duplication hides: the main loop's `decideArchive` skip also calls `trackStuckSkip(root, repoSlug, dir, decision.reason)` (#1613's structurally-stuck visibility), the clean loop's does not.\n\nThe two loops need different inputs only at the front: the main loop derives `branch` from the worktree list (with the structurally-stuck skip on `no-worktree`/`no-branch`), the clean loop from `fallbackBranch(root, dir, state)` because a `clean` run's `state.worktree` is null by construction. `iterCleanRunDirs` exists because `iterRunDirsWithState` in `bin/lib/hooks/context.js` skips `status: 'clean'` by design, and that generator has eight callers (hooks dispatcher, session-start, console-execute, the residue probe, the stray-run-dir sweep, reconcile's index) that all rely on the exclusion.\n\n## Deliverables\n- [ ] One helper in `archive-merged.js`, `archiveMergedRun({ root, repoSlug, dir, branch, dryRun, onSkip })` → `{ outcome: 'archived' | 'skipped', reason? }`, holding the full sequence from `resolvePrState` through `trackArchiveResult`; `onSkip(reason)` is the hook the main loop uses to call `trackStuckSkip` on a `decideArchive` skip, so the one existing difference becomes an explicit parameter rather than a divergence.\n- [ ] Both loops call the helper: the main loop after its worktree-derived `branch` and structurally-stuck handling, the clean loop after `fallbackBranch`; each keeps only its branch derivation and its `archived`/`skipped` push.\n- [ ] `iterRunDirsWithState`'s contract is unchanged and `iterCleanRunDirs` stays as the clean-status enumerator; the record's alternative (a state-tagged tuple from the shared iterator) is declined — see Technical Approach.\n- [ ] `tests/bin-lib/reconcile/archive-merged.test.js`: existing cases unmodified and green; one new case that a clean-status run whose `decideArchive` skips reports the skip reason without invoking `trackStuckSkip` (pins the `onSkip` asymmetry as intended, so a later reader does not \"fix\" it), and one that a main-loop skip still does.\n\n## Acceptance Criteria\n1. `archive-merged.js` contains exactly one call site each for `resolvePrState`, `decideArchive`, `localHasMerge`, and `archiveRunDir` inside `archiveMerged()`'s merged-PR path (the helper); neither loop body calls them directly.\n2. For every existing fixture, `archiveMerged({ dryRun: true })` returns the same `archived`/`skipped` sets as before the change.\n3. `iterRunDirsWithState` in `bin/lib/hooks/context.js` is byte-identical; no other caller changes.\n4. The `trackStuckSkip`-on-main-loop-only behavior is preserved and pinned by a test.\n5. `npm test` is green.\n\n## Technical Approach\nShare the sequence at the caller, not the iterator. Widening `iterRunDirsWithState` to yield `clean` runs behind a tag would touch a generator that every hook invocation drives (`context.js`'s own comment: it \"drives both the fallback event-attribution scan and every reconcile check's enumeration\") and force each of its other callers to filter the new tuple, for a benefit that is entirely local to `archiveMerged()`. The helper is a pure extraction: move the shared block into a function whose only free variables are the ones both loops already have in scope. Land this before #1732 where possible — #1732's per-kind action switch then dispatches the `merged` kind straight to this helper instead of inlining the sequence a third time. Same file as #1732, #1734, #1737: sequence, never build in parallel.\n\n### Key Files\n- `plugin/bin/lib/reconcile/archive-merged.js` — `archiveMerged` (both loops), `iterCleanRunDirs`, `decideArchive`, `localHasMerge`, `archiveRunDir`, `trackArchiveResult`, `trackStuckSkip`.\n- `plugin/bin/lib/hooks/context.js` — `iterRunDirsWithState` (read for the contract; unchanged).\n- `plugin/bin/lib/hooks/run-integrity.js` — `fallbackBranch` (clean loop's branch source; unchanged).\n- `tests/bin-lib/reconcile/archive-merged.test.js` — the #1544 clean-status fixture (around the `status: 'clean', worktree: null, pr: { branch: … }` case) is the template for the new pins.\n\n## Gotchas\n- `resolvePrState` (imported from `pr-state.js`) reads the reconcile PR cache; keep it inside the helper so a future change to its caching cannot land in one loop only.\n- The clean loop's comment block (#1544 rationale: why `state.worktree` is null and why `fallbackBranch` is the right source) must stay on the clean loop, not move into the helper — it explains the input, not the sequence.\n- `dryRun` pushes to `archived` without touching disk in both loops today; the helper returns `outcome: 'archived'` for that case and the caller pushes, so the dry-run contract stays identical.\n\n## Original request\n## Current State\n`iterCleanRunDirs()` and its consuming loop (`plugin/bin/lib/reconcile/archive-merged.js`, ~line 734/897) duplicate the main loop's `prState`/`decideArchive`/`localHasMerge`/`archiveRunDir`/`trackArchiveResult` sequence almost verbatim, added because `iterRunDirsWithState` excludes 'clean' status runs by design rather than generalizing the iterator/caller to yield a state-tagged tuple both loops could share.\n\n## Deliverables\nGeneralize the iterator (or the caller) so both the main loop and the clean-run-dir loop share one archive-decision sequence instead of two independently maintained copies.\n\n## Acceptance Criteria\n- [ ] Only one implementation of the prState/decideArchive/localHasMerge/archiveRunDir/trackArchiveResult sequence exists.\n- [ ] Existing `tests/bin-lib/reconcile/archive-merged.test.js` behavior is preserved.\n- [ ] Full `npm test` passes.\n\nDefer-reason: genuinely-larger — requires reshaping the shared iterator's contract, not a localized change; found by the pre-v6.112.0 whole-branch review.\n",
-        "createdAt": "2026-08-31T11:28:43Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACq41dsw",
-            "name": "backlog:category-technical",
-            "description": "technical-category backlog item",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1733,
-        "state": "OPEN",
-        "title": "archive-merged.js: iterCleanRunDirs() loop duplicates the main loop's archive sequence",
-        "updatedAt": "2026-09-14T11:05:24Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: backend\n\n## Current State\n\n`plugin/bin/lib/hooks/run-integrity.js`'s `mergedEvidence()` passes a caller-derived ref name as a bare positional argument to git at two call sites:\n\n- `runGit(['merge-base', '--is-ancestor', branch, integration], root)`\n- `runGit(['cherry', integration, branch], root)`\n\nThis repo's `gh-api-module-pattern` skill states the rule directly: a caller-supplied value beginning with `-` is still read as an option, and for `git` the separator is `--end-of-options`, not `--` (`--` only guards the pathspec argument slot, a different position). `docs/incident-log.md` carries the same rule for `rev-parse`/`merge-base`.\n\nRecord #1463 added a third call in the same file (`hasCommitSinceRunStart`'s `git log`) and adopted `--end-of-options` there, per CLAUDE.md's \"adopt new conventions in new code first, then migrate existing ones deliberately\". These two call sites are the deliberate migration that convention-adoption implies.\n\n## Deliverables\n\n- [ ] `mergedEvidence()`'s `merge-base --is-ancestor` call places `--end-of-options` before the two ref arguments.\n- [ ] `mergedEvidence()`'s `git cherry` call does the same.\n- [ ] No behavior change for any ref name git can actually produce — the existing `tests/run-integrity.test.js` AC1/AC2/AC3a cases stay green unchanged.\n\n## Acceptance Criteria\n\n1. Both call sites in `mergedEvidence()` pass their ref arguments after an `--end-of-options` separator.\n2. `node --test tests/run-integrity.test.js` passes with no test edits required.\n3. `npm test` passes.\n\n## Technical Approach\nTwo argument-array edits, no logic change: insert `'--end-of-options'` immediately before the first ref argument in each call — `['merge-base', '--is-ancestor', '--end-of-options', branch, integration]` and `['cherry', '--end-of-options', integration, branch]`. `hasCommitSinceRunStart`'s `git log` call in the same file is the in-file model (it already places `--end-of-options` before `branch`, followed by `--` for the pathspec slot); `git cherry` takes no pathspec, so no trailing `--` there.\n\n### Key Files\n- `plugin/bin/lib/hooks/run-integrity.js` — `mergedEvidence()` (the `merge-base --is-ancestor` and `cherry` calls), `hasCommitSinceRunStart()` (existing `--end-of-options` example).\n- `tests/run-integrity.test.js` — AC1 (ancestor), AC2 (cherry), AC3a (unmerged) cases pin the behavior; no edits expected.\n\n## Gotchas\n- Not exploitable today: `branch` reaches these calls only from `deriveBranch()`'s parse of `git worktree list --porcelain`, and git refuses to create a ref beginning with `-`.\n- `--end-of-options` requires git 2.24+; the file's existing `rev-parse --verify --quiet --end-of-options` and `git log … --end-of-options` calls already assume it, so this adds no new floor.\n- The guard just above the calls compares `branch` to `bareIntegrationName(integration)` (#1861/#1862) but passes `integration` through unnormalized; the separator protects the argument slot and changes nothing about that comparison.\n\n## Original request\n\nOrigin: `/claude-tweaks:review #1463`, Step 3 — both dispatched lenses (3b Security, 3c Error Handling) independently reported the same location; 3c cited this repo's own `gh-api-module-pattern` skill for the rule. Staged rather than fixed inside #1463 because those two call sites are untouched by that record's diff and fixing them there would have widened it beyond its declared scope, against this project's surgical-changes rule. Filed via the `/claude-tweaks:flow #1463,#1672,#1673,#1674` consolidated Review Console.\n\n",
-        "createdAt": "2026-08-29T21:03:36Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1686,
-        "state": "OPEN",
-        "title": "run-integrity.js: migrate mergedEvidence()'s two git calls to --end-of-options",
-        "updatedAt": "2026-09-14T12:11:24Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: backend\n\nOrigin: ledger resolve gate\n\nDefer-reason: genuinely-larger\n\n## Current State\n\nDuring record #1276's wrap-up Phase 2 (ROUTE), the Skills-row curation judge followed `.claude/skills/skill-prose-conformance-tests/SKILL.md`'s own \"Record the audit\" step, which invokes `harness-health.js validate-findings`. That step pushed a commit (`dad090519`) to the remote `health-state` tracking branch — a git mutation. The judge's dispatch prompt, composed per `plugin/skills/wrap-up/curation-engine.md` section 4, explicitly forbids any git mutation (\"never run git add, git commit, or any other git mutation\"), on the grounds that the controller alone commits, serially, after auditing each finding. The judge grepped the dispatcher for `git`/`spawnSync` beforehand and found nothing — the durable-state write lives on a path that grep missed (inside `harness-health.js`'s own audit-recording mechanism, invoked as a documented step of the project skill it was applying, not as a git command the judge composed itself).\n\nBlast radius was contained: the push landed only on `health-state` (2 files, cursor/run bookkeeping — never the feature branch, never `main`), recorded zero findings, and left the worktree HEAD and working tree exactly as the judge's own edits left them. But the underlying gap is real: `curation-engine.md`'s dispatch contract has no carve-out for a project skill's own legitimate, sanctioned bookkeeping writes to a dedicated tracking branch, so a judge following a project skill's documented procedure can violate the contract without realizing it — the contract and the project skill disagree, and nothing in either file resolves the disagreement.\n\n## Deliverables\n\n- [ ] Decide the resolution direction: either (a) `curation-engine.md`'s dispatch-prompt git-mutation prohibition gets an explicit carve-out for a project skill's own sanctioned bookkeeping branch writes (name the pattern — a push to a branch distinct from the worktree's own feature branch and from the integration branch, or an explicit allowlist), or (b) `.claude/skills/skill-prose-conformance-tests/SKILL.md`'s \"Record the audit\" step gains a precondition that skips the write when invoked from a context whose contract forbids git mutation (e.g. a documented env var or a passed flag the dispatch prompt sets).\n- [ ] Implement the chosen direction.\n- [ ] Add a conformance test or explicit inline note documenting the resolved contract, so a future dispatch-contract change doesn't silently reintroduce the conflict.\n\n## Acceptance Criteria\n\n1. A Skills-row (or any other curation-engine.md fan-out/singleton) judge dispatch, run against a project whose applicable skill file includes a git-mutating audit-recording step, either completes the write safely under a stated, narrow exception, or the write is skipped with the skip logged — never an unnoticed, unauthorized push.\n2. `npm test` passes.\n\n_Filed by `ledger resolve gate`. Close to resolve; label `wontfix` to suppress future reports of this finding._",
         "createdAt": "2026-08-29T18:01:26Z",
         "labels": [
@@ -4072,96 +4170,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review of `tests/bin-lib/issues/shipped-candidate.test.js`.\nThe test named \"no Key Files section and no title match can never classify strong\" only asserts\n`tier === 'weak'`; it never covers the module's stated \"never upgrades a tier on missing data\"\nrule (confirmed, `shipped-candidate.js:27`'s comment: \"a PR absent from this map is simply 'files\nnot fetched for it,' which the files-based strong signal treats the same as 'files don't cover\neverything' — it never upgrades a tier on missing data\"). No existing test supplies a record with\nKey Files, no title match, and no `prFiles` entry at all — the actual missing-data path the\ncomment describes.\n\n## Deliverables\n\nAdd a test case supplying a record with a Key Files section, no title match, and no `prFiles`\nentry, asserting the module does not upgrade the tier on that missing data.\n\n## Acceptance Criteria\n\nThe new test fails if the missing-data guard is removed from `shipped-candidate.js`, proving it\nactually exercises the rule.\n\n## Technical Approach\n\nAdd a test case to `tests/bin-lib/issues/shipped-candidate.test.js`, alongside the existing \"no\nKey Files section and no title match can never classify strong\" test, using a record that DOES\ncarry a `### Key Files` section (unlike the existing test) but whose corresponding PR number has\nno entry in `opts.prFiles` — asserting the result stays `tier: 'weak'`, not `'strong'`, proving\nthe missing-`prFiles`-entry path is treated as \"files don't cover everything\" rather than\nsilently upgrading. Verify the test actually discriminates per the Acceptance Criteria: comment\nout or bypass the missing-data guard in `shipped-candidate.js` locally and confirm the new test\nfails, before considering it done.\n\n### Key Files\n\n- `tests/bin-lib/issues/shipped-candidate.test.js` — add the missing-`prFiles`-entry test case\n- `plugin/bin/lib/issues/shipped-candidate.js` (line ~27, read-only reference) — the rule being\n  tested\n\n## Gotchas\n\n- The test must supply a record that genuinely has a `### Key Files` section (the existing\n  no-Key-Files test doesn't exercise this path at all) — the distinguishing setup is Key Files\n  present + no title match + no `prFiles` entry, not merely \"no `prFiles` entry\" alone.\n- Per this record's own Acceptance Criteria, verify the test discriminates by temporarily\n  removing the guard and confirming a failure — don't skip this verification step.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review of tests/bin-lib/issues/shipped-candidate.test.js. The test named \"no Key Files section and no title match can never classify strong\" only asserts `tier === 'weak'`; it never covers the module's stated \"never upgrades a tier on missing data\" rule (shipped-candidate.js:27's comment: a PR absent from `opts.prFiles` should be treated like \"files don't cover everything\"). No existing test supplies a record with Key Files, no title match, and no prFiles entry at all — the actual missing-data path the comment describes.\n\n## Deliverables\nAdd a test case supplying a record with a Key Files section, no title match, and no prFiles entry, asserting the module does not upgrade the tier on that missing data.\n\n## Acceptance Criteria\nThe new test fails if the missing-data guard is removed from shipped-candidate.js, proving it actually exercises the rule.\n",
-        "createdAt": "2026-09-12T16:46:40Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2339,
-        "state": "OPEN",
-        "title": "shipped-candidate.test.js doesn't cover the 'never upgrade tier on missing data' rule",
-        "updatedAt": "2026-09-13T13:32:31Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: ledger resolve gate\n\nDefer-reason: blocked-dependency\n\n## Current State\n\nRecord #1302 built the WEBHOOK-TRIGGER mode (`plugin/skills/routine/webhook-trigger.md`), the `webhook_triggers` schema field, the filter grammar, and both preconditions -- all documented from `create_webhook_trigger`'s own tool description, since `RemoteTrigger` was confirmed unavailable via `ToolSearch select:RemoteTrigger` in that build session. This is the 4th consecutive session (2026-08-23 x2, 2026-08-26, 2026-09-05) to confirm the same unavailability. AC2 (\"verified against a real (or explicitly documented dry-run) call\") remains unmet: the request/response shape has never actually been confirmed against a live `create_webhook_trigger` call.\n\nA prior follow-up for this same gap, #1485, was filed and closed on 2026-08-31 -- but the closing commit (`e0d4aded`, \"[fast-lane] Dispatch-queue, worktree-guard, reconcile, and process-hygiene fixes (19 records)\") bundled 19 unrelated record numbers via `Fixes #N` and contains no work touching `webhook-trigger.md`, `RemoteTrigger`, or live-call verification. #1485 appears to have been swept into an unrelated batch closure rather than substantively resolved -- its own acceptance criterion (a live or explicit-dry-run `create_webhook_trigger` call) was never actually satisfied. This record exists so the gap is not lost a second time to the same failure mode; whoever picks this up should close it only against real evidence of a live (or explicit dry-run) call, not a batch commit that doesn't mention the file.\n\n## Deliverables\n\n- Re-run `ToolSearch select:RemoteTrigger` in a session where the tool may be reachable -- 4 consecutive interactive-session misses is a strong signal worth testing in a different session type (cloud/routine) if one becomes available.\n- Once reachable, call `create_webhook_trigger` against a real (or an explicit, logged dry-run) routine and record its actual required fields, response shape, and any App-not-installed error text.\n- Diff the actual response against what `plugin/skills/routine/webhook-trigger.md` currently documents (Step 5's assembled body, the `routine_trigger_id` field, the App-not-installed error detection) and correct any mismatch.\n- Before closing, verify the closing commit/PR actually touches `webhook-trigger.md` or names the live-verification evidence directly -- do not let this close via an unrelated batch sweep the way #1485 did.\n\n## Acceptance Criteria\n\n- A live (or explicit dry-run) `create_webhook_trigger` call has been made and its actual request/response shape is confirmed to match (or has been corrected to match) `plugin/skills/routine/webhook-trigger.md`.\n- The closing commit or PR description names this evidence directly (a transcript excerpt, a diff to `webhook-trigger.md`, or an explicit \"confirmed matching, no changes needed\" note) rather than a bare `Fixes #N` in an unrelated batch.\n\n## Technical Approach\n\nStart with `ToolSearch select:RemoteTrigger` in whichever session type is available at build time. If reachable, make one real or explicit-dry-run `create_webhook_trigger` call and capture its actual request/response shape verbatim before touching the docs. Then diff that captured shape against `webhook-trigger.md`'s current documentation section by section (assembled body, `routine_trigger_id`, App-not-installed error detection) and correct only what actually differs.\n\n### Key Files\n\n- `plugin/skills/routine/webhook-trigger.md` -- the documented request/response shape to verify and correct\n\n## Gotchas\n\n- If `RemoteTrigger`/`create_webhook_trigger` is still unreachable in whatever session builds this record, do not fabricate a \"verified\" result and do not close this record -- report the continued unavailability plainly (a 5th consecutive miss is itself a useful data point) and leave it open.\n- Do not let this close via a bulk/batch commit that references this issue number without actually touching the files above -- that is exactly how #1485 was lost.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
         "createdAt": "2026-09-05T09:42:23Z",
         "labels": [
@@ -4240,14 +4248,14 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\nThree functions in `plugin/bin/lib/reconcile/archive-merged.js` carry the same directory-staleness stanza: `let mtimeMs; try { mtimeMs = fs.statSync(dir).mtimeMs; } catch { return false; } return (now - mtimeMs) > TTL;` — `isAdHocStandaloneSuperseded` against `ADHOC_SUPERSEDED_TTL_MS` (30d), `isOrphanedMint` against `ORPHAN_MINT_TTL_MS` (24h), and `isStructurallyStuck` against `STRUCTURALLY_STUCK_TTL_MS` (7d). Each takes `now = Date.now()` as its last parameter and treats an unstat-able directory as not stale (fail toward \"keep\"). The copies are byte-for-byte the same logic, so a change to the staleness basis (ctime instead of mtime, tolerating clock skew, treating `ENOENT` differently from `EACCES`) has to be made three times, and `isAbandonedInterrupted`, which uses the events log rather than the stat, is the reminder that a fourth copy would be the path of least resistance for the next detector. The related consolidation records (#1732 classifier, #1733 loop extraction) both build on this primitive existing first.\n\n## Deliverables\n- [ ] `isStaleDir(dir, ttlMs, now = Date.now())` in `archive-merged.js`: the one stat-and-compare, returning `false` on any stat failure, `true` iff `(now - mtimeMs) > ttlMs`; exported alongside the existing predicates.\n- [ ] `isAdHocStandaloneSuperseded`, `isOrphanedMint`, and `isStructurallyStuck` each reduce to their own guard clauses plus one `isStaleDir(dir, <their constant>, now)` call; their signatures, exports, and `now` defaults unchanged.\n- [ ] Unit tests for the primitive in `tests/bin-lib/reconcile/archive-merged.test.js` beside the existing `fs.utimesSync`-backdated fixtures: stale past TTL → `true`; exactly at TTL → `false` (strict `>` preserved); fresh → `false`; missing directory → `false`.\n- [ ] The three predicates' existing cases stay green unmodified.\n\n## Acceptance Criteria\n1. `archive-merged.js` contains exactly one `fs.statSync(...).mtimeMs` expression, inside `isStaleDir`.\n2. The three predicates call `isStaleDir` with their own TTL constant; the constants' names and values are unchanged and still exported.\n3. `isStaleDir` is exported and has its own test cases for the four outcomes above, including the boundary (`now - mtimeMs === ttlMs` is not stale).\n4. All existing cases in `tests/bin-lib/reconcile/archive-merged.test.js` pass without modification; `npm test` is green.\n\n## Technical Approach\nA mechanical extraction: the stanza's only free variables are `dir`, the TTL constant, and `now`. Keep the comparison strict (`>`) and the catch-to-`false` posture identical; both are load-bearing (`isStructurallyStuck`'s comment: \"pure except for the one mtime stat\", and the orphan-mint comment's fail-toward-keep rationale). Land first among the four `archive-merged.js` records: #1732's classifier calls this helper, and #1733/#1737 are independent of it but touch the same file, so sequence, never parallel.\n\n### Key Files\n- `plugin/bin/lib/reconcile/archive-merged.js` — `isAdHocStandaloneSuperseded`, `isOrphanedMint`, `isStructurallyStuck`, `module.exports`.\n- `tests/bin-lib/reconcile/archive-merged.test.js` — backdated-`utimesSync` fixtures for the orphan-mint and structurally-stuck cases are the template.\n\n## Gotchas\n- Other `statSync(...).mtimeMs` sites in the plugin (`file-lock.js`'s lock age, `residue/probes/artifacts.js`'s basis, `visual-decide/server.js`'s signature) compare against different things or for different purposes; they are out of scope and must not be routed through this helper.\n- `isAbandonedInterrupted` is not a stat-based detector (events-log recency); do not force it onto `isStaleDir`.\n- Do not change the fail-closed direction: an unreadable directory is \"not stale\" everywhere today, and `archiveMerged()` relies on that to leave a permission-broken run dir alone.\n\n## Original request\n\n## Current State\n`isStructurallyStuck` (~line 664, `plugin/bin/lib/reconcile/archive-merged.js`) reimplements the identical \"fs.statSync(dir).mtimeMs, catch->false, compare (now-mtimeMs) > TTL\" stanza already present in `isAdHocStandaloneSuperseded` (~line 85) and `isOrphanedMint` (~line 97), each against its own TTL constant.\n\n## Deliverables\nA single `isStaleDir(dir, ttlMs, now)` helper collapsing the three copies of the same try/catch staleness check into one tested primitive, used by all three call sites.\n\n## Acceptance Criteria\n- [ ] `isStructurallyStuck`, `isAdHocStandaloneSuperseded`, and `isOrphanedMint` all call the same shared staleness helper.\n- [ ] Existing `tests/bin-lib/reconcile/archive-merged.test.js` behavior is preserved.\n- [ ] Full `npm test` passes.\n\nDefer-reason: genuinely-larger — bundled with the related consolidation findings (#1732, #1733) rather than landed piecemeal mid-release; found by the pre-v6.112.0 whole-branch review.\n\n",
-        "createdAt": "2026-08-31T11:28:51Z",
+        "body": "Surface: infra\n\n## Current State\n\n`fileMatchesFrontendPredicate` (`plugin/bin/lib/design-detect/index.js`, the Layer 3 sniff) returns true when a file's extension is in `TRIGGER_EXTENSIONS` or when any path segment is in `TRIGGER_PATH_SEGMENTS = ['components', 'pages', 'app', 'routes', 'views', 'ui']`. The segment rule exists so app-router `page.ts`/`layout.ts` files without a rendering extension are still caught. It has no exclusion, so Next.js API route handlers — `app/api/**/route.{ts,js}` (app router) and `pages/api/**` (pages router) — match on the `app`/`pages` segment even though they render nothing. `skills/design-wrapper/frontend-detection.md`'s Match rule (two positive clauses, no exclusion) and its Negative cases list (which names `.ts`/`.js` \"outside any trigger path\" only) describe the same behavior, so the sniff and its documentation agree with each other and are both wrong for this case.\n\nObserved on plugin 6.114.0: a record whose diff was two `app/api/**/route.ts` handlers, one vitest file, and four markdown files, with no `Surface:` header (filed before that field existed, so Layer 2 could not rule), returned `{\"decision\":\"proceed\",\"track\":\"web\"}` from `design-detect.js` in `review`, `polish`, and `survey` modes. The run overrode the verdict by hand three times, each logged as a deviation, while `/build`'s own design pre-build step on the same run had already been skipped as \"no frontend surface\". Layer 3 is a fallback that runs only when nothing was declared (`layer3Applies`), so the false positive costs exactly the records that most need the sniff to be right.\n\nTests: `tests/bin-lib/design-detect/index.test.js` (245 lines) covers \"trigger path segments match regardless of extension\" and the zero-match skip; no case exercises an API route path.\n\n## Deliverables\n\n- [ ] Add an API-route exclusion to `fileMatchesFrontendPredicate`: after the extension check (a `.tsx` under `app/api/` still matches on extension) and before the segment scan, return false when the normalized path contains `app/api/` or `pages/api/` as adjacent segments (`(^|/)(app|pages)/api/`), so the `app`/`pages` segment rule never fires for a Next.js API route. Keep `TRIGGER_PATH_SEGMENTS` unchanged; the exclusion is a named constant (`API_ROUTE_SEGMENTS` or a regex) with a comment citing this record and the two Next.js conventions.\n- [ ] `frontend-detection.md`: add a third clause to the Match rule stating the exclusion (segment matches under `app/api/` or `pages/api/` do not count; extension matches still do), and add \"Next.js API route handlers — `app/api/**/route.{ts,js}`, `pages/api/**`\" to the Negative cases list, so the sniff and its documentation agree.\n- [ ] `tests/bin-lib/design-detect/index.test.js`: `app/api/users/route.ts` and `pages/api/health.ts` do not match; `src/app/api/x/route.js` does not match; `app/api/x/page.tsx` still matches (extension wins); `app/dashboard/page.ts` still matches (segment rule intact); `layer3` over the observed file list (two `app/api/**/route.ts`, one `.test.ts`, four `.md`) returns the sniff skip.\n- [ ] `docs/incident-log.md` / `CLAUDE.md` untouched; if `docs/plugin-structure.md`'s `design-detect` line enumerates the trigger tables, leave it — the tables themselves did not change.\n\n## Acceptance Criteria\n\n1. `fileMatchesFrontendPredicate('app/api/users/route.ts')`, `('pages/api/health.ts')`, and `('src/app/api/x/route.js')` return false; `('app/api/x/page.tsx')` and `('app/dashboard/page.ts')` return true.\n2. `layer3([...two app/api route.ts, one .test.ts, four .md])` returns `{ proceed: false, reason: SKIP_REASONS.NON_FRONTEND_SNIFF }`; `node bin/design-detect.js --mode review` over the same list returns a skip decision, not `proceed`.\n3. Every existing case in `tests/bin-lib/design-detect/index.test.js` and `cli.test.js` passes unchanged.\n4. `frontend-detection.md`'s Match rule has the exclusion clause and its Negative cases list names Next.js API route handlers with both path shapes.\n5. `npm test` green.\n\n## Technical Approach\n\nOne predicate change, no new layer: the exclusion is scoped to the two Next.js API conventions the report observed, applied only to the segment rule so the extension rule keeps precedence. Do not generalise to `routes/` (SvelteKit `+server.ts`, Remix resource routes) in this record — those are a different convention with a different marker and belong in a follow-up if observed; name that boundary in the code comment.\n\n### Key Files\n\n- `plugin/bin/lib/design-detect/index.js` — exclusion constant + check in `fileMatchesFrontendPredicate`, above the segment scan\n- `plugin/skills/design-wrapper/frontend-detection.md` — Match rule clause 3; Negative cases bullet\n- `tests/bin-lib/design-detect/index.test.js` — the cases in Deliverables\n\n## Gotchas\n\n- Normalize backslashes before matching (the function already does); the exclusion regex must run on the normalized string so Windows paths behave.\n- `pages/api/` under a `src/` prefix and `app/api/` nested inside a monorepo package path (`packages/web/app/api/...`) must both be excluded; anchor on the adjacent segment pair, not on path start.\n- A `.tsx` under `app/api/` is exotic but possible (a handler that renders an OG image with JSX); the extension rule keeps it frontend on purpose, and the test pins that.\n- `frontend-detection.md`'s trigger tables are cited as \"web-only\" by the native track's routing paragraph; the exclusion does not change that property, so no native-track text needs editing.\n\n## Original request\n\n**Summary:** `design-detect.js`'s Layer 3 path sniff marks Next.js app-router API route handlers (`app/api/**/route.ts`) as frontend, so a backend-only record without a `Surface:` header returns `proceed` for review, polish and survey.\n\n**Kind:** Gap\n\n**Affected component:** bin/lib/design-detect (Layer 3 file-extension / path-segment sniff) and skills/design-wrapper/frontend-detection.md\n\n**Use case:**\nLayer 3's trigger-path table treats any file under a `/app/` segment as frontend so that app-router `page.ts`/`layout.ts` files without a `.tsx` extension are still caught. That rule also matches `app/api/**/route.ts` — Next.js app-router API route handlers, which render nothing. On a record whose diff was two Next.js API route handler files (`app/api/**/route.ts`) plus a vitest file and four markdown files, with no `Surface:` header (a code-health-filed record predating that field), `design-detect.js --mode review`, `--mode polish` and `--mode survey` all returned `{\"decision\":\"proceed\",\"track\":\"web\"}`. The caller then either pays for Impeccable critique/audit over request handlers, or overrides the CLI's verdict by hand — which is what the run did, three times, each as a logged deviation — while `/build`'s own design pre-build step on the same run had already been skipped for \"no frontend surface, two backend API route files\".\n\nSuggested change: exclude `**/app/api/**/route.{ts,js}` (and `pages/api/**`) from the `/app/` and `/pages/` path triggers, or require a rendering extension when the only match is a path segment and the file is a `route.ts`; add \"Next.js API route handlers\" to `frontend-detection.md`'s Negative cases list so the sniff and its documentation agree.\n\n**Definition:** Clear\n\n**Plugin version:** 6.114.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-85c00f04 -->\n\n",
+        "createdAt": "2026-09-02T11:41:30Z",
         "labels": [
           {
-            "id": "LA_kwDORUwzVM8AAAACq41dsw",
-            "name": "backlog:category-technical",
-            "description": "technical-category backlog item",
-            "color": "F9D0C4"
+            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
+            "name": "enhancement",
+            "description": "New feature or request",
+            "color": "a2eeef"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -4268,10 +4276,10 @@
             "color": "E99695"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACrzEqFA",
@@ -4286,10 +4294,10 @@
             "color": "BFDADC"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACszED4w",
@@ -4304,10 +4312,10 @@
             "color": "ededed"
           }
         ],
-        "number": 1734,
+        "number": 1786,
         "state": "OPEN",
-        "title": "archive-merged.js: extract a shared isStaleDir(dir, ttlMs, now) helper",
-        "updatedAt": "2026-09-14T11:05:22Z",
+        "title": "design-detect: Layer 3 path sniff treats Next.js app-router API route handlers as frontend",
+        "updatedAt": "2026-09-14T11:05:05Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -4316,7 +4324,7 @@
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
-          "priority": "low",
+          "priority": "medium",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -4332,7 +4340,9 @@
           "notPlanned": false,
           "shapedHeadless": true
         }
-      },
+      }
+    ],
+    [
       {
         "body": "Surface: infra\n\n## Current State\n\n`tests/timing-nested-parent-roster.test.js` (added for #2030) scans build/test/review/design-wrapper/wrap-up/flow/`_shared` for real nested `/claude-tweaks:{name}` Skill-tool invocations and asserts each is either a `PHASES` member, a `plugin/bin/lib/timing/derive.js` `NESTED_PARENT` key, or an allowlisted descriptive-only mention. The scan found three genuine nested invocations that are none of those:\n\n- `plugin/skills/flow/SKILL.md:80` — \"Run `/claude-tweaks:stories` with the detected URL\" (flow's automatic story generation).\n- `plugin/skills/flow/SKILL.md:195` / `plugin/skills/flow/survey.md:69` — \"invoke `/claude-tweaks:deepen <changed-source-files>`\" (flow's Depth Opportunities survey).\n- `plugin/skills/wrap-up/review-console.md:126` / `plugin/skills/flow/multispec-review-console.md:115` — \"invoke `/claude-tweaks:feedback --pre-confirmed`\" (Review Console upstream-feedback filing).\n\nNone of `stories`, `deepen`, `feedback` are in `NESTED_PARENT`, so a `skill_invoked` event for any of them currently opens its own new top-level phase row in `derive.js`'s output rather than nesting into the enclosing phase (`build`'s stories generation, `wrap-up`'s Review Console, etc.) — exactly the \"spurious top-level phase\" behavior `derive.js`'s own roster comment warns about. The conformance test (#2030) allowlists these three by name, with a pointer to this issue, rather than silently deciding the phase-attribution question itself.\n\n**Resolved here** — all three follow the same pattern as `NESTED_PARENT`'s nine existing entries\n(`simplify`, `reflect`, `visual-review`, `capture`, `design-wrapper`, `challenge`,\n`assess-agent-autonomy`, `ledger`, `journeys`): each is a skill dispatched *as a sub-step* of a\nlarger pipeline skill's own procedure, never itself a top-level pipeline phase (`build`, `test`,\n`review`, `polish`, `wrap-up`, `merge`). `stories` (flow's automatic story generation) is the\ndirect analogue of already-nested `journeys` (also a doc/artifact-generation sub-step of build).\n`deepen` (flow's Depth Opportunities survey) is the direct analogue of already-nested `reflect`/\n`simplify` (analysis passes run as pipeline sub-steps). `feedback` (Review Console's\nupstream-feedback filing) is the direct analogue of already-nested `capture` (a filing action\ninvoked as a pipeline sub-step). None of the three is ever a user-facing standalone pipeline\nstage the way `build`/`review`/`wrap-up` are.\n\n## Deliverables\n\n- Add `stories`, `deepen`, and `feedback` to `plugin/bin/lib/timing/derive.js`'s `NESTED_PARENT`\n  map, each mapped to `'enclosing'` — matching the nine existing entries' shape exactly.\n- Remove `stories`, `deepen`, and `feedback` from `tests/timing-nested-parent-roster.test.js`'s\n  allowlist (they're no longer an unresolved gap once they're `NESTED_PARENT` members).\n\n## Acceptance Criteria\n\n1. `tests/timing-nested-parent-roster.test.js` no longer needs `deepen`/`stories`/`feedback` in\n   its allowlist — they've moved to `NESTED_PARENT` instead.\n2. A `skill_invoked` event for `stories`, `deepen`, or `feedback` nests into its enclosing phase\n   in `derivePhases()`'s output rather than opening a new top-level phase — covered by a test\n   case mirroring the existing `NESTED_PARENT` entries' own test coverage in\n   `tests/bin-lib/timing/derive.test.js` (or wherever the existing nine entries are tested).\n3. `npm test` stays green.\n\n## Technical Approach\n\nAdd three entries to the existing `NESTED_PARENT` object literal in\n`plugin/bin/lib/timing/derive.js` (~line 21), each `'enclosing'` — the identical value every\nexisting entry already uses (`isTopLevel()` at line 55 only checks map membership, not the\nvalue, so `'enclosing'` is the only value this map currently uses; keep it consistent). Then\nremove the three names from `tests/timing-nested-parent-roster.test.js`'s `ALLOWLIST` and add\n(or extend) a test case asserting each nests correctly, following whatever pattern the existing\nnine entries' own coverage already uses.\n\n### Key Files\n\n- `plugin/bin/lib/timing/derive.js` — add three entries to `NESTED_PARENT` (~line 21)\n- `tests/timing-nested-parent-roster.test.js` — remove the three names from `ALLOWLIST`\n- `tests/bin-lib/timing/derive.test.js` (or the actual location of `NESTED_PARENT`'s existing\n  test coverage — verify at build time) — add coverage for the three new entries\n\n## Gotchas\n\n- This record resolves the phase-attribution question itself (all three nest) rather than\n  leaving it open, based on direct structural analogy to `NESTED_PARENT`'s nine existing\n  entries — every one of them is a sub-step skill invoked from within a larger pipeline\n  procedure, exactly the shape `stories`/`deepen`/`feedback` share. If a maintainer disagrees\n  that one of the three should nest, that's a five-minute label removal from the map, not a\n  structural problem with this fix.\n- Do not add a fourth, differently-shaped value to `NESTED_PARENT` (e.g. naming a *specific*\n  parent phase) — every existing entry uses the literal string `'enclosing'`, and `isTopLevel()`\n  only checks map membership, so introducing a new value shape would be unused complexity.\n\n## Original request\n\nSurface: infra\n\n## Current State\n`tests/timing-nested-parent-roster.test.js` (added for #2030) scans build/test/review/design-wrapper/wrap-up/flow/`_shared` for real nested `/claude-tweaks:{name}` Skill-tool invocations and asserts each is either a `PHASES` member, a `plugin/bin/lib/timing/derive.js` `NESTED_PARENT` key, or an allowlisted descriptive-only mention. The scan found three genuine nested invocations that are none of those:\n\n- `plugin/skills/flow/SKILL.md:80` — \"Run `/claude-tweaks:stories` with the detected URL\" (flow's automatic story generation).\n- `plugin/skills/flow/SKILL.md:195` / `plugin/skills/flow/survey.md:69` — \"invoke `/claude-tweaks:deepen <changed-source-files>`\" (flow's Depth Opportunities survey).\n- `plugin/skills/wrap-up/review-console.md:126` / `plugin/skills/flow/multispec-review-console.md:115` — \"invoke `/claude-tweaks:feedback --pre-confirmed`\" (Review Console upstream-feedback filing).\n\nNone of `stories`, `deepen`, `feedback` are in `NESTED_PARENT`, so a `skill_invoked` event for any of them currently opens its own new top-level phase row in `derive.js`'s output rather than nesting into the enclosing phase (`build`'s stories generation, `wrap-up`'s Review Console, etc.) — exactly the \"spurious top-level phase\" behavior `derive.js`'s own roster comment warns about. The conformance test (#2030) allowlists these three by name, with a pointer to this issue, rather than silently deciding the phase-attribution question itself — that's a deliberate semantic call for a maintainer, not a test-authoring one.\n\n## Deliverables\n- [ ] Decide, for each of `stories`, `deepen`, `feedback`: should it nest into its enclosing phase (add to `NESTED_PARENT`) or legitimately remain its own top-level phase (leave as-is, remove from the roster test's allowlist with a comment explaining why it's intentionally top-level)?\n- [ ] Apply the decision in `plugin/bin/lib/timing/derive.js`'s `NESTED_PARENT` and/or `tests/timing-nested-parent-roster.test.js`'s `ALLOWLIST`.\n\n## Acceptance Criteria\n1. `tests/timing-nested-parent-roster.test.js` no longer needs `deepen`/`stories`/`feedback` in its allowlist for an \"unresolved gap\" reason (either they're removed because they're now in `NESTED_PARENT`, or the allowlist comment is updated to state they're deliberately top-level).\n2. `npm test` stays green.\n\nFound while implementing #2030 (the roster conformance test itself).\n\nDefer-reason: tangential\n",
         "createdAt": "2026-09-11T19:54:17Z",
@@ -4520,113 +4530,11 @@
           "notPlanned": false,
           "shapedHeadless": true
         }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`fileMatchesFrontendPredicate` (`plugin/bin/lib/design-detect/index.js`, the Layer 3 sniff) returns true when a file's extension is in `TRIGGER_EXTENSIONS` or when any path segment is in `TRIGGER_PATH_SEGMENTS = ['components', 'pages', 'app', 'routes', 'views', 'ui']`. The segment rule exists so app-router `page.ts`/`layout.ts` files without a rendering extension are still caught. It has no exclusion, so Next.js API route handlers — `app/api/**/route.{ts,js}` (app router) and `pages/api/**` (pages router) — match on the `app`/`pages` segment even though they render nothing. `skills/design-wrapper/frontend-detection.md`'s Match rule (two positive clauses, no exclusion) and its Negative cases list (which names `.ts`/`.js` \"outside any trigger path\" only) describe the same behavior, so the sniff and its documentation agree with each other and are both wrong for this case.\n\nObserved on plugin 6.114.0: a record whose diff was two `app/api/**/route.ts` handlers, one vitest file, and four markdown files, with no `Surface:` header (filed before that field existed, so Layer 2 could not rule), returned `{\"decision\":\"proceed\",\"track\":\"web\"}` from `design-detect.js` in `review`, `polish`, and `survey` modes. The run overrode the verdict by hand three times, each logged as a deviation, while `/build`'s own design pre-build step on the same run had already been skipped as \"no frontend surface\". Layer 3 is a fallback that runs only when nothing was declared (`layer3Applies`), so the false positive costs exactly the records that most need the sniff to be right.\n\nTests: `tests/bin-lib/design-detect/index.test.js` (245 lines) covers \"trigger path segments match regardless of extension\" and the zero-match skip; no case exercises an API route path.\n\n## Deliverables\n\n- [ ] Add an API-route exclusion to `fileMatchesFrontendPredicate`: after the extension check (a `.tsx` under `app/api/` still matches on extension) and before the segment scan, return false when the normalized path contains `app/api/` or `pages/api/` as adjacent segments (`(^|/)(app|pages)/api/`), so the `app`/`pages` segment rule never fires for a Next.js API route. Keep `TRIGGER_PATH_SEGMENTS` unchanged; the exclusion is a named constant (`API_ROUTE_SEGMENTS` or a regex) with a comment citing this record and the two Next.js conventions.\n- [ ] `frontend-detection.md`: add a third clause to the Match rule stating the exclusion (segment matches under `app/api/` or `pages/api/` do not count; extension matches still do), and add \"Next.js API route handlers — `app/api/**/route.{ts,js}`, `pages/api/**`\" to the Negative cases list, so the sniff and its documentation agree.\n- [ ] `tests/bin-lib/design-detect/index.test.js`: `app/api/users/route.ts` and `pages/api/health.ts` do not match; `src/app/api/x/route.js` does not match; `app/api/x/page.tsx` still matches (extension wins); `app/dashboard/page.ts` still matches (segment rule intact); `layer3` over the observed file list (two `app/api/**/route.ts`, one `.test.ts`, four `.md`) returns the sniff skip.\n- [ ] `docs/incident-log.md` / `CLAUDE.md` untouched; if `docs/plugin-structure.md`'s `design-detect` line enumerates the trigger tables, leave it — the tables themselves did not change.\n\n## Acceptance Criteria\n\n1. `fileMatchesFrontendPredicate('app/api/users/route.ts')`, `('pages/api/health.ts')`, and `('src/app/api/x/route.js')` return false; `('app/api/x/page.tsx')` and `('app/dashboard/page.ts')` return true.\n2. `layer3([...two app/api route.ts, one .test.ts, four .md])` returns `{ proceed: false, reason: SKIP_REASONS.NON_FRONTEND_SNIFF }`; `node bin/design-detect.js --mode review` over the same list returns a skip decision, not `proceed`.\n3. Every existing case in `tests/bin-lib/design-detect/index.test.js` and `cli.test.js` passes unchanged.\n4. `frontend-detection.md`'s Match rule has the exclusion clause and its Negative cases list names Next.js API route handlers with both path shapes.\n5. `npm test` green.\n\n## Technical Approach\n\nOne predicate change, no new layer: the exclusion is scoped to the two Next.js API conventions the report observed, applied only to the segment rule so the extension rule keeps precedence. Do not generalise to `routes/` (SvelteKit `+server.ts`, Remix resource routes) in this record — those are a different convention with a different marker and belong in a follow-up if observed; name that boundary in the code comment.\n\n### Key Files\n\n- `plugin/bin/lib/design-detect/index.js` — exclusion constant + check in `fileMatchesFrontendPredicate`, above the segment scan\n- `plugin/skills/design-wrapper/frontend-detection.md` — Match rule clause 3; Negative cases bullet\n- `tests/bin-lib/design-detect/index.test.js` — the cases in Deliverables\n\n## Gotchas\n\n- Normalize backslashes before matching (the function already does); the exclusion regex must run on the normalized string so Windows paths behave.\n- `pages/api/` under a `src/` prefix and `app/api/` nested inside a monorepo package path (`packages/web/app/api/...`) must both be excluded; anchor on the adjacent segment pair, not on path start.\n- A `.tsx` under `app/api/` is exotic but possible (a handler that renders an OG image with JSX); the extension rule keeps it frontend on purpose, and the test pins that.\n- `frontend-detection.md`'s trigger tables are cited as \"web-only\" by the native track's routing paragraph; the exclusion does not change that property, so no native-track text needs editing.\n\n## Original request\n\n**Summary:** `design-detect.js`'s Layer 3 path sniff marks Next.js app-router API route handlers (`app/api/**/route.ts`) as frontend, so a backend-only record without a `Surface:` header returns `proceed` for review, polish and survey.\n\n**Kind:** Gap\n\n**Affected component:** bin/lib/design-detect (Layer 3 file-extension / path-segment sniff) and skills/design-wrapper/frontend-detection.md\n\n**Use case:**\nLayer 3's trigger-path table treats any file under a `/app/` segment as frontend so that app-router `page.ts`/`layout.ts` files without a `.tsx` extension are still caught. That rule also matches `app/api/**/route.ts` — Next.js app-router API route handlers, which render nothing. On a record whose diff was two Next.js API route handler files (`app/api/**/route.ts`) plus a vitest file and four markdown files, with no `Surface:` header (a code-health-filed record predating that field), `design-detect.js --mode review`, `--mode polish` and `--mode survey` all returned `{\"decision\":\"proceed\",\"track\":\"web\"}`. The caller then either pays for Impeccable critique/audit over request handlers, or overrides the CLI's verdict by hand — which is what the run did, three times, each as a logged deviation — while `/build`'s own design pre-build step on the same run had already been skipped for \"no frontend surface, two backend API route files\".\n\nSuggested change: exclude `**/app/api/**/route.{ts,js}` (and `pages/api/**`) from the `/app/` and `/pages/` path triggers, or require a rendering extension when the only match is a path segment and the file is a `route.ts`; add \"Next.js API route handlers\" to `frontend-detection.md`'s Negative cases list so the sniff and its documentation agree.\n\n**Definition:** Clear\n\n**Plugin version:** 6.114.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-85c00f04 -->\n\n",
-        "createdAt": "2026-09-02T11:41:30Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1786,
-        "state": "OPEN",
-        "title": "design-detect: Layer 3 path sniff treats Next.js app-router API route handlers as frontend",
-        "updatedAt": "2026-09-14T11:05:05Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
       },
       {
-        "body": "Surface: infra\n\n## Current State\n\n`plugin/bin/lib/reconcile/archive-merged.js`'s by-number escape hatch (lines ~1295-1314) exists\nto unstick a run whose worktree and branch are both gone (`#1962`): it re-resolves the run's PR\ndirectly by `state.pr.number` via `resolvePrStateByNumber`, and archives immediately **only when\n`byNumber.state === 'CLOSED'`** (an unmerged close has nothing to catch up on). There is no\nbranch at all for `byNumber.state === 'MERGED'` — the most common real-world case, since GitHub\nauto-deletes a branch after merge and a worktree is routinely reaped after that. A merged-but-\nunhandled run falls straight through to the plain `no-branch` skip, which after\n`STRUCTURALLY_STUCK_TTL_MS` (7 days) of no further mtime activity gets classified\n`isStructurallyStuck()` and escalated by `escalate-residue.js` into a GitHub issue titled\n`reconcile: structurally-stuck stuck on {path}` (see #644) — permanently, since nothing in the\nsweep ever revisits a `no-branch` skip once escalated.\n\nConfirmed against the currently-open instances of this exact escalation: `#2225` (this record,\npath `.../2026-09-01T125854-record-1452`, PR #1763 MERGED 2026-09-01), plus nine more open\nissues whose referenced run dirs each stamp a `state.pr.number` for a PR that has since merged —\n`#2226` (PR #1761), `#2228` (PR #1760), `#2229` (PR #1759), `#2354` (PR #1901), `#2355` (PR\n#1850), `#2356` (PR #1842), `#2357` (PR #1525), `#2358` (PR #1907), `#2359` (PR #1891) — all\nconfirmed `MERGED` via `gh pr view {n} --json state,mergedAt`. Ten separate, independently-filed\nGitHub issues are symptoms of this one code gap, not ten unrelated problems.\n\n(Two further open issues in this same title family — `#2230` and `#2231` — reference PRs that\nare `CLOSED` but unmerged (#1509, #1497). Those already match the *existing* CLOSED branch's\ncondition, so they are a different, still-open question (their run dirs have no `console.json`\nat all, so `readConsoleState` reads `'none'`/`console-never-rendered`, which the CLOSED branch\nalso currently skips on) — **out of scope for this record**; tracked separately, not fixed here.)\n\n## Deliverables\n\n- Add a `byNumber.state === 'MERGED'` branch to the by-number escape hatch in\n  `archive-merged.js`, mirroring the existing branch-based merged-PR path immediately below it\n  (`resolvePrState` → `decideArchive` → `localHasMerge` → `archiveRunDir`): gate on the same\n  `readConsoleState`/`decideArchive` resolved-console check the CLOSED branch already applies,\n  then run the identical `localHasMerge(root, byNumber.mergeCommit)` fast-forward check the\n  branch-based merged path uses before calling `archiveRunDir`, using `byNumber.mergeCommit` in\n  place of `prState.mergeCommit` (the by-number lookup carries the same field — verify this\n  against `pr-state.js`'s `resolvePrStateByNumber` return shape before wiring it in).\n- Add a test case to `tests/bin-lib/reconcile/archive-merged.test.js`, alongside the existing\n  by-number `CLOSED`/`OPEN` cases (~line 1723), covering `byNumber.state === 'MERGED'` with a\n  local fast-forward past the merge commit — asserting the run archives.\n- Once this fix ships and the next reconcile sweep runs against the live repo, verify it clears\n  the ten currently-escalated `no-branch` issues named in Current State (or as many as still have\n  their run dir present — some may since have been manually archived).\n\n## Acceptance Criteria\n\n- `archiveMerged()` archives a run whose worktree and branch are both gone, whose\n  `state.pr.number` resolves (via `resolvePrStateByNumber`) to a `MERGED` PR, and whose local\n  checkout is fast-forward of that PR's merge commit — the identical outcome the existing\n  branch-based merged-PR path already produces for a run that still has a resolvable branch.\n- The same run is still skipped (not archived) when `localHasMerge` returns `false` (local\n  checkout behind the merge commit) or `undefined` (merge commit unknown) — the by-number MERGED\n  branch must not skip this safety check just because it takes a different code path to get\n  there.\n- The existing by-number `CLOSED` and `OPEN` behaviors (archive immediately / fall through to\n  `no-branch` skip, respectively) are unchanged — this is a strict addition, not a rewrite of the\n  existing branch.\n- The new test in `archive-merged.test.js` fails if the `MERGED` branch is removed, proving it\n  actually exercises the new code path.\n- `#2230` and `#2231` (the CLOSED-but-console-never-rendered case) are explicitly out of scope —\n  this record's fix must not attempt to also resolve those two.\n\n## Technical Approach\n\nIn `plugin/bin/lib/reconcile/archive-merged.js`, inside the `if (stampedWorktree && state &&\nstate.pr && state.pr.number)` block (~line 1295), add a sibling branch to the existing\n`if (byNumber && ... byNumber.state === 'CLOSED')` check:\n\n```js\nif (byNumber && typeof byNumber === 'object' && byNumber.state === 'MERGED') {\n  const consoleState = readConsoleState(dir);\n  const decision = decideArchive(byNumber, consoleState);\n  if (decision.action === 'skip') {\n    skipped.push({ runDir: dir, reason: decision.reason });\n    continue;\n  }\n  const hasMerge = localHasMerge(root, byNumber.mergeCommit);\n  if (hasMerge !== true) {\n    skipped.push({ runDir: dir, reason: hasMerge === false ? 'local-behind-merge' : 'merge-commit-unknown' });\n    continue;\n  }\n  if (dryRun) { archived.push(dir); continue; }\n  const result = archiveRunDir(root, dir);\n  trackArchiveResult(root, repoSlug, dir, result);\n  if (!result.ok) { skipped.push({ runDir: dir, reason: result.reason }); continue; }\n  archived.push(dir);\n  continue;\n}\n```\n\nVerify `resolvePrStateByNumber`'s actual return shape (`pr-state.js`) carries `mergeCommit` under\nthe same field name `resolvePrState` does before wiring this in — this snippet assumes parity but\nthat assumption needs a one-line confirmation against the real implementation, not a rewrite of\n`pr-state.js` itself. `decideArchive`'s own signature already accepts a `prState`-shaped object\ngenerically (it's already called with both `resolvePrState`'s and the by-number lookup's outputs\nelsewhere in this same file for the CLOSED case's sibling logic), so reusing it here should not\nrequire changing its signature.\n\n### Key Files\n\n- `plugin/bin/lib/reconcile/archive-merged.js` — add the `MERGED` branch to the by-number escape\n  hatch (~line 1295-1314)\n- `plugin/bin/lib/reconcile/pr-state.js` — read-only reference: confirm `resolvePrStateByNumber`'s\n  return shape carries `mergeCommit`\n- `tests/bin-lib/reconcile/archive-merged.test.js` — add the `MERGED` case test (~near line 1723,\n  alongside the existing `CLOSED`/`OPEN` by-number tests)\n\n## Gotchas\n\n- Ten currently-open GitHub issues (`#2226`, `#2228`, `#2229`, `#2354`, `#2355`, `#2356`, `#2357`,\n  `#2358`, `#2359`, plus this record `#2225`) are symptoms of this exact gap, confirmed by\n  checking each referenced PR's merge state directly — they are not being independently shaped\n  into their own build specs by this sweep, to avoid ten redundant PRs fixing the identical\n  one-function gap. Once this fix merges, close the other nine as duplicates (referencing this\n  record) once reconcile's next sweep confirms their run dirs actually archive — do not close\n  them pre-emptively before that confirmation, since a run dir that still doesn't archive after\n  this fix ships means the gap wasn't fully understood and those issues should stay open.\n- `#2230`/`#2231` are a different, still-open sub-problem (CLOSED-unmerged PRs whose run dirs\n  never got a `console.json` at all) — do not fold a fix for that into this record; it needs its\n  own diagnosis of why `console-never-rendered` isn't itself eligible for archival.\n- This fix only prevents *future* silent accumulation and lets already-escalated instances heal\n  on the next reconcile sweep — it does not retroactively touch the GitHub issues themselves;\n  closing them is a separate, manual (or tidy-driven) step once the sweep confirms each path\n  actually cleared.\n\n## Original request\n\nreconcile: structurally-stuck stuck on /Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-09-01T125854-record-1452\n\nReconcile has failed `structurally-stuck` on this path for 3 consecutive passes (first observed 2026-09-10T19:55:46.188Z).\n\n**Path:** `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-09-01T125854-record-1452`\n**Reason:** `structurally-stuck`\n**Last error:** stuck at no-branch\n\nFiled automatically by `bin/lib/reconcile` — see #644.\n\n<!-- fingerprint: reconcile-residue-d3b77c80 -->\n",
-        "createdAt": "2026-09-11T13:10:10Z",
+        "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review of `tests/bin-lib/issues/shipped-candidate.test.js`.\nThe test named \"no Key Files section and no title match can never classify strong\" only asserts\n`tier === 'weak'`; it never covers the module's stated \"never upgrades a tier on missing data\"\nrule (confirmed, `shipped-candidate.js:27`'s comment: \"a PR absent from this map is simply 'files\nnot fetched for it,' which the files-based strong signal treats the same as 'files don't cover\neverything' — it never upgrades a tier on missing data\"). No existing test supplies a record with\nKey Files, no title match, and no `prFiles` entry at all — the actual missing-data path the\ncomment describes.\n\n## Deliverables\n\nAdd a test case supplying a record with a Key Files section, no title match, and no `prFiles`\nentry, asserting the module does not upgrade the tier on that missing data.\n\n## Acceptance Criteria\n\nThe new test fails if the missing-data guard is removed from `shipped-candidate.js`, proving it\nactually exercises the rule.\n\n## Technical Approach\n\nAdd a test case to `tests/bin-lib/issues/shipped-candidate.test.js`, alongside the existing \"no\nKey Files section and no title match can never classify strong\" test, using a record that DOES\ncarry a `### Key Files` section (unlike the existing test) but whose corresponding PR number has\nno entry in `opts.prFiles` — asserting the result stays `tier: 'weak'`, not `'strong'`, proving\nthe missing-`prFiles`-entry path is treated as \"files don't cover everything\" rather than\nsilently upgrading. Verify the test actually discriminates per the Acceptance Criteria: comment\nout or bypass the missing-data guard in `shipped-candidate.js` locally and confirm the new test\nfails, before considering it done.\n\n### Key Files\n\n- `tests/bin-lib/issues/shipped-candidate.test.js` — add the missing-`prFiles`-entry test case\n- `plugin/bin/lib/issues/shipped-candidate.js` (line ~27, read-only reference) — the rule being\n  tested\n\n## Gotchas\n\n- The test must supply a record that genuinely has a `### Key Files` section (the existing\n  no-Key-Files test doesn't exercise this path at all) — the distinguishing setup is Key Files\n  present + no title match + no `prFiles` entry, not merely \"no `prFiles` entry\" alone.\n- Per this record's own Acceptance Criteria, verify the test discriminates by temporarily\n  removing the guard and confirming a failure — don't skip this verification step.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review of tests/bin-lib/issues/shipped-candidate.test.js. The test named \"no Key Files section and no title match can never classify strong\" only asserts `tier === 'weak'`; it never covers the module's stated \"never upgrades a tier on missing data\" rule (shipped-candidate.js:27's comment: a PR absent from `opts.prFiles` should be treated like \"files don't cover everything\"). No existing test supplies a record with Key Files, no title match, and no prFiles entry at all — the actual missing-data path the comment describes.\n\n## Deliverables\nAdd a test case supplying a record with a Key Files section, no title match, and no prFiles entry, asserting the module does not upgrade the tier on that missing data.\n\n## Acceptance Criteria\nThe new test fails if the missing-data guard is removed from shipped-candidate.js, proving it actually exercises the rule.\n",
+        "createdAt": "2026-09-12T16:46:40Z",
         "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
             "name": "ready",
@@ -4664,10 +4572,10 @@
             "color": "BFDADC"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACszED4w",
@@ -4682,10 +4590,10 @@
             "color": "ededed"
           }
         ],
-        "number": 2225,
+        "number": 2339,
         "state": "OPEN",
-        "title": "reconcile: structurally-stuck stuck on /Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-09-01T125854-record-1452",
-        "updatedAt": "2026-09-14T14:37:54Z",
+        "title": "shipped-candidate.test.js doesn't cover the 'never upgrade tier on missing data' rule",
+        "updatedAt": "2026-09-13T13:32:31Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -4694,7 +4602,7 @@
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
-          "priority": "medium",
+          "priority": "low",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -4754,15 +4662,9 @@
   "bundles": [
     {
       "records": [
-        1734,
         2249,
-        2288
-      ]
-    },
-    {
-      "records": [
-        1786,
-        2225
+        2288,
+        2339
       ]
     }
   ]
