@@ -1,7 +1,6 @@
 {
+  "released": true,
   "runId": "2026-09-14T190729-spec-2429-2422-2424-2426-2430-2423-2425-2427-2436",
-  "sessionId": "34ad1d9d-c4f0-4128-92f7-5f4af13a0380",
-  "claimedAt": "2026-09-14T19:09:21.254Z",
-  "ttlHours": 72,
-  "host": "Thomass-MacBook-Pro-3376.local"
+  "reason": "blocked-external: requires a root-privileged or differently-provisioned sandbox to reproduce (record's own Defer-reason: blocked-external) — not actionable from this normal-user checkout, dropped from this flow batch rather than fabricating a fix",
+  "releasedAt": "2026-09-14T19:19:56.183Z"
 }
