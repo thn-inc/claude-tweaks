@@ -221,3 +221,40 @@ test('keySource defaults to tags when opts are omitted; an unrecognized keySourc
   assert.throws(() => precheck(baseDeps(), 'minor', { keySource: 'tsv' }), /keySource/);
   assert.throws(() => precheck(baseDeps(), 'minor', { keySource: 'labels' }), /keySource/);
 });
+
+// #2326: bin/release-local.js --release-as threads an explicit candidate through
+// precheck() instead of deriving one from `part` — still subject to collision
+// checks, but not to the "must be ahead of the base" derivation itself.
+test('releaseAs: an explicit candidate ahead of the base skips derivation and still runs collision checks', () => {
+  const deps = tagDeps({ tags: 'v1.2.0\n', local: '1.2.0', origin: '1.2.0' });
+  const { candidate, base, result } = precheck(deps, 'minor', { keySource: 'tags', versionAtRef: deps.versionAtRef, releaseAs: '7.0.0' });
+  assert.strictEqual(base, '1.2.0');
+  assert.strictEqual(candidate, '7.0.0');
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(result.conflicts, []);
+});
+
+test('releaseAs: a candidate at or behind the base is a usage error, never a collision', () => {
+  const deps = tagDeps({ tags: 'v1.2.0\n', local: '1.2.0', origin: '1.2.0' });
+  const behind = precheck(deps, 'minor', { keySource: 'tags', versionAtRef: deps.versionAtRef, releaseAs: '1.0.0' });
+  assert.strictEqual(behind.base, '1.2.0');
+  assert.strictEqual(behind.result.ok, false);
+  assert.strictEqual(behind.result.usageError, true);
+  assert.deepStrictEqual(behind.result.conflicts, []);
+  const equal = precheck(deps, 'minor', { keySource: 'tags', versionAtRef: deps.versionAtRef, releaseAs: '1.2.0' });
+  assert.strictEqual(equal.result.usageError, true);
+});
+
+test('releaseAs: a sibling worktree claim on the override version still collides', () => {
+  const deps = tagDeps({ tags: 'v1.2.0\n', worktrees: SIBLING_WORKTREES, wtVersion: '7.0.0' });
+  const { result } = precheck(deps, 'minor', { keySource: 'tags', versionAtRef: deps.versionAtRef, releaseAs: '7.0.0' });
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.usageError, undefined);
+  assert.strictEqual(result.conflicts[0].source, 'worktree-branch');
+});
+
+test('releaseAs omitted: existing callers see the same `base` field added but unchanged candidate/result behavior', () => {
+  const a = precheck(baseDeps({ tsv: '6.70.1\t2026-08-09\trelease\n6.71.0\t2026-08-09\twip-never-shipped\n' }), 'minor');
+  assert.strictEqual(a.base, '6.71.0');
+  assert.strictEqual(a.candidate, '6.72.0');
+});
