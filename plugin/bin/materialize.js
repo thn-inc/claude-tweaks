@@ -87,6 +87,22 @@ function computeDrift(sha, deps) {
 // never stall materialize.
 const PREMISE_CHECK_TIMEOUT_MS = 5000;
 
+// Security fix (whole-branch pre-release review, base b9c8bbd86): a
+// `Premise-check:` line is body text — anyone who can create or edit the
+// record's issue can write one, regardless of whether it was actually
+// composed by specShapedBody's premiseCheck param (record.js's own comment
+// states that as a convention, never an enforced gate). Trust it only when
+// GitHub itself attests the issue author has a real relationship to this
+// repo (author_association, from the REST API — not body content, which is
+// exactly the attacker-controlled surface). This is the same mitigation
+// class GitHub Actions guidance uses for privileged automation triggered by
+// issue/PR content. An untrusted or unresolvable association degrades to
+// "no premise check" — never a hard stop, matching this feature's existing
+// fail-open posture (computePremise's own degrade-to-null on a throwing
+// runner).
+const TRUSTED_AUTHOR_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+const AUTHOR_ASSOCIATION_TIMEOUT_MS = 5000;
+
 // command -> exit code, run from the checkout root. Distinguishes "the
 // command ran and exited non-zero" (a normal outcome — execFileSync throws
 // on any non-zero exit, so this unwraps err.status back into a plain
@@ -154,6 +170,20 @@ function parseArgs(argv) {
 
 const realDeps = {
   ghView: (owner, repo, n, host) => execFileSync('gh', ['issue', 'view', String(n), '--repo', repoSlug({ host, owner, repo }), '--json', 'number,title,body,labels,url'], { encoding: 'utf8' }),
+  // Security fix (see TRUSTED_AUTHOR_ASSOCIATIONS above): GitHub's REST API
+  // computes author_association from the issue author's *current* repo
+  // relationship — not body content, so it can't be spoofed by editing the
+  // issue. `gh issue view --json` has no such field to request; the REST
+  // endpoint does. Only called when a Premise-check: line is actually
+  // present (the uncommon case) — every other record pays no extra call.
+  ghAuthorAssociation: (owner, repo, n, host) => String(
+    execFileSync(
+      'gh',
+      ['api', `repos/${owner}/${repo}/issues/${n}`, '--jq', '.author_association']
+        .concat(host && host !== 'github.com' ? ['--hostname', host] : []),
+      { encoding: 'utf8', timeout: AUTHOR_ASSOCIATION_TIMEOUT_MS },
+    ),
+  ).trim(),
   ghAvailable,
   remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }),
   // #117: commit distance from a record's Verified-as-of: stamp to current
@@ -273,6 +303,9 @@ function run(argv, deps = realDeps) {
   if (opts.ceremony && opts.ceremony !== 'fast-lane' && opts.ceremony !== 'standard') { deps.stderr('--ceremony must be fast-lane or standard\n' + USAGE); return 2; }
 
   let record;
+  // Populated only on the gh-backed path below — carries owner/repo/host for
+  // the author-association lookup the premise-check gate needs further down.
+  let repoSpec = null;
   if (opts.recordJson) {
     // #1459: the gh-absent path — deps.ghAvailable()/deps.ghView() are never
     // consulted here, and no owner/repo resolution is needed since nothing
@@ -291,7 +324,7 @@ function run(argv, deps = realDeps) {
 
     let remote = null;
     if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-    const repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
+    repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
     if (!repoSpec) { deps.stderr('materialize.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
     const { host, owner, repo } = repoSpec;
 
@@ -332,7 +365,34 @@ function run(argv, deps = realDeps) {
   // holds. Never a hard stop — an unattended run stages a close proposal for
   // the Review Console instead (auto-mode-contract.md's staging discipline).
   const premiseCommand = extractPremiseCheck(record.body);
-  const premise = computePremise(premiseCommand, deps);
+  let premise = null;
+  if (premiseCommand) {
+    // Security gate (see TRUSTED_AUTHOR_ASSOCIATIONS above): only run the
+    // command when GitHub itself attests the issue author is trusted.
+    // gh-backed path -> a live REST lookup; --record-json path -> the
+    // caller's own optional authorAssociation field, since there is no gh
+    // call to make there (deps.ghView/ghAvailable are never consulted on
+    // that path either, per the #1459 comment above) — an absent field
+    // degrades to untrusted, matching the fail-open-to-skip posture below.
+    let association = null;
+    if (repoSpec) {
+      try {
+        association = deps.ghAuthorAssociation(repoSpec.owner, repoSpec.repo, opts.n, repoSpec.host);
+      } catch {
+        association = null;
+      }
+    } else if (typeof record.authorAssociation === 'string') {
+      association = record.authorAssociation;
+    }
+    if (association && TRUSTED_AUTHOR_ASSOCIATIONS.has(association)) {
+      premise = computePremise(premiseCommand, deps);
+    } else {
+      deps.stderr(
+        `materialize.js: Record #${opts.n} has a Premise-check: line but its author's repo `
+        + `association (${association || 'unresolvable'}) is not trusted — skipping the check.\n`,
+      );
+    }
+  }
   if (premise && premise.satisfiedAtBase) {
     deps.stderr(
       `materialize.js: Record #${opts.n}'s premise already satisfied at base: `
