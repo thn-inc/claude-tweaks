@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T19:50:48.071Z",
+  "computedAt": "2026-09-14T20:38:04.974Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -170,17 +170,12 @@
       },
       {
         "number": 2323,
-        "updatedAt": "2026-09-13T13:32:57Z",
+        "updatedAt": "2026-09-14T20:33:52Z",
         "state": "OPEN"
       },
       {
         "number": 2322,
         "updatedAt": "2026-09-13T13:33:00Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2320,
-        "updatedAt": "2026-09-13T13:33:04Z",
         "state": "OPEN"
       },
       {
@@ -1517,84 +1512,6 @@
     ],
     [
       {
-        "body": "Origin: wrap-up ledger gate for #2253 (run ledger row 32)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n#2253's conflict detection is scope-faithful to the record's enumerated marker list — `.releaserc*`, `release.config.*`, `.changeset/`, `.goreleaser.*`, a foreign `release-please-config.json` — and misses three real-tooling shapes the whole-branch review named: bare `goreleaser.yaml` / `goreleaser.yml` (no leading dot, a supported GoReleaser filename), semantic-release configured under a `release` key inside `package.json`, and `standard-version` (`.versionrc*`). A repo using any of these bootstraps as `fresh` and gets a second engine layered on top — exactly the mixing failure design stance 7 refuses. Run ledger row 32.\n\n## Deliverables\n\nExtend `CONFLICT_MARKERS` in `plugin/bin/lib/init/release-bootstrap.js` with the three shapes (the `package.json` `release` key needs a JSON read, not a name match — add it as a second detection pass after the name scan).\n\nMirror the additions in `step-21-release.md`'s `conflict` row and add one fixture per shape to `tests/bin-lib/init/release-bootstrap.test.js`.\n\n## Acceptance Criteria\n\nA root `goreleaser.yaml`, a `package.json` carrying a `release` object, and a `.versionrc.json` each yield `conflict` naming the tool; the existing eight fixtures keep passing.\n\n_Filed by `wrap-up` via specShapedBody._\n\n\n---\nFiled by the multi-spec wrap-up of run `2026-09-11T204239-spec-2251-2252-2253-2254-2255-2256-2258` (queue write from spec 2253; source `spec-2253/staged/ledger-record-conflict-marker-gaps.md`; consoleAutoResolve at `autonomy: unattended`).\n\nhttps://claude.ai/code/session_018rz67jb18j1RLSqhjEdYWH\n",
-        "createdAt": "2026-09-12T16:21:31Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2323,
-        "state": "OPEN",
-        "title": "Release bootstrap: detect goreleaser.yaml, package.json release keys, and standard-version as conflicts",
-        "updatedAt": "2026-09-13T13:32:57Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: wrap-up ledger gate for #2252 (run ledger row 24)\n\nDefer-reason: needs-human-decision\n\n## Current State\n\n`plugin/bin/lib/reconcile/archive-branches.js` computes the squash-provenance proof only after the per-branch confirm, and the confirm runs only for destructive or MERGED-screened candidates. A squash-merged local branch whose remote ref was deleted by `gh pr merge --delete-branch` screens `null` (the bulk screen's deleted-ref blind spot, `pr-state.js` header), so while its tip is younger than `BRANCH_AGE_DAYS` (14) it reads `too-young` on every pass and is archived only once it ages — safe direction, delayed convergence (#2252 whole-branch re-review, out-of-scope observation; run ledger row 24).\n\n## Deliverables\n\nDecide whether a screen-`null`, cherry-`false` local branch should reach the per-branch confirm regardless of age (one `gh pr list --head` call per such branch per pass) or keep the age gate and accept delayed convergence.\n\nIf confirming: route `screenPr === null && !cherryEquivalent` branches to the confirm in `archiveBranches`'s loop (the `squashCandidate` routing already exists for the MERGED-screened shape) and add a fixture: young (<14d) two-commit branch, squash-merged, screen `null`, confirm MERGED with `mergeCommit` → `delete` `squash-merged`.\n\nDocument the chosen posture in `docs/reconcile-checks.md`'s Merged-proof section (the per-pass `gh` cost vs the convergence delay).\n\n## Acceptance Criteria\n\nA young squash-merged local branch with a deleted remote ref converges (deleted with reason `squash-merged`) on the first pass after its PR merges, or the docs state the deliberate delay and its bound (`BRANCH_AGE_DAYS`).\n\nEvery pre-existing archive-branches fixture keeps passing unchanged; the per-branch confirm count for non-candidates does not grow beyond the new routing.\n\n_Filed by `wrap-up` via specShapedBody._\n\n\n---\nFiled by the multi-spec wrap-up of run `2026-09-11T204239-spec-2251-2252-2253-2254-2255-2256-2258` (queue write from spec 2252; source `spec-2252/staged/ledger-record-archive-squash-recall-gap.md`; consoleAutoResolve at `autonomy: unattended`).\n\nhttps://claude.ai/code/session_018rz67jb18j1RLSqhjEdYWH\n",
         "createdAt": "2026-09-12T16:21:29Z",
         "labels": [
@@ -1645,84 +1562,6 @@
         "state": "OPEN",
         "title": "Archive-branches: confirm young squash-merged branches whose remote ref is gone (or document the 14-day delay)",
         "updatedAt": "2026-09-13T13:33:00Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: ledger resolve gate\n\nDefer-reason: blocked-dependency\n\n## Current State\n\n`tests/merge-subject-composer-conformance.test.js` hard-codes `PR_FIRST_BYTE_CEILING = 30904`, derived from #2251 spec AC 6 (30,404 bytes at the time + 500). #2251 shipped `_shared/pr-first-merge.md` at 30,443 bytes. #2002 is separately shrinking the composed `merge` bundle; the #2251 spec Gotchas say whichever record lands second re-baselines its byte accounting against the file then-current size. If #2002 shrinks the file, the 30,904 constant becomes a no-op guard. Blocked by #2002.\n\n## Deliverables\n\nAfter #2002 merges, set `PR_FIRST_BYTE_CEILING` to the live `wc -c` of `plugin/skills/_shared/pr-first-merge.md` plus 500 (the same net-small margin AC 6 used) and update the test comment naming the baseline commit.\n\nKeep `tests/bin-lib/skill-audit/context-cost.test.js` as the binding composed-bytes gate — the per-file ceiling here is the AC 6 pin, not the real budget.\n\n## Acceptance Criteria\n\n`PR_FIRST_BYTE_CEILING` equals the post-#2002 file size plus 500 and the test comment cites that commit.\n\n`node --test tests/merge-subject-composer-conformance.test.js` passes; raising the file by 501 bytes in a scratch copy makes it fail.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n\n\n---\nFiled by the multi-spec wrap-up of run `2026-09-11T204239-spec-2251-2252-2253-2254-2255-2256-2258` (queue write from spec 2251; source `spec-2251/staged/ledger-record-conformance-byte-ceiling-rebaseline.md`; consoleAutoResolve at `autonomy: unattended`).\n\nhttps://claude.ai/code/session_018rz67jb18j1RLSqhjEdYWH\n",
-        "createdAt": "2026-09-12T16:21:24Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2320,
-        "state": "OPEN",
-        "title": "Re-baseline tests/merge-subject-composer-conformance.test.js PR_FIRST_BYTE_CEILING once #2002 lands",
-        "updatedAt": "2026-09-13T13:33:04Z",
         "facets": {
           "origin": null,
           "risk": "low",
