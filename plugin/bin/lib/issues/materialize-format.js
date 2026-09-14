@@ -55,7 +55,21 @@ function stripCodeSpans(text) {
   }
   // Inline code spans: an opening backtick run, non-greedy content, a
   // closing run of the exact same length (the backreference enforces this).
-  return out.join('\n').replace(/(`+)([\s\S]*?)\1/g, '');
+  // #1837 review finding: the unbounded `[\s\S]*?` here has no explicit
+  // cap on how far it will scan for a same-length closing run on a
+  // pathological backtick-dense body (bounded only by GitHub's ~65KB
+  // issue-body ceiling). Direct verification found this specific pattern
+  // does not actually blow up quadratically in practice — a backreference
+  // search for a shorter run-length is satisfied trivially by any longer
+  // run later in the text, so real backtracking depth stays small — but a
+  // real inline code span is always a short single-line quote (a command,
+  // a path, a literal) anyway, so capping the lazily-matched content at
+  // 2000 chars costs nothing for any span an author would actually write
+  // and removes the open-ended shape as a defensive measure. A span whose
+  // content exceeds the cap degrades to being left as literal text instead
+  // of stripped — the same safe direction stripCodeSpans already takes for
+  // an unclosed fence (line 42-43 above) — never to a longer scan.
+  return out.join('\n').replace(/(`+)([\s\S]{0,2000}?)\1/g, '');
 }
 
 // body -> the text of section `## {name}` up to the next `## ` heading (or

@@ -116,6 +116,23 @@ test('stripCodeSpans: an unclosed fence runs to end of text (the safer direction
   assert.ok(stripped.includes('before'));
 });
 
+test('stripCodeSpans: a code span under the 2000-char defensive cap still strips normally (#1837 review finding)', () => {
+  const longSpan = 'x'.repeat(1999);
+  const stripped = stripCodeSpans(`before \`${longSpan}\` after`);
+  assert.equal(stripped, 'before  after');
+});
+
+test('stripCodeSpans: a span whose content exceeds the 2000-char defensive cap is left as literal text, the same safer direction an unclosed fence already takes', () => {
+  const overCap = 'x'.repeat(2500);
+  const stripped = stripCodeSpans(`before \`${overCap}\` after`);
+  // The cap makes this look "unclosed" from the regex's point of view — content
+  // is left in place rather than silently dropped. No real authored inline
+  // code span is anywhere near this long, so this only affects a
+  // pathological input, and it degrades to leaving text visible (safe),
+  // never to hanging.
+  assert.ok(stripped.includes(overCap));
+});
+
 test('shapeGate: a Deliverables fence quoting a marker word passes; a bare marker in the same section still fails', () => {
   const bodyWithFence = SHAPED_BODY.replace(
     '- [ ] do a thing',
