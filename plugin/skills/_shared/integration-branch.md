@@ -22,13 +22,31 @@ Take the **first** source that yields a branch name; once one does, the rest are
 
    The resolver strips a trailing inline comment from the value — this value is pasted into checkout and merge-base commands, where a trailing `# note` would become part of the branch name. An unset key prints an empty line, which falls through to rank 4.
 4. **A branching model stated unambiguously in CLAUDE.md prose** — "development happens on `dev`", "branch from `dev`, PR into `dev`". A section that merely *names* several branches, or describes a release train without saying where work lands, resolves nothing: fall through to 5 rather than guessing which name is the one. (This reads project *documentation*, not configuration — it is not a config-key lookup and is unaffected by policy.yml being the sole config home.)
-5. **Git — the current branch, checked against the GitHub default:**
+5. **Git — the current branch, checked against the GitHub default:** as three separate
+   single-command Bash calls (`_shared/scratch-worktree.md`'s "## 7. Shell constraint" applies here
+   too whenever this rank is resolved from inside an isolated worktree) — never combine any of
+   these with each other, or with a `$(...)` substitution feeding a git command, in one call:
 
    ```bash
    node -e "const { repoInfo } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/hooks/worktree-detect.js'); console.log(repoInfo(process.cwd()).isLinkedWorktree ? 'WORKTREE' : 'PRIMARY')"
-   git branch --show-current
-   gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || git remote show origin | sed -n '/HEAD branch/s/.*: //p'
    ```
+
+   ```bash
+   git branch --show-current
+   ```
+
+   ```bash
+   gh repo view --json defaultBranchRef -q .defaultBranchRef.name
+   ```
+
+   Read the printed name directly. If that command errors or prints nothing (no `gh`, or
+   offline), fall back to a second, separate call rather than an inline `||`:
+
+   ```bash
+   git remote show origin
+   ```
+
+   and read the value off its own `HEAD branch: {name}` output line.
 
    - **Discard the current branch when it isn't a real one.** If the first command prints `WORKTREE`, this session is inside a linked worktree, so `git branch --show-current` is a throwaway isolation branch that will not exist later — never propose it. Fall through to the GitHub default alone and say so wherever the choice is surfaced. Same worktree detection `[IL-61]` requires, for the same reason: under `worktree-always` the obvious git question answers about the worktree, not the project.
    - Both resolve and **match** → use it.
@@ -47,6 +65,7 @@ Rank 6 is deliberately per-consumer, because they degrade differently. In every 
 | `/claude-tweaks:routine` | Substituting `{{TARGET_BRANCH}}` into a routine's prompt | Prose telling the cloud agent to resolve the branch itself at firing time |
 | `/claude-tweaks:routine` (record freshness) | Which branch `.claude-tweaks/routines/*.yml` is compared against before CREATE/UPDATE/STATUS read it (`routine/record-freshness.md`, #190) | Skip the comparison, report it unverified, proceed on the working checkout — the pre-#190 behavior, so an offline session is never blocked |
 | `/claude-tweaks:dispatch`, `/claude-tweaks:wrap-up` | Merge target and push target | `git remote show origin` / `gh api default_branch`, as today |
+| `bin/lib/release-preflight/pack.js` (`/claude-tweaks:release` Step 1 fact pack) | Release-target branch and tip ref | `git symbolic-ref --short refs/remotes/origin/HEAD`, then `git remote show origin`'s "HEAD branch:" line, then — last resort only, never ahead of either origin-derived read — `git branch --show-current` for a repo with no `origin` remote at all; unresolved by all three degrades the whole pack (ruling 13's preamble-failure envelope) rather than guessing `'main'` (#2422) |
 | `/claude-tweaks:assess-agent-autonomy` | `merge-base` for blast radius | `gh api default_branch`, as today; an unresolvable value is already the documented `needs-human` inconclusive-read case |
 | `/claude-tweaks:build`, `/claude-tweaks:flow` | Expected fork point | Upstream of the current branch, else `origin/HEAD`, as today |
 | `SessionStart` worktree reaper (`bin/lib/hooks/session-start.js` → `bin/lib/hooks/worktree-reap.js`) — the one non-skill consumer | The branch a finished worktree's content must already be in before the worktree is removed | **Reap nothing.** Only rank 3 and rank 5's *GitHub-default* half are available to it: a hook has no explicit argument, no routine template, and no reader for rank 4's prose, and rank 5's *current-branch* half is excluded outright by the anti-pattern below. Nothing resolved means no safe measurement, and here the consequence of measuring against a guess is a deletion rather than a warning — a probe removed a worktree holding genuinely unmerged work purely because the main checkout had been switched underfoot |

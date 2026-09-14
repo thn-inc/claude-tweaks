@@ -256,6 +256,32 @@ gate)" section, this skill's directory, and follow it before Authorization/Conte
    AUTO {time} — Auto-merge gate: #{n} assess-agent-autonomy verdict needs-human — group falls back to the Review Console. Reversibility: n/a.
    ```
 
+   **Log a passing verdict too, the same way** — one entry per member, same command, same file,
+   whether the verdict is `auto-merge` or `needs-human` (#2429). A verdict recorded only on the
+   failure path left nothing in `decisions.md` for a mechanical check to find on the success
+   path — nothing outside this Task call's own self-report could confirm Content judgment
+   actually ran before a merge landed, which is exactly the gap that let two merges in one
+   firing skip this gate undetected.
+
+   ```
+   AUTO {time} — Auto-merge gate: #{n} assess-agent-autonomy verdict auto-merge. Reversibility: n/a.
+   ```
+
+   **Mechanically verify every member's entry exists before proceeding to merge — do not rely on
+   having just run the loop above.** Re-read `{run-dir}/decisions.md` back, the same
+   re-derive-from-the-artifact-you-just-wrote discipline `bin/lib/dispatch/artifact-verdict.js`'s
+   `deriveTestVerdict` already applies to test output, one grep per member:
+
+   ```bash
+   grep -c "Auto-merge gate: #{n} assess-agent-autonomy verdict auto-merge" "{run-dir}/decisions.md"
+   ```
+
+   A count of 0 for any member — the entry is missing, whatever the reason — means Content
+   judgment for that member is not confirmed to have run. Do not merge on that member's behalf:
+   treat it exactly like a `needs-human` verdict (fall the whole group back to the normal
+   pending-review path) rather than proceeding on the assumption that the step above simply ran
+   silently and its log write was merely skipped.
+
 **Both layers pass — acceptance labeling runs first, for every member of the group.** This gate bypasses `/wrap-up`'s Phase 4 execution step, which is where acceptance labeling normally happens, so this gate must perform it itself. For each record in the group, run `wrap-up/verification-brief.md` starting from its **Routing** section — **one record at a time, never batched or concurrent.** Sequencing is what makes the once-per-parent idempotence below hold: each invocation re-reads the parent's labels, so a second member of the same parent sees the first's `demo:pending` and no-ops. Run two concurrently and both read no label, both compose, and both post — two briefs on one parent. That file owns the routing: a record with a resolvable parent goes to its Parent-Gate Procedure (the parent gets the one gate; this sub-issue gets none), and everything else goes through its Steps 1-4 — bootstrap, observation-plan authoring, the safety-net gate, sourcing, posting, then `demo:pending`. Do not apply `demo:pending` to a group member independently of that routing: an `auto:merge`'d sub-issue is exactly the population `_shared/github-pr-scan-acceptance.md`'s `parent-gate` backstop scope exists to catch. One brief and one label per record with no resolvable parent — the merge decision is group-wide, but acceptance is a per-record judgment and a group's members can differ in observation-plan kind and in what shipped for each. A parent-linked sub-issue is routed to the Parent-Gate Procedure instead. **Pass the whole group's record numbers as `$CLOSING_SUB_ISSUES` on every one of these per-member invocations** — not just the member in hand. That is the set `verification-brief.md`'s **Self-inclusion rule** reads: every number in it counts as `CLOSED` when the parent's `leaves` array is built (it overrides state, never adds sub-issues — a group member from another parent, or from none, is simply irrelevant to this parent). The whole group is the correct set here because the single merge below carries one `Fixes #{issue}` line per record, so the group closes together; every record is still open at this point (label before merge, below), and counting only the member in hand would make a group holding two or more sub-issues of one parent evaluate `incomplete` on every one of them, labeling nothing at all — sub-issue or parent — and leaving the parent to `/tidy`'s backstop that the eager gate exists to pre-empt. With the group's set passed, the first such member reaches `due` and gates the parent; the parent's remaining members re-fetch the parent's labels, read `gated`, and no-op — one brief and one `demo:pending` per parent, never a second. `/tidy`'s `parent-gate` sweep stays the backstop for parents this gate never sees at all: a sub-issue closed by hand, or a dispatch run that ended before this gate.
 
 Order is load-bearing: the merge carries one `Fixes #{issue}` line per record, so once it lands every member is closed and this gate has moved on. Label before merging, while the records are still open.
@@ -313,6 +339,13 @@ this call's report is read.
 `integration-model: pr-first` groups never reach this section — their merge already ran above, inside the Task call itself. This section is the `local-merge` fallback only, preserved in full for projects with no GitHub forge to integrate through (`_shared/integration-model.md`).
 
 Runs in `dispatch/SKILL.md` Step 6, in the dispatching session's own thread — never inside a Task call. This is the one part of the Auto-merge gate that needs main-checkout access, which only a top-level session has, never a Task-tool subagent.
+
+**Before executing the merge below, re-run the Content judgment step's own mechanical check**
+(#2429) — this thread is separate from the Task call that reported `OUTCOME: ready-to-merge`,
+and that line alone is not evidence Content judgment ran (it is exactly the self-report the check
+exists not to trust): `grep -c "Auto-merge gate: #{n} assess-agent-autonomy verdict auto-merge"
+"{run-dir}/decisions.md"` for every group member, same as above. A count of 0 for any member
+means do not merge — fall the group back to the normal pending-review path instead.
 
 Nothing is threaded back from the second Task call beyond its `OUTCOME: ready-to-merge` line itself (per `_shared/subagent-output-contract.md`'s no-echo rule — a resolution trigger, not a summarized finding). The dispatching session already holds everything else it needs:
 

@@ -16,6 +16,7 @@ const { promisify } = require('util');
 const { resolvePolicyConfig } = require('../policy-schema');
 const { parseManifestYaml } = require('../flow/manifest');
 const { parseDependencies } = require('../issues/record');
+const { parseRepo, repoSlug } = require('../repo-resolve');
 
 const PROBE_NAMES = ['residue', 'state', 'blastRadius', 'pr', 'recordLabels', 'claim', 'ledger', 'unblocked'];
 const BIN = path.join(__dirname, '..', '..');
@@ -430,7 +431,17 @@ function buildProbes(inputs, deps) {
       const records = JSON.parse(stdout);
       if (inputs.policy.workLinks === 'native') {
         if (!records.length) return [];
-        const res = await deps.execFile('node', [path.join(BIN, 'resolve-blockers.js'), records.map((r) => r.number).join(',')], { cwd: inputs.worktree, ...EXEC_OPTS });
+        // #2425: resolve-blockers.js can't infer owner/repo on a GitHub
+        // Enterprise remote the way plain `gh` calls do — pass it explicitly,
+        // resolved from the same `origin` it would otherwise fall back to
+        // reading itself, so this is additive rather than a behavior change
+        // on a plain github.com project.
+        let repoArgs = [];
+        try {
+          const repoSpec = parseRepo(git(['remote', 'get-url', 'origin']));
+          if (repoSpec) repoArgs = ['--repo', repoSlug(repoSpec)];
+        } catch { /* no origin remote — resolve-blockers.js's own fallback applies unchanged */ }
+        const res = await deps.execFile('node', [path.join(BIN, 'resolve-blockers.js'), records.map((r) => r.number).join(','), ...repoArgs], { cwd: inputs.worktree, ...EXEC_OPTS });
         const byNumber = JSON.parse(res.stdout.trim());
         return records.filter((r) => byNumber[r.number] && byNumber[r.number].blockedBy.includes(closed) && !byNumber[r.number].openBlocker).map(toSummary);
       }

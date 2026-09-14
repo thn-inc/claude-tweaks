@@ -102,10 +102,14 @@ gets refused. Diagnosing the *main checkout's* state from inside this worktree s
 same guard — `git -C <main-checkout> ...` is refused as git-adjacent and too complex to verify;
 use plain filesystem reads (`ls`, `cat`) against the main checkout's path instead (`docs/donts.md`).
 
-Unconditionally, before anything else runs in the new worktree:
+Unconditionally, before anything else runs in the new worktree — as two separate single-command
+Bash calls, per the shell constraint just above; never combined into one:
 
 ```bash
 git fetch origin {integration-branch}
+```
+
+```bash
 git merge origin/{integration-branch}
 ```
 
