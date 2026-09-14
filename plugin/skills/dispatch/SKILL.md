@@ -1,7 +1,7 @@
 ---
 name: dispatch
 description: "Use to select and dispatch authorized GitHub records to /flow — the gate-to-executor queue consumer. Drain (--budget) or #N direct. Keywords - dispatch, queue, claim, auto:build, auto:merge, bot:in-progress, bot:blocked, bot:parked, autonomous build, routine."
-argument-hint: "[#N[,#M...]] [--budget <n|all>] [--priority high|medium|low]"
+argument-hint: "[#N[,#M...]] [--budget <n|all>] [--priority high|medium|low] [--settle-parked]"
 ---
 
 # Dispatch — the Queue Consumer
@@ -51,6 +51,7 @@ Not for: granting authorization (`/claude-tweaks:backlog refine`'s job), derivin
 | `--batch-size <n>` (deprecated alias) | Deprecated alias for `--budget <n>` — same effect, one warn-tier notice. Removal condition: `deprecated-aliases.md`. The old suffix `#N,#M,...` use is no longer accepted — rejected like `--budget` on an explicit list; explicit-list firings are capped by `dispatch-batch-size` alone. |
 | `--concurrent <n>` (deprecated alias) | Two-hop deprecated alias for `--batch-size <n>` — same effect, one warn-tier notice. Removal condition: `deprecated-aliases.md`. |
 | `--priority <high\|medium\|low>` (modifier) | Suffix bare drain (or its deprecated `next` alias) — restrict the candidate pool's representative-member band before ranking/selection runs (Step 3's ranking definition). Lets multiple differently-scheduled Routines each own a distinct slice of the queue. No effect on `#N`/`#N,#M,...`, which select by explicit name, not ranking. |
+| `--settle-parked` (standalone form) | Batch-review every open `bot:parked` PR in one pass and let a human pick which subset to resume — human-present only, never invoked by a scheduled Routine (same posture as `backlog refine --reset-breaker`). **Mutually exclusive** with a ref (`#N`/`#N,#M,...`) or `--budget` — reject the combination with a one-line notice and perform no fetch. Read `settle-parked.md` in this skill's directory for the full fetch/freshness-probe/batch-confirm/sequential-resume procedure. |
 
 **Repo-wide infra outage stop (#2365).** Bare drain's no-`AskUserQuestion` rule (Input table above) has no carve-out — not for a detected infra-wide emergency, not for anything else, human present or not. It is not defenseless either: `settle-and-merge.md` Step 6 point 3 already classifies each Settle failure as `correctness`/`ambiguous`/`transient` via `assess-agent-autonomy`'s `failure-check` mode, where `transient` means "infrastructure failure, not this record's fault." When **two or more groups in the same drain firing** land a `transient` classification, that repetition — not any single transient failure, which is ordinary and already handled by preserving `auto:merge`/`auto:merge-pending` per that step — is the repo-wide-outage signal: stop the remaining drain immediately (do not attempt further groups against `--budget`), and report the halt in this firing's own end-of-run output naming which groups hit it and each one's `assess-agent-autonomy` rationale. This reuses Settle's existing classification rather than inventing a new detection heuristic, and follows the same "report and stop, never ask" shape the Detection Ladder already uses for a real Preflight failure (`stop for any real failure`, above) — a repo-wide outage is a real failure, just one only visible after two groups have independently hit it.
 
