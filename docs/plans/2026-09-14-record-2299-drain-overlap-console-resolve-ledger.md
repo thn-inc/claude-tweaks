@@ -1,5 +1,0 @@
-# Open Items — dispatch drain-PR overlap hold (#1985) is invisible to console-resolve.js unattended auto-merge resolution (#2299)
-
-| # | Phase | Item | Status | Resolution |
-|---|-------|------|--------|------------|
-| 1 | build/skill | `drainOverlapHoldPrs` (`plugin/bin/lib/console/resolve.js`) collapses "no hold line present" and "a hold-shaped line that fails the full regex" into the same empty result — diverges from `.claude/skills/parse-signal-discipline`'s distinguish-could-not-parse-from-doesnt-apply rule. Final whole-branch review (Minor #6) flagged this; the fix wave addressed it by loosening the regex's tolerance (case-insensitivity, em-dash/hyphen), not by adding a distinguishable could-not-parse signal. | observation | Non-blocking: a future `drain-pr-overlap.md` prose edit that silently desyncs from the regex would currently read as "no hold" rather than "ambiguous — investigate." Worth a follow-up if that skill's own convention is ever enforced mechanically for this call site. |
