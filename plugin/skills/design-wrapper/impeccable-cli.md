@@ -1,6 +1,6 @@
 # Impeccable CLI — Invocation + JSON Parsing
 
-<!-- upstream-pin: impeccable-cli@3.6.0 -->
+<!-- upstream-pin: impeccable-cli@4.1.0 -->
 *Contract pinned to Impeccable CLI 3.6.0 and proven by `tests/impeccable-cli-contract.test.js`, which replays committed fixtures against the installed binary. A prose re-verification pass is not a substitute for running that test: the 3.2.1 stamp this replaces was written in good faith twice while the machine ran 2.1.8, because nothing ever compared the stamp to what was installed (`[IL-89]`).*
 
 *The pin is enforced, not aspirational: CLI absent → the contract test skips; CLI present but off-pin → the contract test fails. That asymmetry is the safe direction — a present-but-off-pin CLI failing is what prevents a renamed or reclassified finding from silently downgrading to a pass, the exact "a check that does not run reads as a check that passed" hazard `[IL-105]` names; an absent CLI is defensible to skip because no contributor is misled by it — they were never running the gate at all. The `skip` variable in `tests/impeccable-cli-contract.test.js` is the single enforcement point for this mechanism — read it there rather than here; this paragraph states only the behavior and its rationale.*
