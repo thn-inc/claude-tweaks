@@ -55,6 +55,7 @@ function badgesFor(record) {
 function borderStyleFor(bot) {
   if (bot.blocked) return 'blocked';
   if (bot.inProgress) return 'in-progress';
+  if (bot.parked) return 'bot-parked';
   return 'default';
 }
 

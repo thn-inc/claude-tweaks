@@ -22,6 +22,7 @@ const ORIGIN_COLORS = {
 const BORDER_COLORS = {
   blocked: '#c0392b',
   'in-progress': '#2980b9',
+  'bot-parked': '#f39c12',
   default: '#95a5a6',
 };
 
