@@ -335,3 +335,40 @@ dropping one issue and continuing is safe because each issue in that context is 
 section's group-claim **all-or-abort** invariant is exactly the case that general line doesn't
 fit: silently proceeding to Step 3 with one named target unclaimed reopens the double-build race
 this step exists to prevent.
+
+## Local-ahead-of-origin ride-along stop (#1780)
+
+Not a Step 2.8 claim-time stop — this one fires later, during `build`'s Common Step 1 worktree
+creation (`_shared/worktree-setup.md`'s Post-creation catch-up, "Headless ride-along check"),
+after this run's targets are already claimed above. Registered here anyway, alongside "Claim
+contested"/"Claim in-flight" earlier in this file, since it is the identical static-card,
+no-`AskUserQuestion`, `DISPATCH_HEADLESS=1`-only stop shape those two use.
+
+When the Post-creation catch-up's Headless ride-along check finds the new worktree branch ahead
+of `origin/{integration-branch}` (a non-zero `git rev-list --count
+"origin/{integration-branch}..HEAD"`), stop and render:
+
+```markdown
+## Flow: Local-ahead-of-origin ride-along
+
+This worktree's branch is ahead of origin/{integration-branch} by {N} commit(s) that predate
+this record's own work:
+
+{one line per captured commit, from `git log --oneline "origin/{integration-branch}..HEAD"`}
+
+Nobody is present in this headless run to judge whether this content belongs in #{target}'s PR.
+Next: push or stash the local commit(s) first, then re-dispatch this record.
+```
+
+No `AskUserQuestion` — same as the contest and in-flight cards above, nothing to choose between
+in a headless run.
+
+**Headless self-report.** This stop is `DISPATCH_HEADLESS=1`-only by construction, so always read
+`_shared/headless-self-report.md` and follow its dedup-and-file procedure (caller = `dispatch`),
+using failing-check-name `flow-step-2.5-headless-local-ahead` and this card's own text as the
+diagnostic body — mirroring the claim-contest/in-flight wiring above exactly (same file
+lookup/dedup/self-file mechanics). `dispatch/settle-and-merge.md`'s Settle procedure is where this
+actually runs: unlike the claim-contest/in-flight stops above, this record has already been
+claimed by the time worktree creation reaches this check, so Settle's ordinary
+ownership-check-then-release (steps 1-2) also applies here, unmodified — see that file's own
+"Headless ride-along special case" for the combined sequence.

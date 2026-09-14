@@ -56,6 +56,20 @@ failure. When `DISPATCH_HEADLESS` is unset (a human-present dispatch form), skip
 message the Task call already produced is sufficient; nobody headless needs a durable trace of
 it.
 
+**Headless ride-along special case (#1780).** When the failure this call is settling is instead
+`_shared/worktree-setup.md`'s Post-creation catch-up "Headless ride-along check" — reached during
+`build`'s Common Step 1 worktree creation, always `DISPATCH_HEADLESS=1`-only by construction (see
+`flow/claim-targets.md`'s "Local-ahead-of-origin ride-along stop") — this record HAS already been
+claimed by this run (unlike the claim-contest/in-flight case above, which stops before any claim
+is acquired), so the numbered steps below run normally: step 1's ownership check, then step 2's
+release with `--reason "failed: local-ahead-of-origin"`. In addition to that ordinary release,
+since this stop is unconditionally `DISPATCH_HEADLESS=1`-only, always read
+`_shared/headless-self-report.md` and follow its dedup-and-file procedure (caller = `dispatch`),
+using failing-check-name `flow-step-2.5-headless-local-ahead` and the stop's own card text as the
+diagnostic body — the identical file lookup/dedup/self-file mechanics the claim-contest/in-flight
+case above uses, just for this different stop shape and with the release folded into the normal
+numbered sequence instead of skipped.
+
 1. The CLI in step 2 performs the ownership read itself (`claims/issue-{n}.json` on `claims-registry`, per `_shared/issue-claims.md`'s "The lock" and Ownership rule) and exits `4` — writing nothing — when the blob's `runId` doesn't match `basename($PIPELINE_RUN_DIR)` — the group directory dispatch minted before claiming and this Task call received directly (`dispatch/task-prompt.md`): a mismatch means a successor already broke the stale claim and now holds the lock. Skip the rest of this step for that record and move to the next one — no manual read.
 2. Release the claim and remove `bot:in-progress` in one command — `node "${CLAUDE_PLUGIN_ROOT}/bin/release-claim.js" "$ISSUE" --run "$PIPELINE_RUN_DIR" --reason "failed: {gate}" --remove-in-progress --section "/dispatch" --step "Settle"` (reason per `_shared/issue-claims.md`'s Release triggers table; label removal best-effort, the CLI logs a warning and continues on failure). Same CLI `wrap-up/cleanup-procedures-execution.md` Section E uses — the exit-code contract lives there, not restated here.
 3. **Classify the failure and act on `auto:merge`/`auto:merge-pending` accordingly.** Invoke `/claude-tweaks:assess-agent-autonomy` in `failure-check` mode: `Skill(skill: "claude-tweaks:assess-agent-autonomy", args: "failure-check #{n}")`. If `CLASSIFICATION` is `correctness` or `ambiguous`, revoke whichever of `auto:merge` / `auto:merge-pending` is present — today's behavior for this class, unchanged for `auto:merge`, extended so a still-maturing grant is equally revocable (a record carries at most one of the two per `_shared/work-record.md`'s Grant semantics, so at most one check fires — check both rather than assuming which):

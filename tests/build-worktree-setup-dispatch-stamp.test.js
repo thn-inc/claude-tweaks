@@ -72,6 +72,25 @@ test('worktree-setup.md: Step 4.5 still runs on the skip-creation path (the actu
   );
 });
 
+test('worktree-setup.md: the Step 4.5 paragraph names the Adopted branch by name (#1751)', () => {
+  const start = WORKTREE_SETUP.indexOf('Skip creation when already inside an externally-created worktree');
+  assert.notStrictEqual(start, -1, 'skip-creation guard heading missing — this test has lost its anchor');
+  const end = WORKTREE_SETUP.indexOf('## Base ref', start);
+  assert.notStrictEqual(end, -1, '## Base ref heading missing — this test has lost its anchor');
+  const region = WORKTREE_SETUP.slice(start, end);
+
+  assert.match(
+    region,
+    /\*\*Adopted\*\*/,
+    'the guard must name the Adopted branch by name — a stale two-creator contrast (/flow multi-spec vs. dispatch) omits that /flow\'s own Adopted branch also stamps nothing, which is the common case under worktree-always',
+  );
+  assert.match(
+    region,
+    /\*\*Created\*\*/,
+    'the guard must also name the Created branch by name, distinguishing it from Adopted',
+  );
+});
+
 test('worktree-setup.md: Step 6 (draft PR) is explicitly unaffected by the skip-creation path', () => {
   const start = WORKTREE_SETUP.indexOf('Skip creation when already inside an externally-created worktree');
   const end = WORKTREE_SETUP.indexOf('## Base ref', start);

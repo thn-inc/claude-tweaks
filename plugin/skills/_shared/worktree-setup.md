@@ -48,14 +48,11 @@ session) rather than `EnterWorktree(name=...)` alone, since the harness's own "m
 be in a worktree session" precondition for `name`-creation still applies until the session
 actually leaves. Empty (clean) → **adopt** the current worktree as this run's workspace: no
 `EXPECTED_BASE` capture applies (there is no separate "branch this worktree starts from" distinct
-from what's already checked out — see Post-creation catch-up's own "no `EXPECTED_BASE` to
-capture" case, which already documents skipping just the `EXPECTED_BASE`-specific merge below
-while the origin-relative fetch+merge still runs on its own). The adopt path still runs
-Post-creation catch-up's `git fetch origin {integration-branch}` / `git merge
-origin/{integration-branch}` unconditionally — that half protects the "worktree fell behind"
-direction regardless of how old the adopted worktree is, exactly as this file's own text already
-states ("never assumed already-satisfied just because the worktree is brand new" applies with
-equal force to a worktree that is *not* brand new). The caller records the actual current branch
+from what's already checked out), but the origin-relative half — `git fetch origin
+{integration-branch}` / `git merge origin/{integration-branch}` — still runs unconditionally
+regardless of how old the adopted worktree is, per Post-creation catch-up's own "no
+`EXPECTED_BASE` to capture" case, which documents skipping only the `EXPECTED_BASE`-specific
+merge while that origin-relative fetch+merge runs on its own. The caller records the actual current branch
 name for anything downstream that reports or acts on it — never assume its own naming convention
 (e.g. a call site that would otherwise mint `flow/spec-{N1}-{N2}...`) was applied; nothing renames
 the branch, since a rename could break an already-open PR on a worktree left over from unrelated
@@ -101,7 +98,9 @@ For the rest of this session's lifetime inside the new worktree, the harness's B
 stays in effect (see the "## 7. Shell constraint" pointer above) — default to one plain command
 per call rather than rediscovering the boundary through refusals; see `docs/donts.md` for the
 common mistake of assuming a specific editing idiom, rather than the command's shape, is what
-gets refused.
+gets refused. Diagnosing the *main checkout's* state from inside this worktree session hits the
+same guard — `git -C <main-checkout> ...` is refused as git-adjacent and too complex to verify;
+use plain filesystem reads (`ls`, `cat`) against the main checkout's path instead (`docs/donts.md`).
 
 Unconditionally, before anything else runs in the new worktree:
 
@@ -152,6 +151,27 @@ caller that captured `EXPECTED_BASE` would want kept. A caller with no `EXPECTED
 capture (there was no "branch the worktree starts from" — e.g. a from-scratch scratch worktree)
 skips this merge; the fetch+merge above still runs on its own.
 
+**Headless ride-along check (#1780).** `worktree.baseRef: head` (this project's deliberate
+setting, `_shared/worktree-base-ref.md`) means a new worktree legitimately starts from local
+HEAD, which may itself carry unpushed commits ahead of `origin/{integration-branch}` — an
+in-progress `[reconcile]` merge, an un-pushed `/init` refresh, ordinary local-ahead state. That
+ride-along content is normal and expected for a human-present `/flow`, who can see their own
+local branch state before proceeding; it is never treated as drift here, and nothing in this
+section resets, discards, or refuses to merge it. Immediately after the `{EXPECTED_BASE}` merge
+above completes, when `DISPATCH_HEADLESS=1` is set on the current Task call's environment (a
+`/claude-tweaks:dispatch`-originated firing, where nobody is present to judge whether this
+particular ride-along content belongs in this record's PR): compute `git rev-list --count
+"origin/{integration-branch}..HEAD"`. Zero → nothing ahead, proceed as normal. Non-zero → capture
+`git log --oneline "origin/{integration-branch}..HEAD"` (the specific ride-along commit(s)) and
+stop — this is a new pre-flight stop condition, registered as "Local-ahead-of-origin ride-along"
+in `flow/claim-targets.md` alongside its existing "Claim contested"/"Claim in-flight" entries; read
+that section for the card shape and the headless self-report wiring. No record-specific commit
+exists yet at this point (materialization has not written `work/{n}-spec.md` yet — see
+`flow/materialize.md`'s worktree-first ordering), so temporal position alone identifies this
+content as pre-existing local state, never this record's own future work; no path/scope diffing is
+needed. When `DISPATCH_HEADLESS` is unset, this check does not run at all — a human-present
+invocation keeps today's silent ride-along behavior unchanged.
+
 On a merge conflict from either merge, resolve it per `_shared/git-discipline.md`'s Merge conflict
 resolution — never reset or discard. A freshly created worktree has no local commits yet to
 protect, so a conflict here means the new branch's starting point (the harness's chosen base)
@@ -159,7 +179,26 @@ actually disagrees with the integration branch's tip, or with the branch it was 
 from; read both sides and produce a merged result, or surface it to the user if genuinely
 ambiguous. This is the one case where "unconditional" still needs a human/agent decision.
 
-**Fail open on fetch/merge command failure**, distinctly from a conflict: no `origin` remote, no
+**Windows: `Filename too long`.** This repo tracks paths well past 180 characters under
+`.claude-tweaks/pipelines/**/spec-*/work/{n}-spec.md` (longest observed 225); with a Windows
+checkout prefix these can exceed the default ~260-character `MAX_PATH`, and `core.longpaths` is
+off by default in Git for Windows. A fetch/merge above that fails with `Filename too long` is a
+fixable local misconfiguration, not a connectivity failure — it must **not** take the fail-open
+path below. `git config --get core.longpaths`; when unset or `false`, `git config core.longpaths
+true` (repo-local — linked worktrees share the main checkout's `.git/config`, so one setting
+covers every worktree of this repo; `--global` is the operator's own choice, not this procedure's)
+and retry the merge. This failure can leave the merge partially applied: it self-aborts with no
+`MERGE_HEAD` (`git merge --abort` finds nothing to abort), and the incoming files land as
+untracked additions, so a naive retry fails again with "untracked working tree files would be
+overwritten." Recovery — safe **only** on a freshly created worktree with no commits or edits of
+its own (`_shared/git-discipline.md`'s "never reset or discard" rule is the default this carves
+out): confirm freshness (`git log --oneline origin/{integration-branch}..HEAD` prints nothing and
+`git status --porcelain` shows only the untracked leftovers), then `git reset --hard HEAD` and
+`git clean -f -d -- {leftover paths}`, then retry the merge.
+
+**Fail open on fetch/merge command failure**, distinctly from a conflict and distinctly from the
+Windows long-path failure above (excluded from this path — it is a fixable misconfiguration, not
+one of the cases below): no `origin` remote, no
 network, or an integration branch that was never pushed all make `git fetch` exit non-zero before
 any merge is attempted. Treat this the same way the Pre-flight divergence check treats an empty
 `UPSTREAM` (below) — log it and proceed rather than blocking worktree setup on a check whose
