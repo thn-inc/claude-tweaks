@@ -186,5 +186,9 @@
   "plugin/bin/lib/preflight-records": {
     "lastSweptMs": 1789269160473,
     "lastHash": "868a28ef124c8e5703a284423a589567b8d9fae6"
+  },
+  "plugin/bin/lib/reconcile": {
+    "lastSweptMs": 1789355600047,
+    "lastHash": "ead306923a918ab3e5809f1370af8f7e3a60d4a7"
   }
 }
