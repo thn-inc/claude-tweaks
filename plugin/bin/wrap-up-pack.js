@@ -5,7 +5,10 @@
 // probe degrades its own field), 2 on a malformed invocation, 3 when --run
 // is not anchored under the main checkout (stage-item's resolveTarget —
 // [IL-127]: a worktree-local shadow run dir must never be written), and 3
-// likewise when --json would write outside that same anchored target.
+// likewise when --json would write outside that same anchored target. An
+// undecided crash — a throw that reaches the top level rather than a
+// decided outcome — is exit 1, as in both sibling packs: the 0/2/3
+// vocabulary governs outcomes this CLI decided.
 'use strict';
 
 const path = require('path');
@@ -27,6 +30,9 @@ function parseArgs(argv) {
       if (value === undefined || value.startsWith('--')) throw new UsageError(`${flag} requires a value`);
       if (flag === '--only') {
         const names = value.split(',').map((s) => s.trim()).filter(Boolean);
+        // `--only ,` asks for nothing at all. Gathering every probe instead
+        // would silently answer a different question than the one asked.
+        if (names.length === 0) throw new UsageError(`${flag} names no probes (known: ${PROBE_NAMES.join(', ')})`);
         const bad = names.find((n) => !PROBE_NAMES.includes(n));
         if (bad) throw new UsageError(`unknown probe: ${bad} (known: ${PROBE_NAMES.join(', ')})`);
         out.only = names;
