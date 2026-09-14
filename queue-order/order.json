@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T01:45:31.449Z",
+  "computedAt": "2026-09-14T02:21:33.237Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -166,11 +166,6 @@
       {
         "number": 2314,
         "updatedAt": "2026-09-13T13:31:50Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2306,
-        "updatedAt": "2026-09-13T13:33:08Z",
         "state": "OPEN"
       },
       {
@@ -3692,102 +3687,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nIssue #1882 (splitFrontmatterFence returns null on every CRLF checkout) is closed, and the PR\nthat closed it (#2035) shows as merged — but the merge only carries commit 92a6ff1a,\n\"Materialize spec for #1882,\" which added `work/1882-spec.md` (49 lines). The actual code fix\nwas never committed to that PR.\n\nSequence of events: a `/claude-tweaks:dispatch next` firing selected #1882 and dispatched a\nbuild,test Task agent. That agent wrote the real fix (`content.split('\\n')` -> `content.split(/\\r?\\n/)`\nin `plugin/bin/lib/health-core/frontmatter-list.js`) plus two CRLF-fixture regression tests, but\nhad not yet committed them when the session's container was reclaimed for inactivity mid-run. The\npipeline run (`.claude-tweaks/pipelines/2026-09-07T121938-record-1882`) was left parked with\nstatus `interrupted`. Five days later the repo owner manually marked the still-draft PR #2035\nready for review and merged it directly, without the automated test/review/wrap-up phases ever\nrunning (the PR body's phases checklist — build/test/review/wrap-up — was still fully unchecked\nat merge time). GitHub auto-closed #1882 via the PR's \"Fixes #1882\" line.\n\n**Confirmed still true at this shaping pass:** `plugin/bin/lib/health-core/frontmatter-list.js:35`\nstill reads `content.split('\\n')` on `origin/main` — the CRLF bug is still live, affecting all\nsix call sites #1882 originally listed (skill-audit description/argument-hint measurement,\njourney/harness/docs-health scope fields, and `work-backend: local-files` record frontmatter\nparsing). The orphaned fix branch `worktree-record-1882` still exists at commit `9a883f98`\n(confirmed present on `origin`), 2 commits ahead of the merged PR's head 92a6ff1a: `6ec86bd5`\n(the actual fix + 2 regression tests) and `9a883f98` (an implementation plan doc). No new PR for\n#1882 has been opened since this record was filed (confirmed: `gh pr list --search \"1882\"`\nreturns none open).\n\nSeparately, this points at a process gap: `integration-model: pr-first` has no safeguard today\nagainst a human merging a draft PR before the automated build/test/review/wrap-up phases push\ntheir commits — the phases checklist showing all-unchecked at merge time was a visible signal\nthat went unheeded.\n\n## Deliverables\n\n- Land the actual fix: open a PR from branch `worktree-record-1882` (or cherry-pick commits\n  `6ec86bd5` and `9a883f98` onto a fresh branch) against `main`, verify CI, and merge it.\n- Decide whether to add a safeguard (e.g. a merge-time check, or a documented process rule)\n  against merging a `pr-first` draft PR whose phases checklist isn't fully checked — implement\n  one if it's judged worthwhile, or explicitly decline with recorded reasoning if not.\n\n## Acceptance Criteria\n\n1. `plugin/bin/lib/health-core/frontmatter-list.js`'s `splitFrontmatterFence` uses\n   `content.split(/\\r?\\n/)` on `main`.\n2. `tests/bin-lib/health-core/frontmatter-list.test.js` carries the two CRLF-fixture regression\n   tests on `main`, passing.\n3. The premature-merge process gap is either addressed (a concrete safeguard implemented) or\n   explicitly declined with reasoning recorded in this record's closing comment.\n4. `npm test` passes on `main` after the fix lands.\n\n## Technical Approach\n\nCherry-pick (or PR directly from) branch `worktree-record-1882` at commit `9a883f98` — the fix\ncommit `6ec86bd5` plus the implementation-plan-doc commit `9a883f98` — onto a fresh branch off\ncurrent `main`, resolving any merge drift from the five days of intervening main history. Open a\nPR, let CI run for real (this time), and merge through the normal pipeline rather than a manual\nmerge — the exact process failure this record exists to correct. For the safeguard deliverable,\nsurvey what mechanism this repo already has for gating merges (`_shared/pr-first-merge.md`'s\nexisting merge-verification gate, Claude Approvals rules if in use) and judge whether adding a\nphases-checklist check there is proportionate, or whether the existing safeguards are deemed\nsufficient and this was a one-off human override that no mechanism should have blocked.\n\n### Key Files\n\n- `plugin/bin/lib/health-core/frontmatter-list.js` — apply the CRLF-safe split (already written\n  on the orphaned branch; land it)\n- `tests/bin-lib/health-core/frontmatter-list.test.js` — the two CRLF regression tests (already\n  written on the orphaned branch; land them)\n- `plugin/skills/_shared/pr-first-merge.md` — reference for whatever existing merge-gating\n  mechanism the safeguard deliverable might extend\n- `specs/2-pr-2035-merged-only-the-spec-materialization-commit-1882-s-a.md` — a duplicate local\n  unsynced record from the same incident (see Gotchas); do not re-file, this GitHub issue is the\n  canonical record per the original filer's own note\n\n## Gotchas\n\n- Do not reopen #2035 or open a competing PR under a different framing — the original filer\n  explicitly followed a standing instruction not to reopen #2035 or open a new PR \"without being\n  asked\"; this record's own Deliverables now constitute that ask, so proceeding is expected, not\n  a violation of that instruction.\n- A duplicate local record exists (`specs/2-pr-2035-merged-only-the-spec-materialization-commit-1882-s-a.md`,\n  on branch `worktree-capture-1882-followup`) from the same investigation, filed when `gh` was\n  unavailable — this GitHub issue is the canonical record per the original filer's own note; the\n  local file is paper trail only and should not be independently actioned.\n- Verify the cherry-picked fix still applies cleanly given five days of intervening `main` history\n  before assuming a straight cherry-pick works — check for conflicts in\n  `frontmatter-list.js` or its test file first.\n\n## Original request\n\n## Current State\n\nIssue #1882 (splitFrontmatterFence returns null on every CRLF checkout) is closed, and the PR that closed it (#2035) shows as merged — but the merge only carries commit 92a6ff1a, \"Materialize spec for #1882\", which added `work/1882-spec.md` (49 lines). The actual code fix was never committed to that PR.\n\nSequence of events: a `/claude-tweaks:dispatch next` firing selected #1882 and dispatched a build,test Task agent. That agent wrote the real fix (`content.split('\\n')` -> `content.split(/\\r?\\n/)` in `plugin/bin/lib/health-core/frontmatter-list.js`) plus two CRLF-fixture regression tests, but had not yet committed them when the session's container was reclaimed for inactivity mid-run. The pipeline run (`.claude-tweaks/pipelines/2026-09-07T121938-record-1882`) was left parked with status `interrupted`. Five days later the repo owner manually marked the still-draft PR #2035 ready for review and merged it directly, without the automated test/review/wrap-up phases ever running (the PR body's phases checklist — build/test/review/wrap-up — was still fully unchecked at merge time). GitHub auto-closed #1882 via the PR's \"Fixes #1882\" line.\n\nVerified directly against `origin/main`: `plugin/bin/lib/health-core/frontmatter-list.js` still contains the buggy `content.split('\\n')` line (`git show origin/main:plugin/bin/lib/health-core/frontmatter-list.js`). The CRLF bug is still live on main, affecting all six call sites #1882 originally listed (skill-audit description/argument-hint measurement, journey/harness/docs-health scope fields, and `work-backend: local-files` record frontmatter parsing).\n\nThe orphaned fix has been recovered and preserved: pushed to branch `worktree-record-1882` at commit 9a883f98 (2 commits ahead of the merged PR's head 92a6ff1a): `6ec86bd5` (the actual fix + 2 regression tests) and `9a883f98` (the implementation plan doc). `node --test tests/bin-lib/health-core/frontmatter-list.test.js` passes all 14 tests on that branch, including the 2 new CRLF regression tests. Per the standing instruction not to reopen #2035 or open a new PR for the same change without being asked, no new PR was opened.\n\nSeparately, this points at a process gap: `integration-model: pr-first` has no safeguard today against a human merging a draft PR before the automated build/test/review/wrap-up phases push their commits — the phases checklist showing all-unchecked at merge time was a visible signal that went unheeded.\n\nAlso filed as a local unsynced record (`specs/2-pr-2035-merged-only-the-spec-materialization-commit-1882-s-a.md`, pushed on branch `worktree-capture-1882-followup`) since `gh` CLI was unavailable in the session that first investigated this — kept for paper trail; this issue is now the canonical record.\n\n## Deliverables\n\n- [ ] Open a PR from branch `worktree-record-1882` (or cherry-pick commits `6ec86bd5` and `9a883f98` onto a fresh branch) against `main`, verify CI, and merge it so the actual fix lands\n- [ ] Decide whether to add a safeguard (e.g. a merge-time check, or a Claude Approvals rule) against merging a `pr-first` draft PR whose phases checklist isn't fully checked\n\n## Acceptance Criteria\n\n1. `plugin/bin/lib/health-core/frontmatter-list.js`'s `splitFrontmatterFence` uses `content.split(/\\r?\\n/)` on `main`\n2. `tests/bin-lib/health-core/frontmatter-list.test.js` carries the two CRLF-fixture regression tests on `main`, passing\n3. The premature-merge process gap is either addressed or explicitly declined with reasoning recorded\n\n---\n_Filed by `dispatch` via manual GitHub MCP write (gh CLI unavailable this session)._\n",
-        "createdAt": "2026-09-12T13:34:20Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2306,
-        "state": "OPEN",
-        "title": "PR #2035 merged only the spec-materialization commit — #1882's actual CRLF fix never landed on main",
-        "updatedAt": "2026-09-13T13:33:08Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
