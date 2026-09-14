@@ -86,7 +86,21 @@ proofs exist, evaluated in order, and a branch proven by either is eligible:
    `mergeCommit` rides only on the per-branch confirm (`resolvePrState`), not the bulk screen, so a
    squash candidate is always confirmed before its verdict is final.
 
-**Confirm-routing symmetry (#2322).** `archive-branches.js`'s per-branch confirm — the only place `mergeCommit` becomes available for the squash-provenance check above — is reached by any non-cherry-equivalent branch whose bulk screen read `MERGED` *or* `null`. The `null` case is the bulk screen's documented deleted-ref blind spot (`pr-state.js`'s header): a branch whose remote ref `gh pr merge --delete-branch` already removed. Routing both shapes into the same confirm means a young squash-merged branch in that blind spot converges on the first pass after its PR merges, at the cost of one extra `gh pr list --head` call per screen-null, non-cherry-equivalent branch per pass — the same per-branch cost the MERGED-screened routing already pays, now paid symmetrically rather than only after the branch ages past `BRANCH_AGE_DAYS` (14 days).
+**Confirm-routing symmetry (#2322).** `archive-branches.js`'s per-branch confirm — the only place
+`mergeCommit` becomes available for the squash-provenance check above — is reached by any
+non-cherry-equivalent branch whose bulk screen read `MERGED` *or* `null`. The `null` case is the
+bulk screen's documented deleted-ref blind spot (`pr-state.js`'s header): a branch whose remote ref
+`gh pr merge --delete-branch` already removed. Routing both shapes into the same confirm means a
+young squash-merged branch in that blind spot converges on the first pass after its PR merges, at
+the cost of one extra `gh pr list --head` call per screen-null, non-cherry-equivalent branch per
+pass — the same per-branch cost the MERGED-screened routing already pays, now paid symmetrically
+rather than only after the branch ages past `BRANCH_AGE_DAYS` (14 days). That recurring cost is not
+confined to the deleted-ref shape: `ref()` returns `null` for a **never-pushed** branch too
+(`pr-state.js`'s header lists both), so an abandoned run's purely-local `build/*` branch — the
+commoner screen-null shape in a working checkout — now pays one confirm call per pass as well,
+every pass until it ages out. Nothing follows from those calls: the confirm resolves `null`,
+`isSquashMerged` returns `false` on a null `prState` before spawning any git, and the age rules
+skip the branch `too-young` exactly as before.
 
 Both proofs judge the **local** integration ref (`{integration}`, never `origin/{integration}`) —
 the same staleness direction as `isCherryEquivalent`: fail-safe when the local ref is behind, never
