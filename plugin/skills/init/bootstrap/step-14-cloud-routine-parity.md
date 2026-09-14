@@ -116,7 +116,7 @@ done
 # rule) defensively, in case the script is ever re-run inside a live session that does export
 # CLAUDE_CODE_SESSION_ID, rather than because a collision has ever been observed here.
 CC_TMP_DIR="${TMPDIR:-/tmp}"
-if [ -n "$CLAUDE_CODE_SESSION_ID" ]; then
+if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
   CC_TMP_DIR="$CC_TMP_DIR/ct-session-$CLAUDE_CODE_SESSION_ID"
   mkdir -p "$CC_TMP_DIR"
 fi
@@ -164,14 +164,28 @@ for spec in $PLUGIN_SPECS; do
     // nothing to compare (claude-tweaks #860, which used to make claude-tweaks drift permanently
     // unverifiable via this comparison).
     if (!expected && declared && declared.source && declared.source.source === "git-subdir" && declared.source.sha && declared.source.url) {
-      try {
-        const rawBase = declared.source.url.replace(/^https:\/\/github\.com\//, "https://raw.githubusercontent.com/");
-        const rawUrl = rawBase + "/" + declared.source.sha + "/" + declared.source.path + "/.claude-plugin/plugin.json";
-        const atSha = JSON.parse(require("child_process").execFileSync("curl", ["-fsSL", rawUrl], { encoding: "utf8", timeout: 10000 }));
-        if (atSha && atSha.version) expected = atSha.version;
-      } catch {
-        // Network failure, missing manifest at that path, or unexpected shape: fall through to
-        // "unversioned" below, the same fail-open posture as an unresolvable catalog entry.
+      // Announce every fallback path with the console.error-to-stderr style this script uses
+      // for its other degrades (its output passes through the surrounding $(...) capture into
+      // the setup log) -- a silent "unversioned" here used to make the one plugin this block
+      // exists to protect (claude-tweaks itself, a git-subdir source) read "ok" on a fetch failure.
+      if (declared.source.url.startsWith("https://github.com/")) {
+        try {
+          const rawBase = declared.source.url.replace(/^https:\/\/github\.com\//, "https://raw.githubusercontent.com/");
+          const rawUrl = rawBase + "/" + declared.source.sha + "/" + declared.source.path + "/.claude-plugin/plugin.json";
+          const atSha = JSON.parse(require("child_process").execFileSync("curl", ["-fsSL", rawUrl], { encoding: "utf8", timeout: 10000 }));
+          if (atSha && atSha.version) expected = atSha.version;
+        } catch (e) {
+          // Network failure, missing manifest at that path, or unexpected shape: fall through to
+          // "unversioned" below, the same fail-open posture as an unresolvable catalog entry --
+          // but announce it instead of swallowing it silently.
+          console.error("[claude-cloud-setup] WARNING: could not resolve the pinned version of " + spec + " at " + declared.source.sha + " (" + e.message + ") — freshness unverified.");
+        }
+      } else {
+        // The github.com -> raw.githubusercontent.com rewrite above only makes sense for a
+        // github.com source url; fetching an unrewritten url for any other host would be
+        // meaningless (low severity -- the catalog is already the trust boundary), so skip the
+        // fetch entirely rather than invoke curl against a URL that was never rewritten for this.
+        console.error("[claude-cloud-setup] WARNING: could not resolve the pinned version of " + spec + " at " + declared.source.sha + " (non-github.com source url) — freshness unverified.");
       }
     }
     expected = expected || "unversioned";
