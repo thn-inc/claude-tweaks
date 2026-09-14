@@ -131,6 +131,60 @@ still drops the cache entry; the record is left for a human to close manually). 
 that is already closed gets a comment + reopened rather than a duplicate filing — one record per
 path across its whole open/closed/reopened lifetime.
 
+## `archive-merged.js`'s lifecycle classifier (#1732)
+
+`archiveMerged()`'s main loop no longer carries five independent, interleaved detection
+mechanisms as separate early-return branches. `classifyRunDir(ctx, now)` is the single function
+that owns every mtime-TTL comparison (via `isStaleDir`) and the events-log recency comparison
+(via `ownEventRecency`), returning `{ kind, ttlMs, evidence }` with
+`kind ∈ { 'orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'merged',
+'structurally-stuck', 'none' }` — a first-match list evaluated in that exact precedence order.
+The five pre-consolidation predicates (`isOrphanedMint`, `isAbandonedInterrupted`,
+`isAdHocStandaloneSuperseded`, `decideArchive`, `isStructurallyStuck`) are now thin wrappers that
+call `classifyRunDir` with `ctx.kinds` scoped to their own one kind — this is what keeps a
+standalone call (a unit test constructing a bare fixture dir, or `trackStuckSkip`'s own narrower
+question) answering exactly what it always asked, unaffected by whether the same dir would ALSO
+match some other, higher-precedence kind under the full order. Only `archiveMerged()`'s own main
+loop passes the full, ordered kind set.
+
+The `checkRunIntegrity` shipped-unclosed evidence gate for `abandoned-interrupted` stays
+call-site-only, never folded into the classifier itself (folding it in would misattribute the
+`explicit: true` archival path's justification) — the main loop re-classifies scoped to just
+`adhoc-superseded` when that companion check fails, so a dir that superficially reads
+`abandoned-interrupted` but fails the gate still falls through to the next-lower-precedence kind,
+matching the pre-consolidation `&&`-chained early-return exactly.
+
+## No-run-state.json terminal path and consolidated escalation (#1811)
+
+Two additions beyond the branchless MERGED-by-number probe (already covered by `state.pr.number`
+handling regardless of whether a worktree was ever stamped — see the by-number fallback in the
+main loop, landed via #1962/#2226/#2228/#2231):
+
+- **`isClosedSlugStuck`** — a run dir with `config.yml` but NO `run-state.json` at all (slug
+  `{timestamp}-record-{n}[-{m}...]`, e.g. the shape underlying #1811's own original report) has no
+  branch, no PR, and nothing the classifier or the by-number probe can resolve — it escalates at
+  `structurally-stuck` forever with no path to resolution. Terminal once every record number named
+  in the slug (`recordNumbersFromSlug`) independently resolves `CLOSED` via `gh issue view` (not a
+  PR — `pr-state.js`'s `resolveIssueStateByNumber`) and the directory has sat past
+  `STRUCTURALLY_STUCK_TTL_MS`. Fails closed (leaves the dir in place) on any unresolved record, a
+  `gh-absent`/`network-failure` probe on any one of them, or a dir that DOES carry a
+  `run-state.json` (however stale) — that shape belongs to the ordinary classifier/branch-resolution
+  path instead.
+- **Consolidated `structurally-stuck` escalation** — `escalate-residue.js` files ONE open record per
+  sweep pass covering every path stuck at `structurally-stuck`, not one per directory (the exact
+  symptom that produced seven near-identical records, #1811-#1817, for one underlying defect).
+  `residueFingerprint('structurally-stuck', ...)` ignores the path (every other reason keeps its
+  path-specific basis, unchanged), so every stuck dir's `trackResidue` call converges on the same
+  marker. The record's body carries a `<!-- stuck-paths -->…<!-- /stuck-paths -->` block
+  (`parseStuckPaths`/`renderStuckPathsBlock`) edited in place via `gh issue edit --body` on each new
+  path (plus a comment, so both the record body and its thread reflect the addition) — never a
+  second `issue create`. `cache.js`'s per-path consecutive-failure counter (`trackResidue`,
+  `RESIDUE_ESCALATE_THRESHOLD`) is unchanged and reason-agnostic already; only the filing/resolving
+  side consolidates. Resolving one path (`resolveResidue` under `reason: 'structurally-stuck'`)
+  removes just that path from the shared record's body — the record only actually closes once every
+  path it named has resolved, so fixing directory A never silently closes the record while
+  directory B is still genuinely stuck.
+
 ## Referenced by
 
 `CLAUDE.md`'s `### Reconcile` subsection points here for anyone touching
