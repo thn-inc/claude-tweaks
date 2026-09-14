@@ -137,7 +137,7 @@ function makeCurlStub(responses) {
     .join('\n');
   const script = `#!/bin/sh\n${cases}\nexit 22\n`;
   fs.writeFileSync(path.join(dir, 'curl'), script);
-  fs.chmodSync(path.join(dir, 'curl'), 0o755);
+  fs.chmodSync(path.join(dir, 'curl'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   return dir;
 }
 

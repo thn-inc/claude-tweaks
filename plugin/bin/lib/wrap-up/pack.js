@@ -383,7 +383,15 @@ function buildProbes(inputs, deps) {
     // suite state instead (#1930 review E2).
     residue: async () => {
       if (!inputs.base) throw new Error('base unresolved — no merge-base against the integration branch');
-      const { stdout } = await deps.execFile('node', [path.join(BIN, 'residue.js'), '--base', String(inputs.base), '--integration-branch', String(inputs.baseRef || inputs.integrationBranch), '--scope', 'blast-radius', '--no-suite', '--json'], { cwd: inputs.worktree, ...EXEC_OPTS });
+      const argv = [path.join(BIN, 'residue.js'), '--base', String(inputs.base), '--integration-branch', String(inputs.baseRef || inputs.integrationBranch), '--scope', 'blast-radius', '--no-suite', '--json'];
+      // #1781: a pr-first run's own recorded PR (run-state.json's pr.number,
+      // the same read the `pr` probe above uses) is open by design until
+      // Phase 4 decides merge/arm/park — excluding it here keeps it off the
+      // residue-sweep ledger as an `open` item. local-merge has no recorded
+      // PR (inputs.pr is null there), so this appends nothing and the probe
+      // behaves exactly as before this change.
+      if (inputs.pr !== null) argv.push('--own-pr', String(inputs.pr));
+      const { stdout } = await deps.execFile('node', argv, { cwd: inputs.worktree, ...EXEC_OPTS });
       return JSON.parse(stdout);
     },
     pr: async () => {
