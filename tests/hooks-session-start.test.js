@@ -143,6 +143,28 @@ test('#1494: a *-sweep-standalone* run with non-empty staged/ is listed exactly 
   assert.match(ctx, /\/claude-tweaks:tidy --approve/, 'the sweep-standalone run points at tidy --approve, same as a tidy-standalone run');
 });
 
+// #1738: the hand-rolled readdirSync/sort/run-state.json walk this scan used
+// to run lacked the shared iterator's archive-twin skip entirely — a clean
+// *-tidy-standalone* run whose archive/{name}/ twin is ITSELF already
+// status:'clean' (fully archived) would still have been listed by the old
+// hand-rolled walk. Now that this scan shares iterRunDirsWithState's
+// { status: 'clean' } filter, that twin is correctly recognized as "already
+// archived" and the run is not listed.
+test('#1738: a clean *-tidy-standalone* run with a fully-archived (clean) archive twin is not listed — the skip the hand-rolled walk lacked', async () => {
+  const project = tmpProject();
+  const runId = '2026-07-05T090000-tidy-standalone';
+  const standalone = mkRun(project, runId, { status: 'clean' });
+  mkStagedFile(standalone, 'stale-close-1.json', '{}');
+  mkRun(project, path.join('archive', runId), { status: 'clean' });
+  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  if (out.json) {
+    assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /tidy --approve/);
+    assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, new RegExp(runId));
+  } else {
+    assert.deepStrictEqual(out, {});
+  }
+});
+
 test('#1493: a cleanly-clean standalone run with EMPTY staged/ renders no tidy --approve line', async () => {
   const project = tmpProject();
   const standalone = mkRun(project, '2026-07-02T090000-tidy-standalone', { status: 'clean' });

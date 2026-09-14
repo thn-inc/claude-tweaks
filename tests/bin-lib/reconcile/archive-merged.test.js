@@ -12,7 +12,7 @@ const path = require('path');
 const {
   archiveRunDir, listSpecDirs, decideArchive, readConsoleState, isOrphanedMint, trackArchiveResult,
   archiveMerged, lastOwnEventMs, isAbandonedInterrupted, archiveOrphanedMint, ORPHAN_MINT_TTL_MS,
-  isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS,
+  isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, isStaleDir,
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures } = require('../../../plugin/bin/lib/reconcile/cache');
@@ -1265,6 +1265,39 @@ test('trackArchiveResult: a success clears a prior failure streak for the same d
   assert.deepEqual(listResidueFailures(root), []);
 });
 
+// --- #1734: isStaleDir — the shared staleness primitive underneath
+// isAdHocStandaloneSuperseded, isOrphanedMint, and isStructurallyStuck ---
+
+test('isStaleDir: true once mtime is past the TTL', () => {
+  const dir = mkDirWithMtime(ORPHAN_MINT_TTL_MS * 2);
+  assert.equal(isStaleDir(dir, ORPHAN_MINT_TTL_MS), true);
+});
+
+test('isStaleDir: false exactly at the TTL boundary (strict >, not >=)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-stale-'));
+  const backdated = new Date(Date.now() - ORPHAN_MINT_TTL_MS);
+  fs.utimesSync(dir, backdated, backdated);
+  // Read the mtime back rather than trusting the `backdated` value written
+  // above — some filesystems round mtime to a coarser granularity than
+  // Date.now()'s milliseconds, so the *stored* mtime, not the value handed to
+  // utimesSync, is what isStaleDir actually compares against. Deriving `now`
+  // from that stored value makes the boundary assertion exact regardless of
+  // filesystem timestamp precision.
+  const mtimeMs = fs.statSync(dir).mtimeMs;
+  assert.equal(isStaleDir(dir, ORPHAN_MINT_TTL_MS, mtimeMs + ORPHAN_MINT_TTL_MS), false);
+  assert.equal(isStaleDir(dir, ORPHAN_MINT_TTL_MS, mtimeMs + ORPHAN_MINT_TTL_MS + 1), true);
+});
+
+test('isStaleDir: false for a fresh directory', () => {
+  const dir = mkDirWithMtime(0);
+  assert.equal(isStaleDir(dir, ORPHAN_MINT_TTL_MS), false);
+});
+
+test('isStaleDir: false for a missing directory (fail toward keep)', () => {
+  const dir = path.join(os.tmpdir(), 'archive-merged-does-not-exist-' + Date.now());
+  assert.equal(isStaleDir(dir, ORPHAN_MINT_TTL_MS), false);
+});
+
 // --- #1613: isStructurallyStuck / trackStuckSkip — visibility for a run dir
 // stuck in no-worktree/no-branch/no-pr with no escalation path, without
 // changing archiveMerged's own skip-in-place behavior ---
@@ -1371,6 +1404,74 @@ test('archiveMerged: still skips in place on a single pass, but only starts trac
   const failures = listResidueFailures(root);
   assert.ok(failures.some((f) => f.reason === 'structurally-stuck' && f.path === stuckDir), 'the stuck dir must start accumulating a residue count');
   assert.ok(!failures.some((f) => f.reason === 'structurally-stuck' && f.path === freshDir), 'the fresh (just-created) dir must not enter the counter at all');
+});
+
+// --- #1733: archiveMergedRun's onSkip asymmetry — the one behavioral
+// difference the loop-dedup extraction had to preserve rather than "fix":
+// only the main loop's decideArchive skip feeds trackStuckSkip; the #1544
+// clean-status sweep's decideArchive skip does not. Both fixtures below
+// reach decideArchive's 'no-pr' reason (a resolvable branch with no PR found
+// at all, `gh pr list` returning an empty array), which IS one of
+// STRUCTURALLY_STUCK_REASONS, and both dirs are backdated well past
+// STRUCTURALLY_STUCK_TTL_MS — so a residue-counter difference can only come
+// from the onSkip hook itself, not from isStructurallyStuck's own gating.
+test('archiveMerged: a main-loop decideArchive skip (no-pr) enters the structurally-stuck residue counter', () => {
+  const root = fs.realpathSync(makeRepo());
+  const branch = 'feat-nopr-main-1733';
+  // realpath'd for the same reason mergedFeatureBranchRepo's root is (macOS's
+  // os.tmpdir() sits behind a /var -> /private/var symlink) — deriveBranch
+  // compares `git worktree list --porcelain`'s own (real) path against
+  // run-state.json's stamped `worktree` via a plain path.resolve, with no
+  // realpath step of its own, so an un-realpath'd stamp here would silently
+  // fail to match and fall through to 'no-branch' instead of exercising the
+  // 'no-pr' skip this test means to reach.
+  const wt = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-nopr-main-')));
+  git(root, 'worktree', 'add', '-q', wt, '-b', branch);
+
+  const runId = '2026-01-01T000000-nopr-main-1733';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wt }));
+  const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(runDir, backdated, backdated);
+
+  const wrapper = installGhWrapper([]);
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+
+  assert.ok(result.skipped.some((s) => s.runDir === runDir && s.reason === 'no-pr'), `expected a no-pr skip, got ${JSON.stringify(result)}`);
+  const failures = listResidueFailures(root);
+  assert.ok(
+    failures.some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
+    'the main loop must feed a decideArchive no-pr skip into the structurally-stuck residue counter',
+  );
+});
+
+test('archiveMerged: a clean-loop decideArchive skip (no-pr) does NOT enter the structurally-stuck residue counter', () => {
+  const runId = '2026-01-01T000000-nopr-clean-1733';
+  const { root, runDir } = fixtureCleanUnarchivedRun({ runId });
+  const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(runDir, backdated, backdated);
+
+  const wrapper = installGhWrapper([]);
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+
+  assert.ok(result.skipped.some((s) => s.runDir === runDir && s.reason === 'no-pr'), `expected a no-pr skip, got ${JSON.stringify(result)}`);
+  const failures = listResidueFailures(root);
+  assert.ok(
+    !failures.some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
+    'the #1544 clean-status sweep must never feed a decideArchive skip into the structurally-stuck residue counter — the onSkip asymmetry is intentional, not a gap',
+  );
 });
 
 // --- #1673: auto-close an abandoned `interrupted` run whose work shipped ---
@@ -1498,8 +1599,39 @@ test('isAbandonedInterrupted: false when owner === sessionId, true when they dif
   );
 });
 
+// #1737: isAbandonedInterrupted used to call hasReadableEventsLog then
+// lastOwnEventMs back to back, each doing its own fs.readFileSync of
+// events.jsonl — two reads of the same file per call. Both questions now
+// answer off one ownEventRecency() call, built on context.js's shared
+// readEventLines. Spy on the real fs.readFileSync (archive-merged.js and
+// context.js both call it via property access, so mocking the shared `fs`
+// module object here is observed by both) and count only the events.jsonl
+// reads, delegating to the original implementation so the read still
+// succeeds.
+test('#1737: isAbandonedInterrupted performs at most one read of events.jsonl per call', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-onereadperclock-'));
+  const runDir = path.join(root, 'run');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(runDir, 'events.jsonl'),
+    JSON.stringify({ type: 'skill_invoked', ts: '2020-01-01T00:00:00.000Z' }) + '\n',
+  );
+  const state = { status: 'interrupted' };
+
+  const original = fs.readFileSync;
+  let eventsReadCount = 0;
+  t.mock.method(fs, 'readFileSync', (p, ...rest) => {
+    if (typeof p === 'string' && p.endsWith('events.jsonl')) eventsReadCount += 1;
+    return original.call(fs, p, ...rest);
+  });
+
+  isAbandonedInterrupted(runDir, state, 'this-session');
+
+  assert.equal(eventsReadCount, 1, `expected exactly one events.jsonl read, got ${eventsReadCount}`);
+});
+
 // F9: an unreadable/absent events.jsonl must fail toward not-abandoned, not
-// toward stale — see hasReadableEventsLog's header comment for why this must
+// toward stale — see ownEventRecency's header comment for why this must
 // not rely on checkRunIntegrity's own separate read of the same file.
 test('isAbandonedInterrupted: an unreadable/absent events.jsonl is UNKNOWN evidence — never treated as abandoned', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-unknownlog-'));
