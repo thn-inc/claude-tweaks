@@ -101,7 +101,8 @@ PR both mentions it AND either matches its title (Jaccard token similarity) or t
 in its own `### Key Files` — two independent signals, never one alone. That exclusion costs one
 human approval (the staged Close proposal `queue-pull-script.md` stages, never an autonomous
 close) — it is never silent and it never removes a candidate from `dispatch-groups.json` without
-also naming the reason in `dispatch-shipped-excluded.json`. A `weak`-tier mention (the base signal
+also naming the reason in this run's session-scoped `dispatch-exclusions.json` (`reason:
+'shipped'`, `bin/lib/dispatch/exclusions.js`). A `weak`-tier mention (the base signal
 alone — merged, no second signal) never blocks: the record stays fully eligible, with the mention
 carried forward as build-time context. The residual false negative — a resolving PR that never
 mentions the record at all, by number or otherwise — is accepted: there is no signal left to
@@ -120,12 +121,13 @@ The `bot:*` filter here is the cheap label-based pre-filter — labels are proje
 
 **Open-PR exclusion report (refs #1224).** See `open-pr-exclusion-report.md`, this skill's directory (same convention as the Blocked-exclusion report above; not a gate — the exclusion itself already happened inside `queue-pull-script.md`).
 
-**Shipped-candidate exclusion report (refs #1984).** Read `dispatch-shipped-excluded.json`
-(`queue-pull-script.md`'s output, `{number, pr, signals}[]`). Non-empty: render one line per
-entry — `#{number} excluded — already shipped by merged PR #{pr} ({signals}); a Close proposal is
-staged in this firing's run dir for approval.` — same non-gating, already-happened-in-
-`queue-pull-script.md` convention as the two reports above. A `weak`-tier mention never appears
-here — see the False-positive posture paragraph above.
+**Shipped-candidate exclusion report (refs #1984).** Read this run's session-scoped
+`dispatch-exclusions.json` (`queue-pull-script.md`'s output, `bin/lib/dispatch/exclusions.js`'s
+`readExclusions`), filtered to `reason: 'shipped'` entries (`records: [number], detail: {pr,
+signals}` each). Non-empty: render one line per entry — `#{number} excluded — already shipped by
+merged PR #{pr} ({signals}); a Close proposal is staged in this firing's run dir for approval.` —
+same non-gating, already-happened-in-`queue-pull-script.md` convention as the two reports above. A
+`weak`-tier mention never appears here — see the False-positive posture paragraph above.
 
 **Oversized-group report (refs #1228).** See `oversized-group-report.md`, this skill's directory (groups over the size guard stay selectable via `#N`/`#N,#M,...`; not a gate).
 
@@ -141,13 +143,13 @@ only, never a gate — no selection change; a same-group pair (already covered b
 
 **Bare (drain)** `/dispatch` — headless, no `AskUserQuestion` (skip this and the rest of Step 3 if the zero-groups case above applies). Resolve `{budget}`: `--budget <n|all>` if present (or its deprecated `--batch-size <n>`/`--concurrent <n>` aliases, each with its own notice), else `dispatch-batch-size` (or its deprecated `dispatch-pick-max-concurrent` key, same notice) — CLI arg beats project policy per `_shared/auto-mode-card.md`. `n` = attempt count; `all` drains to empty. `--budget` + `next`/`#N,#M,...`: **rejected with one notice** (bare-drain-only; `next` already means `--budget 1`).
 
-Loop: run the `next` ranking below (`next-ranking.md` verbatim, oversized and this-firing-excluded groups excluded — maintain per `firing-exclusion.md`, this skill's dir) → dispatch the pick through Steps 4-6 → re-run Step 2's queue pull → repeat until `{budget}` attempts or the ranking returns `null`. Report each iteration as it completes, plus a final line naming groups still eligible but undispatched at budget exhaustion.
+Loop: run the `next` ranking below (`next-ranking.md` verbatim, oversized and this-firing-excluded groups excluded via the unified `dispatch-exclusions.json` — maintain per `firing-exclusion.md`, this skill's dir) → dispatch the pick through Steps 4-6 → re-run Step 2's queue pull → repeat until `{budget}` attempts or the ranking returns `null`. Report each iteration as it completes, plus a final line naming groups still eligible but undispatched at budget exhaustion.
 
 **`next` (deprecated alias for `--budget 1`)** — one warn-tier notice (removal condition: `deprecated-aliases.md`); no human decision. Pick exactly ONE group by this ordering: `priority:high` > `priority:medium` > `priority:low` > unprioritized, oldest-first within each band — **a group's rank is its highest-priority (then oldest) member**, taken as its representative. `--priority <band>` (Input table above), when present, filters to matching-band representatives before ranking, letting differently-scheduled Routines each own a queue slice. Also excludes oversized groups (#1228) outright — a headless firing can't see that report, so this ranking must never auto-select one. Read `next-ranking.md` and run it verbatim; it writes the pick (or `null`) to `dispatch-next-pick.json`. The drain loop reuses this ranking each iteration; a Routine now fires bare `--budget 1` (Routine Configuration below), not `next`.
 
-**`#N`** — direct. Fetch issue `#N`, confirm it currently carries `auto:build` and no `bot:*` label (re-verify against Step 2's live queue, not a cached table); if it doesn't qualify, report why (no grant, already claimed, or blocked) and stop. A record that clears those label checks but is absent from Step 2's `dispatch-groups.json` was dropped by the open-linked-PR exclusion (#1224), which removes candidates from that file before any selection form reads it: read this run's session-scoped `dispatch-open-pr-excluded.json`, report that reason by name — `#{N} already has an open PR (#{pr}) — not re-dispatch-eligible until that PR merges or closes` — and stop. Otherwise pull its **whole file-overlap group** from Step 2's output — claiming a single member of a group alone is forbidden; every one of that record's overlap partners comes along, whether or not the user named them.
+**`#N`** — direct. Fetch issue `#N`, confirm it currently carries `auto:build` and no `bot:*` label (re-verify against Step 2's live queue, not a cached table); if it doesn't qualify, report why (no grant, already claimed, or blocked) and stop. A record that clears those label checks but is absent from Step 2's `dispatch-groups.json` was dropped by the open-linked-PR exclusion (#1224), which removes candidates from that file before any selection form reads it: read this run's session-scoped `dispatch-exclusions.json`, filtered to `reason: 'open-pr'`, report that reason by name — `#{N} already has an open PR (#{pr}) — not re-dispatch-eligible until that PR merges or closes` — and stop. Otherwise pull its **whole file-overlap group** from Step 2's output — claiming a single member of a group alone is forbidden; every one of that record's overlap partners comes along, whether or not the user named them.
 
-**`#N[,#M,#O...]`** — explicit list (grammar: `_shared/record-batch-input.md`). Parse via `parseExplicitIssueList` (`bin/lib/issues/grouping.js`) → `{ numbers, invalid }` (report `invalid` in one message; proceed with `numbers`, never aborting over one bad element). Call `selectGroupsForExplicitList(numbers, groups)` (same file) against Step 2's already-computed `groups` array. Report every entry in the returned `notFound` list with why it's excluded — no `auto:build` grant, already claimed, `bot:blocked`, or already covered by an open linked PR (#1224 — name the PR from `dispatch-open-pr-excluded.json`, the same file the Open-PR exclusion report reads) — but do not abort the rest of the named set over one excluded entry. Every group in the returned `selectedGroups` proceeds to Step 4, still bound by `dispatch-batch-size` (extra groups remain unclaimed in the queue for a later firing to select). The selection is already explicit — Step 3's ranking never runs for this form.
+**`#N[,#M,#O...]`** — explicit list (grammar: `_shared/record-batch-input.md`). Parse via `parseExplicitIssueList` (`bin/lib/issues/grouping.js`) → `{ numbers, invalid }` (report `invalid` in one message; proceed with `numbers`, never aborting over one bad element). Call `selectGroupsForExplicitList(numbers, groups)` (same file) against Step 2's already-computed `groups` array. Report every entry in the returned `notFound` list with why it's excluded — no `auto:build` grant, already claimed, `bot:blocked`, or already covered by an open linked PR (#1224 — name the PR from this run's session-scoped `dispatch-exclusions.json`, filtered to `reason: 'open-pr'`, the same file the Open-PR exclusion report reads) — but do not abort the rest of the named set over one excluded entry. Every group in the returned `selectedGroups` proceeds to Step 4, still bound by `dispatch-batch-size` (extra groups remain unclaimed in the queue for a later firing to select). The selection is already explicit — Step 3's ranking never runs for this form.
 
 ### Step 4: Mint the selected group's run directory
 
