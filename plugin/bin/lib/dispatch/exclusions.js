@@ -11,13 +11,27 @@ const fs = require('fs');
 
 // path -> entries, or [] on absent/unreadable (malformed JSON, not an array,
 // permission error) -- a read failure here must never throw and block a
-// dispatch firing; an empty exclusion set is always a safe degrade.
+// dispatch firing; an empty exclusion set is always a safe degrade. A
+// genuinely-absent file (ENOENT -- the normal case on a firing's first pull)
+// degrades silently; anything else (corrupt JSON, non-array content, a
+// permission error) is a diagnosable state, not a routine one -- it also
+// silently drops any preserved 'firing'-reason entries at
+// queue-pull-script.md's truncate step, re-enabling the infinite-reselect
+// bug firing-exclusion.md exists to prevent, so it degrades loud (stderr),
+// never loud enough to throw and block the firing itself.
 function readExclusions(path) {
   try {
     const raw = fs.readFileSync(path, 'utf8');
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
+    if (!Array.isArray(parsed)) {
+      console.error(`readExclusions: ${path} did not contain a JSON array -- treating as empty`);
+      return [];
+    }
+    return parsed;
+  } catch (err) {
+    if (err && err.code !== 'ENOENT') {
+      console.error(`readExclusions: ${path} unreadable (${err.code || err.message}) -- treating as empty`);
+    }
     return [];
   }
 }

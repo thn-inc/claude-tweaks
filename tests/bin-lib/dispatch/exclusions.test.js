@@ -27,6 +27,34 @@ test('readExclusions: unreadable/malformed content returns [] rather than throwi
   assert.deepStrictEqual(readExclusions(p2), []);
 });
 
+// A genuinely-absent file (ENOENT, the routine first-pull case) degrades
+// silently; malformed/non-array content is a diagnosable corruption (it
+// would otherwise silently drop preserved 'firing' entries at
+// queue-pull-script.md's truncate step) and must degrade loud, not silent.
+test('readExclusions: logs a diagnostic for malformed/non-array content, but not for an absent file', () => {
+  const originalError = console.error;
+  const calls = [];
+  console.error = (...args) => calls.push(args.join(' '));
+  try {
+    readExclusions(tmpFile());
+    assert.deepStrictEqual(calls, [], 'absent file must not log');
+
+    const malformed = tmpFile();
+    fs.writeFileSync(malformed, 'not json');
+    readExclusions(malformed);
+    assert.equal(calls.length, 1, 'malformed JSON must log exactly once');
+    assert.match(calls[0], /unreadable/);
+
+    const nonArray = tmpFile();
+    fs.writeFileSync(nonArray, JSON.stringify({ not: 'an array' }));
+    readExclusions(nonArray);
+    assert.equal(calls.length, 2, 'non-array content must log exactly once');
+    assert.match(calls[1], /did not contain a JSON array/);
+  } finally {
+    console.error = originalError;
+  }
+});
+
 test('appendExclusion: creates the file on first call, appends on subsequent calls', () => {
   const p = tmpFile();
   appendExclusion(p, { reason: 'blocked', records: [1], detail: { blockedBy: [2] } });
