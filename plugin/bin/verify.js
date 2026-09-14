@@ -349,12 +349,10 @@ async function main() {
     // #1837: countsUnparsed is real report content only when a count stamp
     // is actually in play — never disable the comparison silently, but also
     // never surface the field when there is no comparison to have skipped.
-    if (!countStampPath || c.countsFamily === undefined) {
-      const { countsFamily, ...rest } = c;
-      return rest;
-    }
     const { countsFamily, ...rest } = c;
-    return { ...rest, countsUnparsed: { family: countsFamily } };
+    return countStampPath && countsFamily !== undefined
+      ? { ...rest, countsUnparsed: { family: countsFamily } }
+      : rest;
   });
   const retriedFiles = [...new Set(results.flatMap((c) => c.flakyRetried || []))];
   const git = gitInfo();
