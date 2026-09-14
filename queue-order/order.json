@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T13:25:20.902Z",
+  "computedAt": "2026-09-14T13:32:24.220Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -35,7 +35,7 @@
       },
       {
         "number": 2367,
-        "updatedAt": "2026-09-14T12:11:16Z",
+        "updatedAt": "2026-09-14T13:29:42Z",
         "state": "OPEN"
       },
       {
@@ -300,7 +300,7 @@
       },
       {
         "number": 2032,
-        "updatedAt": "2026-09-13T20:09:26Z",
+        "updatedAt": "2026-09-14T13:29:49Z",
         "state": "OPEN"
       },
       {
@@ -355,17 +355,12 @@
       },
       {
         "number": 1853,
-        "updatedAt": "2026-09-13T20:09:35Z",
+        "updatedAt": "2026-09-14T13:29:55Z",
         "state": "OPEN"
       },
       {
         "number": 1851,
         "updatedAt": "2026-09-14T07:54:52Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 1841,
-        "updatedAt": "2026-09-13T20:09:39Z",
         "state": "OPEN"
       },
       {
@@ -405,7 +400,7 @@
       },
       {
         "number": 1781,
-        "updatedAt": "2026-09-14T11:04:34Z",
+        "updatedAt": "2026-09-14T13:30:01Z",
         "state": "OPEN"
       },
       {
@@ -1017,378 +1012,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n**Related:** #2364 (complementary, not duplicate — #2364 covers closing out a `pending-review` PR *after* a human has approved it; this record covers *proactive* staleness/mergeability detection *before* that approval happens)\n\n## Current State\n\nUnder `integration-model: pr-first` (`_shared/integration-model.md`), a record that doesn't clear `/claude-tweaks:dispatch`'s Auto-merge gate parks as `pending-review` — the PR stays open indefinitely, per the model's own design, waiting for a human (`dispatch/reporting.md`'s parking note). Nothing re-checks that PR's mergeability while it waits: as other records merge into the integration branch in the meantime, a fraction of parked PRs quietly go from clean to conflicting, discovered only when a human (or a close-out process) finally tries to act on them.\n\nMeasured this session: 2 of 5 (40%) pending-review PRs from one drain required manual merge-conflict resolution by the time a human approved them, roughly a day apart in wall-clock time from when they were originally built — two from-scratch conflict resolutions with full re-verification (typecheck, lint, full test suite), on the order of 20 tool calls each.\n\n## Deliverables\n\n- A periodic check — a natural home is `/claude-tweaks:tidy`'s existing PR/issue scan (`_shared/github-pr-scan.md`'s `repo-wide` scope, Step 4.8) or `bin/lib/reconcile`'s own sweep, both of which already read PR state on a schedule — that re-checks each open `pending-review` PR's `mergeable`/`mergeStateStatus` and either flags a PR that has gone stale (surfaced the same way Step 4.8 already surfaces other PR findings), or attempts an automatic rebase-and-recheck. Which of the two (flag-only vs. auto-rebase) is a deliberate choice for the build step, not prescribed here — flag-only is the lower-risk default consistent with `/tidy`'s documented report-only posture for most of its scans; auto-rebase is more valuable but changes PR content unattended and needs its own confirmation-gate reasoning (see #2367's sibling record #2364's own confirmation-gate note for the precedent to follow if auto-rebase is chosen).\n- Whichever path is chosen, avoid duplicating #2364's own close-out work: #2364 already reuses `assess-agent-autonomy`'s `merge-check` and `_shared/pr-first-merge.md` for the approved-and-ready case; this record's staleness check should feed information a close-out process (#2364, or a human) consumes, not re-implement a second independent merge path.\n\n## Acceptance Criteria\n\n- [ ] Given a `pending-review` PR whose `mergeStateStatus` has changed from clean to conflicting since it was parked, the periodic check flags it (at minimum) before a human or close-out process discovers it only at merge time.\n- [ ] The check runs on a schedule independent of any single dispatch firing — a PR can go stale purely from *other* records merging, with no new dispatch activity of its own.\n- [ ] If auto-rebase is chosen as the remedy: never rebases without a confirmation gate at the same posture #2364's own gate uses (unconditional at every `autonomy` tier), and never force-pushes over a PR a human may already be reviewing.\n- [ ] The chosen integration point (`/tidy` Step 4.8, or the reconciler) is documented in `docs/plugin-structure.md`'s command reference.\n- [ ] `npm test` passes.\n\n## Technical Approach\n\nStart from `_shared/github-pr-scan.md`'s existing `repo-wide` scope (`/tidy` Step 4.8), which already fetches and reports on open PRs on a schedule — extending its query to include `mergeable`/`mergeStateStatus` for PRs carrying the `pending-review` state and adding a staleness classification is a smaller lift than building a new scheduled check from scratch. Cross-check against `bin/lib/reconcile`'s own sweep cadence as the alternative home, since it already runs periodically and already reads PR state for its own archive-merged logic (`bin/lib/reconcile/pr-state.js`'s `resolvePrState`/`resolvePrStateByNumber`) — reuse those functions rather than adding a third PR-state-reading code path. If auto-rebase is chosen, read #2364's own confirmation-gate reasoning (`dispatch/resume-confirmation.md`'s model) before designing a new one.\n\n### Key Files\n\n- `plugin/skills/_shared/github-pr-scan.md` — the likely extension point for the periodic check\n- `plugin/skills/tidy/actions-github-issues.md` — where a flagged finding would surface, if this integration point is chosen\n- `plugin/bin/lib/reconcile/pr-state.js` — `resolvePrState`/`resolvePrStateByNumber`, reusable for the mergeability read regardless of which integration point is chosen\n- `plugin/skills/dispatch/reporting.md` — `pending-review` parking semantics, read-only reference\n- `docs/plugin-structure.md` — update per whichever integration point is chosen\n\n## Gotchas\n\n- Don't duplicate #2364's close-out logic — this record's job is *detection*, feeding a human or #2364's own close-out process, not a second independent merge path.\n- Auto-rebase (if chosen over flag-only) changes PR content without the PR author present — this needs the same unconditional-at-every-tier confirmation posture `resume-confirmation.md` already establishes elsewhere in this codebase, not a weaker one just because it's a background sweep rather than a live dispatch session.\n- The near-duplicate screen did not flag #2364 against this record (raw pre-shape bodies share no Key Files/title-similarity/anchor signal) — the cross-reference above is a manual finding from this shaping pass, not an automated one; a human reviewing both records should confirm the split still makes sense once #2364 is actually built.\n\n## Original request\n\ndispatch (pr-first): a parked pending-review PR has no proactive staleness/mergeability check\n\n**Summary:** Under `integration-model: pr-first`, a record parked as `pending-review` has no proactive staleness/mergeability re-check while it waits for a human — a fraction silently go from clean to conflicting as `master` moves forward, discovered only at merge time.\n\n**Kind:** Gap\n\n**Affected component:** dispatch pending-review parking (pr-first integration model)\n\n**Objective:** Recovery quality\n\n**Measurement:** 2 of 5 (40%) pending-review PRs from one drain required manual merge-conflict resolution by the time a human approved them, roughly a day apart in wall-clock time from when they were originally built.\n\n**Cost this session:** Two from-scratch conflict resolutions with full re-verification (typecheck, lint, and the full test suite) — on the order of 20 tool calls each — that a proactive staleness check could have surfaced earlier, or resolved automatically via a routine rebase-and-recheck.\n\n**Use case:** A record that doesn't clear the auto-merge gate parks as `pending-review`, PR left open indefinitely, per the pr-first model's own design. Nothing re-checks that PR's mergeability as other records merge into `master` in the meantime. By the time a human reviews and approves a batch of pending-review records, some have quietly gone stale, and the human or orchestrator only discovers this while actually trying to merge — not before.\n\n**Proposed fix:** A periodic sweep (e.g. as part of `/claude-tweaks:tidy`, or the reconciler) that re-checks each open `pending-review` PR's `mergeable`/`mergeStateStatus` and flags (or auto-rebases) one that has gone stale, rather than leaving that discovery entirely to merge time.\n\n**Definition:** Clear\n\n**Plugin version:** 6.118.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-32416796 -->\n",
-        "createdAt": "2026-09-13T13:13:09Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2367,
-        "state": "OPEN",
-        "title": "dispatch (pr-first): a parked pending-review PR has no proactive staleness/mergeability check",
-        "updatedAt": "2026-09-14T12:11:16Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "## Current State\n`recordLabels` (`plugin/bin/lib/wrap-up/pack.js:393-400`) loops sequentially over `inputs.records`, `await`ing one `gh issue view {n} --json labels` call per record, instead of running the independent per-record calls concurrently via `Promise.all` — `pack.js` already uses `Promise.all` elsewhere in the module (line 452, over its top-level probe set). A multi-record flow run with N=4-5 backlog records pays N sequential gh round-trips (network latency, ~300-800ms each) instead of running concurrently, adding seconds of unnecessary wall-clock time to the wrap-up fact pack that gates release.\n\n`ghReadGrants` (`plugin/bin/console-resolve.js:73-84`, not `plugin/bin/lib/console/resolve.js` as originally cited — that file only *consumes* it via the `readGrants` dependency) is a different shape: its per-record `execFile('gh', [...], {cwd})` calls are synchronous (`execFile` there defaults to `execFileSync`-based `defaultExecFile`, line 51), not `await`ed promises. `readSnapshot` (`plugin/bin/lib/console/resolve.js:120-138`) calls `deps.readGrants(members)` synchronously inside a plain `try/catch` and `resolveAll` (`resolve.js:292`) itself is not `async`. Converting `ghReadGrants` to `Promise.all` would require first converting its `execFile` primitive to an async form, then threading `async`/`await` through `readSnapshot`, `resolveAll`, and `console-resolve.js`'s own `run()` — a materially larger, structurally invasive change to a file whose header comment says it deliberately \"resolve[s] ... in one process,\" not a drop-in loop conversion. That part of the original request doesn't hold as scoped and is left out of this record's deliverables.\n\n## Deliverables\n- [ ] Convert `recordLabels`'s `for (const n of inputs.records) { await gh(...) }` loop (`pack.js:393-400`) to `Promise.all(inputs.records.map(async (n) => { ... }))`, preserving the `{[n]: labels[]}` output shape.\n\n## Acceptance Criteria\n1. `recordLabels` issues its per-record `gh` calls concurrently.\n2. No behavioral change to the returned data shape (`{[recordNumber]: string[]}`) or error handling (a rejected call still surfaces the same way it does today).\n3. Existing `tests/bin-lib/wrap-up/pack.test.js` `recordLabels` assertions (lines 122-123, 139, 221, 318-321, 326-329, 425-426) pass unchanged.\n\n## Technical Approach\nMirror the existing `Promise.all` idiom already used in this file (`pack.js:452`) rather than introducing a new pattern.\n\n### Key Files\n- `plugin/bin/lib/wrap-up/pack.js` — `recordLabels` (line 393)\n- `tests/bin-lib/wrap-up/pack.test.js` — existing `recordLabels` coverage to keep green\n\n## Gotchas\n- `ghReadGrants` (`plugin/bin/console-resolve.js:73`) is out of scope for this record: it's exec-synchronous, not async/await, and its result is consumed synchronously by `resolveAll`/`readSnapshot` — converting it would ripple through the whole console-resolve call chain, a separate and larger-scoped change than \"convert a loop.\"\n- `claim` (`pack.js`, a few lines below `recordLabels`) has the identical sequential-loop shape and is not part of this record's scope either — the original request named only `recordLabels` and `ghReadGrants`.\n\n## Original request\nFound by the pre-v6.119.0 whole-branch review (range e7d6d9331..4db32e020).\n\nDefer-reason: tangential\n",
-        "createdAt": "2026-09-07T10:32:23Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACq41dsw",
-            "name": "backlog:category-technical",
-            "description": "technical-category backlog item",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2032,
-        "state": "OPEN",
-        "title": "recordLabels and ghReadGrants issue sequential gh calls per record instead of Promise.all",
-        "updatedAt": "2026-09-13T20:09:26Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\nNineteen test files under `tests/` simulate permission failures with `fs.chmodSync` (unreadable or unwritable directories, mode-000 files, permission-denied parents). Under a root-privileged runner (`process.getuid() === 0`, the shape of a sandboxed cloud or CI harness) the kernel ignores mode bits, the simulated denial never happens, and each such assertion fails deterministically. Four tests already guard for this, each with its own inline check: `tests/hooks-worktree-detect.test.js` (`if (process.getuid && process.getuid() === 0) return;`), `tests/curation-judge-stagepath.test.js` (`t.skip('root ignores directory permissions')`), `tests/bin-lib/residue/artifacts.test.js` and `tests/bin-lib/timing/cli.test.js` (`{ skip: process.getuid && process.getuid() === 0 }`). The remaining permission-simulation tests the record lists (`tests/bin-lib/code-health/scope.test.js`, four in `tests/bin-lib/hooks/sweep-shadow.test.js`, the record-worktree write-failure case, `checkRunDirAnchoredOrOutside`'s unreadable-ancestor case, `archiveRunDir`'s unreadable-run-dir case, the stale-PID case) have no guard, and `tests/helpers/` holds only `git-fixtures.js` — there is no shared root predicate, so every new permission test re-derives the check or omits it. CI (`.github/workflows/test.yml`, `ubuntu-latest`) runs as a normal user and never sees the failures; only root sandboxes do.\n\nThree of the sixteen failures the record lists are not permission-related: `tests/impeccable-plugin-contract.test.js` (installed-plugin version pin) and the two whole-file failures `tests/shaping-mode-needs-removal.test.js` and `tests/tidy-needs-worklist-rule.test.js`. All three pass on this checkout as a normal user (20/20 across the three files), so their sandbox failures have an environment cause (an absent or differently-versioned plugin cache in the sandbox) that this record does not reproduce; they are split out below.\n\n## Deliverables\n- [ ] `tests/helpers/root.js` exporting `IS_ROOT` (`typeof process.getuid === 'function' && process.getuid() === 0`) and `skipUnderRoot(reason)` → `{ skip: IS_ROOT && reason }` for `node:test`'s options object, so a skipped test renders as skipped with its reason in the TAP output, never as a silent early `return`.\n- [ ] Every permission-simulation test (the `chmodSync`-based cases across the nineteen files, including the four already guarded ad hoc) uses the helper; the four inline checks are replaced, and the `hooks-worktree-detect` early-`return` form becomes an explicit skip.\n- [ ] A conformance test that scans `tests/**` for `chmodSync(` and asserts each containing test case carries `skipUnderRoot` (or the file imports the helper and every `chmodSync` test is registered with it), so a future permission test cannot land unguarded.\n- [ ] `docs/plugin-structure.md`'s `tests/` directory-tree line states the rule: permission-simulation tests skip under root by name, and `npm test` under root is expected to report those skips, not failures.\n- [ ] The three non-permission failures are re-filed as one separate record via `/claude-tweaks:capture` (Impeccable version-pin mismatch in a sandbox with a different plugin cache; the two whole-file failures), with the reproduction condition recorded as \"sandbox only — passes locally\"; this record does not claim to fix them.\n\n## Acceptance Criteria\n1. `npm test` under a root uid reports every permission-simulation case as skipped with a reason, and none as failed; the same suite as a normal user runs them all (skip count zero).\n2. No test file contains an inline `getuid() === 0` check; the helper is the only root predicate under `tests/`.\n3. The conformance scan fails on a fixture test that calls `chmodSync` without the helper and passes on the real tree.\n4. The Impeccable pin and the two whole-file failures are tracked in their own record and named in this record's closing comment; `npm test` as a normal user stays green.\n\n## Technical Approach\nExplicit skip over early return: `node:test`'s `{ skip: reason }` surfaces in the TAP summary and in `verify.js`'s parsed counts, so a root sandbox reads honestly as \"N skipped (root)\" rather than silently passing fewer assertions — the record's second acceptance point. The helper is a few lines; the work is the sweep across nineteen files, which is why the conformance scan lands with it. Whether to instead require a non-root runner (the record's alternative) is declined: the root sandbox is the cloud harness this project documents in CLAUDE.md's Cloud parity section, so the suite must be honest there.\n\n### Key Files\n- `tests/helpers/root.js` — new; `tests/helpers/git-fixtures.js` is the existing precedent for a shared helper.\n- `tests/hooks-worktree-detect.test.js`, `tests/curation-judge-stagepath.test.js`, `tests/bin-lib/residue/artifacts.test.js`, `tests/bin-lib/timing/cli.test.js` — the four ad hoc guards to replace.\n- `tests/bin-lib/code-health/scope.test.js`, `tests/bin-lib/hooks/sweep-shadow.test.js`, `tests/bin-lib/reconcile/archive-merged.test.js`, `tests/hooks-dispatcher.test.js`, `tests/reconcile.test.js` and the other `chmodSync` files (`grep -rln chmodSync tests`) — the unguarded cases.\n- `docs/plugin-structure.md` — the `tests/` line of the directory tree (`Node test files (node --test runner)`).\n\n## Gotchas\n- A test that `chmodSync`s to simulate a *readable* state (restoring mode after a fixture) is not a permission-simulation test; the conformance scan should key on tests whose assertion expects a failure, so allow an explicit `// root-safe` marker for the restore-only uses rather than forcing the helper on them.\n- Some permission tests also depend on a stale-PID precondition that root trivially satisfies (the hooks server stop case the record names); the helper covers it the same way, but the skip reason should say \"root\" not \"permissions\" so the TAP line stays truthful.\n- Do not fold the Impeccable pin and whole-file failures into this record's deliverables; they pass locally and need a sandbox reproduction first (Deliverable 5).\n- #2010 (verify stamp inert while the suite has pre-existing failures) is the sibling cost of this record in sandboxes: once the skips land, a root sandbox's suite can go green and the stamp becomes meaningful there.\n\n## Original request\n\nFiled while executing headless dispatch build,test for #1224 (run 2026-09-04T161953-record-1224) — 16 pre-existing, deterministic (non-flaky) `npm test` failures observed, confirmed unrelated to #1224's own diff by comparison against unmodified main.\n\n",
-        "createdAt": "2026-09-04T16:44:00Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1853,
-        "state": "OPEN",
-        "title": "npm test: 16 deterministic failures under a root-privileged test runner",
-        "updatedAt": "2026-09-13T20:09:35Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`probeForge` (`plugin/bin/lib/residue/probes/forge.js`) lists every open PR and classifies the one whose `headRefName` equals `scope.headBranch` as `scope: 'blast-radius'`, `remedy: 'record'`, evidence `… — open, head {branch} (this work)`. The file's header comment states the intent: this run's own open PR is \"still worth surfacing — e.g. a forgotten draft PR from an earlier phase of the same run\". That reasoning holds under `integration-model: local-merge`, where an open PR on the run's branch is genuinely left-over. Under `pr-first` every run opens its draft PR at run start (`_shared/pr-early-run-lifecycle.md`) and records it in `run-state.json` as `pr: {number, url, branch}`; the PR is open *by design* until wrap-up's Phase 4 Review Console decides merge/arm/park.\n\n`wrap-up/residue-sweep.md` runs at Phase 3, before that decision. It reads `pack.residue` from `wrap-up-pack.json` (`plugin/bin/lib/wrap-up/pack.js`'s `residue` probe, which shells out to `bin/residue.js --base … --scope blast-radius --no-suite --json`) and, per its \"Writing findings to the ledger\" section, adds every finding as a `Status: open` ledger row with no second disposition mechanism — the resolve gate assigns the outcome. So under `pr-first` every run produces one `pr — PR #N — open, head {branch} (this work)` open item whose only honest disposition is Phase 4's own merge decision. Under `autonomy: unattended` the resolve gate's `ledgerRouteRemainder` routes it to a born-ready backlog record that duplicates the PR's `### Resume` line and the `bot:*` parking labels; under `supervised` it forces a drill question with no sensible answer. A private-project run on plugin 6.114.0 recorded it as an `observation` pointing at the run's closing OUTCOME instead — a disposition the sweep's text does not sanction.\n\nWhat the probe does not know today: which PR is the run's own recorded one, and which integration model the run is under. `bin/residue.js` already reads `$PIPELINE_RUN_DIR` (for `probePipelineRuns`'s `runId`) and `pack.js` already holds `inputs.pr` (the run's `run-state.json` PR number, used by its `pr` probe). `residue.js`'s `parseArgs` accepts `--base`, `--scope`, `--integration-branch`, `--json`, `--no-suite` only. `finding.js`'s `REMEDIES` is `['auto', 'record']`; `render.js` and `scope-filter.js` consume that shape. Tests: `tests/bin-lib/residue/probes-forge.test.js` (five cases incl. \"an open PR for this work is reported\"), `tests/bin-lib/residue/cli.test.js`, `tests/bin-lib/wrap-up/pack.test.js`.\n\nRelated, distinct: #1487 (sweep/residue seam across skills); #435/#429 (closed — residue `remedy: auto` fixes under `pr-first`).\n\n## Deliverables\n\n- [ ] **Thread the run's own PR into the probe.** `bin/residue.js` gains `--own-pr <number>`; `parseArgs` stores it as `ownPr` (integer or `null`). `probeForge({ scope, run, ownPr })`: when `ownPr` is set and an open PR's `number` equals it, the PR is **not** emitted as a finding; the probe result carries a new `ownPr: { number, headRefName }` field (or `ownPr: null` when unset or not open) so the caller can still see it. Every other PR keeps today's classification, including a same-head-branch PR that is *not* the recorded one (the \"forgotten draft from an earlier phase\" case the header comment protects).\n- [ ] **Pass it from the pack.** `pack.js`'s `residue` probe appends `--own-pr {inputs.pr}` when `inputs.pr` is non-null (the same run-state read its `pr` probe uses). No integration-model read is needed: a `local-merge` run has no recorded PR, so `inputs.pr` is `null` there and the probe behaves exactly as today.\n- [ ] **State the pr-first disposition in the sweep.** `wrap-up/residue-sweep.md`: a new short subsection under \"Writing findings to the ledger\" — when `pack.residue.value.probes.forge.ownPr` (or the manual CLI's equivalent) is non-null, add one `observation`-status ledger row `pr — PR #N — this run's own pr-first PR; disposition is Phase 4's merge decision` (Resolution names Phase 4), never an `open` item and never a backlog record. The manual-fallback command block gains `--own-pr {run-state pr.number}` with a one-line note on where the number comes from. Update `forge.js`'s header comment to say the own-PR carve-out applies only to the recorded PR, so the \"forgotten draft\" rationale is preserved verbatim.\n- [ ] **Tests.** `probes-forge.test.js`: recorded own PR excluded and reported in `ownPr`; a second open PR on the same head branch with a different number still reported as `blast-radius`; `ownPr` unset keeps the existing \"this work is reported\" case green. `cli.test.js`: `--own-pr 42` parses; a non-integer value is rejected with the CLI's existing usage error. `pack.test.js`: `--own-pr` appended when `inputs.pr` is set and absent when null. A prose pin in `tests/` sized like the existing residue-sweep conformance coverage asserts the new subsection and the `--own-pr` flag text.\n\n## Acceptance Criteria\n\n1. `node bin/residue.js --base {b} --integration-branch origin/main --scope blast-radius --own-pr {N} --json` in a repo whose open PR #N is on the current head branch emits no `pr` finding for #N and reports `probes.forge.ownPr.number === N`; without `--own-pr` the same PR is reported as `blast-radius (this work)` exactly as today.\n2. A second open PR on the same head branch with a different number is still reported as `blast-radius` with `--own-pr` set.\n3. `pack.js` passes `--own-pr` only when `run-state.json` carries a `pr.number`; a `local-merge` run (no `pr`) invokes `residue.js` with the same argv as before this change.\n4. `residue-sweep.md` names the `observation` row shape for the run's own pr-first PR and says it is never an `open` item and never routed to a record; the manual command block carries `--own-pr`.\n5. `npm test` green, including every existing case in `tests/bin-lib/residue/*` and `tests/bin-lib/wrap-up/pack.test.js` unchanged.\n6. A `pr-first` wrap-up run on this repo (a real run, not a fixture) produces a Phase 3 ledger with no `open` row for the run's own PR and one `observation` row naming Phase 4; quoted in the PR description from the run's ledger file.\n\n## Technical Approach\n\nIdentity, not model: key the carve-out on the run's *recorded* PR number, not on `integration-model` and not on head-branch equality alone. That keeps the header comment's protection (a stale draft on the same branch is still residue) and needs no new policy read inside `residue.js`. Keep `REMEDIES` and the finding shape unchanged — the own PR is reported out-of-band on the probe result, so `render.js`, `scope-filter.js`, and `finding.js`'s fingerprint are untouched. `--own-pr` follows `parseArgs`'s existing `--flag value` pattern; reject non-integers the way the CLI already rejects a missing `--base`.\n\n### Key Files\n\n- `plugin/bin/residue.js` — `--own-pr` in `parseArgs` and usage line; pass `ownPr` to `probeForge`\n- `plugin/bin/lib/residue/probes/forge.js` — exclude the recorded PR from findings; `ownPr` on the result; header comment\n- `plugin/bin/lib/wrap-up/pack.js` — append `--own-pr` to the `residue` probe's argv when `inputs.pr` is set\n- `plugin/skills/wrap-up/residue-sweep.md` — pr-first disposition subsection; `--own-pr` in the manual command block\n- `tests/bin-lib/residue/probes-forge.test.js`, `tests/bin-lib/residue/cli.test.js`, `tests/bin-lib/wrap-up/pack.test.js` — new cases\n- `docs/plugin-structure.md` — `residue.js` command-reference line gains the flag\n\n## Gotchas\n\n- `residue.js` is also invoked by `/tidy` (`tidy/scan-procedures.md`, `--scope repo`) with no run context; `--own-pr` must be optional and default to no carve-out there.\n- `pack.residue` is gathered once and read by several wrap-up sub-files; changing the probe's JSON by *adding* a field is safe, removing or renaming one is not — `tests/residue-manifest-read.test.js` and `pack.test.js` pin the current shape.\n- The `observation` status already exists for `ran: false` probes (the sweep's \"`unknown` — never a silent skip\" section); reuse that status, do not invent a new one.\n- `ledgerRouteRemainder` is the unattended auto-router; confirm it skips `observation` rows (it should — they are not `open`) and add that to the test if no existing test pins it.\n\n## Original request\n\n**Summary:** Under `integration-model: pr-first`, `wrap-up/residue-sweep.md` (Phase 3, `--scope blast-radius`) always returns one finding — `pr — PR #N — open, head {branch} (this work)`, `remedy: record` — because the run's own draft PR is open by design until Phase 4's Review Console decides merge/arm/park; the item has no honest Phase 3 disposition.\n\n**Kind:** Gap\n\n**Affected component:** `wrap-up/residue-sweep.md` and `bin/residue.js`'s PR probe under `pr-first`\n\n**Use case:** Every pr-first run opens its draft PR at run start and decides the merge at Phase 4. The Phase 3 sweep runs before that decision, and `bin/residue.js`'s PR probe deliberately keeps \"a PR from this run's own head branch\" in blast radius (correct for `local-merge`, where an open PR on the run's branch really is residue). The procedure says to add the finding to the ledger with status `open` for Phase 2's per-item drill — but its disposition *is* the Phase 4 outcome. Under `autonomy: unattended`, the resolve gate's `ledgerRouteRemainder` would auto-route it to a born-ready backlog record (\"PR #N is open\") that duplicates the PR's own `### Resume` line and the `bot:*` parking labels; under `supervised` it forces a human drill question with no sensible answer. Observed on a run dispatched via `/claude-tweaks:dispatch` in a private project (plugin 6.114.0), where the item was recorded as an `observation` pointing at the run's closing OUTCOME instead — a judgment call the sweep's own text does not currently sanction.\n\nExpected: either the PR probe excludes the run's own head-branch PR under `pr-first` (it is the run's deliverable, not residue), or `residue-sweep.md` states the pr-first disposition explicitly — record it as an `observation` whose Resolution names Phase 4's merge decision, never an `open` item and never a backlog record. Related but distinct: #1487 (sweep/residue seam across skills).\n\n**Definition:** Clear\n\n**Plugin version:** 6.114.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-ec40e494 -->\n\n",
-        "createdAt": "2026-09-02T09:25:39Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1781,
-        "state": "OPEN",
-        "title": "wrap-up residue-sweep under pr-first: the run's own still-open PR is always reported as residue before Phase 4 decides its merge",
-        "updatedAt": "2026-09-14T11:04:34Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
@@ -4535,102 +4158,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`plugin/bin/lib/wrap-up/engine-verify.js`'s `resolveParent()` (line 392) resolves a record's decomposition parent with `gh issue view {n} --json parent`. On `gh` 2.92.0 (2026-04-28) that field is not in the command's JSON field list, the call throws `Unknown JSON field: \"parent\"`, and `resolveParent` returns `{ok: false}` — which the `acceptance-labeling` check folds into a `fail` row, so `wrap-up-engine.js verify` exits 3 and `/claude-tweaks:wrap-up`'s Verify step withholds the closure line (`execution-and-verification.md`'s exit-3 rule) on every record-mode run, even when the record's `demo:*` labeling is correct. On `gh` 2.96.0 (this checkout, 2026-09-09) the same command returns `{\"parent\": null}`, so the failure is version-dependent: any sandbox or machine still on 2.92.x hits it on every run.\n\nTwo things are wrong at once. The field choice is fragile — the plugin's other parent/sub-issue resolution (`bin/lib/issues/native-dependencies.js`, `fetchNativeSubIssues`) goes through GraphQL, which exposes `Issue.parent` on every `gh` version that can run GraphQL at all. And the failure class is misreported — every other gather failure in this file (`git status`, `git worktree list`, `git log`, `gh pr view`, lines 172–326) renders `result: 'unknown'`, which the closure line quotes without blocking, while `resolveParent`'s failure alone is rendered as `fail`, turning a tooling gap into a false labeling verdict.\n\n## Deliverables\n\n- Resolve the parent through GraphQL — `gh api graphql` with `repository(owner,name){ issue(number){ parent { number } } }` — through the same `deps.gh` seam the rest of the file uses, so the test double can drive it; keep the resolution in `resolveParent` (or a sibling in `native-dependencies.js` it delegates to) and drop the `--json parent` call.\n- When the parent gather itself fails (GraphQL error, unparseable response), render the `acceptance-labeling` row as `result: 'unknown'` with the gather error in `detail`, matching the file's other could-not-gather rows — never `fail`. A real labeling mismatch on a successfully resolved record stays `fail`.\n- Extend `tests/bin-lib/wrap-up/engine-verify.test.js`: a record whose `deps.gh` GraphQL call returns a parent redirects the labeling check to the parent; a null parent takes the non-parent path; a throwing gather renders `unknown` and does not set exit 3.\n\n## Acceptance Criteria\n\n- `resolveParent` no longer invokes `gh issue view … --json parent`; `grep -n \"'--json', 'parent'\" plugin/bin/lib/wrap-up/engine-verify.js` returns nothing.\n- With a `deps.gh` double that throws `Unknown JSON field: \"parent\"` (or any error) on the parent lookup, `verify` renders `| acceptance-labeling | unknown | … |` and exits 0 when every other check passes; the closure line quotes the unknown row per `execution-and-verification.md`.\n- With a double that returns a parent number, the check reads labels/comments from the parent record; with `parent: null`, from the record itself — both covered by tests.\n- `npm test` passes.\n\n## Technical Approach\n\nAdd a `parentOf(n)` GraphQL query beside `fetchNativeSubIssues` in `native-dependencies.js` (same `runner` seam, same `{owner, repo}` resolution) and have `resolveParent` call it via `deps.gh(['api', 'graphql', '-f', query, '-F', …])`. In the `acceptance-labeling` check (line ~463), branch on `resolved.ok`: false → return `{ result: 'unknown', detail: resolved.error }` before any label read. Keep the existing `{ok, error}` return shape so the check's other callers are untouched. Tests use the file's existing `deps` injection; no live `gh`.\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/engine-verify.js` — `resolveParent` (GraphQL via `deps.gh`), `acceptance-labeling` check's could-not-gather branch\n- `plugin/bin/lib/issues/native-dependencies.js` — optional `parentOf` helper sharing the GraphQL runner seam\n- `tests/bin-lib/wrap-up/engine-verify.test.js` — parent-redirect, null-parent, and gather-failure cases\n- `plugin/skills/wrap-up/execution-and-verification.md` — only if the `unknown` row's closure-line quoting needs the acceptance-labeling case named explicitly\n\n## Gotchas\n\n- Do not \"fix\" this by pinning a minimum `gh` version: the field works on 2.96 but the plugin runs in sandboxes that install whatever `gh` the image ships; GraphQL is the version-stable path the plugin already relies on elsewhere.\n- `unknown` must stay distinct from `skip` (the file's own comment at line 109); a gather failure is not a deliberately skipped check.\n- The `deps.gh` double in `engine-verify.test.js` matches on argv — the GraphQL call's argv shape must be stable enough for the existing matcher style, or add one helper the tests can stub by name.\n\n## Original request\n\nwrap-up verify: acceptance-labeling check fails on every record-mode run — `gh issue view --json parent` is not a valid field in gh 2.92.0\n\n**Summary:** `bin/lib/wrap-up/engine-verify.js`'s `resolveParent()` calls `gh issue view {n} --json parent`; `gh` 2.92.0 rejects `parent` as an unknown JSON field, so the `acceptance-labeling` row renders `fail` and `verify` exits 3 for any record-mode run, blocking the closure line even when labeling was correct.\n\n**Kind:** Defect\n\n**Affected component:** `bin/lib/wrap-up/engine-verify.js` (`resolveParent`, the `acceptance-labeling` check) — `/claude-tweaks:wrap-up`'s Verify execution step\n\n**Repro steps:**\n1. On a machine with `gh version 2.92.0 (2026-04-28)`, complete a record-mode `/claude-tweaks:wrap-up` whose `verify-expectations.json` resolves at least one issue number (materialized header or the `issues` key).\n2. Run `node bin/wrap-up-engine.js verify --run-dir <run> --base <base>`.\n\n**Expected vs. actual:**\nExpected: the `acceptance-labeling` row evaluates the record's parent linkage (null → non-parent path → checks the record's own `demo:*` state / oversight-floor exemption) and passes or fails on the labeling itself.\nActual: `| acceptance-labeling | fail | #{n}: gh issue view (parent) failed for #{n} (Command failed: gh issue view {n} --json parent Unknown JSON field: \"parent\" Available fields: assignees author body closed closedAt closedByPullRequestsReferences comments createdAt id isPinned labels milestone number projectCards projectItems reactionGroups state stateReason title updatedAt url ) |` and exit code 3 — a tooling failure reported as a labeling failure, and the closure line is withheld per `execution-and-verification.md`'s exit-3 rule.\n\n**Suggested remedy:** resolve the parent the way the plugin already does elsewhere — `bin/lib/issues/native-dependencies.js` / `bin/resolve-blockers.js` use the GraphQL `issue(number:){ parent { number } }` field, which works on this gh version — instead of the REST-backed `--json parent` field the `gh issue view` command does not expose. Also consider distinguishing could-not-gather from a real labeling failure in the row's Result (e.g. `unknown` rather than `fail`), per the skill's own could-not-gather vocabulary.\n\n**Definition:** Clear\n\n**Plugin version:** 6.114.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-0a41798f -->\n\n",
-        "createdAt": "2026-09-04T15:13:23Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1841,
-        "state": "OPEN",
-        "title": "wrap-up verify: acceptance-labeling check fails on every record-mode run — `gh issue view --json parent` is not a valid field in gh 2.92.0",
-        "updatedAt": "2026-09-13T20:09:39Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
