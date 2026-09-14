@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T16:38:15.336Z",
+  "computedAt": "2026-09-14T17:05:58.606Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -35,12 +35,12 @@
       },
       {
         "number": 2391,
-        "updatedAt": "2026-09-14T14:37:48Z",
+        "updatedAt": "2026-09-14T17:02:51Z",
         "state": "OPEN"
       },
       {
         "number": 2385,
-        "updatedAt": "2026-09-14T14:39:54Z",
+        "updatedAt": "2026-09-14T17:02:47Z",
         "state": "OPEN"
       },
       {
@@ -325,7 +325,7 @@
       },
       {
         "number": 2028,
-        "updatedAt": "2026-09-14T14:38:03Z",
+        "updatedAt": "2026-09-14T17:03:08Z",
         "state": "OPEN"
       },
       {
@@ -491,11 +491,6 @@
       {
         "number": 1135,
         "updatedAt": "2026-09-13T13:14:27Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 666,
-        "updatedAt": "2026-09-14T16:29:22Z",
         "state": "OPEN"
       },
       {
@@ -1107,6 +1102,12 @@
             "color": "5319E7"
           },
           {
+            "id": "LA_kwDORUwzVM8AAAACsXTZ8w",
+            "name": "demo:pending",
+            "description": "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo",
+            "color": "1D76DB"
+          },
+          {
             "id": "LA_kwDORUwzVM8AAAACszED4w",
             "name": "ceremony:fast-lane",
             "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
@@ -1122,7 +1123,7 @@
         "number": 2391,
         "state": "OPEN",
         "title": "wrap-up-pack.js resolveRecords spec-* rung never worktree-mirrors materialized headers",
-        "updatedAt": "2026-09-14T14:37:48Z",
+        "updatedAt": "2026-09-14T17:02:51Z",
         "facets": {
           "origin": "capture",
           "risk": "low",
@@ -1142,7 +1143,7 @@
             "blocked": false,
             "parked": false
           },
-          "acceptance": null,
+          "acceptance": "pending",
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
@@ -1201,6 +1202,12 @@
             "color": "0052CC"
           },
           {
+            "id": "LA_kwDORUwzVM8AAAACsXTZ8w",
+            "name": "demo:pending",
+            "description": "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo",
+            "color": "1D76DB"
+          },
+          {
             "id": "LA_kwDORUwzVM8AAAACszED4w",
             "name": "ceremony:fast-lane",
             "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
@@ -1216,7 +1223,7 @@
         "number": 2385,
         "state": "OPEN",
         "title": "wrap-up-pack.js: residue/state/blastRadius probes hardcode \"main\" instead of the canonical integration-branch ladder",
-        "updatedAt": "2026-09-14T14:39:54Z",
+        "updatedAt": "2026-09-14T17:02:47Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -1236,7 +1243,7 @@
             "blocked": false,
             "parked": false
           },
-          "acceptance": null,
+          "acceptance": "pending",
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
@@ -1380,7 +1387,7 @@
         "number": 2028,
         "state": "OPEN",
         "title": "console-resolve.js's readMembers fallback misses multi-spec parent run dirs (manifest.yml, spec-*/work/)",
-        "updatedAt": "2026-09-14T14:38:03Z",
+        "updatedAt": "2026-09-14T17:03:08Z",
         "facets": {
           "origin": null,
           "risk": "medium",
