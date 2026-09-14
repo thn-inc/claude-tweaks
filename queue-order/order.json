@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T05:11:20.670Z",
+  "computedAt": "2026-09-14T06:10:11.064Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -40,7 +40,7 @@
       },
       {
         "number": 2348,
-        "updatedAt": "2026-09-13T13:30:56Z",
+        "updatedAt": "2026-09-14T05:13:42Z",
         "state": "OPEN"
       },
       {
@@ -937,90 +937,6 @@
           "grants": {
             "build": true,
             "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`_shared/worktree-setup.md`'s \"Adopt-or-create\" gate (confirmed, ~lines 29-65) has an \"Already\nisolated\" (adopt) branch that runs a clean-tree precondition check and a\nfetch+merge-against-origin catch-up, but nowhere checks whether the adopted worktree's own\n`node_modules` matches its own `package.json`/lockfile — confirmed by grep: zero mentions of\n`node_modules`, `npm install`, or `npm ci` anywhere in either `_shared/worktree-setup.md` or\n`build/worktree-setup.md`. When the worktree has no local `node_modules` at all, Node's module\nresolution walks up to the main checkout's copy, which can be stale relative to the worktree's\nown branch (e.g. missing a dependency the branch just added). The result is cascading\n`ERR_MODULE_NOT_FOUND` failures across every test that imports the missing dependency — a\nmisleading, unrelated-looking symptom that costs real investigation time before the actual cause\nis found.\n\nObserved live: in a Next.js/TypeScript project, an adopted worktree had no local `node_modules`,\nso Node resolved to the main checkout's copy, which predated two dependencies (`unified`,\n`remark-parse`) the worktree's own branch had already added. The pre-flight test sweep failed\nnear-total, unrelated to any actual code change. The fix was running `npm ci` plus a\nclient-generation step inside the worktree itself.\n\n**Scope note for the builder:** neither worktree-setup file mentions a dependency-install step at\nall, for either the adopt path or the fresh-creation path — verify at build time whether a fresh\n`EnterWorktree`-created worktree already gets `node_modules` some other way (a symlink, a\ndocumented install step living elsewhere in `build/SKILL.md` or `flow/SKILL.md` rather than in\nthe worktree-setup files themselves) before assuming this gap is adopted-worktree-specific; if\nfresh creation has the identical exposure, the fix belongs in the shared gate both paths already\nroute through, not only the adopt branch.\n\n## Deliverables\n\nAdd a detection-and-message (or auto-install) step to the Adopt-or-create gate's adopt branch:\nwhen the worktree has no local `node_modules` (or one that's stale relative to\n`package.json`/the lockfile), either run the install automatically or surface a clear message\nnaming the mismatch before the caller proceeds to run tests — so a missing/stale dependency\nproduces an actionable message immediately, not a cascade of misleading\n`ERR_MODULE_NOT_FOUND` failures deep into a test run.\n\n## Acceptance Criteria\n\n- Adopting a worktree with no local `node_modules` produces either an automatic install or a\n  clear, actionable message before any test/build step runs — not a silent walk-up resolution to\n  the main checkout's (potentially stale) copy.\n- The check/fix correctly distinguishes \"no local `node_modules` at all\" from \"local\n  `node_modules` present and current\" — an already-correct worktree pays no extra cost.\n- `npm test` passes.\n\n## Technical Approach\n\nAdd a check to the Adopt-or-create gate's adopt branch (~line 49, in the same sequence as the\nexisting clean-tree precondition check and fetch+merge catch-up): test for the presence of a\nlocal `node_modules` directory in the worktree root, and — if missing, or if a cheap staleness\nsignal is available (e.g. comparing `package-lock.json`'s mtime/hash against a stamp\n`node_modules` itself carries, if this project's package manager writes one) — either run the\nproject's own install command (detected the same way `dev-url-detection.md` already detects a\nproject's dev/start command, per this codebase's existing conventions for that kind of\ndetection) or emit a clear warning naming the gap and recommending `npm ci` (or the detected\npackage manager's equivalent) before proceeding. Prefer surfacing a clear message over a silent\nauto-install if there's any ambiguity about which package manager or install command applies —\na wrong auto-install could itself cost more time than the original failure mode.\n\n### Key Files\n\n- `plugin/skills/_shared/worktree-setup.md` — add the check to the Adopt-or-create gate's adopt\n  branch (~line 49)\n- `plugin/skills/build/worktree-setup.md` — verify whether the fresh-creation path also needs\n  this check, per the Current State's scope note\n\n## Gotchas\n\n- Don't assume a specific package manager (npm/pnpm/yarn) — detect it the way this codebase\n  already detects other project-specific commands (lockfile presence is usually the simplest\n  signal: `package-lock.json` → npm, `pnpm-lock.yaml` → pnpm, `yarn.lock` → yarn).\n- An auto-install can be slow (real dependency resolution) — if choosing auto-install over a\n  message-only approach, make sure it doesn't silently add significant wall-clock time to every\n  worktree adoption without at least logging that it's happening.\n- Per the Current State's scope note: confirm whether this is genuinely adopted-worktree-specific\n  before landing a fix only in the adopt branch — a fresh-creation gap in the same class would be\n  a bigger miss to leave unaddressed.\n\n## Original request\n\n**Summary:** An adopted (already-isolated) worktree with no local `node_modules` silently resolves dependencies via Node's parent-directory walk-up to the main checkout's copy, which can predate what the worktree's own branch declares in `package.json`.\n\n**Kind:** Gap\n\n**Affected component:** `build/worktree-setup.md`'s Adopt-or-create gate (and/or the pre-flight verify sweep)\n\n**Use case:** Running `/claude-tweaks:build` or `/claude-tweaks:flow` against a worktree that was adopted rather than freshly created by `EnterWorktree` -- the gate only checks that the worktree is isolated and clean, not that its own `node_modules` matches its own `package.json`/lockfile. When the worktree has no local `node_modules` at all, Node's module resolution walks up to the main checkout's copy, which can be stale relative to the worktree's own branch (e.g. missing a dependency the branch just added). The result is cascading `ERR_MODULE_NOT_FOUND` failures across every test that imports the missing dependency -- a misleading, unrelated-looking symptom that costs real investigation time before the actual cause is found.\n\nObserved live: in a Next.js/TypeScript project (a private project), an adopted worktree had no local `node_modules`, so Node resolved to the main checkout's copy, which predated two dependencies (`unified`, `remark-parse`) the worktree's own branch had already added. The pre-flight test sweep failed near-total, unrelated to any actual code change. The fix was running `npm ci` plus a client-generation step inside the worktree itself.\n\n**Definition:** Clear -- the fix is a single, well-scoped detection-and-message (or auto-install) step; there's no genuine open tradeoff to specify further.\n\n**Plugin version:** 6.114.1\n\n---\nFiled via /claude-tweaks:feedback.\n",
-        "createdAt": "2026-09-12T17:53:41Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2348,
-        "state": "OPEN",
-        "title": "worktree-setup: adopted worktree can silently resolve to stale main-checkout node_modules",
-        "updatedAt": "2026-09-13T13:30:56Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
           },
           "bot": {
             "inProgress": false,
