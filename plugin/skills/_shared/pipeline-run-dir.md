@@ -28,9 +28,10 @@ rather than silently substituted. Never creates a directory unless `--create` is
   `/flow` (`flow/steps-and-gates.md` case 4), `/claude-tweaks:dispatch` (`dispatch/SKILL.md` Step
   4), and `flow/claim-targets.md`'s direct-invocation mint use — `config.yml`/`decisions.md` are
   written later, by whichever step actually initializes the run.
-- `--create` with `--standalone <name>`: step 4's standalone-auto-fallback shape —
-  `{ISO-timestamp}-{name}-standalone/`, pre-populated with `decisions.md` and `staged/`. Pass
-  `--mode auto` too when the caller is on the standalone-auto allowlist above (the command then
+- `--create` with `--standalone <name>`: `_shared/run-dir-resolution.md`'s step 4
+  standalone-auto-fallback shape — `{ISO-timestamp}-{name}-standalone/`, pre-populated with
+  `decisions.md` and `staged/`. Pass `--mode auto` too when the caller is on that step's
+  standalone-auto allowlist (the command then
   refuses to create outside auto mode); omit `--mode` entirely for a caller that creates in every
   mode regardless — the two documented exceptions, `/claude-tweaks:wrap-up` and
   `/claude-tweaks:release`, each with its own clause above.
