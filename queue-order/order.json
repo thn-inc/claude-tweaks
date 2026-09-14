@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T04:47:00.585Z",
+  "computedAt": "2026-09-14T05:11:20.670Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -45,7 +45,7 @@
       },
       {
         "number": 2346,
-        "updatedAt": "2026-09-13T20:09:10Z",
+        "updatedAt": "2026-09-14T04:49:56Z",
         "state": "OPEN"
       },
       {
@@ -105,7 +105,7 @@
       },
       {
         "number": 2330,
-        "updatedAt": "2026-09-13T13:32:47Z",
+        "updatedAt": "2026-09-14T04:49:54Z",
         "state": "OPEN"
       },
       {
@@ -1021,190 +1021,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n**Related:** #1728, #1734, #1738, #1811, #1826, #1841, #1892, #1982, #2032, #2051, #2081, #2226, #2228, #2229, #2230, #2231, #2240, #2330, #2332 (near-duplicate screen hits — shared file-path/anchor mentions only, not confirmed duplicates of this record's own topic)\n\n## Current State\n\nIn one seven-spec multi-record run, eight commits failed with\n`fatal: Unable to create '<repo>/.git/index.lock': File exists`. The lock holder was a sibling\nagent's git call or a PostToolUse hook in the same checkout, never a stale process — every one of\nthem succeeded on a retry a couple of seconds later. The run only got through because the ad-hoc\nledger-append scripts written for it grew their own 2-second retry loop; nothing in the plugin\nprovided one.\n\nThe plugin's own commit call sites run `git commit` through `execFileSync` with no retry at all:\n\n- `bin/lib/reconcile/archive-merged.js` — `runGit(['commit', '-m', '[reconcile] archive run …'])`\n- `bin/lib/release/run.js` — `deps.git(['commit', '-m', 'Release v… — …'])`\n- `bin/release-local.js` — `deps.git(['commit', '-m', 'chore(release): v…'])`\n\nA transient index-lock collision at any of these surfaces as a hard failure of a reconcile or\nrelease step, in exactly the multi-agent setting the plugin is built for (parallel dispatch,\nworktrees, hooks running git in the background). The sanctioned run-dir writers\n(`log-decision.js`, `stage-item.js`, `set-config.js`) never take the index lock and are unaffected;\n`bin/lib/file-lock.js` is a directory mutex for file stores, not git's index.\n\nThe precedent for the exact shape already exists one directory over:\n`bin/lib/feedback/file-feedback.js`'s `withTransientRetry(runner, { waitMs, maxRetries, sleep })`\n(confirmed, line 70) wraps `gh` calls on a transient-error signature, with an injectable `sleep` so\ntests do not wait. Nothing equivalent guards git. A standing memory entry already records the\noperator-side rule for this failure (\"retry, never `rm` the lock\"); the plugin's own code does not\nfollow it.\n\n## Deliverables\n\n- A shared bounded retry for index-lock contention — `bin/lib/git-retry.js` exporting\n  `withIndexLockRetry(gitRunner, { attempts, waitMs, sleep })`, shaped like\n  `withTransientRetry`: retry **only** on a stderr signature naming `index.lock`\n  (`Unable to create … index.lock` / `another git process seems to be running`), bounded\n  (~15 attempts at 2 s), injectable `sleep`, and never unlinking a lock file.\n- Route every plugin commit call site through it: `bin/lib/reconcile/archive-merged.js`,\n  `bin/lib/release/run.js`, `bin/release-local.js`.\n- State the rule once where skill prose instructs a commit, so a hand-written commit path\n  retries the same way instead of each script growing its own loop, and cite it rather than\n  restating it (CLAUDE.md's cross-reference rule).\n\n## Acceptance Criteria\n\n1. `withIndexLockRetry` retries on an `index.lock` stderr signature and does **not** retry on any\n   other git failure — both directions asserted with a fake runner (a fake failing on\n   `index.lock` twice then succeeding produces one commit and no error; a fake failing on an\n   unrelated git error fails on the first attempt).\n2. The helper never unlinks a lock file — asserted directly, not merely absent from the source.\n3. Retries are bounded: a fake runner that always fails on `index.lock` exits after the configured\n   attempt count with the original git error, and the injected `sleep` makes the test instant.\n4. Each of the three named commit call sites routes through the helper (grep proves no direct\n   `['commit', …]` call bypasses it), and `npm test` passes.\n\n## Non-Goals\n\n- Replacing the sanctioned run-dir writers' `file-lock.js` mutex; it guards a different resource.\n- Any change to what the commits contain or when they run — only how a transient lock is survived.\n\n## Technical Approach\n\nModel `bin/lib/git-retry.js`'s `withIndexLockRetry` directly on the existing\n`withTransientRetry` pattern in `bin/lib/feedback/file-feedback.js:70` — same shape (a wrapping\nhigher-order function taking a runner and an options object with an injectable `sleep`), but\nkeyed on a different error signature: match stderr for `index.lock` or `another git process seems\nto be running` rather than `file-feedback.js`'s own transient-`gh`-error signature. Wrap each of\nthe three named call sites' `git(['commit', ...])` invocation with it, passing each site's\nexisting runner through unchanged — this is a call-site wrapping, not a rewrite of any of the\nthree modules' own commit logic. Then find wherever skill prose (a `SKILL.md` or `_shared/*.md`\nfile) instructs an agent to run `git commit` directly as part of a documented procedure, and add\none citation to this new shared retry rule there (per this codebase's cross-reference convention:\nstate the rule once, cite it everywhere) rather than restating the retry logic in prose at each\nsite.\n\n### Key Files\n\n- `plugin/bin/lib/git-retry.js` — new file, `withIndexLockRetry` (model on\n  `bin/lib/feedback/file-feedback.js`'s `withTransientRetry`)\n- `plugin/bin/lib/reconcile/archive-merged.js` — route its `commit` call through the new retry\n- `plugin/bin/lib/release/run.js` — route its `commit` call through the new retry\n- `plugin/bin/release-local.js` — route its `commit` call through the new retry\n- A skill/`_shared/*.md` file instructing a hand-written `git commit` in prose — add one citation\n  to the new rule (exact file identified via a grep at build time)\n\n## Gotchas\n\n- Never unlink the lock file — this is an explicit, tested requirement (Acceptance Criterion 2),\n  not an incidental detail; a standing memory entry in this repo records this as the\n  operator-side rule the plugin's own code is catching up to.\n- Match the retry signature narrowly (`index.lock` / \"another git process seems to be running\")\n  — a broad transient-error match would risk silently retrying a genuine, non-lock git failure\n  and masking it behind a multi-attempt delay.\n- The sanctioned run-dir writers (`log-decision.js`, `stage-item.js`, `set-config.js`) are\n  explicitly out of scope — they use a different lock mechanism (`file-lock.js`, a directory\n  mutex) for a different resource, and don't take git's index lock at all.\n\n## Original request\n\n## Current State\n\nIn one seven-spec multi-record run, eight commits failed with\n`fatal: Unable to create '<repo>/.git/index.lock': File exists`. The lock holder was a sibling\nagent's git call or a PostToolUse hook in the same checkout, never a stale process — every one of\nthem succeeded on a retry a couple of seconds later. The run only got through because the ad-hoc\nledger-append scripts written for it grew their own 2-second retry loop; nothing in the plugin\nprovided one.\n\nThe plugin's own commit call sites run `git commit` through `execFileSync` with no retry at all:\n\n- `bin/lib/reconcile/archive-merged.js` — `runGit(['commit', '-m', '[reconcile] archive run …'])`\n- `bin/lib/release/run.js` — `deps.git(['commit', '-m', 'Release v… — …'])`\n- `bin/release-local.js` — `deps.git(['commit', '-m', 'chore(release): v…'])`\n\nA transient index-lock collision at any of these surfaces as a hard failure of a reconcile or\nrelease step, in exactly the multi-agent setting the plugin is built for (parallel dispatch,\nworktrees, hooks running git in the background). The sanctioned run-dir writers\n(`log-decision.js`, `stage-item.js`, `set-config.js`) never take the index lock and are unaffected;\n`bin/lib/file-lock.js` is a directory mutex for file stores, not git's index.\n\nThe precedent for the exact shape already exists one directory over:\n`bin/lib/feedback/file-feedback.js`'s `withTransientRetry(runner, { waitMs, maxRetries, sleep })`\nwraps `gh` calls on a transient-error signature, with an injectable `sleep` so tests do not wait.\nNothing equivalent guards git. A standing memory entry already records the operator-side rule for\nthis failure (\"retry, never `rm` the lock\"); the plugin's own code does not follow it.\n\n## Deliverables\n\n- [ ] A shared bounded retry for index-lock contention — `bin/lib/git-retry.js` exporting\n      `withIndexLockRetry(gitRunner, { attempts, waitMs, sleep })`, shaped like\n      `withTransientRetry`: retry **only** on a stderr signature naming `index.lock`\n      (`Unable to create … index.lock` / `another git process seems to be running`), bounded\n      (~15 attempts at 2 s), injectable `sleep`, and never unlinking a lock file.\n- [ ] Route every plugin commit call site through it: `bin/lib/reconcile/archive-merged.js`,\n      `bin/lib/release/run.js`, `bin/release-local.js`.\n- [ ] State the rule once where skill prose instructs a commit, so a hand-written commit path\n      retries the same way instead of each script growing its own loop, and cite it rather than\n      restating it (CLAUDE.md's cross-reference rule).\n\n## Acceptance Criteria\n\n1. `withIndexLockRetry` retries on an `index.lock` stderr signature and does **not** retry on any\n   other git failure — both directions asserted with a fake runner (a fake failing on\n   `index.lock` twice then succeeding produces one commit and no error; a fake failing on an\n   unrelated git error fails on the first attempt).\n2. The helper never unlinks a lock file — asserted directly, not merely absent from the source.\n3. Retries are bounded: a fake runner that always fails on `index.lock` exits after the configured\n   attempt count with the original git error, and the injected `sleep` makes the test instant.\n4. Each of the three named commit call sites routes through the helper (grep proves no direct\n   `['commit', …]` call bypasses it), and `npm test` passes.\n\n## Non-Goals\n\n- Replacing the sanctioned run-dir writers' `file-lock.js` mutex; it guards a different resource.\n- Any change to what the commits contain or when they run — only how a transient lock is survived.\n\n\n---\nFiled by the multi-spec wrap-up of run `2026-09-11T204239-spec-2251-2252-2253-2254-2255-2256-2258` (upstream feedback, self-referenced as a local record; source `staged/wrap-up-upstream-3.md`; consoleAutoResolve at `autonomy: unattended`).\n\nhttps://claude.ai/code/session_018rz67jb18j1RLSqhjEdYWH\n",
-        "createdAt": "2026-09-12T17:45:00Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxTu0eA",
-            "name": "by:reflect",
-            "description": "Origin: filed via /reflect (wrap-up Phase 1)",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2346,
-        "state": "OPEN",
-        "title": "Plugin commit call sites have no bounded git index.lock retry, so a sibling agent's git call fails a reconcile or release step",
-        "updatedAt": "2026-09-13T20:09:10Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review of `plugin/bin/lib/reconcile/archive-merged.js`.\nNew failure reasons `work-twin-conflict` (confirmed, ~line 684) and\n`work-twin-resolve-failed[-partial-revert]` are never tracked toward residue escalation, so a\ngenuinely diverged work twin is skipped silently on every reconcile pass forever — no streak, no\nissue filed.\n\n`trackArchiveResult` (confirmed, ~line 1083) early-returns `if (result.reason !== 'move-failed')\nreturn;` before reaching `trackResidue`, and `STRUCTURALLY_STUCK_REASONS` (confirmed, line 1030)\nis `new Set(['no-worktree', 'no-branch', 'no-pr'])` — it doesn't include either new twin reason.\n\n## Deliverables\n\nExtend `trackArchiveResult`/`STRUCTURALLY_STUCK_REASONS` (or add an equivalent path) so a\n`work-twin-conflict`/`work-twin-resolve-failed[-partial-revert]` result accumulates toward the\nsame residue-escalation streak as the existing structurally-stuck reasons, rather than being\nsilently dropped every pass.\n\n## Acceptance Criteria\n\nA reconcile run that repeatedly hits `work-twin-conflict` on the same run dir eventually\nescalates (streak-based issue filing), the same way a repeated `no-worktree`/`no-branch`/`no-pr`\nresult does today.\n\n## Technical Approach\n\nWiden `trackArchiveResult`'s early-return guard (~line 1083) from the single literal\n`result.reason !== 'move-failed'` to also accept `work-twin-conflict` and\n`work-twin-resolve-failed`/`work-twin-resolve-failed-partial-revert`, routing them into the same\n`trackResidue(root, repoSlug, {reason}, dir, { failed: true, lastError: result.lastError },\n{ escalate })` call the `move-failed` path already uses — reuse the existing choke point rather\nthan duplicating escalation logic. Decide whether the twin reasons need their own `reason` key\npassed to `trackResidue` (distinct from `'move-failed'`) so `escalate-residue.js`'s filed-issue\ntitle/body correctly names \"work-twin-conflict\" rather than generically reusing \"move-failed\" —\nthis affects how a human reading the escalated issue understands what actually went wrong, so\nprefer the more specific reason string.\n\n### Key Files\n\n- `plugin/bin/lib/reconcile/archive-merged.js` — widen `trackArchiveResult`'s reason guard\n  (~line 1083) to also route `work-twin-conflict`/`work-twin-resolve-failed[-partial-revert]`\n  into `trackResidue`\n\n## Gotchas\n\n- `STRUCTURALLY_STUCK_REASONS` (line 1030) governs a *different* mechanism (the\n  `isStructurallyStuck()`/`no-branch`-class TTL-based staleness check) than\n  `trackArchiveResult`'s own `move-failed`-keyed residue tracking — don't conflate the two; this\n  record's fix is about routing the twin reasons into `trackResidue`'s escalation streak, not\n  necessarily adding them to `STRUCTURALLY_STUCK_REASONS` itself (which governs a specific,\n  separate no-worktree/no-branch/no-pr classification). Verify which mechanism actually needs\n  the new reasons before changing both.\n- A `work-twin-resolve-failed-partial-revert` is a worse state than a clean `work-twin-conflict`\n  (a partially-applied revert) — make sure the escalated issue's body can distinguish the two\n  reasons, not just lump them under one generic label, since a human resolving the escalation\n  needs to know which situation they're looking at.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review of `plugin/bin/lib/reconcile/archive-merged.js`. New failure reasons `work-twin-conflict` and `work-twin-resolve-failed[-partial-revert]` (~line 684) are never tracked toward residue escalation, so a genuinely diverged work twin is skipped silently on every reconcile pass forever — no streak, no issue filed.\n\n`trackArchiveResult` (~line 1076) early-returns `if (result.reason !== 'move-failed') return;` before reaching `trackResidue`, and `STRUCTURALLY_STUCK_REASONS` (~line 1023) is `{'no-worktree','no-branch','no-pr'}` — it doesn't include either new twin reason.\n\n## Deliverables\nExtend `trackArchiveResult`/`STRUCTURALLY_STUCK_REASONS` (or add an equivalent path) so a `work-twin-conflict`/`work-twin-resolve-failed[-partial-revert]` result accumulates toward the same residue-escalation streak as the existing structurally-stuck reasons, rather than being silently dropped every pass.\n\n## Acceptance Criteria\nA reconcile run that repeatedly hits `work-twin-conflict` on the same run dir eventually escalates (streak-based issue filing), the same way a repeated `no-worktree`/`no-branch`/`no-pr` result does today.\n",
-        "createdAt": "2026-09-12T16:44:02Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2330,
-        "state": "OPEN",
-        "title": "archive-merged.js: work-twin-conflict failure reasons never escalate to residue tracking",
-        "updatedAt": "2026-09-13T13:32:47Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
