@@ -35,13 +35,33 @@
 //     paired with each pair's own single buildSuccess/buildFailure shaping
 //     functions (defined once, called from both twins), makes that class of
 //     drift structurally impossible rather than merely documented against.
+//   - isPathContained: the `candidate === root || candidate.startsWith(root +
+//     path.sep)` (or the strict, no-equals-branch half of it alone) idiom for
+//     "is this resolved path inside that resolved path". Previously retyped
+//     independently in `bin/lib/reconcile/reap-merged.js` (`isOwnCwd`, and its
+//     own domain-boundary check), `bin/lib/hooks/worktree-reap.js` (the same
+//     two checks), `bin/lib/timing/transcript.js`, and
+//     `bin/lib/hooks/pre-tool-use.js` (two call sites, one of each shape) —
+//     found during #2324's review when its own new `--extra-file` containment
+//     check turned out to be a 6th independent copy of the pattern. Every
+//     caller passes its own already-resolved (`path.resolve`/`realpathSync`)
+//     paths in — this is a pure string check, never a filesystem call, so it
+//     does not change any caller's resolution strategy (lexical vs.
+//     symlink-real), only the containment comparison itself.
 'use strict';
+
+const path = require('path');
 
 const GH_TIMEOUT_MS = 5000;
 const LARGE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isPathContained(candidate, root, { orEqual = false } = {}) {
+  if (orEqual && candidate === root) return true;
+  return candidate.startsWith(root + path.sep);
 }
 
 function runClassified(fn, mapError) {
@@ -60,4 +80,4 @@ async function runClassifiedAsync(fn, mapError) {
   }
 }
 
-module.exports = { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES, escapeRegExp, runClassified, runClassifiedAsync };
+module.exports = { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES, escapeRegExp, isPathContained, runClassified, runClassifiedAsync };
