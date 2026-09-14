@@ -85,17 +85,47 @@ test('resolveReleaseType: an unrecognized override releaseType throws after vali
   assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'bogus', extraFile: 'x.json' }), /invalid release-type/);
 });
 
-test('resolveReleaseType: override with extraFile pointing to nonexistent file throws', () => {
+test('resolveReleaseType: override with extraFile pointing to nonexistent file throws, naming the file as missing', () => {
   const root = tmp();
   write(root, 'package.json', '{"version":"1.0.0"}');
-  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'simple', extraFile: 'missing.json' }), /no readable JSON manifest with a semver version/);
+  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'simple', extraFile: 'missing.json' }), /--extra-file does not exist: missing\.json/);
 });
 
-test('resolveReleaseType: override with extraFile pointing to JSON without version throws', () => {
+test('resolveReleaseType: override with extraFile pointing to JSON without version throws, naming the missing field', () => {
   const root = tmp();
   write(root, 'package.json', '{"version":"1.0.0"}');
   write(root, 'noversion.json', '{"name":"x"}');
-  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'simple', extraFile: 'noversion.json' }), /no readable JSON manifest with a semver version/);
+  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'simple', extraFile: 'noversion.json' }), /--extra-file has no "version" field: noversion\.json/);
+});
+
+test('resolveReleaseType: override with extraFile pointing to malformed JSON throws, distinct from missing/no-version', () => {
+  const root = tmp();
+  write(root, 'package.json', '{"version":"1.0.0"}');
+  write(root, 'broken.json', '{not json');
+  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'simple', extraFile: 'broken.json' }), /--extra-file is not valid JSON: broken\.json/);
+});
+
+test('resolveReleaseType: override with extraFile whose version is not semver throws, distinct from missing field', () => {
+  const root = tmp();
+  write(root, 'package.json', '{"version":"1.0.0"}');
+  write(root, 'badversion.json', '{"version":"v1.0"}');
+  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'simple', extraFile: 'badversion.json' }), /--extra-file's "version" field is not a valid semver string: badversion\.json/);
+});
+
+test('resolveReleaseType: override with extraFile pointing to a directory throws, distinct from a missing file', () => {
+  const root = tmp();
+  write(root, 'package.json', '{"version":"1.0.0"}');
+  write(root, 'adir/placeholder.txt', 'x');
+  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'simple', extraFile: 'adir' }), /--extra-file could not be read: adir/);
+});
+
+test('resolveReleaseType: override with extraFile escaping the repo root throws', () => {
+  const root = tmp();
+  write(root, 'package.json', '{"version":"1.0.0"}');
+  assert.throws(
+    () => rb.resolveReleaseType(root, { releaseType: 'simple', extraFile: '../outside.json' }),
+    /--extra-file must resolve inside the repo root: \.\.\/outside\.json/,
+  );
 });
 
 test('resolveReleaseType: no override -> unchanged single-row behavior (AC: "without the override the same fixture still resolves node")', () => {

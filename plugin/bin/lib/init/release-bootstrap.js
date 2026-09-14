@@ -166,6 +166,20 @@ function versionOfJson(file) {
   return typeof v === 'string' && SEMVER_RE.test(v) ? v : null;
 }
 
+// Same read as versionOfJson, but keeps readJson's error/parsed distinction
+// long enough to report which of the 6 ways an --extra-file can fail
+// actually happened, instead of collapsing them all to the same message.
+function extraFileProblem(root, extraFile) {
+  const { parsed, error } = readJson(path.join(root, extraFile));
+  if (parsed === undefined && error === undefined) return `--extra-file does not exist: ${extraFile}`;
+  if (error === 'unparseable') return `--extra-file is not valid JSON: ${extraFile}`;
+  if (error) return `--extra-file could not be read: ${extraFile} (${error})`;
+  const v = parsed && typeof parsed === 'object' ? parsed.version : undefined;
+  if (typeof v !== 'string') return `--extra-file has no "version" field: ${extraFile}`;
+  if (!SEMVER_RE.test(v)) return `--extra-file's "version" field is not a valid semver string: ${extraFile}`;
+  return null;
+}
+
 function findSimpleExtraFile(root, entries) {
   const candidates = ['.claude-plugin/plugin.json', 'plugin/.claude-plugin/plugin.json',
     ...entries.filter((e) => !e.isDir && e.name.endsWith('.json')).map((e) => e.name).sort()];
@@ -188,9 +202,13 @@ function resolveReleaseType(root, override) {
     if (!RELEASE_TYPE_VALUES.has(override.releaseType)) {
       throw new Error(`invalid release-type override: ${override.releaseType}`);
     }
-    if (versionOfJson(path.join(root, override.extraFile)) === null) {
-      throw new Error(`--extra-file names no readable JSON manifest with a semver version: ${override.extraFile}`);
+    const resolvedRoot = path.resolve(root);
+    const resolvedExtraFile = path.resolve(root, override.extraFile);
+    if (resolvedExtraFile !== resolvedRoot && !resolvedExtraFile.startsWith(resolvedRoot + path.sep)) {
+      throw new Error(`--extra-file must resolve inside the repo root: ${override.extraFile}`);
     }
+    const problem = extraFileProblem(root, override.extraFile);
+    if (problem) throw new Error(problem);
     return { releaseType: override.releaseType, extraFiles: [{ type: 'json', path: override.extraFile, jsonpath: '$.version' }] };
   }
   const entries = rootEntries(root);
