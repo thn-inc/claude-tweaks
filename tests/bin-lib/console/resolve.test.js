@@ -157,6 +157,72 @@ test('readGrants throwing resolves the merge half to leave-open with reason gran
   assert.deepStrictEqual(r.merge, { resolution: 'leave-open', reason: 'grants-unreadable' });
 });
 
+test('a live drain-overlap hold (overlapping PR still OPEN) resolves the merge half to leave-open, even with auto:merge granted (#2299)', () => {
+  const decisions = '## /dispatch\n- AUTO 09:00:00 — Auto-merge gate: group [7] held — overlaps drain PR #4001 on src/a.js; merge order is a human call. Reversibility: n/a.\n';
+  const calls = [];
+  const r = resolveAll({
+    runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps({ checkPrState: (n) => { calls.push(n); return 'OPEN'; } }),
+  });
+  assert.deepStrictEqual(calls, [4001]);
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.match(r.merge.reason, /drain-overlap hold/);
+  assert.match(r.merge.reason, /#4001/);
+});
+
+test('a drain-overlap hold whose PR has since merged self-heals: falls through to the ordinary grant check (#2299)', () => {
+  const decisions = '## /dispatch\n- AUTO 09:00:00 — Auto-merge gate: group [7] held — overlaps drain PR #4001 on src/a.js; merge order is a human call. Reversibility: n/a.\n';
+  const r = resolveAll({
+    runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps({ checkPrState: () => 'MERGED' }),
+  });
+  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+});
+
+test('a drain-overlap hold whose PR has since closed self-heals the same as merged (#2299)', () => {
+  const decisions = '## /dispatch\n- AUTO 09:00:00 — Auto-merge gate: group [7] held — overlaps drain PR #4001 on src/a.js; merge order is a human call. Reversibility: n/a.\n';
+  const r = resolveAll({
+    runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps({ checkPrState: () => 'CLOSED' }),
+  });
+  assert.strictEqual(r.merge.resolution, 'merge');
+});
+
+test('checkPrState failing on a drain-overlap hold fails closed to leave-open, same posture as grants-unreadable (#2299)', () => {
+  const decisions = '## /dispatch\n- AUTO 09:00:00 — Auto-merge gate: group [7] held — overlaps drain PR #4001 on src/a.js; merge order is a human call. Reversibility: n/a.\n';
+  const r = resolveAll({
+    runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps({ checkPrState: () => { throw new Error('gh: rate limited'); } }),
+  });
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.match(r.merge.reason, /drain-overlap hold/);
+  assert.match(r.merge.reason, /gh: rate limited/);
+});
+
+test('a needs-human verdict still takes precedence over a live drain-overlap hold (#2299)', () => {
+  const decisions = '## /wrap-up\n- AUTO 08:00:00 — Auto-merge short-circuit: #7 assess-agent-autonomy verdict needs-human — Review Console renders normally. Reversibility: n/a.\n## /dispatch\n- AUTO 09:00:00 — Auto-merge gate: group [7] held — overlaps drain PR #4001 on src/a.js; merge order is a human call. Reversibility: n/a.\n';
+  const r = resolveAll({
+    runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps({ checkPrState: () => { throw new Error('should never be called'); } }),
+  });
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.match(r.merge.reason, /needs-human/);
+});
+
+test('no drain-overlap hold line means checkPrState is never consulted (#2299)', () => {
+  const r = resolveAll({
+    runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps({ checkPrState: () => { throw new Error('should never be called'); } }),
+  });
+  assert.strictEqual(r.merge.resolution, 'merge');
+});
+
 test('no resolvable members resolves the merge half to leave-open with reason members-unresolved (#1932 decision 2)', () => {
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' } }), policy: 'console-auto', deps: deps() });
   assert.deepStrictEqual(r.merge, { resolution: 'leave-open', reason: 'members-unresolved' });
