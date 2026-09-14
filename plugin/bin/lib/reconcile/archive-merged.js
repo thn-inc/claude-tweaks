@@ -1026,8 +1026,16 @@ const STRUCTURALLY_STUCK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // 'console-never-rendered'/'local-behind-merge'/'merge-commit-unknown' are
 // deliberately excluded — each already has its own clear resolution path
 // (a human answering a console, a local fetch catching up) that doesn't
-// need this generic staleness backstop.
-const STRUCTURALLY_STUCK_REASONS = new Set(['no-worktree', 'no-branch', 'no-pr']);
+// need this generic staleness backstop. 'console-never-rendered-pr-closed'
+// (#2231) is the one exception carved out of that exclusion: it fires only
+// when the by-number fallback below confirms the run's PR is CLOSED
+// (never merged) — at that point nothing drives the run's pipeline to
+// wrap-up anymore, so no console will ever render, and the plain
+// 'console-never-rendered' reason's "a human eventually answers it"
+// rationale does not apply. The MERGED sub-case of that same fallback
+// keeps using plain 'console-never-rendered', unchanged — code landed
+// there, so a console may genuinely still be pending.
+const STRUCTURALLY_STUCK_REASONS = new Set(['no-worktree', 'no-branch', 'no-pr', 'console-never-rendered-pr-closed']);
 
 // Pure except for the one mtime stat — no I/O beyond answering the question.
 function isStructurallyStuck(dir, reason, now = Date.now()) {
@@ -1314,7 +1322,20 @@ function archiveMerged({ cwd, dryRun = false, sessionId = process.env.CLAUDE_COD
             continue;
           }
           if (consoleState === 'none') {
-            skipped.push({ runDir: dir, reason: 'console-never-rendered' });
+            // #2231: a CLOSED (never-merged) PR's console will never
+            // render — nothing drives this run's pipeline to wrap-up
+            // anymore, so the plain 'console-never-rendered' reason's
+            // usual "a human answers the console" resolution path
+            // (STRUCTURALLY_STUCK_REASONS' own comment above) does not
+            // apply here. Use a distinct, tracked reason so this
+            // genuinely dead-ended state escalates like no-branch/
+            // no-worktree/no-pr, instead of silently freezing the
+            // escalation cache the way plain 'console-never-rendered'
+            // does today (that reason stays untracked for the MERGED
+            // case, where a console really may still be pending).
+            const consoleReason = byNumber.state === 'CLOSED' ? 'console-never-rendered-pr-closed' : 'console-never-rendered';
+            skipped.push({ runDir: dir, reason: consoleReason });
+            if (consoleReason === 'console-never-rendered-pr-closed') trackStuckSkip(root, repoSlug, dir, consoleReason);
             continue;
           }
           if (dryRun) { archived.push(dir); continue; }
