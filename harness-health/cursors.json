@@ -130,5 +130,9 @@
   "skill:driver-skill-outcome-taxonomy": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1789276368093
+  },
+  "skill:release": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1789400074395
   }
 }
