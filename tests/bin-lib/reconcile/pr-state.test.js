@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const {
-  resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, BULK_CHUNK,
+  resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, resolveIssueStateByNumber, BULK_CHUNK,
 } = require('../../../plugin/bin/lib/reconcile/pr-state');
 
 // resolvePrState/resolvePrStateAsync both shell to `gh pr list` — neither is
@@ -339,6 +339,60 @@ test('resolvePrStateByNumber: requests and returns mergeable/mergeStateStatus (#
     assert.match(argv, /mergeStateStatus/);
   } finally {
     process.env.PATH = originalPath;
+  }
+});
+
+// #1811: resolveIssueStateByNumber — archive-merged.js's no-run-state.json
+// terminal path needs an ISSUE's state by number (not a PR's), a distinct
+// `gh` object with its own subcommand (`issue view`, not `pr view`).
+test('resolveIssueStateByNumber: no number -> null, no gh call', () => {
+  assert.equal(resolveIssueStateByNumber('/tmp', null), null);
+  assert.equal(resolveIssueStateByNumber('/tmp', undefined), null);
+});
+
+test('resolveIssueStateByNumber: resolves the issue state by number', () => {
+  const wrapper = installGhWrapper({ state: 'CLOSED' });
+  try {
+    const result = resolveIssueStateByNumber('/tmp', 1811);
+    assert.equal(result.state, 'CLOSED');
+  } finally {
+    wrapper.restore();
+  }
+});
+
+test('resolveIssueStateByNumber: requests `issue view`, not `pr view`', () => {
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghwrap-issueview-'));
+  const wrapperPath = path.join(wrapperDir, 'gh');
+  const argvLog = path.join(wrapperDir, 'argv.log');
+  fs.writeFileSync(wrapperPath, `#!/bin/sh\necho "$@" > "${argvLog}"\ncat <<'EOF'\n${JSON.stringify({ state: 'OPEN' })}\nEOF\n`);
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  try {
+    resolveIssueStateByNumber('/tmp', 1811);
+    const argv = fs.readFileSync(argvLog, 'utf8');
+    assert.match(argv, /^issue view 1811/);
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});
+
+test('resolveIssueStateByNumber: gh absent -> gh-absent, no throw', () => {
+  const originalPath = process.env.PATH;
+  process.env.PATH = '/nonexistent-path-with-no-gh';
+  try {
+    assert.equal(resolveIssueStateByNumber('/tmp', 1811), 'gh-absent');
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});
+
+test('resolveIssueStateByNumber: malformed gh output -> network-failure, no throw', () => {
+  const wrapper = installGhWrapper('#!/bin/sh\necho "not json"\n');
+  try {
+    assert.equal(resolveIssueStateByNumber('/tmp', 1811), 'network-failure');
+  } finally {
+    wrapper.restore();
   }
 });
 

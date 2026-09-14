@@ -132,6 +132,30 @@ function resolvePrStateByNumber(repoRoot, number) {
   );
 }
 
+// #1811: archive-merged.js's no-run-state.json terminal path needs to know
+// whether a run dir's OWN record(s) — parsed off its `record-{n}[-{m}]`
+// slug, never a PR — are closed, so it can retire a config.yml-only dir that
+// has nothing left to build. `gh issue view` (not `pr view` — a distinct
+// object) returns `{state}` for a genuine issue number the same shape a PR
+// number resolves to. Returns null for a falsy number, matching
+// resolvePrStateByNumber's own null convention; a transport failure returns
+// 'gh-absent'/'network-failure' like every other resolver in this module,
+// via the same classifyExecError/runClassified pair.
+function resolveIssueStateByNumber(repoRoot, number) {
+  if (!number) return null;
+  return runClassified(
+    () => {
+      const stdout = execFileSync(
+        'gh',
+        ['issue', 'view', String(number), '--json', 'state'],
+        { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true },
+      );
+      return JSON.parse(stdout);
+    },
+    classifyExecError,
+  );
+}
+
 // Deliberately no opts/preferOpen here — no destructive async caller exists (#664); add it only when one does.
 //
 // Async twin of resolvePrState — a real (non-blocking) execFile, so a caller
@@ -222,5 +246,6 @@ function resolvePrStatesBulk(repoRoot, branches, opts = {}) {
 }
 
 module.exports = {
-  resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, FETCH_TIMEOUT_MS, BULK_CHUNK,
+  resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, resolveIssueStateByNumber,
+  FETCH_TIMEOUT_MS, BULK_CHUNK,
 };

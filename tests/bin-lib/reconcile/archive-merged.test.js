@@ -14,6 +14,8 @@ const {
   archiveMerged, lastOwnEventMs, isAbandonedInterrupted, archiveOrphanedMint, ORPHAN_MINT_TTL_MS,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, isStaleDir,
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin,
+  classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
+  isClosedSlugStuck, recordNumbersFromSlug,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures } = require('../../../plugin/bin/lib/reconcile/cache');
 
@@ -80,6 +82,36 @@ function installGhWrapper(prsJson) {
   const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-ghwrap-'));
   const wrapperPath = path.join(wrapperDir, 'gh');
   fs.writeFileSync(wrapperPath, `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(prsJson)}\nEOF\n`);
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  return { restore: () => { process.env.PATH = originalPath; } };
+}
+
+// #1811: resolveIssueStateByNumber (pr-state.js) shells to `gh issue view {n}
+// --json state`, bound at archive-merged.js's own require time same as
+// resolvePrState — intercept at the process-spawn boundary, argv-dispatching
+// on `$1 $2` so this wrapper coexists with a test that ALSO needs `gh pr
+// list`/`gh pr view` to keep returning their own canned JSON (installGhWrapper
+// above always returns the same body regardless of subcommand).
+function installGhIssueStateWrapper(stateByNumber) {
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-ghissuewrap-'));
+  const wrapperPath = path.join(wrapperDir, 'gh');
+  const cases = Object.entries(stateByNumber)
+    .map(([n, s]) => `    ${n}) echo '${JSON.stringify({ state: s })}' ;;`)
+    .join('\n');
+  const script = [
+    '#!/bin/sh',
+    'if [ "$1" = "issue" ] && [ "$2" = "view" ]; then',
+    '  case "$3" in',
+    cases,
+    '    *) echo \'{"state":"OPEN"}\' ;;',
+    '  esac',
+    'else',
+    '  echo \'[]\'',
+    'fi',
+  ].join('\n');
+  fs.writeFileSync(wrapperPath, script);
   fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   const originalPath = process.env.PATH;
   process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
@@ -2325,4 +2357,201 @@ test('archiveMerged: split-state run dir archives cleanly on one pass when workt
   assert.ok(
     trackedFiles(root).includes(`.claude-tweaks/pipelines/archive/${runId}/spec-1296/work/1296-spec.md`),
   );
+});
+
+// --- #1732: classifyRunDir — the single classifier every one of the five
+// lifecycle predicates above (isOrphanedMint, isAbandonedInterrupted,
+// isAdHocStandaloneSuperseded, decideArchive, isStructurallyStuck) now
+// delegates to. These tests exercise the classifier directly, at the level
+// the pre-consolidation predicates' own tests above don't reach: the `kind`
+// value itself, and first-match precedence across multiple simultaneously-
+// eligible kinds. ---
+
+test('classifyRunDir: none for a fresh, ordinary run dir with no distinguishing evidence', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-classify-'));
+  fs.writeFileSync(path.join(dir, 'config.yml'), 'mode: auto\n');
+  const result = classifyRunDir({ dir, state: { status: 'active' }, worktrees: [] });
+  assert.equal(result.kind, 'none');
+  assert.equal(result.ttlMs, null);
+});
+
+test('classifyRunDir: orphaned-mint for a config.yml-less mint past the grace window', () => {
+  const dir = mkDirWithMtime(ORPHAN_MINT_TTL_MS * 2);
+  const result = classifyRunDir({ dir });
+  assert.equal(result.kind, 'orphaned-mint');
+  assert.equal(result.ttlMs, ORPHAN_MINT_TTL_MS);
+});
+
+// Precedence: an ad-hoc-standalone dir whose worktree is definitively gone
+// is old enough to ALSO satisfy orphaned-mint's own bare mtime threshold
+// (ADHOC_SUPERSEDED_TTL_MS is a strict superset of ORPHAN_MINT_TTL_MS's
+// window) — but isOrphanedMint's own precondition (`!isAdHocStandaloneMint`)
+// exempts it, so classifyRunDir's full-precedence pass must land on
+// 'adhoc-superseded', never 'orphaned-mint', for this exact shape. This is
+// the reachable form of the "first-match order" pin the consolidation's own
+// acceptance criteria call for: an orphaned-mint-shaped mtime coinciding
+// with an ad-hoc-standalone dir's own superseded shape.
+test('classifyRunDir: adhoc-superseded takes precedence over orphaned-mint for an ad-hoc-standalone dir old enough for both windows', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-classify-adhoc-'));
+  const adhocDir = `${dir}-adhoc-standalone`;
+  fs.renameSync(dir, adhocDir);
+  const state = { status: 'active', worktree: '/nonexistent/torn-down-worktree' };
+  // isAdHocStandaloneMint reads run-state.json off DISK (not the ctx `state`
+  // object passed to classifyRunDir) — write it before backdating, since
+  // writing into the directory bumps its own mtime back to "now".
+  fs.writeFileSync(path.join(adhocDir, 'run-state.json'), JSON.stringify(state));
+  const backdated = new Date(Date.now() - (ADHOC_SUPERSEDED_TTL_MS * 2));
+  fs.utimesSync(adhocDir, backdated, backdated);
+  const result = classifyRunDir({ dir: adhocDir, state, worktrees: [] });
+  assert.equal(result.kind, 'adhoc-superseded');
+  assert.equal(isOrphanedMint(adhocDir), false, 'isOrphanedMint must stay exempt for this same shape');
+  assert.equal(isAdHocStandaloneSuperseded(adhocDir, state, []), true);
+  fs.rmSync(adhocDir, { recursive: true, force: true });
+});
+
+test('classifyRunDir: merged when decideArchiveCore would archive, carrying no TTL', () => {
+  const prState = { state: 'MERGED', mergeCommit: { oid: 'a'.repeat(40) } };
+  const result = classifyRunDir({ prState, consoleState: 'resolved' });
+  assert.equal(result.kind, 'merged');
+  assert.equal(result.ttlMs, null);
+});
+
+test('classifyRunDir: none with the skip reason carried in evidence when the merged-PR path would skip', () => {
+  const result = classifyRunDir({ prState: 'gh-absent', consoleState: 'none' });
+  assert.equal(result.kind, 'none');
+  assert.equal(result.evidence.skipReason, 'gh-absent');
+});
+
+test('classifyRunDir: structurally-stuck for a qualifying skip reason past the TTL', () => {
+  // config.yml present (an adopted run, per STRUCTURALLY_STUCK_TTL_MS's own
+  // comment: "the dir IS adopted") — without it, orphaned-mint's own
+  // higher-precedence, config.yml-absent condition would win first under the
+  // full default kind order, which is correct precedence, not a bug (see the
+  // "kinds scoping" test below for the scoped, config.yml-less equivalent).
+  const dir = mkDirWithMtime(0);
+  fs.writeFileSync(path.join(dir, 'config.yml'), 'mode: auto\n');
+  // Writing config.yml just now bumped the directory's own mtime back to
+  // "now" — backdate again, after the write, so the staleness check below
+  // actually sees the intended age.
+  const backdated = new Date(Date.now() - (STRUCTURALLY_STUCK_TTL_MS * 2));
+  fs.utimesSync(dir, backdated, backdated);
+  const result = classifyRunDir({ dir, skipReason: 'no-worktree' });
+  assert.equal(result.kind, 'structurally-stuck');
+  assert.equal(result.ttlMs, STRUCTURALLY_STUCK_TTL_MS);
+});
+
+// --- #1811 Deliverable 3: isClosedSlugStuck / recordNumbersFromSlug — the
+// no-run-state.json terminal path for a config.yml-only run dir whose own
+// record(s) have all closed. ---
+
+test('recordNumbersFromSlug: parses one or more record numbers off a record-{n}[-{m}] slug', () => {
+  assert.deepEqual(recordNumbersFromSlug('/tmp/2026-08-27T105511-record-1378-816'), [1378, 816]);
+  assert.deepEqual(recordNumbersFromSlug('/tmp/2026-09-14T175427-record-1732-1811'), [1732, 1811]);
+  assert.deepEqual(recordNumbersFromSlug('/tmp/2026-08-01T090000-record-42'), [42]);
+});
+
+test('recordNumbersFromSlug: null for a non-record slug (topic name, standalone, multi-spec parent)', () => {
+  assert.equal(recordNumbersFromSlug('/tmp/2026-08-01T090000-meal-planning'), null);
+  assert.equal(recordNumbersFromSlug('/tmp/2026-08-01T090000-adhoc-standalone'), null);
+  assert.equal(recordNumbersFromSlug('/tmp/2026-08-01T090000-tidy-standalone'), null);
+});
+
+function mkConfigOnlyDir(slugSuffix, ageMs) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-closedslug-'));
+  const named = `${dir}-${slugSuffix}`;
+  fs.renameSync(dir, named);
+  fs.writeFileSync(path.join(named, 'config.yml'), 'mode: auto\n');
+  const backdated = new Date(Date.now() - ageMs);
+  fs.utimesSync(named, backdated, backdated);
+  return named;
+}
+
+test('isClosedSlugStuck: true once every record in the slug resolves CLOSED and the TTL has elapsed', () => {
+  const dir = mkConfigOnlyDir('record-1378-816', STRUCTURALLY_STUCK_TTL_MS * 2);
+  const resolve = (root, n) => ({ state: 'CLOSED', number: n });
+  assert.equal(isClosedSlugStuck('/repo', dir, null, Date.now(), resolve), true);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('isClosedSlugStuck: false when any one record in the slug is still OPEN', () => {
+  const dir = mkConfigOnlyDir('record-1378-816', STRUCTURALLY_STUCK_TTL_MS * 2);
+  const resolve = (root, n) => ({ state: n === 816 ? 'OPEN' : 'CLOSED', number: n });
+  assert.equal(isClosedSlugStuck('/repo', dir, null, Date.now(), resolve), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('isClosedSlugStuck: false while still within the TTL, even with every record closed', () => {
+  const dir = mkConfigOnlyDir('record-1378-816', 60 * 60 * 1000);
+  const resolve = () => ({ state: 'CLOSED' });
+  assert.equal(isClosedSlugStuck('/repo', dir, null, Date.now(), resolve), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('isClosedSlugStuck: false whenever a run-state.json exists — not this predicate\'s shape', () => {
+  const dir = mkConfigOnlyDir('record-1378-816', STRUCTURALLY_STUCK_TTL_MS * 2);
+  const resolve = () => ({ state: 'CLOSED' });
+  assert.equal(isClosedSlugStuck('/repo', dir, { status: 'active' }, Date.now(), resolve), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('isClosedSlugStuck: false for a gh-absent/network-failure probe on any one record — never archives on unresolved evidence', () => {
+  const dir = mkConfigOnlyDir('record-1378-816', STRUCTURALLY_STUCK_TTL_MS * 2);
+  const resolve = (root, n) => (n === 816 ? 'network-failure' : { state: 'CLOSED' });
+  assert.equal(isClosedSlugStuck('/repo', dir, null, Date.now(), resolve), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// AC (#1811): archiveMerged itself archives a config.yml-only, no-run-state
+// dir once every record named in its slug resolves CLOSED via a real `gh
+// issue view` call (intercepted at the process-spawn boundary, same
+// installGhWrapper idiom this file already uses for `gh pr list`/`gh pr
+// view`), and leaves it in place — still skipped, never escalated toward
+// move-failed — while any one record is still open.
+test('archiveMerged: archives a config.yml-only run dir with no run-state.json once every slug record is CLOSED', () => {
+  const root = fs.realpathSync(makeRepo());
+  const runId = '2026-08-27T105511-record-9001-9002';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
+  const backdated = new Date(Date.now() - (STRUCTURALLY_STUCK_TTL_MS * 2));
+  fs.utimesSync(runDir, backdated, backdated);
+  const ghWrapper = installGhIssueStateWrapper({ 9001: 'CLOSED', 9002: 'CLOSED' });
+  try {
+    const result = archiveMerged({ cwd: root });
+    assert.ok(result.archived.includes(runDir), `expected ${runDir} in archived, got ${JSON.stringify(result)}`);
+    assert.equal(fs.existsSync(runDir), false);
+  } finally {
+    ghWrapper.restore();
+  }
+});
+
+test('archiveMerged: leaves a config.yml-only run dir in place while any one slug record is still OPEN', () => {
+  const root = fs.realpathSync(makeRepo());
+  const runId = '2026-08-27T105511-record-9003-9004';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
+  const backdated = new Date(Date.now() - (STRUCTURALLY_STUCK_TTL_MS * 2));
+  fs.utimesSync(runDir, backdated, backdated);
+  const ghWrapper = installGhIssueStateWrapper({ 9003: 'CLOSED', 9004: 'OPEN' });
+  try {
+    const result = archiveMerged({ cwd: root });
+    assert.ok(!result.archived.includes(runDir), `expected ${runDir} NOT in archived, got ${JSON.stringify(result)}`);
+    assert.equal(fs.existsSync(runDir), true);
+  } finally {
+    ghWrapper.restore();
+  }
+});
+
+test('classifyRunDir: kinds scoping restricts evaluation to exactly the requested kind, matching each standalone predicate', () => {
+  // A dir shaped to match structurally-stuck (bare, old, no config.yml) would
+  // ALSO satisfy orphaned-mint's own condition under the full precedence
+  // order — but every wrapper predicate scopes its own `kinds` array to just
+  // its one question, so isStructurallyStuck (and a `kinds: ['structurally-
+  // stuck']` call here) must still answer true for it, unaffected by
+  // orphaned-mint's higher precedence in the unscoped case.
+  const dir = mkDirWithMtime(STRUCTURALLY_STUCK_TTL_MS * 2);
+  assert.equal(classifyRunDir({ dir, kinds: ['orphaned-mint'] }).kind, 'orphaned-mint');
+  assert.equal(classifyRunDir({ dir, skipReason: 'no-worktree', kinds: ['structurally-stuck'] }).kind, 'structurally-stuck');
+  assert.equal(isStructurallyStuck(dir, 'no-worktree'), true);
 });
