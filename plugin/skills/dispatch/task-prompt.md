@@ -116,6 +116,15 @@ worktree of this checkout, so it can pop or clobber a sibling worktree's in-flig
 compare against a baseline without mutating the tree, use `git show <rev>:<path>`; to set your
 own work aside, make a temporary WIP commit instead.
 
+CRITICAL: before reporting `DONE`/`build-test-ok`, confirm your own claim against the artifact
+you just produced -- this call is the producer, not a second call distrusting someone else's
+prior claim, so there is no earlier report to check here, only your own freshly written result.
+The actual artifact is the test-output log this call's own `npm test` run wrote, or a
+runner-written pass stamp matching HEAD (`verify.js --stamp-status`) and its `report.json` (the
+shape `bin/lib/dispatch/artifact-verdict.js`'s `deriveTestVerdict` pins). Never report a result
+from narrative or memory of an earlier pass in this same call -- if the artifact does not exist
+or does not match HEAD, re-run the check before reporting.
+
 OUTPUT FORMAT (required) -- return ONLY these lines, no preamble:
 
 GROUP: {comma-joined issue numbers}
