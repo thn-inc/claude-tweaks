@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T20:38:04.974Z",
+  "computedAt": "2026-09-14T21:05:06.966Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -155,17 +155,12 @@
       },
       {
         "number": 2326,
-        "updatedAt": "2026-09-13T13:32:51Z",
+        "updatedAt": "2026-09-14T20:44:15Z",
         "state": "OPEN"
       },
       {
         "number": 2325,
         "updatedAt": "2026-09-13T13:32:53Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2324,
-        "updatedAt": "2026-09-14T17:32:25Z",
         "state": "OPEN"
       },
       {
@@ -1278,84 +1273,6 @@
     ],
     [
       {
-        "body": "# Backlog proposal — `--release-as` on the local engine (#2256, ledger row 90)\n\n**Category:** backlog-proposal\n**Severity:** low\n**Reversibility:** high\n**Source:** `/release` Step 5 gap surfaced at #2256's plan phase; `/wrap-up` Phase 3 SETTLE\n**Defer-reason:** genuinely-larger\n**Proposed title:** Add `--release-as <version>` to `bin/release-local.js` so `/claude-tweaks:release --as` works under local-merge\n\n## Current State\n\n`/claude-tweaks:release --as <version>` is pr-first only: it pushes a `Release-As:` commit that release-please re-renders. Under `local-merge` the engine (`plugin/bin/release-local.js`, #2254) derives the version from first-parent conventional history (`bin/lib/release-local/bump.js`) and has no override, so the skill refuses `--as` right after Step 1 with `--as is pr-first only (release-local.js derives the version from history); use a breaking commit or a manual tag` (SKILL.md Input table, ruling 17).\n\n## Deliverables\n\n- [ ] `bin/release-local.js --release-as <version>` (strict `^\\d+\\.\\d+\\.\\d+$`), threaded into `bin/lib/release/precheck.js` as an explicit candidate that must be ahead of the version base, and into the manifest/CHANGELOG writers as the version to splice\n- [ ] `/claude-tweaks:release` Step 1's refusal replaced by passing `--release-as {version}` under local-merge; the Input table row and `execute.md`'s back-stop updated; ledger row 90 closed\n- [ ] Tests in `tests/bin-lib/release-local/` (accepted ahead-of-base value; rejected behind/equal value; dry-run plan line naming the override)\n\n## Acceptance Criteria\n\n1. `release-local.js --dry-run --release-as 7.0.0` on a minor-only history plans `v7.0.0` and names the override in its plan line.\n2. `--release-as 1.0.0` when the base is `1.2.0` exits `2` with a usage-shaped message naming both versions.\n3. `/claude-tweaks:release --as 7.0.0` on a `local-merge` fixture reaches Step 4 with `7.0.0` as the effective version and the major-bump gate fires.\n\n\n---\nFiled by the multi-spec wrap-up of run `2026-09-11T204239-spec-2251-2252-2253-2254-2255-2256-2258` (queue write from spec 2256; source `spec-2256/staged/backlog-proposal-release-as-local.md`; consoleAutoResolve at `autonomy: unattended`).\n\nhttps://claude.ai/code/session_018rz67jb18j1RLSqhjEdYWH\n",
-        "createdAt": "2026-09-12T16:21:37Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2326,
-        "state": "OPEN",
-        "title": "Add `--release-as <version>` to `bin/release-local.js` so `/claude-tweaks:release --as` works under local-merge",
-        "updatedAt": "2026-09-13T13:32:51Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: wrap-up ledger gate for #2255 (run ledger rows 80, 84)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nThe three run-directory fact packs share one contract (`run-directory-fact-packs`: exit 0/2/3, no 1 for decided outcomes) but drift on two edges #2255's build noticed in its siblings and left untouched (surgical-changes rule): `plugin/bin/flow-preflight.js`'s `require.main` rejection handler exits 1 on an undecided crash while its own header documents only 0/2/3 (`wrap-up-pack.js` does the same, and #2255's `release-preflight.js` now follows them — the vocabulary text never says what a crash is); and `plugin/bin/wrap-up-pack.js` accepts `--only ,` (an empty list after filtering) as a request for zero probes, writing a probe-less pack with exit 0 — `release-preflight.js` treats that as a usage error since #2255's fix wave. Run ledger rows 80 and 84.\n\n## Deliverables\n\n`.claude/skills/run-directory-fact-packs/SKILL.md`: one sentence stating that an undecided crash exits 1 (the vocabulary governs decided outcomes) and that an empty `--only` list is a usage error — so the rule lives in the pattern, not in three headers.\n\n`plugin/bin/flow-preflight.js` and `plugin/bin/wrap-up-pack.js` headers: name the crash exit; `wrap-up-pack.js` `parseArgs`: reject an empty `--only` list with the usage error, mirroring `release-preflight.js`.\n\nOne test each in `tests/bin-lib/wrap-up/` and `tests/bin-lib/flow/` for the `--only ,` usage error, sized like the existing `parseArgs` cases.\n\n## Acceptance Criteria\n\n`node plugin/bin/wrap-up-pack.js --run <dir> --only ,` exits 2 with the usage text and writes nothing.\n\nThe three pack headers and the skill agree on what exit 1 means, verbatim.\n\n_Filed by `wrap-up` via specShapedBody._\n\n\n---\nFiled by the multi-spec wrap-up of run `2026-09-11T204239-spec-2251-2252-2253-2254-2255-2256-2258` (queue write from spec 2255; source `spec-2255/staged/ledger-record-fact-pack-siblings.md`; consoleAutoResolve at `autonomy: unattended`).\n\nhttps://claude.ai/code/session_018rz67jb18j1RLSqhjEdYWH\n",
         "createdAt": "2026-09-12T16:21:35Z",
         "labels": [
@@ -1406,84 +1323,6 @@
         "state": "OPEN",
         "title": "Fact-pack siblings: name the crash exit and reject an empty --only list (flow-preflight, wrap-up-pack)",
         "updatedAt": "2026-09-13T13:32:53Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: wrap-up ledger gate for #2253 (run ledger row 31)\n\nDefer-reason: blocked-dependency\n\n## Current State\n\n`plugin/bin/lib/init/release-bootstrap.js`'s stack rule selects a `release-type` only when exactly one stack row matches and falls through to `simple` otherwise (#2253, by design — no precedence rule). This repo carries a root `package.json` (version 6.70.0, 51 minors behind the shipped 6.121.0), so its own bootstrap resolves `node` seeded from that stale manifest, while the design doc's Phase 3 acceptance (dropped at decomposition) and #2259's migration need `simple` with `extra-files` pointing at `plugin/.claude-plugin/plugin.json`. Probed on this checkout: `bootstrapRelease({ dryRun })` → `{ verdict: 'fresh', releaseType: 'node', version: '6.70.0' }`. Run ledger row 31; staged `build-deviation-2` in run `2026-09-11T204239-spec-2251-2252-2253-2254-2255-2256-2258`.\n\n## Deliverables\n\nAdd an explicit override to the code twin and CLI: `--release-type <type>` and `--extra-file <path>` (JSON manifest with a top-level `version`, rendered as `{type: json, path, jsonpath: $.version}`), validated against the stack table's type vocabulary plus `simple`; when given, they replace `resolveReleaseType`'s verdict and the manifest seed reads the named file.\n\nStep 21 prose: document the override as the escape hatch for a repo whose real manifest is not its root stack manifest, and note that #2259 uses it.\n\nTests: override selects `simple` + the plugin manifest on a fixture carrying a root `package.json`; an unknown `--release-type` is a usage error; the override is reflected in the rendered config and the seeded version.\n\n## Acceptance Criteria\n\nOn a fixture with a root `package.json` (version 1.0.0) and `plugin/.claude-plugin/plugin.json` (version 6.121.0), `--release-type simple --extra-file plugin/.claude-plugin/plugin.json` produces `release-type: simple`, the matching `extra-files` entry, and manifest `6.121.0` (no `v*` tags present).\n\nWithout the override the same fixture still resolves `node` — the single-row rule is unchanged.\n\n_Filed by `wrap-up` via specShapedBody._\n\n\n---\nFiled by the multi-spec wrap-up of run `2026-09-11T204239-spec-2251-2252-2253-2254-2255-2256-2258` (queue write from spec 2253; source `spec-2253/staged/ledger-record-release-type-override.md`; consoleAutoResolve at `autonomy: unattended`).\n\nhttps://claude.ai/code/session_018rz67jb18j1RLSqhjEdYWH\n",
-        "createdAt": "2026-09-12T16:21:33Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2324,
-        "state": "OPEN",
-        "title": "Release bootstrap: explicit --release-type / --extra-file override for repos whose real manifest is not the root stack manifest",
-        "updatedAt": "2026-09-14T17:32:25Z",
         "facets": {
           "origin": null,
           "risk": "low",
