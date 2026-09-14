@@ -139,6 +139,8 @@ steps select their own models as usual. Resolve via `node "{plugin-root}/bin/res
 (contract § Model Selection).
 ```
 
+**Shell constraint (in a worktree session):** the Claude Code harness enforces limits on Bash commands in a single call, independent of filesystem effect — see `_shared/scratch-worktree.md` §7 ("Shell constraint") for the full boundary description, if that bundle is absent, read `_shared/scratch-worktree.md` directly. Six shapes to avoid: quoted JSON containing `git`; a `for`/`while` loop variable; a glob argument; a `gh api` call inside an `if RAW=$(...)`; `sed -i` on a variable path; `printf … > "$VAR/file"`. Also avoid `cat "$P/…"` and `sed -n 'a,bp' "$P/…"` where `$P` is a runtime-computed path variable. Workaround for each shape is listed in that section — use `Write`/`Edit`/`Read` tools instead of equivalent shell commands, separate commands instead of loops or compound constructs, and literal file paths instead of variables. One plain command per Bash call is the general pattern.
+
 ## Second call — review,polish,wrap-up (gated on the first call)
 
 **Only dispatch this call if the first call's status line was DONE or DONE_WITH_CONCERNS AND its OUTCOME was `build-test-ok`.** A `NEEDS_CONTEXT`/`BLOCKED` status, an `OUTCOME` of `build-test-failed`/`build-test-blocked`, or no parseable report at all means this second call is never dispatched — the first call's own agent settles its own failure (its template above instructs it to), and the dispatching session takes the terminal path in `two-call-gate.md` section 5 (fail-loud reporting plus the `/claude-tweaks:wrap-up {target} cleanup-only` teardown call).
