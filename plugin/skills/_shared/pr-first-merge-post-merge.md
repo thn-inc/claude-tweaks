@@ -39,8 +39,10 @@ Branch on the exit code:
   pr-first-merge Step 4.1: release status — unreleased. Reversibility: n/a.` and carry the literal
   string `unreleased` into the closing report (`flow/summary-template.md`'s `**Release status:**`
   line).
-- **A tag name on stdout** — log `AUTO {time} — pr-first-merge Step 4.1: release status — v{tag}.
-  Reversibility: n/a.` and carry `v{tag}` into the closing report.
+- **A tag name on stdout** — the tag already carries this repo's own `v` prefix (`git tag -l 'v*'`),
+  so `{tag}` below is the raw `git describe` output, unmodified — log `AUTO {time} —
+  pr-first-merge Step 4.1: release status — {tag}. Reversibility: n/a.` and carry `{tag}` into
+  the closing report.
 
 Under `pr-first`, post (or update) a `release-status` PR comment per `_shared/pr-run-comments.md`'s
 post-or-update procedure (kind `release-status`, marker `<!-- run-comment: release-status -->` as
