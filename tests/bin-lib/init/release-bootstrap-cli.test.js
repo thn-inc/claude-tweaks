@@ -116,3 +116,20 @@ test('CLI: --release-type without --extra-file is a usage error naming both flag
   assert.equal(r.status, 2);
   assert.match(r.stderr, /--release-type and --extra-file must be given together/);
 });
+
+test('CLI: --extra-file pointing to nonexistent file causes exit 1 with error message', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  fs.writeFileSync(path.join(root, 'package.json'), '{"version":"1.0.0"}');
+  const r = run(['--root', root, '--integration-model', 'local-merge', '--release-type', 'simple', '--extra-file', 'missing.json']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /no readable JSON manifest with a semver version/);
+});
+
+test('CLI: --extra-file pointing to JSON without version causes exit 1 with error message', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  fs.writeFileSync(path.join(root, 'package.json'), '{"version":"1.0.0"}');
+  fs.writeFileSync(path.join(root, 'noversion.json'), '{"name":"x"}');
+  const r = run(['--root', root, '--integration-model', 'local-merge', '--release-type', 'simple', '--extra-file', 'noversion.json']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /no readable JSON manifest with a semver version/);
+});

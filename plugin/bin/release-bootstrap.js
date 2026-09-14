@@ -5,13 +5,13 @@
 // stdout, exit 0 on every verdict (conflict and skipped are outcomes the
 // step reports, not failures), 2 on usage, 1 on an unexpected throw.
 //
-//   node bin/release-bootstrap.js --integration-model <pr-first|local-merge|unresolved> [--root <dir>] [--branch <name>] [--release-type <type>] [--extra-file <path>] [--dry-run]
+//   node bin/release-bootstrap.js --integration-model <pr-first|local-merge|unresolved> [--root <dir>] [--branch <name>] [--release-type <type> --extra-file <path>] [--dry-run]
 'use strict';
 
 const fs = require('fs');
 const { bootstrapRelease, isValidBranchName, RELEASE_TYPE_VALUES } = require('./lib/init/release-bootstrap');
 
-const USAGE = 'usage: release-bootstrap.js --integration-model <pr-first|local-merge|unresolved> [--root <dir>] [--branch <name>] [--release-type <type>] [--extra-file <path>] [--dry-run]\n';
+const USAGE = 'usage: release-bootstrap.js --integration-model <pr-first|local-merge|unresolved> [--root <dir>] [--branch <name>] [--release-type <type> --extra-file <path>] [--dry-run]\n';
 const VALUE_FLAGS = new Set(['--root', '--branch', '--integration-model', '--release-type', '--extra-file']);
 const VALID_INTEGRATION_MODELS = new Set(['pr-first', 'local-merge', 'unresolved', '']);
 

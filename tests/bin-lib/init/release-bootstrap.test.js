@@ -85,6 +85,19 @@ test('resolveReleaseType: an unrecognized override releaseType throws after vali
   assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'bogus', extraFile: 'x.json' }), /invalid release-type/);
 });
 
+test('resolveReleaseType: override with extraFile pointing to nonexistent file throws', () => {
+  const root = tmp();
+  write(root, 'package.json', '{"version":"1.0.0"}');
+  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'simple', extraFile: 'missing.json' }), /no readable JSON manifest with a semver version/);
+});
+
+test('resolveReleaseType: override with extraFile pointing to JSON without version throws', () => {
+  const root = tmp();
+  write(root, 'package.json', '{"version":"1.0.0"}');
+  write(root, 'noversion.json', '{"name":"x"}');
+  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'simple', extraFile: 'noversion.json' }), /no readable JSON manifest with a semver version/);
+});
+
 test('resolveReleaseType: no override -> unchanged single-row behavior (AC: "without the override the same fixture still resolves node")', () => {
   const root = tmp();
   write(root, 'package.json', '{"version":"1.0.0"}');

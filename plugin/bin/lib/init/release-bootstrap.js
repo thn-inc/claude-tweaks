@@ -189,6 +189,11 @@ function resolveReleaseType(root, override) {
     const extraFiles = override.extraFile
       ? [{ type: 'json', path: override.extraFile, jsonpath: '$.version' }]
       : [];
+    if (override.extraFile !== undefined) {
+      if (versionOfJson(path.join(root, override.extraFile)) === null) {
+        throw new Error(`--extra-file names no readable JSON manifest with a semver version: ${override.extraFile}`);
+      }
+    }
     return { releaseType: override.releaseType, extraFiles };
   }
   const entries = rootEntries(root);
@@ -334,7 +339,9 @@ function bootstrapRelease({ root, integrationModel, branch, dryRun = false, list
   if (detected.verdict !== 'fresh') return { ...detected, ...empty };
   const { releaseType, extraFiles } = resolveReleaseType(root, { releaseType: releaseTypeOverride, extraFile });
   const { tags, failure: tagsFailure } = normalizeListTagsResult((listTags || defaultListTags)(root));
-  const seedSourceVersion = extraFile ? versionOfJson(path.join(root, extraFile)) : readStackManifestVersion(root, releaseType);
+  const seedSourceVersion = extraFiles.length
+    ? versionOfJson(path.join(root, extraFiles[0].path))
+    : readStackManifestVersion(root, releaseType);
   const version = seedManifestVersion({ tags, manifestVersion: seedSourceVersion });
   // A manifest-missing re-run (detectReleaseProcess still reports `fresh`
   // when the config already exists in this step's own shape) must not
