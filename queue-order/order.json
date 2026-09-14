@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T16:14:41.600Z",
+  "computedAt": "2026-09-14T16:38:15.336Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -280,7 +280,7 @@
       },
       {
         "number": 2240,
-        "updatedAt": "2026-09-14T14:57:52Z",
+        "updatedAt": "2026-09-14T16:32:48Z",
         "state": "OPEN"
       },
       {
@@ -405,7 +405,7 @@
       },
       {
         "number": 1829,
-        "updatedAt": "2026-09-14T14:38:10Z",
+        "updatedAt": "2026-09-14T16:32:54Z",
         "state": "OPEN"
       },
       {
@@ -480,7 +480,7 @@
       },
       {
         "number": 1676,
-        "updatedAt": "2026-09-14T14:38:13Z",
+        "updatedAt": "2026-09-14T16:25:03Z",
         "state": "OPEN"
       },
       {
@@ -495,12 +495,12 @@
       },
       {
         "number": 666,
-        "updatedAt": "2026-09-14T12:08:43Z",
+        "updatedAt": "2026-09-14T16:29:22Z",
         "state": "OPEN"
       },
       {
         "number": 496,
-        "updatedAt": "2026-09-14T14:38:15Z",
+        "updatedAt": "2026-09-14T16:33:00Z",
         "state": "OPEN"
       },
       {
@@ -540,7 +540,7 @@
       },
       {
         "number": 1909,
-        "updatedAt": "2026-09-14T15:38:59Z",
+        "updatedAt": "2026-09-14T16:25:22Z",
         "state": "CLOSED"
       },
       {
@@ -2549,260 +2549,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\n\n`plugin/bin/lib/repo-resolve.js`'s `parseRepo` hard-codes `github.com` in its regex\n(`/github\\.com[:/]([^/]+)\\/([^/]+?)(?:\\.git)?\\/?$/`) and is the one shared owner/repo resolver\nfor `bin/` CLIs (`apply-refine-labels.js`, `backlog-grant-gate.js`, `fetch-sub-issues.js`,\n`file-feedback.js`, `link-records.js`, `materialize.js`, `preflight-records.js`,\n`release-claim.js`, `repair-claim.js`, `resolve-blockers.js`, `resolve-linked-prs.js`, and\nothers). #2021 fixed the equivalent `github.com` assumption in `_shared/pr-run-comments.md`'s\n`gh` calls (by resolving `{host}` from `gh repo view --json nameWithOwner,url` and passing\n`--hostname {host}`), but deliberately left `parseRepo` out of scope as \"a wider gap.\" On a\nGitHub Enterprise Server remote, `parseRepo` never matches the non-`github.com` host, so every\none of its callers reports \"could not resolve owner/repo\" and fails outright — the class of\nCLI these callers back (materialization, claim release, blocker/linked-PR resolution, refine\nlabeling) is used throughout this project's own pipeline, so a GHE-hosted adopter repo cannot\nrun `/claude-tweaks:flow`, `/claude-tweaks:dispatch`, or `/claude-tweaks:backlog` at all.\n\n## Deliverables\n\n- Widen `parseRepo`'s regex to capture an arbitrary host, not only `github.com` — return\n  `{host, owner, repo}` instead of `{owner, repo}`, so existing callers that only destructure\n  `{owner, repo}` keep working unchanged.\n- Audit `parseRepo`'s callers for which ones invoke `gh` (as opposed to only using\n  `{owner, repo}` in a REST/GraphQL URL path or a display string) and, for each `gh`-invoking\n  call site, pass the resolved `host` through as `--hostname {host}` (mirroring #2021's fix)\n  when `host` is not `github.com`. Callers that never shell out to `gh` (or that already resolve\n  the host some other way) need no change beyond the destructuring above.\n- Add a regression test in `tests/bin-lib/repo-resolve.test.js` (or wherever this module's\n  existing tests live) asserting `parseRepo` matches an SSH and HTTPS remote on a non-`github.com`\n  host and still returns the pre-existing `{owner, repo}` shape unchanged for a `github.com`\n  remote.\n\n## Acceptance Criteria\n\n- `parseRepo('git@ghe.example.com:acme/widget.git')` and\n  `parseRepo('https://ghe.example.com/acme/widget')` both return\n  `{host: 'ghe.example.com', owner: 'acme', repo: 'widget'}`.\n- `parseRepo('git@github.com:acme/widget.git')` still returns `{host: 'github.com', owner:\n  'acme', repo: 'widget'}` — no regression on the existing, common case.\n- Every existing caller of `parseRepo` that destructures only `{owner, repo}` continues to pass\n  its existing test suite unmodified — the added `host` field must not break existing shapes.\n- Every caller identified as `gh`-invoking during the audit above passes `--hostname {host}`\n  when `host !== 'github.com'`, and a test exercises at least one such caller against a\n  non-`github.com` host (a fake/injected `gh` runner, per this codebase's\n  `gh-api-module-pattern` convention) to confirm the flag is actually passed.\n\n## Technical Approach\n\nWiden the regex in `plugin/bin/lib/repo-resolve.js:19` to capture the host segment ahead of\n`owner/repo`, e.g. `/^(?:[a-zA-Z0-9._-]+@)?([a-zA-Z0-9.-]+)[:/]([^/]+)\\/([^/]+?)(?:\\.git)?\\/?$/`\n(SSH `git@{host}:{owner}/{repo}.git` and HTTPS `https://{host}/{owner}/{repo}` both match; keep\nsupporting the existing bare `github.com/owner/repo` shape a caller may wrap manually). Return\n`{ host: m[1], owner: m[2], repo: m[3] }`. Then grep every call site in the Key Files list below\nfor a direct `execFileSync('gh', ...)` or `execFileSync('git', ...)` invocation that would need\n`--hostname`/`GH_HOST`, per this codebase's `gh-api-module-pattern` skill (the injectable-runner\nseam and `-f`/`-F`/path-placeholder conventions for `gh api` calls) — this record's scope is the\n`parseRepo` widening plus that audit and the flag-threading it turns up, not a redesign of the\ncall sites' own logic.\n\n### Key Files\n\n- `plugin/bin/lib/repo-resolve.js` — widen `parseRepo`'s regex and return shape\n- `plugin/bin/apply-refine-labels.js` — audit for `--hostname` need\n- `plugin/bin/backlog-grant-gate.js` — audit for `--hostname` need\n- `plugin/bin/fetch-sub-issues.js` — audit for `--hostname` need\n- `plugin/bin/file-feedback.js` — audit for `--hostname` need\n- `plugin/bin/link-records.js` — audit for `--hostname` need\n- `plugin/bin/materialize.js` — audit for `--hostname` need\n- `plugin/bin/preflight-records.js` — audit for `--hostname` need\n- `plugin/bin/release-claim.js` — audit for `--hostname` need\n- `plugin/bin/repair-claim.js` — audit for `--hostname` need\n- `plugin/bin/resolve-blockers.js` — audit for `--hostname` need\n- `plugin/bin/resolve-linked-prs.js` — audit for `--hostname` need\n- `_shared/pr-run-comments.md` — prior-art reference only (#2021), not modified by this record\n\n## Gotchas\n\n- The regex must not become so permissive that it misparses a non-GitHub-shaped remote (e.g. a\n  plain filesystem path or a non-forge Git host) as `{host, owner, repo}` — anchor on the\n  `[host][:/]owner/repo[.git]` shape exactly as the current regex does, only generalizing the\n  host segment.\n- This record intentionally does not decide whether every caller needs the `host` value threaded\n  through to a live `--hostname` flag — some callers may only use `{owner, repo}` for display or\n  for constructing a URL where the host is irrelevant. The audit in Deliverables is scoped to\n  identifying which callers actually shell out to `gh`/`git` in a way a GHE host would affect;\n  don't thread `--hostname` everywhere reflexively.\n\n## Original request\n\nrepo-resolve.js: parseRepo rejects non-github.com remotes, so every bin/ CLI fails on GitHub Enterprise\n\n**Related:** #2021\n\nContext: #2021 fixed the GitHub-Enterprise host resolution for `_shared/pr-run-comments.md` and `_shared/pr-early-run-lifecycle.md`'s `gh` calls, but deliberately left `bin/lib/repo-resolve.js`'s `parseRepo` untouched — its regex (`/github\\.com[:/].../`) hard-codes `github.com` and is shared by twelve `bin/` CLIs (materialize, claims, release-claim, link-records, resolve-blockers, resolve-linked-prs, and others) that derive `{owner, repo}` from the checkout's `origin` remote.\n\nScope: On a GHE remote, every one of those twelve callers reports \"could not resolve owner/repo\" and fails outright, since `parseRepo` never matches a non-github.com host. Widening the regex to accept an arbitrary host (and deciding whether callers need the host value too, not just owner/repo) touches all twelve call sites' blast radius — a documentation-level fix (#2021) should not carry that.\n",
-        "createdAt": "2026-09-11T16:32:04Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2240,
-        "state": "OPEN",
-        "title": "repo-resolve.js: parseRepo rejects non-github.com remotes, so every bin/ CLI fails on GitHub Enterprise",
-        "updatedAt": "2026-09-14T14:57:52Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`materialize.js` computes `drift` only from a record's `Verified-as-of: {sha}` body-metadata line (`extractVerifiedAsOf` in `bin/lib/issues/record.js`; `computeDrift` in `plugin/bin/materialize.js`), and a stale stamp produces one stderr sentence (\"premise is N commits old … re-derive facts against current HEAD before implementing\") and an envelope field; it never stops or re-measures. `drift` is `null` for any record without the stamp — which is every record not filed by the four health sweeps, the only callers that thread `specShapedBody`'s `verifiedAsOf` param (`bin/harness-health.js`, `docs-health.js`, `code-health.js`, `journey-health.js` via their `issue-payload.js`). `flow/materialize.md`'s \"Freshness-stamp drift (#117)\" and \"Named-location drift (#315)\" paragraphs describe exactly this.\n\nWrap-up's CLAUDE.md & rules row opens on the `claudeMdOverBudget` fact (`plugin/bin/lib/wrap-up/facts.js`, `computeClaudeMdOverBudget`), which returns a bare boolean — it discards which target was over and by how much — and the row's filing (`skills/wrap-up/claude-md-curation.md` via `_shared/harness-health-analysis.md`, surfaced as a Console queue write) composes its backlog record without `verifiedAsOf`. So an over-budget record carries a measured claim (\"205 lines vs the 150 budget\") that no later phase can date or re-measure.\n\nObserved on plugin 6.114.1 in a private project: the record was filed at 205 lines; two days later another record brought the file to 146; a dispatch then built the over-budget record through a full build/review cycle, with `drift: null` at materialize, `claudeMdOverBudget` already `false` at the base, and the premise discovered only at plan time. `_shared/reverify-before-write.md` states the measure-before-you-act posture for writes; nothing applies it to a record's stated premise at run start. #1769 (shaped by this sweep) adds an `ASSUMPTION — verify at build` marker for claims the composer cannot settle; this record is the complementary mechanical case, where the claim *is* a command.\n\n## Deliverables\n\n- [ ] **Measured fact, not a boolean.** `facts.js`: keep `claudeMdOverBudget` (boolean, read by `engine-plan.js` and `registry.js`'s gate) and add a sibling fact `claudeMdBudgetTargets: [{path, lines, budget}]` for every in-scope target, computed in the same pass. Expand-contract: no existing consumer changes; the curation row reads the new fact.\n- [ ] **Stamp the filing.** `claude-md-curation.md`: the over-budget record composed by the row's queue write goes through `specShapedBody` with `verifiedAsOf` set to the sha wrap-up read the repo at (the same HEAD `wrap-up-pack.json`'s `state` probe records), a Current State line per over-budget target in the form `` `{path}`: {lines} lines vs the {budget}-line budget (`wc -l {path}` at {sha}) ``, and a new optional body-metadata line `Premise-check: {command}` whose command exits 0 while the premise still holds — for this filing, one `test $(wc -l < {path}) -gt {budget}` per target, joined with `&&` when several.\n- [ ] **Materialize runs the premise check.** `record.js`: `extractPremiseCheck(body)` for the `Premise-check:` line, documented beside `VERIFIED_AS_OF_RE` as an optional single-line metadata field. `materialize.js`: when present, run it from the checkout root with the CLI's usual short timeout and add `premise: { command, exit, satisfiedAtBase }` to the envelope (`satisfiedAtBase: true` when exit is non-zero); `null` when the line is absent. On `satisfiedAtBase`, print one stderr sentence in the drift sentence's shape (\"premise already satisfied at base: `{command}` exited {n}\") and, under a run dir, log a `STAGED` decision (`_shared/auto-decision-log.md`) with a staged note in `staged/` proposing to close the record as already satisfied — never a silent proceed, never a hard stop from the CLI.\n- [ ] **Build acts on it.** `flow/materialize.md` gains a \"Premise check\" paragraph beside the two drift paragraphs; `build/SKILL.md`'s Spec Step 2 (existing-progress check) reads `premise.satisfiedAtBase` from the envelope and, when true, routes to the Review Console's staged close rather than planning — the same surface an unattended run already uses for staged proposals.\n- [ ] **Tests.** `tests/bin-lib/wrap-up/facts.test.js` (or the sibling that pins `computeClaudeMdOverBudget`): targets list populated with `lines`/`budget`, boolean unchanged. `tests/materialize-drift.test.js` sibling `tests/materialize-premise-check.test.js`: no line → `premise: null`; exit 0 → `satisfiedAtBase: false`; exit 1 → `true` plus the stderr sentence; a throwing runner degrades to `null`, never a crash (mirroring the drift tests' shapes). A prose pin asserting `claude-md-curation.md` names `verifiedAsOf` and `Premise-check:`, and `materialize.md` carries the paragraph.\n\n## Acceptance Criteria\n\n1. A wrap-up run whose CLAUDE.md exceeds its budget files a record whose body carries `Verified-as-of: {sha}`, the measured `{lines} vs {budget}` line per target, and a `Premise-check:` line; `materialize.js` on that record reports non-null `drift` and non-null `premise`.\n2. `computeClaudeMdOverBudget` still returns the same boolean for every fixture in the existing facts test; `claudeMdBudgetTargets` lists each in-scope target with `lines` and `budget`.\n3. `node bin/materialize.js #N` on a record whose `Premise-check:` command exits non-zero prints the \"premise already satisfied at base\" sentence, sets `premise.satisfiedAtBase: true`, and (with `--run-dir`) writes a `STAGED` line and a staged close note; a record with no `Premise-check:` line behaves byte-identically to today.\n4. `build/SKILL.md` Spec Step 2 names `premise.satisfiedAtBase` and routes it to the Console's staged close; `flow/materialize.md` documents `Premise-check:` beside the drift paragraphs.\n5. `npm test` green; every existing case in `tests/materialize-drift.test.js` and the facts tests unchanged.\n6. Replaying the reported sequence in a fixture (file over budget at filing, under budget at base) ends with a staged close proposal and no plan authored; quoted in the PR description.\n\n## Technical Approach\n\nTwo hops, both additive: the filing side gets what the health sweeps already have (a stamp) plus the one thing a mechanical premise needs (its command); the materialize side gains one optional metadata line and one optional envelope field. Do not generalize to \"re-measure any Current State that looks mechanical\" — the filing site knows its command, the reader should not guess one (#1769 covers the non-mechanical case with a marker). The `Premise-check:` command runs in the checkout being materialized, so it is inherently repo-local; the record composer must write only commands that need no network and no plugin path.\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/facts.js` — `claudeMdBudgetTargets` sibling fact beside `computeClaudeMdOverBudget`\n- `plugin/skills/wrap-up/claude-md-curation.md` — over-budget filing: `verifiedAsOf`, measured line, `Premise-check:` line\n- `plugin/bin/lib/issues/record.js` — `extractPremiseCheck` beside `extractVerifiedAsOf`; `specShapedBody` renders the optional line\n- `plugin/bin/materialize.js` — run the check; `premise` envelope field; stderr sentence; staged close under `--run-dir`\n- `plugin/skills/flow/materialize.md` — \"Premise check\" paragraph\n- `plugin/skills/build/SKILL.md` — Spec Step 2 routing on `premise.satisfiedAtBase`\n- `tests/materialize-premise-check.test.js`, `tests/bin-lib/wrap-up/facts.test.js` — new cases\n\n## Gotchas\n\n- `specShapedBody` enforces sha shape on `verifiedAsOf`; pass a full or 7+ hex sha, never a ref name.\n- Body-metadata lines are plain lines before the first `##`, never YAML frontmatter (`materialize.md`'s own convention note); `Premise-check:` follows the same rule and must be single-line.\n- The check runs an arbitrary shell command from a record body — bound it to the filing site's own composer (this plugin writes it), document that materialize runs it, and keep the timeout short; a hostile or broken command degrades to `premise: null` with a stderr note, never a crash (same posture as `computeDrift`'s throwing-runner test).\n- `engine-plan.js`'s `claudeMdOverBudget` open/closed labels are pinned by tests; the boolean's name and semantics must not change.\n\n## Original request\n\n**Summary:** A work record filed by wrap-up's CLAUDE.md & rules row from the `claudeMdOverBudget` signal (\"CLAUDE.md is 205 lines vs the 150 budget\") was later dispatched after an unrelated compression had already brought the file to 146 lines; because the filing carries no `Verified-as-of` stamp, `flow/materialize.md`'s freshness-stamp and named-location drift checks read `null`, and the build phase only discovered at plan time that the acceptance criterion was already met at the branch base.\n\n**Kind:** Gap\n\n**Affected component:** `/claude-tweaks:wrap-up` — `skills/wrap-up/claude-md-curation.md`'s over-budget filing; `skills/flow/materialize.md` — \"Freshness-stamp drift (#117)\" / \"Named-location drift (#315)\"\n\n**Use case:** In a private project, wrap-up's CLAUDE.md & rules row filed a record for an over-budget CLAUDE.md (measured at 205 lines). Two days later a separate record compressed the Don'ts to 146 lines. A dispatch firing then claimed and built the over-budget record: materialize's drift stamp was `null` (the filing is not produced by a health sweep, so `specShapedBody`'s `verifiedAsOf` was never set), the plugin fact check `claudeMdOverBudget` already read `false` at build time, and the pipeline still ran a full build/review cycle whose only remaining value was restructuring (a `paths:`-scoped rule) rather than the trim the record asked for. The build disclosed the drift in the PR body and a follow-up record, but nothing stopped or re-scoped the run at the point where the premise was measurable. Two possible fixes, either would do: (1) have the `claudeMdOverBudget` filing stamp `Verified-as-of: {sha}` (and the measured number) the same way the four health sweeps do, so materialize's existing drift check has something to compare; and/or (2) let materialize re-measure a record whose Current State names a mechanical check (`wc -l CLAUDE.md`, a line budget) and surface \"premise already satisfied at base\" as a first-class stop/decision before the build starts — the same \"measure before you act\" posture `_shared/reverify-before-write.md` already takes for writes.\n\n**Definition:** Clear — the filing site and the drift check both exist; the gap is the missing stamp between them.\n\n**Plugin version:** 6.114.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-13590db7 -->\n\n",
-        "createdAt": "2026-09-04T11:50:15Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1829,
-        "state": "OPEN",
-        "title": "wrap-up CLAUDE.md curation: an over-budget filing carries no Verified-as-of stamp, so materialize's drift check cannot catch a premise satisfied before dispatch",
-        "updatedAt": "2026-09-14T14:38:10Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\n#360 (merged via PR #492, 2026-08-15) added an instruction to `skills/build/SKILL.md`'s `**subagent** (default):` paragraph directing `/build` to forward the parent spec's Acceptance Criteria excerpt to `/superpowers:subagent-driven-development`'s per-task review dispatches. #360's own Acceptance Criterion 4 required this be verified in a real composed dispatch prompt, not just confirmed by inspecting the instruction text in `skills/build/SKILL.md`.\n\nDuring the 7-spec multi-record `/flow` run that shipped #360, every one of the 7 specs was small enough (1-3 files, size:low) that direct implementation was used instead of dispatching through `/superpowers:subagent-driven-development`, so AC4 was never exercised. A second real opportunity occurred 2026-09-05 (record #1537, run `2026-09-05T132902-record-1537`): its `decisions.md` confirms an actual `/superpowers:subagent-driven-development` dispatch happened (its scratch directory `.superpowers/sdd/2026-09-05-claude-md-auto-mode-contract-drift-fix/` was created and later cleaned up per that run's own Cleanup step), but nothing in that run's `decisions.md` captured whether the per-task dispatch prompt actually carried the parent AC excerpt, and the scratch directory holding the real prompt is already deleted (gitignored, swept by that run's own cleanup). AC4 is still unverified two occurrences later — the instruction text remains correctly placed and worded by inspection, but nobody has yet captured live proof it lands in a real dispatch prompt.\n\n## Deliverables\n\nNext time a `/flow` or `/build` run's plan has 2+ tasks and genuinely reaches `/superpowers:subagent-driven-development` dispatch, capture one per-task review dispatch prompt (before its scratch directory is cleaned up) and confirm it carries the parent spec's Acceptance Criteria excerpt, not just the task's own brief.\n\n## Acceptance Criteria\n\n- A captured, real per-task dispatch prompt from a live `/superpowers:subagent-driven-development` invocation is checked for the parent spec's AC excerpt.\n- If present: close this record, citing the confirming run id and pointing at the captured prompt text (or its location) as evidence.\n- If absent: this is a real gap in `/build`'s Common Step 2 — file it as its own fix-shaped record rather than silently leaving the instruction unverified again.\n\n## Technical Approach\n\nNo code change by default — this is a verification task. Watch for the next `/flow`/`/build` run whose plan dispatches 2+ tasks through `/superpowers:subagent-driven-development` (the SDD scratch directory appears at `.superpowers/sdd/{run-slug}/` during the run, before cleanup) and read one per-task dispatch prompt from that live session before the scratch directory is swept. If `/build`'s Common Step 2 needs a fix, the change lands in `skills/build/SKILL.md`'s `**subagent** (default):` paragraph itself.\n\n### Key Files\n\n- `plugin/skills/build/SKILL.md` — the `**subagent** (default):` paragraph carrying the AC-forwarding instruction; only edited if verification finds a real gap\n- `.superpowers/sdd/{run-slug}/` — ephemeral per-run scratch directory holding the actual dispatch prompts; must be read *during* the triggering run, before its own cleanup step deletes it\n\n## Gotchas\n\n- The evidence window is narrow: `/superpowers:subagent-driven-development`'s own scratch directory is gitignored and routinely cleaned up by the triggering run's own Cleanup step (confirmed on record #1537) — capture the prompt live, during the run, not after.\n- Two occurrences (the #360 batch, record #1537) have now passed without AC4 being exercised; if a third occurrence also passes unverified, consider whether the verification step itself needs to be made a standing part of `/build`'s own procedure rather than relying on someone remembering to check.\n\n## Original request\n\nreview: confirm #360's parent-AC-forwarding instruction actually surfaces in a live per-task SDD dispatch prompt\n\nTrigger: the next `/claude-tweaks:flow` (or standalone `/claude-tweaks:build`) run whose plan genuinely dispatches `/superpowers:subagent-driven-development` for 2+ tasks.\n\n## Context\n\n#360 (merged via PR #492, 2026-08-15) added an instruction to `skills/build/SKILL.md`'s `**subagent** (default):` paragraph directing `/build` to forward the parent spec's Acceptance Criteria excerpt to `/superpowers:subagent-driven-development`'s per-task review dispatches. #360's own Acceptance Criterion 4 required this be verified in a *real composed dispatch prompt*, not just confirmed by inspecting the instruction text in `skills/build/SKILL.md`.\n\nDuring the 7-spec multi-record `/flow` run that shipped #360, every one of the 7 specs (including #360 itself) was small enough (1-3 files, size:low) that I implemented directly rather than dispatching through `/superpowers:subagent-driven-development` — a deliberate, disclosed shortcut for that batch's actual scope, but it means AC4 was never exercised live. The instruction text is correctly placed and worded (verified by inspection), but nobody has yet observed it landing inside a real per-task reviewer's dispatch prompt.\n\n## What to do\n\nNext time a `/flow` or `/build` run's plan has 2+ tasks and genuinely reaches `/superpowers:subagent-driven-development` dispatch, capture one per-task review dispatch prompt and confirm it carries the parent spec's Acceptance Criteria excerpt (not just the task's own brief). If it does — close this record, noting the confirming run. If it doesn't — that's a real gap in `/build`'s Common Step 2, worth its own fix.\n\nFiled via retroactive reflect pass, standalone `/claude-tweaks:wrap-up` (2026-08-15), after the #360 multi-spec batch merged.\n",
-        "createdAt": "2026-08-15T16:40:54Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          }
-        ],
-        "number": 496,
-        "state": "OPEN",
-        "title": "review: confirm #360's parent-AC-forwarding instruction actually surfaces in a live per-task SDD dispatch prompt",
-        "updatedAt": "2026-09-14T14:38:15Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "**Skill:** shared-contract-extraction | **Section:** Gotchas | **Category:** drift | **Classification:** additive | **Confidence:** high\n\nVerified-as-of: 39c3b46bd5b903eb1f9862f557a5c6276b4cb5b6\n\n## Current State\n\ndocs/plugin-structure.md's `_shared` row (lines 94 and 100) was amended by commit 399981c52 (\"ceremony-profile.md rowed in plugin-structure\", refs #1926) after a whole-branch review lens flagged its absence — the opposite outcome from the #1995 `dispatch-waiting.md` case this skill cites as its only worked example, so the skill's unconditional \"needs nothing\" claim no longer matches actual reviewed practice.\n\n## Deliverables\n\n**Current:**\n```\n- **A new `_shared/*.md` file registers in `docs/skill-graph.md` only — `docs/plugin-structure.md` needs nothing.** Step 3's \"cross-reference `docs/plugin-structure.md`'s per-skill sub-file table as a registration site\" is right for a skill's *own* lazy-loaded sub-file and wrong for a `_shared` contract: that doc carries one curated row for the whole directory (`plugin/skills/_shared/*.md → Cross-skill shared content … — see the directory listing`), not a per-file table, so adding a row there is drift, not registration. Step 4's edge is still owed, including when no skill names the new file directly — file the graph row under the section for the reader it addresses and say so in the row. #1995's `_shared/dispatch-waiting.md` is the worked case: one `docs/skill-graph.md` row filed under `dispatch` (\"cited only from the contract's one-line pointer — no skill names it directly … for want of a section for contract-owned files\"), no `plugin-structure.md` edit, ruling narrowed from the plan's first draft at whole-branch review.\n```\n\n**Proposed:**\n```\n- **A new `_shared/*.md` file's `docs/skill-graph.md` edge is mandatory; a `docs/plugin-structure.md` mention is a judgment call, not a given.** Step 3's \"cross-reference `docs/plugin-structure.md`'s per-skill sub-file table as a registration site\" is right for a skill's *own* lazy-loaded sub-file and wrong to apply unmodified to a `_shared` contract: that doc carries one curated row for the whole directory (`plugin/skills/_shared/*.md → Cross-skill shared content … — see the directory listing`), not a per-file table, so adding a *new dedicated row* there is drift, not registration. Step 4's edge is still owed, including when no skill names the new file directly — file the graph row under the section for the reader it addresses and say so in the row. #1995's `_shared/dispatch-waiting.md` is the worked case for staying out of `plugin-structure.md` entirely: one `docs/skill-graph.md` row filed under `dispatch` (\"cited only from the contract's one-line pointer — no skill names it directly … for want of a section for contract-owned files\"), no `plugin-structure.md` edit, ruling narrowed from the plan's first draft at whole-branch review. That is not the only outcome, though: #1926's `_shared/ceremony-profile.md` was added *into* the curated row itself on a review finding (\"the curated `_shared` row lists ceremony-profile.md\", `399981c52`) — the row's own self-description (\"a curated subset … only the fragments worth calling out here\") makes whether to fold the new file into that curated list an explicit judgment call each extraction has to make, not a rule that always resolves to \"nothing.\"\n```\n\n## Acceptance Criteria\n\nThe Gotchas section's absolute claim that a new `_shared/*.md` file never needs a `docs/plugin-structure.md` mention is contradicted by #1926's `_shared/ceremony-profile.md`, which a whole-branch review explicitly required adding to that doc's curated `_shared` row.\n\n_Filed by `/claude-tweaks:harness-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n\n<!-- work-fingerprint: harnesshealth-7f78d679 -->\nwork-fingerprint: harnesshealth-7f78d679",
         "createdAt": "2026-09-11T05:19:35Z",
         "labels": [
@@ -3479,72 +3225,6 @@
     ],
     [
       {
-        "body": "Surface: backend\n\nOrigin: ledger resolve gate\n\nDefer-reason: genuinely-larger\n\n## Current State\n\nDuring record #1276's wrap-up Phase 2 (ROUTE), the Skills-row curation judge followed `.claude/skills/skill-prose-conformance-tests/SKILL.md`'s own \"Record the audit\" step, which invokes `harness-health.js validate-findings`. That step pushed a commit (`dad090519`) to the remote `health-state` tracking branch — a git mutation. The judge's dispatch prompt, composed per `plugin/skills/wrap-up/curation-engine.md` section 4, explicitly forbids any git mutation (\"never run git add, git commit, or any other git mutation\"), on the grounds that the controller alone commits, serially, after auditing each finding. The judge grepped the dispatcher for `git`/`spawnSync` beforehand and found nothing — the durable-state write lives on a path that grep missed (inside `harness-health.js`'s own audit-recording mechanism, invoked as a documented step of the project skill it was applying, not as a git command the judge composed itself).\n\nBlast radius was contained: the push landed only on `health-state` (2 files, cursor/run bookkeeping — never the feature branch, never `main`), recorded zero findings, and left the worktree HEAD and working tree exactly as the judge's own edits left them. But the underlying gap is real: `curation-engine.md`'s dispatch contract has no carve-out for a project skill's own legitimate, sanctioned bookkeeping writes to a dedicated tracking branch, so a judge following a project skill's documented procedure can violate the contract without realizing it — the contract and the project skill disagree, and nothing in either file resolves the disagreement.\n\n## Deliverables\n\n- [ ] Decide the resolution direction: either (a) `curation-engine.md`'s dispatch-prompt git-mutation prohibition gets an explicit carve-out for a project skill's own sanctioned bookkeeping branch writes (name the pattern — a push to a branch distinct from the worktree's own feature branch and from the integration branch, or an explicit allowlist), or (b) `.claude/skills/skill-prose-conformance-tests/SKILL.md`'s \"Record the audit\" step gains a precondition that skips the write when invoked from a context whose contract forbids git mutation (e.g. a documented env var or a passed flag the dispatch prompt sets).\n- [ ] Implement the chosen direction.\n- [ ] Add a conformance test or explicit inline note documenting the resolved contract, so a future dispatch-contract change doesn't silently reintroduce the conflict.\n\n## Acceptance Criteria\n\n1. A Skills-row (or any other curation-engine.md fan-out/singleton) judge dispatch, run against a project whose applicable skill file includes a git-mutating audit-recording step, either completes the write safely under a stated, narrow exception, or the write is skipped with the skip logged — never an unnoticed, unauthorized push.\n2. `npm test` passes.\n\n_Filed by `ledger resolve gate`. Close to resolve; label `wontfix` to suppress future reports of this finding._",
-        "createdAt": "2026-08-29T18:01:26Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          }
-        ],
-        "number": 1676,
-        "state": "OPEN",
-        "title": "Resolve the curation-engine.md dispatch contract vs. project-skill git-mutation conflict",
-        "updatedAt": "2026-09-14T14:38:13Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: reflect full-mode from #1076\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:build` Common Step 2 executes plans via `/superpowers:subagent-driven-development`, whose own Finish step deletes the plan's SDD workspace (`.superpowers/sdd/{plan}/`) once the final review is clean — including `progress.md`, where SDD convention ledgers deferred-minor review findings. claude-tweaks' wrap-up reads only the run ledger (`docs/plans/*-ledger.md`), so any observation ledgered solely in the SDD workspace is structurally lost at the seam. Observed in run 2026-08-20T154419-spec-1076: a scoped re-review's out-of-scope observation survived only because a later hindsight pass happened to re-surface it.\n\n## Deliverables\n\n- [ ] `plugin/skills/build/SKILL.md` Common Step 2 (or the SDD invocation instruction it composes) directs the controller to copy any surviving SDD deferred-minor / parked-finding ledger lines into the run ledger (phase `build/*`, status `deferred` or `observation`) before the SDD workspace is deleted.\n- [ ] The instruction names the source (`{workspace}/progress.md` lines matching `minor (deferred)` / `parked`) and the destination table's column shape.\n\n## Acceptance Criteria\n\n1. After a `/build` run whose SDD pass recorded at least one deferred minor, the run ledger contains those lines and the SDD workspace is deleted — verifiable by inspecting `docs/plans/{run}-ledger.md` post-build.\n2. A conformance check (or the existing suite pattern) pins the instruction's presence in `build/SKILL.md`.\n\n_Filed by `reflect` via wrap-up upstream-row self-reference collapse._\n",
         "createdAt": "2026-08-20T19:15:08Z",
         "labels": [
@@ -3608,84 +3288,6 @@
           "grants": {
             "build": true,
             "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\n\n## Current State\n\n#647's expand phase shipped per-grant `grants.{bornReady,bornAuthorized}.{granted,reason}` in `bin/lib/issues/autonomy.js` (`permittedGrants`), fixing a bug where the flat top-level `reason` string could pair a granted `bornReady` with the other grant's denial text. The flat `bornReady`/`bornAuthorized`/`reason` keys were kept as a transitional twin, with the module header (`bin/lib/issues/autonomy.js`, lines ~10-15) recording a removal condition: delete the flat keys at the first release on or after 2026-11-16 (ship date + 3 months, per `policy-deprecations.md`'s dated-backstop shape).\n\nTwo skill-text consumers carry a matching read-side fallback, tagged with the same removal condition: `skills/capture/SKILL.md` (line ~144) and `skills/backlog/refine-mode.md` (line ~223), both doing `(permitted.grants || {}).bornReady || { granted: permitted.bornReady, reason: permitted.reason }`.\n\nConfirmed at shaping time (2026-08-17): the module header text, both fallback call sites, and `skills/backlog/refine-lanes.md`'s rendered trust-consequence line (`↳ trust: {provenance} / {band} — {verdict}{, {coverage}% coverage}`) all reproduce exactly as described — the trust-table snippet's `bornReady`/`reason` output fields (written to `/tmp/backlog-refine-trust.json`) are genuinely dead: nothing downstream reads or renders them.\n\nThe removal date (2026-11-16) has **not** yet passed as of this record's shaping (2026-08-17) — it is roughly three months out. This record documents and prepares the contract phase; it does not authorize building the removal before that date.\n\n## Deliverables\n\n- [ ] Verify, at build time, that the current date is on or after 2026-11-16 (the first release on/after that date) before making any of the changes below. If built before that date, stop without editing anything and report the record as not yet actionable — see Acceptance Criteria #1, a hard gate.\n- [ ] Re-run `grep -rn \"permittedGrants\" skills/ bin/` to confirm every consumer still reads only `grants.*` shapes (no new flat-key consumer introduced since shaping).\n- [ ] Remove the flat `bornReady`/`bornAuthorized`/`reason` keys from `permittedGrants`'s return value in `bin/lib/issues/autonomy.js`, and delete the module-header comment block documenting the now-resolved removal condition.\n- [ ] Remove the matching read-side fallback in `skills/capture/SKILL.md` (the `(permitted.grants || {}).bornReady || { granted: permitted.bornReady, reason: permitted.reason }` pattern and its explanatory comment), reading `permitted.grants.bornReady` directly.\n- [ ] Remove the matching read-side fallback in `skills/backlog/refine-mode.md` (same pattern, same treatment).\n- [ ] Drop the dead `bornReady`/`reason` output fields from `skills/backlog/refine-mode.md`'s trust-table snippet (the `node -e` block that writes `/tmp/backlog-refine-trust.json`) — confirmed nothing downstream (`skills/backlog/refine-lanes.md`'s rendered trust-consequence line) reads them.\n- [ ] Decide, and record the decision inline as a code/skill-text comment, how to handle the two disclosed conflation residues before deleting the flat keys:\n  1. Withheld grants share one reason string today — `grants.bornAuthorized.reason` can carry born-ready's rationale on the human-filed path. Decide whether this stays as-is (the per-grant shape already fixes the *granted*-path pairing bug; the withheld-grant sharing is a separate, lower-severity residue) or gets its own follow-up record.\n  2. The granted path's flat `reason` today carries positive rationale text (\"class is clean, ceiling is unattended, grant origination opted in\") that no per-grant key reproduces. Decide whether to populate that positive rationale into the granted per-grant `reason` field, or record explicitly (in a code comment) that it is intentionally dropped as noise once the grant itself is visible via `granted: true`.\n- [ ] Update or remove the flat-key compat tests in the `bin-lib/issues` test suite to match the per-grant-only shape.\n\n## Acceptance Criteria\n\n1. **Hard precondition, checked first:** the build only proceeds once the current date is on or after 2026-11-16. A build attempted before that date stops without modifying any file and reports the record as not yet actionable — this is not a normal \"build failed\" outcome, it is the record's own documented gate.\n2. `permittedGrants` (`bin/lib/issues/autonomy.js`) returns only the per-grant `grants.{bornReady,bornAuthorized}.{granted,reason}` shape — no flat `bornReady`/`bornAuthorized`/`reason` keys at the top level.\n3. No consumer (code or skill text, across `skills/` and `bin/`) reads the flat keys or carries a fallback for them — confirmed via `grep -rn \"permittedGrants\" skills/ bin/` read against every hit.\n4. `skills/backlog/refine-mode.md`'s trust-table snippet no longer computes or emits `bornReady`/`reason` fields.\n5. The two conflation-residue decisions are recorded (as a comment near the code they affect, or in this record's own close-out note) — not silently dropped.\n6. `npm test` passes with the flat-key compat tests updated or removed.\n\n## Technical Approach\n\nStart with the grep re-verification (Deliverables item 2) — the module header itself calls this out as the first step, since a consumer could have appeared between #647 shipping and this record's execution.\n\n`bin/lib/issues/autonomy.js`: delete the flat keys from `permittedGrants`'s two return objects (denied-path and granted-path, around current lines 128-155) and the header comment block (lines 10-15) documenting the removal condition — the condition is satisfied, not evergreen.\n\n`skills/capture/SKILL.md` (~line 144) and `skills/backlog/refine-mode.md` (~line 223): drop the `|| { granted: permitted.bornReady, reason: permitted.reason }` fallback half of each destructure, reading `permitted.grants.bornReady` directly; delete the accompanying \"older installed build\" comment.\n\n`skills/backlog/refine-mode.md`'s trust-table `node -e` block (~lines 219-234): remove `bornReady`/`reason` from the `out[issue.number]` object literal.\n\nFold the two conflation-residue decisions into the same edit pass — they're small text/comment changes, not separate work.\n\nGrep the `bin-lib/issues` test directory for `bornReady`/`bornAuthorized` flat-key assertions on `permittedGrants`'s return value and update/remove them alongside the source change, in the same commit.\n\n## Gotchas\n\n- **Date gate is load-bearing, not advisory.** This record was shaped on 2026-08-17, roughly three months before the 2026-11-16 backstop. Confirmed by reading `bin/lib/issues/autonomy.js`'s own module header, which states the removal condition explicitly and cites `policy-deprecations.md`'s dated-backstop shape as precedent for this pattern (see also #628/#629, which apply the same shape to `policy.yml` key retirements). Marking this record `ready` reflects that it is *shaped* and *queued*, not that it is *buildable today* — `/specify` has no mechanism to hold a record out of `ready` pending a future calendar date (only `parked` + `Trigger:` does that, and only `/tidy`/`/wrap-up`/`/reflect`/`/review`'s Defer paths can add it), so this Gotcha and Acceptance Criterion 1 are the only gate. Whoever dispatches this record (`/flow`, `/build`, or a human) must re-check the date before touching code.\n- **Information loss is real if the conflation residues are skipped.** Deleting the flat keys without deciding the two residues (the Deliverables item above them) silently drops the granted-path's positive rationale text — no per-grant key reproduces it today. This isn't a formatting nit; a human reading a future trust/grant explanation loses the \"why\" for a clean grant unless this is deliberately decided and recorded.\n- **Verified against live code at shaping time**, not taken on faith from the issue text: read `bin/lib/issues/autonomy.js` lines 1-40 (module header and `permittedGrants`), `skills/capture/SKILL.md` line ~144, `skills/backlog/refine-mode.md` lines ~203-235, and `skills/backlog/refine-lanes.md` lines ~75-100 (the rendered trust-consequence template, confirming it never references `bornReady`/`reason`). All three deliverables reproduce exactly as the original request states — no false premise to correct here.\n\n## Original request\n\npermittedGrants contract phase — remove flat bornReady/bornAuthorized/reason at the 2026-11-16 backstop\n\nTitle: permittedGrants contract phase — remove flat bornReady/bornAuthorized/reason at the 2026-11-16 backstop\nType: task\nLabels: none\n\n# Staged work-record proposal — #647 contract phase (remove permittedGrants flat keys)\n\n**Related:** #647\n\n## Current State\n\n#647's expand phase shipped per-grant `grants.{bornReady,bornAuthorized}.{granted,reason}` in `bin/lib/issues/autonomy.js` with the flat keys kept as a transitional twin; the removal condition is dated 2026-11-16 in the module header. The skill-text consumers (`skills/capture/SKILL.md`, `skills/backlog/refine-mode.md`) carry read-side fallbacks for installed-build skew, tagged with the same removal condition.\n\n## Deliverables\n\n- [ ] Remove the flat `bornReady`/`bornAuthorized`/`reason` keys and the skill-text fallback reads at the first release on or after 2026-11-16; re-run `grep -rn \"permittedGrants\" skills/ bin/` first to confirm every consumer reads `grants.*`.\n- [ ] Drop the dead `bornReady`/`reason` fields from `skills/backlog/refine-mode.md`'s trust-table snippet output (nothing renders them — the table spec forbids rendering `reason`), retiring the compatibility fallback with them (folded from the batch curation pass's staged dead-field cleanup, wrap-up-skill-refine-trust-dead-fields.md).\n- [ ] Decide the two disclosed conflation residues at contract time: (1) withheld grants share one reason string — `grants.bornAuthorized.reason` can carry born-ready's rationale on the human-filed path; (2) the granted path's flat `reason` carries positive text (\"class is clean, ceiling is unattended, grant origination opted in\") that no per-grant key reproduces — deleting the flat keys is information-lossy unless the positive rationale is populated into granted per-grant reasons or recorded as intentionally dropped.\n\n## Acceptance Criteria\n\n1. `permittedGrants` returns only the per-grant shape; `npm test` passes with the flat-key compat tests updated or removed.\n2. No consumer (code or skill text) reads the flat keys or carries a fallback.\n\nOrigin: whole-branch review of run 2026-08-16T164927-spec-647-648 (Important finding #1 + Minor #2 + Recommendation).\n",
-        "createdAt": "2026-08-16T18:22:45Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          }
-        ],
-        "number": 666,
-        "state": "OPEN",
-        "title": "permittedGrants contract phase — remove flat bornReady/bornAuthorized/reason at the 2026-11-16 backstop",
-        "updatedAt": "2026-09-14T12:08:43Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
           },
           "bot": {
             "inProgress": false,
