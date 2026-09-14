@@ -37,6 +37,8 @@ test('#2430: drain termination re-runs reconcile a second time so merged-PR work
   assert.match(section, /run `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js" reconcile` a second time/);
   assert.match(section, /reaped now rather than left for a future session's SessionStart hook to discover/);
   // Step 1's own first reconcile call stays as-is -- this is additive, not a replacement.
+  // Scope is Steps 1-3 (the drain-termination block lives at the end of Step 3's own text,
+  // before the Step 4 heading) -- not literally "Step 1" alone.
   const throughStep3 = t.slice(t.indexOf('### Step 1: Resolve'), t.indexOf('### Step 4: Mint'));
-  assert.strictEqual((throughStep3.match(/hooks\.js" reconcile/g) || []).length, 2, 'exactly two reconcile call sites: Step 1 and drain termination');
+  assert.strictEqual((throughStep3.match(/hooks\.js" reconcile/g) || []).length, 2, 'exactly two reconcile call sites in Steps 1-3: Step 1\'s own call, and drain termination');
 });

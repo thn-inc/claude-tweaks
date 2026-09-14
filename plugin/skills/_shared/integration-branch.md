@@ -23,7 +23,7 @@ Take the **first** source that yields a branch name; once one does, the rest are
    The resolver strips a trailing inline comment from the value — this value is pasted into checkout and merge-base commands, where a trailing `# note` would become part of the branch name. An unset key prints an empty line, which falls through to rank 4.
 4. **A branching model stated unambiguously in CLAUDE.md prose** — "development happens on `dev`", "branch from `dev`, PR into `dev`". A section that merely *names* several branches, or describes a release train without saying where work lands, resolves nothing: fall through to 5 rather than guessing which name is the one. (This reads project *documentation*, not configuration — it is not a config-key lookup and is unaffected by policy.yml being the sole config home.)
 5. **Git — the current branch, checked against the GitHub default:** as three separate
-   single-command Bash calls (`_shared/worktree-setup.md`'s "## 7. Shell constraint" applies here
+   single-command Bash calls (`_shared/scratch-worktree.md`'s "## 7. Shell constraint" applies here
    too whenever this rank is resolved from inside an isolated worktree) — never combine any of
    these with each other, or with a `$(...)` substitution feeding a git command, in one call:
 
