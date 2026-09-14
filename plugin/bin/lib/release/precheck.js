@@ -98,13 +98,10 @@ function precheck(deps, part, opts = {}) {
   // nextVersion's derivation but not the collision check below — it must still
   // be ahead of the computed base, checked separately since "not ahead" is a
   // usage error (the caller picked a bad value), never a version collision.
-  if (opts.releaseAs) {
-    if (compareVersions(opts.releaseAs, base) <= 0) {
-      return { candidate: opts.releaseAs, base, claims, result: { ok: false, usageError: true, conflicts: [], suggested: null } };
-    }
-    return { candidate: opts.releaseAs, base, claims, result: checkCollisions(opts.releaseAs, claims, part) };
+  const candidate = opts.releaseAs || nextVersion(base, part);
+  if (opts.releaseAs && compareVersions(candidate, base) <= 0) {
+    return { candidate, base, claims, result: { ok: false, usageError: true, conflicts: [], suggested: null } };
   }
-  const candidate = nextVersion(base, part);
   return { candidate, base, claims, result: checkCollisions(candidate, claims, part) };
 }
 

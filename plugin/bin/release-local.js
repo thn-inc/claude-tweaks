@@ -43,7 +43,7 @@ const USAGE = [
   '     3 nothing to release; 4 version collision;',
   '     5 release-hook failed after the tag (and push) landed — re-run the hook alone',
 ].join('\n');
-const VALUE_FLAGS = new Set(['--root', '--branch']);
+const VALUE_FLAGS = new Set(['--root', '--branch', '--release-as']);
 const POLICY_FILE = '.claude-tweaks/policy.yml';
 // Strict three-part semver, no `v` prefix — the same shape /claude-tweaks:release's
 // own --as flag already validates (#2326: threaded through as --release-as).
@@ -57,22 +57,19 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { opts.help = true; continue; }
     if (a === '--dry-run') { opts.dryRun = true; continue; }
-    if (a === '--release-as') {
-      const next = argv[i + 1];
-      if (next === undefined || next.startsWith('--')) return { error: '--release-as requires a value' };
-      i += 1;
-      if (!RELEASE_AS_RE.test(next)) return { error: `--release-as must be strict semver (X.Y.Z), got "${next}"` };
-      opts.releaseAs = next;
-      continue;
-    }
     if (VALUE_FLAGS.has(a)) {
       const next = argv[i + 1];
       if (next === undefined || next.startsWith('--')) return { error: `${a} requires a value` };
       i += 1;
-      if (a === '--root') opts.root = next; else opts.branch = next;
+      if (a === '--root') opts.root = next;
+      else if (a === '--branch') opts.branch = next;
+      else opts.releaseAs = next;
       continue;
     }
     return { error: `unknown argument: ${a}` };
+  }
+  if (opts.releaseAs !== null && !RELEASE_AS_RE.test(opts.releaseAs)) {
+    return { error: `--release-as must be strict semver (X.Y.Z), got "${opts.releaseAs}"` };
   }
   return opts;
 }
