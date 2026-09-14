@@ -1,6 +1,6 @@
 # Ledger Format — Shared Contract
 
-Canonical definition of the pipeline ledger's file format, status lifecycle, phase taxonomy, and resolve-gate procedure. Read by `/claude-tweaks:build`, `/claude-tweaks:test`, `/claude-tweaks:review`, `/claude-tweaks:wrap-up`, and `/claude-tweaks:flow` as a knowledge dependency — none of them invoke `/claude-tweaks:ledger` through the Skill tool; they read this file to learn the format, then read/write `docs/plans/YYYY-MM-DD-{feature}-ledger.md` directly using file operations. `skills/ledger/SKILL.md` is the thin skill for the two standalone human commands (`/claude-tweaks:ledger`, `/claude-tweaks:ledger resolve`) and cites this file rather than restating the contract.
+Canonical definition of the pipeline ledger's file format, status lifecycle, phase taxonomy, and resolve-gate procedure. Read by `/claude-tweaks:build`, `/claude-tweaks:test`, `/claude-tweaks:review`, `/claude-tweaks:wrap-up`, and `/claude-tweaks:flow` as a knowledge dependency — none of them invoke `/claude-tweaks:ledger` through the Skill tool; they read this file to learn the format, then read/write the ledger file at the location this file's Location section resolves, directly using file operations. `skills/ledger/SKILL.md` is the thin skill for the two standalone human commands (`/claude-tweaks:ledger`, `/claude-tweaks:ledger resolve`) and cites this file rather than restating the contract.
 
 ## Ledger File Format
 
