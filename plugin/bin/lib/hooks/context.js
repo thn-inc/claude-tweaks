@@ -112,7 +112,7 @@ function findNonCanonicalRunDirs(cwd) {
 // stale-run report) can stop early and never pay for the rest. Callers that
 // genuinely need the whole list (pre-tool-use's other-worktrees scan)
 // exhaust it via listRunDirsWithState below, which is unchanged in output.
-function* iterRunDirsWithState(cwd) {
+function* iterRunDirsWithState(cwd, opts = {}) {
   // Anchored to the MAIN checkout, not raw cwd. A run dir created inside a
   // linked worktree was previously invisible from the main checkout and vice
   // versa, which is why a worktree could hold the only copy of decisions.md /
@@ -140,10 +140,18 @@ function* iterRunDirsWithState(cwd) {
     .map((e) => e.name)
     .sort()
     .reverse();
+  // #1738: an opt-in filter, not a widened yield — the default (`opts.status`
+  // unset) is byte-identical to the exclude-clean behavior every existing
+  // caller relies on. `{ status: 'clean' }` inverts the same test to yield
+  // ONLY clean runs (session-start.js's #1493 AC5 staged-proposals scan,
+  // archive-merged.js's #1544 clean-status sweep), so both shapes still
+  // share the anchor, ordering, archive-twin skip, and `archiving`-claim skip
+  // below this line.
+  const wantClean = opts.status === 'clean';
   for (const name of names) {
     const dir = path.join(base, name);
     const state = readRunState(dir);
-    if (state && state.status === 'clean') continue;
+    if (Boolean(state && state.status === 'clean') !== wantClean) continue;
     // Defense in depth (#593): a stray top-level dir left behind by a
     // filesystem-only (non-git-aware) archival move — pre-fix, or any future
     // regression that reintroduces one — still has no local run-state.json
@@ -188,12 +196,12 @@ function* iterRunDirsWithState(cwd) {
   }
 }
 
-function listRunDirsWithState(cwd) {
-  return [...iterRunDirsWithState(cwd)];
+function listRunDirsWithState(cwd, opts) {
+  return [...iterRunDirsWithState(cwd, opts)];
 }
 
-function listRunDirs(cwd) {
-  return listRunDirsWithState(cwd).map(({ dir }) => dir);
+function listRunDirs(cwd, opts) {
+  return listRunDirsWithState(cwd, opts).map(({ dir }) => dir);
 }
 
 // Which run an event belongs to, and how confidently we know it (#62).
@@ -582,20 +590,37 @@ function stampAdHocRunDirForDenial(ctx) {
   } catch { return null; }
 }
 
+// #1737: the raw read-and-parse both events.jsonl consumers in this codebase
+// implement inline — read the file, split lines, skip blanks, JSON.parse each,
+// skip unparseable ones. `null` (absent or unreadable file) and `[]` (readable
+// but empty, or readable with every line unparseable) stay distinguishable —
+// callers that need to tell "we don't know" from "we know there's nothing"
+// (run-integrity.js's checkRunIntegrity via scanWrapupEvents below,
+// archive-merged.js's ownEventRecency) rely on that split.
+function readEventLines(runDir) {
+  let raw;
+  try { raw = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'); } catch { return null; }
+  const out = [];
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let ev;
+    try { ev = JSON.parse(line); } catch { continue; }
+    out.push(ev);
+  }
+  return out;
+}
+
 // events.jsonl scan for skill_invoked / claude-tweaks:wrap-up events; missing
 // file or unreadable -> null (indeterminate). Shared by run-integrity.js's
 // checkRunIntegrity and close-run-state.js's closeRunState — the single
 // reader for the paired appendEvent writer above (#380).
 const WRAP_UP_SKILL = 'claude-tweaks:wrap-up';
 function scanWrapupEvents(runDir) {
-  let raw;
-  try { raw = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'); } catch { return null; }
+  const lines = readEventLines(runDir);
+  if (lines === null) return null;
   let any = false;
   let wrapup = false;
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    let ev;
-    try { ev = JSON.parse(line); } catch { continue; }
+  for (const ev of lines) {
     if (!ev || ev.type !== 'skill_invoked') continue;
     any = true;
     if (ev.skill === WRAP_UP_SKILL) wrapup = true;
@@ -625,6 +650,6 @@ function appendEvent(runDir, type, data, attribution) {
 
 module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
-  readRunState, writeRunState, appendEvent, scanWrapupEvents, findRunByWorktreePath, findRunsByWorktreePath, RUN_ID_RE, findNonCanonicalRunDirs,
+  readRunState, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, RUN_ID_RE, findNonCanonicalRunDirs,
   rollbackMint, isStaleClaim, stampAdHocRunDirForDenial,
 };

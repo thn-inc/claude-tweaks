@@ -11,7 +11,7 @@ const { runGit } = require('../hooks/git-exec');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const {
-  iterRunDirsWithState, writeRunState, readRunState, RUN_ID_RE,
+  iterRunDirsWithState, writeRunState, readRunState, readEventLines,
 } = require('../hooks/context');
 const { resolvePrState, resolvePrStateByNumber } = require('./pr-state');
 const { recordResidueSuccess, trackResidue, pruneResidueFailures } = require('./cache');
@@ -31,6 +31,22 @@ const { checkRunIntegrity, fallbackBranch } = require('../hooks/run-integrity');
 // plausible pause before a retry picks the group back up, short enough that
 // a genuinely abandoned mint is swept the next day.
 const ORPHAN_MINT_TTL_MS = 24 * 60 * 60 * 1000;
+
+// #1734: the one stat-and-compare shared by every staleness predicate in this
+// file (isAdHocStandaloneSuperseded, isOrphanedMint, isStructurallyStuck all
+// carried byte-identical copies). Fail-closed toward "not stale" on any stat
+// failure (ENOENT, EACCES, …) — every caller relies on an unreadable directory
+// being left alone rather than swept. Strict `>` (not `>=`): exactly-at-TTL is
+// not yet stale.
+function isStaleDir(dir, ttlMs, now = Date.now()) {
+  let mtimeMs;
+  try {
+    mtimeMs = fs.statSync(dir).mtimeMs;
+  } catch {
+    return false;
+  }
+  return (now - mtimeMs) > ttlMs;
+}
 
 // An ad-hoc-standalone dir (`{ts}-adhoc-standalone`, minted by
 // post-tool-use.js's `stampAdHocRunDir` — see `run-dir-resolve.js`'s
@@ -80,13 +96,7 @@ function isAdHocStandaloneSuperseded(dir, state, worktrees, now = Date.now()) {
   if (!state || typeof state.worktree !== 'string' || !state.worktree) return false;
   const stillLive = worktrees.some((w) => path.resolve(w.path) === path.resolve(state.worktree));
   if (stillLive) return false;
-  let mtimeMs;
-  try {
-    mtimeMs = fs.statSync(dir).mtimeMs;
-  } catch {
-    return false;
-  }
-  return (now - mtimeMs) > ADHOC_SUPERSEDED_TTL_MS;
+  return isStaleDir(dir, ADHOC_SUPERSEDED_TTL_MS, now);
 }
 
 // #2227: a state-less run dir can still hold git-tracked content — a
@@ -118,13 +128,7 @@ function hasTrackedContent(root, dir) {
 function isOrphanedMint(dir, now = Date.now()) {
   if (fs.existsSync(path.join(dir, 'config.yml'))) return false;
   if (isAdHocStandaloneMint(dir)) return false;
-  let mtimeMs;
-  try {
-    mtimeMs = fs.statSync(dir).mtimeMs;
-  } catch {
-    return false;
-  }
-  return (now - mtimeMs) > ORPHAN_MINT_TTL_MS;
+  return isStaleDir(dir, ORPHAN_MINT_TTL_MS, now);
 }
 
 // An orphaned mint that reaches this function has nothing to git-mv and
@@ -192,15 +196,23 @@ function archiveOrphanedMint(root, dir) {
 // differently-tuned constant.
 const STALE_INTERRUPTED_TTL_MS = ORPHAN_MINT_TTL_MS;
 
-// Newest event this run can actually claim as its own, in ms — or null when
-// there are none (or the log is unreadable).
+// #1737: one read of events.jsonl (via context.js's shared readEventLines)
+// answering both questions `isAbandonedInterrupted` used to ask via two
+// separate reads. `readable` is distinct from `lastOwnMs`'s own `null`, which
+// conflates two different things: "the log is readable but has no qualifying
+// (non-fallback, parseable-ts) event" and "the log couldn't be read in the
+// first place." Only the caller below needs to tell those apart (#1673 F9
+// review finding): a genuinely unreadable/absent log is UNKNOWN evidence, not
+// proof of staleness.
 //
-// Deliberately NOT run-state's `updatedAt`, and deliberately excluding
-// `attribution: 'fallback'` lines: a fallback event is one ANOTHER session's
-// hook guessed into this run because the run had no provable owner
-// (context.js's resolveRun). Those lines advance `updatedAt` without this run
-// being alive at all, which is precisely how an abandoned run looks
-// perpetually busy and never becomes closeable (#1673 Deliverable 4).
+// `lastOwnMs` is the newest event this run can actually claim as its own, in
+// ms — or null when there are none. Deliberately NOT run-state's `updatedAt`,
+// and deliberately excluding `attribution: 'fallback'` lines: a fallback
+// event is one ANOTHER session's hook guessed into this run because the run
+// had no provable owner (context.js's resolveRun). Those lines advance
+// `updatedAt` without this run being alive at all, which is precisely how an
+// abandoned run looks perpetually busy and never becomes closeable (#1673
+// Deliverable 4).
 //
 // Deliberately asymmetric with context.js's `scanWrapupEvents` (read by
 // `checkRunIntegrity`), which does NOT filter fallback-attributed lines: a
@@ -210,35 +222,23 @@ const STALE_INTERRUPTED_TTL_MS = ORPHAN_MINT_TTL_MS;
 // is coherent and intended, not a bug to reconcile: the work shipped, and
 // nothing THIS run itself produced has touched it since — a future reader
 // should not "fix" the two filters into agreement.
-function lastOwnEventMs(runDir) {
-  let raw;
-  try { raw = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'); } catch { return null; }
+function ownEventRecency(runDir) {
+  const lines = readEventLines(runDir);
+  if (lines === null) return { readable: false, lastOwnMs: null };
   let newest = null;
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    let ev;
-    try { ev = JSON.parse(line); } catch { continue; }
+  for (const ev of lines) {
     if (!ev || ev.attribution === 'fallback') continue;
     const t = Date.parse(ev.ts);
     if (Number.isNaN(t)) continue;
     if (newest === null || t > newest) newest = t;
   }
-  return newest;
+  return { readable: true, lastOwnMs: newest };
 }
 
-// Whether runDir's events.jsonl exists and is readable at all — distinct
-// from `lastOwnEventMs`'s own `null`, which conflates two different things:
-// "the log is readable but has no qualifying (non-fallback, parseable-ts)
-// event" and "the log couldn't be read in the first place." Only the caller
-// below needs to tell those apart (#1673 F9 review finding): a genuinely
-// unreadable/absent log is UNKNOWN evidence, not proof of staleness.
-function hasReadableEventsLog(runDir) {
-  try {
-    fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8');
-    return true;
-  } catch {
-    return false;
-  }
+// Thin wrapper kept exported for existing callers (this file's own tests
+// import it directly) — `ownEventRecency` above is the one real reader now.
+function lastOwnEventMs(runDir) {
+  return ownEventRecency(runDir).lastOwnMs;
 }
 
 // The ownership half of the criterion, inverted from close-run-state.js's
@@ -272,8 +272,8 @@ function isAbandonedInterrupted(runDir, state, sessionId, now = Date.now()) {
   // happens to also require a readable log with >=1 skill_invoked before this
   // branch is ever reached, but that is a coincidence of two separate reads
   // at different moments, not a guarantee this function can rely on alone).
-  if (!hasReadableEventsLog(runDir)) return false;
-  const last = lastOwnEventMs(runDir);
+  const { readable, lastOwnMs: last } = ownEventRecency(runDir);
+  if (!readable) return false;
   if (last !== null && (now - last) <= STALE_INTERRUPTED_TTL_MS) return false;
   return true;
 }
@@ -1040,13 +1040,7 @@ const STRUCTURALLY_STUCK_REASONS = new Set(['no-worktree', 'no-branch', 'no-pr',
 // Pure except for the one mtime stat — no I/O beyond answering the question.
 function isStructurallyStuck(dir, reason, now = Date.now()) {
   if (!STRUCTURALLY_STUCK_REASONS.has(reason)) return false;
-  let mtimeMs;
-  try {
-    mtimeMs = fs.statSync(dir).mtimeMs;
-  } catch {
-    return false;
-  }
-  return (now - mtimeMs) > STRUCTURALLY_STUCK_TTL_MS;
+  return isStaleDir(dir, STRUCTURALLY_STUCK_TTL_MS, now);
 }
 
 // #1613: visibility only — never changes what archiveMerged does with the
@@ -1108,18 +1102,42 @@ function trackArchiveResult(root, repoSlug, dir, result, { escalate = escalateRe
 // gated below on a confirmed merged PR (never bare clean-status alone, per
 // this issue's own gotcha: a clean status is not itself proof the PR
 // merged).
+// #1738: reduced to the shared iterator's own `{ status: 'clean' }` filter —
+// same anchor, ordering, archive-twin skip, and `archiving`-claim skip every
+// other iterRunDirsWithState caller already gets, rather than this file's own
+// third hand-rolled copy of the walk.
 function iterCleanRunDirs(root) {
-  const base = path.join(root, '.claude-tweaks', 'pipelines');
-  let entries;
-  try { entries = fs.readdirSync(base, { withFileTypes: true }); } catch { return []; }
-  const out = [];
-  for (const e of entries) {
-    if (!e.isDirectory() || !RUN_ID_RE.test(e.name)) continue;
-    const dir = path.join(base, e.name);
-    const state = readRunState(dir);
-    if (state && state.status === 'clean') out.push({ dir, state });
+  return [...iterRunDirsWithState(root, { status: 'clean' })];
+}
+
+// #1733: the merged-PR archive sequence both the main loop and the
+// #1544 clean-status sweep run, once branch resolution has already produced a
+// `branch` to check — resolvePrState -> decideArchive -> (skip, with the
+// caller's own onSkip hook) -> localHasMerge -> (skip on not-yet-caught-up) ->
+// dryRun short-circuit -> archiveRunDir -> trackArchiveResult. `onSkip` is the
+// one place the two callers genuinely differ: the main loop also calls
+// `trackStuckSkip` on a `decideArchive` skip (#1613's structurally-stuck
+// visibility); the clean loop does not (see this file's clean-loop comment
+// for why that asymmetry is intentional, not a gap to "fix").
+function archiveMergedRun({ root, repoSlug, dir, branch, dryRun, onSkip }) {
+  const prState = resolvePrState(root, branch);
+  const consoleState = readConsoleState(dir);
+  const decision = decideArchive(prState, consoleState);
+  if (decision.action === 'skip') {
+    if (onSkip) onSkip(decision.reason);
+    return { outcome: 'skipped', reason: decision.reason };
   }
-  return out;
+
+  const hasMerge = localHasMerge(root, prState.mergeCommit);
+  if (hasMerge !== true) {
+    return { outcome: 'skipped', reason: hasMerge === false ? 'local-behind-merge' : 'merge-commit-unknown' };
+  }
+  if (dryRun) return { outcome: 'archived' };
+
+  const result = archiveRunDir(root, dir);
+  trackArchiveResult(root, repoSlug, dir, result);
+  if (!result.ok) return { outcome: 'skipped', reason: result.reason };
+  return { outcome: 'archived' };
 }
 
 function archiveMerged({ cwd, dryRun = false, sessionId = process.env.CLAUDE_CODE_SESSION_ID || null } = {}) {
@@ -1351,26 +1369,12 @@ function archiveMerged({ cwd, dryRun = false, sessionId = process.env.CLAUDE_COD
       continue;
     }
 
-    const prState = resolvePrState(root, branch);
-    const consoleState = readConsoleState(dir);
-    const decision = decideArchive(prState, consoleState);
-    if (decision.action === 'skip') {
-      skipped.push({ runDir: dir, reason: decision.reason });
-      trackStuckSkip(root, repoSlug, dir, decision.reason);
-      continue;
-    }
-
-    const hasMerge = localHasMerge(root, prState.mergeCommit);
-    if (hasMerge !== true) {
-      skipped.push({ runDir: dir, reason: hasMerge === false ? 'local-behind-merge' : 'merge-commit-unknown' });
-      continue;
-    }
-    if (dryRun) { archived.push(dir); continue; }
-
-    const result = archiveRunDir(root, dir);
-    trackArchiveResult(root, repoSlug, dir, result);
-    if (!result.ok) { skipped.push({ runDir: dir, reason: result.reason }); continue; }
-    archived.push(dir);
+    const runResult = archiveMergedRun({
+      root, repoSlug, dir, branch, dryRun,
+      onSkip: (reason) => trackStuckSkip(root, repoSlug, dir, reason),
+    });
+    if (runResult.outcome === 'archived') { archived.push(dir); continue; }
+    skipped.push({ runDir: dir, reason: runResult.reason });
   }
 
   // #1544: the clean-status sweep — see iterCleanRunDirs' own comment.
@@ -1379,27 +1383,16 @@ function archiveMerged({ cwd, dryRun = false, sessionId = process.env.CLAUDE_COD
   // run-integrity.js's own torn-down-worktree fallback (state.pr.branch, or
   // decisions.md's PR-early lifecycle lines) instead. Otherwise identical to
   // the main loop: decideArchive's merged-PR + resolved-console gate, then
-  // the same local-fast-forward check before any move.
+  // the same local-fast-forward check before any move — via the same
+  // archiveMergedRun helper, minus the main loop's trackStuckSkip hook (see
+  // that helper's own comment for why the asymmetry is intentional).
   for (const { dir, state } of iterCleanRunDirs(root)) {
     const branch = fallbackBranch(root, dir, state);
     if (!branch) { skipped.push({ runDir: dir, reason: 'no-branch' }); continue; }
 
-    const prState = resolvePrState(root, branch);
-    const consoleState = readConsoleState(dir);
-    const decision = decideArchive(prState, consoleState);
-    if (decision.action === 'skip') { skipped.push({ runDir: dir, reason: decision.reason }); continue; }
-
-    const hasMerge = localHasMerge(root, prState.mergeCommit);
-    if (hasMerge !== true) {
-      skipped.push({ runDir: dir, reason: hasMerge === false ? 'local-behind-merge' : 'merge-commit-unknown' });
-      continue;
-    }
-    if (dryRun) { archived.push(dir); continue; }
-
-    const result = archiveRunDir(root, dir);
-    trackArchiveResult(root, repoSlug, dir, result);
-    if (!result.ok) { skipped.push({ runDir: dir, reason: result.reason }); continue; }
-    archived.push(dir);
+    const runResult = archiveMergedRun({ root, repoSlug, dir, branch, dryRun });
+    if (runResult.outcome === 'archived') { archived.push(dir); continue; }
+    skipped.push({ runDir: dir, reason: runResult.reason });
   }
 
   // #1892 Deliverable 3: prune residueFailures entries whose live path no
@@ -1415,6 +1408,7 @@ function archiveMerged({ cwd, dryRun = false, sessionId = process.env.CLAUDE_COD
 
 module.exports = {
   archiveMerged, decideArchive, readConsoleState, archiveRunDir, listSpecDirs,
+  isStaleDir,
   isOrphanedMint, isAdHocStandaloneMint, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
   isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
