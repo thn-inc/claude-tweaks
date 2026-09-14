@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T03:21:13.649Z",
+  "computedAt": "2026-09-14T04:00:07.265Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -115,7 +115,7 @@
       },
       {
         "number": 2328,
-        "updatedAt": "2026-09-13T13:31:28Z",
+        "updatedAt": "2026-09-14T03:24:11Z",
         "state": "OPEN"
       },
       {
@@ -2798,90 +2798,6 @@
         "facets": {
           "origin": null,
           "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nThe `bot:parked` facet (merge-verification gate parked a record; grants stay intact —\n`_shared/work-record.md`) was added, but several sites that classify or render bot state were\nnever updated to consult it, discovered during a pre-release whole-branch review — all confirmed\nstill true at this shaping pass:\n\n- `plugin/bin/lib/issues/backlog.js`'s `classifyBuckets` (~line 208): a parked record with grants\n  intact still lands in `dispatchable` (confirmed: the if/else chain checks `f.bot.inProgress`,\n  `f.stage === 'parked'`, `f.notPlanned`, `f.isParentIssue` — never `f.bot.parked` — before\n  falling through to the `ready && granted` → `dispatchable` branch), so `/backlog overview`\n  recommends `/dispatch`-ing a record that `/dispatch` itself refuses (contrast\n  `queue-pull-script.md:115`, which does filter `!i.facets.bot.parked`).\n- `plugin/bin/lib/record-graph/encode.js`'s `borderStyleFor` (~line 55, confirmed): only checks\n  `bot.blocked`/`bot.inProgress`, so a parked record renders identically to a healthy one in\n  `/visualize`'s queue diagram.\n- `plugin/bin/lib/issues/record-buckets.js`'s `isBotParked` (~line 22): exported but has zero\n  callers anywhere in `plugin/bin/**` (confirmed by grep) — only skill prose\n  (`tidy/step-1-records.md:164`) references it, so no JS path actually enforces the new bucket.\n- `plugin/skills/backlog/attention-mode.md` (~line 69): the needs-you list filters on\n  `bot:blocked` only — a merge-verification-parked record surfaces nowhere in `/backlog\n  attention`.\n- `plugin/skills/dispatch/SKILL.md` (lines ~47, 149, 275) and `help/context-flow.md:67`:\n  queue-exclusion prose names only `bot:blocked`, though `queue-pull-script.md` itself also\n  excludes `bot:parked`.\n\n## Deliverables\n\n- `classifyBuckets` excludes `bot.parked` records from `dispatchable` (or buckets them\n  separately).\n- `borderStyleFor` returns a distinct style for `bot.parked`.\n- `isBotParked` gets a real JS caller, or is removed if genuinely unneeded.\n- `attention-mode.md` and the dispatch/help prose name `bot:parked` alongside `bot:blocked`.\n\n## Acceptance Criteria\n\n- A record with `bot:parked` and intact `auto:*` grants no longer appears in `/backlog\n  overview`'s `dispatchable` bucket.\n- `/visualize`'s queue diagram renders a parked record with a distinct border style.\n- `/backlog attention` surfaces a parked record.\n- `isBotParked` (`record-buckets.js`) has at least one real JS caller after this fix, or is\n  removed from the module's exports with its prose reference (`tidy/step-1-records.md:164`)\n  updated to not imply a JS enforcement path that doesn't exist.\n- `npm test` passes.\n\n## Technical Approach\n\nFive independent, narrow edits, each following an existing sibling pattern already in the\ncodebase:\n\n1. `backlog.js`'s `classifyBuckets` (~line 208): add a `f.bot.parked` check to the if/else chain,\n   before the `ready && granted` branches — likely its own bucket (e.g. `buckets.parked` if one\n   doesn't already exist for this exact case) rather than silently folding into an existing one,\n   mirroring how `f.stage === 'parked'` already gets its own `buckets.parked` line just above.\n2. `encode.js`'s `borderStyleFor` (~line 55): add a `bot.parked` branch returning a distinct\n   style string, following the same `if (bot.blocked) return 'blocked'` pattern already there.\n3. `record-buckets.js`'s `isBotParked`: wire it into `classifyBuckets` (step 1) as the real JS\n   caller — this may make it redundant with a direct `f.bot.parked` check, so decide whether to\n   call the predicate function or inline the check, whichever matches this file's existing\n   style for its sibling predicates (`isBotBlocked` etc.).\n4. `attention-mode.md` (~line 69): extend the needs-you filter to include `bot:parked` alongside\n   `bot:blocked`.\n5. `dispatch/SKILL.md` (~lines 47, 149, 275) and `help/context-flow.md:67`: update\n   queue-exclusion prose to name `bot:parked` alongside `bot:blocked`, matching what\n   `queue-pull-script.md` already does in code.\n\n### Key Files\n\n- `plugin/bin/lib/issues/backlog.js` — `classifyBuckets`, exclude/bucket `bot.parked`\n- `plugin/bin/lib/record-graph/encode.js` — `borderStyleFor`, distinct style for `bot.parked`\n- `plugin/bin/lib/issues/record-buckets.js` — `isBotParked`, wire in a real caller or remove\n- `plugin/skills/backlog/attention-mode.md` — needs-you filter, add `bot:parked`\n- `plugin/skills/dispatch/SKILL.md` — queue-exclusion prose, name `bot:parked`\n- `plugin/skills/help/context-flow.md` — queue-exclusion prose, name `bot:parked`\n- `plugin/skills/tidy/step-1-records.md` — update if `isBotParked` usage changes\n\n## Gotchas\n\n- `bot:parked` records keep their `auto:*` grants intact by design (a merge-verification park is\n  not a build failure, unlike `bot:blocked`) — the fix must exclude them from `dispatchable`\n  without stripping or otherwise touching their grants.\n- Don't conflate `bot:parked` with the pre-existing `stage === 'parked'` bucket in\n  `classifyBuckets` — they're different concepts (a human-deferred backlog record vs. a\n  merge-verification-parked ready record) and already have separate handling elsewhere; give\n  `bot:parked` its own branch rather than merging it into the existing `parked` stage bucket.\n\n## Original request\n\n## Current State\nThe `bot:parked` facet (merge-verification gate parked a record; grants stay intact — `_shared/work-record.md`) was added, but several sites that classify or render bot state were never updated to consult it, discovered during a pre-release whole-branch review:\n\n- `plugin/bin/lib/issues/backlog.js`'s `classifyBuckets` (~line 208): a parked record with grants intact still lands in `dispatchable`, so `/backlog overview` recommends `/dispatch`-ing a record that `/dispatch` itself refuses (contrast `queue-pull-script.md:115`, which does filter `!i.facets.bot.parked`).\n- `plugin/bin/lib/record-graph/encode.js`'s `borderStyleFor` (~line 55): only checks `bot.blocked`/`bot.inProgress`, so a parked record renders identically to a healthy one in `/visualize`'s queue diagram.\n- `plugin/bin/lib/issues/record-buckets.js`'s `isBotParked` (~line 22): exported but has zero callers in `plugin/bin/**` — only skill prose (`tidy/step-1-records.md:164`) references it, so no JS path actually enforces the new bucket.\n- `plugin/skills/backlog/attention-mode.md` (~line 69): the needs-you list filters on `bot:blocked` only — a merge-verification-parked record surfaces nowhere in `/backlog attention`.\n- `plugin/skills/dispatch/SKILL.md` (lines ~47, 149, 275) and `help/context-flow.md:67`: queue-exclusion prose names only `bot:blocked`, though `queue-pull-script.md` itself also excludes `bot:parked`.\n\n## Deliverables\n- `classifyBuckets` excludes `bot.parked` records from `dispatchable` (or buckets them separately).\n- `borderStyleFor` returns a distinct style for `bot.parked`.\n- `isBotParked` gets a real JS caller, or is removed if genuinely unneeded.\n- `attention-mode.md` and the dispatch/help prose name `bot:parked` alongside `bot:blocked`.\n\n## Acceptance Criteria\n- A record with `bot:parked` and intact `auto:*` grants no longer appears in `/backlog overview`'s `dispatchable` bucket.\n- `/visualize`'s queue diagram renders a parked record with a distinct border style.\n- `/backlog attention` surfaces a parked record.\n",
-        "createdAt": "2026-09-12T16:43:39Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2328,
-        "state": "OPEN",
-        "title": "bot:parked facet not consulted by several pre-existing consumers",
-        "updatedAt": "2026-09-13T13:31:28Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
           "size": "medium",
           "ceremony": "standard",
           "solutionUnjustified": false,
