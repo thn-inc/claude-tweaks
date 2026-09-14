@@ -215,10 +215,10 @@ function resolveReleaseType(root, override) {
     const hasReleaseType = override.releaseType !== undefined;
     const hasExtraFile = override.extraFile !== undefined;
     if (hasReleaseType !== hasExtraFile) {
-      throw new Error('--release-type and --extra-file must be given together');
+      throw new Error('releaseType and extraFile must be given together');
     }
     if (!RELEASE_TYPE_VALUES.has(override.releaseType)) {
-      throw new Error(`invalid release-type override: ${override.releaseType}`);
+      throw new Error(`invalid releaseType override: ${override.releaseType}`);
     }
     const resolvedExtraFile = path.resolve(root, override.extraFile);
     if (!isPathContained(resolvedExtraFile, path.resolve(root), { orEqual: true })) {
