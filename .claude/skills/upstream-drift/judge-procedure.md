@@ -66,7 +66,7 @@ The upstream path will be some prefix + the contract path. That prefix is the **
 
 | Entry | Installed root | Contract path | Upstream path | Contract root |
 |---|---|---|---|---|
-| `impeccable-cli` | `$(npm root -g)/impeccable/` | `cli/engine/cli/main.mjs` | `cli/engine/cli/main.mjs` | *(empty — identity)* |
+| `impeccable-cli` | `$(npm root -g)/impeccable/` | `cli/bin/cli.js` | `cli/bin/cli.js` | *(empty — identity)* |
 | `impeccable-plugin` | `~/.claude/plugins/cache/impeccable/impeccable/4.0.2/` | `skills/impeccable/SKILL.md` | `plugin/skills/impeccable/SKILL.md` | `plugin/` |
 
 Two entries against the *same upstream repository* need different prefixes. Never carry one entry's mapping to another.
