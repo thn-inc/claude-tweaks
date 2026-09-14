@@ -14,6 +14,7 @@ const { DEFAULT_TTL_MS } = require('../reconcile/cache');
 const portsEnsure = require('../ports/ensure');
 const { BLOCK_SIZE: PORTS_BLOCK_SIZE } = require('../ports/registry');
 const { INTERACTION_STYLE_DIRECTIVE } = require('./interaction-style');
+const { resolvePluginVersion } = require('../plugin-version');
 
 const MAX_REPORTED = 3;
 
@@ -54,14 +55,15 @@ const FAST_CHECKS = ['mirror', 'red-tip', 'console'];
 function resolveBuildLine(env = process.env) {
   const pluginRoot = env.CLAUDE_PLUGIN_ROOT;
   if (!pluginRoot) return null;
-  let pkg;
-  try {
-    pkg = JSON.parse(fs.readFileSync(path.join(pluginRoot, '.claude-plugin', 'plugin.json'), 'utf8'));
-  } catch {
-    return null;
-  }
-  if (!pkg || typeof pkg.version !== 'string' || !pkg.version) return null;
-  return `claude-tweaks v${pkg.version} @ ${pluginRoot}`;
+  // #1837 review finding: the plugin.json read/parse/extract this function
+  // performed inline was its own copy of the same logic bin/harness-health.js
+  // and bin/materialize.js each independently reimplemented too — now shared
+  // via bin/lib/plugin-version.js. This function keeps owning its own
+  // presentation (the formatted "claude-tweaks v{version} @ {root}" line);
+  // it just no longer owns the filesystem read.
+  const version = resolvePluginVersion(env);
+  if (version === undefined) return null;
+  return `claude-tweaks v${version} @ ${pluginRoot}`;
 }
 
 async function run(ctx) {

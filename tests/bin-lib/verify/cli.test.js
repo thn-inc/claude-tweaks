@@ -172,6 +172,45 @@ test('a steady or higher count between runs never fires the caveat', async () =>
   assert.ok(!higher.stdout.includes('CAVEAT'));
 });
 
+test('an unparseable tests check under --count-stamp prints the CAVEAT line and sets countsUnparsed (#1837 AC4, spec-deliverable coverage gap found by review)', async () => {
+  const logDir = tmpDir();
+  const countStamp = path.join(tmpDir(), 'count.json');
+  const { code, stdout } = await runCli([
+    '--log-dir', logDir, '--count-stamp', countStamp,
+    // A generic-family "tests" output with no parseable summary line at all.
+    '--cmd', 'tests=node -e "console.log(\'nothing parseable here\')"']);
+  assert.strictEqual(code, 0, 'unparseable counts must not fail an otherwise-passing tests check');
+  assert.match(stdout, /^CAVEAT: tests counts unparsed \(family generic\) — count-stamp comparison skipped; see .*\.log$/ms);
+  const report = JSON.parse(fs.readFileSync(path.join(logDir, 'report.json'), 'utf8'));
+  assert.deepStrictEqual(report.checks.tests.countsUnparsed, { family: 'generic' });
+  assert.ok(!('testCountRegression' in report), 'no regression key when there is nothing to compare (omitted, per composeReport, not null)');
+});
+
+test('an unparseable tests check with NO --count-stamp in play prints no CAVEAT line and sets no countsUnparsed field (never surfaced when there is no comparison to have skipped)', async () => {
+  const { code, stdout } = await runCli([
+    '--log-dir', tmpDir(), '--cmd', 'tests=node -e "console.log(\'nothing parseable here\')"']);
+  assert.strictEqual(code, 0);
+  assert.ok(!stdout.includes('CAVEAT'));
+});
+
+test('an unreadable tests log under --count-stamp prints the CAVEAT line too, distinct root cause from an unparseable-but-readable log (#1837 review finding: enrich()\'s unreadable-log path silently skipped this mechanism)', async () => {
+  const logDir = tmpDir();
+  const countStamp = path.join(tmpDir(), 'count.json');
+  const logPath = path.join(logDir, 'tests.log');
+  // The child writes real output (so the runner's own createWriteStream has
+  // something to flush) and then unlinks its OWN log file before exiting --
+  // the write stream stays open (POSIX unlink semantics), but a later
+  // readFileSync by verify.js's own enrich() step gets ENOENT, exercising
+  // the unreadable-log catch path deterministically.
+  const unlinkOwnLog = `node -e "console.log('will vanish'); require('fs').unlinkSync('${logPath}')"`;
+  const { code, stdout } = await runCli([
+    '--log-dir', logDir, '--count-stamp', countStamp, '--cmd', `tests=${unlinkOwnLog}`]);
+  assert.strictEqual(code, 0, 'an unreadable log must not fail an otherwise-passing tests check (exitCode still decides pass/fail)');
+  assert.match(stdout, /^CAVEAT: tests counts unparsed \(family unreadable\) — count-stamp comparison skipped/ms);
+  const report = JSON.parse(fs.readFileSync(path.join(logDir, 'report.json'), 'utf8'));
+  assert.deepStrictEqual(report.checks.tests.countsUnparsed, { family: 'unreadable' });
+});
+
 test('a --count-stamp write failure never crashes the run or discards report.json (review fix: fail-toward-absence, write side)', async () => {
   const logDir = tmpDir();
   const blockerFile = path.join(tmpDir(), 'blocker'); // a FILE, not a directory

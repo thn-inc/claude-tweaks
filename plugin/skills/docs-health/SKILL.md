@@ -188,9 +188,9 @@ Before filing, bootstrap only the label families this run applies, with real des
 #  ["size:high",        "Scoring: large change — consider decomposition before building", "5319E7"],
 #  ["ready",            "Stage: spec-shaped and agent-sized — in the authorization gate's worklist", "2EA44F"],
 #  ["upstream-candidate", "A headless health-sweep finding about claude-tweaks — forward via /claude-tweaks:feedback", "0052CC"],
-#  ["docs-health:additive",     "Safe, mechanical patch — additive change with no removed content"],
-#  ["docs-health:restructural", "Structural change requiring human review before applying"],
-#  ["docs-health:filing-failed", "Escalation: gh issue create failed repeatedly for this fingerprint — needs human attention"]]
+#  ["docs-health:additive",     "Safe, mechanical patch — additive change with no removed content", "0E8A16"],
+#  ["docs-health:restructural", "Structural change requiring human review before applying", "FBCA04"],
+#  ["docs-health:filing-failed", "Escalation: gh issue create failed repeatedly for this fingerprint — needs human attention", "D93F0B"]]
 ```
 
 Each payload in `$DOCS_HEALTH_PAYLOADS` carries structured fields directly (`id`, `target`, `assetType`, `category`, `misleads`, `section`, `classification`, `confidence`, `reversibility`), alongside `title`, `body`, `labels`, and `type`. These stay on the payload as triage metadata — the batch table below reads `category`/`misleads`/`classification`/`confidence`, and the dismiss path reads `id`. The finding's `oldString`/`newString` patch text is deliberately **not** duplicated as top-level fields: `payload.body` already carries both verbatim in its fenced Current/Proposed blocks, and that markdown is what ships to GitHub. Read the patch out of `body` if you need it.

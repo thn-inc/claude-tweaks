@@ -99,6 +99,17 @@ const SHA_SHAPE_RE = /^[0-9a-f]{7,40}$/i;
 // (skills/init/claude-md-template.md); `{version}` is the plugin.json version
 // string (dots, no spaces).
 const TEMPLATE_STAMP_RE = /^Template: (\S+) @ (\S+)[ \t]*$/m;
+// #1837 review finding: the write side (below) only type-checked
+// templateStamp, unlike its sibling verifiedAsOf's SHA_SHAPE_RE — an
+// unconstrained string spliced raw into `Template: {templateStamp}` could
+// carry embedded newlines, including a spoofed `## Original request`
+// heading that neutralizes materialize.js's placeholder gate for
+// everything after it. This mirrors TEMPLATE_STAMP_RE's own reader shape
+// (`\S+ @ \S+`, no whitespace in either token) rather than inventing a
+// separate rule — a value this regex rejects was already going to fail to
+// round-trip through extractTemplateStamp unparsed, so this is a
+// correctness fix as much as a hardening one.
+const TEMPLATE_STAMP_VALUE_RE = /^\S+ @ \S+$/;
 
 // #1829: an optional body-metadata line naming a mechanical command whose
 // exit code answers whether the record's stated premise still holds at the
@@ -781,6 +792,9 @@ function specShapedBody({
   }
   if (!isEmpty(templateStamp) && typeof templateStamp !== 'string') {
     throw new Error(`specShapedBody: templateStamp must be a string (got ${typeof templateStamp})`);
+  }
+  if (!isEmpty(templateStamp) && !TEMPLATE_STAMP_VALUE_RE.test(templateStamp)) {
+    throw new Error(`specShapedBody: templateStamp must match "{path} @ {version}" with no whitespace in either token (got "${templateStamp}")`);
   }
   const { origin, deferReason } = provenance || {};
   if (deferReason !== undefined) oneOf('deferReason', deferReason, DEFER_REASONS);

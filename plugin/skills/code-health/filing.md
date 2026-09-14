@@ -43,7 +43,7 @@ Before filing, bootstrap only the label families this run applies, with real des
 #  ["size:high",       "Scoring: large change — consider decomposition before building", "5319E7"],
 #  ["ready",           "Stage: spec-shaped and agent-sized — in the authorization gate's worklist", "2EA44F"],
 #  ["upstream-candidate", "A headless health-sweep finding about claude-tweaks — forward via /claude-tweaks:feedback", "0052CC"],
-#  ["code-health:filing-failed", "Escalation: gh issue create failed repeatedly for this fingerprint — needs human attention"]]
+#  ["code-health:filing-failed", "Escalation: gh issue create failed repeatedly for this fingerprint — needs human attention", "D93F0B"]]
 ```
 
 There is no per-criterion label anymore — the criterion is already in the issue body's header line (`**Criterion:** ...`), and nothing reads it back off a label; this was also the label class that hit GitHub's 100-char cap (see `bin/lib/code-health/issue-payload.js`).

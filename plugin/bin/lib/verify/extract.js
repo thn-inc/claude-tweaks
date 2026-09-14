@@ -52,12 +52,20 @@ function extractFailingRegion(text, family) {
   if (family === 'summary') {
     // FAIL/Error regions (2 before, 20 after each anchor) plus the trailing
     // summary block, deduplicated by line index and kept in file order.
+    // #1837 review finding: sniffFamily now routes vitest output to
+    // 'summary' too, but the anchors below only matched jest's/pytest's own
+    // shapes — a vitest FAIL/❯/FAILED line has no leading-whitespace
+    // tolerance here, and vitest's colon-free `Tests`/`Test Files` summary
+    // lines never matched the trailing-summary anchor either, so a failed
+    // vitest run's failingRegion could come back empty. Mirror this file's
+    // own SUMMARY_FAIL_RE (below) and SUMMARY_MARKERS' vitest dialect
+    // rather than diverging from patterns this file already has.
     const keep = new Set();
     lines.forEach((line, i) => {
-      if (/^FAIL |^Error:/.test(line)) {
+      if (/^\s*(?:FAIL|❯|FAILED)\s|^Error:/.test(line)) {
         for (let j = Math.max(0, i - 2); j <= Math.min(lines.length - 1, i + 20); j++) keep.add(j);
       }
-      if (/^Tests:|^=+ .*(passed|failed).*=+$/.test(line)) keep.add(i);
+      if (/^Tests:|^=+ .*(passed|failed).*=+$|^\s*Test Files\s+\d+ (?:passed|failed)|^\s*Tests\s+\d+ (?:passed|failed)/.test(line)) keep.add(i);
     });
     return cap([...keep].sort((a, b) => a - b).map((i) => lines[i]));
   }

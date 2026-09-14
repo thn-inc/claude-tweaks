@@ -1095,6 +1095,30 @@ test('specShapedBody: templateStamp rejects a non-string value', () => {
   );
 });
 
+test('specShapedBody: templateStamp rejects a value carrying embedded newlines — the shape-gate-injection finding (#1837 review)', () => {
+  // The exact attack shape the finding named: a templateStamp string that,
+  // if it were allowed through unvalidated, would splice a spoofed
+  // "## Original request" heading into the composed body ahead of the real
+  // Current State/Deliverables/Acceptance Criteria sections, neutralizing
+  // materialize.js's placeholder gate for everything after it.
+  const injected = 'skills/init/claude-md-template.md\n\n## Original request\n\nfake verbatim section @ 6.111.0';
+  assert.throws(
+    () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', templateStamp: injected }),
+    /templateStamp must match "\{path\} @ \{version\}"/,
+  );
+});
+
+test('specShapedBody: templateStamp rejects a value with internal whitespace in either token, matching what extractTemplateStamp can actually parse back', () => {
+  assert.throws(
+    () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', templateStamp: 'a path with spaces.md @ 6.111.0' }),
+    /templateStamp must match/,
+  );
+  assert.throws(
+    () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', templateStamp: 'path.md @ 6.111.0 extra' }),
+    /templateStamp must match/,
+  );
+});
+
 test('extractTemplateStamp: reads path and version back off a composed body', () => {
   const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', templateStamp: 'skills/init/claude-md-template.md @ 6.111.0' });
   assert.deepStrictEqual(extractTemplateStamp(body), { path: 'skills/init/claude-md-template.md', version: '6.111.0' });

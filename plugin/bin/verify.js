@@ -43,7 +43,23 @@ function enrich(result) {
   } catch {
     // Unreadable log degrades to absence, never to a fabricated pass —
     // summary/region/counts stay empty; exitCode still decides pass/fail.
-    return { ...result, summary: result.spawnError || null, failingRegion: null, counts: null };
+    // #1837 review finding: this early return never set `countsFamily`, so
+    // a `tests` check whose log went unreadable (a concurrent process
+    // pruning the log dir is a recurring failure mode in this project)
+    // silently skipped the countsUnparsed/CAVEAT mechanism entirely —
+    // reproducing the exact "regression comparison silently disabled" bug
+    // #1837 was filed to fix, via a different root cause than the
+    // originally-diagnosed ANSI one. 'unreadable' is a real, honest family
+    // value here — main() renders it as `CAVEAT: tests counts unparsed
+    // (family unreadable) — ...`, distinct from a parse failure on readable
+    // text.
+    return {
+      ...result,
+      summary: result.spawnError || null,
+      failingRegion: null,
+      counts: null,
+      ...(result.name === 'tests' ? { countsFamily: 'unreadable' } : {}),
+    };
   }
   // #1837: strip ANSI once, before every parser — a coloured vitest/jest
   // summary line is otherwise invisible to the anchored regexes below. The

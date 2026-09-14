@@ -47,6 +47,7 @@ const {
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
 const { resolveTarget: resolveStageTarget, writeStagedItem } = require('./lib/stage-item/write');
+const { resolvePluginVersion } = require('./lib/plugin-version');
 
 const USAGE = 'usage: materialize.js <n> --run-dir <dir> [--repo owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]\n';
 
@@ -252,16 +253,10 @@ const realDeps = {
   // plugin.json, the same read bin/harness-health.js's own resolvePluginVersion
   // performs (never this repo's own plugin/.claude-plugin/plugin.json, which is
   // ahead of the installed build during development). Fail-toward-undefined.
-  installedPluginVersion: () => {
-    const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
-    if (!pluginRoot) return undefined;
-    try {
-      const pkg = JSON.parse(fs.readFileSync(path.join(pluginRoot, '.claude-plugin', 'plugin.json'), 'utf8'));
-      return pkg && typeof pkg.version === 'string' && pkg.version ? pkg.version : undefined;
-    } catch {
-      return undefined;
-    }
-  },
+  // #1837 review finding: this was its own third copy of the same
+  // read/parse/extract logic — now shared with bin/harness-health.js and
+  // bin/lib/hooks/session-start.js via bin/lib/plugin-version.js.
+  installedPluginVersion: () => resolvePluginVersion(),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };

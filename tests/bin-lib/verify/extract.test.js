@@ -95,6 +95,24 @@ test('summary extraction carries FAIL region and trailing summary block', () => 
   assert.ok(region.includes('Tests:       1 failed, 4 passed, 5 total'));
 });
 
+test('summary extraction carries a vitest ❯ failing-file line and the colon-free Tests/Test Files summary (#1837 review finding)', () => {
+  const vitestFailure = [
+    '❯ src/y.test.ts (3 tests | 1 failed)',
+    '  × y > explodes',
+    ' Test Files  1 failed | 62 passed (63)',
+    '      Tests  1 failed | 724 passed (725)',
+  ].join('\n');
+  const region = extractFailingRegion(vitestFailure, 'summary');
+  assert.ok(region.includes('❯ src/y.test.ts (3 tests | 1 failed)'), 'the ❯ failing-file line must be kept, not dropped');
+  assert.ok(region.includes('Test Files  1 failed | 62 passed (63)'), 'the colon-free Test Files summary line must be kept');
+  assert.ok(region.includes('Tests  1 failed | 724 passed (725)'), 'the colon-free Tests summary line must be kept');
+});
+
+test('summary extraction carries a leading-whitespace FAILED (pytest-shaped) line', () => {
+  const region = extractFailingRegion('  FAILED tests/test_b.py::test_x - AssertionError', 'summary');
+  assert.ok(region.includes('FAILED tests/test_b.py::test_x'), 'a leading-whitespace FAILED line must be kept, matching this file\'s own SUMMARY_FAIL_RE tolerance');
+});
+
 test('generic extraction is the last GENERIC_TAIL_LINES lines', () => {
   const region = extractFailingRegion(GENERIC_FIXTURE, 'generic');
   const lines = region.split('\n');
