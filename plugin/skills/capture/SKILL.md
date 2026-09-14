@@ -3,8 +3,6 @@ name: capture
 description: Use when capturing ideas that need specification later — brain dumps, half-formed features, things to not forget
 argument-hint: '<idea text> [--route=brainstorm|keep|absorb:N] [--title="..."] [--type=bug|feature|task] [--needs-definition|--no-needs-definition] [--batch <path>]'
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
-
 
 # Capture — Quickly note an idea for later specification
 

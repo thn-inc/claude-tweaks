@@ -13,6 +13,7 @@ const { reconcile } = require('../reconcile');
 const { DEFAULT_TTL_MS } = require('../reconcile/cache');
 const portsEnsure = require('../ports/ensure');
 const { BLOCK_SIZE: PORTS_BLOCK_SIZE } = require('../ports/registry');
+const { INTERACTION_STYLE_DIRECTIVE } = require('./interaction-style');
 
 const MAX_REPORTED = 3;
 // The fast/background split (#820, D8, corrected): SessionStart's own
@@ -75,6 +76,13 @@ async function run(ctx) {
   const sessionId = typeof ctx.input === 'object' && ctx.input && typeof ctx.input.session_id === 'string' && ctx.input.session_id
     ? ctx.input.session_id
     : undefined;
+  // #1909: injected once here instead of restated verbatim in every SKILL.md
+  // (35+ byte-identical 501B copies) — the single source of truth is
+  // interaction-style.js; docs/skill-authoring.md documents the convention.
+  // Unconditional (never wrapped in try/catch or a feature gate): this is a
+  // plain string push that cannot throw, and every session gets it regardless
+  // of what else this hook finds to report.
+  parts.push(INTERACTION_STYLE_DIRECTIVE);
   // #2070: single upstream read of CLAUDE_PLUGIN_ROOT, threaded into both
   // resolveBuildLine (below) and the stale-runs report line's fallback
   // (further down) — one place for a future normalization/validation fix to

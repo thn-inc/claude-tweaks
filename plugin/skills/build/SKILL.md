@@ -3,8 +3,6 @@ name: build
 description: Use when implementing a work record or design doc end-to-end. Accepts a record reference (#N) for full lifecycle tracking, or a design doc path to skip /claude-tweaks:specify and build directly from brainstorming output.
 argument-hint: "[#<n>|<design-doc-path>|<topic>] [subagent|batched] [auto] [worktree|current-branch] [profile=<fast|standard|capable|frontier>] [ops=confirm]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
-
 
 # Build — Implement a spec end-to-end with worktree, plan audit, and lifecycle tracking
 

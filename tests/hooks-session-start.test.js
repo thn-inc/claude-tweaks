@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const sessionStart = require('../plugin/bin/lib/hooks/session-start');
 const deps = require('../plugin/bin/lib/deps');
+const { INTERACTION_STYLE_DIRECTIVE } = require('../plugin/bin/lib/hooks/interaction-style');
 
 function tmpProject() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-'));
@@ -25,6 +26,19 @@ function mkStagedFile(run, name, content) {
   fs.mkdirSync(stagedDir, { recursive: true });
   fs.writeFileSync(path.join(stagedDir, name), content || '{}');
 }
+
+// #1909: the Interaction-style directive moved out of 35+ verbatim per-SKILL.md
+// copies into this one hook injection point (plugin/bin/lib/hooks/interaction-style.js).
+// This is the retargeted pin — every session's additionalContext must carry it,
+// regardless of what else the hook finds to report, so this is asserted first and
+// unconditionally rather than folded into any one scenario test below.
+test('#1909: run() always includes the Interaction-style directive in additionalContext, even with nothing else to report', async () => {
+  const project = tmpProject();
+  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.ok(out.json, 'additionalContext must render even when every other check is silent');
+  assert.match(out.json.hookSpecificOutput.additionalContext, /^> \*\*Interaction style:\*\*/);
+  assert.ok(out.json.hookSpecificOutput.additionalContext.includes(INTERACTION_STYLE_DIRECTIVE));
+});
 
 test('deps.collect returns an array of strings and prints nothing', () => {
   const msgs = deps.collect();

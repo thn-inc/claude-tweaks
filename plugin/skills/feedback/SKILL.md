@@ -3,8 +3,6 @@ name: feedback
 description: Use when a learning belongs upstream in the claude-tweaks plugin rather than this project — a skill that behaves wrongly (defect) or has no opinion where it should (gap). Files a GitHub issue against claude-tweaks after an explicit scrub and confirmation.
 argument-hint: "[<learning text>] [--kind=defect|gap] [--dry-run] [--queue] [--full] [--pre-confirmed]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
-
 
 # Feedback — Route a learning upstream to the claude-tweaks plugin
 
