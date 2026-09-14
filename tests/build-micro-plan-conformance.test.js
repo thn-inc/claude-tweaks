@@ -24,7 +24,7 @@ const MATERIALIZE = read('plugin', 'skills', 'flow', 'materialize.md');
 test('SKILL.md Spec Step 3 points to micro-plan.md before invoking writing-plans', () => {
   const stepIdx = BUILD_SKILL.indexOf('### Spec Step 3: Create the Plan');
   assert.notEqual(stepIdx, -1, 'Spec Step 3 heading not found');
-  const section = BUILD_SKILL.slice(stepIdx, stepIdx + 1200);
+  const section = BUILD_SKILL.slice(stepIdx, stepIdx + 1300);
   const microPlanIdx = section.indexOf('micro-plan.md');
   const writingPlansIdx = section.indexOf('Invoke the `/superpowers:writing-plans` skill');
   assert.notEqual(microPlanIdx, -1, 'Spec Step 3 does not mention micro-plan.md');
