@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-14T12:15:27.985Z",
+  "computedAt": "2026-09-14T12:30:04.800Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -400,7 +400,7 @@
       },
       {
         "number": 1785,
-        "updatedAt": "2026-09-14T11:04:30Z",
+        "updatedAt": "2026-09-14T12:18:49Z",
         "state": "OPEN"
       },
       {
@@ -4722,96 +4722,6 @@
           "grants": {
             "build": true,
             "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nUnder `worktree-always: true`, a session pinned to a linked worktree runs every Bash call through the Claude Code harness's worktree-session guard. That guard refuses commands whose text merely contains the substring `git` inside quoted data, and any command whose argument is computed at runtime (a loop variable, a glob, a `$(...)` result), with messages such as \"names git in a form too complex to verify\" and \"runs sed with a value computed at runtime (the variable f)\". Six reproduced shapes are listed in `## Original request` below; one review+wrap-up dispatch call spent five retries on them, and the workaround of rephrasing review findings to avoid the word distorts the audit trail those findings preserve.\n\nThe record as filed attributes the guard to `bin/lib/hooks/pre-tool-use.js`. That attribution is wrong: a plugin-wide grep of `plugin/bin` and `plugin/hooks` finds none of the quoted refusal strings, and `plugin/skills/_shared/scratch-worktree.md` §7 (\"Shell constraint\") already records this as harness behavior observed live on 2026-08-15, 2026-08-25 (#1108) and 2026-08-30 (#1651), including a `github.com` URL argument tripping the same \"names git\" refusal. The plugin cannot change the guard's matching; what it owns is (a) the documented constraint and its workarounds that every worktree-session procedure and dispatch prompt cites, and (b) the upstream report that asks the harness to match the VCS name only in command position and treat quoted data as data.\n\n## Deliverables\n\n- Extend `plugin/skills/_shared/scratch-worktree.md` §7 with a dated addendum covering the six shapes in `## Original request` (quoted JSON containing `git`; a `for`/`while` loop variable; a glob argument; a `gh api` call inside an `if RAW=$(...)`; `sed -i` on a variable path; `printf … > \"$VAR/file\"`) plus the two read-only shapes #1867 reported and this record absorbs (`cat \"$P/…\"` and `sed -n 'a,bp' \"$P/…\"` where `$P` holds an absolute path assigned earlier in the same call — refused as \"runs sed with a value computed at runtime (the variable P) in a plain command\"), each with the pass-through workaround the plugin's own procedures already use (one plain command per call, `Write`/`Edit` instead of a heredoc, literal paths pasted in place of variables, `node -e` composition for unavoidable substitutions).\n- Add the same six shapes, in one sentence each, to the worktree-shell constraint paragraph that `plugin/skills/dispatch/task-prompt.md` bakes into dispatched implementer prompts, so a dispatched agent avoids them up front instead of paying retries.\n- File one upstream report through `/claude-tweaks:feedback` targeting the Claude Code harness, quoting the six shapes and #1867's two read-only shapes and the requested matching rule (VCS name only in command position — start of command or after `;`, `&&`, `||`, `|`, `$(`; quoted arguments and heredoc/printf bodies treated as data; plain data-writing shapes `printf … > file` and `cat > file <<EOF` allow-listed). Record the filed report's reference in this record's closing comment.\n- Correct this record's own component attribution in the closing comment: harness guard, not `pre-tool-use.js`, so the next reader of the incident log does not re-grep the plugin for it.\n\n## Acceptance Criteria\n\n- `plugin/skills/_shared/scratch-worktree.md` §7 carries a new dated addendum whose bullet list names all six refusal shapes from `## Original request` verbatim plus #1867's two read-only shapes (command text and the guard's own refusal wording), each followed by a workaround that is itself a shape the same section already marks as passing.\n- `plugin/skills/dispatch/task-prompt.md`'s worktree-shell constraint text names the six shapes; `tests/` conformance for that file (whichever suite pins its constraint paragraph) passes without a byte-pin exemption.\n- An upstream report exists — its URL or reference is pasted in this record's closing comment — and its body is the six shapes plus the requested command-position matching rule, nothing plugin-internal.\n- `npm test` passes on the branch.\n\n## Technical Approach\n\nDocumentation and reporting only; no code in `plugin/bin` changes, because the guard is not the plugin's. Follow the existing §7 addendum convention (date-stamped, \"confirmed live\", pass/refuse pairs) so the new entries read like the 2026-08-25 and 2026-08-30 ones. For `task-prompt.md`, extend the sentence that already cites §7 rather than restating the whole section — cite, then list the six shapes tersely. For the upstream report, use `/claude-tweaks:feedback`'s upstream-filing path with the harness as the target; keep the ask to the matching rule the original request states.\n\n### Key Files\n\n- `plugin/skills/_shared/scratch-worktree.md` — §7 \"Shell constraint\": new dated addendum listing the six shapes and their workarounds\n- `plugin/skills/dispatch/task-prompt.md` — worktree-shell constraint paragraph in the implementer prompt: add the six shapes\n- `docs/incident-log.md` — optional one-line pointer if a `[IL-nn]` entry already covers the harness guard; otherwise untouched\n\n## Gotchas\n\n- The guard is the Claude Code harness's, not `bin/lib/hooks/pre-tool-use.js` — a code fix inside the plugin cannot address it. Anyone who \"fixes\" this in `pre-tool-use.js` has fixed the wrong thing.\n- §7's own text warns that its observations are \"last observed, not a guarantee\"; a harness release may already have changed the matching. Re-verify at least two of the six shapes live in a worktree session before writing the addendum, and record the harness version alongside the date.\n- The upstream report is an outward-facing write; under this repo's auto-mode contract it goes through `/claude-tweaks:feedback`'s own staging, never a bare `gh issue create` against another repo.\n\n## Original request\n\npre-tool-use worktree guard: refuses data-writing and read-only commands whose text contains the VCS name or a runtime-computed value\n\n**Summary:** Under `worktree-always`, the PreToolUse Bash guard refuses read-only and data-writing commands whose text merely contains the VCS name inside quoted data, or any runtime-computed value — false positives that survive #1108's heredoc/printf fix.\n\n**Kind:** Defect\n\n**Affected component:** bin/lib/hooks/pre-tool-use.js (worktree-isolated session Bash command guard)\n\n**Repro steps:**\n1. Enable `worktree-always: true` and run a session pinned to a linked worktree (a `/claude-tweaks:dispatch`-driven `/flow review,polish,wrap-up` call, for example).\n2. Write a review findings JSON with `printf '%s' '[{\"finding\":\"rollback leaves the git index staged\"}]' > \"$CTX/lens-3c.json\"` — refused: \"names git in a form too complex to verify\".\n3. Run `for f in docs/journeys/*.md; do sed -n '/^files:/,/^---/p' \"$f\"; done` — refused: \"runs sed with a value computed at runtime (the variable f)\".\n4. Run `find <plugin-cache-dir> -maxdepth 3 -iname \"*impeccable*\"` — refused: \"runs find with a value computed at runtime (a glob pattern)\".\n5. Run `gh api \"repos/{owner}/{repo}/contents/claims/issue-N.json?ref=claims-registry\" -q ...` inside an `if RAW=$(...)` — refused: \"runs gh with the text repos/…/contents… inside a construct too complex to verify\".\n6. Run `sed -i 's/^- \\[ \\] review$/- [x] review/' \"$B\"` where `$B` is a scratch-file path variable — refused: \"runs sed with a value computed at runtime (the variable B)\".\n\n**Expected vs. actual:**\nExpected: only commands that can actually reach a repository (a `git`/`gh` invocation in command position) are gated; a `printf`/`sed`/`find` over scratch files, and JSON text that happens to contain the word, pass.\nActual: the substring match runs over the whole command string, including quoted data, and any runtime-computed argument trips the \"cannot show not to be git\" refusal. In one review+wrap-up call this cost five retries, and the workaround — rephrasing review findings so they do not contain the VCS name — distorts the audit trail the findings are supposed to preserve.\n\nSuggested change: match the VCS name only in command position (start of command, or after `;`, `&&`, `||`, `|`, `$(`), treat quoted arguments and heredoc/printf bodies as data, and allow-list plain data-writing shapes (`printf … > file`, `cat > file <<EOF`). #1108 closed the heredoc/printf case for commands that name no other tool; the cases above are the remaining shapes.\n\n**Definition:** Clear\n\n**Plugin version:** 6.114.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-0ff74781 -->\n\n\n\n",
-        "createdAt": "2026-09-02T11:41:17Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1785,
-        "state": "OPEN",
-        "title": "pre-tool-use worktree guard: refuses data-writing and read-only commands whose text contains the VCS name or a runtime-computed value",
-        "updatedAt": "2026-09-14T11:04:30Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
           },
           "bot": {
             "inProgress": false,
