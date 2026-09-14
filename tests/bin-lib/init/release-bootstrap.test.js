@@ -30,6 +30,26 @@ test('detectReleaseProcess: semantic-release, changesets, goreleaser markers -> 
   assert.equal(rb.detectReleaseProcess(d).tool, 'goreleaser');
 });
 
+test('detectReleaseProcess: bare goreleaser.yaml/.yml, package.json release key, .versionrc* -> conflict naming the tool (#2323)', () => {
+  const a = tmp(); write(a, 'goreleaser.yaml', 'builds: []');
+  assert.deepEqual(rb.detectReleaseProcess(a), { verdict: 'conflict', tool: 'goreleaser', evidence: 'goreleaser.yaml' });
+  const b = tmp(); write(b, 'goreleaser.yml', 'builds: []');
+  assert.equal(rb.detectReleaseProcess(b).tool, 'goreleaser');
+  const c = tmp(); write(c, 'package.json', JSON.stringify({ name: 'x', release: { branches: ['main'] } }));
+  assert.deepEqual(rb.detectReleaseProcess(c), { verdict: 'conflict', tool: 'semantic-release', evidence: 'package.json' });
+  const d = tmp(); write(d, '.versionrc.json', '{}');
+  assert.deepEqual(rb.detectReleaseProcess(d), { verdict: 'conflict', tool: 'standard-version', evidence: '.versionrc.json' });
+  const e = tmp(); write(e, '.versionrc', '{}');
+  assert.equal(rb.detectReleaseProcess(e).tool, 'standard-version');
+});
+
+test('detectReleaseProcess: package.json with no release key, or a non-object release value, stays fresh (#2323)', () => {
+  const a = tmp(); write(a, 'package.json', JSON.stringify({ name: 'x', version: '1.0.0' }));
+  assert.deepEqual(rb.detectReleaseProcess(a), { verdict: 'fresh' });
+  const b = tmp(); write(b, 'package.json', JSON.stringify({ name: 'x', release: 'v1' }));
+  assert.deepEqual(rb.detectReleaseProcess(b), { verdict: 'fresh' });
+});
+
 test('detectReleaseProcess: a foreign release-please config -> conflict; the bootstrap shape -> already-bootstrapped', () => {
   const a = tmp(); write(a, 'release-please-config.json', JSON.stringify({ 'release-type': 'node' }));
   assert.deepEqual(rb.detectReleaseProcess(a), { verdict: 'conflict', tool: 'release-please (foreign config)', evidence: 'release-please-config.json' });
