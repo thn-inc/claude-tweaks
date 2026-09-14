@@ -43,7 +43,7 @@ Not for: granting authorization (`/claude-tweaks:backlog refine`'s job), derivin
 
 | Argument | Behavior |
 |---|---|
-| *(none)* | Bare — headless drain: repeat the select-and-dispatch procedure (Step 3's ranking + Steps 4-6) over ranked authorized groups until `--budget <n\|all>` groups have been attempted or the ranked set is empty. Each iteration re-fetches the authorized queue fresh (Step 2) — dispatched groups leave it by claim, and a Settle-failed group's records carry `bot:blocked`/claim markers so it is never re-selected, while still counting as one attempted budget unit. No `AskUserQuestion` fires — an interactive (human-present) bare invocation drains immediately, identically to a headless firing, **with no exception for a detected repo-wide infra outage** (#2365) — see the Repo-wide infra outage stop paragraph below instead. |
+| *(none)* | Bare — headless drain: repeat the select-and-dispatch procedure (Step 3's ranking + Steps 4-6) over ranked authorized groups until `--budget <n\|all>` groups have been attempted or the ranked set is empty. Each iteration re-fetches the authorized queue fresh (Step 2) — dispatched groups leave it by claim, and a Settle-failed group's records carry `bot:blocked`/claim markers so it is never re-selected, while still counting as one attempted budget unit. **No `AskUserQuestion` fires, full stop — not for a detected repo-wide infra outage** (#2365, see the Repo-wide infra outage stop paragraph below), **and not for queue size, an unusually large `--budget`, or any other reason this table doesn't name** (#2424): a bare invocation drains immediately, identically to a headless firing, whether a human is present or not. If you are about to render one anyway, that is not a judgment call this table left open — stop and re-read this row instead. |
 | `next` (deprecated alias) | Deprecated alias for `--budget 1` — identical effect (one group selected by priority-then-age ranking), one warn-tier notice. Removal condition: `deprecated-aliases.md`. |
 | `#N` | Direct — select + dispatch record `#N`'s whole file-overlap group |
 | `#N,#M,...` | Explicit list — select + dispatch each named record's whole file-overlap group, deduplicated; skips ranking/selection entirely since the set is already named |
@@ -113,6 +113,15 @@ Read `queue-pull-script.md` in this skill's directory and run its script verbati
 The `bot:*` filter here is the cheap label-based pre-filter — labels are projection, not truth (`_shared/work-record.md`). The authoritative unclaimed check is `/claude-tweaks:flow`'s Step 2.8 atomic 201/422 claim attempt (`flow/claim-targets.md`) — a record can pass this pre-filter and still turn out contested by the time the first Task call actually claims it. A group of size 1 is a **singleton**; size 2+ is a **bundle** — both dispatch the same way in Step 5, with a different `/claude-tweaks:flow` invocation shape only.
 
 ### Step 3: Select
+
+**Self-check before any `AskUserQuestion` in this step (#2424).** Every stop this step and Step 2
+render is named explicitly above and below — the exclusion/warning reports (informational, never
+a gate), the Zero eligible groups case, and the Repo-wide infra outage stop. If you are about to
+render an `AskUserQuestion` for anything else — confirming scope on a large queue, asking whether
+to drain fully or start smaller, or any other reason not named in this file — stop: that is not a
+documented case, and for a bare invocation specifically it is forbidden outright (Input table
+above), human present or not. Re-read this file's Input table for the invocation form actually
+given before rendering one.
 
 **Zero eligible groups (all forms).** Step 2's `groups` array can legitimately be empty — the common steady state right after a dispatch drain, or after an `auto:build` queue with nothing new authorized since the last firing. This is not an error: report "nothing eligible this firing" and stop before Step 4 — do not proceed with a `null` pick (the drain's current iteration finding nothing left to rank, or `next`'s ranking script below writing `null` to this run's session-scoped `dispatch-next-pick.json` — `_shared/session-tmp-root.md` — for this case). A headless drain (or `next`) firing with no eligible groups is a cheap no-op, per `routine-template.yml`'s own notes — report nothing and exit cleanly, no self-report, no `PushNotification`.
 
