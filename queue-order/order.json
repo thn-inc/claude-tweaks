@@ -1,51 +1,11 @@
 {
-  "computedAt": "2026-09-14T21:56:52.601Z",
+  "computedAt": "2026-09-15T10:16:36.703Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
       {
-        "number": 2458,
-        "updatedAt": "2026-09-14T18:22:12Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2433,
         "updatedAt": "2026-09-14T19:50:43Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2428,
-        "updatedAt": "2026-09-14T18:54:30Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2407,
-        "updatedAt": "2026-09-14T11:47:16Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2405,
-        "updatedAt": "2026-09-14T21:40:43Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2404,
-        "updatedAt": "2026-09-14T21:28:46Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2391,
-        "updatedAt": "2026-09-14T17:02:51Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2385,
-        "updatedAt": "2026-09-14T17:02:47Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2383,
-        "updatedAt": "2026-09-14T11:46:52Z",
         "state": "OPEN"
       },
       {
@@ -54,18 +14,8 @@
         "state": "OPEN"
       },
       {
-        "number": 2362,
-        "updatedAt": "2026-09-14T11:05:02Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2348,
         "updatedAt": "2026-09-14T05:13:42Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2347,
-        "updatedAt": "2026-09-14T17:08:52Z",
         "state": "OPEN"
       },
       {
@@ -91,11 +41,6 @@
       {
         "number": 2338,
         "updatedAt": "2026-09-14T00:28:41Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2336,
-        "updatedAt": "2026-09-14T13:36:33Z",
         "state": "OPEN"
       },
       {
@@ -129,28 +74,13 @@
         "state": "OPEN"
       },
       {
-        "number": 2327,
-        "updatedAt": "2026-09-14T02:44:56Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2326,
         "updatedAt": "2026-09-14T20:44:15Z",
         "state": "OPEN"
       },
       {
-        "number": 2325,
-        "updatedAt": "2026-09-13T13:32:53Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2314,
         "updatedAt": "2026-09-14T19:46:56Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2299,
-        "updatedAt": "2026-09-14T11:04:27Z",
         "state": "OPEN"
       },
       {
@@ -210,7 +140,7 @@
       },
       {
         "number": 2259,
-        "updatedAt": "2026-09-13T12:41:29Z",
+        "updatedAt": "2026-09-15T06:29:28Z",
         "state": "OPEN"
       },
       {
@@ -249,11 +179,6 @@
         "state": "OPEN"
       },
       {
-        "number": 2028,
-        "updatedAt": "2026-09-14T21:30:44Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2026,
         "updatedAt": "2026-09-14T07:55:05Z",
         "state": "OPEN"
@@ -279,18 +204,8 @@
         "state": "OPEN"
       },
       {
-        "number": 1892,
-        "updatedAt": "2026-09-14T15:34:56Z",
-        "state": "OPEN"
-      },
-      {
         "number": 1873,
         "updatedAt": "2026-09-14T07:54:59Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 1863,
-        "updatedAt": "2026-09-14T14:38:08Z",
         "state": "OPEN"
       },
       {
@@ -314,11 +229,6 @@
         "state": "OPEN"
       },
       {
-        "number": 1811,
-        "updatedAt": "2026-09-14T17:56:16Z",
-        "state": "OPEN"
-      },
-      {
         "number": 1800,
         "updatedAt": "2026-09-14T19:36:25Z",
         "state": "OPEN"
@@ -334,16 +244,6 @@
         "state": "OPEN"
       },
       {
-        "number": 1786,
-        "updatedAt": "2026-09-14T11:05:05Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 1778,
-        "updatedAt": "2026-09-14T13:36:26Z",
-        "state": "OPEN"
-      },
-      {
         "number": 1769,
         "updatedAt": "2026-09-14T14:30:57Z",
         "state": "OPEN"
@@ -351,16 +251,6 @@
       {
         "number": 1752,
         "updatedAt": "2026-09-14T18:11:28Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 1739,
-        "updatedAt": "2026-09-14T13:36:20Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 1732,
-        "updatedAt": "2026-09-14T18:48:43Z",
         "state": "OPEN"
       },
       {
@@ -383,65 +273,30 @@
   "groups": [
     [
       {
-        "body": "## Current State\n\nFollow-up from #2324's whole-branch review. #2324 added `--release-type <type>`/`--extra-file <path>` to `plugin/bin/lib/init/release-bootstrap.js` and its CLI (`plugin/bin/release-bootstrap.js`), with tests in `tests/bin-lib/init/release-bootstrap.test.js` and `tests/bin-lib/init/release-bootstrap-cli.test.js`, and a stack-table prose pin in `tests/init-release-bootstrap-conformance.test.js`. Five small gaps surfaced during review, none blocking that merge:\n\n1. `tests/bin-lib/init/release-bootstrap.test.js` has two tests asserting the identical throw on the identical branch (\"override releaseType without extraFile throws\" and \"override with releaseType but no extraFile throws\").\n2. The CLI (`plugin/bin/release-bootstrap.js`) validates `--release-type`'s vocabulary before the both-together pairing check; the lib (`resolveReleaseType`) checks pairing first, vocabulary second. Both are usage errors (no functional bug), but the two layers disagree on order.\n3. `resolveReleaseType`'s thrown errors (\"--release-type and --extra-file must be given together\", \"invalid release-type override: ...\") are phrased in CLI-flag language even though the function's own parameters are `releaseType`/`extraFile` — every other error in this file is parameter-shaped (\"invalid branch name:\", \"root is not a directory:\"). A direct lib caller bypassing the CLI gets a message naming flags it never passed.\n4. `tests/init-release-bootstrap-conformance.test.js` pins the stack table row-for-row against its code twin, but nothing pins the new override paragraph's prose (e.g. that it correctly states the vocabulary is \"this table's types plus simple\").\n5. During #2324's final-review fix wave, `bootstrapRelease`'s seed-version line changed from branching on the raw `extraFile` param to branching on `extraFiles.length` (to reuse one validated path for both the override case and the new `--extra-file` readability check). This incidentally changed the untested, no-override auto-detected-`simple` path too: previously that path always ignored an auto-found manifest's version (`readStackManifestVersion` has no `simple` case, falling back to a `v*` tag or `0.1.0`); it now reads the auto-found manifest's real version. Likely a correctness improvement, but unrequested scope with zero test coverage for that specific path.\n\n## Deliverables\n\n- Drop the duplicate test from item 1, keeping the one that's genuinely distinct (the `extraFile`-without-`releaseType` direction).\n- Align validation order between the CLI and the lib (pick one order, apply it in both places).\n- Reword `resolveReleaseType`'s two new thrown errors to be parameter-shaped rather than flag-shaped, matching the file's existing error style.\n- Add one conformance assertion in `tests/init-release-bootstrap-conformance.test.js` pinning the override paragraph's key claims (flags named, vocabulary described).\n- Add a `bootstrapRelease` test for the no-override, auto-detected-`simple`-with-a-found-manifest case, asserting the (now-changed) seeded version — or, if the pre-#2324 behavior was actually intentional, revert the `extraFiles.length`-based branch so the override and auto-detect paths use independent version sources again.\n\n## Acceptance Criteria\n\n- `node --test tests/bin-lib/init/release-bootstrap.test.js tests/bin-lib/init/release-bootstrap-cli.test.js tests/init-release-bootstrap-conformance.test.js` passes, with one fewer test than before item 1's fix and one more covering item 5.\n- Only one test exercises the \"must be given together\" throw per direction, not two for the same direction.\n- The CLI and lib both reject an invalid `--release-type` value the same way regardless of whether `--extra-file` is also missing (validation order no longer observably differs between the two layers).\n\n_Filed by `capture` via specShapedBody._\n",
-        "createdAt": "2026-09-14T17:08:21Z",
+        "number": 2329,
+        "title": "claim-targets.js: eventually-consistent read-back race + unverified-claim leak",
+        "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review of `plugin/bin/lib/claim-targets/claim-targets.js`\n— all three confirmed still true at this shaping pass:\n\n- **Read-back race** (~line 400): post-write verification (#2073) re-reads immediately with no\n  retry/backoff (`if (!verifyClaimLanded(deps, repoSlug, issue, opts.runId, knownTip))`). On the\n  contents-API transport `knownTip` is `null`, so the read-back hits GitHub's\n  eventually-consistent contents API and can legitimately return the pre-write blob — a spurious\n  exit 5 on a claim that actually landed. The file's own header already warns against\n  eventually-consistent GitHub reads elsewhere.\n- **Claim leak on abort** (~line 227, confirmed): `abort()` releases only `claimedThisRun`\n  (`releaseClaimedThisRun(deps, repoSlug, opts.runId, claimedThisRun)`). `stopOrSkip(issue,\n  'unverified', 'unverified', 5, {})` runs (confirmed, ~line 401) *before* the target is pushed\n  onto `claimedThisRun` (the `claimedThisRun.push(issue)` call is one line after the verification\n  check), so a target whose claim genuinely landed (just couldn't be verified back) leaks until\n  TTL expiry with no `bot:in-progress` marker making it visible.\n- **Stale doc comment** (~line 225, confirmed): `abort()`'s comment still enumerates only exit\n  codes 3 and 4 (\"`exitCode` is 3 for a `contested`/`inFlight` envelope, 4 for a `transient`\n  one\") — exit 5 (`unverified`) was added without updating it.\n\n## Deliverables\n\n- Add a bounded retry/backoff to the post-write read-back verification when `knownTip` is `null`,\n  before declaring exit 5.\n- Release (or otherwise make visible) the `unverified` target's claim on abort, not just\n  `claimedThisRun`.\n- Update `abort()`'s doc comment to include exit 5.\n\n## Acceptance Criteria\n\n- A simulated eventually-consistent stale read on the contents-API path no longer produces a\n  spurious exit 5 within the retry window.\n- An aborted run with an `unverified` target leaves that claim in a state a later run can\n  detect/reclaim before TTL, not silently leaked.\n- `abort()`'s doc comment lists exit codes 3, 4, and 5.\n- `npm test` passes.\n\n## Technical Approach\n\nFor the read-back race: wrap the `verifyClaimLanded` call (~line 400) in a small bounded\nretry loop (a few attempts with a short backoff) specifically for the `knownTip === null` case —\nthe git-CAS path (`knownTip` set) already has a real tip to compare against and doesn't need\nthis, since a git-CAS success is immediately consistent. Only declare exit 5 after the retry\nwindow is exhausted. For the claim leak: capture the `unverified` issue's claim state (the\ncontext `verifyClaimLanded` already had before failing) and pass it to `abort()` so it can be\nreleased or explicitly flagged alongside `claimedThisRun`'s own release — the goal is that a\ngenuinely-landed-but-unverified claim doesn't sit invisible until TTL; releasing it (so a later\nrun can pick it up cleanly) is the safer default over leaving it silently held. Update the\n`abort()` doc comment in the same change.\n\n### Key Files\n\n- `plugin/bin/lib/claim-targets/claim-targets.js` — the read-back retry (~line 400), the claim\n  leak fix (~line 227, `abort()` and the `unverified` stop path), and the doc comment update\n\n## Gotchas\n\n- The retry must be scoped to the `knownTip === null` (contents-API) path only — the git-CAS\n  path's `knownTip`-based verification is already immediately consistent and doesn't need\n  (or benefit from) a retry; adding one there would just slow down every claim for no\n  correctness gain.\n- Releasing an `unverified` claim on abort must not race with the claim that write actually\n  produced — verify the release targets the same claim identity (`repoSlug`, `issue`, `opts.runId`)\n  the write itself used, so a genuinely different run's claim on the same issue is never touched.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review of `plugin/bin/lib/claim-targets/claim-targets.js`:\n\n- **Read-back race** (~line 400): post-write verification (#2073) re-reads immediately with no retry/backoff. On the contents-API transport `knownTip` is `null`, so the read-back hits GitHub's eventually-consistent contents API and can legitimately return the pre-write blob — a spurious exit 5 on a claim that actually landed. The file's own header already warns against eventually-consistent GitHub reads elsewhere.\n- **Claim leak on abort** (~line 227): `abort()` releases only `claimedThisRun`. `stopOrSkip(issue, 'unverified', 'unverified', 5, {})` runs *before* the target is pushed onto `claimedThisRun` (line ~405), so a target whose claim genuinely landed (just couldn't be verified back) leaks until TTL expiry with no `bot:in-progress` marker making it visible.\n- **Stale doc comment** (~line 225): `abort()`'s comment still enumerates only exit codes 3 and 4; exit 5 (`unverified`) was added without updating it.\n\n## Deliverables\n- Add a bounded retry/backoff to the post-write read-back verification when `knownTip` is `null`, before declaring exit 5.\n- Release (or otherwise make visible) the `unverified` target's claim on abort, not just `claimedThisRun`.\n- Update `abort()`'s doc comment to include exit 5.\n\n## Acceptance Criteria\n- A simulated eventually-consistent stale read on the contents-API path no longer produces a spurious exit 5 within the retry window.\n- An aborted run with an `unverified` target leaves that claim in a state a later run can detect/reclaim before TTL, not silently leaked.\n",
         "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
+          "ready",
+          "size:medium",
+          "type:bug",
+          "auto:build",
+          "priority:medium",
+          "risk:medium",
+          "ceremony:standard",
+          "shaped:headless"
         ],
-        "number": 2458,
+        "createdAt": "2026-09-12T16:43:52Z",
+        "updatedAt": "2026-09-14T11:04:25Z",
         "state": "OPEN",
-        "title": "Tighten release-bootstrap's --release-type/--extra-file override validation seam",
-        "updatedAt": "2026-09-14T18:22:12Z",
         "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": "standard",
           "solutionUnjustified": false,
-          "breaking": false,
           "needsDefinition": false,
-          "priority": "low",
+          "priority": "medium",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -449,98 +304,48 @@
           },
           "bot": {
             "inProgress": false,
-            "blocked": false,
-            "parked": false
+            "blocked": false
           },
           "acceptance": null,
           "isParentIssue": false,
           "notPlanned": false,
-          "shapedHeadless": false
+          "shapedHeadless": true
         }
       }
     ],
     [
       {
-        "body": "**Doc:** plans/2026-09-11-release-skill-ledger | **Section:** Row 115 (review/hindsight #2256 — driver-skill-outcome-taxonomy) | **Category:** staleness | **Misleads:** human engineer + coding agent | **Classification:** additive | **Confidence:** high\n\nVerified-as-of: 1941be706a53ea4f6dbd5c9b4c385991cc72811e\n\n## Current State\n\nAlso affects: `Row 34 (review — release-bootstrap.js branch validation)`, `Row 104 (review #2256 — PR title re-read before merge)`\n\nVerified live against the current checkout: (1) `.claude/skills/driver-skill-outcome-taxonomy/SKILL.md` exists and `git log --oneline --diff-filter=A -- .claude/skills/driver-skill-outcome-taxonomy/` shows it added in commit 8409ec468, yet ledger row 115 (line 119) still reads `open`. (2) `plugin/bin/lib/init/release-bootstrap.js` contains `isValidBranchName` (lines 214-222) gating `renderWorkflowYaml` (line 226) and `bootstrapRelease`'s pr-first branch (line 313), matching row 34's (line 38) proposed fix `spec-2253/staged/review-1.patch`, yet row 34 still reads `open`. (3) `plugin/skills/release/execute.md` lines 149-155 implement the exact major-bump re-gate on a re-read PR title that row 104 (line 108) proposed as `staged/review-1.patch`, yet row 104 still reads `open`. All three share one root cause: this ledger's Status column was never updated after later work in the same pipeline (bundled into merge commit 8409ec468) resolved them.\n\n## Deliverables\n\n**Current:**\n```\n`[skill: NEW - driver-skill-outcome-taxonomy]` | open | Evidence: rulings 13, 14, 19, 20 and review rows 104-106; Cost this session: one fix wave and two review fix commits. Wrap-up's Skills curation row seeds it (batch pass) |\n```\n\n**Proposed:**\n```\n`[skill: NEW - driver-skill-outcome-taxonomy]` | fixed | Evidence: rulings 13, 14, 19, 20 and review rows 104-106; Cost this session: one fix wave and two review fix commits — the skill now ships at `.claude/skills/driver-skill-outcome-taxonomy/SKILL.md` (landed 8409ec468) |\n```\n\n## Acceptance Criteria\n\nUpdate the Status column (and Resolution note) for three rows from `open` to `fixed`, since live repository state shows each was completed after this ledger was written: Row 115 — the proposed `driver-skill-outcome-taxonomy` skill now exists at `.claude/skills/driver-skill-outcome-taxonomy/SKILL.md` (git log -S shows it landing in commit 8409ec468); Row 34 — `plugin/bin/lib/init/release-bootstrap.js` now defines `isValidBranchName` and gates both `renderWorkflowYaml` and `bootstrapRelease` on it before interpolating `branch` into the generated workflow YAML (same commit); Row 104 — `plugin/skills/release/execute.md` Step 5's delta 5 (\"title is read too, and the bump is re-gated on it\") now implements exactly the re-read-and-re-gate-on-major behavior this row proposed as `staged/review-1.patch`. All three still read Status: `open`, which actively misleads: `plugin/skills/release/execute.md:189` and `.claude/skills/driver-skill-outcome-taxonomy/SKILL.md:92` both cite specific rows of this ledger by number as live references, so a reader following either citation lands on a row that misreports its own already-shipped fix as not-yet-done.\n\n_Filed by `/claude-tweaks:docs-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n\n<!-- work-fingerprint: docshealth-38e949c8 -->\nwork-fingerprint: docshealth-38e949c8",
-        "createdAt": "2026-09-14T06:08:32Z",
+        "number": 2267,
+        "title": "Migrate status-line instruction: review family plus new prose-conformance test",
+        "body": "Surface: backend\n\n## Overview\n\nPart of the 5-unit status-line migration decomposition (parent #2264, keystone #2265). This unit\ncovers the review skill family's 4 files, including `step3-lens-dispatch.md` — the file the\ndesign doc names explicitly as carrying \"the fullest `WRONG:`-example shape\" (two examples plus a\nself-check sentence) and as a required prose-conformance pin target in its own Testing section.\nThis unit is the one other than the keystone that adds new test coverage rather than a pure text\nswap.\n\n**Complexity:** Medium\n**Estimated tasks:** 4\n\n## Non-Goals\n\n- Editing the canonical contract file itself, or `subagent-stop.js`'s detection logic — that is\n  #2265, which this unit is `Blocked by`.\n- Editing any file outside the review family listed below — those are WU2, WU4, or WU5 in this\n  same decomposition.\n- Editing `plugin/skills/review/step3-debate-and-refutation.md` line ~134 — that line is a\n  consumer read of the status word (reading a prior agent's already-emitted status), not a\n  producer instruction telling an agent where to put one, and is out of this migration's scope by\n  the design doc's own line-item note.\n- Changing the four status words themselves or the Template A/B/C content that follows the status\n  line.\n\n## Current State\n\n- `plugin/skills/review/step3-lens-dispatch.md` (~95-98): the fullest instance — \"First line of\n  your reply must be exactly one of: ... — nothing before it, not even a lead-in sentence,\" plus\n  two `WRONG:` examples and a self-check sentence asking the agent to verify its own first line\n  before replying.\n- `plugin/skills/review/step3-routing.md` (~121): `First line: DONE / DONE_WITH_CONCERNS /\n  NEEDS_CONTEXT / BLOCKED`.\n- `plugin/skills/review/ux-analysis.md` (~68): `First line: DONE / DONE_WITH_CONCERNS /\n  NEEDS_CONTEXT / BLOCKED`.\n- `plugin/skills/review/step3-debate-and-refutation.md` (~27 and ~86, two separate producer\n  instances): `First line: one of DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED. Then:` —\n  line ~134 in this same file is a consumer read and is explicitly untouched (see Non-Goals).\n- No prose-conformance test currently pins any of this file's status-line instruction text against\n  regression.\n\n## Deliverables\n\n- [ ] `plugin/skills/review/step3-lens-dispatch.md` (~95-98) — rewrite the position-asserting\n      instruction to: `The last non-empty line of your reply must read exactly one of: \\`STATUS:\n      DONE\\` / \\`STATUS: DONE_WITH_CONCERNS\\` / \\`STATUS: NEEDS_CONTEXT\\` / \\`STATUS: BLOCKED\\` —\n      nothing after it, not even a closing pleasantry.` Rewrite the two `WRONG:` examples to:\n      `WRONG: \"...the findings above are complete. DONE\"` (bare trailing word, not the labeled\n      line) and `WRONG: \"STATUS: DONE\\n\\nLet me know if you'd like more detail.\"` (a labeled line\n      that isn't truly the last non-empty line). Rewrite the self-check sentence to: \"Before\n      replying, verify the reply's last non-empty line is exactly one of the four labeled\n      `STATUS:` lines above, with nothing after it.\" This is the fullest rewrite in this\n      decomposition — match the design doc's Testing section, which names this file explicitly.\n- [ ] `plugin/skills/review/step3-routing.md` (~121) — replace with: `Status line (required): the\n      last non-empty line of your reply must read exactly \\`STATUS: DONE\\` (or\n      DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED).`\n- [ ] `plugin/skills/review/ux-analysis.md` (~68) — same replacement text as above.\n- [ ] `plugin/skills/review/step3-debate-and-refutation.md` (~27) — replace with: `Produce your\n      response first; the last non-empty line of your reply must then read exactly one of: DONE /\n      DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, labeled \\`STATUS: {WORD}\\`.` — note the \"Then:\"\n      wording is deliberately restructured, not merely preserved: the old phrase described what\n      *follows* a first-line status word, which inverts under the new trailing-line convention\n      where nothing follows the status line.\n- [ ] `plugin/skills/review/step3-debate-and-refutation.md` (~86) — same restructured replacement\n      text as the ~27 instance above (second, separate producer instance in the same file — locate\n      both via `grep -n \"First line: one of DONE\"`, which matches only the two producer instances,\n      never the consumer read at line ~134, which reads `parseStatusLine` output rather than\n      asserting where to put one — leave it untouched).\n- [ ] New prose-conformance test, `tests/subagent-status-line-prose-conformance.test.js` (new\n      file, following this repo's `skill-prose-conformance-tests` house convention and its\n      `*-prose-conformance.test.js` naming pattern — e.g. `fetch-sub-issues-prose-conformance.test.js`):\n      pin the new trailing-`STATUS:`-line instruction text with a go-red proof against a frozen\n      pre-migration excerpt, using two separate hardcoded fixture strings — one excerpt from\n      `plugin/skills/_shared/subagent-output-contract.md`'s pre-migration text and a separate\n      excerpt from `plugin/skills/review/step3-lens-dispatch.md`'s pre-migration `WRONG:`-example\n      shape (both fixtures are string literals in the test file itself, captured from this\n      record's Current State section above — never a live git read of a prior commit, which would\n      make the go-red proof depend on edit ordering). Assert the test fails against each frozen\n      fixture, then assert it passes against the live post-migration text in BOTH\n      `subagent-output-contract.md` (landed by #2265, this unit's blocker) AND\n      `step3-lens-dispatch.md` (this unit's own edit) — per the design doc's own Testing section,\n      which names both files as the minimum representative sample.\n\n## Acceptance Criteria\n\n1. `step3-lens-dispatch.md`'s position instruction is rewritten for the new trailing-line\n   convention, and both `WRONG:` examples plus the self-check sentence show the *new* failure\n   modes verbatim as specified in Deliverables above (a bare trailing word; a labeled line\n   followed by more text) — no example still shows the retired first-line-narration failure mode\n   as the thing to warn against. The rewritten `WRONG:` examples themselves are exempted from\n   check 4 below — they illustrate the retired shape deliberately, as counter-examples, not as a\n   live producer instruction.\n2. `step3-routing.md`, `ux-analysis.md`, and both instances in `step3-debate-and-refutation.md`\n   (~27 and ~86) read the new trailing-`STATUS:`-line instruction; line ~134 in\n   `step3-debate-and-refutation.md` is unchanged.\n3. `tests/subagent-status-line-prose-conformance.test.js` exists and: (a) fails (goes red) against\n   each of its two frozen, hardcoded pre-migration fixture strings (one per file) — proving the\n   assertion can actually distinguish old from new — and (b) passes against the live\n   post-migration text in BOTH `plugin/skills/_shared/subagent-output-contract.md` and\n   `plugin/skills/review/step3-lens-dispatch.md`.\n4. After this unit's edits land, `grep -rn \"First line: one of DONE\\|First line: DONE\\|First\n   line of your reply must be exactly one of\" plugin/skills/review/step3-lens-dispatch.md\n   plugin/skills/review/step3-routing.md plugin/skills/review/ux-analysis.md\n   plugin/skills/review/step3-debate-and-refutation.md` returns zero matches against any live\n   producer instruction — the two rewritten `WRONG:` examples in `step3-lens-dispatch.md` use\n   different illustrative text (per Deliverables above) and so do not themselves match this\n   pattern. Before editing, `grep -n \"First line: one of DONE\"\n   plugin/skills/review/step3-debate-and-refutation.md` confirms the two producer instances sit\n   at ~27 and ~86 only, never at the consumer read on line ~134 (which reads a prior agent's\n   already-emitted status rather than instructing where to put one).\n5. Before authoring criterion 3's fixture against `subagent-output-contract.md`, confirm #2265 is\n   closed (or re-read that file's live content directly) rather than trusting this record's quoted\n   snapshot of its wording.\n6. `npm test` passes with no regressions.\n\n## Technical Approach\n\nSame mechanical replacement pattern as the rest of this decomposition for the 3 simpler files\n(`step3-routing.md`, `ux-analysis.md`, both `step3-debate-and-refutation.md` instances), plus a\nfuller rewrite for `step3-lens-dispatch.md` since it's the one file in the whole 21-file survey\ncarrying a `WRONG:`-example-plus-self-check shape rather than a single instruction line. The new\nprose-conformance test follows this repo's own `skill-prose-conformance-tests` convention: freeze\na short excerpt of the pre-migration instruction text as a fixture, assert the test fails against\nthat fixture (proving it can go red), then assert it passes against the live file content\npost-migration — for both the canonical contract file and this unit's own edited file, since the\ndesign doc's Testing section requires both.\n\n### Key Files\n\n- `plugin/skills/review/step3-lens-dispatch.md` — lines ~95-98, fullest rewrite (instruction +\n  two `WRONG:` examples + self-check sentence).\n- `plugin/skills/review/step3-routing.md` — line ~121, one instance.\n- `plugin/skills/review/ux-analysis.md` — line ~68, one instance.\n- `plugin/skills/review/step3-debate-and-refutation.md` — lines ~27 and ~86 (edit), line ~134\n  (do not edit — consumer read).\n- `tests/` — new or extended prose-conformance test file pinning both\n  `subagent-output-contract.md` and `step3-lens-dispatch.md`'s new instruction text (name the exact\n  test file at implementation time, following the naming convention of neighboring\n  `tests/*prose*`/`tests/*conformance*` files already in this repo).\n\n## Gotchas\n\n- `step3-lens-dispatch.md` is the fullest rewrite in this decomposition — don't treat it as a\n  drop-in text swap like the other 3 files; the `WRONG:` examples and self-check sentence need\n  content, not just position, rewritten.\n- `step3-debate-and-refutation.md` has two producer instances (~27, ~86) AND one consumer read\n  (~134) in the same file — grep for the exact old phrase before editing to confirm which lines\n  are producers, and leave the consumer read alone; editing it would break how that agent reads a\n  prior agent's status word.\n- The new prose-conformance test must actually go red against the frozen pre-migration excerpt\n  before it's trusted to go green post-migration — a test that can't fail proves nothing\n  (`skill-prose-conformance-tests` convention, this repo's own house rule).\n- This unit is `Blocked by` #2265 — the conformance test's assertion against\n  `subagent-output-contract.md` needs that file's actual landed text, not a guess at what it will\n  say. The exact replacement strings quoted in Deliverables above are this record's best-effort\n  snapshot at authoring time; re-read #2265's actual landed text before applying any edit here and\n  defer to it if the two differ.\n- **Do not build before #2265 lands.** This record carries `ready` and a native `Blocked by`\n  dependency on #2265 — the dispatch/queue mechanism that reads that dependency (`/claude-tweaks:dispatch`,\n  `/claude-tweaks:flow`) is what prevents premature pickup; no additional in-record check is\n  needed beyond confirming the dependency edge exists (`gh issue view {this record} --json body`\n  showing the linked blocker, or the dispatcher's own worklist filtering).\n\n## Manual Steps\n\nNone — every deliverable is a direct file edit or new test file, plus `npm test`.\n\n\n<!-- work-fingerprint: subagent-status-line-trailing-migration:review-family -->\nwork-fingerprint: subagent-status-line-trailing-migration:review-family",
         "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACverRqw",
-            "name": "by:docs-health",
-            "description": "",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACverRrA",
-            "name": "docs-health:additive",
-            "description": "",
-            "color": "ededed"
-          }
+          "ready",
+          "risk:low",
+          "size:medium",
+          "type:task",
+          "auto:build",
+          "priority:medium",
+          "ceremony:standard"
         ],
-        "number": 2407,
+        "createdAt": "2026-09-11T21:58:09Z",
+        "updatedAt": "2026-09-13T12:41:38Z",
         "state": "OPEN",
-        "title": "Doc staleness: plans/2026-09-11-release-skill-ledger — Row 115 (review/hindsight #2256 — driver-skill-outcome-taxonomy)",
-        "updatedAt": "2026-09-14T11:47:16Z",
         "facets": {
-          "origin": "docs-health",
+          "origin": null,
           "risk": "low",
-          "size": "low",
-          "ceremony": null,
+          "size": "medium",
+          "ceremony": "standard",
           "solutionUnjustified": false,
-          "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
           "stage": "ready",
           "grants": {
             "build": true,
-            "merge": true
+            "merge": false
           },
           "bot": {
             "inProgress": false,
-            "blocked": false,
-            "parked": false
+            "blocked": false
           },
           "acceptance": null,
           "isParentIssue": false,
@@ -551,517 +356,68 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\n\n`bin/lib/wrap-up/pack.js`'s `resolveRecords` ladder has three rungs: (a) the run dir's own\n`work/*-spec.md` headers, (b) the worktree's mirror of that same run dir (via `worktreeMirror`),\nand (c) a parent multi-spec run's `manifest.yml` ids plus any `spec-*/work/` headers found by\n`deps.readdir(runDir)`. Only rungs (a) and (b) apply worktree-mirroring; rung (c) reads `spec-*`\nsubdirectories directly from `runDir` (the main-checkout path `--run` anchors to), never from the\nworktree.\n\nFor a `/claude-tweaks:dispatch` file-overlap group (2+ records sharing one worktree/branch/PR),\n`materialize.md` writes each record's header to `{run-dir}/spec-{n}/work/{n}-spec.md` and commits\nit on the feature branch -- so on a real pr-first run it exists only inside the worktree's own\nworking tree, never in the main-checkout run dir, exactly the same reason rungs (a)/(b) already\nmirror. Observed live on run `2026-09-14T000308-record-2283-2338` (group #2283,#2338):\n`node bin/wrap-up-pack.js --run \"$RUN_DIR\"` returned `recordLabels`, `claim`, `ledger`, and\n`unblocked` all as `{ok: false, error: \"records unresolved -- no materialized header or manifest\nfound\"}` even though both `spec-2283/work/2283-spec.md` and `spec-2338/work/2338-spec.md` existed\nand were readable inside the worktree.\n\n## Deliverables\n\nExtend rung (c) in `resolveRecords` (`bin/lib/wrap-up/pack.js`) to also check\n`worktreeMirror(runDir, worktree)` for `spec-*/work/` headers and the mirrored `manifest.yml`,\nthe same way rung (b) mirrors rung (a) -- falling back to the existing `runDir`-only read when no\nworktree resolves or the mirror has nothing.\n\n## Acceptance Criteria\n\n- A fixture reproducing this run's shape (main-checkout run dir with no `work/` or `spec-*/`\n  entries; a separate worktree dir carrying `spec-{n}/work/{n}-spec.md` for 2+ records) resolves\n  `records` via a new `worktree-manifest`-shaped source, not `unavailable`.\n- The four probes that depend on `resolveRecords` (`recordLabels`, `claim`, `ledger`, `unblocked`)\n  succeed against that fixture instead of returning `records unresolved`.\n- Existing `resolveRecords`/`wrap-up-pack` tests continue to pass unchanged.\n\n## Technical Approach\n\nMirror rung (b)'s existing pattern (`worktreeMirror(runDir, worktree)`) into rung (c): when the\ndirect `runDir`-anchored `spec-*/work/` read finds nothing, resolve the worktree mirror path the\nsame helper rung (b) already uses, and re-run the same `spec-*/work/` + `manifest.yml` read\nagainst that mirrored path before falling back to `unavailable`. No new mirroring mechanism --\nreuse the existing `worktreeMirror` helper rungs (a)/(b) already call.\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/pack.js` -- `resolveRecords`'s rung (c), and the `worktreeMirror` helper\n  to reuse\n- test fixture covering the group-overlap shape this record reports (main-checkout run dir empty,\n  worktree carrying `spec-{n}/work/{n}-spec.md` for 2+ records)\n\n## Gotchas\n\n- The fix must preserve rung (c)'s existing `runDir`-only behavior for the common single-record\n  or no-worktree case -- the worktree-mirror check is an additional fallback, not a replacement\n  for the direct read.\n- Origin: 2026-09-14T000308-record-2283-2338 (Defer-reason: pre-existing-outside-diff) -- filed\n  as a follow-up capture while wrapping up that unrelated run, not a defect introduced by it.\n\n## Original request\n\nwrap-up-pack.js resolveRecords spec-* rung never worktree-mirrors materialized headers\n\nOrigin: 2026-09-14T000308-record-2283-2338\nDefer-reason: pre-existing-outside-diff\n\n`bin/lib/wrap-up/pack.js`'s `resolveRecords` ladder has three rungs: (a) the run dir's own\n`work/*-spec.md` headers, (b) the worktree's mirror of that same run dir (via `worktreeMirror`),\nand (c) a parent multi-spec run's `manifest.yml` ids plus any `spec-*/work/` headers found by\n`deps.readdir(runDir)`. Only rungs (a) and (b) apply worktree-mirroring; rung (c) reads `spec-*`\nsubdirectories directly from `runDir` (the main-checkout path `--run` anchors to), never from the\nworktree.\n\nFor a `/claude-tweaks:dispatch` file-overlap group (2+ records sharing one worktree/branch/PR),\n`materialize.md` writes each record's header to `{run-dir}/spec-{n}/work/{n}-spec.md` and commits\nit on the feature branch -- so on a real pr-first run it exists only inside the worktree's own\nworking tree, never in the main-checkout run dir, exactly the same reason rungs (a)/(b) already\nmirror. Observed live on run `2026-09-14T000308-record-2283-2338` (group #2283,#2338):\n`node bin/wrap-up-pack.js --run \"$RUN_DIR\"` returned `recordLabels`, `claim`, `ledger`, and\n`unblocked` all as `{ok: false, error: \"records unresolved -- no materialized header or manifest\nfound\"}` even though both `spec-2283/work/2283-spec.md` and `spec-2338/work/2338-spec.md` existed\nand were readable inside the worktree.\n\n_Filed by `capture` via specShapedBody._\n",
-        "createdAt": "2026-09-14T00:27:13Z",
+        "number": 2266,
+        "title": "Migrate status-line instruction: design-wrapper + dispatch + specify family",
+        "body": "Surface: backend\n\n## Overview\n\nPart of the 5-unit status-line migration decomposition (parent #2264, keystone #2265). Once #2265\nlands the new canonical trailing-`STATUS:`-line convention in\n`plugin/skills/_shared/subagent-output-contract.md`, every dispatch site that carries its own\ninline copy of the old first-line-position instruction must be updated to match. This unit covers\nthe design-wrapper, dispatch, and specify skill families — 5 files, 6 instances of the old\ninstruction text.\n\n**Complexity:** Low\n**Estimated tasks:** 3\n\n## Non-Goals\n\n- Editing the canonical contract file itself, or `subagent-stop.js`'s detection logic — that is\n  #2265, which this unit is `Blocked by`.\n- Editing any file outside the design-wrapper/dispatch/specify families listed below — those are\n  WU3 (review family), WU4 (research + misc batch A), or WU5 (misc batch B) in this same\n  decomposition.\n- Changing the four status words themselves or the Template A/B/C content that follows the status\n  line — this unit only relocates the instruction's stated position, from first line to trailing\n  line.\n\n## Current State\n\nEach file below currently instructs its dispatched agent to put the status word as the literal\nfirst line of its reply, \"nothing before it, not even a lead-in sentence\" (or an equivalent\nposition-asserting phrasing):\n\n- `plugin/skills/design-wrapper/modes/explore.md` (~99): `Status line (required): first line of\n  your reply is one of DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.`\n- `plugin/skills/design-wrapper/modes/review.md` (~222): `Status line (required): First line of\n  your reply must be one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.`\n- `plugin/skills/dispatch/task-prompt.md` (~110 and ~199, two separate instances): `Status line\n  (required): First line of your reply must be one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT /\n  BLOCKED.`\n- `plugin/skills/specify/mechanical-handoff.md` (~62-63): `Status line (required): First line of\n  your reply must be one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.` — one\n  instruction spanning two lines (a single instance, not two separate ones — unlike\n  `task-prompt.md` below, which genuinely has two). Note: this is the very file defining the\n  dispatch-prompt template used to launch mechanical-range subagent runs (the same template family\n  this task's own dispatch was launched under).\n- `plugin/skills/specify/red-team.md` (~30): `> Status line (required): First line of your reply\n  must be one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.` (inside a Form B\n  blockquote).\n\n## Deliverables\n\n- [ ] `plugin/skills/design-wrapper/modes/explore.md` (~99) — replace the first-line instruction\n      with: `Status line (required): the last non-empty line of your reply must read exactly\n      \\`STATUS: DONE\\` (or DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED).`\n- [ ] `plugin/skills/design-wrapper/modes/review.md` (~222) — same replacement text as above.\n- [ ] `plugin/skills/dispatch/task-prompt.md` (~110) — same replacement text as above.\n- [ ] `plugin/skills/dispatch/task-prompt.md` (~199) — same replacement text as above (second,\n      separate instance in the same file — both must be edited).\n- [ ] `plugin/skills/specify/mechanical-handoff.md` (~62-63) — same replacement text as above.\n- [ ] `plugin/skills/specify/red-team.md` (~30) — same replacement text as above, preserving the\n      surrounding Form B blockquote `>` prefix on the edited line.\n\n## Acceptance Criteria\n\n1. All 6 instances across the 5 files above read the new trailing-`STATUS:`-line instruction; none\n   still asserts \"first line\" as the required position.\n2. `grep -rln \"Status line (required): first line\\|Status line (required): First line\" plugin/skills/design-wrapper/modes/explore.md\n   plugin/skills/design-wrapper/modes/review.md plugin/skills/dispatch/task-prompt.md\n   plugin/skills/specify/mechanical-handoff.md plugin/skills/specify/red-team.md` returns no\n   match — anchored to the literal retired instruction phrase, not the bare substring \"first\n   line,\" so the check cannot pass on an ambiguous partial match against unrelated prose.\n3. A positive check confirms the new text actually landed correctly, not merely that the old text\n   is gone: `grep -c \"STATUS: DONE\" plugin/skills/design-wrapper/modes/explore.md\n   plugin/skills/design-wrapper/modes/review.md plugin/skills/dispatch/task-prompt.md\n   plugin/skills/specify/mechanical-handoff.md plugin/skills/specify/red-team.md` returns at least\n   1 for each file (2 for `task-prompt.md`, which has two instances).\n4. `npm test` passes with no regressions.\n\n## Technical Approach\n\nMechanical text replacement only — no logic change. Each file's existing instruction is replaced\nwith the canonical trailing-line phrasing #2265 establishes in\n`plugin/skills/_shared/subagent-output-contract.md`: the reply's last non-empty line must read\nexactly `STATUS: {WORD}`. Preserve each file's own surrounding formatting (blockquote prefixes,\nlist indentation, code-fence context) — only the instruction's asserted position and wording\nchange, not its placement within the file or the file's other structure.\n\n### Key Files\n\n- `plugin/skills/design-wrapper/modes/explore.md` — line ~99, one instance.\n- `plugin/skills/design-wrapper/modes/review.md` — line ~222, one instance.\n- `plugin/skills/dispatch/task-prompt.md` — lines ~110 and ~199, two instances.\n- `plugin/skills/specify/mechanical-handoff.md` — lines ~62-63, one instance.\n- `plugin/skills/specify/red-team.md` — line ~30, one instance (inside a Form B blockquote).\n\n## Gotchas\n\n- `mechanical-handoff.md` defines the dispatch-prompt template used to hand off decomposition-mode\n  Steps 3-9 to a subagent (exactly the template family this migration's own originating dispatch\n  used) — get its wording exactly right, since a malformed instruction there self-propagates into\n  every future mechanical-handoff dispatch.\n- `task-prompt.md` has two separate instances at different line numbers — both must be found and\n  edited; a grep for the exact old phrase before editing (not just a line-number lookup) confirms\n  neither was missed if line numbers have drifted since this record was written.\n- `red-team.md`'s instance is inside a `>` Form B blockquote — the replacement text must stay\n  inside the blockquote (each line still prefixed with `>`), not be pasted below it.\n- This unit is `Blocked by` #2265 — do not start until the canonical contract text in\n  `subagent-output-contract.md` has actually landed, since the replacement wording here must match\n  it verbatim, not a guess at what it will say. The exact replacement strings quoted in\n  Deliverables above reflect the wording decided at this spec's authoring time — re-read #2265's\n  actual landed text in `subagent-output-contract.md` before applying any edit here and use that\n  literal wording if it differs in any way from what's quoted above; #2265 is the source of truth,\n  this record's quoted text is a best-effort snapshot of it.\n- `mechanical-handoff.md`'s dispatch-prompt template self-propagates into every future\n  mechanical-handoff dispatch (see Key Files note above) — a wrong edit here is discovered only\n  when a later dispatch under this template misbehaves, not at review time. No standalone smoke\n  test is required for this unit (that would duplicate #2265's own hook-detection test coverage),\n  but the AC3 positive-content grep above catches a malformed or missing replacement before it\n  ships.\n\n## Manual Steps\n\nNone — every deliverable is a direct file edit plus `npm test`.\n\n\n<!-- work-fingerprint: subagent-status-line-trailing-migration:design-wrapper-dispatch-specify -->\nwork-fingerprint: subagent-status-line-trailing-migration:design-wrapper-dispatch-specify",
         "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXTZ8w",
-            "name": "demo:pending",
-            "description": "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo",
-            "color": "1D76DB"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
+          "ready",
+          "risk:low",
+          "size:medium",
+          "type:task",
+          "auto:build",
+          "priority:medium",
+          "ceremony:fast-lane"
         ],
-        "number": 2391,
+        "createdAt": "2026-09-11T21:57:21Z",
+        "updatedAt": "2026-09-13T12:41:35Z",
         "state": "OPEN",
-        "title": "wrap-up-pack.js resolveRecords spec-* rung never worktree-mirrors materialized headers",
-        "updatedAt": "2026-09-14T17:02:51Z",
         "facets": {
-          "origin": "capture",
+          "origin": null,
           "risk": "low",
-          "size": "low",
+          "size": "medium",
           "ceremony": "fast-lane",
           "solutionUnjustified": false,
-          "breaking": false,
           "needsDefinition": false,
-          "priority": "low",
+          "priority": "medium",
           "stage": "ready",
           "grants": {
             "build": true,
-            "merge": true
+            "merge": false
           },
           "bot": {
             "inProgress": false,
-            "blocked": false,
-            "parked": false
+            "blocked": false
           },
-          "acceptance": "pending",
+          "acceptance": null,
           "isParentIssue": false,
           "notPlanned": false,
-          "shapedHeadless": true
+          "shapedHeadless": false
         }
       },
       {
-        "body": "Surface: infra\n\n**Related:** #2422 (same hardcoded-`main`-vs-integration-branch-ladder theme, different file)\n\n## Current State\n\n`bin/lib/wrap-up/pack.js`'s `resolveHeader` (the function backing `bin/wrap-up-pack.js`'s\n`residue`, `state`, and `blastRadius` probes) resolves the integration branch at line 233-238:\n\n```js\nconst policy = {\n  integrationBranch: values['integration-branch'] || '',\n  ...\n};\nconst integrationBranch = policy.integrationBranch || 'main';\nsources.integrationBranch = policy.integrationBranch ? 'policy' : 'default';\n```\n\nIt only ever consults `resolvePolicy`'s `integration-branch` key. When that key is unset (no\n`.claude-tweaks/policy.yml` pin), it falls straight to the literal string `'main'` -- never\nconsulting `skills/_shared/integration-branch.md`'s canonical ladder (routine template ->\npolicy.yml -> CLAUDE.md prose -> git/`gh repo view` default -> per-consumer fallback), which\nexists precisely so callers don't each hardcode their own guess.\n\nOn a repository whose actual default branch is not `main` (e.g. `master`), with no\n`integration-branch:` policy key set, this causes `residue`/`state`/`blastRadius` to fail:\n`could not resolve merge base of \"main\" and HEAD\"` (`blastRadius`) or `\"base unresolved -- no\nmerge-base against the integration branch\"` (`residue`/`state`). `sources.integrationBranch`\nthen reports `\"default\"` -- i.e. the pack's own provenance trace correctly shows it never\nconsulted policy.yml, CLAUDE.md, or git/gh at all.\n\n`skills/wrap-up/residue-sweep.md` already documents the correct pattern for a sibling caller:\n\"`--integration-branch` must always be passed explicitly -- never rely on the CLI's own\ndefault... resolve `{ref}` via `skills/_shared/integration-branch.md`'s canonical ladder before\ninvoking the CLI.\" `pack.js`'s `resolveHeader` is the one caller that still bypasses this.\n\n## Deliverables\n\n- `resolveHeader` in `bin/lib/wrap-up/pack.js` resolves `integrationBranch` via\n  `skills/_shared/integration-branch.md`'s canonical ladder (minus the routine-template rank,\n  which has no meaning inside this CLI -- policy.yml -> CLAUDE.md prose -> git/`gh repo view`\n  default), not a bare `policy.integrationBranch || 'main'` fallback.\n- `sources.integrationBranch` reports which ladder rank actually resolved the value (e.g.\n  `'policy'`, `'git-default'`), not just the binary `'policy'`/`'default'` it reports today --\n  so a reader of the pack's own provenance trace can tell which rank fired.\n\n## Acceptance Criteria\n\n- On a repository whose actual default branch is not `main`, with no `integration-branch:` key\n  in `.claude-tweaks/policy.yml`, running `node bin/wrap-up-pack.js --run <run-dir>` resolves the\n  real default branch (via git/`gh repo view`) instead of hardcoding `main`, and the\n  `residue`/`state`/`blastRadius` probes run to completion instead of failing on an unresolved\n  merge base.\n- `inputs.sources.integrationBranch` in the pack's output reflects the actual resolution source,\n  never silently reporting `'default'` when a real ladder rank (git/gh, or CLAUDE.md prose) fired.\n- A repository that already sets `integration-branch:` in `.claude-tweaks/policy.yml` is\n  unaffected -- this fix only changes what happens when that key is absent.\n- Existing tests covering `pack.js`'s header resolution still pass; add a test covering the\n  non-`main`-default, no-policy-key case this record reports.\n\n## Technical Approach\n\nReplace `pack.js`'s bare `policy.integrationBranch || 'main'` fallback with a call into\n`skills/_shared/integration-branch.md`'s canonical resolution -- the same git/`gh repo view`\ndefault-branch lookup `residue-sweep.md` already instructs its own callers to perform before\ninvoking `bin/residue.js` directly. Reuse whatever resolver function backs that lookup elsewhere\nin `bin/lib/` (check for an existing `resolveIntegrationBranch`-shaped helper before writing a\nnew one -- `bin/lib/reconcile/` and `bin/resolve-policy.js` both touch this same ladder and may\nalready export a reusable piece). Thread the resolved value's source rank through to\n`sources.integrationBranch` so the pack's own provenance trace stays accurate.\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/pack.js` -- `resolveHeader`'s integration-branch fallback (line ~233-238)\n- `plugin/skills/_shared/integration-branch.md` -- the canonical ladder this fix must follow, not restate\n- `plugin/skills/wrap-up/residue-sweep.md` -- the existing sibling-caller pattern to mirror\n\n## Gotchas\n\n- Workaround used to file this record: invoking `bin/residue.js` and `bin/blast-radius.js`\n  directly with an explicit `--base`/`--integration-branch master`, bypassing `pack.js`'s own\n  (broken) resolution for those two fields -- confirms the underlying probes work correctly once\n  given the right branch name; the defect is isolated to `pack.js`'s own resolution step.\n- `merge-size-probe.js`, `release/precheck.js`, and `release-preflight/pack.js` carry similar\n  `|| 'main'` fallbacks (found via a repo-wide grep while shaping this record) -- out of scope\n  for this record, which is filed specifically against `wrap-up-pack.js`'s probes; worth a\n  follow-up capture if they prove to have the same defect.\n\n## Original request\n\nwrap-up-pack.js: residue/state/blastRadius probes hardcode \"main\" instead of the canonical integration-branch ladder\n\n**Summary:** `bin/wrap-up-pack.js`'s `residue`, `state`, and `blastRadius` probes all failed on a repository whose default branch is not literally named `main`, with `could not resolve merge base of \"main\" and HEAD`. `skills/_shared/integration-branch.md` documents a canonical resolution ladder (explicit arg -> routine template -> `policy.yml`'s `integration-branch:` key -> CLAUDE.md prose -> git/`gh repo view` default -> per-consumer fallback) specifically so callers don't each hardcode their own guess, but this tool's `main` fallback bypasses that ladder entirely.\n\n**Kind:** Defect\n\n**Affected component:** `bin/wrap-up-pack.js`\n\n**Repro steps:**\n1. In a repository whose actual default branch is `master` (not `main`), with no `integration-branch:` key set in `.claude-tweaks/policy.yml`.\n2. Run `node bin/wrap-up-pack.js --run <a valid pipeline run dir>`.\n\n**Expected vs. actual:**\nExpected: the tool resolves the integration branch via `_shared/integration-branch.md`'s ladder (landing on the repo's actual default via `gh repo view --json defaultBranchRef` / `git remote show origin`) and the `residue`/`state`/`blastRadius` probes run normally.\nActual: all three probes fail with `error: \"could not resolve merge base of \\\"main\\\" and HEAD\"` (`blastRadius`) or `\"base unresolved -- no merge-base against the integration branch\"` (`residue`/`state`), and the pack's own `inputs.sources.integrationBranch` reports `\"default\"` -- i.e. it never consulted policy.yml, CLAUDE.md, or git/gh at all.\n\n**Definition:** Clear -- cite `_shared/integration-branch.md` in `wrap-up-pack.js` the same way `residue-sweep.md` already instructs its own caller to resolve `{ref}` before invoking `bin/residue.js` directly. Workaround used this run: invoke `bin/residue.js` and `bin/blast-radius.js` directly with an explicit `--base`/`--integration-branch master`, bypassing the pack's own (broken) resolution for those fields.\n\n**Plugin version:** 6.123.0\n<!-- fingerprint: feedback-a696904f -->\n\n",
-        "createdAt": "2026-09-13T22:11:33Z",
+        "number": 1350,
+        "title": "Verify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)",
+        "body": "Surface: backend\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule\nsentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`,\n18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its\npersonas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent`\ntool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a\nstatic `node --test` assertion; it can only be confirmed by observing an actual future `/specify`\ndecomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that\npersona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s\nfan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the\nobservation (transcript excerpt or note) against this item, or file a defect against\n`red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use\ncalls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of\nsub-issues) assistant messages.\n\n## Technical Approach\n\nWait for (or trigger) a `/claude-tweaks:specify` decomposition-mode run that produces 2 or more\n`ceremony:standard` sub-issue records — `ceremony-check` (`assess-agent-autonomy/ceremony-check.md`)\nresolves the tier per sub-issue during that run's own Step 3, so the tier isn't knowable until the\nrun happens. Once such a run occurs, inspect that session's stored transcript for the Step 5\nred-team dispatch (`specify/red-team.md`'s Parallel dispatch section): locate the `Agent` tool_use\nblocks for each dispatched persona and group them by the assistant message id each block belongs\nto. Confirm the number of distinct assistant message ids covering all persona dispatches for a\ngiven sub-issue is ≤ the number of sub-issues in that batch. Use the same read-only transcript\ninspection method `transcript-payload-verification` documents for reading this session's own\nlocally-stored transcript, rather than instrumenting or modifying `red-team.md` itself.\n\nIf the count exceeds the bound, file a defect issue against `red-team.md`'s dispatch prose\n(quoting the transcript grouping that violates the rule) instead of editing the file directly from\nthis record — this record's own deliverable is the observation, not the fix.\n\n### Key Files\n\n- `plugin/skills/specify/red-team.md` — the per-sub-issue persona dispatch procedure being observed\n- `plugin/skills/_shared/subagent-output-contract.md` — the fan-out single-assistant-message rule this observation verifies compliance with\n- `tests/subagent-contract-clauses.test.js` — AC1's existing static test coverage (unaffected by this record)\n\n## Gotchas\n\n- This record's acceptance criterion depends on an external event (a live `/specify` decomposition\n  run over 2+ `ceremony:standard` sub-issues happening) that this record cannot itself trigger on a\n  fixed schedule — it may sit open for some time until a qualifying run occurs naturally, or until\n  someone deliberately runs one to close it out.\n- A qualifying run must be observed via its own transcript at the time it happens; this record\n  cannot be resolved from historical data if no already-completed run's transcript is still\n  available.\n\n## Original request\n\nVerify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)\n\nOrigin: ledger resolve gate\n\nDefer-reason: needs-human-decision\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule sentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`, 18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its personas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent` tool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a static `node --test` assertion; it can only be confirmed by observing an actual future `/specify` decomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that persona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s fan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the observation (transcript excerpt or note) against this item, or file a defect against `red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use calls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of sub-issues) assistant messages.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
         "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXTZ8w",
-            "name": "demo:pending",
-            "description": "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo",
-            "color": "1D76DB"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
+          "ready",
+          "risk:low",
+          "size:low",
+          "type:task",
+          "auto:build",
+          "auto:merge",
+          "priority:low",
+          "ceremony:fast-lane",
+          "fix-on-worktree-worktree-dispatch-record-1350"
         ],
-        "number": 2385,
+        "createdAt": "2026-08-24T03:21:25Z",
+        "updatedAt": "2026-09-13T13:14:34Z",
         "state": "OPEN",
-        "title": "wrap-up-pack.js: residue/state/blastRadius probes hardcode \"main\" instead of the canonical integration-branch ladder",
-        "updatedAt": "2026-09-14T17:02:47Z",
         "facets": {
           "origin": null,
           "risk": "low",
           "size": "low",
           "ceremony": "fast-lane",
           "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": "pending",
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: wrap-up of #1841\nDefer-reason: tangential\n\n## Current State\n\n`plugin/bin/lib/wrap-up/engine-verify.js`'s `acceptance-labeling` check (registered via `registerCheck('acceptance-labeling', ...)`) unconditionally expects a resolved, non-parent-linked issue to carry `demo:pending` plus a Confirmed comment/brief, rendering `fail` when it's absent. `wrap-up/verification-brief.md`'s Oversight-floor gate (`#367`, `bin/lib/issues/oversight-floor.js`'s `exceedsOversightFloor`) legitimately skips Steps 1-4 (no `demo:pending` bootstrap, no brief) for a record whose `risk`/`size` facets don't clear the project's configured `risk-floor`/`size-floor` — e.g. a `risk:low`/`size:low` record under a run resolving `risk-floor: high`/`size-floor: high`. `engine-verify.js` has no knowledge of this exemption, so `wrap-up-engine.js verify` renders `acceptance-labeling` as `fail` and exits 3 for every such record, withholding the closure line even though the record's labeling is exactly as `verification-brief.md` intends.\n\nObserved live during #1841's own wrap-up: the record carries `risk:low`/`size:low`, the resolved run policy set `risk-floor: high`/`size-floor: high`, `exceedsOversightFloor` correctly returned `exceeds: false`, Steps 1-4 were correctly skipped — and `verify`'s `acceptance-labeling` row then rendered `fail — #1841: missing demo:pending label`, a false negative on a check that was never supposed to run for this record.\n\n## Deliverables\n\n- `acceptance-labeling`'s check needs a way to know a record was Oversight-floor-exempted, so it can render `skip (oversight floor not cleared)` instead of `fail` for that record — likely by having `verification-brief.md`'s Oversight-floor gate write the outcome into `verify-expectations.json` (a new field, e.g. `oversightExempt: [n1, n2]`) the same way `memory`/`upstream` are already written there, and having `engine-verify.js` read it before checking for `demo:pending`.\n- Extend `tests/bin-lib/wrap-up/engine-verify.test.js`: an issue listed in `verify-expectations.json`'s new exemption field renders `acceptance-labeling` as `skip`, never `fail`, even with no `demo:pending` label present.\n\n## Acceptance Criteria\n\n- A record whose Oversight-floor gate resolved `exceeds: false` (recorded in `verify-expectations.json`) renders `acceptance-labeling` as `skip`, and does not trip `verify`'s exit-3 gate on that account alone.\n- A record that genuinely should carry `demo:pending` but doesn't still renders `fail` as today — the fix narrows the false-positive population, it does not loosen the check generally.\n- `npm test` passes.\n_Filed by `capture` via specShapedBody._\n",
-        "createdAt": "2026-09-13T21:34:17Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          }
-        ],
-        "number": 2383,
-        "state": "OPEN",
-        "title": "wrap-up verify: acceptance-labeling doesn't know about the Oversight-floor exemption",
-        "updatedAt": "2026-09-14T11:46:52Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: /claude-tweaks:feedback session-evaluation (self-assessment, degraded from a failed Frontier judge dispatch), self-referential run (this repo's own origin is thomasholknielsen/claude-tweaks) — routed to a normal backlog record per Step 3 rather than filed as upstream feedback.\n\n## Current State\n\nWorktrees created via the harness-native `EnterWorktree` tool (rather than `plugin/skills/dispatch/`'s own `record-worktree` CLI) never get their worktree/branch association written into that run's `run-state.json`. Downstream, `teardown-run`/`archive-run` (`plugin/bin/hooks.js`) can't find the association and report \"no worktree recorded\" instead of tearing the worktree down automatically. In one session this recurred across 7 separate worktrees, each requiring a manual `git merge-base --is-ancestor` proof + `git worktree remove --force` + `git branch -D` + `gh api -X DELETE .../refs/heads/{branch}` sequence in place of one CLI call — roughly 14 extra manual commands that a working association would have made unnecessary. A related recovery-quality symptom from the same gap: a prior session's main checkout was found 256 commits behind `origin/main` while still holding uncommitted archival bookkeeping from an earlier `/tidy` run — state left behind with no automatic reconciliation path, blocking a later session's own `archive-run` calls until manually resolved via a scratch-worktree PR.\n\nRelated, narrower observation from the same evaluation: the ledger's canonical Create location (`docs/plans/YYYY-MM-DD-{feature}-ledger.md`, per `_shared/ledger-format.md`) requires a worktree write under `worktree-always`, but `residue-sweep.md` explicitly expects a standalone (no-worktree) wrap-up run to be able to create one \"so the ledger's own resolve gate has something to enforce on a standalone run.\" In practice a standalone run has no lightweight path to satisfy this — creating a ledger file for a single non-blocking item means a full worktree-commit-push-PR-merge cycle for a file that gets deleted moments later once resolved.\n\n## Deliverables\n\n1. Either make `EnterWorktree` call `record-worktree` itself when the harness detects a claude-tweaks-managed repo, or make `teardown-run`/`archive-run` fall back to `git worktree list`/branch-name matching when `run-state.json` carries no worktree field.\n2. Let a standalone, no-worktree wrap-up log ledger items to a location that doesn't require a worktree write — e.g. `.claude-tweaks/pipelines/{run-id}/` (already commit-exempt under `worktree-always` and already the run's own audit-trail home) instead of `docs/plans/`.\n\n## Acceptance Criteria\n\n- A worktree entered via `EnterWorktree` during a dispatch/wrap-up run is torn down by `teardown-run`/`archive-run` without a \"no worktree recorded\" failure and without any manual `git worktree remove`/`git branch -D`/`gh api DELETE` fallback.\n- A standalone wrap-up run with at least one ledger item can create, resolve, and delete its ledger without needing a worktree, a commit, or a PR.\n",
-        "createdAt": "2026-09-13T12:08:46Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          }
-        ],
-        "number": 2362,
-        "state": "OPEN",
-        "title": "EnterWorktree bypasses record-worktree, breaking teardown-run/archive-run's worktree lookup",
-        "updatedAt": "2026-09-14T11:05:02Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review of `plugin/bin/lib/claim-targets/claim-targets.js`\n— all three confirmed still true at this shaping pass:\n\n- **Read-back race** (~line 400): post-write verification (#2073) re-reads immediately with no\n  retry/backoff (`if (!verifyClaimLanded(deps, repoSlug, issue, opts.runId, knownTip))`). On the\n  contents-API transport `knownTip` is `null`, so the read-back hits GitHub's\n  eventually-consistent contents API and can legitimately return the pre-write blob — a spurious\n  exit 5 on a claim that actually landed. The file's own header already warns against\n  eventually-consistent GitHub reads elsewhere.\n- **Claim leak on abort** (~line 227, confirmed): `abort()` releases only `claimedThisRun`\n  (`releaseClaimedThisRun(deps, repoSlug, opts.runId, claimedThisRun)`). `stopOrSkip(issue,\n  'unverified', 'unverified', 5, {})` runs (confirmed, ~line 401) *before* the target is pushed\n  onto `claimedThisRun` (the `claimedThisRun.push(issue)` call is one line after the verification\n  check), so a target whose claim genuinely landed (just couldn't be verified back) leaks until\n  TTL expiry with no `bot:in-progress` marker making it visible.\n- **Stale doc comment** (~line 225, confirmed): `abort()`'s comment still enumerates only exit\n  codes 3 and 4 (\"`exitCode` is 3 for a `contested`/`inFlight` envelope, 4 for a `transient`\n  one\") — exit 5 (`unverified`) was added without updating it.\n\n## Deliverables\n\n- Add a bounded retry/backoff to the post-write read-back verification when `knownTip` is `null`,\n  before declaring exit 5.\n- Release (or otherwise make visible) the `unverified` target's claim on abort, not just\n  `claimedThisRun`.\n- Update `abort()`'s doc comment to include exit 5.\n\n## Acceptance Criteria\n\n- A simulated eventually-consistent stale read on the contents-API path no longer produces a\n  spurious exit 5 within the retry window.\n- An aborted run with an `unverified` target leaves that claim in a state a later run can\n  detect/reclaim before TTL, not silently leaked.\n- `abort()`'s doc comment lists exit codes 3, 4, and 5.\n- `npm test` passes.\n\n## Technical Approach\n\nFor the read-back race: wrap the `verifyClaimLanded` call (~line 400) in a small bounded\nretry loop (a few attempts with a short backoff) specifically for the `knownTip === null` case —\nthe git-CAS path (`knownTip` set) already has a real tip to compare against and doesn't need\nthis, since a git-CAS success is immediately consistent. Only declare exit 5 after the retry\nwindow is exhausted. For the claim leak: capture the `unverified` issue's claim state (the\ncontext `verifyClaimLanded` already had before failing) and pass it to `abort()` so it can be\nreleased or explicitly flagged alongside `claimedThisRun`'s own release — the goal is that a\ngenuinely-landed-but-unverified claim doesn't sit invisible until TTL; releasing it (so a later\nrun can pick it up cleanly) is the safer default over leaving it silently held. Update the\n`abort()` doc comment in the same change.\n\n### Key Files\n\n- `plugin/bin/lib/claim-targets/claim-targets.js` — the read-back retry (~line 400), the claim\n  leak fix (~line 227, `abort()` and the `unverified` stop path), and the doc comment update\n\n## Gotchas\n\n- The retry must be scoped to the `knownTip === null` (contents-API) path only — the git-CAS\n  path's `knownTip`-based verification is already immediately consistent and doesn't need\n  (or benefit from) a retry; adding one there would just slow down every claim for no\n  correctness gain.\n- Releasing an `unverified` claim on abort must not race with the claim that write actually\n  produced — verify the release targets the same claim identity (`repoSlug`, `issue`, `opts.runId`)\n  the write itself used, so a genuinely different run's claim on the same issue is never touched.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review of `plugin/bin/lib/claim-targets/claim-targets.js`:\n\n- **Read-back race** (~line 400): post-write verification (#2073) re-reads immediately with no retry/backoff. On the contents-API transport `knownTip` is `null`, so the read-back hits GitHub's eventually-consistent contents API and can legitimately return the pre-write blob — a spurious exit 5 on a claim that actually landed. The file's own header already warns against eventually-consistent GitHub reads elsewhere.\n- **Claim leak on abort** (~line 227): `abort()` releases only `claimedThisRun`. `stopOrSkip(issue, 'unverified', 'unverified', 5, {})` runs *before* the target is pushed onto `claimedThisRun` (line ~405), so a target whose claim genuinely landed (just couldn't be verified back) leaks until TTL expiry with no `bot:in-progress` marker making it visible.\n- **Stale doc comment** (~line 225): `abort()`'s comment still enumerates only exit codes 3 and 4; exit 5 (`unverified`) was added without updating it.\n\n## Deliverables\n- Add a bounded retry/backoff to the post-write read-back verification when `knownTip` is `null`, before declaring exit 5.\n- Release (or otherwise make visible) the `unverified` target's claim on abort, not just `claimedThisRun`.\n- Update `abort()`'s doc comment to include exit 5.\n\n## Acceptance Criteria\n- A simulated eventually-consistent stale read on the contents-API path no longer produces a spurious exit 5 within the retry window.\n- An aborted run with an `unverified` target leaves that claim in a state a later run can detect/reclaim before TTL, not silently leaked.\n",
-        "createdAt": "2026-09-12T16:43:52Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2329,
-        "state": "OPEN",
-        "title": "claim-targets.js: eventually-consistent read-back race + unverified-claim leak",
-        "updatedAt": "2026-09-14T11:04:25Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: wrap-up ledger gate for #2255 (run ledger rows 80, 84)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nThe three run-directory fact packs share one contract (`run-directory-fact-packs`: exit 0/2/3, no 1 for decided outcomes) but drift on two edges #2255's build noticed in its siblings and left untouched (surgical-changes rule): `plugin/bin/flow-preflight.js`'s `require.main` rejection handler exits 1 on an undecided crash while its own header documents only 0/2/3 (`wrap-up-pack.js` does the same, and #2255's `release-preflight.js` now follows them — the vocabulary text never says what a crash is); and `plugin/bin/wrap-up-pack.js` accepts `--only ,` (an empty list after filtering) as a request for zero probes, writing a probe-less pack with exit 0 — `release-preflight.js` treats that as a usage error since #2255's fix wave. Run ledger rows 80 and 84.\n\n## Deliverables\n\n`.claude/skills/run-directory-fact-packs/SKILL.md`: one sentence stating that an undecided crash exits 1 (the vocabulary governs decided outcomes) and that an empty `--only` list is a usage error — so the rule lives in the pattern, not in three headers.\n\n`plugin/bin/flow-preflight.js` and `plugin/bin/wrap-up-pack.js` headers: name the crash exit; `wrap-up-pack.js` `parseArgs`: reject an empty `--only` list with the usage error, mirroring `release-preflight.js`.\n\nOne test each in `tests/bin-lib/wrap-up/` and `tests/bin-lib/flow/` for the `--only ,` usage error, sized like the existing `parseArgs` cases.\n\n## Acceptance Criteria\n\n`node plugin/bin/wrap-up-pack.js --run <dir> --only ,` exits 2 with the usage text and writes nothing.\n\nThe three pack headers and the skill agree on what exit 1 means, verbatim.\n\n_Filed by `wrap-up` via specShapedBody._\n\n\n---\nFiled by the multi-spec wrap-up of run `2026-09-11T204239-spec-2251-2252-2253-2254-2255-2256-2258` (queue write from spec 2255; source `spec-2255/staged/ledger-record-fact-pack-siblings.md`; consoleAutoResolve at `autonomy: unattended`).\n\nhttps://claude.ai/code/session_018rz67jb18j1RLSqhjEdYWH\n",
-        "createdAt": "2026-09-12T16:21:35Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2325,
-        "state": "OPEN",
-        "title": "Fact-pack siblings: name the crash exit and reject an empty --only list (flow-preflight, wrap-up-pack)",
-        "updatedAt": "2026-09-13T13:32:53Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
           "needsDefinition": false,
           "priority": "low",
           "stage": "ready",
@@ -1071,8 +427,7 @@
           },
           "bot": {
             "inProgress": false,
-            "blocked": false,
-            "parked": false
+            "blocked": false
           },
           "acceptance": null,
           "isParentIssue": false,
@@ -1083,381 +438,27 @@
     ],
     [
       {
-        "body": "Defer-reason: genuinely-larger\n\n## Current State\n\n#1985 (unmerged, PR #2298) adds a \"Drain-overlap hold\" to `plugin/skills/dispatch/settle-and-merge.md`'s Auto-merge gate: before Authorization/Content judgment, `drain-pr-overlap.md`'s Step 6 checks whether this group's PR overlaps a still-open PR opened earlier by the same drain firing, and if so, explicitly **skips Authorization and Content judgment** and \"fall[s] back to the normal Review Console for this group,\" logging:\n\n```\nAUTO {time} — Auto-merge gate: group [{issues}] held — overlaps drain PR #{pr} on {files}; merge order is a human call. Reversibility: n/a.\n```\n\nSeparately, `plugin/bin/lib/console/resolve.js`'s `needsHumanVerdict()` (the ONLY mechanism `mergeResolution()` consults to decide `leave-open` before falling through to a plain grant check) is:\n\n```js\nfunction needsHumanVerdict(decisions) {\n  return decisionLines(decisions).find((l) => /needs-human/i.test(l) && /merge-check|assess-agent-autonomy/i.test(l)) || null;\n}\n```\n\nThis regex requires BOTH `needs-human` AND (`merge-check`|`assess-agent-autonomy`) on the same `decisions.md` line — a signal that only ever comes from `assess-agent-autonomy`'s Content-judgment Layer 2 (`settle-and-merge.md`, around the `2. **Content judgment**` step). Because the drain-overlap hold explicitly *skips* Content judgment, no such verdict is ever computed or logged for a drain-held group. `mergeResolution()` therefore finds no needs-human verdict, falls through to its grant check, and if every group member carries `auto:merge` or a matured `auto:merge-pending`, returns `{resolution: 'merge', reason: 'every member carries auto:merge...'}`.\n\nTraced (not yet reproduced live): under `autonomy: unattended`, `wrap-up/review-console.md`'s Auto-resolution short-circuit invokes exactly this `console-resolve.js` merge resolution with zero human interaction. A group held back by the #1985 drain-overlap hold would reach the Review Console, and — because the hold produces no signal `needsHumanVerdict()` recognizes — the unattended auto-resolver would compute `resolution: 'merge'` and merge it anyway, silently defeating the entire purpose of the #1985 hold for exactly the operating mode (`unattended`) most likely to run a multi-group drain unattended. This is one layer downstream of the original #1480/#1596 incident #1985 was filed to prevent.\n\n## Deliverables\n\n- [ ] Give `console-resolve.js`'s merge-resolution path a way to recognize a live drain-overlap hold and resolve to `leave-open` for it, analogous to the existing `needs-human` carve-out — but the semantics differ: the existing carve-out (`assess-agent-autonomy` verdict) is treated as **permanent** (\"authoritative all the way down,\" per `settle-and-merge.md`), while `drain-pr-overlap.md`'s own Step 6 hold is explicitly **not** persisted — it re-reads the overlapping PR's current state every time it runs and self-heals once that PR merges/closes. A naive regex addition that treats any historical \"held — overlaps drain PR\" decisions.md line as permanent would make the unattended resolver *more* conservative than #1985's own design intends. The real fix likely needs `console-resolve.js` to re-run (or receive as an already-fresh input) the same `detectCrossPRFileOverlap` check drain-pr-overlap.md's Step 6 performs, rather than trusting a historical log line — design thought needed on where that fresh state comes from at console-resolve time (a fact-pack field? a re-invocation of the check inline in resolve.js?).\n- [ ] Tests: a fixture where a group's decisions.md carries a \"held — overlaps drain PR\" line and the overlapping PR is still open -> `mergeResolution` returns `leave-open`; the same fixture with the overlapping PR now merged/closed -> returns `merge` (assuming grants otherwise satisfy).\n\n## Acceptance Criteria\n\n1. Under `autonomy: unattended`, a group held by #1985's drain-overlap hold is never auto-merged by `console-resolve.js` while the overlapping drain PR is still open, even when every member otherwise carries `auto:merge`.\n2. Once the overlapping drain PR merges or closes, the same group's next Review Console evaluation resolves normally (no permanent lockout).\n3. `npm test` green; existing `tests/bin-lib/console/resolve.test.js` cases unaffected.\n\n## Technical Approach\n\nNeeds design thought (hence deferred): the cleanest shape is probably a new field in the run's fact pack (or `console.json`) that records the *live* drain-overlap state at Review-Console-render time, since the console's own render already runs after the Auto-merge gate would have logged the hold — the resolver could read that field instead of re-deriving from decisions.md text. Alternatively, a literal-but-honest log-line addition (e.g. `drain-overlap-hold: live` vs `drain-overlap-hold: resolved`) that `console-resolve.js` re-validates against current PR state before trusting.\n\n### Key Files\n\n- `plugin/bin/lib/console/resolve.js` — `needsHumanVerdict()`/`mergeResolution()`\n- `plugin/skills/dispatch/drain-pr-overlap.md` — Step 6, the hold's own log line\n- `plugin/skills/wrap-up/review-console.md` — Auto-resolution short-circuit's carve-out list\n- `tests/bin-lib/console/resolve.test.js`\n\n## Gotchas\n\n- Do not just make the hold's log line match the existing `needs-human`+`merge-check` regex — that would be dishonest (it isn't an `assess-agent-autonomy` verdict) and would inherit the \"permanent\" semantics that don't fit this hold's self-healing design.\n- This gap does not affect #1944/#1984/#1985's own PR #2298 (none of the three carry `auto:merge`, so this run's own merge decision never reaches `mergeResolution()`'s grant-check branch) — it only affects a *future* group that both carries `auto:merge` and gets caught by the #1985 hold in a live unattended drain.\n\n## Original request\n\nFound during `/claude-tweaks:review` of #1944/#1984/#1985 (dispatch pre-build safety checks bundle, PR #2298) — self-referential review of dispatch's own merge-gating machinery surfaced this cross-cutting gap between #1985's new hold and the pre-existing unattended console auto-resolver.\n\n**Related:** #1944, #1984, #1985",
-        "createdAt": "2026-09-12T09:43:00Z",
+        "number": 2259,
+        "title": "This repo's migration to the new release process (first consumer)",
+        "body": "Surface: infra\n\n## Overview\n\nThis repo becomes the first consumer of everything units 1-8 built, and this unit is the acceptance test for the whole design: retro-tag this repo's entire release history from `docs/shipped-versions.tsv`, bootstrap release-please, move the marketplace-mirror step into a `release: published` workflow, retire `plugin/bin/release.js` and its supporting modules, and rewrite every doc that describes the old process. **Scope split:** Deliverables 1-5 (retro-tag, bootstrap, mirror workflow, retirement, docs) land in one PR, in the order below — each step depends on the prior step's artifacts existing. Deliverable 6 (\"First release through the new path\") is a **separate, post-merge action** taken after that PR merges, not part of the PR's own diff — it cuts an actual release using the now-merged tooling, which by definition cannot happen before the PR that installs that tooling has landed.\n\n**Complexity:** High\n**Estimated tasks:** 8\n\n## Non-Goals\n\n- Rewriting this repo's historical CHANGELOG entries into the new release-please grammar — the switch point is a deliberate one-time boundary; pre-boundary entries keep their existing heading form, and the tag-to-CHANGELOG consistency probe (unit 7's generalized version) only asserts headings at or after the bootstrap version.\n- Building any of units 1-8's underlying capability — this unit only consumes and configures what they produce; if any of units 1-8 is incomplete, this unit cannot proceed (see Gotchas).\n\n## Current State\n\n- `docs/shipped-versions.tsv`: the historical record of every shipped version this repo has produced — the source this unit retro-tags from, then retires.\n- `plugin/bin/lib/release/status.js`'s `iterBumpCommits`: today's mechanism for walking bump commits; explicitly named in the design doc as \"the last legitimate use\" of that walk — after this unit, nothing in the shipped codebase performs a bump-commit walk again.\n- `plugin/bin/release.js` + `plugin/bin/lib/release/{compose,mirror,precheck,run,status,unnamed-records}.js`: this repo's current maintainer-only release tooling. Everything except `precheck.js` and `run.js` is retired by this unit; `precheck.js` gains a `keySource: 'tags' | 'tsv'` parameter in unit 4 and stays shared between `release-local.js` (`'tags'`) and this repo's own tooling until this unit retires the `'tsv'`-calling side, and `run.js` is reused unchanged by unit 4 — neither is deleted here.\n- `plugin/bin/lib/shipped-record.js`: bookkeeping helper retired alongside the above.\n- `tests/bin-lib/release/`: the test suite for the retired modules, deleted **except** `subject.test.js` (unit 1's own test, which lives in `bin/lib/release/subject.js` and stays — that module is not retired).\n- `tests/changelog-coverage.test.js`: today's tag-to-CHANGELOG coverage test for this repo specifically, replaced by unit 7's generalized probe's own test.\n- `.github/workflows/`: no `release-please.yml` or `mirror-marketplace.yml` exist yet.\n- `CHANGELOG.md`: entirely in this repo's current `## v{version} — {summary}` heading grammar, no boundary marker yet.\n- `docs/releasing.md`, `CLAUDE.md` (Versioning/Releasing/commit-style sections), `docs/plugin-structure.md`: all describe the current `release.js`-based process.\n\n## Deliverables\n\n- [ ] **Retro-tag history.** For every line of `docs/shipped-versions.tsv`, resolve the corresponding bump commit via `status.js`'s `iterBumpCommits`, matched **by version string** (the tsv line's own version field is the join key against `iterBumpCommits`'s yielded `{version, sha}` pairs). Before tagging anything, print the full resolved `version → sha → date` triple list for every tsv line and confirm every line resolved to exactly one commit — a tsv line that resolves to zero or more than one commit **aborts the whole retro-tag step with no tags created or pushed** (never silently skipped or partially applied), naming the offending line so it can be fixed by hand before retrying. Once every line resolves cleanly: create an annotated tag `v{version}` dated to that commit (`GIT_COMMITTER_DATE` set to the commit's own date; the tag's own tagger identity is the operator's standard configured git identity — unchanged `git tag -a` behavior, only the committer *date* is overridden), message `v{version} — {summary}` where `{summary}` is exactly the post-em-dash text of that version's existing `## v{version} — {summary}` CHANGELOG heading (not the full entry body). Push all tags to origin. History survives the tsv's own retirement below.\n- [ ] **Bootstrap release-please** via unit 3's init bootstrap step, run against the tip of this migration branch immediately after retro-tagging's tags are pushed and before any of this deliverable's own further edits: `release-type: simple`, `extra-files: [{type: json, path: plugin/.claude-plugin/plugin.json, jsonpath: $.version}]`, manifest seeded to the current shipped version, `last-release-sha` pinned to the **newest retro-tag's own commit** (the tag corresponding to the highest version in `shipped-versions.tsv` — i.e., this branch's tip at the moment retro-tagging finished, before this deliverable's own bootstrap edits land) — not the eventual PR merge commit, which doesn't exist yet at bootstrap time. `CHANGELOG.md` gains a one-line boundary comment immediately above the first release-please-generated entry, naming the grammar switch and the version it took effect at.\n- [ ] **Marketplace mirror as a workflow.** New `.github/workflows/mirror-marketplace.yml`, triggered on `release: published`: PUTs the catalog entry `{source: git-subdir, url, path: plugin, sha: {release commit}}` into `thomasholknielsen/claude-tweaks-marketplace` — the exact write `plugin/bin/lib/release/mirror.js` performs today, preserving its two invariants (`sha`, never `ref`; no `version` field in the catalog entry). The workflow itself is the enforcement mechanism for the `MARKETPLACE_TOKEN` precondition (Manual Steps) — GitHub has no merge-blocking check tied to a secret's mere existence, so this workflow failing loudly (a clear API-auth error naming the missing/expired secret) at first real use, rather than a required PR check, is the accepted gate; an expired token surfaces through the identical loud-failure path as an absent one (the same GitHub API auth error), needing no separate handling.\n- [ ] **Retire**: `plugin/bin/release.js`; `plugin/bin/lib/release/compose.js`, `mirror.js`, `run.js`, `status.js`, `unnamed-records.js` (`precheck.js` is NOT deleted — it was reused by unit 4, re-keyed against tags); `plugin/bin/lib/shipped-record.js`; `docs/shipped-versions.tsv`; `tests/bin-lib/release/` except `subject.test.js`; `tests/changelog-coverage.test.js` (replaced by unit 7's generalized probe's own test); the literal string `kind: release` wherever it appears in prose (`grep -rn \"kind: release\" plugin/ docs/ tests/` — the same four-directory convention `spec-template.md`'s generated-file grep already uses).\n- [ ] **Docs.** `docs/releasing.md` rewritten around `/claude-tweaks:release`. `CLAUDE.md`'s Versioning bullet (\"Version lives in plugin.json / bump minor…\") becomes \"Version is the `v*` tag; release-please bumps plugin.json; `/claude-tweaks:release` cuts it.\" The Releasing section's invocation line changes to the new skill. The commit-message-style bullet gains: \"on `main`, subjects are conventional and plugin-written — feature-branch commits keep the `{Verb} {what} — {detail}` style.\" `docs/plugin-structure.md`'s CLI list drops the retired entries and gains units 4/5's new CLIs (if not already added by those units). New `docs/decisions/0018-release-please-engine.md` recording design doc stances 1, 3, 5, and 7 as an ADR (chosen because each is hard to reverse, surprising to a newcomer, or a real accepted trade-off).\n- [ ] **First release through the new path** (post-merge, not part of the PR above — see Overview). Cut the version that carries this very family of changes through `/claude-tweaks:release`, proving unit 6 end to end against a real release, not a fixture. **No rollback of the PR-1-5 retirement is planned on failure here** — by this point `release.js` and its retired siblings are already gone from main, and there is deliberately no parallel old-path fallback to revert to (a dual-path fallback is exactly what Phase 1-9's design avoids elsewhere in this decomposition). A failure at this step is handled fix-forward, through the same named-partial-state-plus-recovery-command contract unit 6's own Step 6 Verify already provides for any release attempt — debug and re-run `/claude-tweaks:release` (or `bin/release-local.js` directly) against the reported partial state, exactly as any later ordinary release failure would be handled, not as a reason to reinstate the old tooling. Once this step lands cleanly, immediately re-verify AC4 (the CHANGELOG boundary comment) against the newly-generated real entry — release-please's own generation logic is the first thing that could disturb it, and this is the first real chance to observe that.\n\n## Acceptance Criteria\n\n1. The number of new `v*` tags this step creates equals `docs/shipped-versions.tsv`'s line count exactly (measured as a **before/after delta** on `git tag -l 'v*' | wc -l`, not an absolute count — correct even if the repo already carries unrelated pre-existing `v*` tags), measured immediately before the tsv file is deleted in this same PR.\n2. `npm test` is green with the retired suites (`tests/bin-lib/release/` minus `subject.test.js`, `tests/changelog-coverage.test.js`) gone and unit 7's generalized-probe test present and passing.\n3. The release that ships this family of changes has: an annotated `v*` tag, a GitHub Release, a release-please-generated CHANGELOG entry in the new grammar, and a mirrored marketplace catalog entry whose `sha` field is the release commit's sha (never a branch ref).\n4. `CHANGELOG.md` contains exactly one boundary comment, positioned immediately above the first release-please-generated entry, and every entry above the comment keeps its pre-migration `## v{version} — {summary}` heading form unchanged — checked once right after bootstrap, and re-checked after Deliverable 6's real release lands (the second check is the one that actually exercises release-please's own generation logic against the comment).\n5. `docs/plugin-structure.md`'s CLI list no longer references `plugin/bin/release.js`, and does reference `plugin/bin/release-local.js` and `plugin/bin/release-preflight.js`.\n6. A grep for `plugin/bin/release.js` and each retired `plugin/bin/lib/release/*.js` module name (excluding `precheck.js` and `subject.js`) across `plugin/`, `docs/`, and `tests/` returns zero matches outside `docs/decisions/0018-release-please-engine.md`'s own historical description and `docs/incident-log.md`.\n7. The PR description explicitly lists the `MARKETPLACE_TOKEN` human precondition (see Manual Steps below) as a merge precondition, and `mirror-marketplace.yml` fails loudly (a clear error naming the missing secret) rather than silently, when that secret is absent or expired.\n8. Retro-tagging's own pre-flight check (Deliverables) aborts with zero tags created when at least one `shipped-versions.tsv` line fails to resolve to exactly one bump commit — proving the abort-on-ambiguity path, not merely the happy path where every line resolves cleanly.\n\n## Technical Approach\n\nThis unit runs strictly last because every deliverable above assumes units 1-8 already exist and work: retro-tagging needs nothing from earlier units, but release-please bootstrap needs unit 3's bootstrap step, the mirror workflow needs unit 1's conventional-commit grammar to make sense of `release: published` payloads, and \"first release through the new path\" needs unit 6's skill to exist and unit 4/5's CLIs to back the local-merge fallback path if pr-first hits a snag. The ordering within this unit's own deliverables list matters too: retro-tagging before release-please bootstrap (so the bootstrap's `last-release-sha` has real prior tags to reason about), bootstrap before retirement (so nothing is deleted before its replacement is confirmed working), and \"first release through the new path\" last (it is the proof, not a precondition of anything else in this unit).\n\n### Key Files\n\n- `docs/shipped-versions.tsv` — source for retro-tagging, then deleted.\n- `release-please-config.json`, `.release-please-manifest.json` — new, via unit 3's bootstrap step.\n- `.github/workflows/release-please.yml` — new, via unit 3's bootstrap step.\n- `.github/workflows/mirror-marketplace.yml` — new; generated by this unit directly (this repo's own workflow file, not a template another module produces — no generator/consumer distinction applies here).\n- `plugin/bin/release.js` — deleted.\n- `plugin/bin/lib/release/{compose,mirror,run,status,unnamed-records}.js` — deleted (`precheck.js` and `subject.js` NOT deleted).\n- `plugin/bin/lib/shipped-record.js` — deleted.\n- `tests/bin-lib/release/` — deleted except `subject.test.js`.\n- `tests/changelog-coverage.test.js` — deleted.\n- `docs/releasing.md` — rewritten.\n- `CLAUDE.md` — Versioning, Releasing, commit-message-style sections edited.\n- `docs/plugin-structure.md` — CLI list updated.\n- `docs/decisions/0018-release-please-engine.md` — new ADR.\n- `CHANGELOG.md` — one boundary comment inserted.\n\n## Gotchas\n\n- This unit is `Blocked by` units 1 through 8 — every one of them, not a subset; it is explicitly the acceptance test for the whole design, and running it against an incomplete set of prior units would mean bootstrapping release-please against merge subjects that aren't actually conventional yet (unit 1), a local-merge fallback path that doesn't exist (unit 4), or a skill that can't drive the release at all (unit 6).\n- `precheck.js`'s collision logic moved into `bin/release-local.js` in unit 4 — do not delete `precheck.js` itself in this unit's retirement pass; only the five modules explicitly listed above are retired.\n- **Related:** #1781, #1853, #1863, #1893, #1980, #1981, #1983, #1984 — other open records touching `docs/plugin-structure.md`; re-read its current state before this unit's own edit lands, since unit 4/5 may have already landed their own CLI-list rows by the time this unit runs.\n- The marketplace-mirror workflow's two invariants (`sha`, never `ref`; no `version` field in the catalog entry) are load-bearing for how the marketplace resolves plugin versions — carry them forward exactly, do not \"simplify\" the payload shape while porting it from `mirror.js` into the new workflow.\n- Deliverable 6 (\"first release through the new path\") is explicitly **not** part of the PR the other five deliverables land in — see Overview's scope split. Don't fold it into the same commit/PR under the \"one PR\" framing elsewhere in this record; that phrase describes deliverables 1-5 only.\n- Retro-tagging's abort-on-ambiguity behavior (Deliverables) is a deliberate correctness-over-completeness choice: an incorrect historical tag is worse than a blocked migration, since tags are meant to be a permanent record — never fall back to a best-guess match or skip-and-continue on an unresolved tsv line.\n\n## Manual Steps\n\n- Create a fine-grained GitHub personal access token with `contents: write` scope on `thomasholknielsen/claude-tweaks-marketplace`, and store it as the `MARKETPLACE_TOKEN` secret on this repo, before `mirror-marketplace.yml` can succeed (reason-not-auto: requires-signoff — a human must create and scope a credential with write access to a separate repository; no CLI available to this build can provision that token on the user's behalf). The migration PR's description must state this as an explicit merge precondition.\n\n\n<!-- work-fingerprint: release-skill:migrate-this-repo-to-the-new-release-process-first-consumer -->\nwork-fingerprint: release-skill:migrate-this-repo-to-the-new-release-process-first-consumer",
         "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          }
+          "ready",
+          "type:task",
+          "auto:build",
+          "size:high",
+          "priority:high",
+          "risk:high",
+          "ceremony:standard"
         ],
-        "number": 2299,
+        "createdAt": "2026-09-11T20:08:21Z",
+        "updatedAt": "2026-09-15T06:29:28Z",
         "state": "OPEN",
-        "title": "dispatch drain-PR overlap hold (#1985) is invisible to console-resolve.js unattended auto-merge resolution",
-        "updatedAt": "2026-09-14T11:04:27Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Filed by wrap-up reflect (light mode, record #1971's run, refs #1971).\n\n## Current State\n\n`bin/set-config.js` writes exactly one `config.yml` lever per invocation (`--key <lever> --value\n<value>`). The documented recovery path for an inherited run directory that reached `/flow`'s Step\n3 with no `config.yml` yet (`flow/steps-and-gates.md`'s \"Adopting an inherited run directory\", case\n3) requires computing and writing all 13 canonical Manifesto levers before the pipeline can\nproceed. Record #1971's own wrap-up run hit exactly that case and needed 13 sequential\n`set-config.js` invocations to backfill the Manifesto.\n\nEvidence: run `2026-09-08T115203-record-1971`'s own Step 3 recovery — 13 separate\n`node bin/set-config.js --run ... --key ... --value ...` Bash calls to write `mode`,\n`scope-creep`, `overlap`, `design-intent`, `leftover-default`, `auto-fix-threshold`,\n`review-auto-apply-ceiling`, `tidy-aggressiveness`, `ceremony-profile`, `model-stance`,\n`merge-verification`, `design-critique`, `merge-authorization`.\n\n## Deliverables\n\n- [ ] `bin/set-config.js` accepts a batch form (e.g. repeated `--key X --value Y` pairs, or a\n      `--from-json <file>` of `{lever: value}` pairs) that validates and writes every pair in one\n      invocation, using the same per-lever validation (`validateLever`) it already runs today.\n- [ ] The single-pair form (`--key <lever> --value <value>`) keeps working unchanged — this is\n      additive, not a breaking CLI change.\n- [ ] `flow/steps-and-gates.md`'s case 3 recovery procedure references the batch form once it\n      exists.\n\n## Acceptance Criteria\n\n- A caller can write all 13 canonical Manifesto levers via one `set-config.js` invocation instead\n  of 13.\n- Existing single-key callers (the Ceremony escape hatch, `flow/manifesto.md`'s per-lever writes)\n  are unaffected.\n\nDefer-reason: tangential",
-        "createdAt": "2026-09-08T12:42:32Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2081,
-        "state": "OPEN",
-        "title": "set-config.js: support writing multiple config.yml levers in one invocation",
-        "updatedAt": "2026-09-13T20:09:23Z",
         "facets": {
           "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "# Reflect — staged finding 2\n\n**Category:** tangential\n\nOrigin: reflect full mode from #1875\nDefer-reason: tangential\n\n## Current State\n\n`dispatch/mcp-transport.md` already documents, as an accepted gap, that `bin/resolve-linked-prs.js`\n(the #1224 open-linked-PR exclusion) has no confirmed MCP mapping and fails open (no exclusions)\nwhen `gh` is absent. This run hit that gap for real, not hypothetically: of the 27 candidates in\nthe eligible queue, record #1594 already had an open PR (#1908, \"Fixes #1594\") that the automated\ncheck could not detect on this transport. It was caught only because the dispatching session\nindependently ran a manual, targeted subagent scan of open PR bodies/titles for closing-keyword\nreferences before finalizing the group selection — a step the documented protocol does not\nactually specify or require anywhere. Without that improvised check, #1594 could have been\nre-dispatched to a second build in parallel with the already-open PR #1908, producing conflicting\nwork on the same record.\n\n## Deliverables\n\n- [ ] Treat this as evidence for prioritizing a real MCP mapping for the #1224 check (a batched\n      equivalent of `closedByPullRequestsReferences`, or an open-PR title/body scan folded\n      directly into `queue-pull-script.md`'s MCP branch) rather than leaving it \"accepted for now\"\n      indefinitely.\n- [ ] Until a real mapping exists, consider making the manual verification this run improvised a\n      documented, required step in `dispatch/mcp-transport.md`'s Step 2 section for the `gh`-absent\n      path, so a future firing doesn't have to independently rediscover the same gap and the same\n      workaround.\n\n## Acceptance Criteria\n\n1. Either the #1224 check gets a real MCP mapping, or the manual verification workaround is\n   promoted from this run's improvisation to a documented, required step for the `gh`-absent\n   transport.\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-09-08T03:10:18Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          }
-        ],
-        "number": 2051,
-        "state": "OPEN",
-        "title": "Concrete near-miss on the #1224 open-linked-PR exclusion's documented MCP-transport gap",
-        "updatedAt": "2026-09-12T16:02:51Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: `/claude-tweaks:reflect` (full mode, via `/claude-tweaks:wrap-up` on record #1963)\n\nDefer-reason: tangential\n\n**Related:** #2036 — same subagent-stop contract-violation misattribution cluster\n\n## Current State\n\n`bin/lib/hooks/subagent-stop.js`'s `contract-violation` detection fired 4 times during record\n#1963's review phase, each time flagging an intermediate turn where the dispatched agent (that\nrun's own review/polish/wrap-up call, running as a Task-dispatched subagent) ended a turn with\nplain status narration (\"Still waiting on the N lens-review agents...\") while waiting on\nbackground Agent-tool notifications — the documented async-wait pattern (end the turn with a\nstatus message and no tool call, per `_shared/subagent-output-contract.md`'s async dispatch\nguidance). None of these were the dispatch's actual final reply; the OUTPUT FORMAT\nstatus-word-first rule governs the final reply, not every intermediate turn a long-running\ndispatch produces while polling background work. `reflect/full-mode.md`'s own Friction lens\ndocumentation already names this exact failure mode (\"the detector cannot tell which agent\nreplied... over-reports\") but the mechanism itself has no way to distinguish \"this is the final\ndeliverable reply\" from \"this is legitimate mid-flight narration during an async wait.\"\n\n## Deliverables\n\n- Investigate whether `subagent-stop.js`'s contract-violation check can be scoped to only the\n  dispatch's terminal reply (the one actually consumed by the caller) rather than every turn a\n  long-running Task agent produces, OR document more prominently that a multi-turn async-wait\n  dispatch will predictably accumulate false-positive `contract-violation` events that\n  Friction-lens readers must filter by hand.\n\n## Acceptance Criteria\n\n- A dispatched agent using the documented async-wait pattern (status-only intermediate turns, no\n  tool call) across multiple background-agent waits no longer logs a `contract-violation` event\n  for those intermediate turns, only for an actual malformed final reply.\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-09-07T16:48:40Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxTu0eA",
-            "name": "by:reflect",
-            "description": "Origin: filed via /reflect (wrap-up Phase 1)",
-            "color": "ededed"
-          }
-        ],
-        "number": 2041,
-        "state": "OPEN",
-        "title": "friction-events.js's contract-violation detector over-reports on a multi-turn async-wait dispatch",
-        "updatedAt": "2026-09-13T20:09:51Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`plugin/skills/design-wrapper/modes/review.md` Step 3.8 dispatches each project-local craft critic with, per (e), the critic's `SKILL.md` inlined verbatim (item 1, \"a path string reaches nothing\") and the decisions layer — `DESIGN.md` then `.impeccable/design.json` — inlined verbatim (item 3). On a project with a ~25 KB `DESIGN.md` and a ~20 KB sidecar, plus `emil-design-eng`'s ~28 KB `SKILL.md`, that is ~73 KB of prompt per critic, read into the dispatching context and written back out before the critic sees a changed line. Step 3.8 (b) selects the critic whenever `design-critique` resolves `auto`, the track is `web`, and decisions are present — it never asks whether the diff has any design surface: a 20-line change to fetch/refresh control flow in one React component (no JSX, CSS, template, or copy lines touched) dispatches the full critic exactly like a component rewrite would.\n\nObserved on 2026-09-04 (plugin 6.114.1): the critic was fanned out alongside the Impeccable critique/audit runner and the code-simplifier; the dispatching session hit an API session limit mid-flight, all three subagent output files were 0 bytes, the critic's findings survived only via a coordinating session's relay, and re-dispatching the other two moved Impeccable's critique score from 30/40 to 25/40 on identical input. `_shared/subagent-output-contract.md`'s Failed-agent retrieval section documents the session-limit signature but not that a parent-terminated subagent leaves a 0-byte output file, so \"read its transcript tail\" is not a recovery path in that case.\n\n## Deliverables\n\n- Add a design-surface gate to Step 3.8 (b): before selecting a critic, classify the changed UI files' hunks; when no changed line is JSX/TSX markup, CSS/style, template, or user-facing copy — control-flow-only edits — skip the critic with a `SCANNED` line naming the gate, the same posture Layer 3 already takes for non-frontend files. Implement the classification as a small deterministic helper beside `bin/lib/design-detect/` (line-level, extension- and syntax-keyed) rather than prose judgment, so the gate is testable.\n- Replace the verbatim inlining of the decisions layer in Step 3.8 (e) item 3 with an instructed read: pass the absolute paths of `DESIGN.md` and the sidecar with an explicit \"Read these files first, before judging\" sentence, and keep only the critic's `SKILL.md` inline (item 1). Re-word the \"a path string reaches nothing\" rationale to what it actually guards — an unnamed, uninstructed path — so the instruction stays honest about the contract.\n- Add the 0-byte-output observation to `_shared/subagent-output-contract.md`'s Failed-agent retrieval section: a subagent whose parent session is terminated leaves an empty output file; the only record is a relay from a coordinating session, and the dispatcher must treat an empty file as \"no result,\" never as \"no findings.\"\n- Update `critics.md`'s dispatch notes and `docs/skill-graph.md` only if the gate changes the caller edge (it should not); keep `docs/plugin-structure.md`'s sub-file table in sync if a helper file is added.\n\n## Acceptance Criteria\n\n- A fixture diff touching only control-flow lines in a `.tsx` file produces no craft-critic dispatch and one `SCANNED … design-surface gate: no JSX/CSS/template/copy lines changed` line in `decisions.md`; the same file with one JSX attribute change dispatches the critic — both pinned by a unit test on the helper and a conformance test on `review.md`'s Step 3.8 text.\n- A dispatched critic prompt contains the critic's `SKILL.md` inline, the two absolute paths with the \"Read these files first\" instruction, and no verbatim `DESIGN.md`/sidecar content; a conformance test asserts the prompt template's byte size for the reference fixture drops below 35 KB.\n- `_shared/subagent-output-contract.md` names the empty-output-file case and its handling; `tests/` conformance for that file passes.\n- `npm test` passes.\n\n## Technical Approach\n\nThe gate is a line classifier over `git diff -U0` hunks for the files Step 2 resolved: extension first (`.css`/`.scss`/`.module.*` → style; `.html`/`.vue`/`.svelte` → template), then per-line syntax for `.jsx`/`.tsx` (a line inside a JSX return/element, a `className`/`style` attribute, or a string literal rendered as text counts as surface; imports, hooks, fetch calls, and conditionals do not). Put it in `plugin/bin/lib/design-detect/surface-lines.js` with a tiny CLI entry in `plugin/bin/design-detect.js` (`--surface-lines <diff>`), so Step 3.8 (b) calls one command and branches on its JSON. For the prompt change, edit (e) items 1 and 3 and the rationale sentence together, and leave the direction-contract block (Step 3.7's `impeccable-finish-reviewer` input) untouched — it is a different dispatch with its own contract. The contract note is one paragraph under Failed-agent retrieval.\n\n### Key Files\n\n- `plugin/skills/design-wrapper/modes/review.md` — Step 3.8 (b) gate, (e) items 1/3 and the \"path reaches nothing\" rationale\n- `plugin/skills/design-wrapper/critics.md` — dispatch note for the instructed-read shape\n- `plugin/skills/_shared/design-craft.md` — the \"Subagent Contract compliance\" paragraph item 1's rationale cites; reword it alongside item 1\n- `plugin/bin/lib/design-detect/surface-lines.js` — new line classifier (new file)\n- `plugin/bin/design-detect.js` — `--surface-lines` entry\n- `plugin/skills/_shared/subagent-output-contract.md` — Failed-agent retrieval: empty-output-file case\n- `tests/bin-lib/design-detect/` — classifier unit tests (new file beside the existing suite)\n- `docs/plugin-structure.md` — sub-file/CLI table entry for the new helper\n\n## Gotchas\n\n- Do not gate on file extension alone: the incident's file was `.tsx`, which Layer 3 correctly classifies as frontend — the gate has to look at changed lines, not file type.\n- The instructed-read shape depends on the critic agent having the `Read` tool; `critics.md`'s roster entries are project-local `.claude/agents/*.md` files whose tool lists may restrict it — check each roster row and fall back to inlining for a critic without `Read`.\n- Impeccable's own critique score is non-deterministic across runs (30 → 25 on identical input); do not let the conformance test assert on critique output.\n- Step 3.7's finish-reviewer dispatch is a third-party exempt agent with its own input contract; this record changes only Step 3.8.\n\n## Original request\n\ndesign-wrapper review: craft-critic dispatch inlines ~70 KB per critic; a 3-agent fan-out on a 20-line control-flow diff tripped an API session limit\n\n**Summary:** design-wrapper review Step 3.8 inlines ~70 KB per craft critic (SKILL.md + DESIGN.md + sidecar verbatim); a three-agent review fan-out on a 20-line control-flow diff tripped an API session limit and lost every in-flight result.\n\n**Kind:** Gap\n\n**Affected component:** design-wrapper (modes/review.md, Step 3.8 craft-critic dispatch)\n\n**Use case:** Reviewing a 20-line diff in one React client component where only fetch/refresh control flow changed (no JSX, CSS, or copy lines) in a project that has a DESIGN.md (~25 KB) and an `.impeccable/design.json` sidecar (~20 KB). Under `design-critique: auto` with decisions present, Step 3.8 (b) selects `emil-design-eng`, and (e) requires the critic's SKILL.md (~28 KB), DESIGN.md, and the sidecar to be inlined verbatim into the Task prompt (\"a path string reaches nothing\"). That is ~73 KB of prompt read into the dispatching context and written back out before the critic sees a single changed line, for a diff with no design surface to judge.\n\nWhat happened: the dispatching session fanned out the critic alongside the Impeccable critique/audit runner and the code-simplifier and was terminated by an API session limit mid-flight. All three subagent output files were 0 bytes; the critic's findings survived only because a coordinating session had relayed a summary, and the other two agents had to be re-dispatched (Impeccable's critique score moved 30/40 -> 25/40 between the two runs on identical input).\n\nEither of these would close the gap:\n\n1. Let the dispatch reference the three files by absolute path with an explicit \"Read these first\" instruction, keeping only the (small) SKILL.md inline. The \"path reaches nothing\" concern is about an unnamed path, not an instructed read.\n2. Add a scope gate to Step 3.8 (b): skip the critic when the changed UI files contain no JSX/CSS/template/copy line changes -- a control-flow-only diff has no design surface for a craft critic to judge -- the same way Layer 3 already skips non-frontend files.\n\nRelated observation for `_shared/subagent-output-contract.md`: a subagent whose parent is terminated leaves a 0-byte output file, so \"read its transcript\" is not a recovery path in that case -- a relay from a coordinating session is the only record.\n\n**Definition:** Clear\n\n**Plugin version:** 6.114.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-6b6f82b9 -->\n\n",
-        "createdAt": "2026-09-04T19:24:05Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1863,
-        "state": "OPEN",
-        "title": "design-wrapper review: craft-critic dispatch inlines ~70 KB per critic; a 3-agent fan-out on a 20-line control-flow diff tripped an API session limit",
-        "updatedAt": "2026-09-14T14:38:08Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
+          "risk": "high",
+          "size": "high",
           "ceremony": "standard",
           "solutionUnjustified": false,
-          "breaking": false,
           "needsDefinition": false,
           "priority": "high",
           "stage": "ready",
@@ -1467,96 +468,7 @@
           },
           "bot": {
             "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: backend\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule\nsentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`,\n18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its\npersonas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent`\ntool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a\nstatic `node --test` assertion; it can only be confirmed by observing an actual future `/specify`\ndecomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that\npersona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s\nfan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the\nobservation (transcript excerpt or note) against this item, or file a defect against\n`red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use\ncalls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of\nsub-issues) assistant messages.\n\n## Technical Approach\n\nWait for (or trigger) a `/claude-tweaks:specify` decomposition-mode run that produces 2 or more\n`ceremony:standard` sub-issue records — `ceremony-check` (`assess-agent-autonomy/ceremony-check.md`)\nresolves the tier per sub-issue during that run's own Step 3, so the tier isn't knowable until the\nrun happens. Once such a run occurs, inspect that session's stored transcript for the Step 5\nred-team dispatch (`specify/red-team.md`'s Parallel dispatch section): locate the `Agent` tool_use\nblocks for each dispatched persona and group them by the assistant message id each block belongs\nto. Confirm the number of distinct assistant message ids covering all persona dispatches for a\ngiven sub-issue is ≤ the number of sub-issues in that batch. Use the same read-only transcript\ninspection method `transcript-payload-verification` documents for reading this session's own\nlocally-stored transcript, rather than instrumenting or modifying `red-team.md` itself.\n\nIf the count exceeds the bound, file a defect issue against `red-team.md`'s dispatch prose\n(quoting the transcript grouping that violates the rule) instead of editing the file directly from\nthis record — this record's own deliverable is the observation, not the fix.\n\n### Key Files\n\n- `plugin/skills/specify/red-team.md` — the per-sub-issue persona dispatch procedure being observed\n- `plugin/skills/_shared/subagent-output-contract.md` — the fan-out single-assistant-message rule this observation verifies compliance with\n- `tests/subagent-contract-clauses.test.js` — AC1's existing static test coverage (unaffected by this record)\n\n## Gotchas\n\n- This record's acceptance criterion depends on an external event (a live `/specify` decomposition\n  run over 2+ `ceremony:standard` sub-issues happening) that this record cannot itself trigger on a\n  fixed schedule — it may sit open for some time until a qualifying run occurs naturally, or until\n  someone deliberately runs one to close it out.\n- A qualifying run must be observed via its own transcript at the time it happens; this record\n  cannot be resolved from historical data if no already-completed run's transcript is still\n  available.\n\n## Original request\n\nVerify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)\n\nOrigin: ledger resolve gate\n\nDefer-reason: needs-human-decision\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule sentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`, 18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its personas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent` tool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a static `node --test` assertion; it can only be confirmed by observing an actual future `/specify` decomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that persona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s fan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the observation (transcript excerpt or note) against this item, or file a defect against `red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use calls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of sub-issues) assistant messages.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
-        "createdAt": "2026-08-24T03:21:25Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAAC0IWj4w",
-            "name": "fix-on-worktree-worktree-dispatch-record-1350",
-            "description": "Fixed on worktree-worktree-dispatch-record-1350, not yet on the default branch",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 1350,
-        "state": "OPEN",
-        "title": "Verify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)",
-        "updatedAt": "2026-09-13T13:14:34Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
+            "blocked": false
           },
           "acceptance": null,
           "isParentIssue": false,
@@ -1567,63 +479,27 @@
     ],
     [
       {
-        "body": "Origin: reflect full-mode from #1076\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:build` Common Step 2 executes plans via `/superpowers:subagent-driven-development`, whose own Finish step deletes the plan's SDD workspace (`.superpowers/sdd/{plan}/`) once the final review is clean — including `progress.md`, where SDD convention ledgers deferred-minor review findings. claude-tweaks' wrap-up reads only the run ledger (`docs/plans/*-ledger.md`), so any observation ledgered solely in the SDD workspace is structurally lost at the seam. Observed in run 2026-08-20T154419-spec-1076: a scoped re-review's out-of-scope observation survived only because a later hindsight pass happened to re-surface it.\n\n## Deliverables\n\n- [ ] `plugin/skills/build/SKILL.md` Common Step 2 (or the SDD invocation instruction it composes) directs the controller to copy any surviving SDD deferred-minor / parked-finding ledger lines into the run ledger (phase `build/*`, status `deferred` or `observation`) before the SDD workspace is deleted.\n- [ ] The instruction names the source (`{workspace}/progress.md` lines matching `minor (deferred)` / `parked`) and the destination table's column shape.\n\n## Acceptance Criteria\n\n1. After a `/build` run whose SDD pass recorded at least one deferred minor, the run ledger contains those lines and the SDD workspace is deleted — verifiable by inspecting `docs/plans/{run}-ledger.md` post-build.\n2. A conformance check (or the existing suite pattern) pins the instruction's presence in `build/SKILL.md`.\n\n_Filed by `reflect` via wrap-up upstream-row self-reference collapse._\n",
-        "createdAt": "2026-08-20T19:15:08Z",
+        "number": 2081,
+        "title": "set-config.js: support writing multiple config.yml levers in one invocation",
+        "body": "Filed by wrap-up reflect (light mode, record #1971's run, refs #1971).\n\n## Current State\n\n`bin/set-config.js` writes exactly one `config.yml` lever per invocation (`--key <lever> --value\n<value>`). The documented recovery path for an inherited run directory that reached `/flow`'s Step\n3 with no `config.yml` yet (`flow/steps-and-gates.md`'s \"Adopting an inherited run directory\", case\n3) requires computing and writing all 13 canonical Manifesto levers before the pipeline can\nproceed. Record #1971's own wrap-up run hit exactly that case and needed 13 sequential\n`set-config.js` invocations to backfill the Manifesto.\n\nEvidence: run `2026-09-08T115203-record-1971`'s own Step 3 recovery — 13 separate\n`node bin/set-config.js --run ... --key ... --value ...` Bash calls to write `mode`,\n`scope-creep`, `overlap`, `design-intent`, `leftover-default`, `auto-fix-threshold`,\n`review-auto-apply-ceiling`, `tidy-aggressiveness`, `ceremony-profile`, `model-stance`,\n`merge-verification`, `design-critique`, `merge-authorization`.\n\n## Deliverables\n\n- [ ] `bin/set-config.js` accepts a batch form (e.g. repeated `--key X --value Y` pairs, or a\n      `--from-json <file>` of `{lever: value}` pairs) that validates and writes every pair in one\n      invocation, using the same per-lever validation (`validateLever`) it already runs today.\n- [ ] The single-pair form (`--key <lever> --value <value>`) keeps working unchanged — this is\n      additive, not a breaking CLI change.\n- [ ] `flow/steps-and-gates.md`'s case 3 recovery procedure references the batch form once it\n      exists.\n\n## Acceptance Criteria\n\n- A caller can write all 13 canonical Manifesto levers via one `set-config.js` invocation instead\n  of 13.\n- Existing single-key callers (the Ceremony escape hatch, `flow/manifesto.md`'s per-lever writes)\n  are unaffected.\n\nDefer-reason: tangential",
         "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
+          "ready",
+          "risk:low",
+          "size:low",
+          "type:task",
+          "auto:build",
+          "auto:merge",
+          "priority:low"
         ],
-        "number": 1135,
+        "createdAt": "2026-09-08T12:42:32Z",
+        "updatedAt": "2026-09-13T20:09:23Z",
         "state": "OPEN",
-        "title": "build: copy surviving SDD deferred-minor ledger lines into the run ledger before workspace deletion",
-        "updatedAt": "2026-09-13T13:14:27Z",
         "facets": {
           "origin": null,
           "risk": "low",
           "size": "low",
           "ceremony": null,
           "solutionUnjustified": false,
-          "breaking": false,
           "needsDefinition": false,
           "priority": "low",
           "stage": "ready",
@@ -1633,8 +509,7 @@
           },
           "bot": {
             "inProgress": false,
-            "blocked": false,
-            "parked": false
+            "blocked": false
           },
           "acceptance": null,
           "isParentIssue": false,
@@ -1645,83 +520,110 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\n\n`fileMatchesFrontendPredicate` (`plugin/bin/lib/design-detect/index.js`, the Layer 3 sniff) returns true when a file's extension is in `TRIGGER_EXTENSIONS` or when any path segment is in `TRIGGER_PATH_SEGMENTS = ['components', 'pages', 'app', 'routes', 'views', 'ui']`. The segment rule exists so app-router `page.ts`/`layout.ts` files without a rendering extension are still caught. It has no exclusion, so Next.js API route handlers — `app/api/**/route.{ts,js}` (app router) and `pages/api/**` (pages router) — match on the `app`/`pages` segment even though they render nothing. `skills/design-wrapper/frontend-detection.md`'s Match rule (two positive clauses, no exclusion) and its Negative cases list (which names `.ts`/`.js` \"outside any trigger path\" only) describe the same behavior, so the sniff and its documentation agree with each other and are both wrong for this case.\n\nObserved on plugin 6.114.0: a record whose diff was two `app/api/**/route.ts` handlers, one vitest file, and four markdown files, with no `Surface:` header (filed before that field existed, so Layer 2 could not rule), returned `{\"decision\":\"proceed\",\"track\":\"web\"}` from `design-detect.js` in `review`, `polish`, and `survey` modes. The run overrode the verdict by hand three times, each logged as a deviation, while `/build`'s own design pre-build step on the same run had already been skipped as \"no frontend surface\". Layer 3 is a fallback that runs only when nothing was declared (`layer3Applies`), so the false positive costs exactly the records that most need the sniff to be right.\n\nTests: `tests/bin-lib/design-detect/index.test.js` (245 lines) covers \"trigger path segments match regardless of extension\" and the zero-match skip; no case exercises an API route path.\n\n## Deliverables\n\n- [ ] Add an API-route exclusion to `fileMatchesFrontendPredicate`: after the extension check (a `.tsx` under `app/api/` still matches on extension) and before the segment scan, return false when the normalized path contains `app/api/` or `pages/api/` as adjacent segments (`(^|/)(app|pages)/api/`), so the `app`/`pages` segment rule never fires for a Next.js API route. Keep `TRIGGER_PATH_SEGMENTS` unchanged; the exclusion is a named constant (`API_ROUTE_SEGMENTS` or a regex) with a comment citing this record and the two Next.js conventions.\n- [ ] `frontend-detection.md`: add a third clause to the Match rule stating the exclusion (segment matches under `app/api/` or `pages/api/` do not count; extension matches still do), and add \"Next.js API route handlers — `app/api/**/route.{ts,js}`, `pages/api/**`\" to the Negative cases list, so the sniff and its documentation agree.\n- [ ] `tests/bin-lib/design-detect/index.test.js`: `app/api/users/route.ts` and `pages/api/health.ts` do not match; `src/app/api/x/route.js` does not match; `app/api/x/page.tsx` still matches (extension wins); `app/dashboard/page.ts` still matches (segment rule intact); `layer3` over the observed file list (two `app/api/**/route.ts`, one `.test.ts`, four `.md`) returns the sniff skip.\n- [ ] `docs/incident-log.md` / `CLAUDE.md` untouched; if `docs/plugin-structure.md`'s `design-detect` line enumerates the trigger tables, leave it — the tables themselves did not change.\n\n## Acceptance Criteria\n\n1. `fileMatchesFrontendPredicate('app/api/users/route.ts')`, `('pages/api/health.ts')`, and `('src/app/api/x/route.js')` return false; `('app/api/x/page.tsx')` and `('app/dashboard/page.ts')` return true.\n2. `layer3([...two app/api route.ts, one .test.ts, four .md])` returns `{ proceed: false, reason: SKIP_REASONS.NON_FRONTEND_SNIFF }`; `node bin/design-detect.js --mode review` over the same list returns a skip decision, not `proceed`.\n3. Every existing case in `tests/bin-lib/design-detect/index.test.js` and `cli.test.js` passes unchanged.\n4. `frontend-detection.md`'s Match rule has the exclusion clause and its Negative cases list names Next.js API route handlers with both path shapes.\n5. `npm test` green.\n\n## Technical Approach\n\nOne predicate change, no new layer: the exclusion is scoped to the two Next.js API conventions the report observed, applied only to the segment rule so the extension rule keeps precedence. Do not generalise to `routes/` (SvelteKit `+server.ts`, Remix resource routes) in this record — those are a different convention with a different marker and belong in a follow-up if observed; name that boundary in the code comment.\n\n### Key Files\n\n- `plugin/bin/lib/design-detect/index.js` — exclusion constant + check in `fileMatchesFrontendPredicate`, above the segment scan\n- `plugin/skills/design-wrapper/frontend-detection.md` — Match rule clause 3; Negative cases bullet\n- `tests/bin-lib/design-detect/index.test.js` — the cases in Deliverables\n\n## Gotchas\n\n- Normalize backslashes before matching (the function already does); the exclusion regex must run on the normalized string so Windows paths behave.\n- `pages/api/` under a `src/` prefix and `app/api/` nested inside a monorepo package path (`packages/web/app/api/...`) must both be excluded; anchor on the adjacent segment pair, not on path start.\n- A `.tsx` under `app/api/` is exotic but possible (a handler that renders an OG image with JSX); the extension rule keeps it frontend on purpose, and the test pins that.\n- `frontend-detection.md`'s trigger tables are cited as \"web-only\" by the native track's routing paragraph; the exclusion does not change that property, so no native-track text needs editing.\n\n## Original request\n\n**Summary:** `design-detect.js`'s Layer 3 path sniff marks Next.js app-router API route handlers (`app/api/**/route.ts`) as frontend, so a backend-only record without a `Surface:` header returns `proceed` for review, polish and survey.\n\n**Kind:** Gap\n\n**Affected component:** bin/lib/design-detect (Layer 3 file-extension / path-segment sniff) and skills/design-wrapper/frontend-detection.md\n\n**Use case:**\nLayer 3's trigger-path table treats any file under a `/app/` segment as frontend so that app-router `page.ts`/`layout.ts` files without a `.tsx` extension are still caught. That rule also matches `app/api/**/route.ts` — Next.js app-router API route handlers, which render nothing. On a record whose diff was two Next.js API route handler files (`app/api/**/route.ts`) plus a vitest file and four markdown files, with no `Surface:` header (a code-health-filed record predating that field), `design-detect.js --mode review`, `--mode polish` and `--mode survey` all returned `{\"decision\":\"proceed\",\"track\":\"web\"}`. The caller then either pays for Impeccable critique/audit over request handlers, or overrides the CLI's verdict by hand — which is what the run did, three times, each as a logged deviation — while `/build`'s own design pre-build step on the same run had already been skipped for \"no frontend surface, two backend API route files\".\n\nSuggested change: exclude `**/app/api/**/route.{ts,js}` (and `pages/api/**`) from the `/app/` and `/pages/` path triggers, or require a rendering extension when the only match is a path segment and the file is a `route.ts`; add \"Next.js API route handlers\" to `frontend-detection.md`'s Negative cases list so the sniff and its documentation agree.\n\n**Definition:** Clear\n\n**Plugin version:** 6.114.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-85c00f04 -->\n\n",
-        "createdAt": "2026-09-02T11:41:30Z",
+        "number": 2051,
+        "title": "Concrete near-miss on the #1224 open-linked-PR exclusion's documented MCP-transport gap",
+        "body": "# Reflect — staged finding 2\n\n**Category:** tangential\n\nOrigin: reflect full mode from #1875\nDefer-reason: tangential\n\n## Current State\n\n`dispatch/mcp-transport.md` already documents, as an accepted gap, that `bin/resolve-linked-prs.js`\n(the #1224 open-linked-PR exclusion) has no confirmed MCP mapping and fails open (no exclusions)\nwhen `gh` is absent. This run hit that gap for real, not hypothetically: of the 27 candidates in\nthe eligible queue, record #1594 already had an open PR (#1908, \"Fixes #1594\") that the automated\ncheck could not detect on this transport. It was caught only because the dispatching session\nindependently ran a manual, targeted subagent scan of open PR bodies/titles for closing-keyword\nreferences before finalizing the group selection — a step the documented protocol does not\nactually specify or require anywhere. Without that improvised check, #1594 could have been\nre-dispatched to a second build in parallel with the already-open PR #1908, producing conflicting\nwork on the same record.\n\n## Deliverables\n\n- [ ] Treat this as evidence for prioritizing a real MCP mapping for the #1224 check (a batched\n      equivalent of `closedByPullRequestsReferences`, or an open-PR title/body scan folded\n      directly into `queue-pull-script.md`'s MCP branch) rather than leaving it \"accepted for now\"\n      indefinitely.\n- [ ] Until a real mapping exists, consider making the manual verification this run improvised a\n      documented, required step in `dispatch/mcp-transport.md`'s Step 2 section for the `gh`-absent\n      path, so a future firing doesn't have to independently rediscover the same gap and the same\n      workaround.\n\n## Acceptance Criteria\n\n1. Either the #1224 check gets a real MCP mapping, or the manual verification workaround is\n   promoted from this run's improvisation to a documented, required step for the `gh`-absent\n   transport.\n\n_Filed by `reflect` via specShapedBody._\n",
         "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
+          "ready",
+          "size:medium",
+          "type:task",
+          "auto:build",
+          "priority:medium",
+          "risk:medium"
         ],
-        "number": 1786,
+        "createdAt": "2026-09-08T03:10:18Z",
+        "updatedAt": "2026-09-12T16:02:51Z",
         "state": "OPEN",
-        "title": "design-detect: Layer 3 path sniff treats Next.js app-router API route handlers as frontend",
-        "updatedAt": "2026-09-14T11:05:05Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "number": 2041,
+        "title": "friction-events.js's contract-violation detector over-reports on a multi-turn async-wait dispatch",
+        "body": "Origin: `/claude-tweaks:reflect` (full mode, via `/claude-tweaks:wrap-up` on record #1963)\n\nDefer-reason: tangential\n\n**Related:** #2036 — same subagent-stop contract-violation misattribution cluster\n\n## Current State\n\n`bin/lib/hooks/subagent-stop.js`'s `contract-violation` detection fired 4 times during record\n#1963's review phase, each time flagging an intermediate turn where the dispatched agent (that\nrun's own review/polish/wrap-up call, running as a Task-dispatched subagent) ended a turn with\nplain status narration (\"Still waiting on the N lens-review agents...\") while waiting on\nbackground Agent-tool notifications — the documented async-wait pattern (end the turn with a\nstatus message and no tool call, per `_shared/subagent-output-contract.md`'s async dispatch\nguidance). None of these were the dispatch's actual final reply; the OUTPUT FORMAT\nstatus-word-first rule governs the final reply, not every intermediate turn a long-running\ndispatch produces while polling background work. `reflect/full-mode.md`'s own Friction lens\ndocumentation already names this exact failure mode (\"the detector cannot tell which agent\nreplied... over-reports\") but the mechanism itself has no way to distinguish \"this is the final\ndeliverable reply\" from \"this is legitimate mid-flight narration during an async wait.\"\n\n## Deliverables\n\n- Investigate whether `subagent-stop.js`'s contract-violation check can be scoped to only the\n  dispatch's terminal reply (the one actually consumed by the caller) rather than every turn a\n  long-running Task agent produces, OR document more prominently that a multi-turn async-wait\n  dispatch will predictably accumulate false-positive `contract-violation` events that\n  Friction-lens readers must filter by hand.\n\n## Acceptance Criteria\n\n- A dispatched agent using the documented async-wait pattern (status-only intermediate turns, no\n  tool call) across multiple background-agent waits no longer logs a `contract-violation` event\n  for those intermediate turns, only for an actual malformed final reply.\n\n_Filed by `reflect` via specShapedBody._\n",
+        "labels": [
+          "ready",
+          "risk:low",
+          "size:low",
+          "type:bug",
+          "auto:build",
+          "priority:medium",
+          "by:reflect"
+        ],
+        "createdAt": "2026-09-07T16:48:40Z",
+        "updatedAt": "2026-09-13T20:09:51Z",
+        "state": "OPEN",
         "facets": {
           "origin": null,
           "risk": "low",
           "size": "low",
-          "ceremony": "fast-lane",
+          "ceremony": null,
           "solutionUnjustified": false,
-          "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "number": 1135,
+        "title": "build: copy surviving SDD deferred-minor ledger lines into the run ledger before workspace deletion",
+        "body": "Origin: reflect full-mode from #1076\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:build` Common Step 2 executes plans via `/superpowers:subagent-driven-development`, whose own Finish step deletes the plan's SDD workspace (`.superpowers/sdd/{plan}/`) once the final review is clean — including `progress.md`, where SDD convention ledgers deferred-minor review findings. claude-tweaks' wrap-up reads only the run ledger (`docs/plans/*-ledger.md`), so any observation ledgered solely in the SDD workspace is structurally lost at the seam. Observed in run 2026-08-20T154419-spec-1076: a scoped re-review's out-of-scope observation survived only because a later hindsight pass happened to re-surface it.\n\n## Deliverables\n\n- [ ] `plugin/skills/build/SKILL.md` Common Step 2 (or the SDD invocation instruction it composes) directs the controller to copy any surviving SDD deferred-minor / parked-finding ledger lines into the run ledger (phase `build/*`, status `deferred` or `observation`) before the SDD workspace is deleted.\n- [ ] The instruction names the source (`{workspace}/progress.md` lines matching `minor (deferred)` / `parked`) and the destination table's column shape.\n\n## Acceptance Criteria\n\n1. After a `/build` run whose SDD pass recorded at least one deferred minor, the run ledger contains those lines and the SDD workspace is deleted — verifiable by inspecting `docs/plans/{run}-ledger.md` post-build.\n2. A conformance check (or the existing suite pattern) pins the instruction's presence in `build/SKILL.md`.\n\n_Filed by `reflect` via wrap-up upstream-row self-reference collapse._\n",
+        "labels": [
+          "ready",
+          "risk:low",
+          "size:low",
+          "type:task",
+          "auto:build",
+          "auto:merge",
+          "priority:low"
+        ],
+        "createdAt": "2026-08-20T19:15:08Z",
+        "updatedAt": "2026-09-13T13:14:27Z",
+        "state": "OPEN",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "needsDefinition": false,
+          "priority": "low",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -1729,48 +631,95 @@
           },
           "bot": {
             "inProgress": false,
-            "blocked": false,
-            "parked": false
+            "blocked": false
           },
           "acceptance": null,
           "isParentIssue": false,
           "notPlanned": false,
-          "shapedHeadless": true
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "number": 2268,
+        "title": "Migrate status-line instruction: test, docs-health, tidy, research family",
+        "body": "Surface: backend\n\n## Overview\n\nPart of the 5-unit status-line migration decomposition (parent #2264, keystone #2265). This unit\ncovers the test, docs-health, tidy, and research skill families — 5 files, 5 instances of the old\nfirst-line-position instruction, each a pure mechanical text replacement.\n\n**Complexity:** Low\n**Estimated tasks:** 3\n\n## Non-Goals\n\n- Editing the canonical contract file itself, or `subagent-stop.js`'s detection logic — that is\n  #2265, which this unit is `Blocked by`.\n- Editing any file outside the 5 listed below — those belong to WU2, WU3, or WU5 in this same\n  decomposition.\n- Changing the four status words themselves or the Template A/B/C content that follows the status\n  line.\n\n## Current State\n\n- `plugin/skills/test/qa-prompts.md` (~114): `Status line (required, line 1 of your reply): emit\n  exactly one of...`\n- `plugin/skills/docs-health/SKILL.md` (~67): `First line: one of DONE / DONE_WITH_CONCERNS /\n  NEEDS_CONTEXT / BLOCKED.`\n- `plugin/skills/tidy/scan-execution.md` (~33): `Each agent's first reply line must be one of\n  \\`DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED\\`, then the Template A table verbatim.`\n- `plugin/skills/research/reference/methodology.md` (~54): `one of \\`DONE / DONE_WITH_CONCERNS /\n  NEEDS_CONTEXT / BLOCKED\\` as its first line`\n- `plugin/skills/research/source-registry.md` (~153-154): `Report one of these as your FIRST line,\n  alone:`\n\n## Deliverables\n\n- [ ] `plugin/skills/test/qa-prompts.md` (~114) — replace with: `Status line (required): the last\n      non-empty line of your reply must read exactly \\`STATUS: DONE\\` (or DONE_WITH_CONCERNS /\n      NEEDS_CONTEXT / BLOCKED).`\n- [ ] `plugin/skills/docs-health/SKILL.md` (~67) — same replacement text as above.\n- [ ] `plugin/skills/tidy/scan-execution.md` (~33) — replace with: `Each agent's reply must end\n      with its last non-empty line reading exactly \\`STATUS: DONE\\` (or DONE_WITH_CONCERNS /\n      NEEDS_CONTEXT / BLOCKED), then the Template A table verbatim` — reversing today's \"status\n      line, then table\" order to \"table, then trailing status line,\" per the design doc's own\n      instruction for Template A agents.\n- [ ] `plugin/skills/research/reference/methodology.md` (~54) — replace with: `one of \\`STATUS:\n      DONE / STATUS: DONE_WITH_CONCERNS / STATUS: NEEDS_CONTEXT / STATUS: BLOCKED\\` as the last\n      non-empty line of the reply`\n- [ ] `plugin/skills/research/source-registry.md` (~153-154) — replace with: `Report one of these\n      as the last non-empty line of your reply, alone, labeled \\`STATUS: {WORD}\\`:`\n\n## Acceptance Criteria\n\n1. All 5 instances across the 5 files above read the new trailing-`STATUS:`-line instruction; none\n   still asserts \"first line\" as the required position. The underlying assertion — the reply's\n   last non-empty line reads exactly `STATUS: {WORD}` — is identical in substance across all 5;\n   only surface grammar differs per file to fit each file's existing sentence structure (e.g.\n   `methodology.md`'s \"one of ... as the last non-empty line\" vs. `qa-prompts.md`'s \"Status line\n   (required): the last non-empty line ... must read exactly\").\n2. `plugin/skills/tidy/scan-execution.md`'s instruction reflects the reversed order for Template A\n   agents (findings table first, trailing status line last) rather than merely relabeling the old\n   \"status line, then table\" order.\n3. `grep -rn \"first line\\|FIRST line\\|line 1 of your reply\" plugin/skills/test/qa-prompts.md\n   plugin/skills/docs-health/SKILL.md plugin/skills/tidy/scan-execution.md\n   plugin/skills/research/reference/methodology.md plugin/skills/research/source-registry.md`\n   returns no match against any of the edited status-line instructions.\n4. A positive check confirms the new text actually landed, not merely that the old text is gone:\n   `grep -l \"STATUS:\" plugin/skills/test/qa-prompts.md plugin/skills/docs-health/SKILL.md\n   plugin/skills/tidy/scan-execution.md plugin/skills/research/reference/methodology.md\n   plugin/skills/research/source-registry.md` lists all 5 files.\n5. Before editing each file, `grep -n` for the exact old phrase quoted in Current State above\n   confirms the instruction's current line number rather than trusting the approximate `~N` given\n   there — line numbers drift as neighboring content changes between when this record was\n   authored and when it's built.\n6. `npm test` passes with no regressions.\n\n## Technical Approach\n\nMechanical text replacement, matching the canonical trailing-line phrasing #2265 establishes in\n`plugin/skills/_shared/subagent-output-contract.md`. One deliverable in this batch\n(`tidy/scan-execution.md`) additionally needs its stated ordering reversed (table before status\nline, not status line before table) since it is a Template A dispatch site and the design doc's\nDecision section specifies that order reversal explicitly for Template A agents.\n\n### Key Files\n\n- `plugin/skills/test/qa-prompts.md` — line ~114, one instance.\n- `plugin/skills/docs-health/SKILL.md` — line ~67, one instance.\n- `plugin/skills/tidy/scan-execution.md` — line ~33, one instance; also needs its Template A\n  status-line/table ordering reversed.\n- `plugin/skills/research/reference/methodology.md` — line ~54, one instance.\n- `plugin/skills/research/source-registry.md` — lines ~153-154, one instance.\n\n## Gotchas\n\n- `tidy/scan-execution.md`'s edit is not a pure text swap like the other 4 files in this batch — it\n  also needs its stated status-line/table ordering reversed, since it's a Template A dispatch site\n  and the new convention puts the status line after the table for Template A agents specifically\n  (search-style Template B/C sites keep the status line wherever the template's own content\n  otherwise places it).\n- `research/source-registry.md`'s current phrasing (\"Report one of these as your FIRST line,\n  alone\") is a define-in-prose format, not one of Template A/B/C — its own file documents this\n  under the Subagent Contract's \"Not every consumer uses A/B/C\" allowance; the replacement keeps\n  that same allowance, just relocates the position.\n- This unit is `Blocked by` #2265 — the exact replacement wording must match the canonical text\n  #2265 lands, not a guess at what it will say. The strings quoted in Deliverables above are this\n  record's best-effort snapshot at authoring time; re-read #2265's actual landed text in\n  `subagent-output-contract.md` before applying any edit here and defer to it if the two differ.\n- This unit never touches `subagent-stop.js`'s detection logic (owned by #2265) — it relies\n  entirely on #2265 having shipped position-agnostic parsing before this unit's edits go live,\n  which the `Blocked by` dependency (native GitHub issue-dependency edge, not a body-text line)\n  already enforces at dispatch/queue time.\n\n## Manual Steps\n\nNone — every deliverable is a direct file edit plus `npm test`.\n\n\n<!-- work-fingerprint: subagent-status-line-trailing-migration:research-misc-batch-a -->\nwork-fingerprint: subagent-status-line-trailing-migration:research-misc-batch-a",
+        "labels": [
+          "ready",
+          "risk:low",
+          "size:medium",
+          "type:task",
+          "auto:build",
+          "priority:medium",
+          "ceremony:fast-lane"
+        ],
+        "createdAt": "2026-09-11T21:58:51Z",
+        "updatedAt": "2026-09-13T12:41:40Z",
+        "state": "OPEN",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      },
+      {
+        "number": 2269,
+        "title": "Migrate status-line instruction: browse, simplify, help, visual-review, transcript-judge, feedback",
+        "body": "Surface: backend\n\n## Overview\n\nPart of the 5-unit status-line migration decomposition (parent #2264, keystone #2265). This unit\ncovers the remaining 7 files not covered by WU2, WU3, or WU4 — browse, simplify, help,\nvisual-review (2 files), `_shared/transcript-judge.md`, and feedback — each a pure mechanical text\nreplacement of the old first-line-position instruction.\n\n**Complexity:** Low\n**Estimated tasks:** 3 (grouped as: task 1 — the 4 pure wording-only files (`simplify/SKILL.md`,\n`help/status-scan.md`, `_shared/transcript-judge.md`, plus confirming `feedback/session-evaluation.md`'s\ntemplate reorder); task 2 — the 3 Template A ordering-reversal files (`browse/SKILL.md`,\n`visual-review/page-mode.md`, `visual-review/discover-mode.md`); task 3 — verification (`npm\ntest` plus the greps in Acceptance Criteria below))\n\n## Non-Goals\n\n- Editing the canonical contract file itself, or `subagent-stop.js`'s detection logic — that is\n  #2265, which this unit is `Blocked by`.\n- Editing any file outside the 7 listed below — those belong to WU2, WU3, or WU4 in this same\n  decomposition.\n- Changing the four status words themselves or the Template A/B/C content that follows the status\n  line.\n\n## Current State\n\n- `plugin/skills/browse/SKILL.md` (~116-118): `Each agent's first reply line must still be one of\n  \\`DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED\\`, then the chosen template.`\n- `plugin/skills/simplify/SKILL.md` (~75): `First reply line MUST be one of: DONE /\n  DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.`\n- `plugin/skills/help/status-scan.md` (~11): `status line first (\\`DONE / DONE_WITH_CONCERNS /\n  NEEDS_CONTEXT / BLOCKED\\`)`\n- `plugin/skills/visual-review/page-mode.md` (~59): `Each agent's first reply line must be one of\n  \\`DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED\\`, then the table.`\n- `plugin/skills/visual-review/discover-mode.md` (~109): `Each agent's first reply line must be\n  one of \\`DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED\\`, then the table.`\n- `plugin/skills/_shared/transcript-judge.md` (~152-153): `The status line is the contract's usual\n  DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED first line, per\n  \\`_shared/subagent-output-contract.md\\`.`\n- `plugin/skills/feedback/session-evaluation.md` (~20-22): output template's first line is the\n  bare enum, positioned first in the inlined template block.\n\n## Deliverables\n\n- [ ] `plugin/skills/browse/SKILL.md` (~116-118) — replace with: `Each agent's reply must end with\n      its last non-empty line reading exactly \\`STATUS: DONE\\` (or DONE_WITH_CONCERNS /\n      NEEDS_CONTEXT / BLOCKED), then the chosen template.` — reversing today's \"status line, then\n      template\" order to \"template, then trailing status line.\"\n- [ ] `plugin/skills/simplify/SKILL.md` (~75) — replace with: `The reply's last non-empty line\n      MUST read exactly \\`STATUS: DONE\\` (or DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED).`\n- [ ] `plugin/skills/help/status-scan.md` (~11) — replace with: `trailing status line\n      (\\`STATUS: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED\\`)`\n- [ ] `plugin/skills/visual-review/page-mode.md` (~59) — replace with: `Each agent's reply must end\n      with its last non-empty line reading exactly \\`STATUS: DONE\\` (or DONE_WITH_CONCERNS /\n      NEEDS_CONTEXT / BLOCKED), then the table.` — reversing today's \"status line, then table\"\n      order.\n- [ ] `plugin/skills/visual-review/discover-mode.md` (~109) — same replacement text as the\n      `page-mode.md` deliverable above (identical shape, separate file).\n- [ ] `plugin/skills/_shared/transcript-judge.md` (~152-153) — replace with: `The status line is\n      the contract's usual DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED trailing\n      \\`STATUS: {WORD}\\` line (the last non-empty line of the reply), per\n      \\`_shared/subagent-output-contract.md\\`.`\n- [ ] `plugin/skills/feedback/session-evaluation.md` (~20-22) — move the bare enum out of the\n      first-position slot in the inlined output template and reposition it as the template's final\n      line, labeled `STATUS: {WORD}` — `{WORD}` here is a literal template placeholder (matching\n      this same file's own existing placeholder convention for the rest of its inlined template),\n      not literal text to render as-is; the actually-emitted line is one of `STATUS: DONE` /\n      `STATUS: DONE_WITH_CONCERNS` / `STATUS: NEEDS_CONTEXT` / `STATUS: BLOCKED`.\n\n## Acceptance Criteria\n\n1. All 7 files read the new trailing-`STATUS:`-line instruction; none still asserts \"first\n   line\"/\"first reply line\"/\"status line first\" as the required position.\n2. `browse/SKILL.md`, `visual-review/page-mode.md`, and `visual-review/discover-mode.md` each\n   reflect the reversed order for their Template A-shaped dispatch (chosen template/table first,\n   trailing status line last) rather than merely relabeling the old \"status line, then\n   template/table\" order.\n3. `feedback/session-evaluation.md`'s inlined output template has the status enum repositioned to\n   the template's last line, not its first — this is a structural template reorder, not a wording\n   swap only.\n4. `grep -rln \"first reply line\\|first line\\|status line first\" plugin/skills/browse/SKILL.md\n   plugin/skills/simplify/SKILL.md plugin/skills/help/status-scan.md\n   plugin/skills/visual-review/page-mode.md plugin/skills/visual-review/discover-mode.md\n   plugin/skills/_shared/transcript-judge.md plugin/skills/feedback/session-evaluation.md` returns\n   no match against any of the edited status-line instructions.\n5. Structural checks for the 3 reordered files, matching AC4's rigor: for each of\n   `browse/SKILL.md`, `visual-review/page-mode.md`, and `visual-review/discover-mode.md`, the\n   line containing `STATUS:` in the edited instruction appears textually after the line\n   describing the template/table it follows (a simple line-number comparison via `grep -n`\n   against both phrases in the same file) — proving the reorder actually happened, not just that\n   old wording is gone. For `feedback/session-evaluation.md`, the `STATUS:` placeholder line is\n   the last line of the inlined output-template code block, confirmed by inspecting the block's\n   closing fence position relative to it.\n6. No test outside this unit's 7 files pins the retired wording being replaced here — confirmed\n   by `grep -rln \"first reply line\\|first line\\|status line first\"\n   plugin/skills/browse/SKILL.md plugin/skills/simplify/SKILL.md plugin/skills/help/status-scan.md\n   plugin/skills/visual-review/page-mode.md plugin/skills/visual-review/discover-mode.md\n   plugin/skills/_shared/transcript-judge.md plugin/skills/feedback/session-evaluation.md tests/`\n   run once against the union of this unit's files plus `tests/` (rather than the files alone),\n   before this unit's own edits land, returning matches only inside the 7 files above (never\n   inside `tests/`); if a test file does match, that's a pre-existing conformance test pinning\n   this exact prose — surface it as a blocker rather than editing the source file out from under\n   it, since a byte-pinned test failing is this repo's own signal to update the test in the same\n   commit, not a signal to skip the source edit.\n7. `npm test` passes with no regressions.\n\n## Technical Approach\n\nMechanical text replacement for 4 of the 7 files (`simplify/SKILL.md`, `help/status-scan.md`,\n`_shared/transcript-judge.md`, plus wording updates), matching the canonical trailing-line phrasing\n#2265 establishes. Three files additionally need structural reordering, not just a wording swap:\n`browse/SKILL.md`, `visual-review/page-mode.md`, and `visual-review/discover-mode.md` are all\nTemplate A-shaped dispatch sites (status line then table/template, today), so each moves its\nstatus-line instruction to describe a trailing position after the table/template instead; and\n`feedback/session-evaluation.md`'s inlined output template literally has the enum positioned first\nin the template block, so that block's own line order changes, not merely the prose describing it.\n\n### Key Files\n\n- `plugin/skills/browse/SKILL.md` — lines ~116-118; also needs Template A ordering reversed.\n- `plugin/skills/simplify/SKILL.md` — line ~75, wording only.\n- `plugin/skills/help/status-scan.md` — line ~11, wording only.\n- `plugin/skills/visual-review/page-mode.md` — line ~59; also needs Template A ordering reversed.\n- `plugin/skills/visual-review/discover-mode.md` — line ~109; also needs Template A ordering\n  reversed.\n- `plugin/skills/_shared/transcript-judge.md` — lines ~152-153, wording only (this file reads a\n  status line rather than dispatching one, but its own description of where to find it must match\n  the new convention).\n- `plugin/skills/feedback/session-evaluation.md` — lines ~20-22; the inlined output template's\n  line order changes, not just wording.\n\n## Gotchas\n\n- Three files in this batch (`browse/SKILL.md`, `visual-review/page-mode.md`,\n  `visual-review/discover-mode.md`) need their stated status-line/table ordering reversed, not\n  just re-worded — the same reversal WU4's `tidy/scan-execution.md` deliverable needs, since all\n  four are Template A dispatch sites.\n- `feedback/session-evaluation.md`'s change is structural (move a template line), not textual —\n  read the actual inlined template block before editing, don't just search-and-replace the enum\n  string in place.\n- `_shared/transcript-judge.md` is a consumer of the status line (it reads a prior agent's already\n  -emitted status to judge a transcript), not a dispatcher of one — its edit only needs to\n  describe the new location correctly, it issues no dispatch instruction of its own.\n- This unit is `Blocked by` #2265 — the exact replacement wording must match the canonical text\n  #2265 lands, not a guess at what it will say. The strings quoted in Deliverables above are this\n  record's best-effort snapshot at authoring time; re-read #2265's actual landed text in\n  `subagent-output-contract.md` before applying any edit here and defer to it if the two differ.\n\n## Manual Steps\n\nNone — every deliverable is a direct file edit plus `npm test`.\n\n\n<!-- work-fingerprint: subagent-status-line-trailing-migration:misc-batch-b -->\nwork-fingerprint: subagent-status-line-trailing-migration:misc-batch-b",
+        "labels": [
+          "ready",
+          "risk:low",
+          "size:medium",
+          "type:task",
+          "auto:build",
+          "priority:medium",
+          "ceremony:fast-lane"
+        ],
+        "createdAt": "2026-09-11T21:59:35Z",
+        "updatedAt": "2026-09-13T12:41:43Z",
+        "state": "OPEN",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
         }
       }
     ]
   ],
-  "excluded": [
-    {
-      "number": 2269,
-      "blockedBy": [
-        2265
-      ]
-    },
-    {
-      "number": 2268,
-      "blockedBy": [
-        2265
-      ]
-    },
-    {
-      "number": 2267,
-      "blockedBy": [
-        2265
-      ]
-    },
-    {
-      "number": 2266,
-      "blockedBy": [
-        2265
-      ]
-    },
-    {
-      "number": 2259,
-      "blockedBy": [
-        2257
-      ]
-    }
-  ],
-  "bundles": []
+  "excluded": []
 }
