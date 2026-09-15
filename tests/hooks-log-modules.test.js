@@ -413,3 +413,88 @@ test('#2036 AC2: a genuinely distinct agent transcript missing the status line s
   assert.match(out.json.systemMessage, /status line/i);
   assert.strictEqual(readEvents(run)[0].type, 'contract-violation');
 });
+
+// #2041: a DISPATCHED agent that is itself a nested dispatcher (own distinct
+// agent_transcript_path — #2036's equality check never fires) ends a turn
+// with plain status narration while awaiting ITS OWN children's completions.
+// Ground-truth transcript capture confirmed the two structural shapes this
+// narration is always immediately preceded by: an Agent-tool dispatch's own
+// launch acknowledgment (`toolUseResult.isAsync: true`) or a later sibling's
+// task-notification (`origin.kind: 'task-notification'`) — never real content.
+function asyncLaunchEntry() {
+  return { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', content: 'ok' }] }, toolUseResult: { isAsync: true, status: 'async_launched', agentId: 'child1' } };
+}
+function taskNotificationEntry() {
+  return { type: 'user', message: { role: 'user', content: '<task-notification>\n<task-type>queued-remote-notifications</task-type>\n</task-notification>' }, origin: { kind: 'task-notification' } };
+}
+function transcriptWithPriorLines(priorEntries, lastText) {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e3-async-')), 'agent.jsonl');
+  const lines = priorEntries.map((e) => JSON.stringify(e));
+  lines.push(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: lastText }] } }));
+  fs.writeFileSync(f, lines.join('\n') + '\n');
+  return f;
+}
+
+test('#2041 AC: a narration-only reply immediately preceded by an Agent-tool async launch ack logs no contract-violation', () => {
+  const run = mkRun();
+  const t = transcriptWithPriorLines([asyncLaunchEntry()], 'Still waiting on the 3 lens-review agents to report back.');
+  const out = substop.run({ input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  assert.deepStrictEqual(out, {});
+  assert.strictEqual(fs.existsSync(path.join(run, 'events.jsonl')), false);
+});
+
+test('#2041 AC: a narration-only reply immediately preceded by a task-notification logs no contract-violation', () => {
+  const run = mkRun();
+  const t = transcriptWithPriorLines([taskNotificationEntry()], 'One down, still waiting on 2 more lens-review agents.');
+  const out = substop.run({ input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  assert.deepStrictEqual(out, {});
+  assert.strictEqual(fs.existsSync(path.join(run, 'events.jsonl')), false);
+});
+
+test('#2041 AC: across multiple background-agent waits, each narration checkpoint independently logs no contract-violation', () => {
+  const run = mkRun();
+  // Simulate the transcript as it stands at each of several SubagentStop
+  // firings while the same orchestrator polls across multiple children.
+  const checkpoints = [
+    transcriptWithPriorLines([asyncLaunchEntry()], 'Dispatched 3 lens-review agents, waiting on all of them.'),
+    transcriptWithPriorLines([asyncLaunchEntry(), taskNotificationEntry()], 'Lens A reported in, still waiting on B and C.'),
+    transcriptWithPriorLines([asyncLaunchEntry(), taskNotificationEntry(), taskNotificationEntry()], 'Lens B reported in, still waiting on C.'),
+  ];
+  for (const t of checkpoints) {
+    const out = substop.run({ input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+    assert.deepStrictEqual(out, {});
+  }
+  assert.strictEqual(fs.existsSync(path.join(run, 'events.jsonl')), false, 'none of the intermediate async-wait checkpoints should have logged a contract-violation');
+});
+
+test('#2041 regression guard: a genuinely malformed final reply merely mentioning "waiting", with no async-launch/task-notification signal preceding it, still logs a contract-violation', () => {
+  const run = mkRun();
+  // Same wording an async-wait checkpoint would use, but the immediately
+  // preceding transcript line is ordinary prior turn content — content
+  // alone (the word "waiting") must never substitute for the structural
+  // signal, or a genuinely malformed reply could dodge detection just by
+  // saying the right word.
+  const t = multiTurnTranscript(['DONE\nfirst pass looked fine.', 'Waiting for the batch-B review notification.']);
+  const out = substop.run({ input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  assert.match(out.json.systemMessage, /status line/i);
+  assert.strictEqual(readEvents(run)[0].type, 'contract-violation');
+});
+
+test('#2041 regression guard: a lenient-compliant final reply immediately preceded by an async launch ack still logs the lenient variant, not suppressed entirely', () => {
+  const run = mkRun();
+  const t = transcriptWithPriorLines([asyncLaunchEntry()], 'DONE\nAll lens-review findings folded in.');
+  const out = substop.run({ input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  assert.deepStrictEqual(out, {});
+  assert.strictEqual(readEvents(run)[0].variant, 'lenient', 'compliance is decided before the async-wait filter is ever consulted');
+});
+
+test('isAsyncWaitSignal: true for a toolUseResult.isAsync:true entry, true for a task-notification origin, false otherwise', () => {
+  assert.strictEqual(substop.isAsyncWaitSignal(asyncLaunchEntry()), true);
+  assert.strictEqual(substop.isAsyncWaitSignal(taskNotificationEntry()), true);
+  assert.strictEqual(substop.isAsyncWaitSignal({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'go' }] } }), false);
+  assert.strictEqual(substop.isAsyncWaitSignal({ toolUseResult: { isAsync: false } }), false);
+  assert.strictEqual(substop.isAsyncWaitSignal({ origin: { kind: 'something-else' } }), false);
+  assert.strictEqual(substop.isAsyncWaitSignal(null), false);
+  assert.strictEqual(substop.isAsyncWaitSignal(undefined), false);
+  assert.strictEqual(substop.isAsyncWaitSignal('not an object'), false);
+});
