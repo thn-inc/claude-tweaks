@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-15T10:16:36.703Z",
+  "computedAt": "2026-09-15T19:24:23.643Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -149,11 +149,6 @@
         "state": "OPEN"
       },
       {
-        "number": 2081,
-        "updatedAt": "2026-09-13T20:09:23Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2080,
         "updatedAt": "2026-09-13T19:08:48Z",
         "state": "OPEN"
@@ -170,7 +165,7 @@
       },
       {
         "number": 2041,
-        "updatedAt": "2026-09-13T20:09:51Z",
+        "updatedAt": "2026-09-15T12:22:32Z",
         "state": "OPEN"
       },
       {
@@ -273,28 +268,69 @@
   "groups": [
     [
       {
-        "number": 2329,
-        "title": "claim-targets.js: eventually-consistent read-back race + unverified-claim leak",
         "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review of `plugin/bin/lib/claim-targets/claim-targets.js`\n— all three confirmed still true at this shaping pass:\n\n- **Read-back race** (~line 400): post-write verification (#2073) re-reads immediately with no\n  retry/backoff (`if (!verifyClaimLanded(deps, repoSlug, issue, opts.runId, knownTip))`). On the\n  contents-API transport `knownTip` is `null`, so the read-back hits GitHub's\n  eventually-consistent contents API and can legitimately return the pre-write blob — a spurious\n  exit 5 on a claim that actually landed. The file's own header already warns against\n  eventually-consistent GitHub reads elsewhere.\n- **Claim leak on abort** (~line 227, confirmed): `abort()` releases only `claimedThisRun`\n  (`releaseClaimedThisRun(deps, repoSlug, opts.runId, claimedThisRun)`). `stopOrSkip(issue,\n  'unverified', 'unverified', 5, {})` runs (confirmed, ~line 401) *before* the target is pushed\n  onto `claimedThisRun` (the `claimedThisRun.push(issue)` call is one line after the verification\n  check), so a target whose claim genuinely landed (just couldn't be verified back) leaks until\n  TTL expiry with no `bot:in-progress` marker making it visible.\n- **Stale doc comment** (~line 225, confirmed): `abort()`'s comment still enumerates only exit\n  codes 3 and 4 (\"`exitCode` is 3 for a `contested`/`inFlight` envelope, 4 for a `transient`\n  one\") — exit 5 (`unverified`) was added without updating it.\n\n## Deliverables\n\n- Add a bounded retry/backoff to the post-write read-back verification when `knownTip` is `null`,\n  before declaring exit 5.\n- Release (or otherwise make visible) the `unverified` target's claim on abort, not just\n  `claimedThisRun`.\n- Update `abort()`'s doc comment to include exit 5.\n\n## Acceptance Criteria\n\n- A simulated eventually-consistent stale read on the contents-API path no longer produces a\n  spurious exit 5 within the retry window.\n- An aborted run with an `unverified` target leaves that claim in a state a later run can\n  detect/reclaim before TTL, not silently leaked.\n- `abort()`'s doc comment lists exit codes 3, 4, and 5.\n- `npm test` passes.\n\n## Technical Approach\n\nFor the read-back race: wrap the `verifyClaimLanded` call (~line 400) in a small bounded\nretry loop (a few attempts with a short backoff) specifically for the `knownTip === null` case —\nthe git-CAS path (`knownTip` set) already has a real tip to compare against and doesn't need\nthis, since a git-CAS success is immediately consistent. Only declare exit 5 after the retry\nwindow is exhausted. For the claim leak: capture the `unverified` issue's claim state (the\ncontext `verifyClaimLanded` already had before failing) and pass it to `abort()` so it can be\nreleased or explicitly flagged alongside `claimedThisRun`'s own release — the goal is that a\ngenuinely-landed-but-unverified claim doesn't sit invisible until TTL; releasing it (so a later\nrun can pick it up cleanly) is the safer default over leaving it silently held. Update the\n`abort()` doc comment in the same change.\n\n### Key Files\n\n- `plugin/bin/lib/claim-targets/claim-targets.js` — the read-back retry (~line 400), the claim\n  leak fix (~line 227, `abort()` and the `unverified` stop path), and the doc comment update\n\n## Gotchas\n\n- The retry must be scoped to the `knownTip === null` (contents-API) path only — the git-CAS\n  path's `knownTip`-based verification is already immediately consistent and doesn't need\n  (or benefit from) a retry; adding one there would just slow down every claim for no\n  correctness gain.\n- Releasing an `unverified` claim on abort must not race with the claim that write actually\n  produced — verify the release targets the same claim identity (`repoSlug`, `issue`, `opts.runId`)\n  the write itself used, so a genuinely different run's claim on the same issue is never touched.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review of `plugin/bin/lib/claim-targets/claim-targets.js`:\n\n- **Read-back race** (~line 400): post-write verification (#2073) re-reads immediately with no retry/backoff. On the contents-API transport `knownTip` is `null`, so the read-back hits GitHub's eventually-consistent contents API and can legitimately return the pre-write blob — a spurious exit 5 on a claim that actually landed. The file's own header already warns against eventually-consistent GitHub reads elsewhere.\n- **Claim leak on abort** (~line 227): `abort()` releases only `claimedThisRun`. `stopOrSkip(issue, 'unverified', 'unverified', 5, {})` runs *before* the target is pushed onto `claimedThisRun` (line ~405), so a target whose claim genuinely landed (just couldn't be verified back) leaks until TTL expiry with no `bot:in-progress` marker making it visible.\n- **Stale doc comment** (~line 225): `abort()`'s comment still enumerates only exit codes 3 and 4; exit 5 (`unverified`) was added without updating it.\n\n## Deliverables\n- Add a bounded retry/backoff to the post-write read-back verification when `knownTip` is `null`, before declaring exit 5.\n- Release (or otherwise make visible) the `unverified` target's claim on abort, not just `claimedThisRun`.\n- Update `abort()`'s doc comment to include exit 5.\n\n## Acceptance Criteria\n- A simulated eventually-consistent stale read on the contents-API path no longer produces a spurious exit 5 within the retry window.\n- An aborted run with an `unverified` target leaves that claim in a state a later run can detect/reclaim before TTL, not silently leaked.\n",
-        "labels": [
-          "ready",
-          "size:medium",
-          "type:bug",
-          "auto:build",
-          "priority:medium",
-          "risk:medium",
-          "ceremony:standard",
-          "shaped:headless"
-        ],
         "createdAt": "2026-09-12T16:43:52Z",
-        "updatedAt": "2026-09-14T11:04:25Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Size: medium effort",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Risk: medium blast radius",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: standard review",
+            "color": "c5def5"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 2329,
         "state": "OPEN",
+        "title": "claim-targets.js: eventually-consistent read-back race + unverified-claim leak",
+        "updatedAt": "2026-09-14T11:04:25Z",
         "facets": {
           "origin": null,
           "risk": "medium",
           "size": "medium",
           "ceremony": "standard",
           "solutionUnjustified": false,
+          "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
           "stage": "ready",
@@ -304,7 +340,8 @@
           },
           "bot": {
             "inProgress": false,
-            "blocked": false
+            "blocked": false,
+            "parked": false
           },
           "acceptance": null,
           "isParentIssue": false,
@@ -315,231 +352,57 @@
     ],
     [
       {
-        "number": 2267,
-        "title": "Migrate status-line instruction: review family plus new prose-conformance test",
-        "body": "Surface: backend\n\n## Overview\n\nPart of the 5-unit status-line migration decomposition (parent #2264, keystone #2265). This unit\ncovers the review skill family's 4 files, including `step3-lens-dispatch.md` — the file the\ndesign doc names explicitly as carrying \"the fullest `WRONG:`-example shape\" (two examples plus a\nself-check sentence) and as a required prose-conformance pin target in its own Testing section.\nThis unit is the one other than the keystone that adds new test coverage rather than a pure text\nswap.\n\n**Complexity:** Medium\n**Estimated tasks:** 4\n\n## Non-Goals\n\n- Editing the canonical contract file itself, or `subagent-stop.js`'s detection logic — that is\n  #2265, which this unit is `Blocked by`.\n- Editing any file outside the review family listed below — those are WU2, WU4, or WU5 in this\n  same decomposition.\n- Editing `plugin/skills/review/step3-debate-and-refutation.md` line ~134 — that line is a\n  consumer read of the status word (reading a prior agent's already-emitted status), not a\n  producer instruction telling an agent where to put one, and is out of this migration's scope by\n  the design doc's own line-item note.\n- Changing the four status words themselves or the Template A/B/C content that follows the status\n  line.\n\n## Current State\n\n- `plugin/skills/review/step3-lens-dispatch.md` (~95-98): the fullest instance — \"First line of\n  your reply must be exactly one of: ... — nothing before it, not even a lead-in sentence,\" plus\n  two `WRONG:` examples and a self-check sentence asking the agent to verify its own first line\n  before replying.\n- `plugin/skills/review/step3-routing.md` (~121): `First line: DONE / DONE_WITH_CONCERNS /\n  NEEDS_CONTEXT / BLOCKED`.\n- `plugin/skills/review/ux-analysis.md` (~68): `First line: DONE / DONE_WITH_CONCERNS /\n  NEEDS_CONTEXT / BLOCKED`.\n- `plugin/skills/review/step3-debate-and-refutation.md` (~27 and ~86, two separate producer\n  instances): `First line: one of DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED. Then:` —\n  line ~134 in this same file is a consumer read and is explicitly untouched (see Non-Goals).\n- No prose-conformance test currently pins any of this file's status-line instruction text against\n  regression.\n\n## Deliverables\n\n- [ ] `plugin/skills/review/step3-lens-dispatch.md` (~95-98) — rewrite the position-asserting\n      instruction to: `The last non-empty line of your reply must read exactly one of: \\`STATUS:\n      DONE\\` / \\`STATUS: DONE_WITH_CONCERNS\\` / \\`STATUS: NEEDS_CONTEXT\\` / \\`STATUS: BLOCKED\\` —\n      nothing after it, not even a closing pleasantry.` Rewrite the two `WRONG:` examples to:\n      `WRONG: \"...the findings above are complete. DONE\"` (bare trailing word, not the labeled\n      line) and `WRONG: \"STATUS: DONE\\n\\nLet me know if you'd like more detail.\"` (a labeled line\n      that isn't truly the last non-empty line). Rewrite the self-check sentence to: \"Before\n      replying, verify the reply's last non-empty line is exactly one of the four labeled\n      `STATUS:` lines above, with nothing after it.\" This is the fullest rewrite in this\n      decomposition — match the design doc's Testing section, which names this file explicitly.\n- [ ] `plugin/skills/review/step3-routing.md` (~121) — replace with: `Status line (required): the\n      last non-empty line of your reply must read exactly \\`STATUS: DONE\\` (or\n      DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED).`\n- [ ] `plugin/skills/review/ux-analysis.md` (~68) — same replacement text as above.\n- [ ] `plugin/skills/review/step3-debate-and-refutation.md` (~27) — replace with: `Produce your\n      response first; the last non-empty line of your reply must then read exactly one of: DONE /\n      DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, labeled \\`STATUS: {WORD}\\`.` — note the \"Then:\"\n      wording is deliberately restructured, not merely preserved: the old phrase described what\n      *follows* a first-line status word, which inverts under the new trailing-line convention\n      where nothing follows the status line.\n- [ ] `plugin/skills/review/step3-debate-and-refutation.md` (~86) — same restructured replacement\n      text as the ~27 instance above (second, separate producer instance in the same file — locate\n      both via `grep -n \"First line: one of DONE\"`, which matches only the two producer instances,\n      never the consumer read at line ~134, which reads `parseStatusLine` output rather than\n      asserting where to put one — leave it untouched).\n- [ ] New prose-conformance test, `tests/subagent-status-line-prose-conformance.test.js` (new\n      file, following this repo's `skill-prose-conformance-tests` house convention and its\n      `*-prose-conformance.test.js` naming pattern — e.g. `fetch-sub-issues-prose-conformance.test.js`):\n      pin the new trailing-`STATUS:`-line instruction text with a go-red proof against a frozen\n      pre-migration excerpt, using two separate hardcoded fixture strings — one excerpt from\n      `plugin/skills/_shared/subagent-output-contract.md`'s pre-migration text and a separate\n      excerpt from `plugin/skills/review/step3-lens-dispatch.md`'s pre-migration `WRONG:`-example\n      shape (both fixtures are string literals in the test file itself, captured from this\n      record's Current State section above — never a live git read of a prior commit, which would\n      make the go-red proof depend on edit ordering). Assert the test fails against each frozen\n      fixture, then assert it passes against the live post-migration text in BOTH\n      `subagent-output-contract.md` (landed by #2265, this unit's blocker) AND\n      `step3-lens-dispatch.md` (this unit's own edit) — per the design doc's own Testing section,\n      which names both files as the minimum representative sample.\n\n## Acceptance Criteria\n\n1. `step3-lens-dispatch.md`'s position instruction is rewritten for the new trailing-line\n   convention, and both `WRONG:` examples plus the self-check sentence show the *new* failure\n   modes verbatim as specified in Deliverables above (a bare trailing word; a labeled line\n   followed by more text) — no example still shows the retired first-line-narration failure mode\n   as the thing to warn against. The rewritten `WRONG:` examples themselves are exempted from\n   check 4 below — they illustrate the retired shape deliberately, as counter-examples, not as a\n   live producer instruction.\n2. `step3-routing.md`, `ux-analysis.md`, and both instances in `step3-debate-and-refutation.md`\n   (~27 and ~86) read the new trailing-`STATUS:`-line instruction; line ~134 in\n   `step3-debate-and-refutation.md` is unchanged.\n3. `tests/subagent-status-line-prose-conformance.test.js` exists and: (a) fails (goes red) against\n   each of its two frozen, hardcoded pre-migration fixture strings (one per file) — proving the\n   assertion can actually distinguish old from new — and (b) passes against the live\n   post-migration text in BOTH `plugin/skills/_shared/subagent-output-contract.md` and\n   `plugin/skills/review/step3-lens-dispatch.md`.\n4. After this unit's edits land, `grep -rn \"First line: one of DONE\\|First line: DONE\\|First\n   line of your reply must be exactly one of\" plugin/skills/review/step3-lens-dispatch.md\n   plugin/skills/review/step3-routing.md plugin/skills/review/ux-analysis.md\n   plugin/skills/review/step3-debate-and-refutation.md` returns zero matches against any live\n   producer instruction — the two rewritten `WRONG:` examples in `step3-lens-dispatch.md` use\n   different illustrative text (per Deliverables above) and so do not themselves match this\n   pattern. Before editing, `grep -n \"First line: one of DONE\"\n   plugin/skills/review/step3-debate-and-refutation.md` confirms the two producer instances sit\n   at ~27 and ~86 only, never at the consumer read on line ~134 (which reads a prior agent's\n   already-emitted status rather than instructing where to put one).\n5. Before authoring criterion 3's fixture against `subagent-output-contract.md`, confirm #2265 is\n   closed (or re-read that file's live content directly) rather than trusting this record's quoted\n   snapshot of its wording.\n6. `npm test` passes with no regressions.\n\n## Technical Approach\n\nSame mechanical replacement pattern as the rest of this decomposition for the 3 simpler files\n(`step3-routing.md`, `ux-analysis.md`, both `step3-debate-and-refutation.md` instances), plus a\nfuller rewrite for `step3-lens-dispatch.md` since it's the one file in the whole 21-file survey\ncarrying a `WRONG:`-example-plus-self-check shape rather than a single instruction line. The new\nprose-conformance test follows this repo's own `skill-prose-conformance-tests` convention: freeze\na short excerpt of the pre-migration instruction text as a fixture, assert the test fails against\nthat fixture (proving it can go red), then assert it passes against the live file content\npost-migration — for both the canonical contract file and this unit's own edited file, since the\ndesign doc's Testing section requires both.\n\n### Key Files\n\n- `plugin/skills/review/step3-lens-dispatch.md` — lines ~95-98, fullest rewrite (instruction +\n  two `WRONG:` examples + self-check sentence).\n- `plugin/skills/review/step3-routing.md` — line ~121, one instance.\n- `plugin/skills/review/ux-analysis.md` — line ~68, one instance.\n- `plugin/skills/review/step3-debate-and-refutation.md` — lines ~27 and ~86 (edit), line ~134\n  (do not edit — consumer read).\n- `tests/` — new or extended prose-conformance test file pinning both\n  `subagent-output-contract.md` and `step3-lens-dispatch.md`'s new instruction text (name the exact\n  test file at implementation time, following the naming convention of neighboring\n  `tests/*prose*`/`tests/*conformance*` files already in this repo).\n\n## Gotchas\n\n- `step3-lens-dispatch.md` is the fullest rewrite in this decomposition — don't treat it as a\n  drop-in text swap like the other 3 files; the `WRONG:` examples and self-check sentence need\n  content, not just position, rewritten.\n- `step3-debate-and-refutation.md` has two producer instances (~27, ~86) AND one consumer read\n  (~134) in the same file — grep for the exact old phrase before editing to confirm which lines\n  are producers, and leave the consumer read alone; editing it would break how that agent reads a\n  prior agent's status word.\n- The new prose-conformance test must actually go red against the frozen pre-migration excerpt\n  before it's trusted to go green post-migration — a test that can't fail proves nothing\n  (`skill-prose-conformance-tests` convention, this repo's own house rule).\n- This unit is `Blocked by` #2265 — the conformance test's assertion against\n  `subagent-output-contract.md` needs that file's actual landed text, not a guess at what it will\n  say. The exact replacement strings quoted in Deliverables above are this record's best-effort\n  snapshot at authoring time; re-read #2265's actual landed text before applying any edit here and\n  defer to it if the two differ.\n- **Do not build before #2265 lands.** This record carries `ready` and a native `Blocked by`\n  dependency on #2265 — the dispatch/queue mechanism that reads that dependency (`/claude-tweaks:dispatch`,\n  `/claude-tweaks:flow`) is what prevents premature pickup; no additional in-record check is\n  needed beyond confirming the dependency edge exists (`gh issue view {this record} --json body`\n  showing the linked blocker, or the dispatcher's own worklist filtering).\n\n## Manual Steps\n\nNone — every deliverable is a direct file edit or new test file, plus `npm test`.\n\n\n<!-- work-fingerprint: subagent-status-line-trailing-migration:review-family -->\nwork-fingerprint: subagent-status-line-trailing-migration:review-family",
-        "labels": [
-          "ready",
-          "risk:low",
-          "size:medium",
-          "type:task",
-          "auto:build",
-          "priority:medium",
-          "ceremony:standard"
-        ],
-        "createdAt": "2026-09-11T21:58:09Z",
-        "updatedAt": "2026-09-13T12:41:38Z",
-        "state": "OPEN",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "number": 2266,
-        "title": "Migrate status-line instruction: design-wrapper + dispatch + specify family",
-        "body": "Surface: backend\n\n## Overview\n\nPart of the 5-unit status-line migration decomposition (parent #2264, keystone #2265). Once #2265\nlands the new canonical trailing-`STATUS:`-line convention in\n`plugin/skills/_shared/subagent-output-contract.md`, every dispatch site that carries its own\ninline copy of the old first-line-position instruction must be updated to match. This unit covers\nthe design-wrapper, dispatch, and specify skill families — 5 files, 6 instances of the old\ninstruction text.\n\n**Complexity:** Low\n**Estimated tasks:** 3\n\n## Non-Goals\n\n- Editing the canonical contract file itself, or `subagent-stop.js`'s detection logic — that is\n  #2265, which this unit is `Blocked by`.\n- Editing any file outside the design-wrapper/dispatch/specify families listed below — those are\n  WU3 (review family), WU4 (research + misc batch A), or WU5 (misc batch B) in this same\n  decomposition.\n- Changing the four status words themselves or the Template A/B/C content that follows the status\n  line — this unit only relocates the instruction's stated position, from first line to trailing\n  line.\n\n## Current State\n\nEach file below currently instructs its dispatched agent to put the status word as the literal\nfirst line of its reply, \"nothing before it, not even a lead-in sentence\" (or an equivalent\nposition-asserting phrasing):\n\n- `plugin/skills/design-wrapper/modes/explore.md` (~99): `Status line (required): first line of\n  your reply is one of DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.`\n- `plugin/skills/design-wrapper/modes/review.md` (~222): `Status line (required): First line of\n  your reply must be one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.`\n- `plugin/skills/dispatch/task-prompt.md` (~110 and ~199, two separate instances): `Status line\n  (required): First line of your reply must be one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT /\n  BLOCKED.`\n- `plugin/skills/specify/mechanical-handoff.md` (~62-63): `Status line (required): First line of\n  your reply must be one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.` — one\n  instruction spanning two lines (a single instance, not two separate ones — unlike\n  `task-prompt.md` below, which genuinely has two). Note: this is the very file defining the\n  dispatch-prompt template used to launch mechanical-range subagent runs (the same template family\n  this task's own dispatch was launched under).\n- `plugin/skills/specify/red-team.md` (~30): `> Status line (required): First line of your reply\n  must be one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.` (inside a Form B\n  blockquote).\n\n## Deliverables\n\n- [ ] `plugin/skills/design-wrapper/modes/explore.md` (~99) — replace the first-line instruction\n      with: `Status line (required): the last non-empty line of your reply must read exactly\n      \\`STATUS: DONE\\` (or DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED).`\n- [ ] `plugin/skills/design-wrapper/modes/review.md` (~222) — same replacement text as above.\n- [ ] `plugin/skills/dispatch/task-prompt.md` (~110) — same replacement text as above.\n- [ ] `plugin/skills/dispatch/task-prompt.md` (~199) — same replacement text as above (second,\n      separate instance in the same file — both must be edited).\n- [ ] `plugin/skills/specify/mechanical-handoff.md` (~62-63) — same replacement text as above.\n- [ ] `plugin/skills/specify/red-team.md` (~30) — same replacement text as above, preserving the\n      surrounding Form B blockquote `>` prefix on the edited line.\n\n## Acceptance Criteria\n\n1. All 6 instances across the 5 files above read the new trailing-`STATUS:`-line instruction; none\n   still asserts \"first line\" as the required position.\n2. `grep -rln \"Status line (required): first line\\|Status line (required): First line\" plugin/skills/design-wrapper/modes/explore.md\n   plugin/skills/design-wrapper/modes/review.md plugin/skills/dispatch/task-prompt.md\n   plugin/skills/specify/mechanical-handoff.md plugin/skills/specify/red-team.md` returns no\n   match — anchored to the literal retired instruction phrase, not the bare substring \"first\n   line,\" so the check cannot pass on an ambiguous partial match against unrelated prose.\n3. A positive check confirms the new text actually landed correctly, not merely that the old text\n   is gone: `grep -c \"STATUS: DONE\" plugin/skills/design-wrapper/modes/explore.md\n   plugin/skills/design-wrapper/modes/review.md plugin/skills/dispatch/task-prompt.md\n   plugin/skills/specify/mechanical-handoff.md plugin/skills/specify/red-team.md` returns at least\n   1 for each file (2 for `task-prompt.md`, which has two instances).\n4. `npm test` passes with no regressions.\n\n## Technical Approach\n\nMechanical text replacement only — no logic change. Each file's existing instruction is replaced\nwith the canonical trailing-line phrasing #2265 establishes in\n`plugin/skills/_shared/subagent-output-contract.md`: the reply's last non-empty line must read\nexactly `STATUS: {WORD}`. Preserve each file's own surrounding formatting (blockquote prefixes,\nlist indentation, code-fence context) — only the instruction's asserted position and wording\nchange, not its placement within the file or the file's other structure.\n\n### Key Files\n\n- `plugin/skills/design-wrapper/modes/explore.md` — line ~99, one instance.\n- `plugin/skills/design-wrapper/modes/review.md` — line ~222, one instance.\n- `plugin/skills/dispatch/task-prompt.md` — lines ~110 and ~199, two instances.\n- `plugin/skills/specify/mechanical-handoff.md` — lines ~62-63, one instance.\n- `plugin/skills/specify/red-team.md` — line ~30, one instance (inside a Form B blockquote).\n\n## Gotchas\n\n- `mechanical-handoff.md` defines the dispatch-prompt template used to hand off decomposition-mode\n  Steps 3-9 to a subagent (exactly the template family this migration's own originating dispatch\n  used) — get its wording exactly right, since a malformed instruction there self-propagates into\n  every future mechanical-handoff dispatch.\n- `task-prompt.md` has two separate instances at different line numbers — both must be found and\n  edited; a grep for the exact old phrase before editing (not just a line-number lookup) confirms\n  neither was missed if line numbers have drifted since this record was written.\n- `red-team.md`'s instance is inside a `>` Form B blockquote — the replacement text must stay\n  inside the blockquote (each line still prefixed with `>`), not be pasted below it.\n- This unit is `Blocked by` #2265 — do not start until the canonical contract text in\n  `subagent-output-contract.md` has actually landed, since the replacement wording here must match\n  it verbatim, not a guess at what it will say. The exact replacement strings quoted in\n  Deliverables above reflect the wording decided at this spec's authoring time — re-read #2265's\n  actual landed text in `subagent-output-contract.md` before applying any edit here and use that\n  literal wording if it differs in any way from what's quoted above; #2265 is the source of truth,\n  this record's quoted text is a best-effort snapshot of it.\n- `mechanical-handoff.md`'s dispatch-prompt template self-propagates into every future\n  mechanical-handoff dispatch (see Key Files note above) — a wrong edit here is discovered only\n  when a later dispatch under this template misbehaves, not at review time. No standalone smoke\n  test is required for this unit (that would duplicate #2265's own hook-detection test coverage),\n  but the AC3 positive-content grep above catches a malformed or missing replacement before it\n  ships.\n\n## Manual Steps\n\nNone — every deliverable is a direct file edit plus `npm test`.\n\n\n<!-- work-fingerprint: subagent-status-line-trailing-migration:design-wrapper-dispatch-specify -->\nwork-fingerprint: subagent-status-line-trailing-migration:design-wrapper-dispatch-specify",
-        "labels": [
-          "ready",
-          "risk:low",
-          "size:medium",
-          "type:task",
-          "auto:build",
-          "priority:medium",
-          "ceremony:fast-lane"
-        ],
-        "createdAt": "2026-09-11T21:57:21Z",
-        "updatedAt": "2026-09-13T12:41:35Z",
-        "state": "OPEN",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      },
-      {
-        "number": 1350,
-        "title": "Verify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)",
-        "body": "Surface: backend\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule\nsentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`,\n18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its\npersonas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent`\ntool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a\nstatic `node --test` assertion; it can only be confirmed by observing an actual future `/specify`\ndecomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that\npersona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s\nfan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the\nobservation (transcript excerpt or note) against this item, or file a defect against\n`red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use\ncalls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of\nsub-issues) assistant messages.\n\n## Technical Approach\n\nWait for (or trigger) a `/claude-tweaks:specify` decomposition-mode run that produces 2 or more\n`ceremony:standard` sub-issue records — `ceremony-check` (`assess-agent-autonomy/ceremony-check.md`)\nresolves the tier per sub-issue during that run's own Step 3, so the tier isn't knowable until the\nrun happens. Once such a run occurs, inspect that session's stored transcript for the Step 5\nred-team dispatch (`specify/red-team.md`'s Parallel dispatch section): locate the `Agent` tool_use\nblocks for each dispatched persona and group them by the assistant message id each block belongs\nto. Confirm the number of distinct assistant message ids covering all persona dispatches for a\ngiven sub-issue is ≤ the number of sub-issues in that batch. Use the same read-only transcript\ninspection method `transcript-payload-verification` documents for reading this session's own\nlocally-stored transcript, rather than instrumenting or modifying `red-team.md` itself.\n\nIf the count exceeds the bound, file a defect issue against `red-team.md`'s dispatch prose\n(quoting the transcript grouping that violates the rule) instead of editing the file directly from\nthis record — this record's own deliverable is the observation, not the fix.\n\n### Key Files\n\n- `plugin/skills/specify/red-team.md` — the per-sub-issue persona dispatch procedure being observed\n- `plugin/skills/_shared/subagent-output-contract.md` — the fan-out single-assistant-message rule this observation verifies compliance with\n- `tests/subagent-contract-clauses.test.js` — AC1's existing static test coverage (unaffected by this record)\n\n## Gotchas\n\n- This record's acceptance criterion depends on an external event (a live `/specify` decomposition\n  run over 2+ `ceremony:standard` sub-issues happening) that this record cannot itself trigger on a\n  fixed schedule — it may sit open for some time until a qualifying run occurs naturally, or until\n  someone deliberately runs one to close it out.\n- A qualifying run must be observed via its own transcript at the time it happens; this record\n  cannot be resolved from historical data if no already-completed run's transcript is still\n  available.\n\n## Original request\n\nVerify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)\n\nOrigin: ledger resolve gate\n\nDefer-reason: needs-human-decision\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule sentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`, 18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its personas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent` tool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a static `node --test` assertion; it can only be confirmed by observing an actual future `/specify` decomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that persona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s fan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the observation (transcript excerpt or note) against this item, or file a defect against `red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use calls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of sub-issues) assistant messages.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
-        "labels": [
-          "ready",
-          "risk:low",
-          "size:low",
-          "type:task",
-          "auto:build",
-          "auto:merge",
-          "priority:low",
-          "ceremony:fast-lane",
-          "fix-on-worktree-worktree-dispatch-record-1350"
-        ],
-        "createdAt": "2026-08-24T03:21:25Z",
-        "updatedAt": "2026-09-13T13:14:34Z",
-        "state": "OPEN",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "number": 2259,
-        "title": "This repo's migration to the new release process (first consumer)",
-        "body": "Surface: infra\n\n## Overview\n\nThis repo becomes the first consumer of everything units 1-8 built, and this unit is the acceptance test for the whole design: retro-tag this repo's entire release history from `docs/shipped-versions.tsv`, bootstrap release-please, move the marketplace-mirror step into a `release: published` workflow, retire `plugin/bin/release.js` and its supporting modules, and rewrite every doc that describes the old process. **Scope split:** Deliverables 1-5 (retro-tag, bootstrap, mirror workflow, retirement, docs) land in one PR, in the order below — each step depends on the prior step's artifacts existing. Deliverable 6 (\"First release through the new path\") is a **separate, post-merge action** taken after that PR merges, not part of the PR's own diff — it cuts an actual release using the now-merged tooling, which by definition cannot happen before the PR that installs that tooling has landed.\n\n**Complexity:** High\n**Estimated tasks:** 8\n\n## Non-Goals\n\n- Rewriting this repo's historical CHANGELOG entries into the new release-please grammar — the switch point is a deliberate one-time boundary; pre-boundary entries keep their existing heading form, and the tag-to-CHANGELOG consistency probe (unit 7's generalized version) only asserts headings at or after the bootstrap version.\n- Building any of units 1-8's underlying capability — this unit only consumes and configures what they produce; if any of units 1-8 is incomplete, this unit cannot proceed (see Gotchas).\n\n## Current State\n\n- `docs/shipped-versions.tsv`: the historical record of every shipped version this repo has produced — the source this unit retro-tags from, then retires.\n- `plugin/bin/lib/release/status.js`'s `iterBumpCommits`: today's mechanism for walking bump commits; explicitly named in the design doc as \"the last legitimate use\" of that walk — after this unit, nothing in the shipped codebase performs a bump-commit walk again.\n- `plugin/bin/release.js` + `plugin/bin/lib/release/{compose,mirror,precheck,run,status,unnamed-records}.js`: this repo's current maintainer-only release tooling. Everything except `precheck.js` and `run.js` is retired by this unit; `precheck.js` gains a `keySource: 'tags' | 'tsv'` parameter in unit 4 and stays shared between `release-local.js` (`'tags'`) and this repo's own tooling until this unit retires the `'tsv'`-calling side, and `run.js` is reused unchanged by unit 4 — neither is deleted here.\n- `plugin/bin/lib/shipped-record.js`: bookkeeping helper retired alongside the above.\n- `tests/bin-lib/release/`: the test suite for the retired modules, deleted **except** `subject.test.js` (unit 1's own test, which lives in `bin/lib/release/subject.js` and stays — that module is not retired).\n- `tests/changelog-coverage.test.js`: today's tag-to-CHANGELOG coverage test for this repo specifically, replaced by unit 7's generalized probe's own test.\n- `.github/workflows/`: no `release-please.yml` or `mirror-marketplace.yml` exist yet.\n- `CHANGELOG.md`: entirely in this repo's current `## v{version} — {summary}` heading grammar, no boundary marker yet.\n- `docs/releasing.md`, `CLAUDE.md` (Versioning/Releasing/commit-style sections), `docs/plugin-structure.md`: all describe the current `release.js`-based process.\n\n## Deliverables\n\n- [ ] **Retro-tag history.** For every line of `docs/shipped-versions.tsv`, resolve the corresponding bump commit via `status.js`'s `iterBumpCommits`, matched **by version string** (the tsv line's own version field is the join key against `iterBumpCommits`'s yielded `{version, sha}` pairs). Before tagging anything, print the full resolved `version → sha → date` triple list for every tsv line and confirm every line resolved to exactly one commit — a tsv line that resolves to zero or more than one commit **aborts the whole retro-tag step with no tags created or pushed** (never silently skipped or partially applied), naming the offending line so it can be fixed by hand before retrying. Once every line resolves cleanly: create an annotated tag `v{version}` dated to that commit (`GIT_COMMITTER_DATE` set to the commit's own date; the tag's own tagger identity is the operator's standard configured git identity — unchanged `git tag -a` behavior, only the committer *date* is overridden), message `v{version} — {summary}` where `{summary}` is exactly the post-em-dash text of that version's existing `## v{version} — {summary}` CHANGELOG heading (not the full entry body). Push all tags to origin. History survives the tsv's own retirement below.\n- [ ] **Bootstrap release-please** via unit 3's init bootstrap step, run against the tip of this migration branch immediately after retro-tagging's tags are pushed and before any of this deliverable's own further edits: `release-type: simple`, `extra-files: [{type: json, path: plugin/.claude-plugin/plugin.json, jsonpath: $.version}]`, manifest seeded to the current shipped version, `last-release-sha` pinned to the **newest retro-tag's own commit** (the tag corresponding to the highest version in `shipped-versions.tsv` — i.e., this branch's tip at the moment retro-tagging finished, before this deliverable's own bootstrap edits land) — not the eventual PR merge commit, which doesn't exist yet at bootstrap time. `CHANGELOG.md` gains a one-line boundary comment immediately above the first release-please-generated entry, naming the grammar switch and the version it took effect at.\n- [ ] **Marketplace mirror as a workflow.** New `.github/workflows/mirror-marketplace.yml`, triggered on `release: published`: PUTs the catalog entry `{source: git-subdir, url, path: plugin, sha: {release commit}}` into `thomasholknielsen/claude-tweaks-marketplace` — the exact write `plugin/bin/lib/release/mirror.js` performs today, preserving its two invariants (`sha`, never `ref`; no `version` field in the catalog entry). The workflow itself is the enforcement mechanism for the `MARKETPLACE_TOKEN` precondition (Manual Steps) — GitHub has no merge-blocking check tied to a secret's mere existence, so this workflow failing loudly (a clear API-auth error naming the missing/expired secret) at first real use, rather than a required PR check, is the accepted gate; an expired token surfaces through the identical loud-failure path as an absent one (the same GitHub API auth error), needing no separate handling.\n- [ ] **Retire**: `plugin/bin/release.js`; `plugin/bin/lib/release/compose.js`, `mirror.js`, `run.js`, `status.js`, `unnamed-records.js` (`precheck.js` is NOT deleted — it was reused by unit 4, re-keyed against tags); `plugin/bin/lib/shipped-record.js`; `docs/shipped-versions.tsv`; `tests/bin-lib/release/` except `subject.test.js`; `tests/changelog-coverage.test.js` (replaced by unit 7's generalized probe's own test); the literal string `kind: release` wherever it appears in prose (`grep -rn \"kind: release\" plugin/ docs/ tests/` — the same four-directory convention `spec-template.md`'s generated-file grep already uses).\n- [ ] **Docs.** `docs/releasing.md` rewritten around `/claude-tweaks:release`. `CLAUDE.md`'s Versioning bullet (\"Version lives in plugin.json / bump minor…\") becomes \"Version is the `v*` tag; release-please bumps plugin.json; `/claude-tweaks:release` cuts it.\" The Releasing section's invocation line changes to the new skill. The commit-message-style bullet gains: \"on `main`, subjects are conventional and plugin-written — feature-branch commits keep the `{Verb} {what} — {detail}` style.\" `docs/plugin-structure.md`'s CLI list drops the retired entries and gains units 4/5's new CLIs (if not already added by those units). New `docs/decisions/0018-release-please-engine.md` recording design doc stances 1, 3, 5, and 7 as an ADR (chosen because each is hard to reverse, surprising to a newcomer, or a real accepted trade-off).\n- [ ] **First release through the new path** (post-merge, not part of the PR above — see Overview). Cut the version that carries this very family of changes through `/claude-tweaks:release`, proving unit 6 end to end against a real release, not a fixture. **No rollback of the PR-1-5 retirement is planned on failure here** — by this point `release.js` and its retired siblings are already gone from main, and there is deliberately no parallel old-path fallback to revert to (a dual-path fallback is exactly what Phase 1-9's design avoids elsewhere in this decomposition). A failure at this step is handled fix-forward, through the same named-partial-state-plus-recovery-command contract unit 6's own Step 6 Verify already provides for any release attempt — debug and re-run `/claude-tweaks:release` (or `bin/release-local.js` directly) against the reported partial state, exactly as any later ordinary release failure would be handled, not as a reason to reinstate the old tooling. Once this step lands cleanly, immediately re-verify AC4 (the CHANGELOG boundary comment) against the newly-generated real entry — release-please's own generation logic is the first thing that could disturb it, and this is the first real chance to observe that.\n\n## Acceptance Criteria\n\n1. The number of new `v*` tags this step creates equals `docs/shipped-versions.tsv`'s line count exactly (measured as a **before/after delta** on `git tag -l 'v*' | wc -l`, not an absolute count — correct even if the repo already carries unrelated pre-existing `v*` tags), measured immediately before the tsv file is deleted in this same PR.\n2. `npm test` is green with the retired suites (`tests/bin-lib/release/` minus `subject.test.js`, `tests/changelog-coverage.test.js`) gone and unit 7's generalized-probe test present and passing.\n3. The release that ships this family of changes has: an annotated `v*` tag, a GitHub Release, a release-please-generated CHANGELOG entry in the new grammar, and a mirrored marketplace catalog entry whose `sha` field is the release commit's sha (never a branch ref).\n4. `CHANGELOG.md` contains exactly one boundary comment, positioned immediately above the first release-please-generated entry, and every entry above the comment keeps its pre-migration `## v{version} — {summary}` heading form unchanged — checked once right after bootstrap, and re-checked after Deliverable 6's real release lands (the second check is the one that actually exercises release-please's own generation logic against the comment).\n5. `docs/plugin-structure.md`'s CLI list no longer references `plugin/bin/release.js`, and does reference `plugin/bin/release-local.js` and `plugin/bin/release-preflight.js`.\n6. A grep for `plugin/bin/release.js` and each retired `plugin/bin/lib/release/*.js` module name (excluding `precheck.js` and `subject.js`) across `plugin/`, `docs/`, and `tests/` returns zero matches outside `docs/decisions/0018-release-please-engine.md`'s own historical description and `docs/incident-log.md`.\n7. The PR description explicitly lists the `MARKETPLACE_TOKEN` human precondition (see Manual Steps below) as a merge precondition, and `mirror-marketplace.yml` fails loudly (a clear error naming the missing secret) rather than silently, when that secret is absent or expired.\n8. Retro-tagging's own pre-flight check (Deliverables) aborts with zero tags created when at least one `shipped-versions.tsv` line fails to resolve to exactly one bump commit — proving the abort-on-ambiguity path, not merely the happy path where every line resolves cleanly.\n\n## Technical Approach\n\nThis unit runs strictly last because every deliverable above assumes units 1-8 already exist and work: retro-tagging needs nothing from earlier units, but release-please bootstrap needs unit 3's bootstrap step, the mirror workflow needs unit 1's conventional-commit grammar to make sense of `release: published` payloads, and \"first release through the new path\" needs unit 6's skill to exist and unit 4/5's CLIs to back the local-merge fallback path if pr-first hits a snag. The ordering within this unit's own deliverables list matters too: retro-tagging before release-please bootstrap (so the bootstrap's `last-release-sha` has real prior tags to reason about), bootstrap before retirement (so nothing is deleted before its replacement is confirmed working), and \"first release through the new path\" last (it is the proof, not a precondition of anything else in this unit).\n\n### Key Files\n\n- `docs/shipped-versions.tsv` — source for retro-tagging, then deleted.\n- `release-please-config.json`, `.release-please-manifest.json` — new, via unit 3's bootstrap step.\n- `.github/workflows/release-please.yml` — new, via unit 3's bootstrap step.\n- `.github/workflows/mirror-marketplace.yml` — new; generated by this unit directly (this repo's own workflow file, not a template another module produces — no generator/consumer distinction applies here).\n- `plugin/bin/release.js` — deleted.\n- `plugin/bin/lib/release/{compose,mirror,run,status,unnamed-records}.js` — deleted (`precheck.js` and `subject.js` NOT deleted).\n- `plugin/bin/lib/shipped-record.js` — deleted.\n- `tests/bin-lib/release/` — deleted except `subject.test.js`.\n- `tests/changelog-coverage.test.js` — deleted.\n- `docs/releasing.md` — rewritten.\n- `CLAUDE.md` — Versioning, Releasing, commit-message-style sections edited.\n- `docs/plugin-structure.md` — CLI list updated.\n- `docs/decisions/0018-release-please-engine.md` — new ADR.\n- `CHANGELOG.md` — one boundary comment inserted.\n\n## Gotchas\n\n- This unit is `Blocked by` units 1 through 8 — every one of them, not a subset; it is explicitly the acceptance test for the whole design, and running it against an incomplete set of prior units would mean bootstrapping release-please against merge subjects that aren't actually conventional yet (unit 1), a local-merge fallback path that doesn't exist (unit 4), or a skill that can't drive the release at all (unit 6).\n- `precheck.js`'s collision logic moved into `bin/release-local.js` in unit 4 — do not delete `precheck.js` itself in this unit's retirement pass; only the five modules explicitly listed above are retired.\n- **Related:** #1781, #1853, #1863, #1893, #1980, #1981, #1983, #1984 — other open records touching `docs/plugin-structure.md`; re-read its current state before this unit's own edit lands, since unit 4/5 may have already landed their own CLI-list rows by the time this unit runs.\n- The marketplace-mirror workflow's two invariants (`sha`, never `ref`; no `version` field in the catalog entry) are load-bearing for how the marketplace resolves plugin versions — carry them forward exactly, do not \"simplify\" the payload shape while porting it from `mirror.js` into the new workflow.\n- Deliverable 6 (\"first release through the new path\") is explicitly **not** part of the PR the other five deliverables land in — see Overview's scope split. Don't fold it into the same commit/PR under the \"one PR\" framing elsewhere in this record; that phrase describes deliverables 1-5 only.\n- Retro-tagging's abort-on-ambiguity behavior (Deliverables) is a deliberate correctness-over-completeness choice: an incorrect historical tag is worse than a blocked migration, since tags are meant to be a permanent record — never fall back to a best-guess match or skip-and-continue on an unresolved tsv line.\n\n## Manual Steps\n\n- Create a fine-grained GitHub personal access token with `contents: write` scope on `thomasholknielsen/claude-tweaks-marketplace`, and store it as the `MARKETPLACE_TOKEN` secret on this repo, before `mirror-marketplace.yml` can succeed (reason-not-auto: requires-signoff — a human must create and scope a credential with write access to a separate repository; no CLI available to this build can provision that token on the user's behalf). The migration PR's description must state this as an explicit merge precondition.\n\n\n<!-- work-fingerprint: release-skill:migrate-this-repo-to-the-new-release-process-first-consumer -->\nwork-fingerprint: release-skill:migrate-this-repo-to-the-new-release-process-first-consumer",
-        "labels": [
-          "ready",
-          "type:task",
-          "auto:build",
-          "size:high",
-          "priority:high",
-          "risk:high",
-          "ceremony:standard"
-        ],
-        "createdAt": "2026-09-11T20:08:21Z",
-        "updatedAt": "2026-09-15T06:29:28Z",
-        "state": "OPEN",
-        "facets": {
-          "origin": null,
-          "risk": "high",
-          "size": "high",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "number": 2081,
-        "title": "set-config.js: support writing multiple config.yml levers in one invocation",
-        "body": "Filed by wrap-up reflect (light mode, record #1971's run, refs #1971).\n\n## Current State\n\n`bin/set-config.js` writes exactly one `config.yml` lever per invocation (`--key <lever> --value\n<value>`). The documented recovery path for an inherited run directory that reached `/flow`'s Step\n3 with no `config.yml` yet (`flow/steps-and-gates.md`'s \"Adopting an inherited run directory\", case\n3) requires computing and writing all 13 canonical Manifesto levers before the pipeline can\nproceed. Record #1971's own wrap-up run hit exactly that case and needed 13 sequential\n`set-config.js` invocations to backfill the Manifesto.\n\nEvidence: run `2026-09-08T115203-record-1971`'s own Step 3 recovery — 13 separate\n`node bin/set-config.js --run ... --key ... --value ...` Bash calls to write `mode`,\n`scope-creep`, `overlap`, `design-intent`, `leftover-default`, `auto-fix-threshold`,\n`review-auto-apply-ceiling`, `tidy-aggressiveness`, `ceremony-profile`, `model-stance`,\n`merge-verification`, `design-critique`, `merge-authorization`.\n\n## Deliverables\n\n- [ ] `bin/set-config.js` accepts a batch form (e.g. repeated `--key X --value Y` pairs, or a\n      `--from-json <file>` of `{lever: value}` pairs) that validates and writes every pair in one\n      invocation, using the same per-lever validation (`validateLever`) it already runs today.\n- [ ] The single-pair form (`--key <lever> --value <value>`) keeps working unchanged — this is\n      additive, not a breaking CLI change.\n- [ ] `flow/steps-and-gates.md`'s case 3 recovery procedure references the batch form once it\n      exists.\n\n## Acceptance Criteria\n\n- A caller can write all 13 canonical Manifesto levers via one `set-config.js` invocation instead\n  of 13.\n- Existing single-key callers (the Ceremony escape hatch, `flow/manifesto.md`'s per-lever writes)\n  are unaffected.\n\nDefer-reason: tangential",
-        "labels": [
-          "ready",
-          "risk:low",
-          "size:low",
-          "type:task",
-          "auto:build",
-          "auto:merge",
-          "priority:low"
-        ],
-        "createdAt": "2026-09-08T12:42:32Z",
-        "updatedAt": "2026-09-13T20:09:23Z",
-        "state": "OPEN",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "number": 2051,
-        "title": "Concrete near-miss on the #1224 open-linked-PR exclusion's documented MCP-transport gap",
         "body": "# Reflect — staged finding 2\n\n**Category:** tangential\n\nOrigin: reflect full mode from #1875\nDefer-reason: tangential\n\n## Current State\n\n`dispatch/mcp-transport.md` already documents, as an accepted gap, that `bin/resolve-linked-prs.js`\n(the #1224 open-linked-PR exclusion) has no confirmed MCP mapping and fails open (no exclusions)\nwhen `gh` is absent. This run hit that gap for real, not hypothetically: of the 27 candidates in\nthe eligible queue, record #1594 already had an open PR (#1908, \"Fixes #1594\") that the automated\ncheck could not detect on this transport. It was caught only because the dispatching session\nindependently ran a manual, targeted subagent scan of open PR bodies/titles for closing-keyword\nreferences before finalizing the group selection — a step the documented protocol does not\nactually specify or require anywhere. Without that improvised check, #1594 could have been\nre-dispatched to a second build in parallel with the already-open PR #1908, producing conflicting\nwork on the same record.\n\n## Deliverables\n\n- [ ] Treat this as evidence for prioritizing a real MCP mapping for the #1224 check (a batched\n      equivalent of `closedByPullRequestsReferences`, or an open-PR title/body scan folded\n      directly into `queue-pull-script.md`'s MCP branch) rather than leaving it \"accepted for now\"\n      indefinitely.\n- [ ] Until a real mapping exists, consider making the manual verification this run improvised a\n      documented, required step in `dispatch/mcp-transport.md`'s Step 2 section for the `gh`-absent\n      path, so a future firing doesn't have to independently rediscover the same gap and the same\n      workaround.\n\n## Acceptance Criteria\n\n1. Either the #1224 check gets a real MCP mapping, or the manual verification workaround is\n   promoted from this run's improvisation to a documented, required step for the `gh`-absent\n   transport.\n\n_Filed by `reflect` via specShapedBody._\n",
-        "labels": [
-          "ready",
-          "size:medium",
-          "type:task",
-          "auto:build",
-          "priority:medium",
-          "risk:medium"
-        ],
         "createdAt": "2026-09-08T03:10:18Z",
-        "updatedAt": "2026-09-12T16:02:51Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Size: medium effort",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Risk: medium blast radius",
+            "color": "fbca04"
+          }
+        ],
+        "number": 2051,
         "state": "OPEN",
+        "title": "Concrete near-miss on the #1224 open-linked-PR exclusion's documented MCP-transport gap",
+        "updatedAt": "2026-09-12T16:02:51Z",
         "facets": {
           "origin": null,
           "risk": "medium",
           "size": "medium",
           "ceremony": null,
           "solutionUnjustified": false,
+          "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
           "stage": "ready",
@@ -549,7 +412,8 @@
           },
           "bot": {
             "inProgress": false,
-            "blocked": false
+            "blocked": false,
+            "parked": false
           },
           "acceptance": null,
           "isParentIssue": false,
@@ -560,68 +424,63 @@
     ],
     [
       {
-        "number": 2041,
-        "title": "friction-events.js's contract-violation detector over-reports on a multi-turn async-wait dispatch",
-        "body": "Origin: `/claude-tweaks:reflect` (full mode, via `/claude-tweaks:wrap-up` on record #1963)\n\nDefer-reason: tangential\n\n**Related:** #2036 — same subagent-stop contract-violation misattribution cluster\n\n## Current State\n\n`bin/lib/hooks/subagent-stop.js`'s `contract-violation` detection fired 4 times during record\n#1963's review phase, each time flagging an intermediate turn where the dispatched agent (that\nrun's own review/polish/wrap-up call, running as a Task-dispatched subagent) ended a turn with\nplain status narration (\"Still waiting on the N lens-review agents...\") while waiting on\nbackground Agent-tool notifications — the documented async-wait pattern (end the turn with a\nstatus message and no tool call, per `_shared/subagent-output-contract.md`'s async dispatch\nguidance). None of these were the dispatch's actual final reply; the OUTPUT FORMAT\nstatus-word-first rule governs the final reply, not every intermediate turn a long-running\ndispatch produces while polling background work. `reflect/full-mode.md`'s own Friction lens\ndocumentation already names this exact failure mode (\"the detector cannot tell which agent\nreplied... over-reports\") but the mechanism itself has no way to distinguish \"this is the final\ndeliverable reply\" from \"this is legitimate mid-flight narration during an async wait.\"\n\n## Deliverables\n\n- Investigate whether `subagent-stop.js`'s contract-violation check can be scoped to only the\n  dispatch's terminal reply (the one actually consumed by the caller) rather than every turn a\n  long-running Task agent produces, OR document more prominently that a multi-turn async-wait\n  dispatch will predictably accumulate false-positive `contract-violation` events that\n  Friction-lens readers must filter by hand.\n\n## Acceptance Criteria\n\n- A dispatched agent using the documented async-wait pattern (status-only intermediate turns, no\n  tool call) across multiple background-agent waits no longer logs a `contract-violation` event\n  for those intermediate turns, only for an actual malformed final reply.\n\n_Filed by `reflect` via specShapedBody._\n",
-        "labels": [
-          "ready",
-          "risk:low",
-          "size:low",
-          "type:bug",
-          "auto:build",
-          "priority:medium",
-          "by:reflect"
-        ],
-        "createdAt": "2026-09-07T16:48:40Z",
-        "updatedAt": "2026-09-13T20:09:51Z",
-        "state": "OPEN",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "number": 1135,
-        "title": "build: copy surviving SDD deferred-minor ledger lines into the run ledger before workspace deletion",
         "body": "Origin: reflect full-mode from #1076\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:build` Common Step 2 executes plans via `/superpowers:subagent-driven-development`, whose own Finish step deletes the plan's SDD workspace (`.superpowers/sdd/{plan}/`) once the final review is clean — including `progress.md`, where SDD convention ledgers deferred-minor review findings. claude-tweaks' wrap-up reads only the run ledger (`docs/plans/*-ledger.md`), so any observation ledgered solely in the SDD workspace is structurally lost at the seam. Observed in run 2026-08-20T154419-spec-1076: a scoped re-review's out-of-scope observation survived only because a later hindsight pass happened to re-surface it.\n\n## Deliverables\n\n- [ ] `plugin/skills/build/SKILL.md` Common Step 2 (or the SDD invocation instruction it composes) directs the controller to copy any surviving SDD deferred-minor / parked-finding ledger lines into the run ledger (phase `build/*`, status `deferred` or `observation`) before the SDD workspace is deleted.\n- [ ] The instruction names the source (`{workspace}/progress.md` lines matching `minor (deferred)` / `parked`) and the destination table's column shape.\n\n## Acceptance Criteria\n\n1. After a `/build` run whose SDD pass recorded at least one deferred minor, the run ledger contains those lines and the SDD workspace is deleted — verifiable by inspecting `docs/plans/{run}-ledger.md` post-build.\n2. A conformance check (or the existing suite pattern) pins the instruction's presence in `build/SKILL.md`.\n\n_Filed by `reflect` via wrap-up upstream-row self-reference collapse._\n",
-        "labels": [
-          "ready",
-          "risk:low",
-          "size:low",
-          "type:task",
-          "auto:build",
-          "auto:merge",
-          "priority:low"
-        ],
         "createdAt": "2026-08-20T19:15:08Z",
-        "updatedAt": "2026-09-13T13:14:27Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          }
+        ],
+        "number": 1135,
         "state": "OPEN",
+        "title": "build: copy surviving SDD deferred-minor ledger lines into the run ledger before workspace deletion",
+        "updatedAt": "2026-09-13T13:14:27Z",
         "facets": {
           "origin": null,
           "risk": "low",
           "size": "low",
           "ceremony": null,
           "solutionUnjustified": false,
+          "breaking": false,
           "needsDefinition": false,
           "priority": "low",
           "stage": "ready",
@@ -631,7 +490,8 @@
           },
           "bot": {
             "inProgress": false,
-            "blocked": false
+            "blocked": false,
+            "parked": false
           },
           "acceptance": null,
           "isParentIssue": false,
@@ -642,76 +502,86 @@
     ],
     [
       {
-        "number": 2268,
-        "title": "Migrate status-line instruction: test, docs-health, tidy, research family",
-        "body": "Surface: backend\n\n## Overview\n\nPart of the 5-unit status-line migration decomposition (parent #2264, keystone #2265). This unit\ncovers the test, docs-health, tidy, and research skill families — 5 files, 5 instances of the old\nfirst-line-position instruction, each a pure mechanical text replacement.\n\n**Complexity:** Low\n**Estimated tasks:** 3\n\n## Non-Goals\n\n- Editing the canonical contract file itself, or `subagent-stop.js`'s detection logic — that is\n  #2265, which this unit is `Blocked by`.\n- Editing any file outside the 5 listed below — those belong to WU2, WU3, or WU5 in this same\n  decomposition.\n- Changing the four status words themselves or the Template A/B/C content that follows the status\n  line.\n\n## Current State\n\n- `plugin/skills/test/qa-prompts.md` (~114): `Status line (required, line 1 of your reply): emit\n  exactly one of...`\n- `plugin/skills/docs-health/SKILL.md` (~67): `First line: one of DONE / DONE_WITH_CONCERNS /\n  NEEDS_CONTEXT / BLOCKED.`\n- `plugin/skills/tidy/scan-execution.md` (~33): `Each agent's first reply line must be one of\n  \\`DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED\\`, then the Template A table verbatim.`\n- `plugin/skills/research/reference/methodology.md` (~54): `one of \\`DONE / DONE_WITH_CONCERNS /\n  NEEDS_CONTEXT / BLOCKED\\` as its first line`\n- `plugin/skills/research/source-registry.md` (~153-154): `Report one of these as your FIRST line,\n  alone:`\n\n## Deliverables\n\n- [ ] `plugin/skills/test/qa-prompts.md` (~114) — replace with: `Status line (required): the last\n      non-empty line of your reply must read exactly \\`STATUS: DONE\\` (or DONE_WITH_CONCERNS /\n      NEEDS_CONTEXT / BLOCKED).`\n- [ ] `plugin/skills/docs-health/SKILL.md` (~67) — same replacement text as above.\n- [ ] `plugin/skills/tidy/scan-execution.md` (~33) — replace with: `Each agent's reply must end\n      with its last non-empty line reading exactly \\`STATUS: DONE\\` (or DONE_WITH_CONCERNS /\n      NEEDS_CONTEXT / BLOCKED), then the Template A table verbatim` — reversing today's \"status\n      line, then table\" order to \"table, then trailing status line,\" per the design doc's own\n      instruction for Template A agents.\n- [ ] `plugin/skills/research/reference/methodology.md` (~54) — replace with: `one of \\`STATUS:\n      DONE / STATUS: DONE_WITH_CONCERNS / STATUS: NEEDS_CONTEXT / STATUS: BLOCKED\\` as the last\n      non-empty line of the reply`\n- [ ] `plugin/skills/research/source-registry.md` (~153-154) — replace with: `Report one of these\n      as the last non-empty line of your reply, alone, labeled \\`STATUS: {WORD}\\`:`\n\n## Acceptance Criteria\n\n1. All 5 instances across the 5 files above read the new trailing-`STATUS:`-line instruction; none\n   still asserts \"first line\" as the required position. The underlying assertion — the reply's\n   last non-empty line reads exactly `STATUS: {WORD}` — is identical in substance across all 5;\n   only surface grammar differs per file to fit each file's existing sentence structure (e.g.\n   `methodology.md`'s \"one of ... as the last non-empty line\" vs. `qa-prompts.md`'s \"Status line\n   (required): the last non-empty line ... must read exactly\").\n2. `plugin/skills/tidy/scan-execution.md`'s instruction reflects the reversed order for Template A\n   agents (findings table first, trailing status line last) rather than merely relabeling the old\n   \"status line, then table\" order.\n3. `grep -rn \"first line\\|FIRST line\\|line 1 of your reply\" plugin/skills/test/qa-prompts.md\n   plugin/skills/docs-health/SKILL.md plugin/skills/tidy/scan-execution.md\n   plugin/skills/research/reference/methodology.md plugin/skills/research/source-registry.md`\n   returns no match against any of the edited status-line instructions.\n4. A positive check confirms the new text actually landed, not merely that the old text is gone:\n   `grep -l \"STATUS:\" plugin/skills/test/qa-prompts.md plugin/skills/docs-health/SKILL.md\n   plugin/skills/tidy/scan-execution.md plugin/skills/research/reference/methodology.md\n   plugin/skills/research/source-registry.md` lists all 5 files.\n5. Before editing each file, `grep -n` for the exact old phrase quoted in Current State above\n   confirms the instruction's current line number rather than trusting the approximate `~N` given\n   there — line numbers drift as neighboring content changes between when this record was\n   authored and when it's built.\n6. `npm test` passes with no regressions.\n\n## Technical Approach\n\nMechanical text replacement, matching the canonical trailing-line phrasing #2265 establishes in\n`plugin/skills/_shared/subagent-output-contract.md`. One deliverable in this batch\n(`tidy/scan-execution.md`) additionally needs its stated ordering reversed (table before status\nline, not status line before table) since it is a Template A dispatch site and the design doc's\nDecision section specifies that order reversal explicitly for Template A agents.\n\n### Key Files\n\n- `plugin/skills/test/qa-prompts.md` — line ~114, one instance.\n- `plugin/skills/docs-health/SKILL.md` — line ~67, one instance.\n- `plugin/skills/tidy/scan-execution.md` — line ~33, one instance; also needs its Template A\n  status-line/table ordering reversed.\n- `plugin/skills/research/reference/methodology.md` — line ~54, one instance.\n- `plugin/skills/research/source-registry.md` — lines ~153-154, one instance.\n\n## Gotchas\n\n- `tidy/scan-execution.md`'s edit is not a pure text swap like the other 4 files in this batch — it\n  also needs its stated status-line/table ordering reversed, since it's a Template A dispatch site\n  and the new convention puts the status line after the table for Template A agents specifically\n  (search-style Template B/C sites keep the status line wherever the template's own content\n  otherwise places it).\n- `research/source-registry.md`'s current phrasing (\"Report one of these as your FIRST line,\n  alone\") is a define-in-prose format, not one of Template A/B/C — its own file documents this\n  under the Subagent Contract's \"Not every consumer uses A/B/C\" allowance; the replacement keeps\n  that same allowance, just relocates the position.\n- This unit is `Blocked by` #2265 — the exact replacement wording must match the canonical text\n  #2265 lands, not a guess at what it will say. The strings quoted in Deliverables above are this\n  record's best-effort snapshot at authoring time; re-read #2265's actual landed text in\n  `subagent-output-contract.md` before applying any edit here and defer to it if the two differ.\n- This unit never touches `subagent-stop.js`'s detection logic (owned by #2265) — it relies\n  entirely on #2265 having shipped position-agnostic parsing before this unit's edits go live,\n  which the `Blocked by` dependency (native GitHub issue-dependency edge, not a body-text line)\n  already enforces at dispatch/queue time.\n\n## Manual Steps\n\nNone — every deliverable is a direct file edit plus `npm test`.\n\n\n<!-- work-fingerprint: subagent-status-line-trailing-migration:research-misc-batch-a -->\nwork-fingerprint: subagent-status-line-trailing-migration:research-misc-batch-a",
+        "body": "Surface: backend\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule\nsentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`,\n18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its\npersonas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent`\ntool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a\nstatic `node --test` assertion; it can only be confirmed by observing an actual future `/specify`\ndecomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that\npersona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s\nfan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the\nobservation (transcript excerpt or note) against this item, or file a defect against\n`red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use\ncalls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of\nsub-issues) assistant messages.\n\n## Technical Approach\n\nWait for (or trigger) a `/claude-tweaks:specify` decomposition-mode run that produces 2 or more\n`ceremony:standard` sub-issue records — `ceremony-check` (`assess-agent-autonomy/ceremony-check.md`)\nresolves the tier per sub-issue during that run's own Step 3, so the tier isn't knowable until the\nrun happens. Once such a run occurs, inspect that session's stored transcript for the Step 5\nred-team dispatch (`specify/red-team.md`'s Parallel dispatch section): locate the `Agent` tool_use\nblocks for each dispatched persona and group them by the assistant message id each block belongs\nto. Confirm the number of distinct assistant message ids covering all persona dispatches for a\ngiven sub-issue is ≤ the number of sub-issues in that batch. Use the same read-only transcript\ninspection method `transcript-payload-verification` documents for reading this session's own\nlocally-stored transcript, rather than instrumenting or modifying `red-team.md` itself.\n\nIf the count exceeds the bound, file a defect issue against `red-team.md`'s dispatch prose\n(quoting the transcript grouping that violates the rule) instead of editing the file directly from\nthis record — this record's own deliverable is the observation, not the fix.\n\n### Key Files\n\n- `plugin/skills/specify/red-team.md` — the per-sub-issue persona dispatch procedure being observed\n- `plugin/skills/_shared/subagent-output-contract.md` — the fan-out single-assistant-message rule this observation verifies compliance with\n- `tests/subagent-contract-clauses.test.js` — AC1's existing static test coverage (unaffected by this record)\n\n## Gotchas\n\n- This record's acceptance criterion depends on an external event (a live `/specify` decomposition\n  run over 2+ `ceremony:standard` sub-issues happening) that this record cannot itself trigger on a\n  fixed schedule — it may sit open for some time until a qualifying run occurs naturally, or until\n  someone deliberately runs one to close it out.\n- A qualifying run must be observed via its own transcript at the time it happens; this record\n  cannot be resolved from historical data if no already-completed run's transcript is still\n  available.\n\n## Original request\n\nVerify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)\n\nOrigin: ledger resolve gate\n\nDefer-reason: needs-human-decision\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule sentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`, 18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its personas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent` tool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a static `node --test` assertion; it can only be confirmed by observing an actual future `/specify` decomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that persona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s fan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the observation (transcript excerpt or note) against this item, or file a defect against `red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use calls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of sub-issues) assistant messages.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
+        "createdAt": "2026-08-24T03:21:25Z",
         "labels": [
-          "ready",
-          "risk:low",
-          "size:medium",
-          "type:task",
-          "auto:build",
-          "priority:medium",
-          "ceremony:fast-lane"
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAAC0IWj4w",
+            "name": "fix-on-worktree-worktree-dispatch-record-1350",
+            "description": "Fixed on worktree-worktree-dispatch-record-1350, not yet on the default branch",
+            "color": "FBCA04"
+          }
         ],
-        "createdAt": "2026-09-11T21:58:51Z",
-        "updatedAt": "2026-09-13T12:41:40Z",
+        "number": 1350,
         "state": "OPEN",
+        "title": "Verify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)",
+        "updatedAt": "2026-09-13T13:14:34Z",
         "facets": {
           "origin": null,
           "risk": "low",
-          "size": "medium",
+          "size": "low",
           "ceremony": "fast-lane",
           "solutionUnjustified": false,
+          "breaking": false,
           "needsDefinition": false,
-          "priority": "medium",
+          "priority": "low",
           "stage": "ready",
           "grants": {
             "build": true,
-            "merge": false
+            "merge": true
           },
           "bot": {
             "inProgress": false,
-            "blocked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      },
-      {
-        "number": 2269,
-        "title": "Migrate status-line instruction: browse, simplify, help, visual-review, transcript-judge, feedback",
-        "body": "Surface: backend\n\n## Overview\n\nPart of the 5-unit status-line migration decomposition (parent #2264, keystone #2265). This unit\ncovers the remaining 7 files not covered by WU2, WU3, or WU4 — browse, simplify, help,\nvisual-review (2 files), `_shared/transcript-judge.md`, and feedback — each a pure mechanical text\nreplacement of the old first-line-position instruction.\n\n**Complexity:** Low\n**Estimated tasks:** 3 (grouped as: task 1 — the 4 pure wording-only files (`simplify/SKILL.md`,\n`help/status-scan.md`, `_shared/transcript-judge.md`, plus confirming `feedback/session-evaluation.md`'s\ntemplate reorder); task 2 — the 3 Template A ordering-reversal files (`browse/SKILL.md`,\n`visual-review/page-mode.md`, `visual-review/discover-mode.md`); task 3 — verification (`npm\ntest` plus the greps in Acceptance Criteria below))\n\n## Non-Goals\n\n- Editing the canonical contract file itself, or `subagent-stop.js`'s detection logic — that is\n  #2265, which this unit is `Blocked by`.\n- Editing any file outside the 7 listed below — those belong to WU2, WU3, or WU4 in this same\n  decomposition.\n- Changing the four status words themselves or the Template A/B/C content that follows the status\n  line.\n\n## Current State\n\n- `plugin/skills/browse/SKILL.md` (~116-118): `Each agent's first reply line must still be one of\n  \\`DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED\\`, then the chosen template.`\n- `plugin/skills/simplify/SKILL.md` (~75): `First reply line MUST be one of: DONE /\n  DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.`\n- `plugin/skills/help/status-scan.md` (~11): `status line first (\\`DONE / DONE_WITH_CONCERNS /\n  NEEDS_CONTEXT / BLOCKED\\`)`\n- `plugin/skills/visual-review/page-mode.md` (~59): `Each agent's first reply line must be one of\n  \\`DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED\\`, then the table.`\n- `plugin/skills/visual-review/discover-mode.md` (~109): `Each agent's first reply line must be\n  one of \\`DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED\\`, then the table.`\n- `plugin/skills/_shared/transcript-judge.md` (~152-153): `The status line is the contract's usual\n  DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED first line, per\n  \\`_shared/subagent-output-contract.md\\`.`\n- `plugin/skills/feedback/session-evaluation.md` (~20-22): output template's first line is the\n  bare enum, positioned first in the inlined template block.\n\n## Deliverables\n\n- [ ] `plugin/skills/browse/SKILL.md` (~116-118) — replace with: `Each agent's reply must end with\n      its last non-empty line reading exactly \\`STATUS: DONE\\` (or DONE_WITH_CONCERNS /\n      NEEDS_CONTEXT / BLOCKED), then the chosen template.` — reversing today's \"status line, then\n      template\" order to \"template, then trailing status line.\"\n- [ ] `plugin/skills/simplify/SKILL.md` (~75) — replace with: `The reply's last non-empty line\n      MUST read exactly \\`STATUS: DONE\\` (or DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED).`\n- [ ] `plugin/skills/help/status-scan.md` (~11) — replace with: `trailing status line\n      (\\`STATUS: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED\\`)`\n- [ ] `plugin/skills/visual-review/page-mode.md` (~59) — replace with: `Each agent's reply must end\n      with its last non-empty line reading exactly \\`STATUS: DONE\\` (or DONE_WITH_CONCERNS /\n      NEEDS_CONTEXT / BLOCKED), then the table.` — reversing today's \"status line, then table\"\n      order.\n- [ ] `plugin/skills/visual-review/discover-mode.md` (~109) — same replacement text as the\n      `page-mode.md` deliverable above (identical shape, separate file).\n- [ ] `plugin/skills/_shared/transcript-judge.md` (~152-153) — replace with: `The status line is\n      the contract's usual DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED trailing\n      \\`STATUS: {WORD}\\` line (the last non-empty line of the reply), per\n      \\`_shared/subagent-output-contract.md\\`.`\n- [ ] `plugin/skills/feedback/session-evaluation.md` (~20-22) — move the bare enum out of the\n      first-position slot in the inlined output template and reposition it as the template's final\n      line, labeled `STATUS: {WORD}` — `{WORD}` here is a literal template placeholder (matching\n      this same file's own existing placeholder convention for the rest of its inlined template),\n      not literal text to render as-is; the actually-emitted line is one of `STATUS: DONE` /\n      `STATUS: DONE_WITH_CONCERNS` / `STATUS: NEEDS_CONTEXT` / `STATUS: BLOCKED`.\n\n## Acceptance Criteria\n\n1. All 7 files read the new trailing-`STATUS:`-line instruction; none still asserts \"first\n   line\"/\"first reply line\"/\"status line first\" as the required position.\n2. `browse/SKILL.md`, `visual-review/page-mode.md`, and `visual-review/discover-mode.md` each\n   reflect the reversed order for their Template A-shaped dispatch (chosen template/table first,\n   trailing status line last) rather than merely relabeling the old \"status line, then\n   template/table\" order.\n3. `feedback/session-evaluation.md`'s inlined output template has the status enum repositioned to\n   the template's last line, not its first — this is a structural template reorder, not a wording\n   swap only.\n4. `grep -rln \"first reply line\\|first line\\|status line first\" plugin/skills/browse/SKILL.md\n   plugin/skills/simplify/SKILL.md plugin/skills/help/status-scan.md\n   plugin/skills/visual-review/page-mode.md plugin/skills/visual-review/discover-mode.md\n   plugin/skills/_shared/transcript-judge.md plugin/skills/feedback/session-evaluation.md` returns\n   no match against any of the edited status-line instructions.\n5. Structural checks for the 3 reordered files, matching AC4's rigor: for each of\n   `browse/SKILL.md`, `visual-review/page-mode.md`, and `visual-review/discover-mode.md`, the\n   line containing `STATUS:` in the edited instruction appears textually after the line\n   describing the template/table it follows (a simple line-number comparison via `grep -n`\n   against both phrases in the same file) — proving the reorder actually happened, not just that\n   old wording is gone. For `feedback/session-evaluation.md`, the `STATUS:` placeholder line is\n   the last line of the inlined output-template code block, confirmed by inspecting the block's\n   closing fence position relative to it.\n6. No test outside this unit's 7 files pins the retired wording being replaced here — confirmed\n   by `grep -rln \"first reply line\\|first line\\|status line first\"\n   plugin/skills/browse/SKILL.md plugin/skills/simplify/SKILL.md plugin/skills/help/status-scan.md\n   plugin/skills/visual-review/page-mode.md plugin/skills/visual-review/discover-mode.md\n   plugin/skills/_shared/transcript-judge.md plugin/skills/feedback/session-evaluation.md tests/`\n   run once against the union of this unit's files plus `tests/` (rather than the files alone),\n   before this unit's own edits land, returning matches only inside the 7 files above (never\n   inside `tests/`); if a test file does match, that's a pre-existing conformance test pinning\n   this exact prose — surface it as a blocker rather than editing the source file out from under\n   it, since a byte-pinned test failing is this repo's own signal to update the test in the same\n   commit, not a signal to skip the source edit.\n7. `npm test` passes with no regressions.\n\n## Technical Approach\n\nMechanical text replacement for 4 of the 7 files (`simplify/SKILL.md`, `help/status-scan.md`,\n`_shared/transcript-judge.md`, plus wording updates), matching the canonical trailing-line phrasing\n#2265 establishes. Three files additionally need structural reordering, not just a wording swap:\n`browse/SKILL.md`, `visual-review/page-mode.md`, and `visual-review/discover-mode.md` are all\nTemplate A-shaped dispatch sites (status line then table/template, today), so each moves its\nstatus-line instruction to describe a trailing position after the table/template instead; and\n`feedback/session-evaluation.md`'s inlined output template literally has the enum positioned first\nin the template block, so that block's own line order changes, not merely the prose describing it.\n\n### Key Files\n\n- `plugin/skills/browse/SKILL.md` — lines ~116-118; also needs Template A ordering reversed.\n- `plugin/skills/simplify/SKILL.md` — line ~75, wording only.\n- `plugin/skills/help/status-scan.md` — line ~11, wording only.\n- `plugin/skills/visual-review/page-mode.md` — line ~59; also needs Template A ordering reversed.\n- `plugin/skills/visual-review/discover-mode.md` — line ~109; also needs Template A ordering\n  reversed.\n- `plugin/skills/_shared/transcript-judge.md` — lines ~152-153, wording only (this file reads a\n  status line rather than dispatching one, but its own description of where to find it must match\n  the new convention).\n- `plugin/skills/feedback/session-evaluation.md` — lines ~20-22; the inlined output template's\n  line order changes, not just wording.\n\n## Gotchas\n\n- Three files in this batch (`browse/SKILL.md`, `visual-review/page-mode.md`,\n  `visual-review/discover-mode.md`) need their stated status-line/table ordering reversed, not\n  just re-worded — the same reversal WU4's `tidy/scan-execution.md` deliverable needs, since all\n  four are Template A dispatch sites.\n- `feedback/session-evaluation.md`'s change is structural (move a template line), not textual —\n  read the actual inlined template block before editing, don't just search-and-replace the enum\n  string in place.\n- `_shared/transcript-judge.md` is a consumer of the status line (it reads a prior agent's already\n  -emitted status to judge a transcript), not a dispatcher of one — its edit only needs to\n  describe the new location correctly, it issues no dispatch instruction of its own.\n- This unit is `Blocked by` #2265 — the exact replacement wording must match the canonical text\n  #2265 lands, not a guess at what it will say. The strings quoted in Deliverables above are this\n  record's best-effort snapshot at authoring time; re-read #2265's actual landed text in\n  `subagent-output-contract.md` before applying any edit here and defer to it if the two differ.\n\n## Manual Steps\n\nNone — every deliverable is a direct file edit plus `npm test`.\n\n\n<!-- work-fingerprint: subagent-status-line-trailing-migration:misc-batch-b -->\nwork-fingerprint: subagent-status-line-trailing-migration:misc-batch-b",
-        "labels": [
-          "ready",
-          "risk:low",
-          "size:medium",
-          "type:task",
-          "auto:build",
-          "priority:medium",
-          "ceremony:fast-lane"
-        ],
-        "createdAt": "2026-09-11T21:59:35Z",
-        "updatedAt": "2026-09-13T12:41:43Z",
-        "state": "OPEN",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false
+            "blocked": false,
+            "parked": false
           },
           "acceptance": null,
           "isParentIssue": false,
@@ -721,5 +591,37 @@
       }
     ]
   ],
-  "excluded": []
+  "excluded": [
+    {
+      "number": 2269,
+      "blockedBy": [
+        2265
+      ]
+    },
+    {
+      "number": 2268,
+      "blockedBy": [
+        2265
+      ]
+    },
+    {
+      "number": 2267,
+      "blockedBy": [
+        2265
+      ]
+    },
+    {
+      "number": 2266,
+      "blockedBy": [
+        2265
+      ]
+    },
+    {
+      "number": 2259,
+      "blockedBy": [
+        2257
+      ]
+    }
+  ],
+  "bundles": []
 }
