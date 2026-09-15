@@ -34,11 +34,18 @@ const { buildLinkedPRQuery } = require('./record');
 // own try/catch around this call routes the thrown message to their
 // exit-1/exit-3 failure path, same as resolve-blockers.js does for
 // fetchNativeDependencies.
-function fetchLinkedPRs({ numbers, owner, repo, runner } = {}) {
+// `host` (optional; omitted/'github.com' = no flag) threads --hostname onto
+// this call for a GitHub Enterprise Server host — #2240: resolve-linked-prs.js
+// has no other gh-invoking call site of its own to attach the flag to.
+function fetchLinkedPRs({
+  numbers, owner, repo, host, runner,
+} = {}) {
   const result = new Map();
   const query = buildLinkedPRQuery(numbers);
   if (!query) return result;
-  const out = runner(['api', 'graphql', '-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `repo=${repo}`]);
+  const args = ['api', 'graphql', '-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `repo=${repo}`];
+  if (host && host !== 'github.com') args.push('--hostname', host);
+  const out = runner(args);
   const parsed = JSON.parse(out);
   const repository = parsed && parsed.data && parsed.data.repository;
   const missing = repository ? numbers.filter((n) => !repository[`i${n}`]) : numbers.slice();

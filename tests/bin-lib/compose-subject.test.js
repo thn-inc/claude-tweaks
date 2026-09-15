@@ -222,6 +222,20 @@ test('helpers: extractSection and firstSentence', () => {
   assert.equal(firstSentence(''), '');
 });
 
+test('firstSentence (#2319): e.g./i.e./etc. and version/decimal numbers are not sentence terminators', () => {
+  // Discriminating: the pre-#2319 regex cut at the first `.` followed by whitespace with no
+  // abbreviation/version awareness, so each of these would have truncated to just the token
+  // before the first period (e.g. 'e.g.', 'v6.34.', 'i.e.', 'etc.').
+  assert.equal(firstSentence('e.g. Do the thing. More.'), 'e.g. Do the thing.');
+  assert.equal(firstSentence('This is v6.34. New release adds support. More.'), 'This is v6.34. New release adds support.');
+  assert.equal(firstSentence('Say i.e. this way. Next.'), 'Say i.e. this way.');
+  assert.equal(firstSentence('etc. Something else. More.'), 'etc. Something else.');
+  // A plain decimal (no leading v) is treated the same as a version number.
+  assert.equal(firstSentence('It costs 6.34. That is the price. More.'), 'It costs 6.34. That is the price.');
+  // No later terminator at all: falls through to the whole paragraph, same as the untouched case.
+  assert.equal(firstSentence('v6.34. New release with no terminator'), 'v6.34. New release with no terminator');
+});
+
 test('Type vocabulary has one source of truth: TYPE_PREFIX and record.TYPES name the same set', () => {
   // Pins subject.js's TYPE_PREFIX keys against record.js's TYPES so the two never drift apart
   // silently. A fourth Type must gain a prefix in subject.js's TYPE_PREFIX in the SAME change

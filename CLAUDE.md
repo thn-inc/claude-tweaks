@@ -34,7 +34,7 @@ SKILL.md structure, Interaction patterns (incl. the canonical CSC template), Fro
 
 - Version lives in `plugin/.claude-plugin/plugin.json`
 - Bump minor version for feature additions, patch for fixes
-- Commit message style: `{Verb} {what} — {detail}` (imperative, no conventional commit prefixes) — for hand-written commits; merge commits the plugin composes at merge time are Conventional-Commits shaped (`bin/compose-subject.js`, #2251)
+- Commit message style: `{Verb} {what} — {detail}` (imperative, no conventional commit prefixes) — for hand-written commits; merge commits the plugin composes at merge time are Conventional-Commits shaped (`plugin/bin/compose-subject.js`, #2251)
 
 ### Releasing (two repos)
 
@@ -52,7 +52,7 @@ All hook registrations route through `plugin/bin/hooks.js <event>` — one dispa
 
 ### Reconcile
 
-Adding a new `bin/lib/reconcile/` convergence check touches multiple registration sites — the full procedure is in `docs/reconcile-checks.md`. Read it before touching `bin/lib/reconcile/` or `bin/hooks.js`'s `reconcile` command.
+Adding a new `plugin/bin/lib/reconcile/` convergence check touches multiple registration sites — the full procedure is in `docs/reconcile-checks.md`. Read it before touching `plugin/bin/lib/reconcile/` or `plugin/bin/hooks.js`'s `reconcile` command.
 
 ## Philosophy
 

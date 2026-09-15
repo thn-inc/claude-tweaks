@@ -86,13 +86,23 @@ function makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote, runn
 
     let remote = null;
     if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-    const repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
+    // A caller-supplied --repo is either a bare `owner/repo` (github.com
+    // implied — the historical shape) or a host-qualified `host/owner/repo`
+    // slug (repoSlug()'s GHE output). Only the bare form needs the
+    // `github.com/` prefix to satisfy parseRepo's 3-segment regex; prefixing
+    // an already host-qualified value would produce a 4-segment string that
+    // fails to parse at all.
+    const repoSpec = opts.repo
+      ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`)
+      : parseRepo(remote);
     if (!repoSpec) { deps.stderr(`${name}: could not resolve owner/repo — pass --repo owner/name\n`); return 2; }
-    const { owner, repo } = repoSpec;
+    const { owner, repo, host } = repoSpec;
 
     let fetched;
     try {
-      fetched = fetch({ numbers, owner, repo, runner: deps.runner });
+      fetched = fetch({
+        numbers, owner, repo, host, runner: deps.runner,
+      });
     } catch (err) {
       deps.stderr(`${name}: ${err && err.message ? err.message : String(err)}\n`);
       return 3;

@@ -8,9 +8,29 @@ const config = (releaseType, extraFiles) => JSON.stringify({ packages: { '.': { 
 
 test('readConfig: null without a config, release-type + extra-files with one', () => {
   assert.strictEqual(M.readConfig(files({}).readFile), null);
-  assert.deepStrictEqual(M.readConfig(files({ 'release-please-config.json': config('node') }).readFile), { releaseType: 'node', extraFiles: [] });
+  assert.deepStrictEqual(M.readConfig(files({ 'release-please-config.json': config('node') }).readFile),
+    { releaseType: 'node', extraFiles: [], bumpMinorPreMajor: true, bumpPatchForMinorPreMajor: false });
   const ef = [{ type: 'json', path: 'plugin/.claude-plugin/plugin.json', jsonpath: '$.version' }];
   assert.deepStrictEqual(M.readConfig(files({ 'release-please-config.json': config('simple', ef) }).readFile).extraFiles, ef);
+});
+
+test('#2327: readConfig lifts bump-minor-pre-major/bump-patch-for-minor-pre-major, package-level over top-level, defaulting true/false', () => {
+  const pkgLevel = JSON.stringify({ packages: { '.': { 'release-type': 'node', 'bump-minor-pre-major': false, 'bump-patch-for-minor-pre-major': true } } });
+  assert.deepStrictEqual(M.readConfig(files({ 'release-please-config.json': pkgLevel }).readFile),
+    { releaseType: 'node', extraFiles: [], bumpMinorPreMajor: false, bumpPatchForMinorPreMajor: true });
+  const topLevel = JSON.stringify({ 'release-type': 'node', 'bump-minor-pre-major': false });
+  assert.strictEqual(M.readConfig(files({ 'release-please-config.json': topLevel }).readFile).bumpMinorPreMajor, false);
+  // Package-level wins over a conflicting top-level value.
+  const both = JSON.stringify({ 'bump-minor-pre-major': false, packages: { '.': { 'release-type': 'node', 'bump-minor-pre-major': true } } });
+  assert.strictEqual(M.readConfig(files({ 'release-please-config.json': both }).readFile).bumpMinorPreMajor, true);
+});
+
+test('#2327: readBumpFlags never throws — absent file, malformed JSON, and a readFile that throws all default true/false', () => {
+  assert.deepStrictEqual(M.readBumpFlags(files({}).readFile), { bumpMinorPreMajor: true, bumpPatchForMinorPreMajor: false });
+  assert.deepStrictEqual(M.readBumpFlags(files({ 'release-please-config.json': '{ not json' }).readFile), { bumpMinorPreMajor: true, bumpPatchForMinorPreMajor: false });
+  assert.deepStrictEqual(M.readBumpFlags(() => { throw new Error('EISDIR'); }), { bumpMinorPreMajor: true, bumpPatchForMinorPreMajor: false });
+  const cfg = JSON.stringify({ packages: { '.': { 'release-type': 'node', 'bump-patch-for-minor-pre-major': true } } });
+  assert.deepStrictEqual(M.readBumpFlags(files({ 'release-please-config.json': cfg }).readFile), { bumpMinorPreMajor: true, bumpPatchForMinorPreMajor: true });
 });
 
 test('resolveTargets: one row per stack type, the manifest file always, unsupported types throw naming the type', () => {

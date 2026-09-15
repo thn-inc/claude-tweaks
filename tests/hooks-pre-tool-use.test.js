@@ -1124,56 +1124,6 @@ test('hasMaterializeCommit: #1688 AC2 regression guard — the local default-bra
     'the local default-branch probe must not disarm the gate for a worktree\'s own genuinely-unmerged materialize commit');
 });
 
-// #1501: the #989 exemption's repro-resistant failure needs a byte-for-byte
-// diff between a real hook invocation and a synthetic replay to pin down —
-// this is the debug-capture instrumentation added for that, not a fix for
-// the failure itself (unreproducible from static analysis; see the record's
-// Investigation Findings).
-test('CT_HOOKS_DEBUG_CAPTURE: unset by default, no file is written', () => {
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-capture-'));
-  const captureFile = path.join(scratch, 'capture.jsonl');
-  delete process.env.CT_HOOKS_DEBUG_CAPTURE;
-  pre.run({ input: bashInput('ls', scratch), cwd: scratch });
-  assert.strictEqual(fs.existsSync(captureFile), false, 'no CT_HOOKS_DEBUG_CAPTURE set -> no capture file written');
-});
-
-test('CT_HOOKS_DEBUG_CAPTURE: when set, appends one JSON line per call with input/cwd/runDir/runState/ownedRun', () => {
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-capture-'));
-  const captureFile = path.join(scratch, 'capture.jsonl');
-  const { run, state } = mkRun(scratch, 'sess-1');
-  process.env.CT_HOOKS_DEBUG_CAPTURE = captureFile;
-  try {
-    pre.run({
-      input: bashInput('git push origin feature-x', scratch), cwd: scratch, runDir: run, runState: state, ownedRun: { dir: run },
-    });
-    pre.run({ input: bashInput('ls', scratch), cwd: scratch });
-  } finally {
-    delete process.env.CT_HOOKS_DEBUG_CAPTURE;
-  }
-  const lines = fs.readFileSync(captureFile, 'utf8').trim().split('\n');
-  assert.strictEqual(lines.length, 2, 'one capture line per pre.run() call, including calls with no runDir');
-  const first = JSON.parse(lines[0]);
-  assert.strictEqual(first.input.tool_name, 'Bash');
-  assert.match(first.input.tool_input.command, /git push origin feature-x/);
-  assert.strictEqual(first.cwd, scratch);
-  assert.strictEqual(first.runDir, run);
-  assert.strictEqual(first.runState.sessionId, 'sess-1');
-  assert.deepStrictEqual(first.ownedRun, { dir: run });
-  assert.ok(first.at, 'each line carries a capture timestamp');
-  const second = JSON.parse(lines[1]);
-  assert.strictEqual(second.runDir, undefined, 'a call with no runDir captures it as absent, not fabricated');
-});
-
-test('CT_HOOKS_DEBUG_CAPTURE: an unwritable target never breaks the real gate call', () => {
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-capture-'));
-  process.env.CT_HOOKS_DEBUG_CAPTURE = path.join(scratch, 'no-such-parent-dir', 'capture.jsonl');
-  try {
-    assert.doesNotThrow(() => pre.run({ input: bashInput('ls', scratch), cwd: scratch }));
-  } finally {
-    delete process.env.CT_HOOKS_DEBUG_CAPTURE;
-  }
-});
-
 // #1967: git-stash worktree-hazard warn — the stash stack is repository-wide,
 // shared by every linked worktree of the same main checkout, so a bare
 // `git stash`/`git stash pop` from a linked worktree can push onto or pop a

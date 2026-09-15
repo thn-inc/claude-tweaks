@@ -104,9 +104,66 @@ test('resolveInputs marks a missing source unavailable and still resolves the re
   const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps({ resolvePolicy: policyFake({}) }) });
   assert.strictEqual(inputs.pr, null);
   assert.strictEqual(inputs.sources.pr, 'unavailable');
+  // No integration-branch policy key: okDeps' git fake answers the offline
+  // origin/HEAD lookup, so this resolves via the git-default ladder rank
+  // (#2385), not the bare 'main' literal the pre-fix code reported as 'default'.
+  assert.strictEqual(inputs.integrationBranch, 'main');
+  assert.strictEqual(inputs.sources.integrationBranch, 'git-default');
+  assert.strictEqual(inputs.base, 'abc123');
+});
+
+test('resolveInputs resolves integrationBranch via the git-default ladder rank when no policy key is set, even when the real default branch is not "main" (#2385)', () => {
+  const runDir = fixtureRunDir({ withPr: false });
+  const deps = okDeps({
+    resolvePolicy: policyFake({}),
+    git: (args, opts) => {
+      if (args[0] === 'rev-parse' && args[1] === '--symbolic-full-name') return 'refs/remotes/origin/master\n';
+      if (args[0] === 'merge-base') return 'abc123\n';
+      return '';
+    },
+  });
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps });
+  assert.strictEqual(inputs.integrationBranch, 'master');
+  assert.strictEqual(inputs.sources.integrationBranch, 'git-default');
+  // The residue/state/blastRadius probes' merge-base call succeeds against
+  // the resolved non-"main" branch instead of failing on an unresolved base.
+  assert.strictEqual(inputs.base, 'abc123');
+});
+
+test('resolveInputs falls back to gh repo view for the default branch when the offline git pointer is unavailable, no policy key set (#2385)', () => {
+  const runDir = fixtureRunDir({ withPr: false });
+  const deps = okDeps({
+    resolvePolicy: policyFake({}),
+    git: (args) => { if (args[0] === 'rev-parse') throw new Error('no such ref'); return args[0] === 'merge-base' ? 'abc123\n' : ''; },
+    ghSync: (args) => (args[0] === 'repo' ? 'trunk\n' : ''),
+  });
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps });
+  assert.strictEqual(inputs.integrationBranch, 'trunk');
+  assert.strictEqual(inputs.sources.integrationBranch, 'gh-default');
+});
+
+test('resolveInputs falls back to the literal "main" only when neither policy, git, nor gh resolve anything (#2385)', () => {
+  const runDir = fixtureRunDir({ withPr: false });
+  const deps = okDeps({
+    resolvePolicy: policyFake({}),
+    git: (args) => { if (args[0] === 'rev-parse') throw new Error('no such ref'); return args[0] === 'merge-base' ? 'abc123\n' : ''; },
+    ghSync: () => { throw new Error('gh: not found'); },
+  });
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps });
   assert.strictEqual(inputs.integrationBranch, 'main');
   assert.strictEqual(inputs.sources.integrationBranch, 'default');
-  assert.strictEqual(inputs.base, 'abc123');
+});
+
+test('resolveInputs: an explicit integration-branch policy value always wins outright, never consulting git or gh (#2385)', () => {
+  const runDir = fixtureRunDir({ withPr: false });
+  let gitCalledWithRevParse = false;
+  const deps = okDeps({
+    git: (args) => { if (args[0] === 'rev-parse') gitCalledWithRevParse = true; return args[0] === 'merge-base' ? 'abc123\n' : ''; },
+  });
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps });
+  assert.strictEqual(inputs.integrationBranch, 'main');
+  assert.strictEqual(inputs.sources.integrationBranch, 'policy');
+  assert.strictEqual(gitCalledWithRevParse, false, 'policy short-circuits before the git rank is ever consulted');
 });
 
 test('resolveInputs resolves the policy levers ONCE, not once per probe (#1930 review I8)', async () => {
@@ -191,6 +248,46 @@ test('resolveInputs (c): a parent multi-spec run dir resolves records from manif
   assert.strictEqual(inputs.sources.records, 'manifest');
 });
 
+test('resolveRecords rung (c) worktree-mirrors spec-*/work headers when the main-checkout run dir has neither work/ nor spec-* entries (#2391)', () => {
+  // The real /claude-tweaks:dispatch file-overlap group shape: materialize.md
+  // commits each record's header to {run-dir}/spec-{n}/work/{n}-spec.md on the
+  // feature branch, so it exists only inside the worktree's own working tree —
+  // never in the main-checkout run dir --run anchors to. Observed live on
+  // run 2026-09-14T000308-record-2283-2338 (#2391's Current State).
+  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-rungc-main-'));
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-rungc-tree-'));
+  const rel = path.join('.claude-tweaks', 'pipelines', '2026-09-14T000308-record-2283-2338');
+  const runDir = path.join(main, rel);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: tree, status: 'active', pr: { number: 1901 } }));
+  const mirrorRunDir = path.join(tree, rel);
+  fs.mkdirSync(path.join(mirrorRunDir, 'spec-2283', 'work'), { recursive: true });
+  fs.mkdirSync(path.join(mirrorRunDir, 'spec-2338', 'work'), { recursive: true });
+  fs.writeFileSync(path.join(mirrorRunDir, 'spec-2283', 'work', '2283-spec.md'), '---\nrecord: 2283\n---\n');
+  fs.writeFileSync(path.join(mirrorRunDir, 'spec-2338', 'work', '2338-spec.md'), '---\nrecord: 2338\n---\n');
+  const deps = { readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
+  const { records, source } = resolveRecords(deps, runDir, tree);
+  assert.deepStrictEqual(records, [2283, 2338]);
+  assert.strictEqual(source, 'worktree-manifest');
+
+  // resolveInputs surfaces the same resolution end-to-end, and the four
+  // probes that gate on `recordsOrThrow()` no longer see an empty list.
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'ceremony-profile: standard\n');
+  const inputs = resolveInputs({ runDir, cwd: tree, deps: okDeps({ readdir: deps.readdir, readFile: (p) => (path.basename(p) === 'CLAUDE.md' ? '# Fixture\n\nwork-backend: github-issues\n' : deps.readFile(p)) }) });
+  assert.deepStrictEqual(inputs.records, [2283, 2338]);
+  assert.strictEqual(inputs.sources.records, 'worktree-manifest');
+});
+
+test('resolveRecords rung (c): the main-checkout run dir\'s own spec-*/work headers still win over the worktree mirror (#2391 — preserves the existing single-record/no-worktree case)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-rungc-own-'));
+  fs.mkdirSync(path.join(dir, 'spec-1', 'work'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'spec-1', 'work', '1-spec.md'), '---\nrecord: 1\n---\n');
+  const deps = { readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
+  const { records, source } = resolveRecords(deps, dir, null);
+  assert.deepStrictEqual(records, [1]);
+  assert.strictEqual(source, 'manifest', 'no worktree given — the direct runDir read wins, mirror never consulted');
+});
+
 test('pack.js exports resolveRecords (and headerRecords) so console/resolve.js can share the ladder instead of copying it (#2028)', () => {
   assert.strictEqual(typeof resolveRecords, 'function');
   assert.strictEqual(typeof headerRecords, 'function');
@@ -243,6 +340,67 @@ test('gatherPack: every probe ok → eight envelopes with ok:true, plus inputs/g
   assert.strictEqual(typeof pack.state.value.rendered, 'string', 'pack.state.value.rendered carries the verbatim block');
   assert.ok(!('release' in pack), 'the release probe was removed (#1930 review I5)');
   assert.ok(!('mergeSize' in pack), 'the mergeSize probe was removed (#1930 fix round 4)');
+});
+
+test('#2425: unblocked (work-links: native) passes --repo, resolved from `origin`, to resolve-blockers.js — including on a GitHub Enterprise remote', async () => {
+  const calls = [];
+  const deps = okDeps({
+    git: (args) => (args[0] === 'remote' ? 'git@ghe.example.com:acme/widgets.git\n' : okDeps().git(args)),
+    execFile: async (cmd, args) => {
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) {
+        calls.push(args);
+        return { stdout: JSON.stringify({ 1600: { blockedBy: [1535], openBlocker: false } }), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+  assert.strictEqual(calls.length, 1);
+  const repoIdx = calls[0].indexOf('--repo');
+  assert.notStrictEqual(repoIdx, -1, `resolve-blockers.js must be called with --repo: ${JSON.stringify(calls[0])}`);
+  // Host-qualified, not bare owner/repo — a bare slug here silently drops
+  // which GHE host to query, which is the whole point of this fix (see the
+  // review finding this replaced: passing bare 'acme/widgets' for a GHE
+  // remote made resolve-blockers.js/number-list-cli.js re-resolve against
+  // github.com instead of the real host).
+  assert.strictEqual(calls[0][repoIdx + 1], 'ghe.example.com/acme/widgets');
+});
+
+test('#2425 AC 2: on a plain github.com remote, --repo is still passed (additive) with the same owner/repo shape, and unblocked\'s value is unchanged', async () => {
+  const calls = [];
+  const deps = okDeps({
+    git: (args) => (args[0] === 'remote' ? 'https://github.com/acme/widgets.git\n' : okDeps().git(args)),
+    execFile: async (cmd, args) => {
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) {
+        calls.push(args);
+        return { stdout: JSON.stringify({ 1600: { blockedBy: [1535], openBlocker: false } }), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+  const repoIdx = calls[0].indexOf('--repo');
+  assert.strictEqual(calls[0][repoIdx + 1], 'acme/widgets');
+});
+
+test('#2425: no resolvable `origin` remote falls back to calling resolve-blockers.js without --repo (additive, never a hard failure)', async () => {
+  const calls = [];
+  const deps = okDeps({
+    git: (args) => { if (args[0] === 'remote') throw new Error('fatal: No such remote \'origin\''); return okDeps().git(args); },
+    execFile: async (cmd, args) => {
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) {
+        calls.push(args);
+        return { stdout: JSON.stringify({ 1600: { blockedBy: [1535], openBlocker: false } }), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.ok(!calls[0].includes('--repo'), `must not pass --repo when origin can't be resolved: ${JSON.stringify(calls[0])}`);
 });
 
 // The two assertions above compare a probe's value against the fake's own
@@ -554,6 +712,32 @@ test('gatherPack: residue probe refuses to run with an unresolved merge-base rat
   assert.strictEqual(pack.residue.ok, false);
   assert.match(pack.residue.error, /base unresolved/);
   assert.strictEqual(calls.length, 0);
+});
+
+// #1781: the residue probe passes --own-pr {inputs.pr} only when run-state.json
+// carries a pr.number — a local-merge run (no recorded pr) invokes residue.js
+// with the same argv as before this change.
+test('gatherPack: residue probe appends --own-pr when run-state.json carries a pr.number (#1781)', async () => {
+  const calls = [];
+  const deps = okDeps({
+    execFile: async (cmd, args) => { if (String(args[0]).endsWith('residue.js')) { calls.push(args); } return okDeps().execFile(cmd, args); },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir({ withPr: true }), cwd: '/w/tree', only: ['residue'], deps });
+  assert.strictEqual(pack.residue.ok, true);
+  assert.strictEqual(calls.length, 1);
+  assert.ok(calls[0].includes('--own-pr'), JSON.stringify(calls[0]));
+  assert.strictEqual(calls[0][calls[0].indexOf('--own-pr') + 1], '1901');
+});
+
+test('gatherPack: residue probe omits --own-pr when run-state.json carries no pr (local-merge, #1781)', async () => {
+  const calls = [];
+  const deps = okDeps({
+    execFile: async (cmd, args) => { if (String(args[0]).endsWith('residue.js')) { calls.push(args); } return okDeps().execFile(cmd, args); },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir({ withPr: false }), cwd: '/w/tree', only: ['residue'], deps });
+  assert.strictEqual(pack.residue.ok, true);
+  assert.strictEqual(calls.length, 1);
+  assert.ok(!calls[0].includes('--own-pr'), JSON.stringify(calls[0]));
 });
 
 test('gatherPack: state probe refuses to run with an unresolved merge-base rather than passing the literal "null" (#1930 fix)', async () => {

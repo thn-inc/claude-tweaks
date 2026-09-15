@@ -93,6 +93,17 @@ function gitApplyCheck(execFile, cwd) {
   };
 }
 
+// Live PR state for a drain-overlap hold's re-verification (resolve.js's
+// mergeResolution) — mirrors ghReadGrants's shape: one execFile call, thrown
+// errors propagate so resolve.js can fail closed to leave-open on a
+// transport failure rather than silently treating it as resolved.
+function ghCheckPrState(execFile, cwd) {
+  return (prNumber) => {
+    const raw = execFile('gh', ['pr', 'view', String(prNumber), '--json', 'state'], { cwd });
+    return JSON.parse(raw).state;
+  };
+}
+
 async function run(argv, deps = {}) {
   const cwd = deps.cwd || (() => process.cwd());
   const stdout = deps.stdout || ((s) => process.stdout.write(s));
@@ -163,6 +174,7 @@ async function run(argv, deps = {}) {
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
     gitApplyCheck: gitApplyCheck(execFile, cwd()),
     readGrants: ghReadGrants(execFile, cwd()),
+    checkPrState: ghCheckPrState(execFile, cwd()),
     vetoWindowHours,
     now,
     ...(deps.resolverDeps || {}),

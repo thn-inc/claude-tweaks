@@ -191,7 +191,7 @@ function makeGitSpy() {
     path.join(spyDir, 'git'),
     `#!/bin/sh\necho "$@" >> "${logFile}"\nexec "${realGit}" "$@"\n`,
   );
-  fs.chmodSync(path.join(spyDir, 'git'), 0o755);
+  fs.chmodSync(path.join(spyDir, 'git'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   return logFile;
 }
 

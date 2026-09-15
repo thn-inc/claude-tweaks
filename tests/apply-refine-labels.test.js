@@ -158,6 +158,21 @@ test('run: --repo flag overrides remote-derived owner/repo, and remoteUrl is nev
   assert.deepStrictEqual(deps.calls.gh[0], ['issue', 'edit', '5', '--repo', 'other/repo', '--add-label', 'x']);
 });
 
+// #2240: on a GitHub Enterprise Server remote, parseRepo now returns a non-github.com
+// host, and the composed --repo flag is host-qualified (host/owner/repo) so `gh` targets
+// the right instance instead of always assuming github.com.
+test('run: on a GitHub Enterprise Server remote, --repo is host-qualified', () => {
+  const deps = fakeDeps({
+    readFile: () => JSON.stringify([{ issue: 118, addLabels: ['auto:build'] }]),
+    remoteUrl: () => 'git@ghe.example.com:acme/widgets.git',
+  });
+  const code = run(['actions.json'], deps);
+  assert.strictEqual(code, 0);
+  assert.deepStrictEqual(deps.calls.gh, [
+    ['issue', 'edit', '118', '--repo', 'ghe.example.com/acme/widgets', '--add-label', 'auto:build'],
+  ]);
+});
+
 test('run: one failed gh call is isolated — other actions still apply, failure reported in the summary', () => {
   let call = 0;
   const deps = fakeDeps({

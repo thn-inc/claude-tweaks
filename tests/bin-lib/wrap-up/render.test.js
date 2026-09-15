@@ -93,3 +93,43 @@ test('renderState keeps commit count and push status on a detached HEAD, where c
   });
   assert.match(out, /Branch\s+detached at deadbee — 3 commits, UNPUSHED/);
 });
+
+// #1869: the three pushedVia-keyed shapes readState's remote-ref fallback
+// produces, plus confirmation the pushed===null "unknown" case keeps its
+// pre-#1869 wording verbatim.
+
+const REMOTE_REF_PUSHED = {
+  isRepo: true, branch: 'feature-y', detachedAt: null, upstream: null,
+  ahead: 0, behind: 0, pushed: true, commitsInScope: 2, linkedWorktree: true,
+  remoteRef: 'origin/feature-y', pushedVia: 'remote-ref',
+};
+
+test('renderState: pushedVia remote-ref and pushed true names the remote ref and notes no upstream configured', () => {
+  const out = renderState({ state: REMOTE_REF_PUSHED, ops: [], since: 'a1b2c3d', sinceDate: '2026-08-07 09:14' });
+  assert.match(out, /Branch\s+feature-y — 2 commits, pushed \(origin\/feature-y; no upstream configured\)/);
+  assert.doesNotMatch(out, /UNPUSHED/);
+});
+
+test('renderState: the existing pushed/UNPUSHED(upstream) lines still render when pushedVia is upstream', () => {
+  const out = renderState({
+    state: { ...PUSHED, pushedVia: 'upstream', remoteRef: null },
+    ops: [], since: 'a1b2c3d', sinceDate: '2026-08-07 09:14',
+  });
+  assert.match(out, /Branch\s+feature-x — 3 commits, pushed to origin\/main/);
+});
+
+test('renderState: neither ref exists renders UNPUSHED naming the absent origin/{branch}', () => {
+  const out = renderState({
+    state: { ...UNPUSHED, upstream: null, ahead: null, commitsInScope: 3, remoteRef: null, pushedVia: null },
+    ops: [], since: 'a1b2c3d', sinceDate: '2026-08-07 09:14',
+  });
+  assert.match(out, /Branch\s+main — 3 commits, UNPUSHED \(no upstream, origin\/main absent\)/);
+});
+
+test('renderState: pushed===null keeps its pre-#1869 wording even on a state carrying the new fields', () => {
+  const out = renderState({
+    state: { ...UNPUSHED, pushed: null, pushedVia: 'upstream', remoteRef: null },
+    ops: [], since: 'a1b2c3d', sinceDate: '2026-08-07 09:14',
+  });
+  assert.match(out, /Branch\s+main — 1 commit, push status unknown \(origin\/dev\)/);
+});

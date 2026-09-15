@@ -25,14 +25,34 @@
 // unresolvable (no --repo and no readable origin remote); 3 a `gh issue view`
 // call itself failed. Every side effect goes through deps so tests never
 // touch gh or git (gh-api-module-pattern's CLI wrapper contract).
+//
+// Decision (#2319, review minor from #2251): exit 1 stays overloaded —
+// malformed invocation and an uncomposable record share one code. A fourth
+// code would only be worth adding if some caller could act differently on
+// "bad CLI invocation" vs. "shaping defect in the record"; today every merge
+// site (pr-first-merge.md's two squash sites, and the four local-merge sites
+// in merge-subject-composer-conformance.test.js's LOCAL_SITES) treats any
+// non-zero compose-subject.js exit identically (`|| exit 1`), so a fourth
+// code would carry no distinguishable behavior at the only call sites that
+// exist — six merge-site fences would need editing for a distinction nothing
+// reads. Revisit if a caller ever needs to route "uncomposable" (park the
+// record) differently from "bad invocation" (a caller bug).
 'use strict';
 
 const { execFileSync } = require('child_process');
 const { composeSubject, ComposeSubjectError, TYPE_PREFIX } = require('./release/subject');
 const { parseRecordFacets, normalizeLabelNames } = require('./issues/record');
-const { parseRepo, ghAvailable, remoteUrl } = require('./repo-resolve');
+const {
+  parseRepo, ghAvailable, remoteUrl, repoSlug,
+} = require('./repo-resolve');
 
 const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--shell] [--help]\n';
+// Decision (#2319): kept at the single-call convention, not widened. Each
+// `gh issue view` call below fetches exactly one record — unlike
+// fetch-sub-issues.js's 30000ms bound, which covers a single batched
+// 50-alias GraphQL call, this CLI issues N genuinely separate single-record
+// REST calls, so the 5000ms single-call convention (gh-api-module-pattern's
+// "Bound every remote-contacting call") applies unchanged to each one.
 const GH_TIMEOUT_MS = 5000;
 const RECOGNIZED_TYPES = Object.keys(TYPE_PREFIX);
 // Bundle Type aggregation precedence — highest-impact type wins so a lowest-numbered
@@ -87,15 +107,35 @@ function extractSection(body, heading) {
   return m ? m[1].trim() : '';
 }
 
-// text -> its first sentence: the first paragraph (newlines collapsed to spaces), cut at
-// the first `.`/`!`/`?` that is followed by whitespace or end of text; the whole paragraph
-// when it has no such terminator.
+// Decision (#2319): a `.` immediately preceded by one of these tokens (case-insensitive,
+// e.g./i.e./etc.) or by a version-number/decimal token (`6.34`, `v6.34`) is not treated as a
+// sentence terminator — an Overview opening with "e.g. " or "v6.34. " no longer truncates the
+// first sentence to just that token. Deliberately narrow: only the two cases named in #2319
+// (generic Latin abbreviations, version/decimal numbers), not a general abbreviation dictionary
+// (e.g. "Dr."/"St."), which risks silently merging genuinely separate sentences in Overview prose.
+const NON_TERMINAL_ABBREVIATIONS = new Set(['e.g', 'i.e', 'etc']);
+const VERSION_OR_DECIMAL_RE = /^v?\d+(\.\d+)*$/i;
+
+function isNonTerminalToken(word) {
+  const w = word.toLowerCase();
+  return NON_TERMINAL_ABBREVIATIONS.has(w) || VERSION_OR_DECIMAL_RE.test(w);
+}
+
+// text -> its first sentence: the first paragraph (newlines collapsed to spaces), cut at the
+// first `.`/`!`/`?` that is followed by whitespace or end of text and is not immediately
+// preceded by a non-terminal token (see above); the whole paragraph when it has no such
+// terminator.
 function firstSentence(text) {
   const t = typeof text === 'string' ? text.trim() : '';
   if (!t) return '';
   const firstPara = t.split(/\n\s*\n/)[0].replace(/\s*\n\s*/g, ' ').trim();
-  const m = /^[\s\S]*?[.!?](?=\s|$)/.exec(firstPara);
-  return m ? m[0].trim() : firstPara;
+  for (const m of firstPara.matchAll(/[.!?](?=\s|$)/g)) {
+    const before = firstPara.slice(0, m.index);
+    const wordMatch = /(\S+)$/.exec(before);
+    if (wordMatch && isNonTerminalToken(wordMatch[1])) continue;
+    return firstPara.slice(0, m.index + 1).trim();
+  }
+  return firstPara;
 }
 
 function typeOf(record) {
@@ -138,7 +178,7 @@ function run(argv, deps = realDeps) {
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
   const repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
   if (!repoSpec) { deps.stderr('compose-subject.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
-  const slug = `${repoSpec.owner}/${repoSpec.repo}`;
+  const slug = repoSlug(repoSpec);
 
   const records = [];
   for (const n of opts.numbers) {

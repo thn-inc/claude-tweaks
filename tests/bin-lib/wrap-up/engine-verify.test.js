@@ -887,6 +887,52 @@ test('acceptance-labeling check fails when demo:pending label missing', () => {
   assert.strictEqual(row.result, 'fail');
 });
 
+// #2383: verification-brief.md's Oversight-floor gate legitimately skips
+// demo:pending bootstrap for a non-parent record whose risk/size facets
+// don't clear the configured floor -- it records that outcome into
+// verify-expectations.json's `oversightExempt` array, and this check must
+// render 'skip' for that record instead of the false-positive 'fail' it
+// rendered before this fix (record #1841's own wrap-up, cited in #2383).
+test('acceptance-labeling check skips (never fails) an issue listed in verify-expectations.json oversightExempt, even with no demo:pending label', () => {
+  const runDir = makeTmpDir('verify-acceptance-oversightexempt-');
+  writeSpecFile(runDir, '900', 900);
+  writeExpectations(runDir, { version: 1, memory: [], upstream: [], oversightExempt: [900] });
+  const calls = [];
+  const fakeGh = (args) => {
+    calls.push(args);
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    // Any other call -- parent resolution, labels, comments -- is a bug: an
+    // exempted issue must never reach gh at all.
+    throw new Error(`unexpected gh call: ${JSON.stringify(args)}`);
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'acceptance-labeling');
+  assert.strictEqual(row.result, 'skip', row.detail);
+  assert.match(row.detail, /oversight floor/);
+  assert.strictEqual(calls.filter((a) => a[0] !== '--version').length, 0, 'an exempted issue must never call gh beyond the availability probe');
+});
+
+// A mixed run (one exempted record, one that genuinely needs checking) must
+// only narrow the checked population -- the non-exempt issue's own
+// pass/fail verdict is unaffected by its sibling's exemption.
+test('acceptance-labeling check still fails a non-exempt issue when a sibling issue is oversight-exempt', () => {
+  const runDir = makeTmpDir('verify-acceptance-oversightexempt-mixed-');
+  writeSpecFile(runDir, '900', 900);
+  writeSpecFile(runDir, '901', 901);
+  writeExpectations(runDir, { version: 1, memory: [], upstream: [], oversightExempt: [900] });
+  const fakeGh = (args) => {
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+    if (args.includes('labels')) return JSON.stringify({ labels: [] });
+    return JSON.stringify({ comments: [] });
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'acceptance-labeling');
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#901/);
+  assert.doesNotMatch(row.detail, /#900/);
+});
+
 test('acceptance-labeling check skips when no resolved issues found', () => {
   const runDir = makeTmpDir('verify-acceptance-skip-');
   const fakeGh = (args) => (args[0] === '--version' ? 'gh version 2.0.0' : '');

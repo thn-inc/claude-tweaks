@@ -130,6 +130,21 @@ function deferredSet(expectations) {
   return expectations.ok ? new Set(expectations.data.deferred || []) : new Set();
 }
 
+// #2383: issue numbers whose Oversight-floor gate (verification-brief.md,
+// #367) resolved `exceeds: false` -- these records legitimately carry no
+// `demo:pending` (Steps 1-4 were correctly skipped), so acceptance-labeling
+// below must render 'skip' for them instead of 'fail'. Written by the gate
+// itself into verify-expectations.json's `oversightExempt` array, the same
+// way `memory`/`upstream` are written by the Review Console. Absent
+// expectations degrades to an empty set here (not 'unknown') -- an unrelated
+// check (memory-updates/upstream-feedback) already surfaces a missing
+// expectations file as 'unknown'; acceptance-labeling itself only consults
+// this set to narrow its failing population, never to gate its own result on
+// the file's presence.
+function oversightExemptSet(expectations) {
+  return expectations.ok ? new Set((expectations.data.oversightExempt || []).map(Number)) : new Set();
+}
+
 function expectationsUnknownDetail(expectations) {
   return expectations.reason === 'unsupported-version'
     ? `expectations version ${expectations.version} unsupported`
@@ -456,18 +471,30 @@ function resolvePrNumber(runDir) {
 // contains the brief, never only the most recent one. A last-comment-only
 // test would hard-stop a correctly-gated parent.
 //
-// Known, deliberate gaps (not reproduced here -- said honestly rather than
-// implied by omission): the Oversight-floor gate (a non-parent record that
-// doesn't clear the floor legitimately carries no `demo:pending` at all --
-// this check has no way to distinguish that from a genuinely missed
-// labeling step, so it will report a false `fail` for that case) and the
-// `local-files` backend's different acceptance shape (`facets.acceptance`
-// on the record body, no `gh` comments at all) are both out of scope for
-// this check as written; it only reproduces the `github-issues` path.
-registerCheck('acceptance-labeling', ({ runDir, deps, cwd }) => {
+// Known, deliberate gap (not reproduced here -- said honestly rather than
+// implied by omission): the `local-files` backend's different acceptance
+// shape (`facets.acceptance` on the record body, no `gh` comments at all) is
+// out of scope for this check as written; it only reproduces the
+// `github-issues` path. The Oversight-floor gate's exemption (a non-parent
+// record that doesn't clear the floor legitimately carries no
+// `demo:pending`) IS reproduced here -- see `oversightExemptSet` above.
+registerCheck('acceptance-labeling', ({ runDir, deps, cwd, expectations }) => {
   if (!ghAvailable(deps, cwd)) return { result: 'unknown', detail: 'gh absent' };
   const issues = resolvedIssueNumbers(runDir);
   if (!issues.length) return { result: 'skip', detail: 'no resolved issue numbers found' };
+
+  // Oversight-floor-exempted records (#2383) never carry `demo:pending` --
+  // narrow the population this check gathers/labels-checks to the issues
+  // that are NOT exempted, before any parent resolution or gh call runs. An
+  // exempted record never has a resolvable parent by construction (the
+  // Oversight-floor gate only runs on the non-parent path), so it is always
+  // its own target -- filtering here is equivalent to, and cheaper than,
+  // filtering the resolved `targets` list below.
+  const exempt = oversightExemptSet(expectations);
+  const checkIssues = issues.filter((n) => !exempt.has(n));
+  if (!checkIssues.length) {
+    return { result: 'skip', detail: `oversight floor not cleared for #${issues.join(', #')}` };
+  }
   const failing = [];
 
   // Resolve each issue's target (its parent, when resolvable; itself
@@ -484,7 +511,7 @@ registerCheck('acceptance-labeling', ({ runDir, deps, cwd }) => {
   const targets = [];
   const seenTargets = new Set();
   const gatherFailures = [];
-  for (const n of issues) {
+  for (const n of checkIssues) {
     const resolved = resolveParent(n, deps, cwd);
     if (!resolved.ok) {
       gatherFailures.push(`#${n}: ${resolved.error}`);

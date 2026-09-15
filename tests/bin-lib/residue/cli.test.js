@@ -30,6 +30,23 @@ test('omitting --base exits 2 with the usage message on stderr', () => {
   assert.match(error.stderr, /usage: residue\.js --base <commit-ish>/);
 });
 
+// #1781: --own-pr parses as an integer and threads through to the forge
+// probe's `ownPr` result field.
+test('#1781: --own-pr 42 parses and is not itself an open PR here, so ownPr is null', () => {
+  const out = execFileSync('node', [CLI, '--base', 'HEAD', '--no-suite', '--json', '--own-pr', '42'], {
+    cwd: REPO_ROOT, encoding: 'utf8',
+  });
+  const parsed = JSON.parse(out);
+  // results[2] is the forge probe (worktrees, branches, forge, suite, release, pipeline-runs, artifacts).
+  assert.ok(Object.prototype.hasOwnProperty.call(parsed.results[2], 'ownPr'), 'forge result carries an ownPr field');
+});
+
+test('#1781: a non-integer --own-pr value is rejected with the usage error', () => {
+  const error = runExpectingFailure(['--base', 'HEAD', '--own-pr', 'not-a-number']);
+  assert.strictEqual(error.status, 2);
+  assert.match(error.stderr, /--own-pr must be an integer/);
+});
+
 test('--base HEAD --no-suite runs and renders the Outstanding table', () => {
   const out = execFileSync('node', [CLI, '--base', 'HEAD', '--no-suite'], {
     cwd: REPO_ROOT, encoding: 'utf8',

@@ -18,6 +18,7 @@ const path = require('path');
 const { runGit } = require('../hooks/git-exec');
 const { mainCheckoutRoot, safeReal } = require('../hooks/worktree-detect');
 const { parseWorktreeList, isWorktreeLocked, HARNESS_WORKTREE_DIR, QUIET_SKIP_REASONS } = require('../hooks/worktree-reap');
+const { isPathContained } = require('../shared-primitives');
 const { resolvePrState } = require('./pr-state');
 const { findRunByWorktreePath, appendEvent } = require('../hooks/context');
 const { release: releasePortsDefault } = require('../ports/registry');
@@ -86,7 +87,7 @@ function trackReapResidue(root, repoSlug, real, { failed, lastError }, { escalat
 // `here` as "compare against nothing matches" via the guard at the call site.
 function isOwnCwd(here, real) {
   if (!here || !real) return false;
-  return here === real || here.startsWith(real + path.sep);
+  return isPathContained(here, real, { orEqual: true });
 }
 
 function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault } = {}) {
@@ -108,7 +109,7 @@ function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault } 
   for (const wt of parseWorktreeList(list.stdout)) {
     const real = safeReal(wt.path);
     if (!real || real === root || wt.bare) continue; // never the main checkout
-    if (!real.startsWith(domain + path.sep)) continue; // out of harness domain — not this check's concern
+    if (!isPathContained(real, domain)) continue; // out of harness domain — not this check's concern
 
     if (!wt.branch) { skipped.push({ path: real, reason: 'no-branch' }); continue; }
     // Regardless of PR state, lock state, or anything else below — a

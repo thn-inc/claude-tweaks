@@ -6,7 +6,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { checkRunIntegrity, repoRootOf } = require('../plugin/bin/lib/hooks/run-integrity');
+const { checkRunIntegrity, repoRootOf, worktreePathForBranch } = require('../plugin/bin/lib/hooks/run-integrity');
 const { fixtureGit } = require('./helpers/git-fixtures');
 
 function sh(cwd, ...args) {
@@ -158,6 +158,44 @@ test('#1672 validation: a resolved name that is not a real local ref never becom
   const r = checkRunIntegrity(runDir);
   assert.strictEqual(r.state, 'in-progress');
   assert.strictEqual(r.evidence.branch, null);
+});
+
+// Shared base repo for the worktreePathForBranch tests below: init + one commit on `trunk`,
+// nothing more — each test adds only what it individually needs on top of this.
+function basicRepo() {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wpfb-')));
+  execFileSync('git', ['init', '-q', '-b', 'trunk'], { cwd: root });
+  execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: root });
+  execFileSync('git', ['config', 'user.name', 'T'], { cwd: root });
+  fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
+  execFileSync('git', ['add', 'a.txt'], { cwd: root });
+  execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: root });
+  return root;
+}
+
+test('worktreePathForBranch: finds the live linked worktree checked out on the given branch', () => {
+  const root = basicRepo();
+  const wt = path.join(root, '.claude', 'worktrees', 'feat');
+  execFileSync('git', ['worktree', 'add', '-q', '-b', 'feat-branch', wt], { cwd: root });
+
+  assert.strictEqual(worktreePathForBranch(root, 'feat-branch'), wt);
+});
+
+test('worktreePathForBranch: never returns the main checkout even when its branch is asked for', () => {
+  const root = basicRepo();
+
+  assert.strictEqual(worktreePathForBranch(root, 'trunk'), null);
+});
+
+test('worktreePathForBranch: no matching branch -> null', () => {
+  const root = basicRepo();
+
+  assert.strictEqual(worktreePathForBranch(root, 'no-such-branch'), null);
+});
+
+test('worktreePathForBranch: null/empty branch -> null without spawning git', () => {
+  assert.strictEqual(worktreePathForBranch('/nonexistent-root-never-touched', null), null);
+  assert.strictEqual(worktreePathForBranch('/nonexistent-root-never-touched', ''), null);
 });
 
 // #1861: a policy-configured integration-branch whose refs/remotes/origin/{name}

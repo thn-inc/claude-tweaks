@@ -165,3 +165,81 @@ test('#959 negative control: a NEW run dir file elsewhere (decisions.md) is stil
   const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
   assertDenied(out);
 });
+
+// #1493/#1494: the second documented worktree-local exception — a
+// `*-tidy-standalone*`/`*-sweep-standalone*` run's decisions.md/report.md/
+// staged/** must be reachable via a normal Write/Bash mkdir/cp even though
+// the run-id directory does not exist yet in the worktree, mirroring
+// tidy/step-7-5-worktree-always.md's pr-first mirror-then-commit procedure.
+
+test('#1778 AC: mkdir -p of {id}-sweep-standalone/staged, run dir absent, is allowed', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-sweep-standalone', 'staged');
+  const out = pre.run({ input: bashInput(`mkdir -p "${target}"`, wt), runDir: null, runState: null, cwd: wt });
+  assertAllowed(out);
+});
+
+test('#1778 AC: mkdir -p of {id}-tidy-standalone/staged, run dir absent, is allowed', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-tidy-standalone', 'staged');
+  const out = pre.run({ input: bashInput(`mkdir -p "${target}"`, wt), runDir: null, runState: null, cwd: wt });
+  assertAllowed(out);
+});
+
+test('#1778 AC: a Write of {id}-sweep-standalone/decisions.md, run dir absent, is allowed', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-sweep-standalone', 'decisions.md');
+  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  assertAllowed(out);
+});
+
+test('#1778 AC: a cp of report.md into {id}-sweep-standalone, run dir absent, is allowed', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-sweep-standalone', 'report.md');
+  const out = pre.run({ input: bashInput(`cp source.md "${target}"`, wt), runDir: null, runState: null, cwd: wt });
+  assertAllowed(out);
+});
+
+test('#1778 AC: a Write under staged/ ({id}-tidy-standalone/staged/tidy-close-issue-1.md), run dir absent, is allowed', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-tidy-standalone', 'staged', 'tidy-close-issue-1.md');
+  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  assertAllowed(out);
+});
+
+test('#1778 negative control: config.yml inside a NEW {id}-sweep-standalone run dir is still denied', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-sweep-standalone', 'config.yml');
+  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  assertDenied(out);
+});
+
+test('#1778 negative control: context/records.json inside a NEW {id}-sweep-standalone run dir is still denied', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-sweep-standalone', 'context', 'records.json');
+  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  assertDenied(out);
+});
+
+test('#1778 negative control: decisions.md under a plain non-standalone run dir name is still denied', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-record-42', 'decisions.md');
+  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  assertDenied(out);
+});
+
+test('#1778 negative control: a standalone-named directory nested under spec-*/ is still denied', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-multi', 'spec-1-sweep-standalone', 'decisions.md');
+  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  assertDenied(out);
+});

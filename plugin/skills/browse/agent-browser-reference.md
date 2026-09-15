@@ -123,6 +123,29 @@ First-class flags for viewport and device emulation. Cross-platform — no shell
 | Set viewport | `agent-browser --session <name> set viewport <width> <height>` |
 | Set device | `agent-browser --session <name> set device "<device-name>"` |
 
+## Color scheme
+
+Native `prefers-color-scheme` emulation — a session-startup flag, set once when the
+session opens rather than a per-command action. Verified against agent-browser 0.27.0:
+opening the same `prefers-color-scheme`-driven fixture under each value produces the
+computed style the media query maps to (`--color-scheme light` → the light branch's
+declared color; `--color-scheme dark` → the dark branch's) — confirmed via `get styles`
+against a minimal fixture whose only styling is a `prefers-color-scheme: dark` media
+query, not merely read off `--help`.
+
+| Operation | Command |
+|---|---|
+| Open a session emulating dark mode | `agent-browser --session <name> --color-scheme dark open <url>` |
+| Open a session emulating light mode | `agent-browser --session <name> --color-scheme light open <url>` |
+| Open a session with no preference | `agent-browser --session <name> --color-scheme no-preference open <url>` |
+
+Use this to verify a change scoped to the non-default color scheme in a project whose
+theming is driven solely by `prefers-color-scheme` media queries (no in-app toggle) —
+drive the live app in the scheme under test directly, rather than building a standalone
+HTML fixture with the target CSS and scheme copied in. The flag applies for the life of
+the session; open a second `--session` with the other value to compare both schemes side
+by side.
+
 ## Batch mode
 
 Run multiple operations in a single process invocation against one session.

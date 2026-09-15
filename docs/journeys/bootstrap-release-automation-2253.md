@@ -26,7 +26,7 @@ files:
 
 ### 2. Detection — one verdict, three outcomes
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/release-bootstrap.js" --integration-model pr-first --branch main` (called by the step; one JSON line back)
-- **Action:** The CLI scans the repo root for competing release tooling (`.releaserc*`, `release.config.*`, `.changeset/`, `.goreleaser.*`, a foreign `release-please-config.json`) and for this step's own earlier output, and returns `fresh`, `already-bootstrapped`, or `conflict` with the tool and its evidence path.
+- **Action:** The CLI scans the repo root for competing release tooling (`.releaserc*`, `release.config.*` / a `package.json` `release` key (semantic-release), `.changeset/`, `.goreleaser.*` / bare `goreleaser.yaml`/`goreleaser.yml` (goreleaser), `.versionrc*` (standard-version), a foreign `release-please-config.json`) and for this step's own earlier output, and returns `fresh`, `already-bootstrapped`, or `conflict` with the tool and its evidence path.
 - **Should feel:** Honest — the existing `v1.9.0`, `v1.10.0` tags do not read as a conflict; only a real second engine does.
 - **Should understand:** `conflict` writes nothing and names the file (`release: conflict — changesets`); removing that tool and re-running clears it. `already-bootstrapped` needs *both* the shaped config and the manifest — a half-written earlier run reads as `fresh` and completes itself. A mistyped `--root` is a usage error (exit 2), never a phantom bootstrap.
 - **Red flags:** A conflict verdict with no evidence path; `already configured` reported while the manifest is missing; a JSON line whose `verdict` is not one of the four documented values.
@@ -36,7 +36,14 @@ files:
 - **Action:** On `fresh`, the CLI resolves `release-type` from the stack table (exactly one matching row → `node`; zero or several → `simple` with an `extra-files` pointer at a version-bearing JSON manifest), seeds the manifest from the semver-newest `v*` tag (`v1.10.0` beats `v1.9.0`; pre-release tags are ignored; no tags → the stack manifest's version → `0.1.0`), and writes the workflow pinned to `googleapis/release-please-action@v4` with `target-branch` and `branches` both set to the integration branch.
 - **Should feel:** Correct on the first try — the manifest matches what the maintainer would have typed.
 - **Should understand:** The workflow's commented `token:` line is not decoration: releases created with the default `GITHUB_TOKEN` never trigger a `release: published` publish/deploy workflow, so a PAT secret is the price of having a hook under `pr-first`. Under `simple`, release-please will also create a root `version.txt`.
-- **Red flags:** `release-type: node` seeded from a stale root `package.json` on a repo whose real manifest lives elsewhere (this plugin's own case — tracked for unit 8); a workflow with `branches: [develop]` but no `target-branch`.
+- **Red flags:** `release-type: node` auto-detected from a stale root `package.json` on a repo whose real manifest lives elsewhere, **without** passing the override below to correct it; a workflow with `branches: [develop]` but no `target-branch`.
+
+### 3.5. The escape hatch — `--release-type`/`--extra-file` override, for a repo whose real manifest isn't its root stack manifest
+- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/release-bootstrap.js" --integration-model pr-first --branch main --release-type simple --extra-file plugin/.claude-plugin/plugin.json`
+- **Action:** When the two flags are given together, they replace the stack scan's own verdict entirely: `release-type` is validated against the stack table's eight types plus `simple`, and the manifest seed reads the named file's own version instead of the stack lookup — this plugin's own migration (#2259) is the first consumer, since its real manifest (`plugin/.claude-plugin/plugin.json`) is not its stale root `package.json`.
+- **Should feel:** An explicit, deliberate override — not a silent guess. An `--extra-file` that is missing, unparseable, otherwise unreadable, version-less, carrying a non-semver `version`, or resolving outside the repo root — and an unrecognized `--release-type` — fails loud (a thrown error / usage error) naming which of those it was, rather than quietly seeding `0.1.0`.
+- **Should understand:** The two flags are given together or not at all — passing exactly one is a usage error, since a lone `--extra-file` would otherwise leave the rendered config and the seeded manifest version pointing at different sources. Without the override, Step 2's single-row stack rule is completely unchanged.
+- **Red flags:** A CLI invocation with only one of the two flags succeeding instead of erroring; a config whose `extra-files` entry names a path that doesn't actually exist on disk.
 
 ### 4. The policy rows arrive commented, at the very end
 - **URL:** `.claude-tweaks/policy.yml`
@@ -49,10 +56,10 @@ files:
 - **URL:** `/claude-tweaks:init release` again; the generated `CLAUDE.md`'s `## Releasing` section
 - **Action:** The second run reports `release: already configured` and writes nothing. The CLAUDE.md template's `## Releasing` section names the engine, where the hook lives, and the `/claude-tweaks:release` invocation — framed as landing with later units of the release family until they ship.
 - **Should feel:** Safe to repeat — init never clobbers a config the maintainer has since edited (a manifest-missing re-run rewrites only the missing files).
-- **Should understand:** The bootstrap is the whole of #2253; cutting a release is unit 5/6's skill, and this repo's own migration (unit 8) needs an explicit release-type override.
+- **Should understand:** The bootstrap is the whole of #2253; cutting a release is unit 5/6's skill. This repo's own migration (#2259) uses Step 3.5's `--release-type`/`--extra-file` override (#2324) to bootstrap `simple` against `plugin/.claude-plugin/plugin.json` rather than the stale root `package.json`.
 - **Red flags:** A re-run that rewrites a hand-edited config; a CLAUDE.md that tells the maintainer to run a command that does not exist yet without saying so.
 
 ## Origin
 - Created during build of #2253 (Init bootstrap, detection, and the two policy keys)
-- Steps 1-5 built in this session
-- Related specs: #2250 (parent design), #2251 (merge-time conventional subject), #2252 (reconcile under squash); units 4, 6, 8 of #2250 consume what this journey leaves behind
+- Steps 1-5 built in this session; Step 3.5 (the `--release-type`/`--extra-file` override) added during build of #2324
+- Related specs: #2250 (parent design), #2251 (merge-time conventional subject), #2252 (reconcile under squash), #2324 (the override); units 4, 6 of #2250 consume what this journey leaves behind, and unit 9 (#2259, this repo's own migration) is the override's first consumer

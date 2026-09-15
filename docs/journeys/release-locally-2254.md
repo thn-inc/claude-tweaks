@@ -29,8 +29,8 @@ files:
 - **URL:** the same command on a history of only `chore:`/`docs:` commits
 - **Action:** The engine reports `nothing to release: N commit(s) since vX.Y.Z, none feat/fix/breaking` and exits `3` without touching a file.
 - **Should feel:** Calm — a non-event, not an error; the shell script wrapping it can branch on `3` and move on.
-- **Should understand:** Precedence is breaking → major, feat → minor, fix → patch; anything else never bumps, on a first release too.
-- **Red flags:** A `0.0.1` bump from a `chore:`-only history; a manifest edit left behind.
+- **Should understand:** Precedence is breaking → major, feat → minor, fix → patch; anything else never bumps, on a first release too. On a `0.x` line, a breaking commit bumps the minor instead of the major by default (`bump-minor-pre-major` in `release-please-config.json`, default `true`) — matching release-please's own pre-1.0 behavior; set it `false` in the config to force the plain major bump.
+- **Red flags:** A `0.0.1` bump from a `chore:`-only history; a manifest edit left behind; a `1.0.0` bump on a `0.x` line from a breaking commit with no `bump-minor-pre-major: false` in the config.
 
 ### 3. Land it — the live run
 - **URL:** `node plugin/bin/release-local.js`
@@ -50,3 +50,4 @@ files:
 - Created during build of #2254 (record: The local engine `bin/release-local.js`)
 - Steps 1-4 built in this session
 - Related specs: #2253 (Step 21 bootstrap writes the config this engine reads), #2255 (the `/claude-tweaks:release` skill that fronts this CLI), #2250 (design)
+- Step 2's bump precedence updated during build of #2327 (0.x pre-major bump softening)

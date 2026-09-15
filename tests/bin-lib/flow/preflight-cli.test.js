@@ -77,6 +77,19 @@ test('run: malformed invocations exit 2 — missing --run, missing --steps, unkn
   assert.strictEqual(await run(['--run', fx.runDir, '--steps', 'review', '--bogus'], d), 2);
 });
 
+// #2325: flow-preflight.js has no --only flag (see run-directory-fact-packs'
+// SKILL.md), so the applicable behavior here is the crash exit itself — a
+// throw outside gatherPreflight's per-probe wrapProbe net (computeAdoption
+// calls deps.readRunState before any probe's try/catch) must propagate
+// uncaught out of run(), which is what makes the header's "undecided crash
+// is exit 1" claim true rather than aspirational.
+test('run: a throw outside the per-probe safety net (adoption\'s readRunState) propagates uncaught — the top-level handler exits 1, not a decided 0/2/3 outcome (#2325)', async () => {
+  const fx = mainCheckoutWithRun();
+  const { d } = baseDeps(fx);
+  d.packDeps = { ...packDeps, readRunState: () => { throw new Error('boom'); } };
+  await assert.rejects(() => run(['--run', fx.runDir, '--steps', 'review'], d), /boom/);
+});
+
 test('run: --json redirects the write inside the anchored target; a symlinked escape is refused (#1931, [IL-150])', async () => {
   const fx = mainCheckoutWithRun();
   const { d } = baseDeps(fx);

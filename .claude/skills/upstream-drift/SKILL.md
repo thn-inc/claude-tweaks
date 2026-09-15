@@ -4,7 +4,6 @@ description: Use when you want to check whether this repo's claims about an upst
 argument-hint: "[--dep <name>] [--latest-tag <tag>] [--drift-only|--capability-only] [--json]"
 allowed-tools: Read, Grep, Glob, Bash, Task
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
 
 # Upstream Drift — What Broke, and What Arrived
 

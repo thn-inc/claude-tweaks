@@ -109,7 +109,7 @@ test('installWrapper restores 0o755 when re-run over an existing, non-executable
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-install-sl-rechmod-'));
 
   const targetPath = installWrapper(tmpHome);
-  fs.chmodSync(targetPath, 0o644);
+  fs.chmodSync(targetPath, 0o644); // root-safe: asserts mode bits directly via stat, not access-denial behavior
   assert.strictEqual(fs.statSync(targetPath).mode & 0o777, 0o644, 'precondition: file is non-executable before re-install');
 
   installWrapper(tmpHome);
