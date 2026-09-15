@@ -20,7 +20,13 @@ const bytesOf = (rel) => Buffer.byteLength(fs.readFileSync(path.join(ROOT, rel),
 // changes landed) — see the PR description for the byte-for-byte git show
 // this pins against.
 const WRAP_UP_BASELINE_BYTES = 35392;
-const SCAN_PROCEDURES_BASELINE_BYTES = 42249;
+// scan-procedures.md's baseline was re-measured at 92ecb93c (main's tip at
+// merge time): unrelated main-branch edits landed on this same file between
+// 747092c4 and the merge (net +217 bytes), independent of this unit's own
+// -148-byte edit — re-pinning against the file's actual pre-merge size keeps
+// this test checking "did this unit's own edit net-zero or shrink the file"
+// rather than freezing a byte count concurrent unrelated work has since moved past.
+const SCAN_PROCEDURES_BASELINE_BYTES = 42466;
 
 test('AC3: wrap-up/SKILL.md grew by no more than ~200 bytes for the release Next Actions row', () => {
   const bytes = bytesOf('plugin/skills/wrap-up/SKILL.md');
