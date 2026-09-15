@@ -74,6 +74,32 @@ test('#1928: an un-mapped claude-tweaks skill opens its own top-level span (neve
   assert.equal(NESTED_PARENT.journeys, 'enclosing');
 });
 
+test('#2249: stories/deepen/feedback are NESTED_PARENT members and nest into the enclosing phase rather than opening a new top-level span', () => {
+  assert.equal(NESTED_PARENT.stories, 'enclosing');
+  assert.equal(NESTED_PARENT.deepen, 'enclosing');
+  assert.equal(NESTED_PARENT.feedback, 'enclosing');
+  const events = [
+    { skill: 'claude-tweaks:flow', ts: '2026-09-05T13:00:00.000Z', type: 'skill_invoked' },
+    { skill: 'claude-tweaks:build', ts: '2026-09-05T13:01:00.000Z', type: 'skill_invoked' },
+    { skill: 'claude-tweaks:stories', ts: '2026-09-05T13:05:00.000Z', type: 'skill_invoked' },
+    { skill: 'claude-tweaks:review', ts: '2026-09-05T13:10:00.000Z', type: 'skill_invoked' },
+    { skill: 'claude-tweaks:deepen', ts: '2026-09-05T13:12:00.000Z', type: 'skill_invoked' },
+    { skill: 'claude-tweaks:wrap-up', ts: '2026-09-05T13:20:00.000Z', type: 'skill_invoked' },
+    { skill: 'claude-tweaks:feedback', ts: '2026-09-05T13:22:00.000Z', type: 'skill_invoked' },
+    { ts: '2026-09-05T13:25:00.000Z', type: 'session-end' },
+  ];
+  const out = derivePhases({ events });
+  const p = byName(out);
+  assert.ok(!('stories' in p), 'stories never opens its own top-level phase row');
+  assert.ok(!('deepen' in p), 'deepen never opens its own top-level phase row');
+  assert.ok(!('feedback' in p), 'feedback never opens its own top-level phase row');
+  assert.ok(!out.phases.some((x) => x.phase === 'stories' || x.phase === 'deepen' || x.phase === 'feedback'));
+  // build's span runs through to review's start — stories' nested invocation
+  // inside it does not truncate build's span the way an un-mapped skill would.
+  assert.equal(p.build.minutes, 9, `build ${p.build.minutes}`);
+  assert.equal(p['wrap-up'].minutes, 5, `wrap-up ${p['wrap-up'].minutes}`);
+});
+
 test('#1928: a re-entered phase sums every span attributed to its name', () => {
   const events = [
     { skill: 'claude-tweaks:flow', ts: '2026-09-05T13:00:00.000Z', type: 'skill_invoked' },

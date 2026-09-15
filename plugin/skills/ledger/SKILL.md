@@ -3,8 +3,6 @@ name: ledger
 description: Use when you need to create, update, query, or resolve open items in a pipeline ledger file, or standalone for ledger inspection. A knowledge dependency read by build/test/review/wrap-up/flow, never invoked via the Skill tool.
 argument-hint: "[resolve [<feature-name>]|<feature-name>]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
-
 
 # Ledger — Open Items Tracking
 
@@ -53,11 +51,11 @@ Phase schema, the full phase table, and the `reason-not-auto` qualifier rules fo
 
 ### Create
 
-Create a new ledger file. Called by `/claude-tweaks:flow` Step 1 or `/claude-tweaks:build` on first item.
+Create a new ledger file. Called by `/claude-tweaks:flow` Step 1 or `/claude-tweaks:build` on first item — or, for a run with no worktree at all, by `wrap-up/residue-sweep.md`'s preamble on its first finding.
+
+File: `docs/plans/YYYY-MM-DD-{feature}-ledger.md` — or, when this run has no worktree (`run-state.json` carries no `worktree` field, or no `run-state.json` exists), `{run-dir}/ledger.md`. See `_shared/ledger-format.md`'s Location section for the full condition; this file cites it rather than restating it.
 
 ```
-File: docs/plans/YYYY-MM-DD-{feature}-ledger.md
-
 # Open Items — {spec title or design topic}
 
 | # | Phase | Item | Status | Resolution |
@@ -111,7 +109,7 @@ Only delete when the resolve gate has passed — all items must have terminal st
 
 > **Parallel execution:** Use parallel tool calls aggressively — all `Glob`/`Read` operations across the matched ledger files are independent and should run concurrently.
 
-1. Find active ledger files: glob `docs/plans/*-ledger.md`
+1. Find active ledger files: glob `docs/plans/*-ledger.md`. When a run dir resolves for this invocation (`$PIPELINE_RUN_DIR`, or the most-recent-matching run), also check `{run-dir}/ledger.md` — per `_shared/ledger-format.md`'s Location section's resolution rule, include it in the listing when it exists. With no run dir at all, the glob alone is the complete listing.
 2. For each ledger, show:
    ```
    ## {ledger name}
@@ -121,14 +119,14 @@ Only delete when the resolve gate has passed — all items must have terminal st
 
 ### `/claude-tweaks:ledger {feature-name}`
 
-1. Glob `docs/plans/*-ledger.md` and match `{feature-name}` against each file's `{feature}` slug (case-insensitive substring match — e.g. `auth` matches `2026-01-15-auth-refactor-ledger.md`)
+1. Glob `docs/plans/*-ledger.md`, matching `{feature-name}` against each file's `{feature}` slug (case-insensitive substring match — e.g. `auth` matches `2026-01-15-auth-refactor-ledger.md`). When a run dir resolves for this invocation, also check `{run-dir}/ledger.md` for existence per `_shared/ledger-format.md`'s Location section's resolution rule, and include it in the match set. With no run dir at all, the glob alone is the complete match set.
 2. If exactly one file matches, show its full item table
 3. If multiple files match, list all matches (with their dates) and ask the user which one they mean
 4. If no file matches, report `No ledger found for "{feature-name}"` and list the currently active ledgers (same glob as the no-arguments form) so the user can retry with a correct name
 
 ### `/claude-tweaks:ledger resolve`
 
-1. Find the active ledger: if a `{feature-name}` is given (`resolve {feature-name}`), match it against `docs/plans/*-ledger.md` the same way the `{feature-name}` form does above — if no match, report `No ledger found for "{feature-name}"` and list the currently active ledgers instead of guessing. Otherwise, default to the most recent `docs/plans/*-ledger.md`.
+1. Find the active ledger: when a run dir resolves for this invocation and `{run-dir}/ledger.md` exists (per `_shared/ledger-format.md`'s Location section's resolution rule), that is the active ledger — a `{feature-name}` argument is not applicable to a single run-dir-scoped file. Otherwise, resolve against `docs/plans/*-ledger.md` the same way the `{feature-name}` form does above: if a `{feature-name}` is given (`resolve {feature-name}`), match it (no match → report `No ledger found for "{feature-name}"` and list the currently active ledgers instead of guessing); otherwise default to the most recent `docs/plans/*-ledger.md`.
 2. Run the resolve gate procedure
 3. Present results
 
@@ -142,7 +140,7 @@ Render as plain markdown (docs/skill-authoring.md's Skill handoffs convention):
 
 ## Invocation Model
 
-`/ledger` is consumed as a **knowledge dependency** by `/build`, `/test`, `/review`, `/wrap-up`, and `/flow` — they read `_shared/ledger-format.md` (not this file) to learn the ledger file format and resolve-gate procedure, then write to `docs/plans/YYYY-MM-DD-{feature}-ledger.md` directly using file operations. There is no programmatic invocation API, so the standard Component-Skill Contract (which suppresses `## Next Actions` when a parent skill is driving the interaction via `$PIPELINE_RUN_DIR`) does not apply here: no parent skill ever invokes `/claude-tweaks:ledger` through the Skill tool, so every actual run of this skill's own procedure is a direct, standalone invocation — `## Next Actions` always renders. The format contract itself (entry schema, statuses, phase taxonomy, resolve-gate procedure) lives in `_shared/ledger-format.md` — this file covers only the two standalone human commands and the mutation operations (Create/Add/Update/Query/Delete).
+`/ledger` is consumed as a **knowledge dependency** by `/build`, `/test`, `/review`, `/wrap-up`, and `/flow` — they read `_shared/ledger-format.md` (not this file) to learn the ledger file format and resolve-gate procedure, then write directly, using file operations, to the location `_shared/ledger-format.md` resolves. There is no programmatic invocation API, so the standard Component-Skill Contract (which suppresses `## Next Actions` when a parent skill is driving the interaction via `$PIPELINE_RUN_DIR`) does not apply here: no parent skill ever invokes `/claude-tweaks:ledger` through the Skill tool, so every actual run of this skill's own procedure is a direct, standalone invocation — `## Next Actions` always renders. The format contract itself (entry schema, statuses, phase taxonomy, resolve-gate procedure) lives in `_shared/ledger-format.md` — this file covers only the two standalone human commands and the mutation operations (Create/Add/Update/Query/Delete).
 
 ## Anti-Patterns
 

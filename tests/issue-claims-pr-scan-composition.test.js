@@ -32,7 +32,11 @@ function presence(bundle, strings) {
 // -- github-pr-scan.md ------------------------------------------------------
 
 const ITEM9_LABEL = '9. **Unarmed ready PR**';
-const ITEM9_BODY_ONLY = 'PR_SCAN_UNARMED'; // occurs only inside item 9's fenced body — verified below
+// #2367: item 11 (its own transport=gh fence) reuses item 9's PR_SCAN_UNARMED
+// variable name inside its own fenced body, so this string now occurs only
+// inside EITHER item's fenced body — verified below.
+const ITEM9_BODY_ONLY = 'PR_SCAN_UNARMED';
+const ITEM11_LABEL = '11. **Stale pending-review PR**';
 const TRIAGE_ITEM3 = '3. **Auto-merged this week**';
 const ITEM4_LABEL = '4. **Merged/closed PRs with local remnants**';
 const PR_BACKED_BULLET = '- **PR-backed items**';
@@ -41,22 +45,24 @@ const ITEM1_LABEL = '1. **PR lookup**';
 // fence right after it, so it must exist verbatim or the doctoring is a silent no-op.
 const ITEM9_LABEL_PARAGRAPH_END = 'no local run-dir join, so this check works from a fresh sandbox exactly like every other item here.';
 
-test('github-pr-scan.md: ITEM9_BODY_ONLY occurs only inside item 9\'s fenced body in the raw file', () => {
-  // grep -c PR_SCAN_UNARMED plugin/skills/_shared/github-pr-scan.md -> 12 matching lines, all
-  // between the item-9 fence markers; this pins the fixture choice, not just asserts it once.
-  // (The mcp composition test below is what proves "inside the fence": any occurrence outside a
-  // transport=gh fence would survive into the mcp bundle and fail it.)
+test('github-pr-scan.md: ITEM9_BODY_ONLY occurs only inside item 9\'s and item 11\'s fenced bodies in the raw file', () => {
+  // grep -c PR_SCAN_UNARMED plugin/skills/_shared/github-pr-scan.md -> 15 matching lines (12
+  // from item 9's fenced body + 3 from item 11's, #2367), all between transport=gh fence
+  // markers; this pins the fixture choice, not just asserts it once. (The mcp composition test
+  // below is what proves "inside a fence": any occurrence outside a transport=gh fence would
+  // survive into the mcp bundle and fail it.)
   const matchingLines = prScanContent.split('\n').filter((line) => line.includes(ITEM9_BODY_ONLY)).length;
-  assert.equal(matchingLines, 12, 'fixture assumption: PR_SCAN_UNARMED matching-line count changed — pick a new item-9-only string');
+  assert.equal(matchingLines, 15, 'fixture assumption: PR_SCAN_UNARMED matching-line count changed — pick a new item-9/item-11-only string');
   assert.ok(prScanContent.includes(ITEM9_LABEL_PARAGRAPH_END), 'fixture assumption: the discrimination test\'s fence-close anchor is no longer in the file verbatim');
 });
 
-test('github-pr-scan.md under mcp: item 9\'s label survives, its fenced body does not, and the other cited labels survive', () => {
+test('github-pr-scan.md under mcp: item 9 and item 11\'s labels survive, their fenced bodies do not, and the other cited labels survive', () => {
   const bundle = bundleFor(PR_SCAN_FILE, 'mcp', prScanContent);
   assert.deepEqual(
-    presence(bundle, [ITEM9_LABEL, ITEM9_BODY_ONLY, TRIAGE_ITEM3, ITEM4_LABEL, PR_BACKED_BULLET, ITEM1_LABEL]),
+    presence(bundle, [ITEM9_LABEL, ITEM11_LABEL, ITEM9_BODY_ONLY, TRIAGE_ITEM3, ITEM4_LABEL, PR_BACKED_BULLET, ITEM1_LABEL]),
     {
       [ITEM9_LABEL]: true,
+      [ITEM11_LABEL]: true,
       [ITEM9_BODY_ONLY]: false,
       [TRIAGE_ITEM3]: false,
       [ITEM4_LABEL]: true,
@@ -66,13 +72,14 @@ test('github-pr-scan.md under mcp: item 9\'s label survives, its fenced body doe
   );
 });
 
-test('github-pr-scan.md under gh and under unresolved transport: every cited label and item-9\'s body are present', () => {
+test('github-pr-scan.md under gh and under unresolved transport: every cited label and item-9/item-11\'s bodies are present', () => {
   for (const transport of ['gh', UNRESOLVED]) {
     const bundle = bundleFor(PR_SCAN_FILE, transport, prScanContent);
     assert.deepEqual(
-      presence(bundle, [ITEM9_LABEL, ITEM9_BODY_ONLY, TRIAGE_ITEM3, ITEM4_LABEL, PR_BACKED_BULLET, ITEM1_LABEL]),
+      presence(bundle, [ITEM9_LABEL, ITEM11_LABEL, ITEM9_BODY_ONLY, TRIAGE_ITEM3, ITEM4_LABEL, PR_BACKED_BULLET, ITEM1_LABEL]),
       {
         [ITEM9_LABEL]: true,
+        [ITEM11_LABEL]: true,
         [ITEM9_BODY_ONLY]: true,
         [TRIAGE_ITEM3]: true,
         [ITEM4_LABEL]: true,

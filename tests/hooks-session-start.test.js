@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const sessionStart = require('../plugin/bin/lib/hooks/session-start');
 const deps = require('../plugin/bin/lib/deps');
+const { INTERACTION_STYLE_DIRECTIVE } = require('../plugin/bin/lib/hooks/interaction-style');
 
 function tmpProject() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-'));
@@ -25,6 +26,19 @@ function mkStagedFile(run, name, content) {
   fs.mkdirSync(stagedDir, { recursive: true });
   fs.writeFileSync(path.join(stagedDir, name), content || '{}');
 }
+
+// #1909: the Interaction-style directive moved out of 35+ verbatim per-SKILL.md
+// copies into this one hook injection point (plugin/bin/lib/hooks/interaction-style.js).
+// This is the retargeted pin — every session's additionalContext must carry it,
+// regardless of what else the hook finds to report, so this is asserted first and
+// unconditionally rather than folded into any one scenario test below.
+test('#1909: run() always includes the Interaction-style directive in additionalContext, even with nothing else to report', async () => {
+  const project = tmpProject();
+  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.ok(out.json, 'additionalContext must render even when every other check is silent');
+  assert.match(out.json.hookSpecificOutput.additionalContext, /^> \*\*Interaction style:\*\*/);
+  assert.ok(out.json.hookSpecificOutput.additionalContext.includes(INTERACTION_STYLE_DIRECTIVE));
+});
 
 test('deps.collect returns an array of strings and prints nothing', () => {
   const msgs = deps.collect();
@@ -127,6 +141,28 @@ test('#1494: a *-sweep-standalone* run with non-empty staged/ is listed exactly 
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.match(ctx, /2026-08-30T120000-sweep-standalone/, 'the cleanly-finished sweep-standalone run is named');
   assert.match(ctx, /\/claude-tweaks:tidy --approve/, 'the sweep-standalone run points at tidy --approve, same as a tidy-standalone run');
+});
+
+// #1738: the hand-rolled readdirSync/sort/run-state.json walk this scan used
+// to run lacked the shared iterator's archive-twin skip entirely — a clean
+// *-tidy-standalone* run whose archive/{name}/ twin is ITSELF already
+// status:'clean' (fully archived) would still have been listed by the old
+// hand-rolled walk. Now that this scan shares iterRunDirsWithState's
+// { status: 'clean' } filter, that twin is correctly recognized as "already
+// archived" and the run is not listed.
+test('#1738: a clean *-tidy-standalone* run with a fully-archived (clean) archive twin is not listed — the skip the hand-rolled walk lacked', async () => {
+  const project = tmpProject();
+  const runId = '2026-07-05T090000-tidy-standalone';
+  const standalone = mkRun(project, runId, { status: 'clean' });
+  mkStagedFile(standalone, 'stale-close-1.json', '{}');
+  mkRun(project, path.join('archive', runId), { status: 'clean' });
+  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  if (out.json) {
+    assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /tidy --approve/);
+    assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, new RegExp(runId));
+  } else {
+    assert.deepStrictEqual(out, {});
+  }
 });
 
 test('#1493: a cleanly-clean standalone run with EMPTY staged/ renders no tidy --approve line', async () => {

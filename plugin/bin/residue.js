@@ -30,17 +30,27 @@ function parseArgs(argv) {
   // now always `scope: 'blast-radius'` and so is never hidden under either
   // scope; 'repo' still matters for other `observed` findings (a sibling
   // worktree, another lane's PR) that blast-radius would otherwise drop.
-  const out = { base: null, scope: 'repo', integrationBranch: 'origin/main', json: false, noSuite: false };
+  const out = {
+    base: null, scope: 'repo', integrationBranch: 'origin/main', json: false, noSuite: false, ownPr: null,
+  };
   for (let i = 0; i < argv.length; i++) {
     const next = argv[i + 1];
     if (argv[i] === '--base' && next && !next.startsWith('--')) { out.base = next; i += 1; continue; }
     if (argv[i] === '--scope' && next && !next.startsWith('--')) { out.scope = next; i += 1; continue; }
     if (argv[i] === '--integration-branch' && next && !next.startsWith('--')) { out.integrationBranch = next; i += 1; continue; }
+    // No pre-existing --flag-value integer-flag convention in this file to
+    // mirror; Number(next) on a non-numeric or non-integer string yields NaN
+    // or a fraction, both caught by main()'s Number.isInteger(opts.ownPr)
+    // check below — same two-step parse/validate split release-claim.js and
+    // materialize.js use for their own positive-integer args.
+    if (argv[i] === '--own-pr' && next && !next.startsWith('--')) { out.ownPr = Number(next); i += 1; continue; }
     if (argv[i] === '--json') { out.json = true; continue; }
     if (argv[i] === '--no-suite') { out.noSuite = true; continue; }
   }
   return out;
 }
+
+const USAGE = 'usage: residue.js --base <commit-ish> [--scope repo|blast-radius] [--integration-branch <ref>] [--own-pr <n>] [--no-suite] [--json]\n';
 
 function runner(cwd) {
   // `opts` lets a caller pass extra `execFileSync` options (e.g. `timeout`)
@@ -82,7 +92,12 @@ function readProjectManifest(cwd) {
 function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (!opts.base) {
-    process.stderr.write('usage: residue.js --base <commit-ish> [--scope repo|blast-radius] [--integration-branch <ref>] [--no-suite] [--json]\n');
+    process.stderr.write(USAGE);
+    process.exitCode = 2;
+    return;
+  }
+  if (opts.ownPr !== null && !Number.isInteger(opts.ownPr)) {
+    process.stderr.write(`residue.js: --own-pr must be an integer\n${USAGE}`);
     process.exitCode = 2;
     return;
   }
@@ -137,7 +152,7 @@ function main() {
   const results = filterResultsByScope([
     probeWorktrees({ scope }),
     probeBranches({ scope, integrationBranch: opts.integrationBranch, run: git }),
-    probeForge({ scope, run }),
+    probeForge({ scope, run, ownPr: opts.ownPr }),
     suiteResult,
     probeRelease({ scope, manifest, run }),
     probePipelineRuns({

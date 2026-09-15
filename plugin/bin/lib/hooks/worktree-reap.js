@@ -22,6 +22,7 @@ const { runGit } = require('./git-exec');
 const { mainCheckoutRoot, safeReal } = require('./worktree-detect');
 const policy = require('../policy');
 const { release: releasePortsDefault } = require('../ports/registry');
+const { isPathContained } = require('../shared-primitives');
 
 const PID_RE = /\(pid\s+(\d+)\b/;
 
@@ -257,9 +258,9 @@ function reapWorktrees({
   for (const wt of parseWorktreeList(stdout)) {
     const real = safeReal(wt.path);
     if (!real || real === root || wt.bare) continue;      // never the main checkout
-    if (here === real || here.startsWith(real + path.sep)) continue; // never our own ground
+    if (isPathContained(here, real, { orEqual: true })) continue; // never our own ground
 
-    if (!real.startsWith(domain + path.sep)) {
+    if (!isPathContained(real, domain)) {
       skipped.push({ path: real, reason: REASON.OUT_OF_DOMAIN });
       continue;
     }

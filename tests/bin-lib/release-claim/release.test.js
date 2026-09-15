@@ -49,6 +49,60 @@ test('readClaimBlob: 404 -> absent; otherwise decoded content + sha', () => {
   assert.match(present.calls[0].join(' '), /-q \{content: \(\.content \| @base64d\), sha: \.sha\}/);
 });
 
+// #2240: a GitHub Enterprise Server host threads --hostname onto every gh
+// call this module makes — the contents-API `gh api` calls (readClaimBlob,
+// writeTombstone) via an appended flag, and the `-R/--repo` calls
+// (postReleaseComment, removeLabel) via repoSlug's host-qualified slug.
+test('#2240: readClaimBlob passes --hostname on a non-github.com host, omits it for github.com/unset', () => {
+  const ghe = fakeRunner({ content: live(OWN), sha: 'abc' });
+  readClaimBlob({
+    owner: 'acme', repo: 'w', host: 'ghe.example.com', issueNumber: 999, runner: ghe.runner,
+  });
+  assert.deepEqual(ghe.calls[0].slice(-2), ['--hostname', 'ghe.example.com']);
+
+  const dotcom = fakeRunner({ content: live(OWN), sha: 'abc' });
+  readClaimBlob({
+    owner: 'acme', repo: 'w', host: 'github.com', issueNumber: 999, runner: dotcom.runner,
+  });
+  assert.doesNotMatch(dotcom.calls[0].join(' '), /--hostname/);
+
+  const unset = fakeRunner({ content: live(OWN), sha: 'abc' });
+  readClaimBlob({ owner: 'acme', repo: 'w', issueNumber: 999, runner: unset.runner });
+  assert.doesNotMatch(unset.calls[0].join(' '), /--hostname/);
+});
+
+test('#2240: writeTombstone passes --hostname on the PUT for a non-github.com host', () => {
+  const fixture = fakeRunner({ content: live(OWN), sha: 'abc' });
+  const tombstone = JSON.stringify({ released: true, runId: OWN, reason: 'r', releasedAt: '2026-08-16T12:00:00.000Z' });
+  writeTombstone({
+    owner: 'acme', repo: 'w', host: 'ghe.example.com', issueNumber: 999, sha: 'abc', tombstoneContent: tombstone, expectedContent: live(OWN), message: 'm', runner: fixture.runner,
+  });
+  const put = fixture.calls.find(isPut);
+  assert.ok(put);
+  assert.deepEqual(put.slice(-2), ['--hostname', 'ghe.example.com']);
+});
+
+test('#2240: postReleaseComment and removeLabel use repoSlug\'s host-qualified --repo value', () => {
+  const fixture = fakeRunner({ content: live(OWN), sha: 'abc' });
+  releaseClaim({
+    owner: 'acme', repo: 'w', host: 'ghe.example.com', issueNumber: 999, runId: OWN, reason: 'r', runner: fixture.runner, now: NOW,
+  });
+  const comment = fixture.calls.find(isComment);
+  const edit = fixture.calls.find(isEdit);
+  assert.equal(comment[comment.indexOf('--repo') + 1], 'ghe.example.com/acme/w');
+  assert.equal(edit[edit.indexOf('--repo') + 1], 'ghe.example.com/acme/w');
+});
+
+test('#2240: no host (or github.com) keeps the bare owner/repo --repo slug', () => {
+  const fixture = fakeRunner({ content: live(OWN), sha: 'abc' });
+  const r = removeLabel({
+    owner: 'acme', repo: 'w', issueNumber: 999, label: 'bot:in-progress', runner: fixture.runner,
+  });
+  assert.equal(r.ok, true);
+  const edit = fixture.calls.find(isEdit);
+  assert.equal(edit[edit.indexOf('--repo') + 1], 'acme/w');
+});
+
 test('releaseClaim happy path: read -> PUT with the read sha -> comment -> bot:in-progress removal (default); exact call order + payloads', () => {
   const f = fakeRunner({ content: live(OWN), sha: 'blobsha1' });
   const r = releaseClaim({ owner: 'acme', repo: 'w', issueNumber: 999, runId: OWN, reason: 'merged: spec 999', link: 'https://x/pr/1', runner: f.runner, now: NOW });

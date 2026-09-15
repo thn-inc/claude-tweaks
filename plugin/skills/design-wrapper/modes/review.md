@@ -150,7 +150,33 @@ routes them.
 `off` → skip the whole step: no roster read, no dispatch, no nudge, and `craft_critics` is **omitted**
 from the return. `auto` and `full` continue.
 
-**(b) Roster selection.** Read `../critics.md` and select every row whose `Track` equals the resolved
+**(b) Design-surface gate, then roster selection.** Before reading the roster, classify whether Step
+2's resolved file list actually changed any design surface — a control-flow-only diff in a file
+Layer 3 already classified as frontend (fetch/refresh logic in a `.tsx` component, say) has nothing
+for a craft critic to judge, the same "no UI content" case Layer 3's own sniff exists to catch, one
+level down (files, not lines). This gate applies **only on `surface_track === "web"`** — the
+classifier below is JSX/CSS/HTML-specific, meaningless for the terminal critic's CLI/TTY output
+principles, and no critic is ever selected on `ios`/`android`/`adaptive` regardless (`../critics.md`'s
+native row). On any other track, skip this gate entirely and go straight to roster selection below.
+
+On the web track: write `git diff -U0 -- <Step 2's resolved files>` to a scratch path (the CLI reads
+a diff file, not a live git invocation), then run
+`node "${CLAUDE_PLUGIN_ROOT}/bin/design-detect.js" --surface-lines <scratch-path>`. A `false`
+`surface` field in its JSON output means every changed line across every resolved file is
+control-flow-only — no JSX/TSX markup, CSS/style, template markup, or rendered copy touched. Skip
+the rest of this step entirely: no roster read, no dispatch, and `craft_critics` is **omitted** from
+the return (the absence-nudge in Step 4 is unaffected — it conditions on decisions being absent, not
+on this gate). Log
+`SCANNED {time} — review Step 3.8: design-surface gate: no JSX/CSS/template/copy lines changed. Reversibility: n/a.`
+A `true` `surface` field proceeds to roster selection below. A failed or unreadable diff (the `git
+diff` invocation errored, or the CLI call itself failed) never blocks the step — fail open toward
+dispatching, exactly as an unreadable claim blob fails closed toward *not* breaking a lock elsewhere
+in this plugin, applied here to the opposite direction (this gate's failure mode is "run the critic
+anyway," never "silently skip it"): proceed to roster selection as if the gate had reported `true`,
+and log `SCANNED {time} — review Step 3.8: design-surface gate: diff unavailable ({reason}) — proceeding
+to roster selection. Reversibility: n/a.`
+
+**Roster selection.** Read `../critics.md` and select every row whose `Track` equals the resolved
 `surface_track` and whose `Trigger` holds given the four inputs that file defines and cites:
 
 - **Lever** — the value from (a).
@@ -186,8 +212,7 @@ nothing for it, and log
 Availability is per critic; one missing critic never skips the others. On `surface_track === "terminal"`, skip this lookup for the terminal critic — it resolves at `${CLAUDE_PLUGIN_ROOT}/skills/_shared/terminal-ux.md` directly and is never unavailable (`../critics.md`'s Resolution exception).
 
 **(d) Decisions layer.** Resolve `DESIGN.md` (three-path lookup, as in (b)) and the root sidecar
-`.impeccable/design.json` per `../../_shared/design-craft.md`'s **The two source classes** (its Decisions row). Read both
-verbatim when present — they are inlined into every critic's prompt in (e). On `surface_track === "terminal"`, skip this resolution — no decisions layer is inlined; (e) item 3 sends the literal absence sentence, and the critic resolves at the plugin path per `../terminal-routing.md`. When neither exists, note
+`.impeccable/design.json` per `../../_shared/design-craft.md`'s **The two source classes** (its Decisions row). Resolve both to their **absolute paths** when present — (e) item 3 sends the critic an instructed read of those paths, never the file content itself. On `surface_track === "terminal"`, skip this resolution — no decisions layer exists on this track; (e) item 3 sends the literal absence sentence, and the critic resolves at the plugin path per `../terminal-routing.md`. When neither exists, note
 it: (e) sends the literal absence sentence instead, and Step 4's absence-nudge conditions read this
 result.
 
@@ -204,13 +229,20 @@ absolute** repository path into the prompt; never an unexpanded placeholder.
 The prompt body contains **only** the following, in this order — never conversation history, never
 this mode's other findings, never a path *to* the critic skill in place of its text:
 
-1. The critic's `SKILL.md` content, inlined verbatim (a path string reaches nothing — see
-   `../../_shared/design-craft.md`'s Subagent Contract compliance). For the `terminal` critic this is
-   `_shared/terminal-ux.md`'s content, resolved per (c)'s exception — not a `SKILL.md`.
+1. The critic's `SKILL.md` content, inlined verbatim (an unnamed, uninstructed path reaches nothing —
+   see `../../_shared/design-craft.md`'s Subagent Contract compliance; item 3 below is the
+   instructed-read exception that rule already carves out, not a contradiction of it). For the
+   `terminal` critic this is `_shared/terminal-ux.md`'s content, resolved per (c)'s exception — not a
+   `SKILL.md`.
 2. The resolved absolute repository path (the working-directory anchor), then Step 2's resolved file list as absolute paths.
-3. The decisions layer from (d), inlined verbatim (`DESIGN.md`, then `.impeccable/design.json`) — or,
-   when absent, the literal sentence: "No DESIGN.md or sidecar exists for this project — emit no
-   `decisions` rows".
+3. The decisions layer from (d) as an **instructed read**, never inlined: the absolute path(s)
+   resolved in (d) (`DESIGN.md`, then `.impeccable/design.json` when both exist), paired with the
+   explicit instruction "Read these files first, before judging — DESIGN.md, then
+   .impeccable/design.json when both are listed." This is a named path with an explicit read
+   instruction, not the unnamed, uninstructed path item 1's rationale guards against — and every
+   critic dispatched here runs as `subagent_type: general-purpose` (below), which carries the `Read`
+   tool unconditionally, so the instructed read always resolves. When absent, send the literal
+   sentence instead: "No DESIGN.md or sidecar exists for this project — emit no `decisions` rows".
 4. The two questions, verbatim:
    "1. Conformance: for each file, where does the diff fall short of what DESIGN.md decided, or of your
    craft principles where DESIGN.md is silent? Report as `Target: code`. 2. Pushback: where is DESIGN.md

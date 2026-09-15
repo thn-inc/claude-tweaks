@@ -143,10 +143,33 @@ test('layer3: negative cases do not match', () => {
 test('layer3: .d.ts type-only files do not match', () => {
   assert.equal(dd.fileMatchesFrontendPredicate('types/global.d.ts'), false);
 });
+test('layer3: Next.js API route handlers do not match the app/pages segment rule (#1786)', () => {
+  for (const f of ['app/api/users/route.ts', 'pages/api/health.ts', 'src/app/api/x/route.js']) {
+    assert.equal(dd.fileMatchesFrontendPredicate(f), false, f);
+  }
+});
+test('layer3: an extension match under app/api still wins over the API-route exclusion', () => {
+  assert.equal(dd.fileMatchesFrontendPredicate('app/api/x/page.tsx'), true);
+});
+test('layer3: the app/pages segment rule is otherwise intact', () => {
+  assert.equal(dd.fileMatchesFrontendPredicate('app/dashboard/page.ts'), true);
+});
 test('layer3(): zero matches skips with the sniff reason; one match proceeds', () => {
   assert.deepEqual(dd.layer3(['src/utils/cache.ts', 'README.md']), { proceed: false, reason: dd.SKIP_REASONS.NON_FRONTEND_SNIFF });
   assert.deepEqual(dd.layer3(['src/components/Button.tsx']), { proceed: true });
   assert.deepEqual(dd.layer3([]), { proceed: false, reason: dd.SKIP_REASONS.NON_FRONTEND_SNIFF });
+});
+test('layer3(): observed file list (two app/api route.ts, one .test.ts, four .md) skips with the sniff reason (#1786)', () => {
+  const files = [
+    'app/api/foo/route.ts',
+    'app/api/bar/route.ts',
+    'src/utils/cache.test.ts',
+    'README.md',
+    'docs/one.md',
+    'docs/two.md',
+    'docs/three.md',
+  ];
+  assert.deepEqual(dd.layer3(files), { proceed: false, reason: dd.SKIP_REASONS.NON_FRONTEND_SNIFF });
 });
 
 // --- layer3Applies — the fallback-only table ---

@@ -162,9 +162,53 @@ function needsHumanVerdict(decisions) {
   return decisionLines(decisions).find((l) => /needs-human/i.test(l) && /merge-check|assess-agent-autonomy/i.test(l)) || null;
 }
 
+// The Auto-merge gate's own drain-PR-overlap hold (dispatch/drain-pr-overlap.md
+// Step 6, #1985) logs this line when this group's PR overlaps a still-open PR
+// opened earlier by the same drain firing. Unlike needsHumanVerdict's carve-out
+// (an assess-agent-autonomy verdict, permanent), this hold is explicitly NOT
+// persisted — drain-pr-overlap.md re-reads the overlapping PR's live state every
+// time the Auto-merge gate runs and self-heals once that PR merges or closes.
+// A historical decisions.md line alone is therefore not enough to resolve
+// leave-open forever after — mergeResolution re-verifies every named PR's
+// current state (below) before trusting it. A group can be held by more than
+// one hold line at once (drain-pr-overlap.md Step 6: "Any hit whose
+// overlapping drain PR is still open holds this group back") — e.g. two
+// distinct overlapping drain PRs, or the same group held more than once
+// across retries — so every distinct PR named across all hold lines is
+// returned; the group only clears once EVERY one of them is confirmed
+// merged/closed. The "held" keyword is the load-bearing discriminator against
+// Step 4's differently-worded advisory-only line (`STAGED … group [{issues}]
+// overlaps drain PR #{pr}`, no "held"), which must never match this regex.
+const DRAIN_OVERLAP_HOLD_RE = /held\s*[-—]\s*overlaps drain PR #(\d+)/i;
+
+function drainOverlapHoldPrs(decisions) {
+  const found = new Set();
+  for (const line of decisionLines(decisions)) {
+    const m = DRAIN_OVERLAP_HOLD_RE.exec(line);
+    if (m) found.add(Number(m[1]));
+  }
+  return [...found];
+}
+
 function mergeResolution(snapshot, deps) {
   const verdict = needsHumanVerdict(snapshot.decisions);
   if (verdict) return { resolution: 'leave-open', reason: `merge-check verdict needs-human takes precedence: ${verdict.replace(/^- /, '')}` };
+  for (const holdPr of drainOverlapHoldPrs(snapshot.decisions)) {
+    let state;
+    try {
+      state = deps.checkPrState(holdPr);
+    } catch (err) {
+      return { resolution: 'leave-open', reason: `drain-overlap hold: could not re-verify PR #${holdPr}'s current state (${err && err.message ? err.message : err}) — failing closed, same posture as grants-unreadable` };
+    }
+    // Fail closed on anything other than a confirmed MERGED/CLOSED — an
+    // unrecognized state (a future gh output shape, undefined, etc.) must
+    // never be treated as "hold cleared, proceed to merge."
+    if (state !== 'MERGED' && state !== 'CLOSED') {
+      const stateDesc = state === 'OPEN' ? 'still open' : `in an unrecognized state (${state === undefined ? 'undefined' : JSON.stringify(state)})`;
+      return { resolution: 'leave-open', reason: `drain-overlap hold: PR #${holdPr} is ${stateDesc} — merge order is a human call (re-checked live against current PR state, not a persisted hold — see dispatch/drain-pr-overlap.md Step 6)` };
+    }
+    // state is MERGED or CLOSED for this PR: self-healed — keep checking any other named hold PR.
+  }
   if (!snapshot.members.length) return { resolution: 'leave-open', reason: 'members-unresolved' };
   if (snapshot.grantsError) return { resolution: 'leave-open', reason: 'grants-unreadable' };
   for (const n of snapshot.members) {
@@ -298,4 +342,4 @@ function resolveAll({ runDir, policy, deps }) {
   return result;
 }
 
-module.exports = { SECTIONS, SECTION_MAP, SECTION_STANCES, classifyStagedItem, readSnapshot, resolveAll, renderTable, renderStoredTable };
+module.exports = { SECTIONS, SECTION_MAP, SECTION_STANCES, classifyStagedItem, readSnapshot, resolveAll, renderTable, renderStoredTable, drainOverlapHoldPrs };

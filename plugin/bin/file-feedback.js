@@ -28,7 +28,7 @@ const fs = require('fs');
 const os = require('os');
 const { execFileSync } = require('child_process');
 const feedback = require('./lib/feedback/file-feedback');
-const { parseRepo, ghAvailable } = require('./lib/repo-resolve');
+const { parseRepo, ghAvailable, repoSlug } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: file-feedback.js --drafts <path.json> [--repo owner/name] [--dry-run] [--help]\n';
 
@@ -111,7 +111,10 @@ function run(argv, deps = realDeps) {
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
   const repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
   if (!repoSpec) { deps.stderr('file-feedback.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
-  const repo = `${repoSpec.owner}/${repoSpec.repo}`;
+  // #2240: repoSlug host-qualifies a non-github.com host (`{host}/{owner}/{repo}`) for
+  // gh's `-R/--repo` flag, which accepts that form directly — a bare `owner/repo` here
+  // silently discarded repoSpec.host and every gh call below resolved against github.com.
+  const repo = repoSlug(repoSpec);
 
   const lines = [];
   let anyFailure = false;

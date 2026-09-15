@@ -95,6 +95,34 @@ test('repaired, release mode: unreadable blob overwritten with releasePayload-sh
   assert.match(body, /repair-force-release: corrupt blob/, 'the issue comment also reads as a repair override');
 });
 
+// #2240: `ghHost` (the GitHub Enterprise Server host) is distinct from
+// `host` (the claiming machine's os.hostname(), only used inside a reclaim's
+// claimPayload) — a non-github.com ghHost threads --hostname onto the read
+// and PUT, and repoSlug's host-qualified --repo value onto the comment.
+test('#2240: ghHost threads --hostname onto the read + PUT, and repoSlug\'s host-qualified --repo onto the comment', () => {
+  const f = fakeRunner({ content: 'not json {{{', sha: 'abc123' });
+  const r = repairClaim({
+    ...base, mode: 'release', reason: 'corrupt blob', ghHost: 'ghe.example.com', runner: f.runner,
+  });
+  assert.equal(r.outcome, 'repaired');
+  const get = f.calls.find(isGet);
+  assert.deepEqual(get.slice(-2), ['--hostname', 'ghe.example.com']);
+  const put = f.calls.find(isPut);
+  assert.deepEqual(put.slice(-2), ['--hostname', 'ghe.example.com']);
+  const comment = f.calls.find(isComment);
+  assert.equal(comment[comment.indexOf('--repo') + 1], 'ghe.example.com/acme/w');
+});
+
+test('#2240: no ghHost (or github.com) keeps the bare owner/repo --repo slug and no --hostname flag', () => {
+  const f = fakeRunner({ content: 'not json {{{', sha: 'abc123' });
+  const r = repairClaim({ ...base, mode: 'release', reason: 'corrupt blob', runner: f.runner });
+  assert.equal(r.outcome, 'repaired');
+  const get = f.calls.find(isGet);
+  assert.doesNotMatch(get.join(' '), /--hostname/);
+  const comment = f.calls.find(isComment);
+  assert.equal(comment[comment.indexOf('--repo') + 1], 'acme/w');
+});
+
 test('repaired, reclaim mode: unreadable blob overwritten with claimPayload-shaped claim content', () => {
   const f = fakeRunner({ content: 'not json {{{', sha: 'abc123' });
   const r = repairClaim({

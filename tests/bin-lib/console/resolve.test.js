@@ -157,6 +157,160 @@ test('readGrants throwing resolves the merge half to leave-open with reason gran
   assert.deepStrictEqual(r.merge, { resolution: 'leave-open', reason: 'grants-unreadable' });
 });
 
+test('a live drain-overlap hold (overlapping PR still OPEN) resolves the merge half to leave-open, even with auto:merge granted (#2299)', () => {
+  const decisions = '## /dispatch\n- AUTO 09:00:00 — Auto-merge gate: group [7] held — overlaps drain PR #4001 on src/a.js; merge order is a human call. Reversibility: n/a.\n';
+  const calls = [];
+  const r = resolveAll({
+    runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps({ checkPrState: (n) => { calls.push(n); return 'OPEN'; } }),
+  });
+  assert.deepStrictEqual(calls, [4001]);
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.match(r.merge.reason, /drain-overlap hold/);
+  assert.match(r.merge.reason, /#4001/);
+});
+
+test('a drain-overlap hold whose PR has since merged self-heals: falls through to the ordinary grant check (#2299)', () => {
+  const decisions = '## /dispatch\n- AUTO 09:00:00 — Auto-merge gate: group [7] held — overlaps drain PR #4001 on src/a.js; merge order is a human call. Reversibility: n/a.\n';
+  const r = resolveAll({
+    runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps({ checkPrState: () => 'MERGED' }),
+  });
+  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+});
+
+test('a drain-overlap hold whose PR has since closed self-heals the same as merged (#2299)', () => {
+  const decisions = '## /dispatch\n- AUTO 09:00:00 — Auto-merge gate: group [7] held — overlaps drain PR #4001 on src/a.js; merge order is a human call. Reversibility: n/a.\n';
+  const r = resolveAll({
+    runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps({ checkPrState: () => 'CLOSED' }),
+  });
+  assert.strictEqual(r.merge.resolution, 'merge');
+});
+
+test('checkPrState failing on a drain-overlap hold fails closed to leave-open, same posture as grants-unreadable (#2299)', () => {
+  const decisions = '## /dispatch\n- AUTO 09:00:00 — Auto-merge gate: group [7] held — overlaps drain PR #4001 on src/a.js; merge order is a human call. Reversibility: n/a.\n';
+  const r = resolveAll({
+    runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps({ checkPrState: () => { throw new Error('gh: rate limited'); } }),
+  });
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.match(r.merge.reason, /drain-overlap hold/);
+  assert.match(r.merge.reason, /gh: rate limited/);
+});
+
+test('a needs-human verdict still takes precedence over a live drain-overlap hold (#2299)', () => {
+  const decisions = '## /wrap-up\n- AUTO 08:00:00 — Auto-merge short-circuit: #7 assess-agent-autonomy verdict needs-human — Review Console renders normally. Reversibility: n/a.\n## /dispatch\n- AUTO 09:00:00 — Auto-merge gate: group [7] held — overlaps drain PR #4001 on src/a.js; merge order is a human call. Reversibility: n/a.\n';
+  const r = resolveAll({
+    runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps({ checkPrState: () => { throw new Error('should never be called'); } }),
+  });
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.match(r.merge.reason, /needs-human/);
+});
+
+test('a drain-overlap hold whose checkPrState returns an unrecognized value fails closed to leave-open (final review Important #2)', () => {
+  const decisions = '## /dispatch\n- AUTO 09:00:00 — Auto-merge gate: group [7] held — overlaps drain PR #4001 on src/a.js; merge order is a human call. Reversibility: n/a.\n';
+  const r = resolveAll({
+    runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps({ checkPrState: () => 'UNKNOWN' }),
+  });
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.match(r.merge.reason, /drain-overlap hold/);
+  assert.match(r.merge.reason, /unrecognized state/);
+  assert.match(r.merge.reason, /UNKNOWN/);
+});
+
+test('a drain-overlap hold whose checkPrState returns undefined fails closed to leave-open (final review Important #2)', () => {
+  const decisions = '## /dispatch\n- AUTO 09:00:00 — Auto-merge gate: group [7] held — overlaps drain PR #4001 on src/a.js; merge order is a human call. Reversibility: n/a.\n';
+  const r = resolveAll({
+    runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps({ checkPrState: () => undefined }),
+  });
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.match(r.merge.reason, /unrecognized state/);
+  assert.match(r.merge.reason, /undefined/);
+});
+
+test('a group held by two distinct overlapping drain PRs leaves open while either is still OPEN, even if the other has merged (final review Important #3)', () => {
+  const decisions = '## /dispatch\n'
+    + '- AUTO 09:00:00 — Auto-merge gate: group [7] held — overlaps drain PR #4001 on src/a.js; merge order is a human call. Reversibility: n/a.\n'
+    + '- AUTO 09:05:00 — Auto-merge gate: group [7] held — overlaps drain PR #4002 on src/b.js; merge order is a human call. Reversibility: n/a.\n';
+  const states = { 4001: 'MERGED', 4002: 'OPEN' };
+  const calls = [];
+  const r = resolveAll({
+    runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps({ checkPrState: (n) => { calls.push(n); return states[n]; } }),
+  });
+  assert.deepStrictEqual(calls, [4001, 4002]);
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.match(r.merge.reason, /#4002/);
+});
+
+test('a group held by two distinct overlapping drain PRs falls through to merge once BOTH are confirmed merged/closed (final review Important #3)', () => {
+  const decisions = '## /dispatch\n'
+    + '- AUTO 09:00:00 — Auto-merge gate: group [7] held — overlaps drain PR #4001 on src/a.js; merge order is a human call. Reversibility: n/a.\n'
+    + '- AUTO 09:05:00 — Auto-merge gate: group [7] held — overlaps drain PR #4002 on src/b.js; merge order is a human call. Reversibility: n/a.\n';
+  const states = { 4001: 'MERGED', 4002: 'CLOSED' };
+  const calls = [];
+  const r = resolveAll({
+    runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps({ checkPrState: (n) => { calls.push(n); return states[n]; } }),
+  });
+  assert.deepStrictEqual(calls, [4001, 4002]);
+  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+});
+
+test('the regex matches PR number extraction from drain-pr-overlap.md\'s own Step 6 log-line template, instantiated with concrete values (final review Minor #4 — producer/consumer coupling)', () => {
+  // Copied from plugin/skills/dispatch/drain-pr-overlap.md's Step 6 fenced block (the two
+  // markdown lines join into one logged line; a future desync in that file is visible as a
+  // diff against this copy, per parse-signal-discipline's producer/consumer coupling guidance):
+  //   AUTO {time} — Auto-merge gate: group [{issues}] held — overlaps drain PR #{pr} on {files}; merge
+  //   order is a human call. Reversibility: n/a.
+  const TEMPLATE = 'AUTO {time} — Auto-merge gate: group [{issues}] held — overlaps drain PR #{pr} on {files}; merge order is a human call. Reversibility: n/a.';
+  const instantiated = TEMPLATE
+    .replace('{time}', '09:00:00')
+    .replace('{issues}', '7')
+    .replace('{pr}', '4001')
+    .replace('{files}', 'src/a.js');
+  const line = `- AUTO ${instantiated.slice('AUTO '.length)}`;
+  const r = resolveAll({
+    runDir: fixture({ decisions: `## /dispatch\n${line}\n`, staged: { 'reflect-1.md': 'x' }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps({ checkPrState: () => 'OPEN' }),
+  });
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.match(r.merge.reason, /#4001/);
+});
+
+test('the STAGED advisory-only line from Step 4 (no "held") never matches the hold regex, even after the case-insensitive/em-dash-tolerant loosening (final review Minor #5)', () => {
+  const decisions = '## /dispatch\n- STAGED 08:55:00 — dispatch: group [7] overlaps drain PR #4001 on src/a.js; dispatched anyway, serialize before merge. Reversibility: n/a.\n';
+  const r = resolveAll({
+    runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps({ checkPrState: () => { throw new Error('should never be called'); } }),
+  });
+  assert.strictEqual(r.merge.resolution, 'merge');
+});
+
+test('no drain-overlap hold line means checkPrState is never consulted (#2299)', () => {
+  const r = resolveAll({
+    runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps({ checkPrState: () => { throw new Error('should never be called'); } }),
+  });
+  assert.strictEqual(r.merge.resolution, 'merge');
+});
+
 test('no resolvable members resolves the merge half to leave-open with reason members-unresolved (#1932 decision 2)', () => {
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' } }), policy: 'console-auto', deps: deps() });
   assert.deepStrictEqual(r.merge, { resolution: 'leave-open', reason: 'members-unresolved' });

@@ -24,7 +24,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
-const { ghAvailable: sharedGhAvailable } = require('../repo-resolve');
+const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve');
+const { fetchNativeParent } = require('../issues/native-dependencies');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
@@ -127,6 +128,21 @@ function readExpectations(runDir) {
 
 function deferredSet(expectations) {
   return expectations.ok ? new Set(expectations.data.deferred || []) : new Set();
+}
+
+// #2383: issue numbers whose Oversight-floor gate (verification-brief.md,
+// #367) resolved `exceeds: false` -- these records legitimately carry no
+// `demo:pending` (Steps 1-4 were correctly skipped), so acceptance-labeling
+// below must render 'skip' for them instead of 'fail'. Written by the gate
+// itself into verify-expectations.json's `oversightExempt` array, the same
+// way `memory`/`upstream` are written by the Review Console. Absent
+// expectations degrades to an empty set here (not 'unknown') -- an unrelated
+// check (memory-updates/upstream-feedback) already surfaces a missing
+// expectations file as 'unknown'; acceptance-labeling itself only consults
+// this set to narrow its failing population, never to gate its own result on
+// the file's presence.
+function oversightExemptSet(expectations) {
+  return expectations.ok ? new Set((expectations.data.oversightExempt || []).map(Number)) : new Set();
 }
 
 function expectationsUnknownDetail(expectations) {
@@ -386,23 +402,39 @@ function ghAvailable(deps, cwd) {
 // `verification-brief.md`'s Routing section: a resolvable-parent sub-issue
 // never carries its own `demo:pending` -- its parent carries one gate for
 // all of them. Callers must redirect to the parent before checking labels/
-// comments. Returns { ok:false, error } instead of throwing so a gh/JSON
-// failure folds into the check's own `fail` detail line rather than
-// aborting the whole check.
+// comments. Returns { ok:false, error } instead of throwing so a gather
+// failure can be distinguished from a genuine labeling mismatch by the
+// caller -- the acceptance-labeling check below renders 'unknown', never
+// 'fail', for an { ok: false } result.
+//
+// GraphQL, not `gh issue view --json parent`: that REST field is unknown to
+// gh <2.96 (#1841), while Issue.parent via GraphQL works on every gh version
+// that can run GraphQL at all. A GraphQL variable can't be filled by gh's
+// {owner}/{repo} placeholder substitution (gh-api-module-pattern skill) --
+// the repo slug has to be resolved locally first, via the same `deps.git`
+// seam every other check in this file already uses.
 function resolveParent(n, deps, cwd) {
-  let raw;
+  let remote;
   try {
-    raw = deps.gh(['issue', 'view', String(n), '--json', 'parent'], cwd);
+    remote = deps.git(['remote', 'get-url', 'origin'], cwd);
   } catch (err) {
-    return { ok: false, error: `gh issue view (parent) failed for #${n} (${err.message})` };
+    return { ok: false, error: `git remote get-url failed for #${n} (${err.message})` };
   }
-  let parsed;
+  const repoSpec = parseRepo(remote);
+  if (!repoSpec) {
+    return { ok: false, error: `could not resolve owner/repo for #${n}` };
+  }
   try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { ok: false, error: `could not parse parent JSON for #${n}` };
+    const parent = fetchNativeParent({
+      number: n,
+      owner: repoSpec.owner,
+      repo: repoSpec.repo,
+      runner: (args) => deps.gh(args, cwd),
+    });
+    return { ok: true, parent };
+  } catch (err) {
+    return { ok: false, error: `gh api graphql (parent) failed for #${n} (${err.message})` };
   }
-  return { ok: true, parent: parsed.parent ? parsed.parent.number : null };
 }
 
 // `verify`'s --run-dir may be the parent pipeline run directory, or (in a
@@ -439,30 +471,50 @@ function resolvePrNumber(runDir) {
 // contains the brief, never only the most recent one. A last-comment-only
 // test would hard-stop a correctly-gated parent.
 //
-// Known, deliberate gaps (not reproduced here -- said honestly rather than
-// implied by omission): the Oversight-floor gate (a non-parent record that
-// doesn't clear the floor legitimately carries no `demo:pending` at all --
-// this check has no way to distinguish that from a genuinely missed
-// labeling step, so it will report a false `fail` for that case) and the
-// `local-files` backend's different acceptance shape (`facets.acceptance`
-// on the record body, no `gh` comments at all) are both out of scope for
-// this check as written; it only reproduces the `github-issues` path.
-registerCheck('acceptance-labeling', ({ runDir, deps, cwd }) => {
+// Known, deliberate gap (not reproduced here -- said honestly rather than
+// implied by omission): the `local-files` backend's different acceptance
+// shape (`facets.acceptance` on the record body, no `gh` comments at all) is
+// out of scope for this check as written; it only reproduces the
+// `github-issues` path. The Oversight-floor gate's exemption (a non-parent
+// record that doesn't clear the floor legitimately carries no
+// `demo:pending`) IS reproduced here -- see `oversightExemptSet` above.
+registerCheck('acceptance-labeling', ({ runDir, deps, cwd, expectations }) => {
   if (!ghAvailable(deps, cwd)) return { result: 'unknown', detail: 'gh absent' };
   const issues = resolvedIssueNumbers(runDir);
   if (!issues.length) return { result: 'skip', detail: 'no resolved issue numbers found' };
+
+  // Oversight-floor-exempted records (#2383) never carry `demo:pending` --
+  // narrow the population this check gathers/labels-checks to the issues
+  // that are NOT exempted, before any parent resolution or gh call runs. An
+  // exempted record never has a resolvable parent by construction (the
+  // Oversight-floor gate only runs on the non-parent path), so it is always
+  // its own target -- filtering here is equivalent to, and cheaper than,
+  // filtering the resolved `targets` list below.
+  const exempt = oversightExemptSet(expectations);
+  const checkIssues = issues.filter((n) => !exempt.has(n));
+  if (!checkIssues.length) {
+    return { result: 'skip', detail: `oversight floor not cleared for #${issues.join(', #')}` };
+  }
   const failing = [];
 
   // Resolve each issue's target (its parent, when resolvable; itself
   // otherwise), deduping by target -- two sub-issues sharing one parent
   // must only be checked once, both to avoid redundant gh calls and to
   // avoid redundant identical detail lines.
+  //
+  // A gather failure here (GraphQL error, unresolvable owner/repo, an
+  // unparseable response) is a tooling gap, not evidence of a labeling
+  // mismatch -- it renders the whole check 'unknown', matching this file's
+  // other could-not-gather rows, and returns before any label/comment read
+  // runs (a real labeling mismatch on a successfully resolved record still
+  // reaches the loop below and can still render 'fail').
   const targets = [];
   const seenTargets = new Set();
-  for (const n of issues) {
+  const gatherFailures = [];
+  for (const n of checkIssues) {
     const resolved = resolveParent(n, deps, cwd);
     if (!resolved.ok) {
-      failing.push(`#${n}: ${resolved.error}`);
+      gatherFailures.push(`#${n}: ${resolved.error}`);
       continue;
     }
     const target = resolved.parent || n;
@@ -470,6 +522,7 @@ registerCheck('acceptance-labeling', ({ runDir, deps, cwd }) => {
     seenTargets.add(target);
     targets.push(target);
   }
+  if (gatherFailures.length) return { result: 'unknown', detail: gatherFailures.join('; ') };
 
   const prNumber = resolvePrNumber(runDir);
 

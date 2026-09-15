@@ -45,10 +45,15 @@ function isAlreadyLinkedError(err) {
   return /\b422\b/.test(text) && /already/i.test(text);
 }
 
-// { owner, repo, numbers, runner } -> Map<number, databaseId>. One GraphQL call,
+// { owner, repo, host, numbers, runner } -> Map<number, databaseId>. One GraphQL call,
 // one `i{N}` alias per distinct number; throws when any number resolves to no
 // databaseId (a partial map would let a caller POST sub_issue_id=undefined).
-function resolveDatabaseIds({ owner, repo, numbers, runner = defaultRunner }) {
+// `host` is optional — omitted or 'github.com' means no --hostname flag (#2240:
+// a GitHub Enterprise Server host threads --hostname the same way
+// fetch-sub-issues.js's REST retry loop does).
+function resolveDatabaseIds({
+  owner, repo, host, numbers, runner = defaultRunner,
+}) {
   const distinct = [...new Set(numbers.map(Number))].filter((n) => Number.isInteger(n) && n > 0);
   if (distinct.length === 0) return new Map();
   const fields = distinct.map((n) => `i${n}: issue(number:${n}){ databaseId }`).join(' ');
@@ -57,7 +62,9 @@ function resolveDatabaseIds({ owner, repo, numbers, runner = defaultRunner }) {
   // -F would type-coerce an all-numeric owner/repo (e.g. "2048") to an Int and GraphQL rejects it.
   // (-F is only right for gh's literal `{owner}`/`{repo}` placeholder substitution, which is not
   // in play here — see #608 vs #610.)
-  const out = runner(['api', 'graphql', '-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `repo=${repo}`]);
+  const args = ['api', 'graphql', '-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `repo=${repo}`];
+  if (host && host !== 'github.com') args.push('--hostname', host);
+  const out = runner(args);
   const parsed = JSON.parse(out);
   const repository = parsed && parsed.data && parsed.data.repository;
   const ids = new Map();
@@ -76,19 +83,27 @@ function resolveDatabaseIds({ owner, repo, numbers, runner = defaultRunner }) {
   return ids;
 }
 
-function post({ runner, path, field, value }) {
-  return runner(['api', '-X', 'POST', path, '-F', `${field}=${value}`]);
+function post({
+  runner, path, field, value, host,
+}) {
+  const args = ['api', '-X', 'POST', path, '-F', `${field}=${value}`];
+  if (host && host !== 'github.com') args.push('--hostname', host);
+  return runner(args);
 }
 
-// { owner, repo, parent, subs, ids, runner } -> { ok: [{number, already}], failed: [{number, error}] }
-function linkSubIssues({ owner, repo, parent, subs, ids, runner = defaultRunner }) {
+// { owner, repo, host, parent, subs, ids, runner } -> { ok: [{number, already}], failed: [{number, error}] }
+function linkSubIssues({
+  owner, repo, host, parent, subs, ids, runner = defaultRunner,
+}) {
   const ok = [];
   const failed = [];
   for (const sub of subs) {
     const id = ids.get(Number(sub));
     if (id === undefined) { failed.push({ number: sub, error: 'no databaseId resolved' }); continue; }
     try {
-      post({ runner, path: `repos/${owner}/${repo}/issues/${parent}/sub_issues`, field: 'sub_issue_id', value: id });
+      post({
+        runner, path: `repos/${owner}/${repo}/issues/${parent}/sub_issues`, field: 'sub_issue_id', value: id, host,
+      });
       ok.push({ number: sub, already: false });
     } catch (err) {
       if (isAlreadyLinkedError(err)) ok.push({ number: sub, already: true });
@@ -98,15 +113,19 @@ function linkSubIssues({ owner, repo, parent, subs, ids, runner = defaultRunner 
   return { ok, failed };
 }
 
-// { owner, repo, edges: [{dependent, blocker}], ids, runner } -> same shape, keyed by edge
-function linkBlockedBy({ owner, repo, edges, ids, runner = defaultRunner }) {
+// { owner, repo, host, edges: [{dependent, blocker}], ids, runner } -> same shape, keyed by edge
+function linkBlockedBy({
+  owner, repo, host, edges, ids, runner = defaultRunner,
+}) {
   const ok = [];
   const failed = [];
   for (const { dependent, blocker } of edges) {
     const id = ids.get(Number(blocker));
     if (id === undefined) { failed.push({ dependent, blocker, error: 'no databaseId resolved' }); continue; }
     try {
-      post({ runner, path: `repos/${owner}/${repo}/issues/${dependent}/dependencies/blocked_by`, field: 'issue_id', value: id });
+      post({
+        runner, path: `repos/${owner}/${repo}/issues/${dependent}/dependencies/blocked_by`, field: 'issue_id', value: id, host,
+      });
       ok.push({ dependent, blocker, already: false });
     } catch (err) {
       if (isAlreadyLinkedError(err)) ok.push({ dependent, blocker, already: true });

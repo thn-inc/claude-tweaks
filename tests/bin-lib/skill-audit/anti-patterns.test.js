@@ -633,5 +633,11 @@ test('every shipped skill has a parseable Anti-Patterns table', () => {
   //   `proposedVersion` field", and the `failed`-vs-`PARTIAL` row. Measured
   //   by RUNNING the parser on the working tree (actual 411), not by adding
   //   the row count to 403 (`[IL-99]`).
-  assert.strictEqual(total, 411);
+  //
+  //   411 -> 412, #2428 (`/claude-tweaks:dispatch` — new `--settle-parked`
+  //   entry point). One new row: "Resuming `--settle-parked`-selected PRs in
+  //   parallel, or in a headless/Routine-fired context". Measured by RUNNING
+  //   the parser on the working tree (actual 412), not by adding 1 to 411
+  //   (`[IL-99]`).
+  assert.strictEqual(total, 412);
 });

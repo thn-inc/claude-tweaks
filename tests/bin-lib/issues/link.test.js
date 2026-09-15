@@ -193,11 +193,13 @@ test('link-records CLI: a blocked-by pair with a missing side is a malformed inv
 
 test('parseRepo: dotted repo names survive; only a trailing .git is stripped', () => {
   const { parseRepo } = require('../../../plugin/bin/link-records');
-  assert.deepEqual(parseRepo('https://github.com/owner/my.repo.git'), { owner: 'owner', repo: 'my.repo' });
-  assert.deepEqual(parseRepo('https://github.com/owner/my.repo'), { owner: 'owner', repo: 'my.repo' });
-  assert.deepEqual(parseRepo('git@github.com:owner/repo.git'), { owner: 'owner', repo: 'repo' });
-  assert.deepEqual(parseRepo('https://github.com/owner/repo/'), { owner: 'owner', repo: 'repo' });
-  assert.equal(parseRepo('https://gitlab.com/owner/repo'), null);
+  assert.deepEqual(parseRepo('https://github.com/owner/my.repo.git'), { host: 'github.com', owner: 'owner', repo: 'my.repo' });
+  assert.deepEqual(parseRepo('https://github.com/owner/my.repo'), { host: 'github.com', owner: 'owner', repo: 'my.repo' });
+  assert.deepEqual(parseRepo('git@github.com:owner/repo.git'), { host: 'github.com', owner: 'owner', repo: 'repo' });
+  assert.deepEqual(parseRepo('https://github.com/owner/repo/'), { host: 'github.com', owner: 'owner', repo: 'repo' });
+  // #2240: parseRepo now widens to an arbitrary host (GitHub Enterprise Server support) —
+  // a non-github.com host is no longer rejected, it's captured.
+  assert.deepEqual(parseRepo('https://gitlab.com/owner/repo'), { host: 'gitlab.com', owner: 'owner', repo: 'repo' });
 });
 
 test('link-records CLI: blocked-by-only invocation is valid (no --parent/--subs)', () => {
@@ -280,6 +282,59 @@ test('resolveDatabaseIds: repository null with no errors[] throws the plain miss
     () => resolveDatabaseIds({ owner: 'a', repo: 'b', numbers: [595], runner }),
     (e) => /missing databaseId for #595$/.test(e.message),
   );
+});
+
+// #2240: a GitHub Enterprise Server host threads --hostname onto the
+// GraphQL alias batch AND every REST POST — a bare github.com host (or no
+// host) omits the flag entirely, unchanged from before this record.
+test('#2240: resolveDatabaseIds passes --hostname on a non-github.com host', () => {
+  const calls = [];
+  const runner = (args) => { calls.push(args); return graphqlJSON({ 595: 1 }); };
+  resolveDatabaseIds({
+    owner: 'acme', repo: 'w', host: 'ghe.example.com', numbers: [595], runner,
+  });
+  assert.deepEqual(calls[0].slice(-2), ['--hostname', 'ghe.example.com']);
+});
+
+test('#2240: resolveDatabaseIds omits --hostname for github.com or no host', () => {
+  const calls = [];
+  const runner = (args) => { calls.push(args); return graphqlJSON({ 595: 1 }); };
+  resolveDatabaseIds({
+    owner: 'acme', repo: 'w', host: 'github.com', numbers: [595], runner,
+  });
+  resolveDatabaseIds({ owner: 'acme', repo: 'w', numbers: [595], runner });
+  assert.doesNotMatch(calls[0].join(' '), /--hostname/);
+  assert.doesNotMatch(calls[1].join(' '), /--hostname/);
+});
+
+test('#2240: linkSubIssues and linkBlockedBy pass --hostname on their POST for a non-github.com host', () => {
+  const calls = [];
+  const runner = (args) => { calls.push(args); return '{}'; };
+  linkSubIssues({
+    owner: 'acme', repo: 'w', host: 'ghe.example.com', parent: 592, subs: [595], ids: new Map([[595, 111]]), runner,
+  });
+  linkBlockedBy({
+    owner: 'acme', repo: 'w', host: 'ghe.example.com', edges: [{ dependent: 610, blocker: 608 }], ids: new Map([[608, 10]]), runner,
+  });
+  assert.deepEqual(calls[0].slice(-2), ['--hostname', 'ghe.example.com']);
+  assert.deepEqual(calls[1].slice(-2), ['--hostname', 'ghe.example.com']);
+});
+
+test('#2240: link-records CLI threads a non-github.com --repo host through resolveDatabaseIds/linkSubIssues/linkBlockedBy', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isGraphQL(args)) return graphqlJSON({ 592: 1, 595: 2, 598: 3 });
+    return '{}';
+  };
+  const { deps } = cliDeps({ runner, remoteUrl: 'https://ghe.example.com/acme/w.git' });
+  const code = run(['--parent', '592', '--subs', '595', '--blocked-by', '598:595'], deps);
+  assert.equal(code, 0);
+  const graphqlCall = calls.find(isGraphQL);
+  assert.deepEqual(graphqlCall.slice(-2), ['--hostname', 'ghe.example.com']);
+  const posts = calls.filter((a) => a[1] === '-X');
+  assert.equal(posts.length, 2);
+  for (const post of posts) assert.deepEqual(post.slice(-2), ['--hostname', 'ghe.example.com']);
 });
 
 test('linkBlockedBy: a blocker absent from the ids map lands in failed, no POST attempted', () => {

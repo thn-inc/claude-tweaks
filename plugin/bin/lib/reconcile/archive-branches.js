@@ -211,13 +211,21 @@ function archiveBranches({ cwd, integration, dryRun, now, resolvePr, resolvePrBu
       // destructive candidates below instead of skipping here. ROUTING only
       // (#2252 review F2): squashCandidate decides whether a provisional
       // skip proceeds to the confirm — it does NOT gate whether squashMerged
-      // gets computed below. A screen-null branch (the deleted-ref blind
-      // spot, e.g. after `gh pr merge --delete-branch`) already reaches the
-      // confirm via the age-driven tag-and-delete provisional with
-      // squashCandidate false; hardcoding squashMerged to false in that case
-      // would discard the confirm's own MERGED-with-mergeCommit verdict and
-      // skip the branch forever.
-      const squashCandidate = !cherryEquivalent && Boolean(screenPr) && screenPr.state === 'MERGED';
+      // gets computed below.
+      // #2322: widened to also cover the screen-null case. A screen-null
+      // branch (the deleted-ref blind spot, e.g. after `gh pr merge
+      // --delete-branch`) previously reached the confirm only once aged past
+      // BRANCH_AGE_DAYS, via the age-driven tag-and-delete provisional — a
+      // YOUNG screen-null branch's provisional is 'skip' (reason
+      // 'too-young') with the old squashCandidate: false, so it never
+      // reached the confirm at all and read too-young on every pass
+      // regardless of what had actually merged. Treating screenPr === null
+      // as a candidate too closes that gap: the confirm below still makes
+      // the final call (nothingLanded stays true, and the age rules still
+      // apply, if the confirm itself comes back null/CLOSED/OPEN) — this
+      // only widens which branches get a confirm, never what the confirm
+      // decides.
+      const squashCandidate = !cherryEquivalent && (screenPr === null || screenPr.state === 'MERGED');
       if (provisional.action === 'skip' && !squashCandidate) {
         entries.push({ name: branch, kind: 'branch', action: 'skip', reason: provisional.reason });
         continue;

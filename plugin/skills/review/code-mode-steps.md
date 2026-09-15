@@ -79,7 +79,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status
 
 ### QA Ledger Check
 
-After confirming `TEST_PASSED`, read the open items ledger (`docs/plans/*-ledger.md`) and filter for entries with phase `test/qa`:
+After confirming `TEST_PASSED`, read the open items ledger (`docs/plans/*-ledger.md`, or the run-dir-scoped alternate per `_shared/ledger-format.md`'s Location section) and filter for entries with phase `test/qa`:
 
 - If any QA ledger entries have status `open` (failures that were not resolved), include them in the test gate report alongside the `TEST_PASSED` status. These represent QA failures that `/claude-tweaks:test` surfaced and that still need resolution.
 - If all QA entries have status `observation` or `fixed`, note: "QA observations present — see findings table in Step 3 Routing."
