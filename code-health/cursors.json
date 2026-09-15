@@ -190,5 +190,9 @@
   "plugin/bin/lib/reconcile": {
     "lastSweptMs": 1789355600047,
     "lastHash": "ead306923a918ab3e5809f1370af8f7e3a60d4a7"
+  },
+  "plugin/bin/lib/record-graph": {
+    "lastSweptMs": 1789442007578,
+    "lastHash": "03ab165dec692e2ce8a9edb91551a4de718f61c6"
   }
 }
