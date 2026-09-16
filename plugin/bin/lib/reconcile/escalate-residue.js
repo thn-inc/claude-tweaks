@@ -243,6 +243,7 @@ function escalateResidue({
   repo, reason, targetPath, count, firstFailedAt, lastError, runner = defaultRunner,
 }) {
   if (reason === 'structurally-stuck') return escalateStructurallyStuck({ repo, targetPath, runner });
+  if (!repo) return { status: 'escalation-failed', reason: 'no-repo-slug' };
   const { body, marker } = residueBody({
     reason, targetPath, count, firstFailedAt, lastError,
   });
