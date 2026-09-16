@@ -1,7 +1,7 @@
 {
+  "released": true,
   "runId": "2026-09-16T002021-record-2462",
-  "sessionId": "2a2c215c-d7a8-5949-9c3e-2ca58f54b1ba",
-  "claimedAt": "2026-09-16T00:23:20.346Z",
-  "ttlHours": 72,
-  "host": "vm"
+  "reason": "merged: spec 2462",
+  "releasedAt": "2026-09-16T00:59:45.000Z",
+  "link": "https://github.com/thomasholknielsen/claude-tweaks/commit/392e87b2f22a2b4403ab516195382b3e803ada1b"
 }
