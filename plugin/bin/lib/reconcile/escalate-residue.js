@@ -123,31 +123,6 @@ function residueBody({ reason, targetPath, count, firstFailedAt, lastError }) {
   return { body: lines.join('\n'), marker };
 }
 
-// { repo, reason, targetPath, count, firstFailedAt, lastError, runner } ->
-// { status: 'filed'|'dedup-hit'|'reopened', number } | { status: 'escalation-failed', reason }
-// Never throws — every branch below is try/caught, mirroring every other
-// best-effort write in this module family (logReapEvent in reap-merged.js,
-// writeCache here).
-//
-// #1892 Deliverable 4: a marker match that is already CLOSED means this same
-// path escalated before, got resolved, and is now failing again. Reopen the
-// existing record instead of filing a fresh duplicate — a deliberate choice
-// to keep one issue per path across its whole open/closed/reopened lifetime,
-// not one per escalation streak. (`--state all` above mirrors the shared
-// `findDuplicate`'s own already-`--state all` behavior, not a widening from
-// an open-only search bug — see #2334.)
-// #1811 Deliverable 4: the consolidated escalation path for
-// `structurally-stuck` alone — every OTHER reason keeps escalateResidue's
-// ordinary one-record-per-path behavior below unchanged. Dedups by the same
-// (path-less) fingerprint marker: no hit files a new record naming just this
-// one path; a hit already naming this path is a plain dedup-hit (or reopen,
-// if closed); a hit that does NOT yet name this path gets it appended —
-// edited into the body (so "the body names all N paths" stays literally
-// true) and also left as a comment, satisfying both this file's own
-// dedup-marker convention and the Technical Approach's "append... as a
-// comment" phrasing.
-// -> { status: 'filed'|'dedup-hit'|'appended'|'reopened', number } |
-//    { status: 'escalation-failed', reason, number? }
 // Shared find-hit skeleton for the two escalate* functions below: resolve
 // the no-repo guard and the findResidueDuplicate try/catch once, then either
 // create a fresh issue (no hit) or hand the found hit to the caller's onHit
@@ -199,6 +174,31 @@ function findHitForResolve({
   return onHit(hit);
 }
 
+// { repo, reason, targetPath, count, firstFailedAt, lastError, runner } ->
+// { status: 'filed'|'dedup-hit'|'reopened', number } | { status: 'escalation-failed', reason }
+// Never throws — every branch below is try/caught, mirroring every other
+// best-effort write in this module family (logReapEvent in reap-merged.js,
+// writeCache here).
+//
+// #1892 Deliverable 4: a marker match that is already CLOSED means this same
+// path escalated before, got resolved, and is now failing again. Reopen the
+// existing record instead of filing a fresh duplicate — a deliberate choice
+// to keep one issue per path across its whole open/closed/reopened lifetime,
+// not one per escalation streak. (`--state all` above mirrors the shared
+// `findDuplicate`'s own already-`--state all` behavior, not a widening from
+// an open-only search bug — see #2334.)
+// #1811 Deliverable 4: the consolidated escalation path for
+// `structurally-stuck` alone — every OTHER reason keeps escalateResidue's
+// ordinary one-record-per-path behavior below unchanged. Dedups by the same
+// (path-less) fingerprint marker: no hit files a new record naming just this
+// one path; a hit already naming this path is a plain dedup-hit (or reopen,
+// if closed); a hit that does NOT yet name this path gets it appended —
+// edited into the body (so "the body names all N paths" stays literally
+// true) and also left as a comment, satisfying both this file's own
+// dedup-marker convention and the Technical Approach's "append... as a
+// comment" phrasing.
+// -> { status: 'filed'|'dedup-hit'|'appended'|'reopened', number } |
+//    { status: 'escalation-failed', reason, number? }
 function escalateStructurallyStuck({ repo, targetPath, runner = defaultRunner }) {
   const marker = structurallyStuckMarker();
   return findOrCreateIssue({
