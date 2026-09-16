@@ -62,7 +62,7 @@ try {
   );
 } catch (err) {
   goRedControlSkip = `commit ${PRE_TASK11_BASE_SHA} is not reachable in this checkout's git history ` +
-    `(shallow/partial clone?) — the go-red control needs full history: ${String(err.message).split('\n')[0]}`;
+    `— the go-red control needs full history: ${String(err.message).split('\n')[0]}`;
 }
 
 test('go-red control: pre-change file carries no needsDefinition field anywhere', { skip: goRedControlSkip }, () => {

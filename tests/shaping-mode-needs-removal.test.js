@@ -70,7 +70,7 @@ try {
   );
 } catch (err) {
   goRedControlSkip = `commit ${PRE_CHANGE_COMMIT} is not reachable in this checkout's git history ` +
-    `(shallow/partial clone?) — the go-red control needs full history: ${String(err.message).split('\n')[0]}`;
+    `— the go-red control needs full history: ${String(err.message).split('\n')[0]}`;
 }
 
 test('go-red control (#763\'s bug): pre-change stamp bullets have no needs:* removal step at all', { skip: goRedControlSkip }, () => {
