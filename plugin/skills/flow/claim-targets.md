@@ -162,8 +162,8 @@ claimed cleanly" apart from "Step 2.8 was silently skipped" without a live regis
 future mechanical gate (see the gap note below) has a local signal to check against.
 
 **Known gap: this step has no mechanical backstop today.** Unlike its sibling bookkeeping
-stamps — `record-worktree` and, under `integration-model: pr-first`, the PR-early draft-PR open —
-which `bin/lib/hooks/pre-tool-use.js`'s `checkBookkeepingStampsGate` denies the next covered write
+stamps — `record-worktree` and, under `integration-model: pr-first` (`_shared/integration-model.md`),
+the PR-early draft-PR open — which `bin/lib/hooks/pre-tool-use.js`'s `checkBookkeepingStampsGate` denies the next covered write
 until it sees the stamp, nothing in this codebase mechanically verifies that this step's
 `bin/claim-targets.js` call (or its MCP equivalent) actually ran before a build proceeds. #2492
 confirmed this the hard way: a `/flow #{n} build,test` dispatch completed a full build and test
