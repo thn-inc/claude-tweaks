@@ -51,14 +51,30 @@ function usableAnchor({ stamp = null, execImpl = execFileSync } = {}) {
   return canonical === null || canonical.trim() === '' ? null : canonical.trim();
 }
 
-function resolveBase({ stamp = null, integrationBranch = null, base = null, execImpl = execFileSync } = {}) {
+function resolveBase({
+  stamp = null, integrationBranch = null, base = null, execImpl = execFileSync, requireNonDegenerate = false,
+} = {}) {
   if (base) {
     const out = tryGit(execImpl, ['rev-parse', '--verify', '--end-of-options', `${base}^{commit}`]);
     if (out === null || out.trim() === '') throw new ChangedFilesError(`--base "${base}" does not resolve to a commit`);
     return out.trim();
   }
   const anchor = usableAnchor({ stamp, execImpl });
-  if (anchor !== null) return anchor;
+  if (anchor !== null) {
+    // #2486: a stamp anchor identical to HEAD answers "nothing since the
+    // last full verify" — correct for --scope's own incremental intent
+    // (that call site never sets requireNonDegenerate), but a caller that
+    // explicitly named --integration-branch is asking a different question
+    // ("what differs from that branch"), and silently answering the first
+    // question instead produces a plausible-looking but empty diff. When
+    // the anchor is this degenerate and an integration branch was given,
+    // skip it and fall through to the integration-branch resolution below.
+    const head = requireNonDegenerate && integrationBranch
+      ? tryGit(execImpl, ['rev-parse', '--verify', 'HEAD'])
+      : null;
+    const degenerate = head !== null && head.trim() === anchor;
+    if (!degenerate) return anchor;
+  }
   if (!integrationBranch) {
     throw new ChangedFilesError('could not resolve a base: no usable stamp anchor and no --integration-branch or --base given');
   }
