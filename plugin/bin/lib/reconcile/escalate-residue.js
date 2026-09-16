@@ -213,25 +213,21 @@ function escalateStructurallyStuck({ repo, targetPath, runner = defaultRunner })
     onHit: (hit) => {
       const existingPaths = parseStuckPaths(hit.body);
       const alreadyNamed = existingPaths.includes(targetPath);
+      const isClosed = hit.state === 'CLOSED';
+      if (!isClosed && alreadyNamed) return { status: 'dedup-hit', number: hit.number };
       const updatedPaths = alreadyNamed ? existingPaths : [...existingPaths, targetPath];
-
-      if (hit.state !== 'CLOSED') {
-        if (alreadyNamed) return { status: 'dedup-hit', number: hit.number };
-        try {
-          runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', structurallyStuckBody(updatedPaths)]);
-          runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body', `Also stuck: \`${targetPath}\``]);
-          return { status: 'appended', number: hit.number };
-        } catch (err) {
-          return { status: 'escalation-failed', reason: errorText(err), number: hit.number };
-        }
-      }
+      const comment = isClosed
+        ? `Reconcile is seeing \`${targetPath}\` stuck at structurally-stuck again — reopening rather than filing a duplicate.`
+        : `Also stuck: \`${targetPath}\``;
 
       try {
         runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', structurallyStuckBody(updatedPaths)]);
-        runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body',
-          `Reconcile is seeing \`${targetPath}\` stuck at structurally-stuck again — reopening rather than filing a duplicate.`]);
-        runner(['issue', 'reopen', String(hit.number), '--repo', repo]);
-        return { status: 'reopened', number: hit.number };
+        runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body', comment]);
+        if (isClosed) {
+          runner(['issue', 'reopen', String(hit.number), '--repo', repo]);
+          return { status: 'reopened', number: hit.number };
+        }
+        return { status: 'appended', number: hit.number };
       } catch (err) {
         return { status: 'escalation-failed', reason: errorText(err), number: hit.number };
       }
