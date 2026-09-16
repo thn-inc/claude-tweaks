@@ -1246,6 +1246,21 @@ function iterCleanRunDirs(root) {
   return [...iterRunDirsWithState(root, { status: 'clean' })];
 }
 
+// Shared dryRun/track/push tail for archiveMerged's main-loop branches below
+// (isArchivedPendingTrackedMove, isClosedSlugStuck, orphaned-mint,
+// adhoc-superseded, the by-number fallback) — each reaches this exact
+// dryRun-short-circuit-else-archive-and-track sequence once its own branch-
+// specific `produceResult` is ready to run. Pulled out only because the tail
+// itself was five byte-identical copies; every branch keeps its own
+// condition, comment, and `continue` at the call site.
+function finishArchiveAttempt(root, repoSlug, dir, dryRun, runner, archived, skipped, produceResult) {
+  if (dryRun) { archived.push(dir); return; }
+  const result = produceResult();
+  trackArchiveResult(root, repoSlug, dir, result, { runner });
+  if (!result.ok) { skipped.push({ runDir: dir, reason: result.reason }); return; }
+  archived.push(dir);
+}
+
 // #1733: the merged-PR archive sequence both the main loop and the
 // #1544 clean-status sweep run, once branch resolution has already produced a
 // `branch` to check — resolvePrState -> decideArchive -> (skip, with the
@@ -1315,11 +1330,7 @@ function archiveMerged({
         });
         continue;
       }
-      if (dryRun) { archived.push(dir); continue; }
-      const result = archiveRunDir(root, dir);
-      trackArchiveResult(root, repoSlug, dir, result, { runner });
-      if (!result.ok) { skipped.push({ runDir: dir, reason: result.reason }); continue; }
-      archived.push(dir);
+      finishArchiveAttempt(root, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
       continue;
     }
 
@@ -1335,11 +1346,7 @@ function archiveMerged({
     // escalation on success (trackArchiveResult's own success branch clears
     // both).
     if (isClosedSlugStuck(root, dir, state)) {
-      if (dryRun) { archived.push(dir); continue; }
-      const result = archiveRunDir(root, dir);
-      trackArchiveResult(root, repoSlug, dir, result, { runner });
-      if (!result.ok) { skipped.push({ runDir: dir, reason: result.reason }); continue; }
-      archived.push(dir);
+      finishArchiveAttempt(root, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
       continue;
     }
 
@@ -1370,17 +1377,13 @@ function archiveMerged({
     }
 
     if (kind === 'orphaned-mint') {
-      if (dryRun) { archived.push(dir); continue; }
       // #2227: tracked content (a materialized work/ spec) needs archiveRunDir's
       // git mv + commit — same (root, dir) signature and {ok, reason} contract,
       // so the result handling below is shared. A bare mint with nothing
       // tracked keeps the fs-only move; see hasTrackedContent above.
-      const result = hasTrackedContent(root, dir)
-        ? archiveRunDir(root, dir)
-        : archiveOrphanedMint(root, dir);
-      trackArchiveResult(root, repoSlug, dir, result, { runner });
-      if (!result.ok) { skipped.push({ runDir: dir, reason: result.reason }); continue; }
-      archived.push(dir);
+      finishArchiveAttempt(root, repoSlug, dir, dryRun, runner, archived, skipped, () => (
+        hasTrackedContent(root, dir) ? archiveRunDir(root, dir) : archiveOrphanedMint(root, dir)
+      ));
       continue;
     }
 
@@ -1455,7 +1458,6 @@ function archiveMerged({
     // returns 'adhoc-superseded' while the worktree still resolves, regardless
     // of age.
     if (kind === 'adhoc-superseded') {
-      if (dryRun) { archived.push(dir); continue; }
       // archiveRunDir, not archiveOrphanedMint: an ad-hoc-standalone dir is a
       // real dev session that can have materialized a spec (a git-tracked work/
       // subtree) before being abandoned. archiveOrphanedMint is a bare
@@ -1465,10 +1467,7 @@ function archiveMerged({
       // orphaned-mint branch above makes the same choice per-dir via
       // hasTrackedContent (#2227) — this branch is unconditional because an
       // ad-hoc dir is always a real session, tracked spec or not.
-      const result = archiveRunDir(root, dir);
-      trackArchiveResult(root, repoSlug, dir, result, { runner });
-      if (!result.ok) { skipped.push({ runDir: dir, reason: result.reason }); continue; }
-      archived.push(dir);
+      finishArchiveAttempt(root, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
       continue;
     }
 
@@ -1538,11 +1537,7 @@ function archiveMerged({
             trackStuckSkip(root, repoSlug, dir, consoleReason, { runner });
             continue;
           }
-          if (dryRun) { archived.push(dir); continue; }
-          const result = archiveRunDir(root, dir);
-          trackArchiveResult(root, repoSlug, dir, result, { runner });
-          if (!result.ok) { skipped.push({ runDir: dir, reason: result.reason }); continue; }
-          archived.push(dir);
+          finishArchiveAttempt(root, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
           continue;
         }
       }
