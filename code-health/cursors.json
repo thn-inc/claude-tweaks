@@ -194,5 +194,9 @@
   "plugin/bin/lib/record-graph": {
     "lastSweptMs": 1789442007578,
     "lastHash": "03ab165dec692e2ce8a9edb91551a4de718f61c6"
+  },
+  "plugin/bin/lib/release": {
+    "lastSweptMs": 1789528349820,
+    "lastHash": "6de697aa28ad01d0714795032acae828092a9b4a"
   }
 }
