@@ -1474,20 +1474,54 @@ test('archiveMerged: two dirs crossing the structurally-stuck threshold in one c
   const dirA = seedStuckDir('2026-01-01T000000-stuck-a-2505', path.join(root, 'long-gone-a'));
   const dirB = seedStuckDir('2026-01-01T010000-stuck-b-2505', path.join(root, 'long-gone-b'));
 
-  const calls = [];
+  // A STATEFUL fake `gh` — a bare `(argv) => { calls.push(argv); return
+  // '[]'; }` can't distinguish "1 consolidated issue naming both dirs" from
+  // "2 separate issues" (#2505's Critical finding): both shapes produce the
+  // same issue-list call count, since a stateless fake never reflects the
+  // `issue create`/`issue edit` writes the escalation loop makes in between.
+  // This fake tracks issues in `fakeIssues` so the assertions below can
+  // check the actual outcome instead of a call count alone.
+  const fakeIssues = [];
+  let nextNumber = 100;
+  const listCalls = [];
   const base = (argv) => {
-    calls.push(argv);
-    return '[]'; // no prior issue — findResidueDuplicate reads an empty list, escalateResidue files fresh
+    if (argv[0] === 'issue' && argv[1] === 'list') {
+      listCalls.push(argv);
+      return JSON.stringify(fakeIssues);
+    }
+    if (argv[0] === 'issue' && argv[1] === 'create') {
+      const titleIdx = argv.indexOf('--title');
+      const bodyIdx = argv.indexOf('--body');
+      const number = nextNumber++;
+      fakeIssues.push({
+        number, title: argv[titleIdx + 1], body: argv[bodyIdx + 1],
+        createdAt: new Date().toISOString(), state: 'OPEN',
+      });
+      return `https://github.com/acme/w/issues/${number}\n`;
+    }
+    if (argv[0] === 'issue' && argv[1] === 'edit') {
+      const number = Number(argv[2]);
+      const bodyIdx = argv.indexOf('--body');
+      const entry = fakeIssues.find((e) => e.number === number);
+      if (entry) entry.body = argv[bodyIdx + 1];
+      return '';
+    }
+    return ''; // comment and any other write — no state effect needed for this test
   };
   // Wrapped in the same createIssueListCache shape reconcile/index.js's own
-  // (not-yet-wired, Task 5) shared cache produces — `calls` records every
-  // call that actually reaches `base`, so a repeat `issue list` for the same
-  // repo served from the cache's memo never lands in `calls` a second time,
-  // while `issue create` (a write, never cached) still reaches `base` every
-  // time it's invoked.
+  // shared cache produces — `listCalls` records every `issue list` call that
+  // actually reaches `base`, so a repeat read for the same repo served from
+  // the cache's memo never lands in `listCalls` a second time, while
+  // `issue create`/`issue edit` (writes, never cached) still reach `base`
+  // every time they're invoked.
   const { runner } = createIssueListCache({ base });
 
-  const wrapper = installGhWrapper([]); // issue create's own gh call still goes to real gh unless intercepted — see note below
+  // installGhWrapper stays as a belt-and-braces guard: it's `gh pr list`/`gh
+  // pr view` (pr-state.js, unrelated to the injected `runner` above) that
+  // archiveMerged's own PR-resolution path calls directly via
+  // execFileSync — this makes sure THOSE calls never fall through to a real
+  // `gh` if some other code path isn't wired through `runner`.
+  const wrapper = installGhWrapper([]);
   let result;
   try {
     result = archiveMerged({ cwd: root, runner });
@@ -1498,8 +1532,12 @@ test('archiveMerged: two dirs crossing the structurally-stuck threshold in one c
   assert.ok(result.skipped.some((s) => s.runDir === dirA && s.reason === 'no-branch'));
   assert.ok(result.skipped.some((s) => s.runDir === dirB && s.reason === 'no-branch'));
 
-  const issueListCalls = calls.filter((c) => c[0] === 'issue' && c[1] === 'list');
-  assert.equal(issueListCalls.length, 1, `expected exactly one issue-list call across both escalations, got ${issueListCalls.length}: ${JSON.stringify(calls)}`);
+  assert.equal(fakeIssues.length, 1, `expected exactly ONE consolidated issue, got ${fakeIssues.length}: ${JSON.stringify(fakeIssues)}`);
+  assert.match(fakeIssues[0].body, /long-gone-a|stuck-a-2505/, 'the one issue must name the first stuck dir');
+  assert.match(fakeIssues[0].body, /long-gone-b|stuck-b-2505/, 'the one issue must ALSO name the second stuck dir — not a second separate issue');
+
+  const issueListCalls = listCalls.filter((c) => c[0] === 'issue' && c[1] === 'list');
+  assert.equal(issueListCalls.length, 1, `expected exactly one issue-list call across both escalations, got ${issueListCalls.length}`);
 
   const failures = listResidueFailures(root);
   assert.ok(failures.find((f) => f.path === dirA && f.escalated === true));
