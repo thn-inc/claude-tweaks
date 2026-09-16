@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -43,7 +44,6 @@ test('Shape 8 node -e script filters out needsDefinition closed records', () => 
 // path is real. Repinned to d111b1474 — the immediate parent, on origin/main's own history, of
 // e2f499095 (the squash-merged commit that added the needsDefinition filter) — which is reachable
 // and carries the file with no needsDefinition reference, same as the original pin intended.
-const { execFileSync } = require('node:child_process');
 const PRE_TASK11_BASE_SHA = 'd111b14742e935487e64a7afa7949cd24e71b8d8';
 // #2436: a shallow/partial clone (a common sandbox-provisioning shape) does not have this
 // historical commit's tree reachable, even though it is on origin/main's real history — the same
