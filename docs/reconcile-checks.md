@@ -145,6 +145,19 @@ still drops the cache entry; the record is left for a human to close manually). 
 that is already closed gets a comment + reopened rather than a duplicate filing — one record per
 path across its whole open/closed/reopened lifetime.
 
+**Shared per-pass `gh issue list` cache (#2505).** `findResidueDuplicate`'s `gh issue list --state
+all --limit 10000` fetch is identical for every escalate/resolve call in one reconcile pass
+regardless of which marker it's filtering for — `reconcile/index.js`'s `reconcile()` creates one
+`issue-list-cache.js`'s `createIssueListCache()` instance per pass and threads its `runner` into
+both `archiveMerged` and `reapMerged` (and, transitively, `cache.js`'s `trackResidue`/
+`pruneResidueFailures`), so a pass touching N stuck dirs/paths makes at most one such call per
+repo, not N. The cache is write-aware, not a naive read-through: `escalateResidue`/
+`resolveResidue` write through the same runner (`issue create`/`edit`/`close`/`reopen`) and then
+read back within the same pass — most visibly for the path-less `structurally-stuck` marker, where
+every stuck dir in a pass converges on one consolidated record — so the cache applies each write's
+effect to its own memoized array directly rather than serving a stale read. Scoped to one
+`createIssueListCache()` instance's lifetime; nothing persists across passes or processes.
+
 ## `archive-merged.js`'s lifecycle classifier (#1732)
 
 `archiveMerged()`'s main loop no longer carries five independent, interleaved detection

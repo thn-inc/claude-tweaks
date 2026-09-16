@@ -1195,6 +1195,93 @@ test('reconcile(): a real successful preflight stamps lastHealthCheckOkAt for a 
   assert.ok(stamped >= before, 'stamp must be set at (or after) this pass, not stale');
 });
 
+// #2505 — reconcile()'s own archive+reap dispatch must share ONE issue-list
+// cache instance across both checks in the same pass. Exercised at the
+// module-wiring level (a spy on issue-list-cache.js's own
+// createIssueListCache, confirming it is called exactly once per
+// reconcile() invocation, and that the SAME returned runner reaches both
+// archiveMerged and reapMerged) rather than by re-deriving N-stuck-dir
+// git/gh fixtures here — Task 3/4's own tests already prove the runner,
+// once received, is forwarded correctly through every call site in each
+// module; this test's only job is proving index.js creates and shares
+// exactly one instance.
+test('reconcile(): creates exactly one issue-list cache per pass and passes its runner to both archiveMerged and reapMerged', async () => {
+  const issueListCache = require('../plugin/bin/lib/reconcile/issue-list-cache');
+  const archiveMergedModule = require('../plugin/bin/lib/reconcile/archive-merged');
+  const reapMergedModule = require('../plugin/bin/lib/reconcile/reap-merged');
+  const preflight = require('../plugin/bin/lib/reconcile/preflight');
+
+  const originalCreate = issueListCache.createIssueListCache;
+  const originalArchive = archiveMergedModule.archiveMerged;
+  const originalReap = reapMergedModule.reapMerged;
+  const originalHealth = preflight.ghHealthCheck;
+  const originalHealthAsync = preflight.ghHealthCheckAsync;
+
+  let createCalls = 0;
+  const fakeRunner = () => '[]';
+  issueListCache.createIssueListCache = (...args) => {
+    createCalls += 1;
+    return { runner: fakeRunner };
+  };
+  let archiveRunnerSeen;
+  let reapRunnerSeen;
+  archiveMergedModule.archiveMerged = (opts) => {
+    archiveRunnerSeen = opts.runner;
+    return { archived: [], skipped: [] };
+  };
+  reapMergedModule.reapMerged = (opts) => {
+    reapRunnerSeen = opts.runner;
+    return { reaped: [], skipped: [], portsRelease: [] };
+  };
+  // 'archive'/'reap' are both gh-dependent checks, so reconcile()'s own
+  // GitHub-health preflight would otherwise run a real `gh api rate_limit`
+  // call here (no 'mirror' in `checks`, so the concurrent fastChecksShape
+  // path doesn't apply — the sequential ghHealthCheck() branch runs
+  // instead). Stub both the sync and async forms — mirroring the existing
+  // preflight-stub idiom elsewhere in this file (e.g. the red-tip/
+  // FAST_CHECKS tests above) — so this test stays hermetic and never
+  // depends on live gh auth/network; an unstubbed preflight failure would
+  // filter `checks` down to nothing and skip the archive/reap dispatch
+  // entirely, failing this test for the wrong reason.
+  preflight.ghHealthCheck = () => ({ ok: true, reason: null });
+  preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
+
+  try {
+    // Rebuild index.js's own top-level requires against the monkeypatched
+    // modules by clearing its module cache entry first — index.js
+    // destructures archiveMerged/reapMerged/createIssueListCache at
+    // require-time, so a patch applied AFTER index.js has already been
+    // required elsewhere in this suite would not be seen without this.
+    delete require.cache[require.resolve('../plugin/bin/lib/reconcile/index')];
+    const { reconcile: reconcileFresh } = require('../plugin/bin/lib/reconcile/index');
+    // A real origin + clone (pairedFixture), not a bare `git init` — before
+    // reconcile() ever reaches the archive/reap dispatch (or the
+    // cache-creation line just above it), it resolves `integration` from
+    // `origin/HEAD`; a repo with no remote at all trips the earlier
+    // 'no-remote' skip instead (see the 'checks filter excludes reap' test
+    // above for the same fixture-shape requirement).
+    const { mainDir } = pairedFixture();
+
+    await reconcileFresh({
+      cwd: mainDir,
+      checks: ['archive', 'reap'],
+      resolveIntegrationModel: () => 'pr-first',
+      mcpReachable: true,
+    });
+
+    assert.equal(createCalls, 1, 'exactly one cache must be created per reconcile() pass');
+    assert.equal(archiveRunnerSeen, fakeRunner, 'archiveMerged must receive the shared cache runner');
+    assert.equal(reapRunnerSeen, fakeRunner, 'reapMerged must receive the same shared cache runner');
+  } finally {
+    issueListCache.createIssueListCache = originalCreate;
+    archiveMergedModule.archiveMerged = originalArchive;
+    reapMergedModule.reapMerged = originalReap;
+    preflight.ghHealthCheck = originalHealth;
+    preflight.ghHealthCheckAsync = originalHealthAsync;
+    delete require.cache[require.resolve('../plugin/bin/lib/reconcile/index')];
+  }
+});
+
 // #820 Task 10's exact regression shape, re-applied to this new mechanism: a
 // `lastRunAt` stamp from an unrelated pass must never be misread as preflight
 // freshness — the two fields are deliberately independent (cache.js's own
