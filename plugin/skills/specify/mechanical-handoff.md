@@ -65,7 +65,8 @@ Modified, Artifacts Removed, Diagram suggestions when present, Actions Performed
 paraphrase, so the caller can relay it without having watched the work happen.
 
 Status line (required): after the summary above, on its own trailing line — the last non-empty
-line of your reply — write exactly one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
+line of your reply — must read exactly `STATUS: DONE` (or DONE_WITH_CONCERNS / NEEDS_CONTEXT /
+BLOCKED).
 ```
 
 `[Use: Standard]` — resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard`.
