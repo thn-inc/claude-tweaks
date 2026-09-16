@@ -148,92 +148,120 @@ function residueBody({ reason, targetPath, count, firstFailedAt, lastError }) {
 // comment" phrasing.
 // -> { status: 'filed'|'dedup-hit'|'appended'|'reopened', number } |
 //    { status: 'escalation-failed', reason, number? }
-function escalateStructurallyStuck({ repo, targetPath, runner = defaultRunner }) {
+// Shared find-hit skeleton for the two escalate* functions below: resolve
+// the no-repo guard and the findResidueDuplicate try/catch once, then either
+// create a fresh issue (no hit) or hand the found hit to the caller's onHit
+// for the reason-specific accept/append/reopen logic. That per-hit logic is
+// deliberately NOT folded in here — escalateResidue's hit branch is a plain
+// 2-way dedup-hit/reopen split, escalateStructurallyStuck's is a 3-way
+// dedup-hit/append/reopen split over a multi-path body it has to parse and
+// re-render first (see that function's own header comment) — forcing those
+// two shapes through one callback would trade real duplication (this
+// skeleton) for fake unification (a callback with reason-specific branches
+// inside it, no clearer than leaving the two functions separate).
+function findOrCreateIssue({
+  repo, marker, runner, createArgs, onHit,
+}) {
   if (!repo) return { status: 'escalation-failed', reason: 'no-repo-slug' };
-  const marker = structurallyStuckMarker();
-
   let hit;
   try {
     hit = findResidueDuplicate({ repo, marker, runner });
   } catch (err) {
     return { status: 'escalation-failed', reason: errorText(err) };
   }
-
   if (!hit) {
     try {
-      const out = runner([
-        'issue', 'create', '--repo', repo,
-        '--title', 'reconcile: structurally-stuck run directories',
-        '--body', structurallyStuckBody([targetPath]),
-        '--label', 'bug',
-      ]);
+      const out = runner(['issue', 'create', '--repo', repo, ...createArgs]);
       const m = /\/issues\/(\d+)/.exec(String(out));
       return { status: 'filed', number: m ? Number(m[1]) : null };
     } catch (err) {
       return { status: 'escalation-failed', reason: errorText(err) };
     }
   }
+  return onHit(hit);
+}
 
-  const existingPaths = parseStuckPaths(hit.body);
-  const alreadyNamed = existingPaths.includes(targetPath);
-  const updatedPaths = alreadyNamed ? existingPaths : [...existingPaths, targetPath];
-
-  if (hit.state !== 'CLOSED') {
-    if (alreadyNamed) return { status: 'dedup-hit', number: hit.number };
-    try {
-      runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', structurallyStuckBody(updatedPaths)]);
-      runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body', `Also stuck: \`${targetPath}\``]);
-      return { status: 'appended', number: hit.number };
-    } catch (err) {
-      return { status: 'escalation-failed', reason: errorText(err), number: hit.number };
-    }
-  }
-
+// Shared find-hit skeleton for the two resolve* functions below — same
+// rationale as findOrCreateIssue above, minus the create branch (resolve
+// never files a new issue) and with the resolution-failed/not-found status
+// vocabulary instead of escalation-failed/filed.
+function findHitForResolve({
+  repo, marker, runner, onHit,
+}) {
+  if (!repo) return { status: 'resolution-failed', reason: 'no-repo-slug' };
+  let hit;
   try {
-    runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', structurallyStuckBody(updatedPaths)]);
-    runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body',
-      `Reconcile is seeing \`${targetPath}\` stuck at structurally-stuck again — reopening rather than filing a duplicate.`]);
-    runner(['issue', 'reopen', String(hit.number), '--repo', repo]);
-    return { status: 'reopened', number: hit.number };
+    hit = findResidueDuplicate({ repo, marker, runner });
   } catch (err) {
-    return { status: 'escalation-failed', reason: errorText(err), number: hit.number };
+    return { status: 'resolution-failed', reason: errorText(err) };
   }
+  if (!hit) return { status: 'not-found' };
+  return onHit(hit);
+}
+
+function escalateStructurallyStuck({ repo, targetPath, runner = defaultRunner }) {
+  const marker = structurallyStuckMarker();
+  return findOrCreateIssue({
+    repo,
+    marker,
+    runner,
+    createArgs: ['--title', 'reconcile: structurally-stuck run directories', '--body', structurallyStuckBody([targetPath]), '--label', 'bug'],
+    onHit: (hit) => {
+      const existingPaths = parseStuckPaths(hit.body);
+      const alreadyNamed = existingPaths.includes(targetPath);
+      const updatedPaths = alreadyNamed ? existingPaths : [...existingPaths, targetPath];
+
+      if (hit.state !== 'CLOSED') {
+        if (alreadyNamed) return { status: 'dedup-hit', number: hit.number };
+        try {
+          runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', structurallyStuckBody(updatedPaths)]);
+          runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body', `Also stuck: \`${targetPath}\``]);
+          return { status: 'appended', number: hit.number };
+        } catch (err) {
+          return { status: 'escalation-failed', reason: errorText(err), number: hit.number };
+        }
+      }
+
+      try {
+        runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', structurallyStuckBody(updatedPaths)]);
+        runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body',
+          `Reconcile is seeing \`${targetPath}\` stuck at structurally-stuck again — reopening rather than filing a duplicate.`]);
+        runner(['issue', 'reopen', String(hit.number), '--repo', repo]);
+        return { status: 'reopened', number: hit.number };
+      } catch (err) {
+        return { status: 'escalation-failed', reason: errorText(err), number: hit.number };
+      }
+    },
+  });
 }
 
 function escalateResidue({
   repo, reason, targetPath, count, firstFailedAt, lastError, runner = defaultRunner,
 }) {
   if (reason === 'structurally-stuck') return escalateStructurallyStuck({ repo, targetPath, runner });
-  if (!repo) return { status: 'escalation-failed', reason: 'no-repo-slug' };
-  const { body, marker } = residueBody({ reason, targetPath, count, firstFailedAt, lastError });
+  const { body, marker } = residueBody({
+    reason, targetPath, count, firstFailedAt, lastError,
+  });
   const title = `reconcile: ${reason} stuck on ${targetPath}`;
 
-  let hit;
-  try {
-    hit = findResidueDuplicate({ repo, marker, runner });
-  } catch (err) {
-    return { status: 'escalation-failed', reason: errorText(err) };
-  }
-  if (hit) {
-    if (hit.state !== 'CLOSED') return { status: 'dedup-hit', number: hit.number };
-    try {
-      runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body',
-        `Reconcile is seeing this path fail \`${reason}\` again (${count} consecutive passes since it was ` +
-        'last resolved) — reopening rather than filing a duplicate.']);
-      runner(['issue', 'reopen', String(hit.number), '--repo', repo]);
-      return { status: 'reopened', number: hit.number };
-    } catch (err) {
-      return { status: 'escalation-failed', reason: errorText(err), number: hit.number };
-    }
-  }
-
-  try {
-    const out = runner(['issue', 'create', '--repo', repo, '--title', title, '--body', body, '--label', 'bug']);
-    const m = /\/issues\/(\d+)/.exec(String(out));
-    return { status: 'filed', number: m ? Number(m[1]) : null };
-  } catch (err) {
-    return { status: 'escalation-failed', reason: errorText(err) };
-  }
+  return findOrCreateIssue({
+    repo,
+    marker,
+    runner,
+    createArgs: ['--title', title, '--body', body, '--label', 'bug'],
+    onHit: (hit) => {
+      if (hit.state !== 'CLOSED') return { status: 'dedup-hit', number: hit.number };
+      try {
+        runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body',
+          `Reconcile is seeing this path fail \`${reason}\` again (${count} consecutive passes since it was `
+          + 'last resolved) — reopening rather than filing a duplicate.']);
+        runner(['issue', 'reopen', String(hit.number), '--repo', repo]);
+        return { status: 'reopened', number: hit.number };
+      } catch (err) {
+        return { status: 'escalation-failed', reason: errorText(err), number: hit.number };
+      }
+    },
+  });
 }
 
 // #1892 Deliverable 3: the cache-pruning half of the same marker-lookup
@@ -251,58 +279,57 @@ function escalateResidue({
 // -> { status: 'closed'|'path-removed'|'already-closed'|'not-found', number? } |
 //    { status: 'resolution-failed', reason, number? }
 function resolveStructurallyStuck({ repo, targetPath, runner = defaultRunner }) {
-  if (!repo) return { status: 'resolution-failed', reason: 'no-repo-slug' };
   const marker = structurallyStuckMarker();
-  let hit;
-  try {
-    hit = findResidueDuplicate({ repo, marker, runner });
-  } catch (err) {
-    return { status: 'resolution-failed', reason: errorText(err) };
-  }
-  if (!hit) return { status: 'not-found' };
-  const existingPaths = parseStuckPaths(hit.body);
-  if (!existingPaths.includes(targetPath)) return { status: 'not-found' };
-  if (hit.state === 'CLOSED') return { status: 'already-closed', number: hit.number };
-  const remaining = existingPaths.filter((p) => p !== targetPath);
-  try {
-    runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', structurallyStuckBody(remaining)]);
-    if (remaining.length === 0) {
-      runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body',
-        `\`${targetPath}\` no longer exists on disk — the last remaining stuck path. Closing.`]);
-      runner(['issue', 'close', String(hit.number), '--repo', repo]);
-      return { status: 'closed', number: hit.number };
-    }
-    runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body',
-      `\`${targetPath}\` no longer exists on disk — resolved by other means, removed from the stuck-paths list ` +
-      `(${remaining.length} path(s) still stuck).`]);
-    return { status: 'path-removed', number: hit.number };
-  } catch (err) {
-    return { status: 'resolution-failed', reason: errorText(err), number: hit.number };
-  }
+  return findHitForResolve({
+    repo,
+    marker,
+    runner,
+    onHit: (hit) => {
+      const existingPaths = parseStuckPaths(hit.body);
+      if (!existingPaths.includes(targetPath)) return { status: 'not-found' };
+      if (hit.state === 'CLOSED') return { status: 'already-closed', number: hit.number };
+      const remaining = existingPaths.filter((p) => p !== targetPath);
+      try {
+        runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', structurallyStuckBody(remaining)]);
+        if (remaining.length === 0) {
+          runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body',
+            `\`${targetPath}\` no longer exists on disk — the last remaining stuck path. Closing.`]);
+          runner(['issue', 'close', String(hit.number), '--repo', repo]);
+          return { status: 'closed', number: hit.number };
+        }
+        runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body',
+          `\`${targetPath}\` no longer exists on disk — resolved by other means, removed from the stuck-paths list `
+          + `(${remaining.length} path(s) still stuck).`]);
+        return { status: 'path-removed', number: hit.number };
+      } catch (err) {
+        return { status: 'resolution-failed', reason: errorText(err), number: hit.number };
+      }
+    },
+  });
 }
 
 // -> { status: 'closed'|'already-closed'|'not-found', number? } |
 //    { status: 'resolution-failed', reason, number? }
-function resolveResidue({ repo, reason, targetPath, runner = defaultRunner }) {
+function resolveResidue({
+  repo, reason, targetPath, runner = defaultRunner,
+}) {
   if (reason === 'structurally-stuck') return resolveStructurallyStuck({ repo, targetPath, runner });
-  if (!repo) return { status: 'resolution-failed', reason: 'no-repo-slug' };
   const marker = `<!-- fingerprint: ${residueFingerprint(reason, targetPath)} -->`;
-  let hit;
-  try {
-    hit = findResidueDuplicate({ repo, marker, runner });
-  } catch (err) {
-    return { status: 'resolution-failed', reason: errorText(err) };
-  }
-  if (!hit) return { status: 'not-found' };
-  if (hit.state === 'CLOSED') return { status: 'already-closed', number: hit.number };
-  try {
-    runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body',
-      `This path no longer exists on disk — resolved by other means. Closing.`]);
-    runner(['issue', 'close', String(hit.number), '--repo', repo]);
-    return { status: 'closed', number: hit.number };
-  } catch (err) {
-    return { status: 'resolution-failed', reason: errorText(err), number: hit.number };
-  }
+  return findHitForResolve({
+    repo,
+    marker,
+    runner,
+    onHit: (hit) => {
+      if (hit.state === 'CLOSED') return { status: 'already-closed', number: hit.number };
+      try {
+        runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body', 'This path no longer exists on disk — resolved by other means. Closing.']);
+        runner(['issue', 'close', String(hit.number), '--repo', repo]);
+        return { status: 'closed', number: hit.number };
+      } catch (err) {
+        return { status: 'resolution-failed', reason: errorText(err), number: hit.number };
+      }
+    },
+  });
 }
 
 module.exports = {
