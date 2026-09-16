@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-16T22:43:18.559Z",
+  "computedAt": "2026-09-16T22:52:06.180Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -45,7 +45,7 @@
       },
       {
         "number": 2405,
-        "updatedAt": "2026-09-15T19:40:35Z",
+        "updatedAt": "2026-09-16T22:51:17Z",
         "state": "OPEN"
       },
       {
@@ -629,7 +629,7 @@
         "number": 2405,
         "state": "OPEN",
         "title": "CLAUDE.md structure: CLAUDE — ## claude-tweaks Pipeline",
-        "updatedAt": "2026-09-15T19:40:35Z",
+        "updatedAt": "2026-09-16T22:51:17Z",
         "facets": {
           "origin": "harness-health",
           "risk": "low",
