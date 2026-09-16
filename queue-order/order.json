@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-15T19:51:09.585Z",
+  "computedAt": "2026-09-16T06:29:12.925Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -54,11 +54,6 @@
         "state": "OPEN"
       },
       {
-        "number": 2462,
-        "updatedAt": "2026-09-15T19:40:29Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2436,
         "updatedAt": "2026-09-15T19:40:32Z",
         "state": "OPEN"
@@ -75,7 +70,7 @@
       },
       {
         "number": 2400,
-        "updatedAt": "2026-09-15T19:40:37Z",
+        "updatedAt": "2026-09-16T04:50:28Z",
         "state": "OPEN"
       },
       {
@@ -200,12 +195,12 @@
       },
       {
         "number": 2267,
-        "updatedAt": "2026-09-13T12:41:38Z",
+        "updatedAt": "2026-09-15T22:24:35Z",
         "state": "OPEN"
       },
       {
         "number": 2266,
-        "updatedAt": "2026-09-13T12:41:35Z",
+        "updatedAt": "2026-09-16T06:28:30Z",
         "state": "OPEN"
       },
       {
@@ -316,11 +311,6 @@
       {
         "number": 1796,
         "updatedAt": "2026-09-13T21:39:48Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 1778,
-        "updatedAt": "2026-09-15T19:40:42Z",
         "state": "OPEN"
       },
       {
@@ -1168,90 +1158,6 @@
     ],
     [
       {
-        "body": "Origin: wrap-up of #2413 (review/reflect pass) — discovered while running residue-sweep.md as documented and finding the --own-pr flag it names does not exist\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nCommit bc1754dac (`Fix bundle: residue own-PR carve-out, root-safe test skips, pending-review PR staleness check (#2437)`, already merged to main) claims: \"residue.js/forge.js/pack.js: --own-pr carve-out excludes a pr-first run's own recorded PR from residue findings, reporting it via ownPr instead\". `plugin/skills/wrap-up/residue-sweep.md` was updated accordingly and now documents a `--own-pr {run-state pr.number}` flag and an `ownPr` result field consumers should branch on.\n\nThe actual code was never wired: `bin/residue.js`'s `parseArgs` recognizes only `--base`, `--scope`, `--integration-branch`, `--json`, `--no-suite` — no `--own-pr`. `bin/lib/residue/probes/forge.js`'s `probeForge` has no `ownPr` concept at all; it only ever tags a PR `scope: 'blast-radius'` (this run's own head branch) or `'observed'` and always includes it in `findings` with `remedy: 'record'`. `bin/lib/wrap-up/pack.js` (the `wrap-up-pack.js` CLI's residue field, which `residue-sweep.md` says to read first) never references `ownPr`/`own-pr` anywhere either. Confirmed by grepping all three files for `own-pr`/`ownPr` — zero matches outside the prose file.\n\nConcretely observed while wrapping up #2413 (a pr-first run): `wrap-up-pack.js`'s `residue.value.results` returned this run's own open PR (#2461) as an ordinary `{kind: 'pr', scope: 'blast-radius', remedy: 'record'}` finding — not the documented `ownPr: {number, headRefName}` side-channel — forcing the wrap-up run to manually recognize and special-case it instead of the tooling doing so automatically.\n\n## Deliverables\n\nAdd `--own-pr <number>` to `bin/residue.js`'s `parseArgs`, thread it through to the forge probe.\n\n`bin/lib/residue/probes/forge.js`: when a PR's number matches the passed own-PR number, exclude it from `findings` and report it on a separate `ownPr: {number, headRefName}` field (or `null`) on the probe's return value, per what `residue-sweep.md` already documents.\n\n`bin/lib/wrap-up/pack.js`: pass `--own-pr` (sourced from `run-state.json`'s `pr.number`, omitted on a `local-merge` run) when it shells out to the residue CLI for the `residue` fact-pack field, so `pack.residue.value.ownPr` is populated the same way the manual CLI invocation is documented to behave.\n\nAdd or extend a test (`tests/bin-lib/residue/**` and/or `tests/bin-lib/wrap-up/pack.test.js`) asserting the own-PR carve-out actually excludes the PR from `findings` and populates `ownPr` — the gap this record reports is exactly the kind a byte-level prose-vs-behavior conformance check would have caught at merge time.\n\n## Acceptance Criteria\n\n`node bin/residue.js --base <sha> --scope blast-radius --own-pr <n> --json` excludes PR `#<n>` from `findings` and reports it under a top-level `ownPr` field when that PR is open with head == this run's branch.\n\n`wrap-up-pack.js`'s `residue` field's `value.ownPr` is populated the same way for a `pr-first` run with a recorded `run-state.json` `pr.number`, and is `null`/absent for a `local-merge` run.\n\nA new or extended automated test fails on the pre-fix code and passes after the fix (proving the gap this record reports is real, not a misreading of the CLI's current behavior).\n\n_Filed by `wrap-up` via specShapedBody._",
-        "createdAt": "2026-09-14T18:08:36Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          }
-        ],
-        "number": 2462,
-        "state": "OPEN",
-        "title": "residue-sweep's documented --own-pr carve-out (#2437) was never wired into bin/residue.js/forge.js/pack.js",
-        "updatedAt": "2026-09-15T19:40:29Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "**CLAUDE.md:** CLAUDE | **Section:** ## claude-tweaks Pipeline | **Category:** template-conformance | **Classification:** additive | **Confidence:** high\n\nVerified-as-of: 1941be706a53ea4f6dbd5c9b4c385991cc72811e\n\n## Current State\n\n`skills/init/claude-md-template.md` (the installed plugin's own generator, v6.120.0) includes a 'Spec close-out' bullet immediately after 'Artifacts' in every generated `## claude-tweaks Pipeline` section; CLAUDE.md's copy of this section omits it entirely. `specs/` in this repo currently holds one file, so the discipline this bullet establishes (delete after shipping, don't accumulate a permanent index) is directly applicable, not dead weight.\n\n## Deliverables\n\n**Current:**\n```\n**Artifacts:** design doc (one file, phases = `## Phase N` sections) → spec (one per work unit, via `/claude-tweaks:specify`) → `/claude-tweaks:flow`. No multi-phase plan files (`*-P1.md`, `*-P2.md`, …); a single plan per spec via `/superpowers:writing-plans`, stopped before its execution-choice offer, is expected and normal.\n```\n\n**Proposed:**\n```\n**Artifacts:** design doc (one file, phases = `## Phase N` sections) → spec (one per work unit, via `/claude-tweaks:specify`) → `/claude-tweaks:flow`. No multi-phase plan files (`*-P1.md`, `*-P2.md`, …); a single plan per spec via `/superpowers:writing-plans`, stopped before its execution-choice offer, is expected and normal.\n\n**Spec close-out:** `specs/` is a working directory, not a permanent historical index — once a spec ships and is verified, promote any durable reference content to `docs/reference/*.md` or a skill, repoint by-number citations elsewhere in the repo to the closing commit or PR, then delete the spec file. A permanent tracker file (e.g. `specs/INDEX.md`) is an anti-pattern here, not a convention to preserve.\n```\n\n## Acceptance Criteria\n\nCLAUDE.md's `## claude-tweaks Pipeline` section is missing the 'Spec close-out' convention that the currently installed claude-tweaks v6.120.0 plugin's own `claude-md-template.md` mandates for every generated CLAUDE.md, and this repo actively uses `specs/` (one file present) so the missing convention is not merely theoretical.\n\n_Filed by `/claude-tweaks:harness-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n\n<!-- work-fingerprint: harnesshealth-6ac3a5eb -->\nwork-fingerprint: harnesshealth-6ac3a5eb",
         "createdAt": "2026-09-14T05:15:47Z",
         "labels": [
@@ -1336,88 +1242,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\n\n`plugin/bin/lib/claim-targets/claim-targets.js`'s `#2329` fix (PR #2399) closes the\n\"unverified-claim leak\" for the default all-or-abort path: `abort()` now releases a target\nwhose write reported `ok: true` but couldn't be confirmed by the post-write read-back\n(`stopOrSkip`'s new `releaseThisIssue` flag, threaded only through the `'unverified'` call\nsite).\n\nThat fix does not extend to the `--keep-going` path. `stopOrSkip`'s early return —\n\n```js\nif (opts.keepGoing) { skipped.push({ issue, reason: skipReason, ...extra }); return null; }\n```\n\n— never consults `releaseThisIssue` at all. Under `--keep-going` (multi-target `/flow` runs,\n`flow/claim-targets.md`), an unverified target is simply recorded in `skipped` and the loop\ncontinues to the next target -- its own write is never released, regardless of whether it\ngenuinely landed. `plugin/skills/_shared/issue-claims.md`'s Post-write verification section is\nhonest about this scope boundary (\"downgraded to a per-target skip under `--keep-going`\"), and\nthe existing test `(m3) #2073 under --keep-going: unverified target recorded in skipped, not\nclaimed, exit 0` pins the current (unfixed) behavior.\n\nNet effect: a target that hits `'unverified'` under `--keep-going` leaks identically to the\npre-#2329 behavior for the abort path -- it rides out its full TTL unreleased and invisible\n(no `bot:in-progress` marker pointing at it), every time, not just when the write's own\nconfirmation happens to lag.\n\n## Deliverables\n\n- Extend `stopOrSkip`'s `--keep-going` branch to also attempt releasing the unverified target's\n  own write (mirroring `abort()`'s `extraToRelease` handling), before pushing the `skipped`\n  entry -- or make an explicit, documented decision that keep-going intentionally leaves this\n  leaked (and say why) rather than the current silent-by-omission behavior.\n- Update `issue-claims.md`'s Post-write verification section and the `(m3)` test to match\n  whichever behavior is chosen.\n\n## Acceptance Criteria\n\n- An unverified target under `--keep-going` either gets its own write released (and this is\n  covered by a new/updated test), or the doc explicitly states and justifies why it does not.\n- `npm test` passes.\n\n## Technical Approach\n\nMirror `abort()`'s existing `extraToRelease`/`releaseThisIssue` handling (landed by #2329/PR\n#2399 for the abort path) into `stopOrSkip`'s `--keep-going` early-return branch -- same release\ncall, gated the same way on the `'unverified'` skip reason, just reached from the branch that\ncurrently returns early without it. If the decision instead is to leave `--keep-going` leaking\ndeliberately, the Technical Approach is documentation-only: state the reasoning in\n`issue-claims.md`'s Post-write verification section rather than leaving it implicit.\n\n### Key Files\n\n- `plugin/bin/lib/claim-targets/claim-targets.js` -- `stopOrSkip`'s `--keep-going` early return\n- `plugin/skills/_shared/issue-claims.md` -- Post-write verification section, to update either way\n- test file covering the `(m3)` case pinning current `--keep-going` behavior\n\n## Gotchas\n\n- Not a blocker for #2329/PR #2399 -- that record's own Deliverables/AC text scoped the fix to\n  `abort()` specifically, and the fix is correct for that scope. This record is the residual\n  instance in the sibling code path the original record didn't name.\n- Whichever behavior is chosen, the existing `(m3)` test currently pins the unfixed behavior --\n  changing behavior without updating that test leaves a stale assertion.\n\n## Original request\n\nclaim-targets.js: unverified-claim leak still present under --keep-going (residual of #2329)\n\nFound during `/claude-tweaks:review`'s scrutiny of PR #2399 (record #2329, \"claim-targets.js:\neventually-consistent read-back race + unverified-claim leak\") -- a residual instance of the same\nbug class in a code path the original record didn't name. Not a blocker for #2329/PR #2399: the\nrecord's own Deliverables/AC text scoped the fix to `abort()` specifically, and the fix is\ncorrect for that scope.\n",
-        "createdAt": "2026-09-14T04:29:57Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2400,
-        "state": "OPEN",
-        "title": "claim-targets.js: unverified-claim leak still present under --keep-going (residual of #2329)",
-        "updatedAt": "2026-09-15T19:40:37Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
         "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review of `plugin/bin/lib/claim-targets/claim-targets.js`\n— all three confirmed still true at this shaping pass:\n\n- **Read-back race** (~line 400): post-write verification (#2073) re-reads immediately with no\n  retry/backoff (`if (!verifyClaimLanded(deps, repoSlug, issue, opts.runId, knownTip))`). On the\n  contents-API transport `knownTip` is `null`, so the read-back hits GitHub's\n  eventually-consistent contents API and can legitimately return the pre-write blob — a spurious\n  exit 5 on a claim that actually landed. The file's own header already warns against\n  eventually-consistent GitHub reads elsewhere.\n- **Claim leak on abort** (~line 227, confirmed): `abort()` releases only `claimedThisRun`\n  (`releaseClaimedThisRun(deps, repoSlug, opts.runId, claimedThisRun)`). `stopOrSkip(issue,\n  'unverified', 'unverified', 5, {})` runs (confirmed, ~line 401) *before* the target is pushed\n  onto `claimedThisRun` (the `claimedThisRun.push(issue)` call is one line after the verification\n  check), so a target whose claim genuinely landed (just couldn't be verified back) leaks until\n  TTL expiry with no `bot:in-progress` marker making it visible.\n- **Stale doc comment** (~line 225, confirmed): `abort()`'s comment still enumerates only exit\n  codes 3 and 4 (\"`exitCode` is 3 for a `contested`/`inFlight` envelope, 4 for a `transient`\n  one\") — exit 5 (`unverified`) was added without updating it.\n\n## Deliverables\n\n- Add a bounded retry/backoff to the post-write read-back verification when `knownTip` is `null`,\n  before declaring exit 5.\n- Release (or otherwise make visible) the `unverified` target's claim on abort, not just\n  `claimedThisRun`.\n- Update `abort()`'s doc comment to include exit 5.\n\n## Acceptance Criteria\n\n- A simulated eventually-consistent stale read on the contents-API path no longer produces a\n  spurious exit 5 within the retry window.\n- An aborted run with an `unverified` target leaves that claim in a state a later run can\n  detect/reclaim before TTL, not silently leaked.\n- `abort()`'s doc comment lists exit codes 3, 4, and 5.\n- `npm test` passes.\n\n## Technical Approach\n\nFor the read-back race: wrap the `verifyClaimLanded` call (~line 400) in a small bounded\nretry loop (a few attempts with a short backoff) specifically for the `knownTip === null` case —\nthe git-CAS path (`knownTip` set) already has a real tip to compare against and doesn't need\nthis, since a git-CAS success is immediately consistent. Only declare exit 5 after the retry\nwindow is exhausted. For the claim leak: capture the `unverified` issue's claim state (the\ncontext `verifyClaimLanded` already had before failing) and pass it to `abort()` so it can be\nreleased or explicitly flagged alongside `claimedThisRun`'s own release — the goal is that a\ngenuinely-landed-but-unverified claim doesn't sit invisible until TTL; releasing it (so a later\nrun can pick it up cleanly) is the safer default over leaving it silently held. Update the\n`abort()` doc comment in the same change.\n\n### Key Files\n\n- `plugin/bin/lib/claim-targets/claim-targets.js` — the read-back retry (~line 400), the claim\n  leak fix (~line 227, `abort()` and the `unverified` stop path), and the doc comment update\n\n## Gotchas\n\n- The retry must be scoped to the `knownTip === null` (contents-API) path only — the git-CAS\n  path's `knownTip`-based verification is already immediately consistent and doesn't need\n  (or benefit from) a retry; adding one there would just slow down every claim for no\n  correctness gain.\n- Releasing an `unverified` claim on abort must not race with the claim that write actually\n  produced — verify the release targets the same claim identity (`repoSlug`, `issue`, `opts.runId`)\n  the write itself used, so a genuinely different run's claim on the same issue is never touched.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review of `plugin/bin/lib/claim-targets/claim-targets.js`:\n\n- **Read-back race** (~line 400): post-write verification (#2073) re-reads immediately with no retry/backoff. On the contents-API transport `knownTip` is `null`, so the read-back hits GitHub's eventually-consistent contents API and can legitimately return the pre-write blob — a spurious exit 5 on a claim that actually landed. The file's own header already warns against eventually-consistent GitHub reads elsewhere.\n- **Claim leak on abort** (~line 227): `abort()` releases only `claimedThisRun`. `stopOrSkip(issue, 'unverified', 'unverified', 5, {})` runs *before* the target is pushed onto `claimedThisRun` (line ~405), so a target whose claim genuinely landed (just couldn't be verified back) leaks until TTL expiry with no `bot:in-progress` marker making it visible.\n- **Stale doc comment** (~line 225): `abort()`'s comment still enumerates only exit codes 3 and 4; exit 5 (`unverified`) was added without updating it.\n\n## Deliverables\n- Add a bounded retry/backoff to the post-write read-back verification when `knownTip` is `null`, before declaring exit 5.\n- Release (or otherwise make visible) the `unverified` target's claim on abort, not just `claimedThisRun`.\n- Update `abort()`'s doc comment to include exit 5.\n\n## Acceptance Criteria\n- A simulated eventually-consistent stale read on the contents-API path no longer produces a spurious exit 5 within the retry window.\n- An aborted run with an `unverified` target leaves that claim in a state a later run can detect/reclaim before TTL, not silently leaked.\n",
         "createdAt": "2026-09-12T16:43:52Z",
         "labels": [
@@ -1497,278 +1321,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review. #2019 split `_shared/pipeline-run-dir.md`'s\nResolution-order content out into a new `_shared/run-dir-resolution.md`, and migrated most\nciters, but two gaps remain — both confirmed still present at this shaping pass:\n\n- `plugin/skills/research/verify-mode.md` (confirmed, lines ~124 and ~184) still cites\n  `pipeline-run-dir.md` for content that moved: \"not on the standalone-auto allowlist in\n  `skills/_shared/pipeline-run-dir.md`\" (now `run-dir-resolution.md` step 4) and\n  \"`_shared/pipeline-run-dir.md`'s most-recent-matching-directory fallback\" (now step 2). Every\n  other named citer (`/capture`, `tidy/step-6-auto.md`, `flow/materialize.md`,\n  `_shared/auto-decision-log.md`, `sweep/SKILL.md`) was migrated.\n- `_shared/pipeline-run-dir.md` itself (confirmed, lines ~31, 33) has two internal references\n  that now dangle: \"step 4's standalone-auto-fallback shape\" and \"when the caller is on the\n  standalone-auto allowlist above\" — neither step 4 nor the allowlist lives in this file any\n  more (both moved to `run-dir-resolution.md:14-19`). This file's remaining sections are the CLI\n  reference, Anchoring, and the worktree-local `--run` fallback.\n\n## Deliverables\n\n- Retarget `research/verify-mode.md`'s two citations to `run-dir-resolution.md`.\n- Fix `pipeline-run-dir.md`'s two dangling internal self-references to point at the correct\n  file/step now that the content moved out.\n\n## Acceptance Criteria\n\nNeither file references content by a step number or \"above\"/\"below\" pointer that no longer\nresolves in the cited location.\n\n## Technical Approach\n\nFour targeted text edits, no logic change:\n\n1. `research/verify-mode.md` (~line 124): change \"not on the standalone-auto allowlist in\n   `skills/_shared/pipeline-run-dir.md`\" to cite `_shared/run-dir-resolution.md`'s step 4\n   allowlist instead.\n2. `research/verify-mode.md` (~line 184): change \"`_shared/pipeline-run-dir.md`'s\n   most-recent-matching-directory fallback\" to cite `_shared/run-dir-resolution.md`'s step 2\n   instead.\n3. `pipeline-run-dir.md` (~line 31): change \"step 4's standalone-auto-fallback shape\" to name\n   `run-dir-resolution.md`'s step 4 explicitly, since that step no longer lives in this file.\n4. `pipeline-run-dir.md` (~line 33): change \"when the caller is on the standalone-auto allowlist\n   above\" to point at `run-dir-resolution.md`'s allowlist (also step 4, per edit 3) rather than\n   \"above,\" since the allowlist is no longer in this file at all.\n\n### Key Files\n\n- `plugin/skills/research/verify-mode.md` — retarget two citations (~lines 124, 184)\n- `plugin/skills/_shared/pipeline-run-dir.md` — fix two dangling internal self-references\n  (~lines 31, 33)\n\n## Gotchas\n\n- This is a pure citation-retargeting fix — verify no other file makes the same stale reference\n  by grepping for \"standalone-auto allowlist\" and \"most-recent-matching-directory\" repo-wide\n  before assuming these are the only two gaps #2019's migration left; the record's own Current\n  State only names the two it found, not a guarantee of exhaustiveness.\n- Run this repo's skill-prose conformance tests (`npm test`) after editing, since these are\n  exactly the kind of cross-reference the conformance suites are designed to catch drift in.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review. #2019 split `_shared/pipeline-run-dir.md`'s Resolution-order content out into a new `_shared/run-dir-resolution.md`, and migrated most citers, but two gaps remain:\n\n- `plugin/skills/research/verify-mode.md` (lines ~125, 183) still cites `pipeline-run-dir.md` for content that moved: the standalone-auto allowlist (now `run-dir-resolution.md` step 4) and the most-recent-matching-directory fallback (now step 2). Every other named citer (`/capture`, `tidy/step-6-auto.md`, `flow/materialize.md`, `_shared/auto-decision-log.md`, `sweep/SKILL.md`) was migrated.\n- `_shared/pipeline-run-dir.md` itself (lines ~31, 33) has two internal references that now dangle: \"step 4's standalone-auto-fallback shape\" and \"when the caller is on the standalone-auto allowlist above\" — neither step 4 nor the allowlist lives in this file any more (both moved to `run-dir-resolution.md:14-19`). This file's remaining sections are the CLI reference, Anchoring, and the worktree-local `--run` fallback.\n\n## Deliverables\n- Retarget `research/verify-mode.md`'s two citations to `run-dir-resolution.md`.\n- Fix `pipeline-run-dir.md`'s two dangling internal self-references to point at the correct file/step now that the content moved out.\n\n## Acceptance Criteria\nNeither file references content by a step number or \"above\"/\"below\" pointer that no longer resolves in the cited location.\n",
-        "createdAt": "2026-09-12T16:45:54Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2336,
-        "state": "OPEN",
-        "title": "Dangling citations from #2019's pipeline-run-dir.md split: research/verify-mode.md + the split file's own internal refs",
-        "updatedAt": "2026-09-15T19:40:40Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`shadowPipelineRunDir` (`plugin/bin/lib/hooks/pre-tool-use.js`, the function above `checkPipelineShadowGuard`) denies any Edit/Write/NotebookEdit target or Bash write/mkdir target that would create a run directory under `.claude-tweaks/pipelines/` inside a linked worktree when that run-dir name does not yet exist there. Its only carve-out is `WORK_SPEC_TAIL_RE` (#959), tested against the path tail *below* the run-dir segment; the run-dir name itself (`relParts[0]`) is computed and never inspected. The comment block at the top of the file's exemption section already names `*-tidy-standalone*`/`*-sweep-standalone*` audit files (#1493/#1494) as the gitignore exception, but no code implements a matching carve-out.\n\nThe documented procedure that collides with this: `plugin/skills/tidy/step-7-5-worktree-always.md`'s `pr-first` branch says that before the housekeeping `git add`, the run copies `decisions.md`, `report.md`, and `staged/**` from the `$RUN_ROOT`-anchored run dir into the worktree's own copy of that path and commits the worktree copies, because a worktree cannot `git add` a main-checkout path. `.gitignore` un-ignores exactly those three shapes under `*-tidy-standalone*` and `*-sweep-standalone*` (its #1493/#1494 block), and `_shared/pipeline-run-dir.md`'s Anchoring section describes the same exception. The first `mkdir -p .claude-tweaks/pipelines/{id}-sweep-standalone/staged` inside the scratch worktree is a new run-dir creation to the guard, so it is denied with the \"refusing to create ... a NEW pipeline run directory inside a linked worktree\" message (observed live 2026-09-02 during a `/claude-tweaks:sweep` run at tidy Step 7.5).\n\nNet effect today: under `worktree-always: true` + `pr-first`, a tidy or sweep housekeeping commit can never carry its audit trail. The trail stays real at the main-checkout path (writes there pass `checkWorktreeRequired`'s `.claude-tweaks/pipelines/` prefix exemption) but never lands on the integration branch, contradicting the gitignore and skill text.\n\nExisting coverage: `tests/hooks-pipeline-shadow-guard.test.js` (167 lines) pins the deny shapes plus #959's allow and negative-control cases using `tests/helpers/git-fixtures`' `gitRepo`/`linkedWorktreeOf`; its last negative control asserts a new `decisions.md` in an ordinary run dir is still denied, which must keep holding for non-standalone names.\n\n## Deliverables\n\n- [ ] Add a second, name-keyed carve-out to `shadowPipelineRunDir`: when `runDirName` matches a `STANDALONE_AUDIT_RUN_RE` (`*-tidy-standalone*` or `*-sweep-standalone*`, the same two globs `.gitignore` un-ignores) **and** the tail matches a `STANDALONE_AUDIT_TAIL_RE` covering exactly `decisions.md`, `report.md`, `staged`, or `staged/{anything}` (directory form for `mkdir -p`, file form for the Write/heredoc/`cp` target), return `null` before the existence check — mirroring how `WORK_SPEC_TAIL_RE` is applied. Both regexes sit beside `WORK_SPEC_TAIL_RE` with a comment block of the same shape citing #1493/#1494, `.gitignore`'s block, and `step-7-5-worktree-always.md`'s mirror paragraph.\n- [ ] Keep the deny unchanged for everything else: an empty tail (bare `mkdir` of the run dir itself is still denied unless the tail is one of the three), any other file inside a standalone run dir (`config.yml`, `events.jsonl`, `context/**`, `run-state.json`), a standalone-looking name nested below `spec-*/`, and every non-standalone run-dir name. The deny message's `resolve-run-dir --create` pointer stays as is.\n- [ ] Extend `tests/hooks-pipeline-shadow-guard.test.js` with one block sized like the #959 block: allow cases for `mkdir -p {id}-sweep-standalone/staged`, `mkdir -p {id}-tidy-standalone/staged`, a Write of `{id}-sweep-standalone/decisions.md`, a `cp` of `report.md`, and a Write of `staged/tidy-close-issue-1.md`; negative controls for `{id}-sweep-standalone/config.yml`, `{id}-sweep-standalone/context/records.json`, and `decisions.md` under a plain `{id}-record-42` name (the existing last test already covers this last shape; keep it and add the standalone-adjacent ones).\n- [ ] Update the two prose sites that describe the guard's exemptions so the new carve-out is stated once: the code comment (above), and `_shared/pipeline-run-dir.md`'s Anchoring section sentence that names `work/{n}-spec.md` as \"the exception\" — it now has a second, tidy/sweep-only one. `docs/hooks.md` gets one line if it enumerates the shadow guard's carve-outs (check before editing; do not add a section).\n\n## Acceptance Criteria\n\n1. In a linked worktree fixture, `mkdir -p .claude-tweaks/pipelines/2026-01-01T000000-sweep-standalone/staged` and the `-tidy-standalone` equivalent are allowed by `checkPipelineShadowGuard` when the run dir does not yet exist in the worktree; a Write of `decisions.md` and a `cp` of `report.md` at that run dir's top level are allowed; a Write under `staged/` is allowed.\n2. The same fixture still denies: a new non-standalone run dir of any shape, `config.yml`/`events.jsonl`/`context/**`/`run-state.json` inside a not-yet-existing standalone run dir, and a standalone-named directory nested under `spec-*/`.\n3. Every pre-existing test in `tests/hooks-pipeline-shadow-guard.test.js` passes unchanged, including the `decisions.md`-in-an-ordinary-run-dir negative control.\n4. `npm test` green.\n5. `tidy/step-7-5-worktree-always.md`'s mirror-then-commit paragraph completes end-to-end in a worktree under `worktree-always: true` + `pr-first` without a guard denial, demonstrated once in the PR description by the exact `mkdir -p` and `cp` commands and the hook's allow output.\n6. The comment beside the new regexes and `_shared/pipeline-run-dir.md`'s Anchoring section both name the carve-out, and no third file restates it.\n\n## Technical Approach\n\nA two-regex, name-plus-tail check inserted right after `WORK_SPEC_TAIL_RE.test(tail)` in `shadowPipelineRunDir`. Keying on the run-dir *name* is new for this guard; keep the name regex anchored (`/-(?:tidy|sweep)-standalone/`) so a `spec-{slug}` nesting or an `archive/` parent cannot match (the `.gitignore` block is explicitly top-level-only, \"never spec-*/-nested\"). Use `path.sep`-agnostic character classes the way `WORK_SPEC_TAIL_RE` does. Cross-check the prior-art dimensions the #959 carve-out established (directory form vs file form, `cp` shape, nested negative control) and cover each in the new tests. No change to `checkWorktreeRequired` — the main-checkout writes already pass its prefix exemption.\n\n### Key Files\n\n- `plugin/bin/lib/hooks/pre-tool-use.js` — `STANDALONE_AUDIT_RUN_RE` + `STANDALONE_AUDIT_TAIL_RE` beside `WORK_SPEC_TAIL_RE`; second early-return in `shadowPipelineRunDir`; comment block\n- `tests/hooks-pipeline-shadow-guard.test.js` — new allow and negative-control block after the #959 block\n- `plugin/skills/_shared/pipeline-run-dir.md` — Anchoring section: name the second exception\n- `docs/hooks.md` — one line only if it enumerates the shadow guard's carve-outs\n\n## Gotchas\n\n- The guard runs unconditionally (not gated on `worktree-always`), so the new carve-out also applies on projects without the policy; that is correct — the `.gitignore` exception is not policy-gated either.\n- Order matters: return `null` for the carve-out before the `fs.statSync` existence check, exactly like #959, or the first `mkdir -p` of the run dir still fails because the run dir does not exist yet.\n- `mkdirTargets`/`fileWriteTargets` (Bash parsing) feed the candidates; `cp` is already a recognised write shape (existing test), so no parser change is needed.\n- Sweep's own run dir is minted by `/claude-tweaks:sweep` Step 0 and tidy runs inside it, so the `-sweep-standalone` name is the one a sweep-driven tidy hits; both names must be covered.\n- A worktree copy of `decisions.md` diverges from `$RUN_ROOT`'s the moment the run logs another line; the skill text already says `$RUN_ROOT` stays authoritative until merge. Do not \"fix\" that here.\n\n## Original request\n\n**Related:** none\n\n## Current State\n\n`checkPipelineShadowGuard`/`shadowPipelineRunDir` in `plugin/bin/lib/hooks/pre-tool-use.js` denies\nany Edit/Write/NotebookEdit/Bash write or mkdir that would create a NEW top-level directory under\n`.claude-tweaks/pipelines/` inside a linked worktree — intended to stop a worktree-local shadow of\npipeline run state (`[IL-127]`). The only carve-out implemented is `WORK_SPEC_TAIL_RE` (#959),\nwhich matches `work[/{n}-spec.md]` (or `spec-{slug}/work[/{n}-spec.md]`) tails only.\n\n`.gitignore` (lines 18-30) and `_shared/pipeline-run-dir.md`'s Anchoring section (plus\n`tidy/SKILL.md` Step 7.5) document a second, separate exemption for `*-tidy-standalone*` and\n`*-sweep-standalone*` run directories: under `worktree-always: true` + `integration-model:\npr-first`, a worktree-isolated tidy/sweep run is supposed to mirror that run's `decisions.md`,\n`report.md`, and `staged/**` into the worktree's own copy of the run-dir path, then `git add`+\ncommit them there (#1493/#1494) — those specific paths are the ones `.gitignore` un-ignores.\n\n`shadowPipelineRunDir` has no code path implementing #1493/#1494 at all — it only checks the tail\nagainst `WORK_SPEC_TAIL_RE`. Reproduced live on 2026-09-02 during a `/claude-tweaks:sweep` run:\ninside a worktree at Step 7.5, `mkdir -p .claude-tweaks/pipelines/{sweep-run-id}/staged` (following\nthe documented mirror-then-commit procedure verbatim) was denied with \"refusing to create ... a NEW\npipeline run directory inside a linked worktree\" — indistinguishable from a genuine shadow attempt,\nbecause the guard never inspects the run-dir's own NAME, only the tail beneath it.\n\nNet effect: a worktree-run tidy/sweep housekeeping commit can never land. The audit trail\n(decisions.md, staged proposals) stays real and readable at the main-checkout path — writes there\nare separately exempted by `checkWorktreeRequired`'s own `.claude-tweaks/pipelines/` prefix\nexemption — but is permanently uncommitted, contradicting the documented and gitignore-encoded\ndesign.\n\n## Deliverables\n\n- Extend `shadowPipelineRunDir` (or add a sibling check alongside `WORK_SPEC_TAIL_RE`) so a\n  first-creation of `decisions.md`, `report.md`, or anything under `staged/` is also let through\n  when the run-dir's top-level name matches `*-tidy-standalone*` or `*-sweep-standalone*` — mirror\n  the existing carve-out's narrowness: only those specific paths, nothing else in the run dir, and\n  never a match that isn't a first-creation of exactly one of those.\n- Keep the deny message's `resolve-run-dir --create` pointer accurate for every path this new\n  carve-out does NOT cover (i.e. it should still fire for a genuinely new run-dir name, or for any\n  other file inside a `*-tidy-standalone*`/`*-sweep-standalone*` run dir besides the three\n  exempted paths).\n- Update the code comment block above `WORK_SPEC_TAIL_RE` (or add a sibling comment) to document\n  the new regex the same way #959's is documented, so a future reader doesn't rediscover this gap.\n\n## Acceptance Criteria\n\n- A worktree-isolated session under `worktree-always: true` can successfully `mkdir -p\n  .claude-tweaks/pipelines/{id}-tidy-standalone/staged` and `.claude-tweaks/pipelines/{id}-sweep-standalone/staged`\n  for a run-dir name that does not yet exist in that worktree, and can write `decisions.md`/\n  `report.md` at that run dir's top level — none of these are denied by `checkPipelineShadowGuard`.\n- The guard still denies: (a) any other new pipeline run-dir name/shape inside a worktree, (b) any\n  file under a `*-tidy-standalone*`/`*-sweep-standalone*` run dir besides `decisions.md`,\n  `report.md`, and `staged/**`.\n- A new `node --test` case in the existing pre-tool-use hook test suite covers both the allow and\n  the still-denied shapes above.\n- `tidy/SKILL.md` Step 7.5's documented worktree-mirror-then-commit procedure for a\n  `*-tidy-standalone*`/`*-sweep-standalone*` run completes end-to-end without a guard denial.\n\n",
-        "createdAt": "2026-09-02T08:11:43Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1778,
-        "state": "OPEN",
-        "title": "Pipeline-shadow guard has no #1493/#1494 carve-out for tidy/sweep-standalone run-dir mirroring",
-        "updatedAt": "2026-09-15T19:40:42Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: backend\n\n## Current State\n`captureDebugPayload` (`plugin/bin/lib/hooks/pre-tool-use.js:1633`) is env-gated (`CT_HOOKS_DEBUG_CAPTURE`) diagnostic instrumentation wired directly into `run()` — the general hook dispatcher invoked on every covered tool call — added by #1501 to chase a repro-resistant #989 investigation. #1501's own investigation found the actual cause without it (a fresh worktree's `@{u}` inherited `origin/main`), and #1860/PR #1874 (merged 2026-09-05) fixed `hasNoUpstreamYet` for that case with regression tests covering the inherited-upstream shape. The harness gap the instrumentation was added to diagnose is closed at the test level. Nothing in the repo reads the capture file, and no other open record cites `CT_HOOKS_DEBUG_CAPTURE`. A maintainer has decided (this record's own resolution, 2026-09-13) to remove the instrumentation rather than keep it as permanent tooling.\n\n## Deliverables\n- Remove `captureDebugPayload(ctx)` (function definition, its header comment block, and its call site in `run()`) from `plugin/bin/lib/hooks/pre-tool-use.js`.\n- Remove the three `CT_HOOKS_DEBUG_CAPTURE` tests and their preceding comment block from `tests/hooks-pre-tool-use.test.js`.\n\n## Acceptance Criteria\n- [ ] `captureDebugPayload`'s function definition, its header comment (the `#1501: env-gated debug capture...` block), and its `captureDebugPayload(ctx);` call inside `run()` no longer exist in `plugin/bin/lib/hooks/pre-tool-use.js`.\n- [ ] The three `CT_HOOKS_DEBUG_CAPTURE` tests (`unset by default, no file is written`; `when set, appends one JSON line per call...`; `an unwritable target never breaks the real gate call`) and their preceding `#1501` comment no longer exist in `tests/hooks-pre-tool-use.test.js`.\n- [ ] `grep -rn \"captureDebugPayload\\|CT_HOOKS_DEBUG_CAPTURE\" plugin/ tests/` returns no results.\n- [ ] Full `npm test` passes.\n\n## Technical Approach\nDelete the `captureDebugPayload` function (`plugin/bin/lib/hooks/pre-tool-use.js`, currently ~lines 1621-1646 including its header comment) and its call site inside `run()` (currently the `captureDebugPayload(ctx);` statement at the top of `run()`, ~line 1649) — `run()`'s remaining body is unaffected; it already builds `indeterminateTargets`/`warnings` and calls `runInner` immediately after.\n\nDelete the corresponding test block in `tests/hooks-pre-tool-use.test.js` (currently ~lines 1127-1176: the `#1501` comment plus all three `CT_HOOKS_DEBUG_CAPTURE` tests) — the surrounding tests (the preceding block and the following `#1967` git-stash test) are unaffected and need no renumbering.\n\n### Key Files\n- `plugin/bin/lib/hooks/pre-tool-use.js` — remove `captureDebugPayload` function, its header comment, and its call in `run()`\n- `tests/hooks-pre-tool-use.test.js` — remove the three `CT_HOOKS_DEBUG_CAPTURE` tests and their preceding comment\n\n## Gotchas\n- `run()` calls `captureDebugPayload(ctx)` unconditionally as its first statement — confirmed only one call site and one definition exist in the repo (`grep -rn \"captureDebugPayload\\|CT_HOOKS_DEBUG_CAPTURE\"` against `plugin/bin/lib/hooks/pre-tool-use.js` and `tests/hooks-pre-tool-use.test.js`) before removing either.\n- Pure removal with no behavior change for any caller — `CT_HOOKS_DEBUG_CAPTURE` was already a no-op unless the env var was explicitly set for a deliberate capture session, so no production behavior depends on it.\n\n## Original request\n\npre-tool-use.js: captureDebugPayload is permanent scaffolding in the production hook dispatcher\n\n## Current State\n`captureDebugPayload` (`plugin/bin/lib/hooks/pre-tool-use.js`, ~line 1409) — permanent, env-gated (`CT_HOOKS_DEBUG_CAPTURE`) diagnostic instrumentation added to chase one repro-resistant #989 bug — is wired directly into `run()`, the general hook dispatcher invoked on every covered tool call, rather than the actual ctx-field gap (between synthetic test payloads and live invocations) being closed in the test harness. Low runtime cost when unset, but sets a precedent for future \"repro doesn't match\" investigations to keep accumulating env-gated capture hooks in the production dispatcher rather than fixing the harness gap that necessitated it.\n\n## Deliverables\nEither (a) close the actual ctx-field gap in the test harness so synthetic payloads match live invocations and remove `captureDebugPayload` from `run()`, or (b) make a deliberate call to keep it as permanent tooling and document why in place of the current \"added to chase one bug\" framing.\n\n## Acceptance Criteria\n- [ ] A decision is made and recorded: remove captureDebugPayload (harness gap closed) or keep it deliberately (comment updated to reflect permanent-tooling intent).\n- [ ] Full `npm test` passes.\n\nDefer-reason: needs-human-decision — whether to invest in closing the harness gap vs. keep the instrumentation is a product/maintainer call, not a mechanical fix; found by the pre-v6.112.0 whole-branch review.\n",
-        "createdAt": "2026-08-31T11:30:30Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACq4x75g",
-            "name": "backlog",
-            "description": "Captured idea or deferred work, tracked via /claude-tweaks:capture and /claude-tweaks:tidy",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACq41dsw",
-            "name": "backlog:category-technical",
-            "description": "technical-category backlog item",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          }
-        ],
-        "number": 1739,
-        "state": "OPEN",
-        "title": "pre-tool-use.js: captureDebugPayload is permanent scaffolding in the production hook dispatcher",
-        "updatedAt": "2026-09-15T19:40:45Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
         }
       }
     ],
@@ -1901,6 +1453,96 @@
           "risk": "low",
           "size": "low",
           "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\n\n**Related:** #2401, #2402\n\n## Current State\n\nSplit out of #1853's Deliverable 5. While building #1853 (root-privileged `npm test` failures), three of the sixteen originally-reported failures were confirmed **not** permission-related and **not reproducible on this checkout as a normal user** (20/20 across the three files, run clean):\n\n- `tests/impeccable-plugin-contract.test.js` — pins the installed Impeccable plugin's version; fails in a sandbox whose plugin cache carries a different (or absent) version than this checkout expects.\n- `tests/shaping-mode-needs-removal.test.js` — whole-file failure, cause not reproduced locally.\n- `tests/tidy-needs-worklist-rule.test.js` — whole-file failure, cause not reproduced locally.\n\nReproduction condition: **sandbox only — passes locally.** This record does not claim to fix them; it exists to track the gap once #1853's permission-simulation skips land (so a root sandbox's `npm test` can go fully green there per #2010).\n\n## Deliverables\n\n- [ ] Reproduce the `tests/impeccable-plugin-contract.test.js` failure in a sandbox with a differently-versioned or absent Impeccable plugin cache; determine whether the pin should read the installed version dynamically or the sandbox's plugin-provisioning step needs a fix.\n- [ ] Reproduce `tests/shaping-mode-needs-removal.test.js` and `tests/tidy-needs-worklist-rule.test.js`'s whole-file failures in the same sandbox shape; identify the actual cause (environment-dependent fixture path, missing plugin cache asset, or similar) before proposing a fix.\n\n## Acceptance Criteria\n\n1. Each of the three tests' sandbox failure is reproduced (not just cited) and its root cause identified.\n2. A fix or an explicit environment-provisioning follow-up is proposed for each.\n3. `npm test` as a normal user on this checkout stays green throughout.\n\n## Technical Approach\n\nNeeds an actual sandbox (root-privileged, or a plugin cache provisioned with a different/absent Impeccable version) to reproduce — not reproducible from this checkout alone. Once reproduced, `tests/impeccable-plugin-contract.test.js`'s fix path likely means reading the installed plugin version dynamically (rather than a hardcoded pin) or fixing the sandbox's own plugin-provisioning step; the two whole-file failures need their actual cause identified before a fix direction can be proposed at all.\n\n### Key Files\n\n- `tests/impeccable-plugin-contract.test.js` — version-pin failure in a differently-provisioned sandbox\n- `tests/shaping-mode-needs-removal.test.js` — whole-file failure, cause unknown\n- `tests/tidy-needs-worklist-rule.test.js` — whole-file failure, cause unknown\n\n## Gotchas\n\n- Do not conflate this with #1853's permission-simulation skips — these three failures are confirmed non-permission-related; #1853 explicitly declines to fix them.\n- Needs an actual sandbox (root-privileged or differently-provisioned plugin cache) to reproduce; this is why it is filed separately rather than folded into #1853's build.\n\nDefer-reason: blocked-external\n\n## Original request\n\nnpm test: 3 sandbox-only failures split out of #1853 (Impeccable pin, 2 whole-file)\n\nSurface: infra\n\n## Current State\n\nSplit out of #1853's Deliverable 5. While building #1853 (root-privileged `npm test` failures), three of the sixteen originally-reported failures were confirmed **not** permission-related and **not reproducible on this checkout as a normal user** (20/20 across the three files, run clean):\n\n- `tests/impeccable-plugin-contract.test.js` — pins the installed Impeccable plugin's version; fails in a sandbox whose plugin cache carries a different (or absent) version than this checkout expects.\n- `tests/shaping-mode-needs-removal.test.js` — whole-file failure, cause not reproduced locally.\n- `tests/tidy-needs-worklist-rule.test.js` — whole-file failure, cause not reproduced locally.\n\nReproduction condition: **sandbox only — passes locally.** This record does not claim to fix them; it exists to track the gap once #1853's permission-simulation skips land (so a root sandbox's `npm test` can go fully green there per #2010).\n\n## Deliverables\n\n- [ ] Reproduce the `tests/impeccable-plugin-contract.test.js` failure in a sandbox with a differently-versioned or absent Impeccable plugin cache; determine whether the pin should read the installed version dynamically or the sandbox's plugin-provisioning step needs a fix.\n- [ ] Reproduce `tests/shaping-mode-needs-removal.test.js` and `tests/tidy-needs-worklist-rule.test.js`'s whole-file failures in the same sandbox shape; identify the actual cause (environment-dependent fixture path, missing plugin cache asset, or similar) before proposing a fix.\n\n## Acceptance Criteria\n\n1. Each of the three tests' sandbox failure is reproduced (not just cited) and its root cause identified.\n2. A fix or an explicit environment-provisioning follow-up is proposed for each.\n3. `npm test` as a normal user on this checkout stays green throughout.\n\n## Gotchas\n\n- Do not conflate this with #1853's permission-simulation skips — these three failures are confirmed non-permission-related; #1853 explicitly declines to fix them.\n- Needs an actual sandbox (root-privileged or differently-provisioned plugin cache) to reproduce; this is why it is filed separately rather than folded into #1853's build.\n\nDefer-reason: blocked-external\n\nFiled via /claude-tweaks:capture during #1853's build (headless dispatch).\n",
+        "createdAt": "2026-09-14T13:41:36Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "BFDADC"
+          }
+        ],
+        "number": 2436,
+        "state": "OPEN",
+        "title": "npm test: 3 sandbox-only failures split out of #1853 (Impeccable pin, 2 whole-file)",
+        "updatedAt": "2026-09-15T19:40:32Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
@@ -2090,8 +1732,102 @@
         }
       },
       {
-        "body": "Surface: infra\n\n**Related:** #2401, #2402\n\n## Current State\n\nSplit out of #1853's Deliverable 5. While building #1853 (root-privileged `npm test` failures), three of the sixteen originally-reported failures were confirmed **not** permission-related and **not reproducible on this checkout as a normal user** (20/20 across the three files, run clean):\n\n- `tests/impeccable-plugin-contract.test.js` — pins the installed Impeccable plugin's version; fails in a sandbox whose plugin cache carries a different (or absent) version than this checkout expects.\n- `tests/shaping-mode-needs-removal.test.js` — whole-file failure, cause not reproduced locally.\n- `tests/tidy-needs-worklist-rule.test.js` — whole-file failure, cause not reproduced locally.\n\nReproduction condition: **sandbox only — passes locally.** This record does not claim to fix them; it exists to track the gap once #1853's permission-simulation skips land (so a root sandbox's `npm test` can go fully green there per #2010).\n\n## Deliverables\n\n- [ ] Reproduce the `tests/impeccable-plugin-contract.test.js` failure in a sandbox with a differently-versioned or absent Impeccable plugin cache; determine whether the pin should read the installed version dynamically or the sandbox's plugin-provisioning step needs a fix.\n- [ ] Reproduce `tests/shaping-mode-needs-removal.test.js` and `tests/tidy-needs-worklist-rule.test.js`'s whole-file failures in the same sandbox shape; identify the actual cause (environment-dependent fixture path, missing plugin cache asset, or similar) before proposing a fix.\n\n## Acceptance Criteria\n\n1. Each of the three tests' sandbox failure is reproduced (not just cited) and its root cause identified.\n2. A fix or an explicit environment-provisioning follow-up is proposed for each.\n3. `npm test` as a normal user on this checkout stays green throughout.\n\n## Technical Approach\n\nNeeds an actual sandbox (root-privileged, or a plugin cache provisioned with a different/absent Impeccable version) to reproduce — not reproducible from this checkout alone. Once reproduced, `tests/impeccable-plugin-contract.test.js`'s fix path likely means reading the installed plugin version dynamically (rather than a hardcoded pin) or fixing the sandbox's own plugin-provisioning step; the two whole-file failures need their actual cause identified before a fix direction can be proposed at all.\n\n### Key Files\n\n- `tests/impeccable-plugin-contract.test.js` — version-pin failure in a differently-provisioned sandbox\n- `tests/shaping-mode-needs-removal.test.js` — whole-file failure, cause unknown\n- `tests/tidy-needs-worklist-rule.test.js` — whole-file failure, cause unknown\n\n## Gotchas\n\n- Do not conflate this with #1853's permission-simulation skips — these three failures are confirmed non-permission-related; #1853 explicitly declines to fix them.\n- Needs an actual sandbox (root-privileged or differently-provisioned plugin cache) to reproduce; this is why it is filed separately rather than folded into #1853's build.\n\nDefer-reason: blocked-external\n\n## Original request\n\nnpm test: 3 sandbox-only failures split out of #1853 (Impeccable pin, 2 whole-file)\n\nSurface: infra\n\n## Current State\n\nSplit out of #1853's Deliverable 5. While building #1853 (root-privileged `npm test` failures), three of the sixteen originally-reported failures were confirmed **not** permission-related and **not reproducible on this checkout as a normal user** (20/20 across the three files, run clean):\n\n- `tests/impeccable-plugin-contract.test.js` — pins the installed Impeccable plugin's version; fails in a sandbox whose plugin cache carries a different (or absent) version than this checkout expects.\n- `tests/shaping-mode-needs-removal.test.js` — whole-file failure, cause not reproduced locally.\n- `tests/tidy-needs-worklist-rule.test.js` — whole-file failure, cause not reproduced locally.\n\nReproduction condition: **sandbox only — passes locally.** This record does not claim to fix them; it exists to track the gap once #1853's permission-simulation skips land (so a root sandbox's `npm test` can go fully green there per #2010).\n\n## Deliverables\n\n- [ ] Reproduce the `tests/impeccable-plugin-contract.test.js` failure in a sandbox with a differently-versioned or absent Impeccable plugin cache; determine whether the pin should read the installed version dynamically or the sandbox's plugin-provisioning step needs a fix.\n- [ ] Reproduce `tests/shaping-mode-needs-removal.test.js` and `tests/tidy-needs-worklist-rule.test.js`'s whole-file failures in the same sandbox shape; identify the actual cause (environment-dependent fixture path, missing plugin cache asset, or similar) before proposing a fix.\n\n## Acceptance Criteria\n\n1. Each of the three tests' sandbox failure is reproduced (not just cited) and its root cause identified.\n2. A fix or an explicit environment-provisioning follow-up is proposed for each.\n3. `npm test` as a normal user on this checkout stays green throughout.\n\n## Gotchas\n\n- Do not conflate this with #1853's permission-simulation skips — these three failures are confirmed non-permission-related; #1853 explicitly declines to fix them.\n- Needs an actual sandbox (root-privileged or differently-provisioned plugin cache) to reproduce; this is why it is filed separately rather than folded into #1853's build.\n\nDefer-reason: blocked-external\n\nFiled via /claude-tweaks:capture during #1853's build (headless dispatch).\n",
-        "createdAt": "2026-09-14T13:41:36Z",
+        "body": "Surface: backend\n\n## Current State\n`captureDebugPayload` (`plugin/bin/lib/hooks/pre-tool-use.js:1633`) is env-gated (`CT_HOOKS_DEBUG_CAPTURE`) diagnostic instrumentation wired directly into `run()` — the general hook dispatcher invoked on every covered tool call — added by #1501 to chase a repro-resistant #989 investigation. #1501's own investigation found the actual cause without it (a fresh worktree's `@{u}` inherited `origin/main`), and #1860/PR #1874 (merged 2026-09-05) fixed `hasNoUpstreamYet` for that case with regression tests covering the inherited-upstream shape. The harness gap the instrumentation was added to diagnose is closed at the test level. Nothing in the repo reads the capture file, and no other open record cites `CT_HOOKS_DEBUG_CAPTURE`. A maintainer has decided (this record's own resolution, 2026-09-13) to remove the instrumentation rather than keep it as permanent tooling.\n\n## Deliverables\n- Remove `captureDebugPayload(ctx)` (function definition, its header comment block, and its call site in `run()`) from `plugin/bin/lib/hooks/pre-tool-use.js`.\n- Remove the three `CT_HOOKS_DEBUG_CAPTURE` tests and their preceding comment block from `tests/hooks-pre-tool-use.test.js`.\n\n## Acceptance Criteria\n- [ ] `captureDebugPayload`'s function definition, its header comment (the `#1501: env-gated debug capture...` block), and its `captureDebugPayload(ctx);` call inside `run()` no longer exist in `plugin/bin/lib/hooks/pre-tool-use.js`.\n- [ ] The three `CT_HOOKS_DEBUG_CAPTURE` tests (`unset by default, no file is written`; `when set, appends one JSON line per call...`; `an unwritable target never breaks the real gate call`) and their preceding `#1501` comment no longer exist in `tests/hooks-pre-tool-use.test.js`.\n- [ ] `grep -rn \"captureDebugPayload\\|CT_HOOKS_DEBUG_CAPTURE\" plugin/ tests/` returns no results.\n- [ ] Full `npm test` passes.\n\n## Technical Approach\nDelete the `captureDebugPayload` function (`plugin/bin/lib/hooks/pre-tool-use.js`, currently ~lines 1621-1646 including its header comment) and its call site inside `run()` (currently the `captureDebugPayload(ctx);` statement at the top of `run()`, ~line 1649) — `run()`'s remaining body is unaffected; it already builds `indeterminateTargets`/`warnings` and calls `runInner` immediately after.\n\nDelete the corresponding test block in `tests/hooks-pre-tool-use.test.js` (currently ~lines 1127-1176: the `#1501` comment plus all three `CT_HOOKS_DEBUG_CAPTURE` tests) — the surrounding tests (the preceding block and the following `#1967` git-stash test) are unaffected and need no renumbering.\n\n### Key Files\n- `plugin/bin/lib/hooks/pre-tool-use.js` — remove `captureDebugPayload` function, its header comment, and its call in `run()`\n- `tests/hooks-pre-tool-use.test.js` — remove the three `CT_HOOKS_DEBUG_CAPTURE` tests and their preceding comment\n\n## Gotchas\n- `run()` calls `captureDebugPayload(ctx)` unconditionally as its first statement — confirmed only one call site and one definition exist in the repo (`grep -rn \"captureDebugPayload\\|CT_HOOKS_DEBUG_CAPTURE\"` against `plugin/bin/lib/hooks/pre-tool-use.js` and `tests/hooks-pre-tool-use.test.js`) before removing either.\n- Pure removal with no behavior change for any caller — `CT_HOOKS_DEBUG_CAPTURE` was already a no-op unless the env var was explicitly set for a deliberate capture session, so no production behavior depends on it.\n\n## Original request\n\npre-tool-use.js: captureDebugPayload is permanent scaffolding in the production hook dispatcher\n\n## Current State\n`captureDebugPayload` (`plugin/bin/lib/hooks/pre-tool-use.js`, ~line 1409) — permanent, env-gated (`CT_HOOKS_DEBUG_CAPTURE`) diagnostic instrumentation added to chase one repro-resistant #989 bug — is wired directly into `run()`, the general hook dispatcher invoked on every covered tool call, rather than the actual ctx-field gap (between synthetic test payloads and live invocations) being closed in the test harness. Low runtime cost when unset, but sets a precedent for future \"repro doesn't match\" investigations to keep accumulating env-gated capture hooks in the production dispatcher rather than fixing the harness gap that necessitated it.\n\n## Deliverables\nEither (a) close the actual ctx-field gap in the test harness so synthetic payloads match live invocations and remove `captureDebugPayload` from `run()`, or (b) make a deliberate call to keep it as permanent tooling and document why in place of the current \"added to chase one bug\" framing.\n\n## Acceptance Criteria\n- [ ] A decision is made and recorded: remove captureDebugPayload (harness gap closed) or keep it deliberately (comment updated to reflect permanent-tooling intent).\n- [ ] Full `npm test` passes.\n\nDefer-reason: needs-human-decision — whether to invest in closing the harness gap vs. keep the instrumentation is a product/maintainer call, not a mechanical fix; found by the pre-v6.112.0 whole-branch review.\n",
+        "createdAt": "2026-08-31T11:30:30Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACq4x75g",
+            "name": "backlog",
+            "description": "Captured idea or deferred work, tracked via /claude-tweaks:capture and /claude-tweaks:tidy",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACq41dsw",
+            "name": "backlog:category-technical",
+            "description": "technical-category backlog item",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Size: medium effort",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "BFDADC"
+          }
+        ],
+        "number": 1739,
+        "state": "OPEN",
+        "title": "pre-tool-use.js: captureDebugPayload is permanent scaffolding in the production hook dispatcher",
+        "updatedAt": "2026-09-15T19:40:45Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      },
+      {
+        "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review. #2019 split `_shared/pipeline-run-dir.md`'s\nResolution-order content out into a new `_shared/run-dir-resolution.md`, and migrated most\nciters, but two gaps remain — both confirmed still present at this shaping pass:\n\n- `plugin/skills/research/verify-mode.md` (confirmed, lines ~124 and ~184) still cites\n  `pipeline-run-dir.md` for content that moved: \"not on the standalone-auto allowlist in\n  `skills/_shared/pipeline-run-dir.md`\" (now `run-dir-resolution.md` step 4) and\n  \"`_shared/pipeline-run-dir.md`'s most-recent-matching-directory fallback\" (now step 2). Every\n  other named citer (`/capture`, `tidy/step-6-auto.md`, `flow/materialize.md`,\n  `_shared/auto-decision-log.md`, `sweep/SKILL.md`) was migrated.\n- `_shared/pipeline-run-dir.md` itself (confirmed, lines ~31, 33) has two internal references\n  that now dangle: \"step 4's standalone-auto-fallback shape\" and \"when the caller is on the\n  standalone-auto allowlist above\" — neither step 4 nor the allowlist lives in this file any\n  more (both moved to `run-dir-resolution.md:14-19`). This file's remaining sections are the CLI\n  reference, Anchoring, and the worktree-local `--run` fallback.\n\n## Deliverables\n\n- Retarget `research/verify-mode.md`'s two citations to `run-dir-resolution.md`.\n- Fix `pipeline-run-dir.md`'s two dangling internal self-references to point at the correct\n  file/step now that the content moved out.\n\n## Acceptance Criteria\n\nNeither file references content by a step number or \"above\"/\"below\" pointer that no longer\nresolves in the cited location.\n\n## Technical Approach\n\nFour targeted text edits, no logic change:\n\n1. `research/verify-mode.md` (~line 124): change \"not on the standalone-auto allowlist in\n   `skills/_shared/pipeline-run-dir.md`\" to cite `_shared/run-dir-resolution.md`'s step 4\n   allowlist instead.\n2. `research/verify-mode.md` (~line 184): change \"`_shared/pipeline-run-dir.md`'s\n   most-recent-matching-directory fallback\" to cite `_shared/run-dir-resolution.md`'s step 2\n   instead.\n3. `pipeline-run-dir.md` (~line 31): change \"step 4's standalone-auto-fallback shape\" to name\n   `run-dir-resolution.md`'s step 4 explicitly, since that step no longer lives in this file.\n4. `pipeline-run-dir.md` (~line 33): change \"when the caller is on the standalone-auto allowlist\n   above\" to point at `run-dir-resolution.md`'s allowlist (also step 4, per edit 3) rather than\n   \"above,\" since the allowlist is no longer in this file at all.\n\n### Key Files\n\n- `plugin/skills/research/verify-mode.md` — retarget two citations (~lines 124, 184)\n- `plugin/skills/_shared/pipeline-run-dir.md` — fix two dangling internal self-references\n  (~lines 31, 33)\n\n## Gotchas\n\n- This is a pure citation-retargeting fix — verify no other file makes the same stale reference\n  by grepping for \"standalone-auto allowlist\" and \"most-recent-matching-directory\" repo-wide\n  before assuming these are the only two gaps #2019's migration left; the record's own Current\n  State only names the two it found, not a guarantee of exhaustiveness.\n- Run this repo's skill-prose conformance tests (`npm test`) after editing, since these are\n  exactly the kind of cross-reference the conformance suites are designed to catch drift in.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review. #2019 split `_shared/pipeline-run-dir.md`'s Resolution-order content out into a new `_shared/run-dir-resolution.md`, and migrated most citers, but two gaps remain:\n\n- `plugin/skills/research/verify-mode.md` (lines ~125, 183) still cites `pipeline-run-dir.md` for content that moved: the standalone-auto allowlist (now `run-dir-resolution.md` step 4) and the most-recent-matching-directory fallback (now step 2). Every other named citer (`/capture`, `tidy/step-6-auto.md`, `flow/materialize.md`, `_shared/auto-decision-log.md`, `sweep/SKILL.md`) was migrated.\n- `_shared/pipeline-run-dir.md` itself (lines ~31, 33) has two internal references that now dangle: \"step 4's standalone-auto-fallback shape\" and \"when the caller is on the standalone-auto allowlist above\" — neither step 4 nor the allowlist lives in this file any more (both moved to `run-dir-resolution.md:14-19`). This file's remaining sections are the CLI reference, Anchoring, and the worktree-local `--run` fallback.\n\n## Deliverables\n- Retarget `research/verify-mode.md`'s two citations to `run-dir-resolution.md`.\n- Fix `pipeline-run-dir.md`'s two dangling internal self-references to point at the correct file/step now that the content moved out.\n\n## Acceptance Criteria\nNeither file references content by a step number or \"above\"/\"below\" pointer that no longer resolves in the cited location.\n",
+        "createdAt": "2026-09-12T16:45:54Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -2110,12 +1846,6 @@
             "name": "size:low",
             "description": "Scoring: small, agent-sized change",
             "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACry2nbg",
@@ -2146,14 +1876,20 @@
             "name": "ceremony:fast-lane",
             "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
             "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
           }
         ],
-        "number": 2436,
+        "number": 2336,
         "state": "OPEN",
-        "title": "npm test: 3 sandbox-only failures split out of #1853 (Impeccable pin, 2 whole-file)",
-        "updatedAt": "2026-09-15T19:40:32Z",
+        "title": "Dangling citations from #2019's pipeline-run-dir.md split: research/verify-mode.md + the split file's own internal refs",
+        "updatedAt": "2026-09-15T19:40:40Z",
         "facets": {
-          "origin": "capture",
+          "origin": null,
           "risk": "low",
           "size": "low",
           "ceremony": "fast-lane",
@@ -2174,7 +1910,7 @@
           "acceptance": null,
           "isParentIssue": false,
           "notPlanned": false,
-          "shapedHeadless": false
+          "shapedHeadless": true
         }
       }
     ]
@@ -2199,12 +1935,6 @@
       ]
     },
     {
-      "number": 2266,
-      "blockedBy": [
-        2265
-      ]
-    },
-    {
       "number": 2259,
       "blockedBy": [
         2257
@@ -2215,7 +1945,8 @@
     {
       "records": [
         1350,
-        2436
+        1739,
+        2336
       ]
     }
   ]
