@@ -56,8 +56,12 @@ function residueFingerprint(reason, targetPath) {
   return fingerprintFromBasis('reconcile-residue', basis);
 }
 
+function markerFor(reason, targetPath) {
+  return `<!-- fingerprint: ${residueFingerprint(reason, targetPath)} -->`;
+}
+
 function structurallyStuckMarker() {
-  return `<!-- fingerprint: ${residueFingerprint('structurally-stuck', '')} -->`;
+  return markerFor('structurally-stuck', '');
 }
 
 // The consolidated record's body carries its own paths list between two
@@ -107,7 +111,7 @@ function findResidueDuplicate({ repo, marker, runner = defaultRunner }) {
 }
 
 function residueBody({ reason, targetPath, count, firstFailedAt, lastError }) {
-  const marker = `<!-- fingerprint: ${residueFingerprint(reason, targetPath)} -->`;
+  const marker = markerFor(reason, targetPath);
   const lines = [
     `Reconcile has failed \`${reason}\` on this path for ${count} consecutive passes` +
       (firstFailedAt ? ` (first observed ${new Date(firstFailedAt).toISOString()})` : '') + '.',
@@ -314,7 +318,7 @@ function resolveResidue({
   repo, reason, targetPath, runner = defaultRunner,
 }) {
   if (reason === 'structurally-stuck') return resolveStructurallyStuck({ repo, targetPath, runner });
-  const marker = `<!-- fingerprint: ${residueFingerprint(reason, targetPath)} -->`;
+  const marker = markerFor(reason, targetPath);
   return findHitForResolve({
     repo,
     marker,
