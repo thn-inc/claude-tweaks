@@ -104,6 +104,21 @@ retry once before treating it as a real failure), and it rejects an output path
 containing a space — keep screenshot paths space-free (the kebab-case
 session/description convention above already does this).
 
+**`os error 35` (EAGAIN) can outlive the retry.** The transient failure above is
+usually a single missed capture, but it has been observed to leave the daemon
+session's screenshot pipeline permanently degraded: once a session hits `os error
+35`, every later `screenshot`/`screenshot --annotate` call in that same daemon
+session can exit `0` while returning a dead/stale frame — the retry-once guidance
+does not recover this case, because the call is no longer failing, it is silently
+returning wrong data. There is no in-CLI recovery for an already-degraded session
+short of `agent-browser doctor` (restarts the daemon; ends every open session) or
+closing this session and opening a fresh one. A consumer skill that judges
+anything from a captured frame (not just the accessibility snapshot) must treat
+every frame from a session that has hit this error as unreliable for the rest of
+that session's life, not just retry the one failed call —
+`plugin/agents/qa-agent.md`'s Screenshot Capture Degradation section implements
+this for `/claude-tweaks:test qa`'s execution path.
+
 `click` (both the ref form and the locator-based `find ... click` form) does
 **not** auto-scroll the target into view — a below-the-fold click reports success
 but lands nowhere. Pin a tall viewport (`set viewport <width> <height>`, below) so
@@ -113,6 +128,25 @@ this as a `1440x1600` default whenever a story's `**Viewport:**` is unset, so th
 note is enforced for `/claude-tweaks:test qa`'s own execution path, not advisory
 only — a caller driving agent-browser outside that path still needs to set its own
 viewport explicitly.
+
+**A reported-success click is not proof the target's handler ran.** Both click
+forms have been observed to report success on certain elements (repro: small
+icon-sized buttons inside table rows) while the element's own registered click
+handler never fires — no network request, no state change — even though the same
+element responds correctly to a CSS-selector-based click, keyboard activation
+(focus then `press "Enter"`), or a raw coordinate click. The locator resolved the
+right element; the synthetic click dispatch itself was not equivalent to a
+trusted user click for it. This is narrower than the below-the-fold case above
+(which agent-browser reports honestly as "clicked, wrong place") — here the
+command's own success signal cannot be trusted at all for the affected elements.
+There is no reliable client-side workaround for the affected elements from this
+plugin's usage surface (no `find ... select`-style fallback exists for it, and no
+vendored source is available in this repo to patch the dispatch path itself) —
+a story step whose `verify` immediately after such a click finds no expected
+effect should not be assumed to mean the *app* is broken; `plugin/agents/qa-agent.md`'s
+evidence-precedence rules call this out explicitly in its failure reporting so a
+human triaging a QA report can distinguish this known tooling gap from a real
+regression.
 
 ## Viewport and device
 

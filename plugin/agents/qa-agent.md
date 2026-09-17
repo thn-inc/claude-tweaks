@@ -21,6 +21,7 @@ The full agent-browser operation vocabulary lives in `skills/browse/agent-browse
 
 - **SCREENSHOTS_DIR:** base directory for this story's screenshots, passed via the prompt's `**SCREENSHOT_PATH**` field. Each step writes `00_<step-name>.png`, `01_<step-name>.png`, etc.
 - **TRACES_BASE:** base directory for failure traces (default `.claude-tweaks/artifacts/traces/`). Tracing is record-then-stop: recording starts right after `open` (Setup Step c), and on any step failure the trace is saved to `{TRACES_BASE}/<story-id>/<ISO-timestamp>.zip` via `trace stop` BEFORE closing the session. A trace cannot be captured retroactively — if recording never started, there is nothing to save.
+- **screenshots_degraded:** boolean, initially `false`, maintained across all steps of one story (same lifecycle as `caveats`/`recovered_locators` below). Set per the Screenshot Capture Degradation section (Section 4). Once `true`, it stays `true` for the rest of this story — the underlying daemon-session defect does not self-heal within a session.
 
 ## Test Isolation
 
@@ -93,7 +94,15 @@ The `open` command in Step 2c already navigated to the story URL. Stories must N
 
 ### 4. Execute Steps Sequentially
 
-Maintain a `caveats` array (initially empty) and a `recovered_locators` array (initially empty) across all steps.
+Maintain a `caveats` array (initially empty), a `recovered_locators` array (initially empty), and `screenshots_degraded` (initially `false`, see Variables above) across all steps.
+
+**Evidence precedence (read before judging any step).** Judge every `verify`/assertion from the accessibility snapshot (`snapshot -i -c` / plain `snapshot`) and other non-visual signals (console output, network/state changes implied by the step) first — these are the authoritative evidence. A screenshot (annotated or raw) is documentation for the human-facing report, not assertion evidence, *unless* the assertion is inherently visual (an image, a canvas-rendered element, styling with no accessible-tree representation) and no non-visual equivalent exists. This matters most once `screenshots_degraded` is `true` (see Screenshot Capture Degradation below): never mark a step FAIL on the grounds that expected content is "not visible in the screenshot" without first checking the assertion against the snapshot/non-visual evidence — a degraded daemon session can silently return the last known-good frame instead of the current one, and judging from it reproduces the false-FAIL failure mode this section exists to close.
+
+**Screenshot Capture Degradation (os error 35 / EAGAIN).** `screenshot`/`screenshot --annotate` can fail with an OS-level `os error 35` under this pinned version (`skills/browse/agent-browser-reference.md`'s existing retry-once guidance covers the single-call case). That guidance does not cover what has also been observed: once a daemon session hits this error, later captures in the *same* session can exit `0` while silently returning a dead/stale frame rather than failing again. After any `screenshot`/`screenshot --annotate` call:
+
+1. If the command's output/stderr contains `os error 35` or `EAGAIN`, retry the same call once immediately.
+2. If the retry also fails with the same signature, set `screenshots_degraded = true` and add exactly one caveat the first time this happens: `"Screenshot capture degraded (os error 35) at step N — later steps judged from the accessibility snapshot, not from captured frames."`
+3. Do not abort the story on this alone — continue executing remaining steps per the Evidence precedence rule above. Still attach whatever frame the capture call returns (even the stale one) to the report for human reference; do not suppress it, just do not use it as assertion evidence.
 
 For each step in the steps array:
 
@@ -122,14 +131,17 @@ For each step in the steps array:
    ```
    Search the snapshot for an element matching the locator's intent (role + accessible name, testid, exact text). If you find an unambiguous match with a different but semantically equivalent locator (e.g., the `name` shifted from "Sign in" to "Sign In"), record the recovery in `recovered_locators` and retry the action once — either via `find` with the corrected locator, or by acting on the matching `@eN` ref from this snapshot (`click @eN`, `fill @eN "<value>"`; refs are session-scoped and regenerate every snapshot — never reuse one across steps). If multiple elements match, do not recover — mark FAIL.
 
-4. If the step has a `verify` field, take a fresh snapshot and evaluate the assertion against the page state.
+4. If the step has a `verify` field, take a fresh snapshot and evaluate the assertion against the page state, per the **Evidence precedence** rule above.
+
+   **Click-with-no-effect caveat:** when this step's `action` is a click (a `find ... click` or a ref-based `click`) and the immediately-following `verify` finds no expected effect despite the click command itself reporting success, this may be `skills/browse/agent-browser-reference.md`'s known synthetic-click dispatch gap rather than a real app defect (confirmed repro: small icon-sized buttons inside table rows — the locator resolves correctly but the registered handler never fires). Add a caveat: `"Step N: click reported success but verify found no effect — possible agent-browser synthetic-click dispatch gap (see skills/browse/agent-browser-reference.md), not necessarily an app defect."` This does not change the verdict — the assertion still evaluates honestly against real page state, and a genuine no-effect is still a real FAIL — it only tells a human triaging the report which root cause to check first.
 
 5. **Take an annotated screenshot** after the action:
    ```
    agent-browser --session <story-id> screenshot --annotate {SCREENSHOT_PATH}/<NN>_<step-name>.png
    ```
+   If this call's output shows the `os error 35`/`EAGAIN` signature, follow **Screenshot Capture Degradation** above before continuing.
 
-6. Mark PASS or FAIL.
+6. Mark PASS or FAIL, per the **Evidence precedence** rule above — never FAIL a step solely because expected content is absent from a screenshot once `screenshots_degraded` is `true`; corroborate against the snapshot/non-visual evidence first.
 
 7. On PASS: run the **Caveat Detection** check below.
 
@@ -150,9 +162,9 @@ Recovery requires **high confidence** — the snapshot match must be unambiguous
 
 **Verify-only steps** (have only a `verify` field, no `action`):
 1. Take a fresh snapshot via `agent-browser --session <story-id> snapshot -i -c`.
-2. Evaluate the assertion against the snapshot.
-3. Take an annotated screenshot.
-4. Mark PASS or FAIL. On FAIL: capture a trace immediately, BEFORE Teardown or Close run (see Section 6 Step 1 — Failure Handling), stop executing remaining steps, mark them SKIPPED, then proceed to Teardown (Section 5) and Close (Section 6 Step 3).
+2. Evaluate the assertion against the snapshot, per the **Evidence precedence** rule above.
+3. Take an annotated screenshot. If this call's output shows the `os error 35`/`EAGAIN` signature, follow **Screenshot Capture Degradation** above before continuing.
+4. Mark PASS or FAIL — never FAIL solely because expected content is absent from a screenshot once `screenshots_degraded` is `true`; corroborate against the snapshot/non-visual evidence first. On FAIL: capture a trace immediately, BEFORE Teardown or Close run (see Section 6 Step 1 — Failure Handling), stop executing remaining steps, mark them SKIPPED, then proceed to Teardown (Section 5) and Close (Section 6 Step 3).
 
 **Caveat Detection (after each PASS step):**
 
@@ -225,8 +237,8 @@ Return the structured report as detailed in the "Report" section below. If `reco
 3. **Execute each step sequentially** (maintain a `caveats` array, initially empty):
    a. Resolve the target via `find` using a semantic locator inferred from the free-text step.
    b. Execute the action via the appropriate `agent-browser` command. Free-text-derived values (the story's narrative/checklist/BDD text) are spliced into double-quoted Bash arguments the same way structured-format `<value>`/`<text>` fields are — apply the escaping rule from "Escaping story-supplied strings" (Structured Format, Section 4 Step 1) before splicing any such string into a command.
-   c. Take an annotated screenshot.
-   d. Evaluate PASS or FAIL.
+   c. Take an annotated screenshot. If this call's output shows the `os error 35`/`EAGAIN` signature, follow Structured Format Section 4's **Screenshot Capture Degradation** procedure before continuing.
+   d. Evaluate PASS or FAIL per Structured Format Section 4's **Evidence precedence** rule — never FAIL solely because expected content is absent from a screenshot once `screenshots_degraded` is `true`.
    e. On PASS: run the Caveat Detection check.
    f. On FAIL: save the trace via `trace stop {TRACES_BASE}/<session>/<timestamp>.zip`, then stop executing. Mark remaining steps SKIPPED. Do NOT close here — Step 4 below is the single close point for both outcomes.
 4. **Close** the session via `agent-browser --session <session> close` — runs unconditionally, whether the story passed or a step 3f failure stopped it early.
