@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-17T17:14:24.670Z",
+  "computedAt": "2026-09-17T17:32:03.991Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -20,7 +20,7 @@
       },
       {
         "number": 2512,
-        "updatedAt": "2026-09-16T23:04:09Z",
+        "updatedAt": "2026-09-17T17:30:46Z",
         "state": "OPEN"
       },
       {
@@ -718,7 +718,7 @@
         "number": 2512,
         "state": "OPEN",
         "title": "9 pre-existing npm test failures unrelated to any single record (base-SHA-ancestor and version-pin preconditions)",
-        "updatedAt": "2026-09-16T23:04:09Z",
+        "updatedAt": "2026-09-17T17:30:46Z",
         "facets": {
           "origin": null,
           "risk": "low",
