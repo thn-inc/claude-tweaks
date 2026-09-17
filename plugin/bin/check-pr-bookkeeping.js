@@ -14,12 +14,14 @@
 //   node bin/check-pr-bookkeeping.js --run <run-dir> [--help]
 //
 // Exit 0 ok (compliant, or nothing to check yet); 2 malformed invocation;
-// 3 run dir missing; 4 bookkeeping precondition violated (HARD-GATE finding
-// -- the caller should stop the pipeline and surface stderr verbatim).
+// 3 run dir missing OR not anchored under the main checkout (a worktree-local
+// shadow -- _shared/pipeline-run-dir.md's Anchoring section, [IL-127]); 4
+// bookkeeping precondition violated (HARD-GATE finding -- the caller should
+// stop the pipeline and surface stderr verbatim).
 'use strict';
 
-const fs = require('fs');
 const { checkPrBookkeepingPrecondition } = require('./lib/pr-bookkeeping/precondition');
+const { resolveTarget } = require('./lib/log-decision/append');
 
 const USAGE = 'usage: check-pr-bookkeeping.js --run <run-dir> [--help]\n';
 
@@ -37,6 +39,7 @@ function parseArgs(argv) {
 
 const realDeps = {
   cwd: () => process.cwd(),
+  mainRoot: undefined,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -46,8 +49,10 @@ function run(argv, deps = realDeps) {
   if (o.error) { deps.stderr(`check-pr-bookkeeping.js: ${o.error}\n${USAGE}`); return 2; }
   if (o.help) { deps.stdout(USAGE); return 0; }
   if (!o.run) { deps.stderr(`check-pr-bookkeeping.js: --run <run-dir> is required\n${USAGE}`); return 2; }
-  if (!fs.existsSync(o.run)) {
-    deps.stderr(`check-pr-bookkeeping.js: run dir does not exist: ${o.run}\n`);
+  const target = resolveTarget({ runDir: o.run, cwd: deps.cwd(), mainRoot: deps.mainRoot });
+  if (!target.ok) {
+    if (target.reason === 'missing') deps.stderr(`check-pr-bookkeeping.js: run dir does not exist: ${o.run}\n`);
+    else deps.stderr(`check-pr-bookkeeping.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
   }
   const result = checkPrBookkeepingPrecondition({ runDir: o.run, cwd: deps.cwd() });
