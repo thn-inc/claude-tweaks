@@ -139,15 +139,18 @@ first has to **locate** that binary, in this order:
    the release's `.sha256` sidecar is missing/empty or the digest doesn't
    match.
 
-**When none of the four resolve** — a download failure, a checksum mismatch,
+**When none of the four resolve** — a download failure (network failure, missing/empty sha256 sidecar, checksum mismatch),
 an unsupported platform with no matching optional-dependency package and no
 downloadable asset, or a network-less/offline environment — the shim writes
-a human-readable message to **stderr** and exits **127** (`no binary for
-{os}-{arch}. Install {package}, set IMPECCABLE_BIN, or download
-impeccable-{os}-{arch} v{version} from {base} into {cache-path}.`; a
-checksum/sidecar failure additionally prepends its own `impeccable:
-{message}` line ahead of that one). **Stdout is always empty in this case**
-— the existing defensive parsing rules above already treat empty/non-JSON
+a human-readable message to **stderr** and exits **127**. Any exception during
+`download()` additionally prepends an `impeccable: {error.message}` line to
+stderr before the main message. The main message is: `no binary for
+{os}-{arch}. Install {package}@{version}, set IMPECCABLE_BIN, or download
+impeccable-{os}-{arch} v{version} from {base} into {cache-path}.` A second
+exit-127 cause also exists: if a binary IS successfully located, `spawnSync`
+can still fail to execute it (e.g., permission denied, corrupted download),
+which triggers the same exit code without the locate-phase error context.
+**Stdout is always empty in both cases** — the existing defensive parsing rules above already treat empty/non-JSON
 stdout as the `malformed` skip (rule 6), so this failure mode already
 degrades safely without any wrapper behavior change; it does not fail the
 gate.

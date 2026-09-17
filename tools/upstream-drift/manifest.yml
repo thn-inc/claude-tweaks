@@ -52,8 +52,8 @@ dependencies:
     # failure path (IMPECCABLE_BIN/HOME/DOWNLOAD_BASE all exhausted) writes a
     # plain-text message to stderr, which this harness cannot express as a
     # passing fixture today. Extending checkOneFixture with a text/substring
-    # assertion mode would make this fixture expressible — filed as a
-    # follow-up backlog record, not folded into this decision-only change.
+    # assertion mode would make this fixture expressible — tracked as #2573,
+    # not folded into this decision-only change.
     fixtures:
       - run: "npx --no-install impeccable detect --json --no-config --no-design-system tests/fixtures/impeccable-cli/warning.html"
         expect:
