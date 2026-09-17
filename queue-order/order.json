@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-17T00:03:06.887Z",
+  "computedAt": "2026-09-17T15:04:46.450Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -355,7 +355,7 @@
       },
       {
         "number": 1798,
-        "updatedAt": "2026-09-16T23:38:50Z",
+        "updatedAt": "2026-09-17T05:12:57Z",
         "state": "OPEN"
       },
       {
@@ -370,7 +370,7 @@
       },
       {
         "number": 1768,
-        "updatedAt": "2026-09-16T23:04:24Z",
+        "updatedAt": "2026-09-17T04:35:14Z",
         "state": "OPEN"
       },
       {
@@ -385,7 +385,7 @@
       },
       {
         "number": 1728,
-        "updatedAt": "2026-09-16T23:04:26Z",
+        "updatedAt": "2026-09-17T00:21:24Z",
         "state": "OPEN"
       },
       {
@@ -395,7 +395,7 @@
       },
       {
         "number": 1460,
-        "updatedAt": "2026-09-16T23:47:30Z",
+        "updatedAt": "2026-09-17T15:00:44Z",
         "state": "OPEN"
       },
       {
@@ -1093,176 +1093,6 @@
         }
       },
       {
-        "body": "Surface: infra\n\n## Current State\n\n`/claude-tweaks:dispatch` parks a group's PR as `pending-review` when it has no `auto:merge` grant, or `assess-agent-autonomy`'s `merge-check` mode declines auto-merge (`dispatch/SKILL.md`'s Auto-merge gate, `dispatch/settle-and-merge.md`). Under `integration-model: pr-first`, this PR is already public and current (`_shared/pr-early-run-lifecycle.md` opened it at run start; every phase exit since has pushed to it) — `dispatch/reporting.md`'s own note on parking states the branch \"never waited on parking to become public in the first place.\"\n\nTwo distinct resumption paths already exist for a **still-active dispatch session**: `dispatch/reporting.md`'s \"resuming a parked run\" (re-invoking the same session to answer its Review Console) and `resume-confirmation.md`'s confirm-before-resume gate. Neither applies to this record's actual gap: a `pending-review` PR that a human reviews and approves **directly on GitHub**, days or weeks after the dispatching session ended, with no live session left to resume. For that case, nothing in the plugin re-verifies the PR's CI is still green (rather than stale from an earlier infrastructure blip), converts a still-draft PR to ready, flags a PR that quietly went from clean to conflicting while parked, or performs the merge (and any deploy) once approval is confirmed — all of it currently done by hand with raw `gh`/`git` commands. `/tidy`'s Step 4.8 (`_shared/github-pr-scan.md`'s `repo-wide` scope) already **surfaces** exactly this class of PR as a `STAGED` finding (report-only, per its documented \"never edits\" posture) — but surfacing is not closing out.\n\n## Deliverables\n\n- A close-out capability for an approved `pending-review` PR, covering at minimum: (1) re-verify CI is currently green (not a stale prior result), (2) convert a still-draft PR to ready-for-review/merge, (3) detect and flag a PR that has gone from mergeable to conflicting since it was parked, (4) merge on confirmed approval, with an optional deploy step where the project has one.\n- A confirmation gate before merge — mirroring `resume-confirmation.md`'s existing \"confirm before resuming\" posture (unconditional at every `autonomy` tier, including `unattended`) — since this closes out a PR with no live session's Review Console already having asked the merge question.\n- Decide where this capability lives: extending `/tidy`'s Step 4.8 `pending-review` surfacing from report-only into an actionable close-out lane (it already does the discovery work), or a new bare-drain-style mode on `/claude-tweaks:dispatch` that re-adopts a `pending-review` group's claim and runs the close-out sequence headlessly. Either integration point reuses existing machinery (`assess-agent-autonomy`'s `merge-check`, `_shared/pr-first-merge.md`'s merge mechanics, the claims protocol for re-adoption) rather than inventing a parallel one — this decision is left to the build step, not prescribed here.\n\n## Acceptance Criteria\n\n- [ ] Given a `pending-review` PR whose CI last ran before an infrastructure outage, the close-out re-runs or re-checks CI before treating it as green.\n- [ ] Given a still-draft `pending-review` PR with human approval, the close-out converts it to ready before merging.\n- [ ] Given a `pending-review` PR that has gone from clean to conflicting while parked, the close-out flags it rather than attempting a merge.\n- [ ] Given a clean, approved, CI-green `pending-review` PR, the close-out merges it (and runs any project deploy step) only after an explicit confirmation gate — never silently, at any `autonomy` tier.\n- [ ] The chosen integration point (extended `/tidy` Step 4.8, or a new `/dispatch` mode) is documented in `docs/plugin-structure.md`'s command reference and, if a new mode, added to `docs/skill-graph.md`'s edges per CLAUDE.md's cross-reference rule.\n- [ ] `npm test` passes.\n\n## Technical Approach\n\nReuse existing machinery rather than building parallel logic: `assess-agent-autonomy`'s `merge-check` mode for the mergeability/CI judgment, `_shared/pr-first-merge.md` for the actual `gh pr merge` mechanics, and the issue-claims protocol (`_shared/issue-claims.md`) to re-adopt a `pending-review` group's original claim (still held, since parking never releases it) rather than starting a fresh one. `resume-confirmation.md`'s existing `AskUserQuestion` shape and Recommended-derivation rule are the direct model for this record's own confirmation gate — read that file before designing a new one, since the two must never disagree on the same PR's state if a human could reach either path for the same PR. Start the \"where does this live\" decision (see Deliverables) by reading `/tidy`'s Step 4.8 surfacing logic (`_shared/github-pr-scan.md`) and `dispatch/reporting.md`'s parking/resumption sections side by side.\n\n### Key Files\n\n- `plugin/skills/dispatch/reporting.md` — `pending-review` parking semantics, read-only reference\n- `plugin/skills/dispatch/resume-confirmation.md` — the confirmation-gate model to follow\n- `plugin/skills/dispatch/settle-and-merge.md` — the Auto-merge gate and merge-check invocation this reuses\n- `plugin/skills/_shared/pr-first-merge.md` — the merge mechanics to reuse, not re-invent\n- `plugin/skills/_shared/issue-claims.md` — re-adopting a still-held `pending-review` claim\n- `plugin/skills/tidy/actions-github-issues.md` / `_shared/github-pr-scan.md` — the existing `pending-review` surfacing this record extends, if that integration point is chosen\n- `docs/plugin-structure.md`, `docs/skill-graph.md` — update per whichever integration point is chosen\n\n## Gotchas\n\n- Merging without a fresh confirmation is exactly the auto-mode contract's concern this repo already legislates against — see `resume-confirmation.md`'s note on why that confirmation \"carries no `autonomy`-ceiling carve-out (unconditional at every tier, including `unattended`)\"; this record's own confirmation gate must hold the same line, not a weaker one, even though it runs outside a live dispatch session.\n- A `pending-review` PR's original claim is still held (parking never releases it) — re-adopting it at close-out time must go through the same read-then-classify protocol as any other claim operation, not assume it's free to take.\n- `/tidy`'s Step 4.8 is documented as report-only (\"never edits\") — extending it into an actionable close-out lane is a deliberate posture change for that scope specifically, not a blanket precedent for the rest of `/tidy`.\n\n## Original request\n\ndispatch: no skill to close out approved pending-review records (verify CI, merge, deploy)\n\n**Summary:** No skill closes the loop after a human approves records `/claude-tweaks:dispatch` parked as `pending-review` — re-verifying CI, marking drafts ready, detecting staleness/conflicts, merging, and deploying are all hand-rolled.\n\n**Kind:** Gap\n\n**Affected component:** dispatch (pending-review close-out) — no `/claude-tweaks:*` skill covers this\n\n**Objective:** Automation efficiency\n\n**Cost this session:** Roughly 15 extra manual tool calls (repeated `gh pr ready`, a `gh run rerun` to clear CI results left stale by an earlier outage, a manual CI-status poll loop, two from-scratch merge-conflict resolutions) after a human approved a batch of pending-review PRs.\n\n**Use case:** After `/claude-tweaks:dispatch` parks a record as `pending-review` (no `auto:merge` grant, or the auto-merge gate declined), a human eventually reviews and approves it. Nothing in the plugin then: (1) re-verifies the PR's CI is actually green rather than stale from an earlier infrastructure blip, (2) converts a still-draft PR to ready, (3) flags a PR that has silently gone from clean to conflicting while it sat parked, or (4) merges and optionally deploys. All of this had to be done by hand with raw `gh`/`git`/build commands.\n\n**Definition:** Clear\n\n**Plugin version:** 6.118.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-d0db2b3a -->\n",
-        "createdAt": "2026-09-13T13:12:21Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2364,
-        "state": "OPEN",
-        "title": "dispatch: no skill to close out approved pending-review records (verify CI, merge, deploy)",
-        "updatedAt": "2026-09-16T23:04:19Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review of `plugin/bin/lib/claim-targets/claim-targets.js`\n— all three confirmed still true at this shaping pass:\n\n- **Read-back race** (~line 400): post-write verification (#2073) re-reads immediately with no\n  retry/backoff (`if (!verifyClaimLanded(deps, repoSlug, issue, opts.runId, knownTip))`). On the\n  contents-API transport `knownTip` is `null`, so the read-back hits GitHub's\n  eventually-consistent contents API and can legitimately return the pre-write blob — a spurious\n  exit 5 on a claim that actually landed. The file's own header already warns against\n  eventually-consistent GitHub reads elsewhere.\n- **Claim leak on abort** (~line 227, confirmed): `abort()` releases only `claimedThisRun`\n  (`releaseClaimedThisRun(deps, repoSlug, opts.runId, claimedThisRun)`). `stopOrSkip(issue,\n  'unverified', 'unverified', 5, {})` runs (confirmed, ~line 401) *before* the target is pushed\n  onto `claimedThisRun` (the `claimedThisRun.push(issue)` call is one line after the verification\n  check), so a target whose claim genuinely landed (just couldn't be verified back) leaks until\n  TTL expiry with no `bot:in-progress` marker making it visible.\n- **Stale doc comment** (~line 225, confirmed): `abort()`'s comment still enumerates only exit\n  codes 3 and 4 (\"`exitCode` is 3 for a `contested`/`inFlight` envelope, 4 for a `transient`\n  one\") — exit 5 (`unverified`) was added without updating it.\n\n## Deliverables\n\n- Add a bounded retry/backoff to the post-write read-back verification when `knownTip` is `null`,\n  before declaring exit 5.\n- Release (or otherwise make visible) the `unverified` target's claim on abort, not just\n  `claimedThisRun`.\n- Update `abort()`'s doc comment to include exit 5.\n\n## Acceptance Criteria\n\n- A simulated eventually-consistent stale read on the contents-API path no longer produces a\n  spurious exit 5 within the retry window.\n- An aborted run with an `unverified` target leaves that claim in a state a later run can\n  detect/reclaim before TTL, not silently leaked.\n- `abort()`'s doc comment lists exit codes 3, 4, and 5.\n- `npm test` passes.\n\n## Technical Approach\n\nFor the read-back race: wrap the `verifyClaimLanded` call (~line 400) in a small bounded\nretry loop (a few attempts with a short backoff) specifically for the `knownTip === null` case —\nthe git-CAS path (`knownTip` set) already has a real tip to compare against and doesn't need\nthis, since a git-CAS success is immediately consistent. Only declare exit 5 after the retry\nwindow is exhausted. For the claim leak: capture the `unverified` issue's claim state (the\ncontext `verifyClaimLanded` already had before failing) and pass it to `abort()` so it can be\nreleased or explicitly flagged alongside `claimedThisRun`'s own release — the goal is that a\ngenuinely-landed-but-unverified claim doesn't sit invisible until TTL; releasing it (so a later\nrun can pick it up cleanly) is the safer default over leaving it silently held. Update the\n`abort()` doc comment in the same change.\n\n### Key Files\n\n- `plugin/bin/lib/claim-targets/claim-targets.js` — the read-back retry (~line 400), the claim\n  leak fix (~line 227, `abort()` and the `unverified` stop path), and the doc comment update\n\n## Gotchas\n\n- The retry must be scoped to the `knownTip === null` (contents-API) path only — the git-CAS\n  path's `knownTip`-based verification is already immediately consistent and doesn't need\n  (or benefit from) a retry; adding one there would just slow down every claim for no\n  correctness gain.\n- Releasing an `unverified` claim on abort must not race with the claim that write actually\n  produced — verify the release targets the same claim identity (`repoSlug`, `issue`, `opts.runId`)\n  the write itself used, so a genuinely different run's claim on the same issue is never touched.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review of `plugin/bin/lib/claim-targets/claim-targets.js`:\n\n- **Read-back race** (~line 400): post-write verification (#2073) re-reads immediately with no retry/backoff. On the contents-API transport `knownTip` is `null`, so the read-back hits GitHub's eventually-consistent contents API and can legitimately return the pre-write blob — a spurious exit 5 on a claim that actually landed. The file's own header already warns against eventually-consistent GitHub reads elsewhere.\n- **Claim leak on abort** (~line 227): `abort()` releases only `claimedThisRun`. `stopOrSkip(issue, 'unverified', 'unverified', 5, {})` runs *before* the target is pushed onto `claimedThisRun` (line ~405), so a target whose claim genuinely landed (just couldn't be verified back) leaks until TTL expiry with no `bot:in-progress` marker making it visible.\n- **Stale doc comment** (~line 225): `abort()`'s comment still enumerates only exit codes 3 and 4; exit 5 (`unverified`) was added without updating it.\n\n## Deliverables\n- Add a bounded retry/backoff to the post-write read-back verification when `knownTip` is `null`, before declaring exit 5.\n- Release (or otherwise make visible) the `unverified` target's claim on abort, not just `claimedThisRun`.\n- Update `abort()`'s doc comment to include exit 5.\n\n## Acceptance Criteria\n- A simulated eventually-consistent stale read on the contents-API path no longer produces a spurious exit 5 within the retry window.\n- An aborted run with an `unverified` target leaves that claim in a state a later run can detect/reclaim before TTL, not silently leaked.\n",
-        "createdAt": "2026-09-12T16:43:52Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2329,
-        "state": "OPEN",
-        "title": "claim-targets.js: eventually-consistent read-back race + unverified-claim leak",
-        "updatedAt": "2026-09-14T11:04:25Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
         "body": "Surface: infra\n\n## Current State\n\nTwo dispatch-driven two-call handoffs (`build,test` then `review,polish,wrap-up`, both Task calls handed the same pre-minted `PIPELINE_RUN_DIR` per `dispatch/SKILL.md` Step 4) reached their second call with the run directory's mandatory artifacts missing, on the same day, after the closures of #1013 / #1129 / #1145 / #1037 / #1106 / #1162 / #1356 / #1548 that each covered a narrower slice of this symptom:\n\n- Run `2026-09-04T095553-record-703` (this record): build had committed repeatedly on `worktree-dispatch-record-703` (698f19e51 materialize through 0635a52db), yet `$RUN_ROOT/.claude-tweaks/pipelines/2026-09-04T095553-record-703/` was completely empty — no `config.yml`, `decisions.md`, `run-state.json`, or `staged/` — and the branch was never pushed, no draft PR. The resuming call's `/claude-tweaks:review` Step 5 code-simplifier dispatch was BLOCKED by the bookkeeping-stamps PreToolUse gate until the session ran `_shared/pr-early-run-lifecycle.md` by hand mid-review.\n- Run `2026-09-04T122916-record-976` (#1832, absorbed here): the group's first `build,test` call recorded in its own `decisions.md` that it \"executed directly against the group's shared worktree without invoking the full `/claude-tweaks:flow` skill machinery (Manifesto/materialize/claim steps)\" — so `/flow` Step 2.8's claim-targets never ran, an earlier firing's live claim on 4 of the 6 records was never seen, and the call re-implemented work PR #1799 had already merged. Same shape as the two runs above, with the claim step as the third artifact that vanished.\n- Run `2026-09-04T181649-record-1484` (#1858, absorbed here): the directory carried `decisions.md`/`events.jsonl`/`run-state.json` but no `config.yml`, `decisions.md` had no Manifesto entry and no `PR-early run lifecycle` entries, the branch had no upstream, and `run-state.json` had no `pr` field — both mandatory procedures silently absent with zero trace.\n- A private-project run on plugin 6.114.0/6.114.1 (#1810, absorbed here): the first `build,test` call completed normally and its own `decisions.md` records the Manifesto writing `config.yml`, yet the second call ~80 minutes later found `decisions.md`, `events.jsonl`, `run-state.json` (with `worktree` and `pr`) and a committed `work/{n}-spec.md` but no `config.yml`; it landed in case 3, whose prose describes an interrupted first call, and recovery backfilled `config.yml` via `set-config.js` from `decisions.md`'s \"Pipeline config snapshot\" header. The cause could not be established because the Manifesto's write logs no path.\n\nWhat the current code says should happen: `bin/lib/flow/preflight.js` classifies an adopted directory into case 1 (has `config.yml` → adopt as-is), case 2 (no `config.yml`, otherwise empty → adopt then initialize as fresh, the minted-but-unadopted shape dispatch creates), or case 3 (no `config.yml` but other content → explicit backfill of `config.yml`, `record-worktree`, and the PR-early push/open). The record-703 run is case 2 for the first call — so either that call's `/flow` never reached the Manifesto and `build/worktree-setup.md` Step 6, or its writes landed somewhere other than the anchored directory (a worktree-local shadow is exactly `[IL-127]`'s shape, and `checkPipelineShadowGuard` only denies *creating* a new run directory in a worktree, not writes into a pre-existing shadow). The record-1484 run is case 3 for the second call, and #1858's hypothesis — an adopt-inherited-run-dir guard treating a pre-existing directory as \"already handled\" — would explain both artifacts vanishing together. Neither run's first call left a `SKIP` line, so the degrade-trace rule (`_shared/auto-decision-log.md`) was not honored on whichever path skipped.\n\n## Deliverables\n\n- Reproduce and diagnose against the two runs' surviving evidence (their branches, `events.jsonl` where present, the dispatching session's transcripts if retained): confirm which of the three candidate causes held — (a) the first call's `/flow` adopted the minted directory but its Manifesto write and Step 6 bootstrap ran against a worktree-local shadow path, (b) an adoption-guard branch (`preflight.js` case 1/2/3 classification, or the \"do not re-initialize\" rule of case 1) short-circuited both writes, (c) the Task agent's `PIPELINE_RUN_DIR` never reached `/flow` and it minted or resolved a different directory. State which of #1013/#1129/#1145's fixes the surviving cause bypasses.\n- Fix the confirmed cause so that call 1 of a two-call handoff always leaves `config.yml`, `decisions.md`, and `run-state.json` (with `worktree` and, under `pr-first`, `pr`) in the anchored directory and the branch pushed with a draft PR before `test` exits — and make every skip on those paths write a `SKIP` line per the degrade-trace rule so a silent gap is no longer possible.\n- Give `/claude-tweaks:flow`'s resume path a detection-or-recovery branch for the \"commits exist, directory uninitialized or partially initialized\" shape: extend `preflight.js` case 2/3 so that a run whose branch already carries commits beyond the materialize commit is treated as case 3 (backfill `config.yml`, `record-worktree`, PR-early) rather than re-initialized as fresh, and surface the backfill in the adoption note.\n- Add a regression test that simulates the two-call split end to end against a fixture repo (mint, call-1 adoption + Manifesto + Step 6, call-2 adoption) and asserts the anchored directory's contents and the PR bookkeeping after call 1.\n- Cover the claim step in the same diagnosis and fix: a `build,test` Task call that reaches build commits without `/flow` Step 2.8 having claimed the group (no `claims/issue-{n}.json` under this run's `runId`, no `bot:in-progress`) must fail loud before its first commit, never proceed — the record-976 run duplicated already-merged work because nothing checked. The disposition items #1832 filed for that run are moot (its worktree and branch are gone, #1100/#1484 closed, PR #1730 closed) and need no work.\n- Close #1858, #1832, and #1810 as absorbed once this record's fix lands, naming which hypothesis held.\n- (#1810) Have the Manifesto's `config.yml` write log the absolute path it wrote (`AUTO … — Manifesto: levers written to {absolute path}`), the way `record-pr`/`record-worktree` log their targets, so a shadow-path write and a later removal from the anchored directory can be told apart from the artifacts.\n- (#1810) In `steps-and-gates.md`'s case 3, name `decisions.md`'s \"Pipeline config snapshot\" header as the preferred lever source, ahead of recomputing from the precedence chain (recomputation can silently differ from what call 1 ran under), and widen case 3's description to cover a completed first call whose `config.yml` is missing — not only an interrupted one.\n\n## Acceptance Criteria\n\n1. A `build,test` → `review,polish,wrap-up` two-call dispatch handoff leaves the run directory populated with `config.yml`, `decisions.md`, and `run-state.json`, and the branch pushed with a draft PR open, by the time the first call's `test` step exits — verified by a regression test that simulates the two-call split and asserts the anchored run directory's contents after call 1.\n2. A resumed run found with an empty or partially initialized run directory despite existing build commits takes `preflight.js`'s backfill path (case 3 semantics) and the adoption note names each backfill performed; a run it cannot recover surfaces a clear, actionable error instead of continuing.\n3. Every conditional skip on the Manifesto write and the PR-early bootstrap paths writes a `SKIP` entry to `decisions.md`; the two runs' shapes (empty directory; `decisions.md` without a Manifesto entry) can no longer occur without a log line.\n4. `tests/dispatch-flow-rundir-handoff.test.js` (or a sibling) covers the shadow-write hypothesis: a `config.yml` written under `<worktree>/.claude-tweaks/pipelines/{run}/` is detected and rejected or redirected.\n5. A `build,test` call whose run has no claim under its own `runId` for every group member stops with an actionable error before any build commit — covered by the regression test in AC 1 (a fixture where the claim step is skipped must fail, not build).\n6. `npm test` passes; #1858, #1832, and #1810 are closed with a comment naming this record and the confirmed cause.\n7. The Manifesto's `config.yml` write logs the absolute path; case 3's prose names the `decisions.md` snapshot header as the preferred lever source and covers the completed-first-call shape (#1810).\n\n## Technical Approach\n\nStart from evidence, not the prior fixes: for record-703's branch, list `<worktree>/.claude-tweaks/pipelines/` on the branch's tree at its last commit and in any surviving worktree — a shadow directory there settles hypothesis (a) immediately. For record-1484, read its `events.jsonl` for the first call's `PostToolUse`/`SessionStart` events to see which run the hooks attributed writes to. Then read `flow/steps-and-gates.md` Step 2 adoption cases against `preflight.js`'s predicates and `flow/manifesto.md` Step 3's write, and `build/worktree-setup.md` Step 6's call into `_shared/pr-early-run-lifecycle.md`, looking for the branch that returns early when the directory pre-exists. The fix should make the write paths resolve the anchored directory through `resolve-run-dir` (never a cwd-relative path) and log a `SKIP` on every early return. Keep the regression test in the fixture-repo style `tests/dispatch-flow-rundir-handoff.test.js` already uses.\n\n### Key Files\n\n- `plugin/bin/lib/flow/preflight.js` — adoption case classification; case 2/3 boundary when commits already exist\n- `plugin/skills/flow/steps-and-gates.md` — Step 2 adoption cases and the \"do not re-initialize\" rule\n- `plugin/skills/flow/manifesto.md` — Step 3 `config.yml` write; add the `SKIP` degrade-trace on every skip path\n- `plugin/skills/_shared/pr-early-run-lifecycle.md` — push/open-draft-PR procedure invoked from `build/worktree-setup.md` Step 6; skip-path logging\n- `plugin/skills/build/worktree-setup.md` — Step 4.5 `record-worktree` and Step 6 bootstrap call site\n- `plugin/skills/dispatch/task-prompt.md` — the two-call context pack's `{minted-run-dir}` substitution and `record-worktree` instruction\n- `plugin/bin/lib/hooks/pre-tool-use.js` — `checkPipelineShadowGuard`: whether writes into a pre-existing worktree-local shadow are caught\n- `tests/dispatch-flow-rundir-handoff.test.js` — regression test for the two-call split and the shadow-write case\n\n## Gotchas\n\n- Three closed records (#1013, #1129, #1145) already \"fixed\" this symptom; a fourth fix that does not first identify which path the earlier fixes missed will regress the same way. The diagnosis deliverable is not optional.\n- `checkPipelineShadowGuard` flags only a *new* run directory created inside a worktree; a pre-existing shadow (from a pre-anchoring run, or a copy) is left alone by design — a write into it is silent.\n- `preflight.js`'s case 1 rule \"never re-initialize `config.yml`/`decisions.md`\" is load-bearing for the second call; the case 2/3 change must not overwrite an interrupted first call's audit trail.\n- Record-1484's run had `run-state.json` without `pr` — `record-worktree` ran but the PR-early bootstrap did not; that ordering narrows the search to Step 6's own guard, not adoption as a whole.\n- The regression test needs a fixture with a real `origin` remote (bare repo) for the push/PR half; mock `gh` at the seam the existing handoff test already uses.\n\n## Original request\n\nTwo-call dispatch handoff again left run dir empty (no config.yml/run-state.json/PR) despite build commits already present — recurrence of #1013/#1129/#1145\n\n## Current State\n\nRun `2026-09-04T095553-record-703` (dispatch bundle group for #703, `build,test` then `review,polish,wrap-up` two-call handoff) was resumed for its second call (`review,polish,wrap-up`) with:\n\n- `git log` showing build had already completed and committed multiple times against the materialized spec (`698f19e51` materialize, through `0635a52db` \"Record Task 0 empirical findings for #703\"), including a real implementation, tests, and a written plan doc.\n- The run directory (`$RUN_ROOT/.claude-tweaks/pipelines/2026-09-04T095553-record-703/`) was **completely empty** — no `config.yml`, no `decisions.md`, no `run-state.json`, not even a `staged/` directory.\n- The branch (`worktree-dispatch-record-703`) had never been pushed to `origin`, and no draft PR existed for it — despite `build/worktree-setup.md` Step 6's PR-early bootstrap being documented as running \"immediately after the materialize commit, before Spec Step 2.\"\n\nThis reproduces the same failure shape as #1013 / #1129 / #1145 (all closed) — a split `build,test` → `review,polish,wrap-up` dispatch handoff loses the run directory's `config.yml`/`run-state.json` and the PR-early lifecycle bootstrap, even though those issues were closed as fixed. Either the fix didn't cover this exact code path, or a regression reintroduced the gap.\n\n**Downstream cost this run:** the code-simplifier subagent dispatched from `/claude-tweaks:review` Step 5 was BLOCKED outright by the `worktree-always`/bookkeeping-stamps PreToolUse gate, which requires a draft PR to exist before any Edit/Write in a `pr-first` worktree — because no PR had ever been opened. The resuming session had to retroactively run the full \"Run start: push, then open (or reuse) the draft PR\" procedure (`_shared/pr-early-run-lifecycle.md`) mid-review, several phases later than intended, before any file edit could land.\n\n## Deliverables\n\n- [ ] Determine why `build/worktree-setup.md` Step 6 (PR-early bootstrap) and the Manifesto's `config.yml`/`decisions.md` write did not execute (or did not persist) for this run, despite build itself clearly having run multiple commits.\n- [ ] Determine whether this is the same root cause #1013/#1129/#1145 addressed (and their fix regressed or didn't cover this path), or a distinct gap in the two-call dispatch handoff specifically.\n- [ ] Add a recovery/detection path so a resumed run whose directory is unexpectedly empty (build commits exist, but no `config.yml`/`run-state.json`/PR) either self-heals (as this session did manually) or fails loudly with a clear diagnostic, rather than silently proceeding.\n\n## Acceptance Criteria\n\n1. A `build,test` → `review,polish,wrap-up` two-call dispatch handoff (the pattern `dispatch/SKILL.md`'s two-call context pack uses) leaves the run directory populated with `config.yml`, `decisions.md`, and `run-state.json`, and the branch pushed with a draft PR open, by the time the first call's `test` step exits — verified by a regression test that simulates the two-call split and asserts the run directory's contents after call 1.\n2. If a resumed run is found with an empty/uninitialized run directory despite existing build commits, `/claude-tweaks:flow`'s resume path either recovers automatically (mirroring what this occurrence's session did by hand: adopt-and-initialize the run dir, retroactively push + open the PR) or surfaces a clear, actionable error rather than silently continuing with missing state.\n\n## Original request\n\nFiled as a fresh recurrence of #1013 / #1129 / #1145 (all closed) observed on run `2026-09-04T095553-record-703` (record #703) during a `/claude-tweaks:dispatch`-driven two-call `build,test` → `review,polish,wrap-up` handoff. See the Current State section for the concrete evidence from this occurrence.\n\n**Related:** #1013, #1129, #1145 — closed issues covering the same failure shape; this occurrence suggests either an incomplete fix or a regression.\n\n\n\n",
         "createdAt": "2026-09-04T10:53:11Z",
         "labels": [
@@ -1436,94 +1266,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      },
-      {
-        "body": "Surface: backend\n\n## Current State\n\n`#1486`/PR #1707 (merged ~06:15 UTC 2026-08-31, less than an hour before this run) fixed a claim-persistence defect in the dispatch two-call `build,test` → `review,polish,wrap-up` flow, but the fix (`plugin/bin/lib/claim-targets/claim-targets.js` and friends) is built entirely on `deps.gh` — a generic runner shaped like `gh(args)` — with no MCP-native branch. `claim-targets.js`'s own header states every side effect (`ghApi`, `gh`, ...) goes through `deps`, but nothing in that file substitutes a GitHub-MCP-tool-backed implementation when `gh` the CLI is genuinely absent from the sandbox.\n\nThis run (`/claude-tweaks:dispatch next` fired from a scheduled Routine in a cloud sandbox with no `gh` CLI installed — confirmed via `command -v gh` → exit 1) reproduced the *same failure class* #1486 described, immediately after that fix landed, but with a wider blast radius:\n\n- The first Task call (`build,test`) reported `DONE` / `OUTCOME: build-test-ok` and committed `c25cd63`, but:\n  - **No claim was ever persisted** to the `claims-registry` branch for this run's identity (`2026-08-31T061940-record-833`). The only prior claim history on `claims/issue-833.json` was an unrelated 2026-08-25 run, already released stale by `/claude-tweaks:tidy` on 2026-08-29.\n  - **No `work/833-spec.md` was materialized.**\n  - **No `config.yml` was written** to the run directory.\n  - **No PR was opened at run start**, despite `integration-model: pr-first` (`.claude-tweaks/policy.yml`) documenting a PR born at run start (`_shared/pr-early-run-lifecycle.md`).\n- The second Task call (`review,polish,wrap-up`) independently audited raw artifacts, found none of the above bookends had landed, and recovered by hand: reclaimed #833 under its own run identity via the MCP conditional-write path (`create_or_update_file` against the stale tombstone's blob sha, per `_shared/issue-claims.md`), and opened PR #1727 itself mid-run instead of at run start.\n\nThis is the same recovery pattern #1486's own second-call audit used originally — meaning the fix in PR #1707 did not close the gap for the MCP-transport path, only (at most) the `gh`-CLI path. The recovery worked this time only because the second call happened to run a thorough raw-artifact audit; nothing in the pipeline forces that audit, so a second call that trusts the first call's `DONE`/`build-test-ok` report at face value would leave the record permanently unclaimed with no PR, indistinguishable from a healthy run until the retry ceiling or a human eventually notices.\n\n## Deliverables\n\n- [ ] Identify every Step 2.8/materialize/PR-open call site in `flow/claim-targets.md`, `flow/materialize.md`, and `_shared/pr-early-run-lifecycle.md`'s implementation that assumes `deps.gh`/the `gh` CLI is present, with no MCP-backed equivalent wired in for a `gh`-absent sandbox.\n- [ ] Either wire an MCP-backed `deps.gh`-shaped adapter into these call sites (mirroring the pattern `dispatch/mcp-transport.md` already documents for dispatch's own queue pull), or make the failure loud instead of silent — a `build,test` call that cannot claim/materialize/open-PR should report `BLOCKED`/`build-test-blocked`, never `DONE`/`build-test-ok`.\n- [ ] Add the same post-write read-back #1486/PR #1707 was supposed to add, verified specifically against a `gh`-absent sandbox this time (the original fix's own verification apparently only covered the `gh`-CLI transport).\n\n## Acceptance Criteria\n\n- A fresh `/claude-tweaks:dispatch next` run against a fresh record, in a sandbox with no `gh` CLI installed, produces a verifiable claim commit on `claims-registry`, a materialized `work/{n}-spec.md`, a written `config.yml`, and an opened PR — all before the first Task call reports `DONE`/`build-test-ok` — confirmed by direct inspection, not the call's own self-report.\n- If any of these cannot be made to work on the MCP transport, the first Task call reports `BLOCKED`/`build-test-blocked` instead of a false `build-test-ok`, so the two-call gate (`dispatch/two-call-gate.md`) never dispatches a second call on top of an unclaimed, unopened run.\n\n## Technical Approach\n\nSame investigation shape as #1486, extended to the MCP-transport branch specifically:\n\n- Confirm which of `claim-targets.js`'s `deps.gh` calls actually executed in this sandbox (none should have succeeded if `gh` is genuinely absent from `PATH`) versus which silently no-op'd or were skipped by a caller-side guard.\n- Trace `flow/materialize.md`'s and `_shared/pr-early-run-lifecycle.md`'s own call sites the same way — this record's build call skipped spec materialization and PR-open too, not just the claim, so the root cause may be one shared upstream guard (e.g. a `gh`-presence check that silently skips a whole block of Step 2.x rather than erroring) rather than three independent defects.\n- Cross-reference against `dispatch/mcp-transport.md`, which documents MCP substitutions for dispatch's own Step 2 queue pull but says nothing about `/flow`'s internal Step 2.8/materialize/PR-open — suggesting those were never bridged to MCP at all, unlike dispatch's own queue-pull path (the bridge plan referenced there, `docs/superpowers/plans/2026-08-02-dispatch-mcp-bridge.md`, deleted `d83f0720`, may only have covered dispatch's own call sites).\n\n### Key Files\n\n- `plugin/bin/lib/claim-targets/claim-targets.js` — `deps.gh`-only claim write, no MCP adapter\n- `plugin/skills/flow/claim-targets.md` — Step 2.8 procedure\n- `plugin/skills/flow/materialize.md` — spec materialization, also apparently skipped\n- `plugin/skills/_shared/pr-early-run-lifecycle.md` — run-start PR creation, also apparently skipped\n- `plugin/skills/dispatch/mcp-transport.md` — existing MCP-bridge documentation, scoped to dispatch's own Step 2 only\n\n## Gotchas\n\n- Don't assume this is identical to #1486's root cause just because the symptom (missing claim) matches — that fix already merged and evidently didn't prevent recurrence here, so treat this as a distinct, MCP-transport-specific investigation rather than a re-verification of the same fix.\n- The second call's recovery (reclaim + late PR-open) left the record in a consistent, non-broken end state (`pending-review`, claim released, PR #1727 open) — this is not data loss, but a reliability gap: the recovery depended on the second call happening to audit raw artifacts rather than trust the first call's report, which is not guaranteed behavior.\n- This sandbox's `gh`-absence is not an edge case for this repo's own scheduled Routines — `/claude-tweaks:dispatch next` is exactly the routine-fired form, and cloud Routine sandboxes are exactly where `gh` is most likely to be absent (per CLAUDE.md's Cloud parity section). Every future `next`-form firing in such a sandbox risks the same silent bookend gap.\n\n## Original request\n\nDiscovered during `/claude-tweaks:dispatch next`'s dispatch of record #833 (run `2026-08-31T061940-record-833`), by this run's own second Task call (`review,polish,wrap-up`) while auditing raw artifacts per its own contract rather than trusting the first call's `DONE`/`build-test-ok` report. See #833's comment trail (issuecomment-5474812069) for the reclaim note this issue is filed to follow up on.\n\nDefer-reason: pre-existing-outside-diff\n",
-        "createdAt": "2026-08-31T07:00:25Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1728,
-        "state": "OPEN",
-        "title": "dispatch: build,test call's claim/materialize/PR-open bookends silently no-op in gh-absent (MCP-transport) sandboxes",
-        "updatedAt": "2026-09-16T23:04:26Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       },
       {
@@ -2309,6 +2051,180 @@
     ],
     [
       {
+        "body": "Surface: infra\n\n## Current State\n\n`/claude-tweaks:dispatch` parks a group's PR as `pending-review` when it has no `auto:merge` grant, or `assess-agent-autonomy`'s `merge-check` mode declines auto-merge (`dispatch/SKILL.md`'s Auto-merge gate, `dispatch/settle-and-merge.md`). Under `integration-model: pr-first`, this PR is already public and current (`_shared/pr-early-run-lifecycle.md` opened it at run start; every phase exit since has pushed to it) — `dispatch/reporting.md`'s own note on parking states the branch \"never waited on parking to become public in the first place.\"\n\nTwo distinct resumption paths already exist for a **still-active dispatch session**: `dispatch/reporting.md`'s \"resuming a parked run\" (re-invoking the same session to answer its Review Console) and `resume-confirmation.md`'s confirm-before-resume gate. Neither applies to this record's actual gap: a `pending-review` PR that a human reviews and approves **directly on GitHub**, days or weeks after the dispatching session ended, with no live session left to resume. For that case, nothing in the plugin re-verifies the PR's CI is still green (rather than stale from an earlier infrastructure blip), converts a still-draft PR to ready, flags a PR that quietly went from clean to conflicting while parked, or performs the merge (and any deploy) once approval is confirmed — all of it currently done by hand with raw `gh`/`git` commands. `/tidy`'s Step 4.8 (`_shared/github-pr-scan.md`'s `repo-wide` scope) already **surfaces** exactly this class of PR as a `STAGED` finding (report-only, per its documented \"never edits\" posture) — but surfacing is not closing out.\n\n## Deliverables\n\n- A close-out capability for an approved `pending-review` PR, covering at minimum: (1) re-verify CI is currently green (not a stale prior result), (2) convert a still-draft PR to ready-for-review/merge, (3) detect and flag a PR that has gone from mergeable to conflicting since it was parked, (4) merge on confirmed approval, with an optional deploy step where the project has one.\n- A confirmation gate before merge — mirroring `resume-confirmation.md`'s existing \"confirm before resuming\" posture (unconditional at every `autonomy` tier, including `unattended`) — since this closes out a PR with no live session's Review Console already having asked the merge question.\n- Decide where this capability lives: extending `/tidy`'s Step 4.8 `pending-review` surfacing from report-only into an actionable close-out lane (it already does the discovery work), or a new bare-drain-style mode on `/claude-tweaks:dispatch` that re-adopts a `pending-review` group's claim and runs the close-out sequence headlessly. Either integration point reuses existing machinery (`assess-agent-autonomy`'s `merge-check`, `_shared/pr-first-merge.md`'s merge mechanics, the claims protocol for re-adoption) rather than inventing a parallel one — this decision is left to the build step, not prescribed here.\n\n## Acceptance Criteria\n\n- [ ] Given a `pending-review` PR whose CI last ran before an infrastructure outage, the close-out re-runs or re-checks CI before treating it as green.\n- [ ] Given a still-draft `pending-review` PR with human approval, the close-out converts it to ready before merging.\n- [ ] Given a `pending-review` PR that has gone from clean to conflicting while parked, the close-out flags it rather than attempting a merge.\n- [ ] Given a clean, approved, CI-green `pending-review` PR, the close-out merges it (and runs any project deploy step) only after an explicit confirmation gate — never silently, at any `autonomy` tier.\n- [ ] The chosen integration point (extended `/tidy` Step 4.8, or a new `/dispatch` mode) is documented in `docs/plugin-structure.md`'s command reference and, if a new mode, added to `docs/skill-graph.md`'s edges per CLAUDE.md's cross-reference rule.\n- [ ] `npm test` passes.\n\n## Technical Approach\n\nReuse existing machinery rather than building parallel logic: `assess-agent-autonomy`'s `merge-check` mode for the mergeability/CI judgment, `_shared/pr-first-merge.md` for the actual `gh pr merge` mechanics, and the issue-claims protocol (`_shared/issue-claims.md`) to re-adopt a `pending-review` group's original claim (still held, since parking never releases it) rather than starting a fresh one. `resume-confirmation.md`'s existing `AskUserQuestion` shape and Recommended-derivation rule are the direct model for this record's own confirmation gate — read that file before designing a new one, since the two must never disagree on the same PR's state if a human could reach either path for the same PR. Start the \"where does this live\" decision (see Deliverables) by reading `/tidy`'s Step 4.8 surfacing logic (`_shared/github-pr-scan.md`) and `dispatch/reporting.md`'s parking/resumption sections side by side.\n\n### Key Files\n\n- `plugin/skills/dispatch/reporting.md` — `pending-review` parking semantics, read-only reference\n- `plugin/skills/dispatch/resume-confirmation.md` — the confirmation-gate model to follow\n- `plugin/skills/dispatch/settle-and-merge.md` — the Auto-merge gate and merge-check invocation this reuses\n- `plugin/skills/_shared/pr-first-merge.md` — the merge mechanics to reuse, not re-invent\n- `plugin/skills/_shared/issue-claims.md` — re-adopting a still-held `pending-review` claim\n- `plugin/skills/tidy/actions-github-issues.md` / `_shared/github-pr-scan.md` — the existing `pending-review` surfacing this record extends, if that integration point is chosen\n- `docs/plugin-structure.md`, `docs/skill-graph.md` — update per whichever integration point is chosen\n\n## Gotchas\n\n- Merging without a fresh confirmation is exactly the auto-mode contract's concern this repo already legislates against — see `resume-confirmation.md`'s note on why that confirmation \"carries no `autonomy`-ceiling carve-out (unconditional at every tier, including `unattended`)\"; this record's own confirmation gate must hold the same line, not a weaker one, even though it runs outside a live dispatch session.\n- A `pending-review` PR's original claim is still held (parking never releases it) — re-adopting it at close-out time must go through the same read-then-classify protocol as any other claim operation, not assume it's free to take.\n- `/tidy`'s Step 4.8 is documented as report-only (\"never edits\") — extending it into an actionable close-out lane is a deliberate posture change for that scope specifically, not a blanket precedent for the rest of `/tidy`.\n\n## Original request\n\ndispatch: no skill to close out approved pending-review records (verify CI, merge, deploy)\n\n**Summary:** No skill closes the loop after a human approves records `/claude-tweaks:dispatch` parked as `pending-review` — re-verifying CI, marking drafts ready, detecting staleness/conflicts, merging, and deploying are all hand-rolled.\n\n**Kind:** Gap\n\n**Affected component:** dispatch (pending-review close-out) — no `/claude-tweaks:*` skill covers this\n\n**Objective:** Automation efficiency\n\n**Cost this session:** Roughly 15 extra manual tool calls (repeated `gh pr ready`, a `gh run rerun` to clear CI results left stale by an earlier outage, a manual CI-status poll loop, two from-scratch merge-conflict resolutions) after a human approved a batch of pending-review PRs.\n\n**Use case:** After `/claude-tweaks:dispatch` parks a record as `pending-review` (no `auto:merge` grant, or the auto-merge gate declined), a human eventually reviews and approves it. Nothing in the plugin then: (1) re-verifies the PR's CI is actually green rather than stale from an earlier infrastructure blip, (2) converts a still-draft PR to ready, (3) flags a PR that has silently gone from clean to conflicting while it sat parked, or (4) merges and optionally deploys. All of this had to be done by hand with raw `gh`/`git`/build commands.\n\n**Definition:** Clear\n\n**Plugin version:** 6.118.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-d0db2b3a -->\n",
+        "createdAt": "2026-09-13T13:12:21Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
+            "name": "enhancement",
+            "description": "New feature or request",
+            "color": "a2eeef"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Size: medium effort",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Risk: medium blast radius",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: standard review",
+            "color": "c5def5"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 2364,
+        "state": "OPEN",
+        "title": "dispatch: no skill to close out approved pending-review records (verify CI, merge, deploy)",
+        "updatedAt": "2026-09-16T23:04:19Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\n\n## Current State\n\nFound during a pre-release whole-branch review of `plugin/bin/lib/claim-targets/claim-targets.js`\n— all three confirmed still true at this shaping pass:\n\n- **Read-back race** (~line 400): post-write verification (#2073) re-reads immediately with no\n  retry/backoff (`if (!verifyClaimLanded(deps, repoSlug, issue, opts.runId, knownTip))`). On the\n  contents-API transport `knownTip` is `null`, so the read-back hits GitHub's\n  eventually-consistent contents API and can legitimately return the pre-write blob — a spurious\n  exit 5 on a claim that actually landed. The file's own header already warns against\n  eventually-consistent GitHub reads elsewhere.\n- **Claim leak on abort** (~line 227, confirmed): `abort()` releases only `claimedThisRun`\n  (`releaseClaimedThisRun(deps, repoSlug, opts.runId, claimedThisRun)`). `stopOrSkip(issue,\n  'unverified', 'unverified', 5, {})` runs (confirmed, ~line 401) *before* the target is pushed\n  onto `claimedThisRun` (the `claimedThisRun.push(issue)` call is one line after the verification\n  check), so a target whose claim genuinely landed (just couldn't be verified back) leaks until\n  TTL expiry with no `bot:in-progress` marker making it visible.\n- **Stale doc comment** (~line 225, confirmed): `abort()`'s comment still enumerates only exit\n  codes 3 and 4 (\"`exitCode` is 3 for a `contested`/`inFlight` envelope, 4 for a `transient`\n  one\") — exit 5 (`unverified`) was added without updating it.\n\n## Deliverables\n\n- Add a bounded retry/backoff to the post-write read-back verification when `knownTip` is `null`,\n  before declaring exit 5.\n- Release (or otherwise make visible) the `unverified` target's claim on abort, not just\n  `claimedThisRun`.\n- Update `abort()`'s doc comment to include exit 5.\n\n## Acceptance Criteria\n\n- A simulated eventually-consistent stale read on the contents-API path no longer produces a\n  spurious exit 5 within the retry window.\n- An aborted run with an `unverified` target leaves that claim in a state a later run can\n  detect/reclaim before TTL, not silently leaked.\n- `abort()`'s doc comment lists exit codes 3, 4, and 5.\n- `npm test` passes.\n\n## Technical Approach\n\nFor the read-back race: wrap the `verifyClaimLanded` call (~line 400) in a small bounded\nretry loop (a few attempts with a short backoff) specifically for the `knownTip === null` case —\nthe git-CAS path (`knownTip` set) already has a real tip to compare against and doesn't need\nthis, since a git-CAS success is immediately consistent. Only declare exit 5 after the retry\nwindow is exhausted. For the claim leak: capture the `unverified` issue's claim state (the\ncontext `verifyClaimLanded` already had before failing) and pass it to `abort()` so it can be\nreleased or explicitly flagged alongside `claimedThisRun`'s own release — the goal is that a\ngenuinely-landed-but-unverified claim doesn't sit invisible until TTL; releasing it (so a later\nrun can pick it up cleanly) is the safer default over leaving it silently held. Update the\n`abort()` doc comment in the same change.\n\n### Key Files\n\n- `plugin/bin/lib/claim-targets/claim-targets.js` — the read-back retry (~line 400), the claim\n  leak fix (~line 227, `abort()` and the `unverified` stop path), and the doc comment update\n\n## Gotchas\n\n- The retry must be scoped to the `knownTip === null` (contents-API) path only — the git-CAS\n  path's `knownTip`-based verification is already immediately consistent and doesn't need\n  (or benefit from) a retry; adding one there would just slow down every claim for no\n  correctness gain.\n- Releasing an `unverified` claim on abort must not race with the claim that write actually\n  produced — verify the release targets the same claim identity (`repoSlug`, `issue`, `opts.runId`)\n  the write itself used, so a genuinely different run's claim on the same issue is never touched.\n\n## Original request\n\n## Current State\nFound during a pre-release whole-branch review of `plugin/bin/lib/claim-targets/claim-targets.js`:\n\n- **Read-back race** (~line 400): post-write verification (#2073) re-reads immediately with no retry/backoff. On the contents-API transport `knownTip` is `null`, so the read-back hits GitHub's eventually-consistent contents API and can legitimately return the pre-write blob — a spurious exit 5 on a claim that actually landed. The file's own header already warns against eventually-consistent GitHub reads elsewhere.\n- **Claim leak on abort** (~line 227): `abort()` releases only `claimedThisRun`. `stopOrSkip(issue, 'unverified', 'unverified', 5, {})` runs *before* the target is pushed onto `claimedThisRun` (line ~405), so a target whose claim genuinely landed (just couldn't be verified back) leaks until TTL expiry with no `bot:in-progress` marker making it visible.\n- **Stale doc comment** (~line 225): `abort()`'s comment still enumerates only exit codes 3 and 4; exit 5 (`unverified`) was added without updating it.\n\n## Deliverables\n- Add a bounded retry/backoff to the post-write read-back verification when `knownTip` is `null`, before declaring exit 5.\n- Release (or otherwise make visible) the `unverified` target's claim on abort, not just `claimedThisRun`.\n- Update `abort()`'s doc comment to include exit 5.\n\n## Acceptance Criteria\n- A simulated eventually-consistent stale read on the contents-API path no longer produces a spurious exit 5 within the retry window.\n- An aborted run with an `unverified` target leaves that claim in a state a later run can detect/reclaim before TTL, not silently leaked.\n",
+        "createdAt": "2026-09-12T16:43:52Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Size: medium effort",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Risk: medium blast radius",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: standard review",
+            "color": "c5def5"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 2329,
+        "state": "OPEN",
+        "title": "claim-targets.js: eventually-consistent read-back race + unverified-claim leak",
+        "updatedAt": "2026-09-14T11:04:25Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      }
+    ],
+    [
+      {
         "body": "# Reflect — staged finding 2\n\n**Category:** tangential\n\nOrigin: reflect full mode from #1875\nDefer-reason: tangential\n\n## Current State\n\n`dispatch/mcp-transport.md` already documents, as an accepted gap, that `bin/resolve-linked-prs.js`\n(the #1224 open-linked-PR exclusion) has no confirmed MCP mapping and fails open (no exclusions)\nwhen `gh` is absent. This run hit that gap for real, not hypothetically: of the 27 candidates in\nthe eligible queue, record #1594 already had an open PR (#1908, \"Fixes #1594\") that the automated\ncheck could not detect on this transport. It was caught only because the dispatching session\nindependently ran a manual, targeted subagent scan of open PR bodies/titles for closing-keyword\nreferences before finalizing the group selection — a step the documented protocol does not\nactually specify or require anywhere. Without that improvised check, #1594 could have been\nre-dispatched to a second build in parallel with the already-open PR #1908, producing conflicting\nwork on the same record.\n\n## Deliverables\n\n- [ ] Treat this as evidence for prioritizing a real MCP mapping for the #1224 check (a batched\n      equivalent of `closedByPullRequestsReferences`, or an open-PR title/body scan folded\n      directly into `queue-pull-script.md`'s MCP branch) rather than leaving it \"accepted for now\"\n      indefinitely.\n- [ ] Until a real mapping exists, consider making the manual verification this run improvised a\n      documented, required step in `dispatch/mcp-transport.md`'s Step 2 section for the `gh`-absent\n      path, so a future firing doesn't have to independently rediscover the same gap and the same\n      workaround.\n\n## Acceptance Criteria\n\n1. Either the #1224 check gets a real MCP mapping, or the manual verification workaround is\n   promoted from this run's improvisation to a documented, required step for the `gh`-absent\n   transport.\n\n_Filed by `reflect` via specShapedBody._\n",
         "createdAt": "2026-09-08T03:10:18Z",
         "labels": [
@@ -2376,96 +2292,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nagent-browser's semantic-locator click action can report success without the target app's click handler firing on certain elements (repro: small icon-sized buttons inside table rows in a local Next.js dev app) — confirmed by no network request firing and no state change, while a CSS-selector click, keyboard activation (focus+Enter), and raw mouse coordinates at the same element all behave correctly, so the locator resolved the right element but the synthetic click was not equivalent to a trusted click for it. Independently, the screenshot pipeline intermittently fails with `os error 35` (EAGAIN); once a daemon session hits it, every later screenshot from that daemon returns a dead/stale frame. Together these produced 3 false QA FAILs in a 7-story run — the qa-agent judged steps against a stale frame and reported on-screen hint text as \"not rendered\" even though page-text reads and the dev server's request log confirmed the POSTs actually fired.\n\n## Deliverables\n\n- Diagnose why a semantic-locator click on certain elements reports success without the element's registered click handler firing, and land a fix or a reliable failure signal — a locator click must never silently report success when the handler didn't run.\n- Diagnose the `os error 35` (EAGAIN) screenshot-capture failure and either recover the pipeline (retry/self-heal/restart) or surface the degraded state loudly so a stale frame is never treated as current evidence.\n- Ensure the qa-agent skill stops judging a step against a screenshot known to be stale/dead once the pipeline is in the degraded state.\n\n## Acceptance Criteria\n\n- A locator click against the repro'd icon-sized table-row-button case either triggers the same handler a real user click would, or the click action reports failure rather than false success.\n- After an `os error 35` screenshot failure, subsequent screenshot captures in the same daemon session either recover automatically, or the session is marked degraded so downstream judgment doesn't trust the frame.\n- Re-running the original 7-story QA run (or an equivalent regression case reproducing the same elements) produces no false FAIL attributable to either symptom.\n\n## Technical Approach\n\nInvestigate agent-browser's synthetic click dispatch path for semantic-locator resolution versus its CSS-selector dispatch path — since CSS-selector clicks, keyboard activation, and raw-coordinate clicks all work on the same element, the defect is specific to how the locator-click path synthesizes the click event (likely not marked as a trusted event, or dispatched to the wrong target/phase). One option to evaluate against root-causing the synthetic dispatch itself: fall back to a trusted-input dispatch (e.g., CDP `Input.dispatchMouseEvent` at the resolved element's center) when a locator click produces no observable effect — not mandated. For the screenshot pipeline, investigate the daemon's screenshot capture retry/error-handling around `os error 35` (EAGAIN) and either add a bounded retry/self-heal, or a degraded-session flag the qa-agent skill checks before trusting a frame as current.\n\n### Key Files\n\n- `plugin/agents/qa-agent.md` — consumes screenshot and click-action results as evidence; needs the degraded-session awareness so it stops trusting a dead frame\n- agent-browser CLI (vendored dependency, not in this repo's own source tree) — owns both the locator-click dispatch path and the screenshot capture pipeline; confirm the vendoring/patch mechanism before starting\n\n## Gotchas\n\n- The vendored agent-browser CLI's synthetic-click and screenshot code live outside this repo's own source in the vendored dependency — root-causing may require patching upstream or a vendored patch layer; confirm the vendoring/patch mechanism before starting.\n- The \"trusted-input dispatch\" fallback and the \"self-heal/mark degraded\" fallback are both offered as directions in the original report, not mandated fixes — the actual mechanism is left open; do not treat either as the only acceptable design.\n\n## Original request\n\nagent-browser: locator clicks can dispatch without triggering app handlers; screenshot failures (os error 35) persist and cause false QA FAILs\n\n**Summary:** Semantic-locator clicks can report success without the app's click handler ever firing, and the daemon's screenshot pipeline dies permanently on repeated `os error 35` — together these produced 3 false FAILs in a 7-story QA run.\n\n**Kind:** Defect\n\n**Affected component:** agent-browser CLI (vendored) + qa-agent skill\n\n**Repro steps:**\n1. Run a QA story against a local Next.js dev app containing small icon-sized buttons inside table rows.\n2. Execute `agent-browser --session s find <semantic locator resolving to a row button> click` — the command reports success.\n3. Observe the app: no network request fires, no state changes (the click handler never ran). The same element responds correctly to a CSS-selector-based click, keyboard activation (focus + Enter), and raw mouse coordinates at the element's position — so the locator resolved to the right element; the synthetic click was not equivalent to a trusted click for it.\n4. Separately, within a long session, screenshot capture intermittently fails with `os error 35` (EAGAIN); once it starts failing, every later screenshot in that daemon's life returns a dead/stale frame.\n\n**Expected vs. actual:**\nExpected: a locator click either triggers the same handlers a user's click would or reports failure; a failed screenshot recovers on retry or is surfaced loudly so the qa-agent stops treating frames as current evidence.\nActual: the click reports success while the handler never fires (deterministic on these elements), and the screenshot pipeline stays dead silently — the qa-agent then judges steps on stale frames and reports on-screen hint text as \"not rendered\" (confirmed via page-text reads and the dev server's request log showing the POSTs fired). 3 of 7 stories in one run were false FAILs; each cost a manual reproduce-and-clear cycle.\n\nSuggested directions: (a) fall back to a trusted-input dispatch (e.g. CDP `Input.dispatchMouseEvent` at element center) when a locator click produces no observable effect; (b) self-heal or restart the screenshot pipeline on repeated `os error 35`, or mark the session \"screenshots degraded\" so the qa-agent weights evidence accordingly.\n\n**Definition:** Clear\n\n**Plugin version:** 6.114.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-b3379900 -->\n",
-        "createdAt": "2026-09-02T00:08:31Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 1768,
-        "state": "OPEN",
-        "title": "agent-browser: locator clicks can dispatch without triggering app handlers; screenshot failures (os error 35) persist and cause false QA FAILs",
-        "updatedAt": "2026-09-16T23:04:24Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
