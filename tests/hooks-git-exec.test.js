@@ -169,6 +169,13 @@ test('runGitAsync: a blown budget is timeout, and timeout is indeterminate (#134
 
 test('runGitAsync: always returns an object, never null, on every path', async () => {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-ge-async-shape-'));
+  // #2500 review: this third call races a real subprocess against a real
+  // `timeoutMs: 1`, the same shape as the two CT_HOOKS_GIT_TIMEOUT_MS tests
+  // above that needed a mock-based rewrite — but unlike those, it does NOT
+  // share their flake: `dir` is a non-git tempdir, so the call resolves to
+  // either FAILURE.TIMEOUT or a git-error failure depending on load, and the
+  // loop below only asserts result *shape* (stdout/failure/stderr keys
+  // present), never which failure kind won the race. No rewrite needed.
   for (const result of await Promise.all([
     runGitAsync(['rev-parse', '--show-toplevel'], gitRepo()),
     runGitAsync(['rev-parse', '--show-toplevel'], dir),
