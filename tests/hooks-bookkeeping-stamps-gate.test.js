@@ -1060,33 +1060,53 @@ test('bookkeeping-stamps gate (#1258): a caught model-resolution exception never
 // non-terminal run repo-wide), a dangling run whose materialize commit landed
 // elsewhere but was never followed by record-worktree must not have its
 // missing-worktree-stamp deny fire against this unrelated scratch worktree.
-// hasMaterializeCommit's #1674 range-bound (`{integration}..HEAD`, this
-// worktree's own unique commits only) already closes this: a scratch worktree
-// with zero commits of its own can never match the dangling run's materialize
-// pathspec, regardless of which run ctx.runDir resolves to. This test pins that
-// already-correct behavior so a future regression to hasMaterializeCommit's
-// bound (e.g. reverting to an unbounded walk) is caught here, not live.
-test('bookkeeping-stamps gate (#1460): an unrelated dangling run (materialize commit landed elsewhere, no worktree recorded) does not deny a fresh scratch worktree', () => {
+//
+// A fixture where the victim commit sits on a branch that never merges anywhere
+// (e.g. an unmerged PR) can't actually exercise this: that commit is simply
+// unreachable from any other worktree's HEAD regardless of hasMaterializeCommit's
+// range bound, so a naive version of this test would pass identically whether
+// or not #1674's fix exists — proving nothing (confirmed empirically: forcing
+// hasMaterializeCommit's `integration` bound to null and re-running such a
+// fixture left the assertion green). #1460's own cited reproduction — run
+// 2026-08-23T204821-record-361, PR #1339 — did not stay unmerged: `gh pr view
+// 1339` shows `state: MERGED` (2026-08-25) into `main`, even though that run's
+// own run-state.json was left `status: interrupted` with no worktree ever
+// recorded. So this fixture merges the victim's materialize commit into `main`
+// before branching the scratch worktree — the one topology that actually puts
+// the commit in a later worktree's inherited history, which is exactly the
+// precondition hasMaterializeCommit's #1674 range-bound (`{integration}..HEAD`,
+// this worktree's own unique commits only) exists to exclude. Verified by
+// reverting that bound locally (forcing the unbounded pre-#1674 walk) against
+// this exact fixture: the gate arms (hasMaterializeCommit returns true) — so
+// this fixture, unlike the disconnected-branch version, genuinely regresses if
+// the bound is ever removed.
+test('bookkeeping-stamps gate (#1460): an unrelated dangling run (materialize commit merged into main via an already-closed PR, no worktree recorded) does not deny a fresh scratch worktree', () => {
   const main = gitRepo();
 
   // The dangling run's OWN worktree — a genuine prior /build attempt whose
-  // materialize commit landed here, on a branch never merged into main (e.g.
-  // its PR is still open, or it was interrupted before merging).
+  // materialize commit landed here.
   const victimWt = linkedWorktreeOf(main);
   const runId = '2026-08-23T204821-record-361';
   commitMaterializedSpec(victimWt, path.join('work', '361-spec.md'), runId);
 
-  // The dangling run dir: materialize commit landed (per victimWt above), but
-  // record-worktree never ran — no `worktree`/`sessionId` field at all, the
-  // exact "interrupted, no worktree ever recorded" shape #1460 describes.
+  // Merge that commit into `main`, simulating PR #1339's real, confirmed merge
+  // — this is what puts it into every LATER worktree's inherited history.
+  const victimBranch = execFileSync('git', ['-C', victimWt, 'branch', '--show-current'], { encoding: 'utf8' }).trim();
+  execFileSync('git', ['-C', main, 'merge', '--no-ff', victimBranch, '-m', 'Merge PR #1339', '-q']);
+
+  // The dangling run dir: materialize commit landed and merged (per victimWt
+  // above), but record-worktree never ran — no `worktree`/`sessionId` field at
+  // all, the exact "interrupted, no worktree ever recorded" shape #1460
+  // describes, matching run-361's real state despite PR #1339 having merged.
   const project = projectDir();
   const run = path.join(project, '.claude-tweaks', 'pipelines', runId);
   fs.mkdirSync(run, { recursive: true });
   fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'interrupted' }));
 
-  // A separate scratch worktree, freshly branched from main's current tip —
-  // has made zero commits of its own and has never seen victimWt's materialize
-  // commit (different branch entirely, never merged).
+  // A separate scratch worktree, freshly branched from main's CURRENT
+  // (post-merge) tip — has made zero commits of its own, but its HEAD now
+  // contains victimWt's materialize commit via ordinary ancestry, the same as
+  // any real worktree created after that PR merged.
   const scratchWt = linkedWorktreeOf(main);
 
   const out = pre.run({
@@ -1097,7 +1117,7 @@ test('bookkeeping-stamps gate (#1460): an unrelated dangling run (materialize co
   });
   assert.deepStrictEqual(
     out, {},
-    'a scratch worktree with no commits of its own must not be denied on account of an unrelated dangling run\'s missing worktree stamp',
+    'a scratch worktree with no commits of its own must not be denied on account of an unrelated dangling run\'s inherited materialize commit',
   );
 });
 
