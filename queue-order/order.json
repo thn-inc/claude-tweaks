@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-17T17:02:35.836Z",
+  "computedAt": "2026-09-17T17:14:24.670Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -65,7 +65,7 @@
       },
       {
         "number": 2477,
-        "updatedAt": "2026-09-16T23:03:47Z",
+        "updatedAt": "2026-09-17T17:13:44Z",
         "state": "OPEN"
       },
       {
@@ -1812,7 +1812,7 @@
         "number": 2477,
         "state": "OPEN",
         "title": "wrap-up verify: acceptance-labeling check doesn't recognize the Oversight-floor gate's legitimate demo:pending skip",
-        "updatedAt": "2026-09-16T23:03:47Z",
+        "updatedAt": "2026-09-17T17:13:44Z",
         "facets": {
           "origin": null,
           "risk": "low",
