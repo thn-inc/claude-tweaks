@@ -1124,6 +1124,15 @@ test('hasMaterializeCommit: #1688 AC2 regression guard — the local default-bra
     'the local default-branch probe must not disarm the gate for a worktree\'s own genuinely-unmerged materialize commit');
 });
 
+test('resolveRunPinnedIntegrationModel: exported for reuse by the phase-boundary precondition check (#2472)', () => {
+  const repo = gitRepoWithCommit();
+  const runDir = runDirForId('2026-09-17T000000-spec-2472');
+  assert.strictEqual(typeof pre.resolveRunPinnedIntegrationModel, 'function');
+  // No policy.yml, no remote configured -> detectIntegrationModel falls back
+  // to local-merge (no forge to be pr-first against).
+  assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, runDir), 'local-merge');
+});
+
 // #1967: git-stash worktree-hazard warn — the stash stack is repository-wide,
 // shared by every linked worktree of the same main checkout, so a bare
 // `git stash`/`git stash pop` from a linked worktree can push onto or pop a

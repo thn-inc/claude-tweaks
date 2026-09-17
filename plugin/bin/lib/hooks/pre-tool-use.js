@@ -1712,4 +1712,8 @@ module.exports = {
   toplevel,
   checkBookkeepingStampsGate,
   hasLoggedPrDegrade,
+  // Exported for check-pr-bookkeeping.js's phase-boundary precondition check
+  // (#2472) to reuse rather than reimplement — the same integration-model
+  // resolution checkBookkeepingStampsGate's own PR-stamp branch already uses.
+  resolveRunPinnedIntegrationModel,
 };
