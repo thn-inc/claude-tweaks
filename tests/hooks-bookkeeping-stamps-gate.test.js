@@ -1049,3 +1049,87 @@ test('bookkeeping-stamps gate (#1258): a caught model-resolution exception never
     'a caught resolution exception must never persist prExempt — a later call might resolve pr-first and need to enforce',
   );
 });
+
+// --- #1460: an unrelated dangling run must not deny a fresh scratch worktree ---
+//
+// _shared/scratch-worktree.md's throwaway checkouts (used by /tidy, /wrap-up's
+// residue sweep, /init) never call materialize or record-worktree for
+// themselves — they have no run-state.json of their own. When such a worktree's
+// first Edit/Write resolves ctx.runDir to some OTHER, unrelated non-terminal run
+// (bin/hooks.js's resolveRunDir has no session-id filtering and picks the newest
+// non-terminal run repo-wide), a dangling run whose materialize commit landed
+// elsewhere but was never followed by record-worktree must not have its
+// missing-worktree-stamp deny fire against this unrelated scratch worktree.
+// hasMaterializeCommit's #1674 range-bound (`{integration}..HEAD`, this
+// worktree's own unique commits only) already closes this: a scratch worktree
+// with zero commits of its own can never match the dangling run's materialize
+// pathspec, regardless of which run ctx.runDir resolves to. This test pins that
+// already-correct behavior so a future regression to hasMaterializeCommit's
+// bound (e.g. reverting to an unbounded walk) is caught here, not live.
+test('bookkeeping-stamps gate (#1460): an unrelated dangling run (materialize commit landed elsewhere, no worktree recorded) does not deny a fresh scratch worktree', () => {
+  const main = gitRepo();
+
+  // The dangling run's OWN worktree — a genuine prior /build attempt whose
+  // materialize commit landed here, on a branch never merged into main (e.g.
+  // its PR is still open, or it was interrupted before merging).
+  const victimWt = linkedWorktreeOf(main);
+  const runId = '2026-08-23T204821-record-361';
+  commitMaterializedSpec(victimWt, path.join('work', '361-spec.md'), runId);
+
+  // The dangling run dir: materialize commit landed (per victimWt above), but
+  // record-worktree never ran — no `worktree`/`sessionId` field at all, the
+  // exact "interrupted, no worktree ever recorded" shape #1460 describes.
+  const project = projectDir();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'interrupted' }));
+
+  // A separate scratch worktree, freshly branched from main's current tip —
+  // has made zero commits of its own and has never seen victimWt's materialize
+  // commit (different branch entirely, never merged).
+  const scratchWt = linkedWorktreeOf(main);
+
+  const out = pre.run({
+    input: editInput(path.join(scratchWt, 'src', 'x.js')),
+    runDir: run,
+    runState: { status: 'interrupted' },
+    cwd: scratchWt,
+  });
+  assert.deepStrictEqual(
+    out, {},
+    'a scratch worktree with no commits of its own must not be denied on account of an unrelated dangling run\'s missing worktree stamp',
+  );
+});
+
+// Control for the test above: the SAME dangling-run shape (materialize landed,
+// no worktree recorded) still denies when the calling worktree IS the one the
+// materialize commit actually landed in — proving the allow above comes from
+// "this worktree never touched that run," not from a broken fixture or a
+// gate that stopped enforcing the record-worktree stamp altogether. This is
+// the AC2 case (genuine /build worktree missing its own stamp must still be
+// denied) exercised with THIS test's own fixture shape rather than reusing the
+// file's line-97 test's fixture — the record-worktree deny AC2 already asks
+// for is already covered there, but this control keeps the #1460 scenario's
+// own fixtures self-verifying, the same pairing the file's existing I2.1 test
+// (line 615) uses.
+test('bookkeeping-stamps gate (#1460 control): the same dangling-run shape still denies when the calling worktree IS the one that materialized it', () => {
+  const main = gitRepo();
+  const ownWt = linkedWorktreeOf(main);
+  const runId = '2026-08-23T204821-record-361';
+  commitMaterializedSpec(ownWt, path.join('work', '361-spec.md'), runId);
+
+  const project = projectDir();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'interrupted' }));
+
+  const out = pre.run({
+    input: editInput(path.join(ownWt, 'src', 'x.js')),
+    runDir: run,
+    runState: { status: 'interrupted' },
+    cwd: ownWt,
+  });
+  assert.ok(out.json && out.json.hookSpecificOutput, 'control: the worktree that actually materialized this run must still be denied for its missing worktree stamp');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/);
+});
