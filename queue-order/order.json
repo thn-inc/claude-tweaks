@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-17T17:32:03.991Z",
+  "computedAt": "2026-09-17T18:05:06.157Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -69,11 +69,6 @@
         "state": "OPEN"
       },
       {
-        "number": 2476,
-        "updatedAt": "2026-09-16T23:03:50Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2472,
         "updatedAt": "2026-09-15T19:40:26Z",
         "state": "OPEN"
@@ -86,11 +81,6 @@
       {
         "number": 2449,
         "updatedAt": "2026-09-17T15:10:35Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2444,
-        "updatedAt": "2026-09-16T23:04:00Z",
         "state": "OPEN"
       },
       {
@@ -2188,190 +2178,6 @@
           "shapedHeadless": true
         }
       }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nTen call sites across `plugin/bin/` resolve an explicit `--repo` value by unconditionally\nwrapping it as `` parseRepo(`github.com/${opts.repo}`) `` before parsing — so a caller-supplied\n`--repo` can never target a non-github.com host, even after #2240 widened `parseRepo` itself to\nreturn a `host` field. Only the git-remote fallback path (`parseRepo(remote)`, when `--repo` is\nomitted) benefits from #2240's widening.\n\nConfirmed live in the current tree:\n\n- `plugin/bin/fetch-sub-issues.js:92`\n- `plugin/bin/release-claim.js:138`\n- `plugin/bin/file-feedback.js:112`\n- `plugin/bin/apply-refine-labels.js:174`\n- `plugin/bin/link-records.js:77`\n- `plugin/bin/repair-claim.js:99`\n- `plugin/bin/materialize.js:327`\n- `plugin/bin/lib/compose-subject.js:179`\n- `plugin/bin/preflight-records.js:115`\n- `plugin/bin/backlog-grant-gate.js:148`\n\nThis is a distinct, still-live bug from #2443 (closed already-shipped, 2026-09-16): #2443 was\nabout `bin/lib/**` modules discarding a host that had already reached them; this record is about\nthe wrap that decides what `host` reaches them from `--repo` in the first place.\n\n`plugin/bin/lib/number-list-cli.js:96-97` already carries the fix, landed as a review finding on\n#2425: `parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : \\`github.com/${opts.repo}\\`)` — a\n3-segment `--repo` value (`host/owner/repo`, `repoSlug()`'s own GHE output shape) is passed through\nunwrapped; a 2-segment `owner/repo` value still gets the `github.com/` prefix, unchanged. Its\nregression tests (`tests/bin-lib/number-list-cli.test.js:166` and `:177`) are the reference\nfixture shape for this record's own test coverage. `number-list-cli.js` is the shared scaffold\nbehind `resolve-blockers.js`/`resolve-linked-prs.js` only — the ten call sites above each hand-roll\ntheir own `parseRepo` wrap independently and never picked up #2425's fix.\n\n## Deliverables\n\n- Apply `number-list-cli.js`'s exact segment-count check (`opts.repo.split('/').length >= 3 ?\n  opts.repo : \\`github.com/${opts.repo}\\``) to each of the ten call sites listed above, replacing\n  their unconditional `github.com/` wrap.\n- Add one regression test per call site's existing test file, mirroring\n  `tests/bin-lib/number-list-cli.test.js`'s two `#2425 review fix` cases: a host-qualified\n  `--repo host/owner/repo` resolves to that host, and a bare `--repo owner/repo` still resolves to\n  `github.com` unchanged.\n\n## Acceptance Criteria\n\n- Each of the ten named call sites' `--repo` flag accepts a host-qualified `host/owner/repo` value\n  and resolves `repoSpec.host` to that host, not `github.com`.\n- Each of the ten named call sites' `--repo` flag still resolves a bare `owner/repo` value to\n  `host: \"github.com\"` — no regression on the existing, far more common case.\n- Every git-remote fallback path (`--repo` omitted) is unchanged — this record touches only the\n  explicit-`--repo` wrap.\n- `npm test` passes.\n\n## Technical Approach\n\nReplace the unconditional `` `github.com/${opts.repo}` `` (or `o.repo` — two of the ten sites use\nthat param name) template literal at each of the ten cited line numbers with\n`number-list-cli.js:96`'s conditional: pass `opts.repo` through unwrapped when it already has 3+\n`/`-separated segments (already host-qualified), otherwise prefix `github.com/` exactly as today.\nNo change to `repo-resolve.js`'s `parseRepo` itself — the fix is entirely in how each caller\nconstructs the string it hands to `parseRepo`, matching #2425's precedent. Add the two-case test\npattern (`tests/bin-lib/number-list-cli.test.js:166`/`:177`) to each call site's own test file.\n\n### Key Files\n\n- `plugin/bin/fetch-sub-issues.js:92`, `plugin/bin/release-claim.js:138`,\n  `plugin/bin/file-feedback.js:112`, `plugin/bin/apply-refine-labels.js:174`,\n  `plugin/bin/link-records.js:77`, `plugin/bin/repair-claim.js:99`,\n  `plugin/bin/materialize.js:327`, `plugin/bin/lib/compose-subject.js:179`,\n  `plugin/bin/preflight-records.js:115`, `plugin/bin/backlog-grant-gate.js:148` — the ten sites to\n  fix\n- `plugin/bin/lib/number-list-cli.js:96-97` — the reference fix pattern (read-only, not modified)\n- `tests/bin-lib/number-list-cli.test.js:166-186` — the reference test-case shape\n\n## Gotchas\n\n- Don't touch `parseRepo`/`repoSlug`/`ghAvailable` in `plugin/bin/lib/repo-resolve.js` itself —\n  #2240 already widened that module correctly; the bug is entirely in how the ten callers wrap\n  their input before handing it to `parseRepo`.\n- This is a mechanical, low-risk change (ten near-identical one-line edits plus matching tests) —\n  don't let the ten-file spread inflate the ceremony; each site is independently verifiable against\n  the same two test cases `number-list-cli.js` already pins.\n",
-        "createdAt": "2026-09-14T14:45:17Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2444,
-        "state": "OPEN",
-        "title": "parseRepo callers' --repo CLI flag can't target a non-github.com host",
-        "updatedAt": "2026-09-16T23:04:00Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n`checkWindowsLongpaths` in `plugin/bin/lib/hooks/post-tool-use.js` (around line 524-530, landed via #1785/#2432) runs `runGit(['config', '--get', 'core.longpaths'])` and treats any non-`'true'` stdout as \"core.longpaths is not enabled\" — including when `result.failure` is `'timeout'`, `'spawn'`, or `'no-git'` (the check never actually ran). It then unconditionally calls `logWindowsLongpathsEvent(ctx, { result: 'unset', value: result.stdout })` and surfaces the same warning message for both cases.\n\nThe sibling function 20 lines below, `checkWorktreeStaleness`, already draws this exact distinction correctly: it logs `result: 'check-failed'` and skips the message when `fetch.failure`/`revList.failure` is set, rather than asserting a fact it doesn't know. This file's own header comment (lines 14-18) states the indeterminate/definitive distinction matters \"only where a gate acts on the answer\" — this is exactly such a site.\n\nFound by two independent reproduction-pair agents during the whole-branch pre-release review after v6.124.0 (base 05d7d6cc5..75f71e366), confirmed severity: medium.\n\n## Deliverables\n- [ ] `checkWindowsLongpaths` distinguishes a real `runGit` failure (`result.failure` set) from a definitive git-config answer, matching `checkWorktreeStaleness`'s existing `'check-failed'` convention\n- [ ] On a real failure, skip the \"core.longpaths is not enabled\" warning (the check didn't run, so the fact is unknown) and log a distinct result value (e.g. `'check-failed'`) rather than `'unset'`\n- [ ] Add test coverage for the forced timeout/spawn/no-git branches (currently only success and real-git-config-unset are covered — `tests/hooks-post-tool-use-worktree-staleness.test.js`)\n\n## Acceptance Criteria\n1. A forced `runGit` failure (timeout/spawn/no-git) on the `core.longpaths` check never produces the \"not enabled\" warning and never logs `result: 'unset'`\n2. `events.jsonl` can distinguish \"checked, found unset\" from \"check didn't run\" for this event, same as it already can for worktree-staleness events\n3. New tests exercise the failure branches and would fail against the current code\n\n## Technical Approach\n\nIn `checkWindowsLongpaths` (`plugin/bin/lib/hooks/post-tool-use.js:524-530`), split the current\nsingle `if (!result.failure && result.stdout === 'true')` branch into two checks, mirroring\n`checkWorktreeStaleness`'s existing shape (same file, line 571):\n\n1. `if (result.failure) { logWindowsLongpathsEvent(ctx, { worktree: worktreePath, result: 'check-failed', reason: result.failure }); return null; }` — a real check failure never asserts \"not enabled\" and never returns the warning `systemMessage`.\n2. The existing `result.stdout === 'true'` → `'enabled'` branch is unchanged.\n3. Everything else (a clean, non-failing `--get` that returned non-`'true'` stdout, including empty stdout for a genuinely unset key) keeps today's `result: 'unset'` logging and warning.\n\nNo change to `checkWorktreeStaleness` itself — it's the reference pattern, not part of this fix.\n\n### Key Files\n\n- `plugin/bin/lib/hooks/post-tool-use.js` — `checkWindowsLongpaths` (~line 513-544, the fix),\n  `checkWorktreeStaleness` (~line 546, the reference pattern already correct)\n- `tests/hooks-post-tool-use-worktree-staleness.test.js` — existing win32/longpaths coverage at\n  line 231 (unset) and 240 (already-true); add a forced-failure case mirroring line 171's\n  `checkWorktreeStaleness` fetch-failure test\n\n## Gotchas\n\n- Don't change the message text or the `'enabled'`/`'unset'` result values for the two paths that\n  already work correctly (real true, real non-true) — only the previously-uncovered failure path\n  changes behavior.\n- The fix is a direct structural mirror of code already in the same file 20 lines away — no new\n  pattern to invent, just apply the existing one.\n\nOrigin: whole-branch pre-release review, `/claude-tweaks:release` session, delta pass over 05d7d6cc5..75f71e366\n",
-        "createdAt": "2026-09-14T19:46:18Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2476,
-        "state": "OPEN",
-        "title": "post-tool-use.js checkWindowsLongpaths conflates real check failures with a definitive 'unset' answer",
-        "updatedAt": "2026-09-16T23:03:50Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
     ]
   ],
   "excluded": [
@@ -2406,12 +2212,6 @@
         1350,
         1739,
         2336
-      ]
-    },
-    {
-      "records": [
-        2444,
-        2476
       ]
     }
   ]
