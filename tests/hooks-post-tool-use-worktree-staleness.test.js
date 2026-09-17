@@ -272,3 +272,75 @@ test('never writes git config — only a read-only `config --get` reaches the ex
     assert.ok(!args.includes('true') && !args.includes('false'), `no config call may pass a value to set: ${args.join(' ')}`);
   }
 });
+
+// #2476: checkWindowsLongpaths previously conflated a real runGit failure
+// (timeout/spawn/no-git — the check never actually ran) with a definitive
+// "not enabled" answer, asserting the same warning and `result: 'unset'`
+// log for both. A real failure must instead log `result: 'check-failed'`
+// and never assert the fact it doesn't know. Mirrors the fetch-failure
+// coverage above for checkWorktreeStaleness's own 'check-failed' branch.
+function mockConfigFailure(t, err) {
+  const realExecFileSync = cp.execFileSync;
+  t.mock.method(cp, 'execFileSync', (cmd, args, opts) => {
+    if (cmd === 'git' && Array.isArray(args) && args.includes('config') && args.includes('core.longpaths')) {
+      throw err;
+    }
+    return realExecFileSync(cmd, args, opts);
+  });
+}
+
+test('#2476: a forced no-git failure on core.longpaths never warns and logs check-failed, not unset', (t) => {
+  const { main } = setupProject();
+  const wt = harnessWorktreeOf(main);
+  const err = new Error('spawn git ENOENT');
+  err.code = 'ENOENT';
+  mockConfigFailure(t, err);
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wlp-run-'));
+  const out = post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32', ownedRun: { dir: runDir } }));
+  assert.deepStrictEqual(out, {}, 'a forced check failure must never produce the core.longpaths warning');
+  const events = readEvents(runDir).filter((e) => e.type === 'windows-longpaths');
+  assert.strictEqual(events.length, 1);
+  assert.strictEqual(events[0].result, 'check-failed');
+  assert.notStrictEqual(events[0].result, 'unset');
+});
+
+test('#2476: a forced timeout failure on core.longpaths never warns and logs check-failed, not unset', (t) => {
+  const { main } = setupProject();
+  const wt = harnessWorktreeOf(main);
+  const err = new Error('command timed out');
+  err.killed = true;
+  err.signal = 'SIGTERM';
+  mockConfigFailure(t, err);
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wlp-run-'));
+  const out = post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32', ownedRun: { dir: runDir } }));
+  assert.deepStrictEqual(out, {}, 'a forced check failure must never produce the core.longpaths warning');
+  const events = readEvents(runDir).filter((e) => e.type === 'windows-longpaths');
+  assert.strictEqual(events.length, 1);
+  assert.strictEqual(events[0].result, 'check-failed');
+});
+
+test('#2476: a forced spawn failure (EAGAIN) on core.longpaths never warns and logs check-failed, not unset', (t) => {
+  const { main } = setupProject();
+  const wt = harnessWorktreeOf(main);
+  const err = new Error('spawn git EAGAIN');
+  err.code = 'EAGAIN';
+  mockConfigFailure(t, err);
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wlp-run-'));
+  const out = post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32', ownedRun: { dir: runDir } }));
+  assert.deepStrictEqual(out, {}, 'a forced check failure must never produce the core.longpaths warning');
+  const events = readEvents(runDir).filter((e) => e.type === 'windows-longpaths');
+  assert.strictEqual(events.length, 1);
+  assert.strictEqual(events[0].result, 'check-failed');
+});
+
+test('#2476: a real (non-forced) unset key still logs result: unset, distinct from check-failed', () => {
+  const { main } = setupProject();
+  const wt = harnessWorktreeOf(main);
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wlp-run-'));
+  const out = post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32', ownedRun: { dir: runDir } }));
+  assert.ok(out.json && typeof out.json.systemMessage === 'string');
+  const events = readEvents(runDir).filter((e) => e.type === 'windows-longpaths');
+  assert.strictEqual(events.length, 1);
+  assert.strictEqual(events[0].result, 'unset');
+  assert.notStrictEqual(events[0].result, 'check-failed');
+});
