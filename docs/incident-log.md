@@ -1559,3 +1559,48 @@ owned the question.
 shaping mode mechanically requires a stated headless-refusal outcome for any deliverable that is
 a flag or mode whose consumer is a Routine firing — at that point the spec can no longer be
 written this way and the rule is enforced rather than remembered.
+
+## IL-157 — A regression test's cited historical incident was never ground-truthed against its actual resolved state
+
+Surfaced during `/claude-tweaks:review` on record #1460 (bookkeeping-stamps gate scratch-worktree
+misattribution). #1460's own build agent ran a legitimate empirical investigation before touching
+any code: it reproduced the record's described scenario against current `pre-tool-use.js`,
+concluded (correctly) that `hasMaterializeCommit`'s `#1674` range-bound already closes the gap,
+and committed a regression test (96508dae5) pinning that already-correct behavior rather than
+writing an unneeded fix. The investigation's reasoning was sound; its fixture was not.
+
+The committed test's fixture put the dangling run's materialize commit on a branch that never
+merges anywhere — modeled on the record's own prose, which described the cited reproduction (PR
+#1339) only as "landed, no worktree ever recorded," with no explicit statement of whether that PR
+had merged. Read literally, that description is consistent with an open or a merged PR. The
+fixture assumed the weaker reading. Reviewed independently: forcing `hasMaterializeCommit`'s
+`integration` bound to `null` (simulating a full revert of `#1674`) left the committed test green.
+The assertion passed for a reason that had nothing to do with the fix it claimed to pin — the
+victim commit was simply unreachable from the scratch worktree's ancestry regardless of any range
+bound, since two never-merged branches share no history to walk in the first place. Had `#1674`'s
+bound later regressed for real, this test would have stayed green through it, silently
+reintroducing the exact live false-positive-deny bug #1460 investigated, with a "regression test"
+sitting in the suite that could never have caught the regression.
+
+Ground-truthing the citation settled which reading was correct: `gh pr view 1339` showed
+`state: MERGED`, merged into `main` on 2026-08-25 — despite the run dir itself staying
+`status: interrupted` with no worktree ever recorded, an inconsistency the record's prose gave no
+reason to suspect. The real bug precondition requires the commit to be reachable through the
+shared integration branch (a merged PR putting it into every later worktree's inherited history),
+not merely to exist somewhere in the repository. Re-verified directly against a hand-built
+git fixture reproducing that real topology: with `#1674`'s bound in place, `hasMaterializeCommit`
+correctly returns `false` (no false deny); with the bound reverted, it returns `true`, reproducing
+the exact bug #1460 described. The committed fixture was corrected to match this real topology
+(commit 6d066a2c0) and re-verified the same way — it now goes red when the bound is reverted and
+green against the actual current code.
+
+Cost: caught in the same review pass that would otherwise have approved it, so no shipped defect
+— but the near-miss is real: a silently non-discriminating regression test is indistinguishable
+from a discriminating one until someone reverts the fix it claims to guard and watches it stay
+green. Nothing about the fixture's assertions or the test's passing status would ever have
+surfaced the gap on its own.
+
+**Removal condition:** retire this entry and its `docs/donts.md` rule once a mechanical check
+exists that flags a regression test whose only cited external evidence (a PR/commit/issue number
+in the test's own comments) was never independently queried during authoring or review — at that
+point the omission is caught structurally rather than by a reviewer's judgment call.
