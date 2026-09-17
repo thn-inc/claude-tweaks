@@ -5,8 +5,7 @@ const {
   hasMaterializeCommit, hasLoggedPrDegrade, resolveRunPinnedIntegrationModel,
 } = require('../hooks/pre-tool-use');
 const { readRunState } = require('../hooks/context');
-const wtDetect = require('../hooks/worktree-detect');
-const { mainCheckoutRoot } = wtDetect;
+const { mainCheckoutRoot, repoInfo } = require('../hooks/worktree-detect');
 
 // checkPrBookkeepingPrecondition({ runDir, cwd }) -> { ok, reason, message? }
 //
@@ -62,7 +61,7 @@ function checkPrBookkeepingPrecondition({ runDir, cwd = process.cwd() }) {
     // Indeterminate (git never answered) resolves the same as "not linked" --
     // this check's whole posture is fail-open on ambiguity (see header
     // comment), so an unprovable case is not grounds to deny either.
-    const { isLinkedWorktree, indeterminate } = wtDetect.repoInfo(cwd);
+    const { isLinkedWorktree, indeterminate } = repoInfo(cwd);
     if (indeterminate || !isLinkedWorktree) {
       return { ok: true, reason: 'not-linked-worktree' };
     }
