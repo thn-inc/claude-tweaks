@@ -135,7 +135,7 @@ function run(argv, deps = realDeps) {
   }
   let remote = null;
   if (!o.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = o.repo ? parseRepo(`github.com/${o.repo}`) : parseRepo(remote);
+  const repoSpec = o.repo ? parseRepo(o.repo.split('/').length >= 3 ? o.repo : `github.com/${o.repo}`) : parseRepo(remote);
   if (!repoSpec) { deps.stderr('release-claim.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
   // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'
   // (#1153 review finding). release.releaseClaim -> lib/issues/claim-store.js interpolates

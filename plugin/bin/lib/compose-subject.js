@@ -176,7 +176,7 @@ function run(argv, deps = realDeps) {
 
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
+  const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
   if (!repoSpec) { deps.stderr('compose-subject.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
   const slug = repoSlug(repoSpec);
 

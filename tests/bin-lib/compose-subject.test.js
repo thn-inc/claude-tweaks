@@ -60,6 +60,25 @@ test('single record: conventional subject from type label, summary from Overview
   assert.ok(out.calls[0].includes('number,title,body,labels,issueType'));
 });
 
+// #2444 review fix: a caller-supplied --repo can itself already be a
+// host-qualified `host/owner/repo` slug (repoSlug()'s GHE output) — before
+// this fix, --repo was always prefixed with `github.com/` regardless of
+// shape, producing an unparseable 4-segment string for a slug like this.
+test('#2444 fix: a host-qualified --repo slug passes through to the --repo flag unmangled', () => {
+  const { deps, out } = fakeDeps({ remoteUrl: () => { throw new Error('remoteUrl should not be called when --repo is passed'); } });
+  const code = run(['2251', '--repo', 'ghe.example.com/acme/widgets'], deps);
+  assert.equal(code, 0, out.stderr);
+  assert.ok(out.calls[0].includes('--repo') && out.calls[0].includes('ghe.example.com/acme/widgets'));
+});
+
+test('#2444 fix: a bare --repo owner/repo still resolves unchanged', () => {
+  const { deps, out } = fakeDeps({ remoteUrl: () => { throw new Error('remoteUrl should not be called when --repo is passed'); } });
+  const code = run(['2251', '--repo', 'acme/widgets'], deps);
+  assert.equal(code, 0, out.stderr);
+  assert.ok(out.calls[0].includes('--repo') && out.calls[0].includes('acme/widgets'));
+  assert.ok(!out.calls[0].join(' ').includes('github.com/acme/widgets'), 'must not be double-wrapped with github.com/');
+});
+
 test('bundle: subject from the lowest number, one Fixes line per record ascending, tag paragraph', () => {
   const { deps, out } = fakeDeps();
   assert.equal(run(['2252,2251', '--tag', 'auto-merge'], deps), 0, out.stderr);
