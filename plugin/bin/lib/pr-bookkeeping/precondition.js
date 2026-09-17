@@ -5,7 +5,8 @@ const {
   hasMaterializeCommit, hasLoggedPrDegrade, resolveRunPinnedIntegrationModel,
 } = require('../hooks/pre-tool-use');
 const { readRunState } = require('../hooks/context');
-const { mainCheckoutRoot } = require('../hooks/worktree-detect');
+const wtDetect = require('../hooks/worktree-detect');
+const { mainCheckoutRoot } = wtDetect;
 
 // checkPrBookkeepingPrecondition({ runDir, cwd }) -> { ok, reason, message? }
 //
@@ -32,7 +33,17 @@ function checkPrBookkeepingPrecondition({ runDir, cwd = process.cwd() }) {
   }
   if (runState.status === 'clean') return { ok: true, reason: 'clean' };
 
-  const worktreeRoot = runState.worktree ? path.resolve(runState.worktree) : cwd;
+  let worktreeRoot;
+  try {
+    worktreeRoot = runState.worktree ? path.resolve(runState.worktree) : cwd;
+  } catch {
+    // A hand-corrupted run-state.json can carry a non-string `worktree`
+    // field (path.resolve throws a TypeError on anything but a string) --
+    // this is the same "can't trust what we read" shape as the JSON-parse
+    // failure above, so it fails open the same way rather than crashing the
+    // CLI with an undocumented exit code.
+    return { ok: true, reason: 'unreadable-run-state' };
+  }
 
   let materialized;
   try {
@@ -43,6 +54,18 @@ function checkPrBookkeepingPrecondition({ runDir, cwd = process.cwd() }) {
   if (!materialized) return { ok: true, reason: 'not-materialized-yet' };
 
   if (!runState.worktree) {
+    // `git-strategy: current-branch` skips build/worktree-setup.md entirely,
+    // so record-worktree (Step 4.5) legitimately never runs and a materialize
+    // commit lands with no `worktree` field -- correct-by-design, not a
+    // violation. Mirror pre-tool-use.js's checkBookkeepingStampsGate: only a
+    // CONFIRMED linked-worktree cwd makes the missing stamp meaningful.
+    // Indeterminate (git never answered) resolves the same as "not linked" --
+    // this check's whole posture is fail-open on ambiguity (see header
+    // comment), so an unprovable case is not grounds to deny either.
+    const { isLinkedWorktree, indeterminate } = wtDetect.repoInfo(cwd);
+    if (indeterminate || !isLinkedWorktree) {
+      return { ok: true, reason: 'not-linked-worktree' };
+    }
     return {
       ok: false,
       reason: 'no-worktree-stamp',

@@ -79,6 +79,26 @@ test('checkPrBookkeepingPrecondition: DENY when materialize commit landed but no
   assert.match(r.message, /record-worktree/);
 });
 
+test('checkPrBookkeepingPrecondition: ok (fail-open) for a current-branch-shaped run -- no worktree field, NOT a linked worktree (#2472 Finding 1 regression)', () => {
+  const runId = '2026-09-17T000003b-spec-1';
+  // A plain git repo that is NOT a linked worktree of anything -- the
+  // git-strategy: current-branch shape, where build/worktree-setup.md (and
+  // its record-worktree call) never runs at all.
+  const main = gitRepoWithCommit();
+  // current-branch mode works directly on a feature branch in the SAME
+  // checkout (no linked worktree at all) -- advance HEAD past the resolved
+  // integration branch (main/master) the same way a linked worktree's own
+  // branch does, so hasMaterializeCommit's {integration}..HEAD range is
+  // non-empty.
+  execFileSync('git', ['-C', main, 'checkout', '-b', 'feature-branch', '-q']);
+  commitMaterializeFile(main, runId);
+  const runDir = makeRunDir(runId);
+  // No run-state.json -- record-worktree legitimately never ran in this mode.
+  const r = checkPrBookkeepingPrecondition({ runDir, cwd: main });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.reason, 'not-linked-worktree');
+});
+
 test('checkPrBookkeepingPrecondition: ok when worktree stamped and prExempt is set', () => {
   const runId = '2026-09-17T000004-spec-1';
   const main = gitRepoWithCommit();
