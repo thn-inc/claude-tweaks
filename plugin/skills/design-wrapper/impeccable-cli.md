@@ -101,11 +101,11 @@ The schema above is the pinned CLI version's real, verified output shape — the
 ### Defensive parsing rules
 
 1. **Parse stdout unconditionally.** `--json` writes the findings array to stdout at the pinned version; stderr carries only diagnostics. Never read findings from stderr.
-2. **The exit code is a whole-run summary of `advisory`, never a per-finding signal.** `main.mjs` sets it via `process.exit(primary.length > 0 ? 2 : 0)`, where `primary` is exactly the findings whose `advisory` flag is not `true` (`isAdvisory()` checks `finding.advisory === true`, the same value stamped in the JSON) — so the exit code and the JSON `advisory` field agree by construction; it is `severity` that can disagree with both (see the note after the parsing rules below for the verified specifics). Still, never derive `pass`/`fail` from the exit code: it can't tell you *which* finding needs surfacing, only whether the run as a whole had one. Always parse stdout and classify each finding by the [Advisory-to-result mapping](#advisory-to-result-mapping) below. Exit code otherwise distinguishes only ran (0 or 2) from crashed (1, a usage error).
+2. **The exit code is a whole-run summary of `advisory`, never a per-finding signal.** `main.mjs` sets it via `process.exit(primary.length > 0 ? 2 : 0)`, where `primary` is exactly the findings whose `advisory` flag is not `true` (`isAdvisory()` checks `finding.advisory === true`, the same value stamped in the JSON) — so the exit code and the JSON `advisory` field agree by construction; it is `severity` that can disagree with both (see the note after the parsing rules below for the verified specifics). Still, never derive `pass`/`fail` from the exit code: it can't tell you *which* finding needs surfacing, only whether the run as a whole had one. Always parse stdout and classify each finding by the [Advisory-to-result mapping](#advisory-to-result-mapping) below. Exit code otherwise distinguishes ran (0 or 2) from crashed (1, a usage error, or 127, the shim's own engine-binary-not-found exit — see [Engine binary resolution failures](#engine-binary-resolution-failures-shim-architecture-410) below).
 3. **Unknown finding fields** → ignore. `category` was added this way.
 4. **Top-level JSON is an array** → treat directly as the findings list.
 5. **`severity` outside `{warning, advisory, error}`** → informational only; surface a contract-breach note naming the observed value, same as any other unexpected shape (Phase 2's drift auditor is what escalates it). It does not change `pass`/`fail` — classification never reads `severity`, so an unrecognized value has nothing left to decide.
-6. **Exit code 1, or stdout that does not parse as JSON** → malformed; return the skip object below.
+6. **Exit code 1 or 127, or stdout that does not parse as JSON** → malformed; return the skip object below.
 
 ```json
 {
@@ -120,6 +120,59 @@ Malformed output is a skip, not a fail — same rationale as the availability ch
 **Advisory path — fixture-proven.** `tests/fixtures/impeccable-cli/advisory.html` and `tests/fixtures/impeccable-cli/warning.html`, replayed by `tests/impeccable-cli-contract.test.js` on every test run, assert the `severity`/`advisory` divergence live rather than leaving it as a claim read off upstream source. One fixture fires a rule whose registry entry carries `advisory: true` without declaring its own `severity` — the finding reports `severity: "warning"` (the default) and `advisory: true`, and the CLI exits `0`. The other fires a rule whose registry entry declares a `severity` but no `advisory: true` — the finding reports its declared `severity` and carries no `advisory` field at all, and the CLI exits `2`. `severity` and `advisory` are populated from two different, independent registry keys, so they disagree in both directions at the pinned version; which rule ids fall on which side is upstream's data, deliberately not enumerated here for the same reason the `severity` field entry in the field reference above gives.
 
 This is exactly why the wrapper classifies on `advisory` instead of `severity`. The CLI's own `--no-advisory` help text names em-dash overuse (`Suppress advisory findings entirely (e.g. em-dash overuse)`) as its worked example of a non-blocking finding, and that finding's `severity` field reads `"warning"` — a `severity`-keyed mapping would `fail` the gate on exactly the finding upstream calls out as safe to ignore. The opposite direction is just as real: a finding whose `severity` reads `"advisory"` but carries no `advisory: true` flag exits `2` — upstream blocks on it — so a `severity`-keyed mapping would have wrongly passed it. Classifying on `advisory` gets both directions right, because it is the one field the exit code itself is computed from.
+
+### Engine binary resolution failures (shim architecture, 4.1.0+)
+
+Since cli-v4.0.0, `impeccable` is a thin npm shim (`cli/bin/cli.js`) around a
+per-platform Rust binary — `--version` is answered by the shim itself and
+never touches the engine, but every other subcommand (including `detect`)
+first has to **locate** that binary, in this order:
+
+1. `$IMPECCABLE_BIN`, if set and it points at an existing file.
+2. The `@impeccable/cli-<os>-<arch>` optional dependency, if installed.
+3. The version-pinned cache at `$IMPECCABLE_HOME/bin/<engine-version>/`
+   (default `~/.impeccable/bin/<engine-version>/`; `<engine-version>` is the
+   **engine's own** version — a separate scheme from the npm package version
+   `--version` reports).
+4. A checksum-verified download from `$IMPECCABLE_DOWNLOAD_BASE` (default
+   `https://github.com/pbakaus/impeccable/releases/download`) — refused if
+   the release's `.sha256` sidecar is missing/empty or the digest doesn't
+   match.
+
+**When none of the four resolve** — a download failure, a checksum mismatch,
+an unsupported platform with no matching optional-dependency package and no
+downloadable asset, or a network-less/offline environment — the shim writes
+a human-readable message to **stderr** and exits **127** (`no binary for
+{os}-{arch}. Install {package}, set IMPECCABLE_BIN, or download
+impeccable-{os}-{arch} v{version} from {base} into {cache-path}.`; a
+checksum/sidecar failure additionally prepends its own `impeccable:
+{message}` line ahead of that one). **Stdout is always empty in this case**
+— the existing defensive parsing rules above already treat empty/non-JSON
+stdout as the `malformed` skip (rule 6), so this failure mode already
+degrades safely without any wrapper behavior change; it does not fail the
+gate.
+
+The one thing to get right when diagnosing it: **`npx impeccable --version`
+succeeding is not evidence the engine binary resolved** — unlike the
+version-pin-mismatch skip (`availability.md`), this failure is invisible to
+that check, so it needs its own install_hint rather than reusing
+`availability.md`'s pin-verification wording:
+
+> "Engine binary could not be located or downloaded — set `IMPECCABLE_BIN`
+> to an existing binary, install `@impeccable/cli-<os>-<arch>` for this
+> platform, or verify network access to `IMPECCABLE_DOWNLOAD_BASE` (default
+> GitHub releases)."
+
+**Env var overrides**, useful for CI/offline pinning or troubleshooting:
+
+| Var | Effect |
+|---|---|
+| `IMPECCABLE_BIN` | Bypass resolution entirely — run this exact binary path. |
+| `IMPECCABLE_HOME` | Override the cache root (default `~/.impeccable`) — the version-pinned binary is read from and downloaded to `$IMPECCABLE_HOME/bin/<engine-version>/`. |
+| `IMPECCABLE_DOWNLOAD_BASE` | Override the release base URL for the download fallback (default `https://github.com/pbakaus/impeccable/releases/download`) — e.g. an internal mirror. |
+
+Verified against the installed 4.1.0 shim's own source (`cli/bin/cli.js`),
+not inferred from release notes.
 
 ## Sample invocation (canonical)
 
