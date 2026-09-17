@@ -271,10 +271,33 @@ file -- fetch it the same way `{minted-run-dir}/context/claims.md` describes (if
 `gh pr view {number} --repo {owner}/{repo} --json state,isDraft,url` rather than assuming from the
 recorded object alone, since it carries no state field. A completed hand-off (a live PR already
 recorded, or `state: MERGED`) is not the same state as a genuinely still-open run awaiting a
-human -- report `pending-review` only for the latter. If the claim's `runId` no longer matches
+human -- report `pending-review` only for the latter.
+
+<!-- HARD-GATE: dispatch-missing-claim-fallback -->
+If the claim's `runId` no longer matches
 this run, or is not `live`, or `bot:in-progress` is already gone -- another session has taken over
-this record since your run started; report `pending-review` and note the discrepancy rather than
-reporting `merged`/`armed`/`ready-to-merge` against a claim you no longer hold.
+this record since your run started; report `pending-review` and note the discrepancy. **This is
+a hard, non-negotiable stop, not a default you may reason past.** Do not report
+`merged`/`armed`/`ready-to-merge` against a claim you no longer hold, no matter how confident your
+own read of the diff's safety is -- a plausible-looking single-author commit/label/PR history is
+not evidence the claim state can be overridden; it is exactly the kind of case this stop exists to
+catch regardless of outcome (`_shared/auto-mode-contract.md`'s HARD-GATE / BLOCKED / STOP row).
+
+**Mechanical audit trail (#2488) -- log this check before reporting any of the four outcomes
+above, not just when it fails.** Before choosing among `merged`/`armed`/`pending-review`/
+`ready-to-merge`, write one line to `decisions.md` recording what the claim read found:
+
+```bash
+node "{plugin-root}/bin/log-decision.js" --run "{run-dir}" --status AUTO --section "/dispatch" \
+  --text "State-check: claim runId={observed-runId-or-absent}, live={true|false}, bot:in-progress={present|absent} -- reporting {outcome}." --reversibility n/a
+```
+
+A report of `merged`/`armed`/`ready-to-merge` with no matching state-check line in `decisions.md`
+is not trustworthy self-report -- the same principle the Auto-merge gate's own
+"mechanically verify... do not rely on having just run the loop above" check already applies to
+the `assess-agent-autonomy` verdict, applied here to this state-check instead. A later audit or
+reconciler pass can use this line's absence as a signal that this HARD-GATE may have been
+bypassed.
 
 OUTPUT FORMAT (required), before the trailing status line -- return ONLY these lines, no preamble:
 

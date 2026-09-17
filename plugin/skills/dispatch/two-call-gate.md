@@ -27,3 +27,47 @@ Dispatch the second call only if the first call's status line was `DONE` or `DON
    Settle has already released this group's claim and adjusted its labels by this point, so `cleanup-only`'s Section E release step may run against an already-released claim. That overlap is accepted and recorded here so a duplicate release comment is not later read as a defect — the alternative is the `[IL-116]` hazard above.
 
 Only once that cleanup call returns does this session enter the next group's worktree.
+
+## 6. Terminal path when the second call's status line is missing or malformed
+
+Same detection as `sequential-execution.md`'s mechanical status-line check, above — but firing on
+the **second** (`review,polish,wrap-up`) call instead of the first. Treated exactly like the
+second call reporting `BLOCKED`.
+
+This needs its own remedy, not simply "same as section 5 above." Settle's own ownership note
+(`settle-and-merge.md`) states it "runs inside whichever of them handles the outcome being
+settled … the second (`review,polish,wrap-up`) on any path that reaches wrap-up." A second call
+whose status line is missing or malformed is, by the same evidence section 2's check relies on,
+one that backgrounded `/flow` or yielded outside the Foreground execution clause — exactly the
+shape of a call that may never have reached wrap-up, and therefore may never have run Settle
+either. Unlike the first-call case in section 5 (where Settle's non-run is certain — a `build,test`
+HARD-GATE is always settled inside that same call, so a first call producing no report also never
+ran Settle), a second call's silence is ambiguous: it may have run Settle and then hung, or died
+before ever reaching it. There is no cheap way to distinguish the two from the dispatching
+session's own thread, so treat it as the worse case (Settle did not run) — running cleanup-only
+against a group whose claim was already released costs nothing (step 2 below), while assuming
+Settle ran when it didn't leaves the claim, worktree, and run directory stranded.
+
+1. **Make the same direct-`/claude-tweaks:wrap-up`-cleanup-only call section 5 item 2 specifies,
+   unchanged in form.** This group already cleared the first gate, so there is no
+   materialize-shape-gate concern to route around, but the same reasoning still applies — call
+   `/claude-tweaks:wrap-up` directly, never through `/claude-tweaks:flow`, for the identical
+   reason section 5 gives (re-running `/flow`'s Step 1.5/Step 2 pre-flight buys nothing here
+   either):
+
+   ```
+   PIPELINE_RUN_DIR="{run-dir}" CLAIM_RUN_ID="{RUN_ID}" /claude-tweaks:wrap-up {target} cleanup-only
+   ```
+
+2. **Claim release is idempotent either way.** If the second call's own Settle procedure did in
+   fact run before it yielded (the ambiguous case above), this group's claim is already released
+   and its labels already adjusted — `cleanup-only`'s Section E release step finds an
+   already-released claim and no-ops, the identical overlap section 5's own note already accepts
+   for the first-call path. If Settle never ran, this call performs the release for the first
+   time. Either way, the dispatching session never needs to determine which case it is before
+   making this call.
+
+3. **Worktree teardown is unaffected by which call reached it.** `[IL-116]`'s constraint on raw
+   `ExitWorktree`/`git worktree remove` applies identically regardless of which Task call's
+   failure triggered this path — `cleanup-only`'s `cleanup-procedures.md` Section C step 3.5 is
+   what performs it correctly either way.

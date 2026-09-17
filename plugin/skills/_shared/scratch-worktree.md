@@ -171,10 +171,14 @@ Tear down via **`ExitWorktree`**, never a raw `git worktree remove` — the work
 live lock, and the raw command fails on it (`[IL-58]`).
 
 Before calling `ExitWorktree`, run the sanctioned ancestry check to prove discarding the
-worktree branch loses nothing:
+worktree branch loses nothing — as two separate single-command Bash calls, per this worktree's
+shell constraint; never combined into one:
 
 ```bash
 git fetch origin {integration-branch}
+```
+
+```bash
 git merge-base --is-ancestor HEAD origin/{integration-branch}
 ```
 
