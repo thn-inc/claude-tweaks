@@ -1,7 +1,6 @@
 {
+  "released": true,
   "runId": "2026-09-17T171501-record-2512",
-  "sessionId": "79bc9dec-bf35-44c2-af9d-8afd808ad40d",
-  "claimedAt": "2026-09-17T17:16:19.469Z",
-  "ttlHours": 72,
-  "host": "Thomass-MacBook-Pro-3376.local"
+  "reason": "abandoned: spec 2512",
+  "releasedAt": "2026-09-17T17:30:40.314Z"
 }
