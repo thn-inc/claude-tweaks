@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-17T20:35:10.523Z",
+  "computedAt": "2026-09-17T20:50:46.220Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -45,7 +45,7 @@
       },
       {
         "number": 2491,
-        "updatedAt": "2026-09-15T19:40:09Z",
+        "updatedAt": "2026-09-17T20:37:54Z",
         "state": "OPEN"
       },
       {
@@ -910,96 +910,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: filed by the docs-health curation row (`/claude-tweaks:wrap-up`, D1 restructural), during #2322's wrap-up.\n\n## Current State\n\n`docs/plugin-structure.md`'s `plugin/bin/lib/reconcile/` inventory paragraph states: \"Both destructive branch checks read it screen-then-confirm: archive-branches and prune-remote screen the in-scope set in one bulk call and re-read per-branch only to confirm a destructive provisional verdict.\"\n\nThis is no longer accurate for `archive-branches.js`. Since #2252 (and widened by #2322), a MERGED-screened or screen-null non-cherry-equivalent branch reaches the per-branch confirm even when its provisional verdict is a non-destructive `skip` — the confirm's own squash-provenance evidence, not the provisional verdict, decides whether the branch is actually destructive. The claim stays true for `prune-remote.js`, whose provisional `skip` still short-circuits before any confirm call.\n\n## Deliverables\n\n- [ ] Update the sentence in `docs/plugin-structure.md`'s reconcile inventory paragraph so it states the current, differing behavior of the two checks: `prune-remote.js`'s provisional skip still short-circuits (confirm only follows a destructive provisional), while `archive-branches.js`'s confirm now also runs for a MERGED- or screen-null-screened, non-cherry-equivalent branch regardless of whether the provisional itself is destructive (`squashCandidate` routing, #2252/#2322) — the confirm's own evidence, not the provisional, has the final say for that check.\n\n## Acceptance Criteria\n\n- [ ] The sentence no longer claims both checks re-read per-branch \"only to confirm a destructive provisional verdict\" — it distinguishes the two checks' actual routing conditions, cross-referencing `docs/reconcile-checks.md`'s Merged-proof / Confirm-routing symmetry sections rather than restating their detail inline.\n\n_Filed by `wrap-up`'s docs curation row via the docs-health issue-filing convention._\n",
-        "createdAt": "2026-09-14T21:04:07Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACverRqw",
-            "name": "by:docs-health",
-            "description": "",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACyvI7Qw",
-            "name": "docs-health:restructural",
-            "description": "",
-            "color": "ededed"
-          }
-        ],
-        "number": 2491,
-        "state": "OPEN",
-        "title": "docs/plugin-structure.md's reconcile inventory line is now stale for archive-branches' confirm-routing (#2252/#2322)",
-        "updatedAt": "2026-09-15T19:40:09Z",
-        "facets": {
-          "origin": "docs-health",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
         }
       }
     ],
