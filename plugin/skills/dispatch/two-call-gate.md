@@ -4,7 +4,7 @@ Referenced by `skills/dispatch/SKILL.md` Step 5. Each group is dispatched as two
 
 ## 2. The gate
 
-Dispatch the second call only if the first call's status line was `DONE` or `DONE_WITH_CONCERNS` **and** its `OUTCOME` was `build-test-ok`. Anything else — a `NEEDS_CONTEXT`/`BLOCKED` status, an `OUTCOME` of `build-test-failed`/`build-test-blocked`, or no parseable report at all — means the second call is never dispatched for that group this firing; go to section 5. A dispatched agent that fails mid-flight is a different case from one that completes — see `_shared/subagent-dispatch-core.md`'s "Failed-agent retrieval" section for how to read its result cheaply, without blocking on the full envelope.
+Dispatch the second call only if the first call's status line was `DONE` or `DONE_WITH_CONCERNS` **and** its `OUTCOME` was `build-test-ok`. Anything else — a `NEEDS_CONTEXT`/`BLOCKED` status, an `OUTCOME` of `build-test-failed`/`build-test-blocked`, or no parseable report at all — means the second call is never dispatched for that group this firing; go to section 5. An `OUTCOME` of `already-shipped` (#2502) is never dispatched to the second call either, but is not a failure — go to section 7 instead of section 5. A dispatched agent that fails mid-flight is a different case from one that completes — see `_shared/subagent-dispatch-core.md`'s "Failed-agent retrieval" section for how to read its result cheaply, without blocking on the full envelope.
 
 ## 5. Terminal path when the first call fails
 
@@ -71,3 +71,35 @@ Settle ran when it didn't leaves the claim, worktree, and run directory stranded
    `ExitWorktree`/`git worktree remove` applies identically regardless of which Task call's
    failure triggered this path — `cleanup-only`'s `cleanup-procedures.md` Section C step 3.5 is
    what performs it correctly either way.
+
+## 7. Terminal path when the first call reports `already-shipped`
+
+`build/SKILL.md`'s Spec Step 2 "Already-shipped assessment" (#2502): when every Deliverable and
+Acceptance Criterion in the materialized spec is already satisfied on the base branch with zero
+implementation diff needed, the first call stops there and reports `OUTCOME: already-shipped`
+instead of proceeding to a normal build. This is **not** a failure — do not route it through
+section 5's fail-loud reporting or Settle's failure classification/retry-counting/failure-comment
+machinery, all of which assume something went wrong. Nothing did; the record was simply already
+done.
+
+By the time this outcome reaches the dispatching session, the first call has already:
+
+- staged a Close proposal for the record (reusing `bin/lib/issues/shipped-candidate.js`'s shape),
+- closed any draft PR the pr-early lifecycle opened for this run,
+- released the record's claim.
+
+**The only thing left for the dispatching session to do is tear the worktree down** — the first
+call inherited it without entering it and, per the outcome-independent constraint at the top of
+this file, can never tear it down itself, on any outcome including this one. Make the same direct
+`/claude-tweaks:wrap-up {target} cleanup-only` call section 5 item 2 and section 6 item 1 both
+specify, unchanged in form:
+
+```
+PIPELINE_RUN_DIR="{run-dir}" CLAIM_RUN_ID="{RUN_ID}" /claude-tweaks:wrap-up {target} cleanup-only
+```
+
+`cleanup-only`'s Section E release step finds an already-released claim and no-ops, the same
+idempotent overlap section 6 item 2 already describes. This dispatching session's own report for
+the group is a **no-op**, never `pending-review` — the record is closed via the staged Close
+proposal, not shipped via a merge this firing performed. Only once that cleanup call returns does
+this session enter the next group's worktree.
