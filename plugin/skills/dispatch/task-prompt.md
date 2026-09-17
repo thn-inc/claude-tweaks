@@ -285,12 +285,8 @@ catch regardless of outcome.
 
 **Mechanical audit trail (#2488) -- log this check before reporting any of the four outcomes
 above, not just when it fails.** Before choosing among `merged`/`armed`/`pending-review`/
-`ready-to-merge`, write one line to `decisions.md` recording what the claim read found:
-
-```bash
-node "{plugin-root}/bin/log-decision.js" --run "{run-dir}" --status AUTO --section "/dispatch" \
-  --text "State-check: claim runId={observed-runId-or-absent}, live={true|false}, bot:in-progress={present|absent} -- reporting {outcome}." --reversibility n/a
-```
+`ready-to-merge`, write one line to `decisions.md` recording what the claim read found, via
+`node "{plugin-root}/bin/log-decision.js" --run "{run-dir}" --status AUTO --section "/dispatch" --text "State-check: claim runId={observed-runId-or-absent}, live={true|false}, bot:in-progress={present|absent} -- reporting {outcome}." --reversibility n/a`.
 
 A report of `merged`/`armed`/`ready-to-merge` with no matching state-check line in `decisions.md`
 is not trustworthy self-report -- the same principle the Auto-merge gate's own

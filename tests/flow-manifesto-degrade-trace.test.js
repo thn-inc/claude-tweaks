@@ -13,19 +13,26 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 // told apart from a write that never happened at all), and no conditional
 // skip on that write path ever logged a SKIP entry. These pin the fix.
 
-test('#1826/#1810: manifesto.md logs the absolute config.yml path on a successful write', () => {
-  const t = read('plugin/skills/flow/manifesto.md');
-  assert.match(t, /Log the absolute path written \(#1826\/#1810\)\./);
-  assert.match(t, /AUTO \{time\} — Manifesto: levers written to \{absolute path of \$PIPELINE_RUN_DIR\/config\.yml\}/);
+// manifesto.md itself had almost no byte headroom left against
+// tests/run-dir-timestamp-utc.test.js's 21760-byte raw-read budget (87
+// bytes, before this fix even started) -- so the logging convention lives
+// in auto-decision-log.md's own per-skill example sections instead (the
+// file /flow's Manifesto step already cites generically for decisions.md
+// format), matching how /build, /review, /test, and /stories each already
+// document their own example log lines there.
+
+test('#1826/#1810: auto-decision-log.md documents the Manifesto write logging the absolute config.yml path on success', () => {
+  const t = read('plugin/skills/_shared/auto-decision-log.md');
+  const section = t.slice(t.indexOf('## /flow'), t.indexOf('## /build'));
+  assert.match(section, /Manifesto: levers written to/);
+  assert.match(section, /#1826\/#1810/);
 });
 
-test('#1826: manifesto.md logs a SKIP entry on both legitimate write-skip paths (interactive mode, case 1 adoption)', () => {
-  const t = read('plugin/skills/flow/manifesto.md');
-  assert.match(t, /Log a `SKIP` on every path where this write does not run \(#1826\)\./);
-  const section = t.slice(t.indexOf('Log a `SKIP` on every path where this write does not run'));
-  assert.match(section, /interactive mode, no Manifesto this run/);
-  assert.match(section, /case 1 adoption, config\.yml already present/);
-  assert.match(section, /_shared\/auto-decision-log\.md`'s degrade-trace rule/);
+test('#1826: auto-decision-log.md documents a SKIP entry on both legitimate Manifesto write-skip paths (interactive mode, case 1 adoption)', () => {
+  const t = read('plugin/skills/_shared/auto-decision-log.md');
+  const section = t.slice(t.indexOf('## /flow'), t.indexOf('## /build'));
+  assert.match(section, /SKIP .* — Manifesto write skipped: interactive mode, no Manifesto this run/);
+  assert.match(section, /SKIP .* — Manifesto write skipped: case 1 adoption, config\.yml already present/);
 });
 
 test('#1826/#1810: steps-and-gates.md case 3 prefers decisions.md\'s Pipeline config snapshot header over recomputing from the precedence chain', () => {

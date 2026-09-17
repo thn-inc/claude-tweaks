@@ -33,6 +33,11 @@ Pipeline config snapshot:
 - leftover-default: defer
 - auto-fix-threshold: lint+type
 
+## /flow
+- AUTO 14:31:02 — Manifesto: levers written to /Users/x/project/.claude-tweaks/pipelines/2026-05-15T143207-spec-42/config.yml. (#1826/#1810: logs the absolute path so a shadow-path write is never indistinguishable from no write at all.)
+- SKIP 14:31:03 — Manifesto write skipped: interactive mode, no Manifesto this run. (#1826)
+- SKIP 14:31:03 — Manifesto write skipped: case 1 adoption, config.yml already present. (#1826)
+
 ## /build
 - AUTO 14:32:14 — Common Step 1.5: scope-creep detected (src/utils/cache.ts mentioned, not in plan). Applied policy `add-to-plan`. Reversibility: high (in worktree commit `abc1234`).
 - AUTO 14:33:48 — Common Step 1 (worktree consent): pre-authorized by `auto` arg. Worktree created at `.worktrees/spec-42`.
