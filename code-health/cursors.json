@@ -198,5 +198,9 @@
   "plugin/bin/lib/release": {
     "lastSweptMs": 1789528349820,
     "lastHash": "6de697aa28ad01d0714795032acae828092a9b4a"
+  },
+  "plugin/bin/lib/release-claim": {
+    "lastSweptMs": 1789614759725,
+    "lastHash": "09eb6ef294bfa8385c5d929630108f71a99af544"
   }
 }
