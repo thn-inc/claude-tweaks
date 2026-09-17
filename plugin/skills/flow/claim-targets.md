@@ -149,6 +149,8 @@ This CLI is the `gh` transport only — its `deps.gh`/`deps.ghApi` shell to real
 `_shared/issue-claims.md`'s "The lock" steps 1-6 directly via the MCP contents-API calls, per
 target, exactly as before this CLI existed — read them from the composed `claims` bundle (`node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step claims "${CLAUDE_PLUGIN_ROOT}/skills/_shared/issue-claims.md"`, then `$PIPELINE_RUN_DIR/context/claims.md`; the run directory always exists here, set or minted mkdir-only by "Resolve this run's identity" above, and the composer needs only the directory, not `config.yml`); if the compose command is unavailable or exits non-zero, read the named source files directly.
 
+**Confirming the manual MCP path actually landed (#1728).** The hand-run procedure above has no CLI enforcing that every step actually ran, so before this call (or a `build,test`-scoped headless dispatch call) reports `DONE`/`build-test-ok`, run `node "${CLAUDE_PLUGIN_ROOT}/bin/verify-run-bookends.js" --run "$PIPELINE_RUN_DIR" --targets {n}[,{m}…]` — a mechanical, `gh`-independent check (it reads the claim via git, never `gh`) confirming this run's `worktree`/`pr` stamps and a live claim per target, by direct inspection rather than trusting the manual procedure was followed correctly. Exit 0 → proceed. Non-zero → the named bookend(s) in its `missing` array were never confirmed; report `BLOCKED`/`build-test-blocked` instead of a false `DONE`/`build-test-ok`, per this issue's own Acceptance Criteria.
+
 **Branch on exit code:**
 
 - **0** — every target claimed (default mode), or every non-skipped target claimed
