@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-17T18:05:06.157Z",
+  "computedAt": "2026-09-17T19:45:29.590Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -70,7 +70,7 @@
       },
       {
         "number": 2472,
-        "updatedAt": "2026-09-15T19:40:26Z",
+        "updatedAt": "2026-09-17T19:41:37Z",
         "state": "OPEN"
       },
       {
@@ -1074,78 +1074,6 @@
           "grants": {
             "build": true,
             "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "# Reflect — staged finding 1\n\n**Category:** tangential\n\nOrigin: reflect light from #2221\n\nDefer-reason: tangential\n\n## Current State\n\nThis run (for #2221) reached /claude-tweaks:wrap-up with no run-state.json and no PR, despite this project resolving integration-model: pr-first and the branch already being pushed to origin. pr-early-run-lifecycle.md Step 2/3 both mandate a logged AUTO ... FAILED line on any push/create failure, and none existed in decisions.md, meaning the step most likely never ran at all for this run's original build. Wrap-up's own pr-first-merge.md precondition check caught the gap only because it explicitly requires run-state.json.pr before proceeding; this session recovered by retroactively opening PR #2470 and recording it.\n\n## Deliverables\n\nConsider whether flow/materialize.md's Resolution + Materialization hard gate (or build/worktree-setup.md Step 6) should assert that a pr-first run either recorded a PR or logged an explicit degrade line before the pipeline is allowed to proceed past build.\n\n## Acceptance Criteria\n\nA pr-first run whose build phase never invokes pr-early-run-lifecycle.md (or invokes it and it fails silently) is caught by a gate before reaching test/review/wrap-up, rather than being discovered only by wrap-up's own merge-time precondition check.\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-09-14T19:20:55Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2472,
-        "state": "OPEN",
-        "title": "pr-first run reached wrap-up with no PR/run-state and no logged degrade trace",
-        "updatedAt": "2026-09-15T19:40:26Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
           },
           "bot": {
             "inProgress": false,
