@@ -74,7 +74,7 @@ function run(argv, deps = realDeps) {
   // instead of an uncaught stack trace colliding with the exit-1 contract.
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
+  const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
   if (!repoSpec) { deps.stderr('link-records.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
   const { host, owner, repo } = repoSpec;
   // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'
