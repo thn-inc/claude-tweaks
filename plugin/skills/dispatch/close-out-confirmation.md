@@ -15,14 +15,16 @@ session left to resume at all.
 - Option 1 — `label`: `"Merge"` (append `" (Recommended)"` per the Recommended-derivation rule below), `description`: `"Run the merge now — _shared/pr-first-merge.md's Step 3, arms or merges immediately depending on repo auto-merge settings"`
 - Option 2 — `label`: `"Skip"` (append `" (Recommended)"` instead when the rule below picks this option), `description`: `"Leave this PR pending-review; do nothing"`
 
-**Recommended-derivation rule.** The same predicate `resume-confirmation.md`'s own rule uses,
-reapplied here rather than re-derived, so the two gates can never disagree about the same PR's
-readiness: Merge is Recommended when CI reads `passing` and mergeability reads clean (not
-`DIRTY`). Skip is Recommended when CI reads `failing` or mergeability reads `DIRTY` — in the
-ordinary flow `close-out.md`'s own steps 1-2 already stopped before this gate is ever reached for
-either case, so this predicate matters only when the gate is consulted directly against a PR this
-session has not itself just re-verified. Exactly one option carries `(Recommended)`, never both,
-never neither.
+**Recommended-derivation rule.** Modeled on `resume-confirmation.md`'s own rule (same shape — a
+single-predicate Recommended pick, never both, never neither) but not identical, since this gate
+answers a stricter question (merge now, not merely resume): Merge is Recommended when CI reads
+`passing` and mergeability reads clean (not `DIRTY`). Skip is Recommended when CI reads `failing`
+or mergeability reads `DIRTY` — in the ordinary flow `close-out.md`'s own steps 1-2 already
+stopped before this gate is ever reached for either case, so this predicate matters only when the
+gate is consulted directly against a PR this session has not itself just re-verified. The two
+gates never disagree in practice because they never render for the same PR at the same time (see
+above) — not because their predicates are the same expression. Exactly one option carries
+`(Recommended)`, never both, never neither.
 
 **No `autonomy`-ceiling carve-out.** This gate stays unconditional at every ceiling tier,
 including `unattended`, for the same reason `resume-confirmation.md`'s own gate does — and, unlike
