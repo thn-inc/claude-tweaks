@@ -183,34 +183,58 @@ test('runGitAsync: always returns an object, never null, on every path', async (
   }
 });
 
-test('runGit: CT_HOOKS_GIT_TIMEOUT_MS env override raises the budget when opts.timeoutMs is not given (#104)', () => {
-  // Sibling `npm test` runs contending for the same machine can push a plain
-  // git call past DEFAULT_TIMEOUT_MS (#104 measured 12.1s). A 1ms override
-  // still can't complete any real invocation, so this deterministically
-  // proves the env var reaches runGit's actual timeout, not just that a low
-  // value happens to work — same technique as the `timeoutMs: 1` test above.
+test('runGit: CT_HOOKS_GIT_TIMEOUT_MS env override raises the budget when opts.timeoutMs is not given (#104)', (t) => {
+  // #2500: this used to race a real `timeoutMs: 1` override against a real
+  // `git rev-parse` subprocess, which flaked under contended machine load
+  // (the subprocess occasionally completed inside 1ms). git-exec.js's own
+  // header comment names the fix: `cp.execFileSync` is resolved at call
+  // time specifically so a test can intercept it — mock it to throw a
+  // synthetic timeout error, and assert on the `timeout` option the mock
+  // actually observed, so the env-var-vs-opts precedence logic under test
+  // still runs for real, just without any wall-clock dependence.
+  const cp = require('child_process');
   const dir = gitRepo();
   const prior = process.env.CT_HOOKS_GIT_TIMEOUT_MS;
   process.env.CT_HOOKS_GIT_TIMEOUT_MS = '1';
+  const mock = t.mock.method(cp, 'execFileSync', () => {
+    const e = new Error('mock timeout');
+    e.killed = true;
+    e.signal = 'SIGTERM';
+    throw e;
+  });
   try {
     const { failure } = runGit(['rev-parse', '--show-toplevel'], dir);
     assert.strictEqual(failure, FAILURE.TIMEOUT);
+    assert.strictEqual(mock.mock.calls.length, 1);
+    assert.strictEqual(mock.mock.calls[0].arguments[2].timeout, 1,
+      'the env override must reach execFileSync\'s own timeout option');
   } finally {
     if (prior === undefined) delete process.env.CT_HOOKS_GIT_TIMEOUT_MS;
     else process.env.CT_HOOKS_GIT_TIMEOUT_MS = prior;
   }
 });
 
-test('runGit: an explicit opts.timeoutMs still wins over CT_HOOKS_GIT_TIMEOUT_MS', () => {
+test('runGit: an explicit opts.timeoutMs still wins over CT_HOOKS_GIT_TIMEOUT_MS', (t) => {
   // Tests that force the timeout branch deterministically via opts.timeoutMs
   // (e.g. the #134 tests above) must not be silently overridden by whatever
-  // this env var happens to be set to in the running test process.
+  // this env var happens to be set to in the running test process. Same
+  // mock-based rewrite as the test above (#2500) — see its comment.
+  const cp = require('child_process');
   const dir = gitRepo();
   const prior = process.env.CT_HOOKS_GIT_TIMEOUT_MS;
   process.env.CT_HOOKS_GIT_TIMEOUT_MS = '60000';
+  const mock = t.mock.method(cp, 'execFileSync', () => {
+    const e = new Error('mock timeout');
+    e.killed = true;
+    e.signal = 'SIGTERM';
+    throw e;
+  });
   try {
     const { failure } = runGit(['rev-parse', '--show-toplevel'], dir, { timeoutMs: 1 });
     assert.strictEqual(failure, FAILURE.TIMEOUT, 'explicit opts.timeoutMs must still apply');
+    assert.strictEqual(mock.mock.calls.length, 1);
+    assert.strictEqual(mock.mock.calls[0].arguments[2].timeout, 1,
+      'explicit opts.timeoutMs must reach execFileSync\'s own timeout option, not the env var value');
   } finally {
     if (prior === undefined) delete process.env.CT_HOOKS_GIT_TIMEOUT_MS;
     else process.env.CT_HOOKS_GIT_TIMEOUT_MS = prior;

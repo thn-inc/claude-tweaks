@@ -1489,6 +1489,15 @@ test('reconcile(): a FAST_CHECKS pass (session-start\'s inline hot path) issues 
 // delay), not their sum — a regression back to the old serial order would
 // add the fetch's own time on top.
 test('reconcile(): FAST_CHECKS runs the preflight and the shared fetch concurrently, not serially (#872)', async () => {
+  // #2499: this used to assert `elapsed < HEALTH_DELAY_MS * 2` (400ms) after
+  // racing a real local `git fetch` (sharedFetchAsync) against a mocked,
+  // artificially-delayed preflight — a wall-clock margin that flaked once
+  // under full-suite machine load (measured 463ms) despite the isolated run
+  // completing correctly. Widening the margin trades away the very
+  // regression-detection power the test exists for (see the design note this
+  // replaced), so instead assert overlap directly: record each call's own
+  // [start, end] window and check they overlap. Concurrent dispatch always
+  // overlaps; serial dispatch never does, regardless of host speed.
   const { mainDir } = pairedFixture();
   fs.mkdirSync(path.join(mainDir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(mainDir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
@@ -1500,27 +1509,56 @@ test('reconcile(): FAST_CHECKS runs the preflight and the shared fetch concurren
   const originalHealthAsync = preflight.ghHealthCheckAsync;
   preflight.ghHealthCheck = () => ({ ok: true, reason: null });
   const HEALTH_DELAY_MS = 200;
-  preflight.ghHealthCheckAsync = () => new Promise((resolve) => {
-    setTimeout(() => resolve({ ok: true, reason: null }), HEALTH_DELAY_MS);
-  });
+  let healthStart = null;
+  let healthEnd = null;
+  preflight.ghHealthCheckAsync = () => {
+    healthStart = Date.now();
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        healthEnd = Date.now();
+        resolve({ ok: true, reason: null });
+      }, HEALTH_DELAY_MS);
+    });
+  };
+
+  // sharedFetchAsync (reconcile/shared-fetch.js) calls runGitAsync
+  // (bin/lib/hooks/git-exec.js), which resolves `promisify(cp.execFile)`
+  // fresh at call time — the same call-time-resolved property runGitAsync's
+  // own timeout test already mocks — so wrapping `cp.execFile` here observes
+  // the real fetch subprocess's actual start/end without faking its result.
+  // The wrapper delegates to Node's real custom promisify implementation
+  // (`execFile[promisify.custom]`) so the {stdout, stderr} shape runGitAsync
+  // depends on is preserved exactly; only the timing is instrumented.
+  const cp = require('child_process');
+  const { promisify } = require('util');
+  const originalExecFile = cp.execFile;
+  const originalCustomPromisify = originalExecFile[promisify.custom];
+  let fetchStart = null;
+  let fetchEnd = null;
+  function execFileWrapper(...args) {
+    return originalExecFile(...args);
+  }
+  execFileWrapper[promisify.custom] = (...args) => {
+    fetchStart = Date.now();
+    return originalCustomPromisify(...args).finally(() => {
+      fetchEnd = Date.now();
+    });
+  };
+  cp.execFile = execFileWrapper;
 
   const { FAST_CHECKS } = require('../plugin/bin/lib/hooks/session-start');
-  const start = Date.now();
   try {
     await reconcile({ cwd: mainDir, checks: FAST_CHECKS });
   } finally {
     preflight.ghHealthCheck = originalHealth;
     preflight.ghHealthCheckAsync = originalHealthAsync;
+    cp.execFile = originalExecFile;
   }
-  const elapsed = Date.now() - start;
-  // A serial implementation would take at least HEALTH_DELAY_MS plus the
-  // fetch's own time (and every other dispatched check's time on top);
-  // concurrent execution stays close to HEALTH_DELAY_MS alone. The margin
-  // is generous (2x) to absorb load on a shared test machine while still
-  // failing a genuine regression to serial dispatch.
+  assert.ok(healthStart !== null && healthEnd !== null, 'the preflight health check must have run');
+  assert.ok(fetchStart !== null && fetchEnd !== null, 'the shared fetch must have run');
   assert.ok(
-    elapsed < HEALTH_DELAY_MS * 2,
-    `expected concurrent dispatch to keep elapsed (${elapsed}ms) close to the ${HEALTH_DELAY_MS}ms preflight delay, not stack the fetch on top`,
+    healthStart < fetchEnd && fetchStart < healthEnd,
+    `expected the preflight window [${healthStart}, ${healthEnd}] to overlap the fetch window [${fetchStart}, ${fetchEnd}] — a serial regression would not overlap`,
   );
 });
 
