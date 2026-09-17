@@ -25,6 +25,8 @@ description: Use when adding or reviewing a scoping exemption in `plugin/bin/lib
 
 `gh-api-module-pattern` governs the `run(argv, deps)`/`execFileSync` seam elsewhere in `plugin/bin/lib/` — not this file's deny-gate exemptions, which call `wtDetect` directly (no injectable seam; `deps` here is a single test-only `resolveIntegrationModel` override). Nothing else in `.claude/skills/` touches hooks.
 
+**A fail-open sibling exists and is not covered by this skill's discipline.** `plugin/bin/lib/pr-bookkeeping/precondition.js`'s `checkPrBookkeepingPrecondition` (#2472) reuses `pre-tool-use.js`'s exported `hasMaterializeCommit`/`hasLoggedPrDegrade`/`resolveRunPinnedIntegrationModel` and the same `isLinkedWorktree`/`indeterminate` scoping pattern this skill documents — but it is a benefit-of-the-doubt *precondition* check, not a deny gate, and deliberately inverts the posture: ambiguity resolves to `{ok: true}` (proceed) rather than fail-closed. Do not apply this skill's "every unprovable answer fails CLOSED" rule to that file — it is a correct, intentional divergence, not an instance of the anti-pattern this skill exists to catch.
+
 ## Anti-Patterns
 
 | Pattern | Why It Fails |
