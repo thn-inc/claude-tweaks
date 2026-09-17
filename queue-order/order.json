@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-17T16:54:44.080Z",
+  "computedAt": "2026-09-17T17:02:35.836Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -80,7 +80,7 @@
       },
       {
         "number": 2466,
-        "updatedAt": "2026-09-16T23:03:53Z",
+        "updatedAt": "2026-09-17T17:00:35Z",
         "state": "OPEN"
       },
       {
@@ -1211,12 +1211,6 @@
             "color": "F9D0C4"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
             "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
             "name": "priority:medium",
             "description": "Priority: dispatch picks after priority:high",
@@ -1238,7 +1232,7 @@
         "number": 2466,
         "state": "OPEN",
         "title": "reconcile: manually archive the seven #1811 run directories in live main-checkout state",
-        "updatedAt": "2026-09-16T23:03:53Z",
+        "updatedAt": "2026-09-17T17:00:35Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -1251,7 +1245,7 @@
           "stage": "ready",
           "grants": {
             "build": true,
-            "merge": true
+            "merge": false
           },
           "bot": {
             "inProgress": false,
