@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-16T23:44:33.696Z",
+  "computedAt": "2026-09-17T00:03:06.887Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -395,7 +395,7 @@
       },
       {
         "number": 1460,
-        "updatedAt": "2026-09-16T23:04:28Z",
+        "updatedAt": "2026-09-16T23:47:30Z",
         "state": "OPEN"
       },
       {
@@ -2466,84 +2466,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "## Current State\n\nbin/lib/hooks/pre-tool-use.js's checkBookkeepingStampsGate resolves ctx.runDir via ctxLib.resolveRunDir(cwd, process.env) with no session-id filtering, deliberately picking the newest non-terminal pipeline run repo-wide. When a scratch worktree with no run-state.json of its own (e.g. /tidy's or /wrap-up's Step 7 housekeeping worktree per _shared/scratch-worktree.md) is created while an unrelated dangling non-terminal run exists (materialize commit landed, no worktree ever recorded — observed live against .claude-tweaks/pipelines/2026-08-23T204821-record-361, status interrupted, PR #1339), any Edit/Write/NotebookEdit or git-write Bash call inside that unrelated scratch worktree is denied with a message instructing: node hooks.js record-worktree --run \"{dangling-run-dir}\" \"{scratch-worktree}\". Following that remediation would stamp the scratch worktree as belonging to the dangling run, corrupting that other (possibly still-live-sibling) run's run-state.json. isForeignSessionCall can't rescue this case: the dangling run's runState.sessionId is unset (no worktree was ever recorded for it), so owner is empty, isForeignSessionCall returns false, and the deny stands. hasDistinctOwnedRun exists in the same file but per its own comment is deliberately not folded into this branch's foreign-session check. Reproduced live: /tidy's Step 7.5 worktree-always handling (EnterWorktree, fetch+merge catch-up, zero commits made) hit this gate on its first file write attempt, with no legitimate way to proceed short of corrupting an unrelated dangling run's state.\n\n## Deliverables\n\n- A way for checkBookkeepingStampsGate (or its caller) to recognize a scratch worktree never registered as belonging to any pipeline run's Common Step 1/materialize flow, and skip the gate for it entirely — e.g. a marker file scratch-worktree.md's procedure writes at creation time, a distinct code path for non-build worktree callers, or resolveRunDir excluding runs whose worktree field was never set from the newest-non-terminal fallback pool when the calling worktree has no independent evidence of belonging to that run\n- Regression test reproducing this exact scenario: a dangling interrupted run with a landed materialize commit and no recorded worktree, plus a separate unrelated scratch worktree created afterward, asserting the scratch worktree's writes are NOT denied\n\n## Acceptance Criteria\n\n- A scratch worktree created per _shared/scratch-worktree.md while an unrelated dangling non-terminal run (materialize commit landed, no worktree recorded) exists in the same repo can Edit/Write/commit without being denied by checkBookkeepingStampsGate\n- The fix does not weaken the gate's real purpose (catching a genuine /build session that skipped record-worktree for its OWN run) — a real /build worktree missing its own run's worktree assignment must still be denied\n- A regression test is added under tests/ pinning the fixed behavior\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-08-26T04:14:29Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMTcg",
-            "name": "risk:high",
-            "description": "Scoring: high blast radius — human review required",
-            "color": "0052CC"
-          }
-        ],
-        "number": 1460,
-        "state": "OPEN",
-        "title": "Bookkeeping-stamps gate misattributes a scratch worktree to an unrelated dangling pipeline run",
-        "updatedAt": "2026-09-16T23:04:28Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "high",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
         }
       }
     ],
