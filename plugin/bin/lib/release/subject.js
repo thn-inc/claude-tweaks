@@ -6,8 +6,10 @@
 // (https://www.conventionalcommits.org/): `{type}[!]: {title} (#{n})` subject,
 // optional summary paragraph, optional `[{tag}]` paragraph (kept because
 // _shared/github-pr-scan.md's auto-merged-this-week metric matches the tag
-// anywhere in the message), `Fixes #n` footer lines, and a trailing
-// `BREAKING CHANGE: {note}` footer when `breaking` is set. release-please and
+// anywhere in the message), a required `Release-Note: {line}` paragraph
+// (single-line by construction — see the inline comment at its push site),
+// `Fixes #n` footer lines, and a trailing `BREAKING CHANGE: {note}` footer
+// when `breaking` is set. release-please and
 // the local release engine both parse exactly this shape back out, which is
 // why there is one writer and no per-site variation. Pure function, zero deps.
 'use strict';
@@ -50,7 +52,7 @@ function truncateHead(head, prefix, suffixLength) {
 }
 
 // { type, title, number, breaking?, summary?, migrationNote?, fixes?, tag?, breakingRecords? } -> { title, body }
-function composeSubject({ type, title, number, breaking = false, summary, migrationNote, fixes, tag, breakingRecords } = {}) {
+function composeSubject({ type, title, number, breaking = false, summary, migrationNote, releaseNote, fixes, tag, breakingRecords } = {}) {
   // number is validated first so the type/title usage errors below can cite "for #{number}".
   if (!Number.isInteger(number) || number <= 0) throw usage(`number must be a positive integer, got ${JSON.stringify(number)}`);
   const prefixBase = TYPE_PREFIX[type];
@@ -65,6 +67,11 @@ function composeSubject({ type, title, number, breaking = false, summary, migrat
     throw usage(`breaking is true for ${who} but migrationNote is empty — the record needs a non-empty "## Breaking Change" section`);
   }
 
+  const cleanReleaseNote = typeof releaseNote === 'string' ? releaseNote.trim() : '';
+  if (!cleanReleaseNote) {
+    throw usage(`releaseNote must be a non-empty string for #${number}`);
+  }
+
   const prefix = breaking ? `${prefixBase}!` : prefixBase;
   const suffix = ` (#${number})`;
   const head = truncateHead(`${prefix}: ${cleanTitle}`, prefix, suffix.length);
@@ -77,6 +84,12 @@ function composeSubject({ type, title, number, breaking = false, summary, migrat
   const cleanSummary = typeof summary === 'string' ? summary.trim() : '';
   if (cleanSummary) paragraphs.push(cleanSummary);
   if (typeof tag === 'string' && tag.trim()) paragraphs.push(`[${tag.trim()}]`);
+  // Release-Note is a single-line trailer by construction, same as BREAKING CHANGE: below — the
+  // read-side Release-Note: footer regex (bin/lib/release-notes.js, a sibling unit) only ever
+  // captures the first line, regardless of how many lines cleanReleaseNote actually has. This
+  // function performs no truncation itself: it writes cleanReleaseNote verbatim (multi-line
+  // included), exactly like migrationNote/BREAKING CHANGE: already does.
+  paragraphs.push(`Release-Note: ${cleanReleaseNote}`);
   paragraphs.push(fixList.map((n) => `Fixes #${n}`).join('\n'));
   if (breaking) paragraphs.push(`BREAKING CHANGE: ${note}`);
 
