@@ -317,10 +317,16 @@ This pass never replays Step 3.5 (each source's findings have no peers to debate
 Present a structured summary covering spec compliance, test results (from `/claude-tweaks:test`), code review findings, browser review (if run), implementation hindsight, tradeoffs, simplification, and a verdict (PASS or BLOCKED). The summary must include an Actions Performed table (when autonomous fixes were applied) and a Next Actions block (always). For the complete template, the context-signal rules, and the **compact clean-PASS form** (rendered instead of the full template when the verdict is PASS with zero findings, zero actions, and zero manual steps), read `review-summary-template.md` in this skill's directory.
 
 **Verdict comment (`run-state.json` carries a `pr` object — `_shared/pr-run-comments.md`):** once
-the verdict is final (PASS or BLOCKED), compose a comment — `<!-- run-comment: verdict -->` as
-its first line, then the verdict, then the top findings by severity (max 5), reusing
-`review-summary-template.md`'s own `Category | Finding | Severity | Action` findings-table shape
-— and post-or-update it on the PR per that file's canonical procedure. A no-op when the `pr`
+the verdict is final (PASS or BLOCKED), compose a comment — its first line is the marker:
+`<!-- run-comment: verdict -->` in a single-spec run, or, when `$MULTISPEC_PARENT_DIR` is set (a
+multi-spec `/claude-tweaks:flow` run sharing one PR across specs — `flow/multi-spec.md`),
+`<!-- run-comment: verdict:{spec} -->` where `{spec}` is this spec's record id (the numeric
+suffix of `basename($PIPELINE_RUN_DIR)`, which is this spec's own `spec-{N}/` subdirectory —
+`_shared/pr-run-comments.md`'s "Multi-spec verdict comments" section). Then the verdict, then the
+top findings by severity (max 5), reusing `review-summary-template.md`'s own
+`Category | Finding | Severity | Action` findings-table shape — and post-or-update it on the PR
+per that file's canonical procedure, using the same marker as `{kind}` (`verdict` or
+`verdict:{spec}`) so each spec finds and updates only its own comment. A no-op when the `pr`
 object is absent (`local-merge`, or a degraded `pr-first` run).
 
 ### Key Learnings for Wrap-Up

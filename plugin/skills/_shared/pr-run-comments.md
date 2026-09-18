@@ -27,7 +27,7 @@ etc.).
 
 | Kind | Posted by | Marker |
 |---|---|---|
-| `verdict` | `/claude-tweaks:review`, on review-gate completion | `<!-- run-comment: verdict -->` |
+| `verdict` | `/claude-tweaks:review`, on review-gate completion | `<!-- run-comment: verdict -->` single-spec; `<!-- run-comment: verdict:{spec} -->` per spec in a multi-spec run — see "Multi-spec verdict comments" below |
 | `brief` | `/claude-tweaks:wrap-up`, the Verification Brief | `<!-- run-comment: brief -->` |
 | `timing` | `/claude-tweaks:wrap-up`, right after the Verification Brief | `<!-- run-comment: timing -->` |
 | `failure` | `/claude-tweaks:dispatch`'s Settle step, on HARD-GATE failure | `<!-- run-comment: failure -->` |
@@ -38,9 +38,32 @@ first-line-marker convention `_shared/pr-early-run-lifecycle.md`'s PR body uses 
 `claude-tweaks-run` marker, for the same reason: a reader (or a scan) must be able to identify
 the kind without parsing prose.
 
-## Post-or-update procedure (per kind, per run)
+## Multi-spec verdict comments (#2592)
 
-**One comment per kind per run.** A re-run (a re-triggered review, a resumed wrap-up) edits the
+A multi-spec `/claude-tweaks:flow` run shares one PR across every spec (`flow/multi-spec.md`),
+the same way it shares one draft PR and one cumulative phase-checklist
+(`flow/multispec-pr-checklist.md`). Unlike the phase-checklist, the `verdict` kind is **not**
+cumulative into a single shared comment — each spec's review verdict is substantively different
+content (its own findings, its own PASS/BLOCKED call), so folding spec B's verdict into spec A's
+comment would still lose spec A's content the moment spec B's review posts. Instead: **one
+`verdict` comment per spec**, each keyed by its own spec-qualified marker,
+`<!-- run-comment: verdict:{spec} -->` — `{spec}` is the record id (`2589`, `2592`, …), the same
+identifier `manifest.yml`'s `specs[].id` and the `spec-{N}/` subdirectory convention already use.
+`/claude-tweaks:review`'s Step 7 (`review/code-mode-steps.md`) composes this marker instead of
+the plain `verdict` marker whenever it is running inside a multi-spec context (`$MULTISPEC_PARENT_DIR`
+set); a single-spec run keeps the plain `<!-- run-comment: verdict -->` marker unchanged.
+
+This reuses the Post-or-update procedure below completely unchanged — `{kind}` is simply
+`verdict:{spec}` instead of `verdict` for that spec's own find/update/create calls, so each spec
+finds and updates only its own comment and never touches a sibling spec's. No new logic: the
+existing find-by-marker `startswith` check already disambiguates `verdict:2589` from `verdict:2592`
+(and from the bare `verdict` marker, which no multi-spec comment ever uses) since none is a
+prefix of another once `-->` closes the tag.
+
+## Post-or-update procedure (per kind, per run — per kind per spec per run under multi-spec)
+
+**One comment per kind per run** (one per kind **per spec** per run, under multi-spec — see
+above). A re-run (a re-triggered review, a resumed wrap-up) edits the
 existing marker comment in place — it never appends a duplicate. A stale `verdict`/`brief` sitting
 above a fresh one would misinform a reader skimming the PR, so this is the one place in the
 plugin's PR-comment surface that edits rather than always-appends.
@@ -89,7 +112,7 @@ call — never silently drop the content.
 
 | Consumer | Kind | Notes |
 |---|---|---|
-| `/claude-tweaks:review` (verdict-rendering step) | `verdict` | Top findings by severity, max 5, reusing review's own findings-table shape |
+| `/claude-tweaks:review` (verdict-rendering step) | `verdict` (`verdict:{spec}` under multi-spec — see above) | Top findings by severity, max 5, reusing review's own findings-table shape |
 | `/claude-tweaks:wrap-up` (`verification-brief.md` Step 4) | `brief` | Full brief posts to the PR; the issue gets a one-line pointer comment instead (unmarkered — it is not itself a `run-comment` kind, since nothing ever needs to find-and-update it by marker) |
 | `/claude-tweaks:wrap-up` (`verification-brief.md` Step 4, after the brief) | `timing` | The run's Timing table, `bin/phase-timing.js --run "$PIPELINE_RUN_DIR" --markdown --auto-transcript` verbatim under the same `pr`-object gate as the brief; find-or-update by marker, so a re-run replaces it (#1928) |
 | `/claude-tweaks:dispatch` (`settle-and-merge.md` Step 6, step 5) | `failure` | The full comment (`bin/lib/issues/retry.js`'s `attemptFailedCommentBody`, marker included) always posts to the **issue**, regardless of pr-first (`#1963`) — this is what `bin/lib/issues/trust.js`, which reads only the issue's comments and is not modified, already sees. Under pr-first, the PR gets a short pointer comment instead of the full narrative, and is closed. Retry-ceiling **counting** (`countFailedAttempts`) merges the issue's comments with every PR ever linked to the record, open or closed, so an attempt is found regardless of which source it originally posted to |
