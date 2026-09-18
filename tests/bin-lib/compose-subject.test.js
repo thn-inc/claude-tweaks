@@ -5,17 +5,18 @@ const { run, parseArgs, shellQuote, extractSection, firstSentence } = require('.
 const { ComposeSubjectError } = require('../../plugin/bin/lib/release/subject.js');
 
 const RECORDS = {
-  2251: { number: 2251, title: 'Merge-time conventional subject', body: 'Surface: infra\n\n## Overview\n\nMakes the merge subject conventional. Second sentence.\n\n## Deliverables\n\n- x\n', labels: [{ name: 'type:feature' }, { name: 'ready' }], issueType: null },
-  2252: { number: 2252, title: 'Reconcile under squash', body: '## Overview\n\nSquash-aware reconcile.\n', labels: [{ name: 'type:task' }], issueType: null },
-  2260: { number: 2260, title: 'Drop the legacy flag', body: '## Overview\n\nRemoves --legacy.\n\n## Breaking Change\n\nPass --new instead of --legacy.\n\n## Gotchas\n\n- none\n', labels: [{ name: 'type:feature' }, { name: 'breaking' }], issueType: null },
-  2261: { number: 2261, title: 'Native-typed', body: '## Overview\n\nNative.\n', labels: [{ name: 'type:task' }], issueType: { name: 'Bug' } },
-  2262: { number: 2262, title: "It's quoted", body: '## Overview\n\nHas a quote.\n', labels: [{ name: 'type:bug' }], issueType: null },
-  2263: { number: 2263, title: 'No type', body: '## Overview\n\nNo type label.\n', labels: [{ name: 'ready' }], issueType: null },
-  2264: { number: 2264, title: 'Breaking, no section', body: '## Overview\n\nOops.\n', labels: [{ name: 'type:feature' }, { name: 'breaking' }], issueType: null },
-  2265: { number: 2265, title: 'Unrecognized native type', body: '## Overview\n\nEpic-typed but stale-labeled.\n', labels: [{ name: 'type:feature' }], issueType: { name: 'Epic' } },
-  2266: { number: 2266, title: 'Shaping-mode record', body: '## Current State\n\nToday X is Y. More.\n', labels: [{ name: 'type:task' }], issueType: null },
-  2270: { number: 2270, title: 'Second task in an all-task bundle', body: '## Overview\n\nAnother task.\n', labels: [{ name: 'type:task' }], issueType: null },
-  2250: { number: 2250, title: 'Lowest is a task', body: '## Overview\n\nTask overview.\n', labels: [{ name: 'type:task' }], issueType: null },
+  2251: { number: 2251, title: 'Merge-time conventional subject', body: 'Surface: infra\n\n## Overview\n\nMakes the merge subject conventional. Second sentence.\n\n## Deliverables\n\n- x\n\n## Release Note\n\nMade merge subjects Conventional Commits shaped.\n', labels: [{ name: 'type:feature' }, { name: 'ready' }], issueType: null },
+  2252: { number: 2252, title: 'Reconcile under squash', body: '## Overview\n\nSquash-aware reconcile.\n\n## Release Note\n\nMade reconcile squash-aware.\n', labels: [{ name: 'type:task' }], issueType: null },
+  2260: { number: 2260, title: 'Drop the legacy flag', body: '## Overview\n\nRemoves --legacy.\n\n## Breaking Change\n\nPass --new instead of --legacy.\n\n## Release Note\n\nDropped the legacy flag.\n\n## Gotchas\n\n- none\n', labels: [{ name: 'type:feature' }, { name: 'breaking' }], issueType: null },
+  2261: { number: 2261, title: 'Native-typed', body: '## Overview\n\nNative.\n\n## Release Note\n\nAdded native type support.\n', labels: [{ name: 'type:task' }], issueType: { name: 'Bug' } },
+  2262: { number: 2262, title: "It's quoted", body: '## Overview\n\nHas a quote.\n\n## Release Note\n\nAdded quote handling.\n', labels: [{ name: 'type:bug' }], issueType: null },
+  2263: { number: 2263, title: 'No type', body: '## Overview\n\nNo type label.\n\n## Release Note\n\nNo type label present.\n', labels: [{ name: 'ready' }], issueType: null },
+  2264: { number: 2264, title: 'Breaking, no section', body: '## Overview\n\nOops.\n\n## Release Note\n\nOops noted anyway.\n', labels: [{ name: 'type:feature' }, { name: 'breaking' }], issueType: null },
+  2265: { number: 2265, title: 'Unrecognized native type', body: '## Overview\n\nEpic-typed but stale-labeled.\n\n## Release Note\n\nUnrecognized type test note.\n', labels: [{ name: 'type:feature' }], issueType: { name: 'Epic' } },
+  2266: { number: 2266, title: 'Shaping-mode record', body: '## Current State\n\nToday X is Y. More.\n\n## Release Note\n\nUpdated shaping-mode current state.\n', labels: [{ name: 'type:task' }], issueType: null },
+  2270: { number: 2270, title: 'Second task in an all-task bundle', body: '## Overview\n\nAnother task.\n\n## Release Note\n\nAdded another task path.\n', labels: [{ name: 'type:task' }], issueType: null },
+  2250: { number: 2250, title: 'Lowest is a task', body: '## Overview\n\nTask overview.\n\n## Release Note\n\nAdded task overview support.\n', labels: [{ name: 'type:task' }], issueType: null },
+  2290: { number: 2290, title: 'No release note', body: '## Overview\n\nSomething.\n', labels: [{ name: 'type:task' }], issueType: null },
 };
 
 function fakeDeps({ records = RECORDS, ghAvailable = () => true, remoteUrl = () => 'git@github.com:acme/repo.git', failView = false } = {}) {
@@ -54,10 +55,31 @@ test('single record: conventional subject from type label, summary from Overview
   assert.equal(code, 0, out.stderr);
   const parsed = JSON.parse(out.stdout);
   assert.equal(parsed.title, 'feat: Merge-time conventional subject (#2251)');
-  assert.equal(parsed.body, 'Makes the merge subject conventional.\n\nFixes #2251');
+  assert.equal(parsed.body, 'Makes the merge subject conventional.\n\nRelease-Note: Made merge subjects Conventional Commits shaped.\n\nFixes #2251');
   assert.deepEqual(out.calls[0].slice(0, 3), ['issue', 'view', '2251']);
   assert.ok(out.calls[0].includes('--repo') && out.calls[0].includes('acme/repo'));
   assert.ok(out.calls[0].includes('number,title,body,labels,issueType'));
+});
+
+test('bundle: releaseNote is derived from the subject record only — a companion record\'s own section is required but never rendered', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2251,2252'], deps), 0, out.stderr);
+  const parsed = JSON.parse(out.stdout);
+  assert.match(parsed.body, /Release-Note: Made merge subjects Conventional Commits shaped\./);
+  assert.ok(!parsed.body.includes('Made reconcile squash-aware.'), parsed.body);
+});
+
+test('exit 1: a record with no ## Release Note section fails loudly, regardless of breaking', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2290'], deps), 1);
+  assert.match(out.stderr, /record\(s\) #2290 carry no non-empty "## Release Note" section/);
+  assert.ok(out.stderr.startsWith('compose-subject.js:'), out.stderr);
+});
+
+test('exit 1: a companion record with no ## Release Note section fails loudly even though the subject record has one', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2251,2290'], deps), 1);
+  assert.match(out.stderr, /#2290/);
 });
 
 // #2444 review fix: a caller-supplied --repo can itself already be a
@@ -84,7 +106,7 @@ test('bundle: subject from the lowest number, one Fixes line per record ascendin
   assert.equal(run(['2252,2251', '--tag', 'auto-merge'], deps), 0, out.stderr);
   const parsed = JSON.parse(out.stdout);
   assert.equal(parsed.title, 'feat: Merge-time conventional subject (#2251)');
-  assert.equal(parsed.body, 'Makes the merge subject conventional.\n\n[auto-merge]\n\nFixes #2251\nFixes #2252');
+  assert.equal(parsed.body, 'Makes the merge subject conventional.\n\n[auto-merge]\n\nRelease-Note: Made merge subjects Conventional Commits shaped.\n\nFixes #2251\nFixes #2252');
 });
 
 test('bundle Type aggregation: a type:feature sibling wins over the lowest-numbered type:task record (discriminating: the old lowest-record-only logic yields chore: here)', () => {
@@ -112,7 +134,7 @@ test('summary falls back to ## Current State\'s first sentence when ## Overview 
   const { deps, out } = fakeDeps();
   assert.equal(run(['2266'], deps), 0, out.stderr);
   const parsed = JSON.parse(out.stdout);
-  assert.ok(parsed.body.startsWith('Today X is Y.\n\nFixes #2266'), parsed.body);
+  assert.equal(parsed.body, 'Today X is Y.\n\nRelease-Note: Updated shaping-mode current state.\n\nFixes #2266');
 });
 
 test('breaking record: ! suffix and BREAKING CHANGE footer from its ## Breaking Change section', () => {
@@ -162,7 +184,7 @@ test('--shell prints two eval-able sh assignments; a real eval round-trip recove
   assert.equal(result.status, 0, result.stderr);
   const [recoveredTitle, recoveredBody] = result.stdout.split('\n---\n');
   assert.equal(recoveredTitle, "fix: It's quoted (#2262)");
-  assert.equal(recoveredBody, 'Has a quote.\n\nFixes #2262');
+  assert.equal(recoveredBody, 'Has a quote.\n\nRelease-Note: Added quote handling.\n\nFixes #2262');
   assert.equal(recoveredTitle, jsonComposed.title);
   assert.equal(recoveredBody, jsonComposed.body);
 
