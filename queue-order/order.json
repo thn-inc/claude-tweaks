@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-18T06:30:22.799Z",
+  "computedAt": "2026-09-18T06:38:10.417Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -60,7 +60,7 @@
       },
       {
         "number": 2466,
-        "updatedAt": "2026-09-17T17:00:35Z",
+        "updatedAt": "2026-09-18T06:35:33Z",
         "state": "OPEN"
       },
       {
@@ -537,7 +537,7 @@
         "number": 2466,
         "state": "OPEN",
         "title": "reconcile: manually archive the seven #1811 run directories in live main-checkout state",
-        "updatedAt": "2026-09-17T17:00:35Z",
+        "updatedAt": "2026-09-18T06:35:33Z",
         "facets": {
           "origin": null,
           "risk": "low",
