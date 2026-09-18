@@ -48,6 +48,28 @@ const LOCK_PATH = path.join('.claude-tweaks', 'declined-learning', '.store.lock'
 // suppresses a live finding" risk this file's header already documents) for no added benefit.
 const DEFAULT_PRUNE_MAX_AGE_DAYS = 180;
 
+// Storage-time bound on `subject` (#1400 — review of #1033's Security lens flagged this field as
+// unbounded free text). 300 characters is generous for a "human-legible summary a consumer already
+// has on hand" (this file's header) — a sentence or two — while bounding how much of an adversarial
+// blob any single decline can carry forward into a future rendered prompt (watermark.js's
+// formatOffsetClause, the render-time half of this same fix). Independent of and complementary to
+// that render-time delimiting: this cap bounds volume; the delimiter in watermark.js bounds whether
+// the content can be read as instructions rather than data. See "Decision" in
+// docs/superpowers/plans/2026-09-18-declined-learning-subject-sanitization.md for the full
+// risk-tolerance decision and why this fix stays scoped to this store.
+const MAX_SUBJECT_LENGTH = 300;
+const TRUNCATION_MARKER = '… [truncated]';
+
+// Pure — bounds `subject`'s stored length. A subject at or under the cap round-trips unchanged
+// (the common case: every subject written before this cap existed, and every well-formed one
+// going forward, is untouched). Only a subject that itself exceeds the cap loses its tail, with a
+// marker that makes the truncation visible to any human or agent reading the entry back — never a
+// silent cut.
+function truncateSubject(subject) {
+  if (typeof subject !== 'string' || subject.length <= MAX_SUBJECT_LENGTH) return subject;
+  return `${subject.slice(0, MAX_SUBJECT_LENGTH)}${TRUNCATION_MARKER}`;
+}
+
 // Pure — the store has exactly one on-disk location; no per-transcript/per-consumer derivation.
 function storePath() {
   return STORE_PATH;
@@ -84,7 +106,7 @@ function recordDecline(fingerprint, {
   return withLock(LOCK_PATH, () => {
     const current = readStore(deps);
     const entry = { declinedAt, reason, source };
-    if (subject !== undefined) entry.subject = subject;
+    if (subject !== undefined) entry.subject = truncateSubject(subject);
     current[fingerprint] = entry;
     writeStore(current, deps);
     return entry;
@@ -176,4 +198,5 @@ module.exports = {
   clearDecline,
   pruneDeclines,
   DEFAULT_PRUNE_MAX_AGE_DAYS,
+  MAX_SUBJECT_LENGTH,
 };
