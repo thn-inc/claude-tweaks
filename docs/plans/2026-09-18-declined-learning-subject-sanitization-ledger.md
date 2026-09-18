@@ -1,0 +1,5 @@
+# Open Items — Declined-Learning Subject Sanitization (#1400)
+
+| # | Phase | Item | Status | Resolution |
+|---|-------|------|--------|------------|
+| 1 | test | `npm test` reports 30 pre-existing failures across 11 files (reconcile-background, visual-decide/cli, console-execute, demo-full-verification-pointer, demo-visual-decision-adoption, impeccable-plugin-contract, needs-worklist-rule-cross-consumer, session-limit-degrade-conformance, shaping-mode-needs-removal, tidy-needs-worklist-rule, untrusted-record-content-conformance) — none intersect this record's changed files (store.js, watermark.js, transcript-judge.md + their tests, all 60/60 passing). Root causes visible in failure text: a pinned base SHA not reachable as an ancestor of this checkout's HEAD, installed impeccable-plugin 4.3.1 vs pinned 4.0.2, and a reconcile pr-first wiring assertion. | observation | Pre-existing, unrelated to this record's diff — isolated by source-file path per `test/verification.md`'s "Isolating pre-existing failures by file" procedure. |
