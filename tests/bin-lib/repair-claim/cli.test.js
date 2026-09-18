@@ -85,6 +85,34 @@ test('gh absent: exit 2, stderr names the manual MCP path in _shared/issue-claim
   assert.equal(calls.length, 0);
 });
 
+// --- 2.5. --repo flag resolution (#2444 review fix) ---
+// A caller-supplied --repo can itself already be a host-qualified
+// `host/owner/repo` slug (repoSlug()'s GHE output) — before this fix, --repo
+// was always prefixed with `github.com/` regardless of shape, producing an
+// unparseable 4-segment string for a slug like this.
+
+test('#2444 fix: a host-qualified --repo slug resolves to its own host, not github.com', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { calls, d } = deps({ repairResult: { outcome: 'repaired', state: 'unreadable', commentPosted: true }, out, mainRoot: rootOf(runDir) });
+  const code = run(['999', '--run', runDir, '--mode', 'release', '--reason', 'r', '--repo', 'ghe.example.com/acme/widgets'], d);
+  assert.equal(code, 0);
+  assert.equal(calls[0].owner, 'acme');
+  assert.equal(calls[0].repo, 'widgets');
+  assert.equal(calls[0].ghHost, 'ghe.example.com');
+});
+
+test('#2444 fix: a bare --repo owner/repo still resolves to host: github.com (unchanged)', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { calls, d } = deps({ repairResult: { outcome: 'repaired', state: 'unreadable', commentPosted: true }, out, mainRoot: rootOf(runDir) });
+  const code = run(['999', '--run', runDir, '--mode', 'release', '--reason', 'r', '--repo', 'someone/else'], d);
+  assert.equal(code, 0);
+  assert.equal(calls[0].owner, 'someone');
+  assert.equal(calls[0].repo, 'else');
+  assert.equal(calls[0].ghHost, 'github.com');
+});
+
 // --- 3. Exit map ---
 
 test('exit map: repaired->0, cas-rejected->3, refused->4, failed->1', () => {

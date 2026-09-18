@@ -155,7 +155,7 @@ function recordResidueSuccess(root, reason, targetPath) {
 // archive-merged.js's `result.reason !== 'move-failed'` early-return guard
 // in particular stays there, not here, since it's archive-specific and
 // unrelated to this branching.
-function trackResidue(root, repoSlug, reason, targetPath, { failed, lastError }, { escalate = escalateResidue } = {}) {
+function trackResidue(root, repoSlug, reason, targetPath, { failed, lastError }, { escalate = escalateResidue, runner } = {}) {
   if (!failed) {
     recordResidueSuccess(root, reason, targetPath);
     return;
@@ -165,7 +165,7 @@ function trackResidue(root, repoSlug, reason, targetPath, { failed, lastError },
   try {
     escalate({
       repo: repoSlug, reason, targetPath,
-      count: streak.count, firstFailedAt: streak.firstFailedAt, lastError,
+      count: streak.count, firstFailedAt: streak.firstFailedAt, lastError, runner,
     });
   } catch { /* best-effort — never let escalation turn a residue-tracking call into a thrown error */ }
 }
@@ -198,7 +198,7 @@ function listResidueFailures(root) {
 // the path itself is gone either way — leaving the filed issue open for a
 // human to close manually later, same posture as escalateResidue's own
 // never-breaks-a-session contract.
-function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue } = {}) {
+function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue, runner } = {}) {
   const cache = readCache(root);
   const failures = { ...cache.residueFailures };
   let changed = false;
@@ -210,7 +210,7 @@ function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue } = {})
     delete failures[key];
     changed = true;
     if (entry && entry.escalated) {
-      try { resolve({ repo: repoSlug, reason, targetPath }); } catch { /* best-effort */ }
+      try { resolve({ repo: repoSlug, reason, targetPath, runner }); } catch { /* best-effort */ }
     }
   }
   if (changed) writeCache(root, { ...cache, residueFailures: failures });

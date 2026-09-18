@@ -38,6 +38,19 @@ test('parseArgs: --run is required; --only is a comma list of known probes; unkn
   assert.throws(() => parseArgs(['--run', '/r', '--bogus']), /unknown flag/);
 });
 
+test('parseArgs: --only , (empty after filtering) names no probes — a usage error, mirroring release-preflight.js (#2325)', () => {
+  assert.throws(() => parseArgs(['--run', '/r', '--only', ',']), /names no probes/);
+});
+
+test('run: --only , exits 2 with the usage text and writes nothing (#2325 AC)', async () => {
+  const { root, runDir } = mainCheckoutWithRun();
+  let err = '';
+  const code = await run(['--run', runDir, '--only', ','], { cwd: () => root, mainRoot: root, stdout: () => {}, stderr: (s) => { err += s; }, packDeps: okProbeDeps });
+  assert.strictEqual(code, 2);
+  assert.match(err, /names no probes/);
+  assert.ok(!fs.existsSync(path.join(runDir, 'wrap-up-pack.json')));
+});
+
 test('run: an anchored run dir → exit 0, the pack on stdout, wrap-up-pack.json written with the eight probe keys (#1930 AC2)', async () => {
   const { root, runDir } = mainCheckoutWithRun();
   let out = '';

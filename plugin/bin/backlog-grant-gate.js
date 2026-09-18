@@ -145,7 +145,7 @@ function run(argv, deps = realDeps) {
   if (workLinks === 'native') {
     let remote = null;
     if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-    const repoSpec = parseRepo(opts.repo ? `github.com/${opts.repo}` : remote);
+    const repoSpec = parseRepo(opts.repo ? (opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : remote);
     if (!repoSpec) { deps.stderr('backlog-grant-gate.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
     // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'
     // (#1153 review finding). resolveSubIssueNumbers's REST fallback (lib/backlog-grant-gate/

@@ -264,6 +264,49 @@ test('(b) CLI native mode: one batched graphql call, blockedBy + openBlocker map
   assert.equal(env.records['721'].openBlocker, false);
 });
 
+// #2444 review fix: a caller-supplied --repo can itself already be a
+// host-qualified `host/owner/repo` slug (repoSlug()'s GHE output) — before
+// this fix, --repo was always prefixed with `github.com/` regardless of
+// shape, producing an unparseable 4-segment string for a slug like this.
+// Only native-mode's GraphQL call actually consults owner/repo/host.
+test('#2444 fix: native mode with a host-qualified --repo slug threads --hostname onto the graphql call', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isIssueView(args, 720)) return JSON.stringify(issue({ number: 720, title: 'A', body: specBody(['a.js']) }));
+    if (isGraphQL(args)) {
+      return JSON.stringify({ data: { repository: { i720: { number: 720, blockedBy: { nodes: [] } } } } });
+    }
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out } = cliDeps({ runner, workLinks: 'native', remoteUrl: () => { throw new Error('remoteUrl should not be called when --repo is passed'); } });
+  const code = run(['720', '--repo', 'ghe.example.com/acme/widgets'], deps);
+  assert.equal(code, 0);
+  const q = calls.find(isGraphQL).join(' ');
+  assert.match(q, /-f owner=acme -f repo=widgets/);
+  assert.match(q, /--hostname ghe\.example\.com/);
+  const env = JSON.parse(out.join(''));
+  assert.equal(env.workLinks, 'native');
+});
+
+test('#2444 fix: native mode with a bare --repo owner/repo still resolves to github.com (unchanged)', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isIssueView(args, 720)) return JSON.stringify(issue({ number: 720, title: 'A', body: specBody(['a.js']) }));
+    if (isGraphQL(args)) {
+      return JSON.stringify({ data: { repository: { i720: { number: 720, blockedBy: { nodes: [] } } } } });
+    }
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out } = cliDeps({ runner, workLinks: 'native', remoteUrl: () => { throw new Error('remoteUrl should not be called when --repo is passed'); } });
+  const code = run(['720', '--repo', 'acme/widgets'], deps);
+  assert.equal(code, 0);
+  const q = calls.find(isGraphQL).join(' ');
+  assert.match(q, /-f owner=acme -f repo=widgets/);
+  assert.doesNotMatch(q, /--hostname/);
+});
+
 test('(c) CLI overlapGroups: shared keyFiles union across three records', () => {
   const runner = (args) => {
     if (isIssueView(args, 720)) return JSON.stringify(issue({ number: 720, title: 'A', body: specBody(['shared.js']) }));

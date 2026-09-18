@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -43,14 +44,27 @@ test('Shape 8 node -e script filters out needsDefinition closed records', () => 
 // path is real. Repinned to d111b1474 — the immediate parent, on origin/main's own history, of
 // e2f499095 (the squash-merged commit that added the needsDefinition filter) — which is reachable
 // and carries the file with no needsDefinition reference, same as the original pin intended.
-const { execFileSync } = require('node:child_process');
 const PRE_TASK11_BASE_SHA = 'd111b14742e935487e64a7afa7949cd24e71b8d8';
-const PRE_CHANGE_STEP1_RECORDS = execFileSync(
-  'git',
-  ['show', `${PRE_TASK11_BASE_SHA}:plugin/skills/tidy/step-1-records.md`],
-  { cwd: ROOT, encoding: 'utf8' }
-);
+// #2436: a shallow/partial clone (a common sandbox-provisioning shape) does not have this
+// historical commit's tree reachable, even though it is on origin/main's real history — the same
+// "exists on disk, but not in {sha}" failure the comment above already documents for the ORIGINAL
+// pin. That failure previously happened at module-load time with no try/catch, crashing the whole
+// file (a whole-file `node --test` failure) instead of just this one go-red control. Guard the
+// read so every other test in this file is unaffected by an unreachable historical commit; only
+// the one test that actually needs it degrades, with a stated reason.
+let PRE_CHANGE_STEP1_RECORDS = null;
+let goRedControlSkip = false;
+try {
+  PRE_CHANGE_STEP1_RECORDS = execFileSync(
+    'git',
+    ['show', `${PRE_TASK11_BASE_SHA}:plugin/skills/tidy/step-1-records.md`],
+    { cwd: ROOT, encoding: 'utf8' }
+  );
+} catch (err) {
+  goRedControlSkip = `commit ${PRE_TASK11_BASE_SHA} is not reachable in this checkout's git history ` +
+    `— the go-red control needs full history: ${String(err.message).split('\n')[0]}`;
+}
 
-test('go-red control: pre-change file carries no needsDefinition field anywhere', () => {
+test('go-red control: pre-change file carries no needsDefinition field anywhere', { skip: goRedControlSkip }, () => {
   assert.ok(!PRE_CHANGE_STEP1_RECORDS.includes('needsDefinition'), 'control must not already carry a needsDefinition reference (proves the assertions above can fail)');
 });

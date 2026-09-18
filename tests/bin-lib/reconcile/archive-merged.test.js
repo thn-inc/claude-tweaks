@@ -17,7 +17,8 @@ const {
   classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
   isClosedSlugStuck, recordNumbersFromSlug,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
-const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures } = require('../../../plugin/bin/lib/reconcile/cache');
+const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure } = require('../../../plugin/bin/lib/reconcile/cache');
+const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
 
 // #1892: stamps `worktree-always: true` in `.claude-tweaks/policy.yml` — the
 // flat kebab-case format `bin/lib/policy.js` reads directly (no YAML dep).
@@ -1436,6 +1437,111 @@ test('archiveMerged: still skips in place on a single pass, but only starts trac
   const failures = listResidueFailures(root);
   assert.ok(failures.some((f) => f.reason === 'structurally-stuck' && f.path === stuckDir), 'the stuck dir must start accumulating a residue count');
   assert.ok(!failures.some((f) => f.reason === 'structurally-stuck' && f.path === freshDir), 'the fresh (just-created) dir must not enter the counter at all');
+});
+
+// #2505 — two independently stuck dirs both crossing the escalation
+// threshold in the SAME archiveMerged() call must still make only ONE
+// underlying gh issue-list call when a shared runner (the shape
+// reconcile/index.js's createIssueListCache produces) is injected — proof
+// that archiveMerged's `runner` option actually reaches every trackStuckSkip
+// call site in its loop, not just the first one reached.
+test('archiveMerged: two dirs crossing the structurally-stuck threshold in one call share one injected runner — only one underlying issue-list call fires', () => {
+  const root = fs.realpathSync(makeRepo());
+  // escalateStructurallyStuck bails out at 'no-repo-slug' (never calling
+  // `runner` at all) unless repoSlugOf(root) resolves — makeRepo()'s bare
+  // fixture has no origin remote, so one is stamped here (same shape
+  // release-merged.test.js's own fixtures use).
+  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+
+  function seedStuckDir(id, gonePath) {
+    const dir = path.join(root, '.claude-tweaks', 'pipelines', id);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'config.yml'), 'x: 1\n');
+    fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({
+      status: 'active', worktree: gonePath, sessionId: 'sess-1',
+    }));
+    const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+    fs.utimesSync(dir, backdated, backdated);
+    // Pre-seed the residue counter one short of the threshold, so this
+    // single archiveMerged() call's own trackStuckSkip crosses it for
+    // BOTH dirs at once, simultaneously reaching escalateResidue.
+    for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD - 1; i++) {
+      recordResidueFailure(root, 'structurally-stuck', dir, { lastError: 'stuck at no-branch' });
+    }
+    return dir;
+  }
+
+  const dirA = seedStuckDir('2026-01-01T000000-stuck-a-2505', path.join(root, 'long-gone-a'));
+  const dirB = seedStuckDir('2026-01-01T010000-stuck-b-2505', path.join(root, 'long-gone-b'));
+
+  // A STATEFUL fake `gh` — a bare `(argv) => { calls.push(argv); return
+  // '[]'; }` can't distinguish "1 consolidated issue naming both dirs" from
+  // "2 separate issues" (#2505's Critical finding): both shapes produce the
+  // same issue-list call count, since a stateless fake never reflects the
+  // `issue create`/`issue edit` writes the escalation loop makes in between.
+  // This fake tracks issues in `fakeIssues` so the assertions below can
+  // check the actual outcome instead of a call count alone.
+  const fakeIssues = [];
+  let nextNumber = 100;
+  const listCalls = [];
+  const base = (argv) => {
+    if (argv[0] === 'issue' && argv[1] === 'list') {
+      listCalls.push(argv);
+      return JSON.stringify(fakeIssues);
+    }
+    if (argv[0] === 'issue' && argv[1] === 'create') {
+      const titleIdx = argv.indexOf('--title');
+      const bodyIdx = argv.indexOf('--body');
+      const number = nextNumber++;
+      fakeIssues.push({
+        number, title: argv[titleIdx + 1], body: argv[bodyIdx + 1],
+        createdAt: new Date().toISOString(), state: 'OPEN',
+      });
+      return `https://github.com/acme/w/issues/${number}\n`;
+    }
+    if (argv[0] === 'issue' && argv[1] === 'edit') {
+      const number = Number(argv[2]);
+      const bodyIdx = argv.indexOf('--body');
+      const entry = fakeIssues.find((e) => e.number === number);
+      if (entry) entry.body = argv[bodyIdx + 1];
+      return '';
+    }
+    return ''; // comment and any other write — no state effect needed for this test
+  };
+  // Wrapped in the same createIssueListCache shape reconcile/index.js's own
+  // shared cache produces — `listCalls` records every `issue list` call that
+  // actually reaches `base`, so a repeat read for the same repo served from
+  // the cache's memo never lands in `listCalls` a second time, while
+  // `issue create`/`issue edit` (writes, never cached) still reach `base`
+  // every time they're invoked.
+  const { runner } = createIssueListCache({ base });
+
+  // installGhWrapper stays as a belt-and-braces guard: it's `gh pr list`/`gh
+  // pr view` (pr-state.js, unrelated to the injected `runner` above) that
+  // archiveMerged's own PR-resolution path calls directly via
+  // execFileSync — this makes sure THOSE calls never fall through to a real
+  // `gh` if some other code path isn't wired through `runner`.
+  const wrapper = installGhWrapper([]);
+  let result;
+  try {
+    result = archiveMerged({ cwd: root, runner });
+  } finally {
+    wrapper.restore();
+  }
+
+  assert.ok(result.skipped.some((s) => s.runDir === dirA && s.reason === 'no-branch'));
+  assert.ok(result.skipped.some((s) => s.runDir === dirB && s.reason === 'no-branch'));
+
+  assert.equal(fakeIssues.length, 1, `expected exactly ONE consolidated issue, got ${fakeIssues.length}: ${JSON.stringify(fakeIssues)}`);
+  assert.match(fakeIssues[0].body, /long-gone-a|stuck-a-2505/, 'the one issue must name the first stuck dir');
+  assert.match(fakeIssues[0].body, /long-gone-b|stuck-b-2505/, 'the one issue must ALSO name the second stuck dir — not a second separate issue');
+
+  const issueListCalls = listCalls.filter((c) => c[0] === 'issue' && c[1] === 'list');
+  assert.equal(issueListCalls.length, 1, `expected exactly one issue-list call across both escalations, got ${issueListCalls.length}`);
+
+  const failures = listResidueFailures(root);
+  assert.ok(failures.find((f) => f.path === dirA && f.escalated === true));
+  assert.ok(failures.find((f) => f.path === dirB && f.escalated === true));
 });
 
 // --- #1733: archiveMergedRun's onSkip asymmetry — the one behavioral

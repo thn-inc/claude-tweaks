@@ -273,7 +273,7 @@ Two worked examples:
 
 What `ready` asserts and the gate re-verifies. **Deliberately structural-plus-minimal:**
 
-- The sections `Current State`, `Deliverables`, and `Acceptance Criteria` are present.
+- The sections `Current State`, `Deliverables`, `Acceptance Criteria`, and `Release Note` are present.
 - Each of those sections is non-empty.
 - No unresolved placeholder markers (`TBD`, `TODO`, `<!-- ambiguity:`) anywhere in the body **outside the verbatim-preserved `## Original request` section** — everything from that heading to end of body is exempt: shaping-mode's preservation rule mandates that copy byte-exact, so a marker inherited there is the original capture's own text, not an unresolved authored placeholder (#1240).
 
