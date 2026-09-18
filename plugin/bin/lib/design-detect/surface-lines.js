@@ -106,13 +106,19 @@ function analyzeDiff(diffText) {
   const order = [];
   const files = new Map();
   let current = null;
+  // A `---`/`+++` line is only a file header before the first `@@` hunk of
+  // that file — inside a hunk, a content line can itself start with those
+  // same three characters (e.g. `+++counter;`, a `+`-prefixed line whose
+  // content is `++counter;`) and must be counted, not skipped as a header.
+  let inHunk = false;
 
   for (const line of lines) {
     const gitHeader = /^diff --git a\/.+ b\/(.+)$/.exec(line);
-    const plusHeader = /^\+\+\+ b\/(.+)$/.exec(line);
+    const plusHeader = !inHunk ? /^\+\+\+ b\/(.+)$/.exec(line) : null;
     const file = gitHeader ? gitHeader[1] : plusHeader ? plusHeader[1] : null;
     if (file) {
       current = file;
+      inHunk = false;
       if (!files.has(current)) {
         files.set(current, { file: current, kind: classifyFileKind(current), surface: false, changedLines: 0 });
         order.push(current);
@@ -120,8 +126,14 @@ function analyzeDiff(diffText) {
       continue;
     }
     if (!current) continue;
-    if (line.startsWith('---') || line.startsWith('+++') || line.startsWith('@@') || line.startsWith('diff --git') || line.startsWith('index ')) continue;
-    if (line.startsWith('+') || line.startsWith('-')) {
+    if (line.startsWith('@@')) {
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk) {
+      if (line.startsWith('---') || line.startsWith('+++') || line.startsWith('diff --git') || line.startsWith('index ')) continue;
+    }
+    if (inHunk && (line.startsWith('+') || line.startsWith('-'))) {
       const entry = files.get(current);
       const content = line.slice(1);
       entry.changedLines += 1;

@@ -1195,6 +1195,93 @@ test('reconcile(): a real successful preflight stamps lastHealthCheckOkAt for a 
   assert.ok(stamped >= before, 'stamp must be set at (or after) this pass, not stale');
 });
 
+// #2505 — reconcile()'s own archive+reap dispatch must share ONE issue-list
+// cache instance across both checks in the same pass. Exercised at the
+// module-wiring level (a spy on issue-list-cache.js's own
+// createIssueListCache, confirming it is called exactly once per
+// reconcile() invocation, and that the SAME returned runner reaches both
+// archiveMerged and reapMerged) rather than by re-deriving N-stuck-dir
+// git/gh fixtures here — Task 3/4's own tests already prove the runner,
+// once received, is forwarded correctly through every call site in each
+// module; this test's only job is proving index.js creates and shares
+// exactly one instance.
+test('reconcile(): creates exactly one issue-list cache per pass and passes its runner to both archiveMerged and reapMerged', async () => {
+  const issueListCache = require('../plugin/bin/lib/reconcile/issue-list-cache');
+  const archiveMergedModule = require('../plugin/bin/lib/reconcile/archive-merged');
+  const reapMergedModule = require('../plugin/bin/lib/reconcile/reap-merged');
+  const preflight = require('../plugin/bin/lib/reconcile/preflight');
+
+  const originalCreate = issueListCache.createIssueListCache;
+  const originalArchive = archiveMergedModule.archiveMerged;
+  const originalReap = reapMergedModule.reapMerged;
+  const originalHealth = preflight.ghHealthCheck;
+  const originalHealthAsync = preflight.ghHealthCheckAsync;
+
+  let createCalls = 0;
+  const fakeRunner = () => '[]';
+  issueListCache.createIssueListCache = (...args) => {
+    createCalls += 1;
+    return { runner: fakeRunner };
+  };
+  let archiveRunnerSeen;
+  let reapRunnerSeen;
+  archiveMergedModule.archiveMerged = (opts) => {
+    archiveRunnerSeen = opts.runner;
+    return { archived: [], skipped: [] };
+  };
+  reapMergedModule.reapMerged = (opts) => {
+    reapRunnerSeen = opts.runner;
+    return { reaped: [], skipped: [], portsRelease: [] };
+  };
+  // 'archive'/'reap' are both gh-dependent checks, so reconcile()'s own
+  // GitHub-health preflight would otherwise run a real `gh api rate_limit`
+  // call here (no 'mirror' in `checks`, so the concurrent fastChecksShape
+  // path doesn't apply — the sequential ghHealthCheck() branch runs
+  // instead). Stub both the sync and async forms — mirroring the existing
+  // preflight-stub idiom elsewhere in this file (e.g. the red-tip/
+  // FAST_CHECKS tests above) — so this test stays hermetic and never
+  // depends on live gh auth/network; an unstubbed preflight failure would
+  // filter `checks` down to nothing and skip the archive/reap dispatch
+  // entirely, failing this test for the wrong reason.
+  preflight.ghHealthCheck = () => ({ ok: true, reason: null });
+  preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
+
+  try {
+    // Rebuild index.js's own top-level requires against the monkeypatched
+    // modules by clearing its module cache entry first — index.js
+    // destructures archiveMerged/reapMerged/createIssueListCache at
+    // require-time, so a patch applied AFTER index.js has already been
+    // required elsewhere in this suite would not be seen without this.
+    delete require.cache[require.resolve('../plugin/bin/lib/reconcile/index')];
+    const { reconcile: reconcileFresh } = require('../plugin/bin/lib/reconcile/index');
+    // A real origin + clone (pairedFixture), not a bare `git init` — before
+    // reconcile() ever reaches the archive/reap dispatch (or the
+    // cache-creation line just above it), it resolves `integration` from
+    // `origin/HEAD`; a repo with no remote at all trips the earlier
+    // 'no-remote' skip instead (see the 'checks filter excludes reap' test
+    // above for the same fixture-shape requirement).
+    const { mainDir } = pairedFixture();
+
+    await reconcileFresh({
+      cwd: mainDir,
+      checks: ['archive', 'reap'],
+      resolveIntegrationModel: () => 'pr-first',
+      mcpReachable: true,
+    });
+
+    assert.equal(createCalls, 1, 'exactly one cache must be created per reconcile() pass');
+    assert.equal(archiveRunnerSeen, fakeRunner, 'archiveMerged must receive the shared cache runner');
+    assert.equal(reapRunnerSeen, fakeRunner, 'reapMerged must receive the same shared cache runner');
+  } finally {
+    issueListCache.createIssueListCache = originalCreate;
+    archiveMergedModule.archiveMerged = originalArchive;
+    reapMergedModule.reapMerged = originalReap;
+    preflight.ghHealthCheck = originalHealth;
+    preflight.ghHealthCheckAsync = originalHealthAsync;
+    delete require.cache[require.resolve('../plugin/bin/lib/reconcile/index')];
+  }
+});
+
 // #820 Task 10's exact regression shape, re-applied to this new mechanism: a
 // `lastRunAt` stamp from an unrelated pass must never be misread as preflight
 // freshness — the two fields are deliberately independent (cache.js's own
@@ -1489,6 +1576,15 @@ test('reconcile(): a FAST_CHECKS pass (session-start\'s inline hot path) issues 
 // delay), not their sum — a regression back to the old serial order would
 // add the fetch's own time on top.
 test('reconcile(): FAST_CHECKS runs the preflight and the shared fetch concurrently, not serially (#872)', async () => {
+  // #2499: this used to assert `elapsed < HEALTH_DELAY_MS * 2` (400ms) after
+  // racing a real local `git fetch` (sharedFetchAsync) against a mocked,
+  // artificially-delayed preflight — a wall-clock margin that flaked once
+  // under full-suite machine load (measured 463ms) despite the isolated run
+  // completing correctly. Widening the margin trades away the very
+  // regression-detection power the test exists for (see the design note this
+  // replaced), so instead assert overlap directly: record each call's own
+  // [start, end] window and check they overlap. Concurrent dispatch always
+  // overlaps; serial dispatch never does, regardless of host speed.
   const { mainDir } = pairedFixture();
   fs.mkdirSync(path.join(mainDir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(mainDir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
@@ -1500,27 +1596,56 @@ test('reconcile(): FAST_CHECKS runs the preflight and the shared fetch concurren
   const originalHealthAsync = preflight.ghHealthCheckAsync;
   preflight.ghHealthCheck = () => ({ ok: true, reason: null });
   const HEALTH_DELAY_MS = 200;
-  preflight.ghHealthCheckAsync = () => new Promise((resolve) => {
-    setTimeout(() => resolve({ ok: true, reason: null }), HEALTH_DELAY_MS);
-  });
+  let healthStart = null;
+  let healthEnd = null;
+  preflight.ghHealthCheckAsync = () => {
+    healthStart = Date.now();
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        healthEnd = Date.now();
+        resolve({ ok: true, reason: null });
+      }, HEALTH_DELAY_MS);
+    });
+  };
+
+  // sharedFetchAsync (reconcile/shared-fetch.js) calls runGitAsync
+  // (bin/lib/hooks/git-exec.js), which resolves `promisify(cp.execFile)`
+  // fresh at call time — the same call-time-resolved property runGitAsync's
+  // own timeout test already mocks — so wrapping `cp.execFile` here observes
+  // the real fetch subprocess's actual start/end without faking its result.
+  // The wrapper delegates to Node's real custom promisify implementation
+  // (`execFile[promisify.custom]`) so the {stdout, stderr} shape runGitAsync
+  // depends on is preserved exactly; only the timing is instrumented.
+  const cp = require('child_process');
+  const { promisify } = require('util');
+  const originalExecFile = cp.execFile;
+  const originalCustomPromisify = originalExecFile[promisify.custom];
+  let fetchStart = null;
+  let fetchEnd = null;
+  function execFileWrapper(...args) {
+    return originalExecFile(...args);
+  }
+  execFileWrapper[promisify.custom] = (...args) => {
+    fetchStart = Date.now();
+    return originalCustomPromisify(...args).finally(() => {
+      fetchEnd = Date.now();
+    });
+  };
+  cp.execFile = execFileWrapper;
 
   const { FAST_CHECKS } = require('../plugin/bin/lib/hooks/session-start');
-  const start = Date.now();
   try {
     await reconcile({ cwd: mainDir, checks: FAST_CHECKS });
   } finally {
     preflight.ghHealthCheck = originalHealth;
     preflight.ghHealthCheckAsync = originalHealthAsync;
+    cp.execFile = originalExecFile;
   }
-  const elapsed = Date.now() - start;
-  // A serial implementation would take at least HEALTH_DELAY_MS plus the
-  // fetch's own time (and every other dispatched check's time on top);
-  // concurrent execution stays close to HEALTH_DELAY_MS alone. The margin
-  // is generous (2x) to absorb load on a shared test machine while still
-  // failing a genuine regression to serial dispatch.
+  assert.ok(healthStart !== null && healthEnd !== null, 'the preflight health check must have run');
+  assert.ok(fetchStart !== null && fetchEnd !== null, 'the shared fetch must have run');
   assert.ok(
-    elapsed < HEALTH_DELAY_MS * 2,
-    `expected concurrent dispatch to keep elapsed (${elapsed}ms) close to the ${HEALTH_DELAY_MS}ms preflight delay, not stack the fetch on top`,
+    healthStart < fetchEnd && fetchStart < healthEnd,
+    `expected the preflight window [${healthStart}, ${healthEnd}] to overlap the fetch window [${fetchStart}, ${fetchEnd}] — a serial regression would not overlap`,
   );
 });
 

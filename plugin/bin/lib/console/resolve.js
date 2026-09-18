@@ -84,8 +84,37 @@ const SECTION_STANCES = {
 
 const ENGINE_ROW_SECTIONS = { skills: SECTIONS.SKILL, docs: SECTIONS.DOC, journeys: SECTIONS.JOURNEY, 'claude-md': SECTIONS.CONFIG, 'decision-records': SECTIONS.CONFIG, references: SECTIONS.REF };
 
-function classifyStagedItem(filename) {
-  for (const [re, section, reason] of SECTION_MAP) if (re.test(filename)) return reason ? { section, reason } : { section };
+// `**Category:** {value}` — the header line `reflect/SKILL.md` (and any other producer sharing
+// this convention) writes on a staged finding. `null` when the text carries no such line —
+// including every caller that passes no text at all (unknown by design; never routed off it).
+function parseCategory(text) {
+  if (!text) return null;
+  const m = /^\*\*Category:\*\*\s*(\S+)/m.exec(text);
+  return m ? m[1] : null;
+}
+
+// `text` is the staged file's own content, when the caller has it (readSnapshot loads it for
+// every `.md`/`.patch` staged item). Only the QUEUE bucket's un-reasoned row reads it: that
+// bucket's contract (`reflect/SKILL.md`'s Auto mode routing table) reserves an actual Queue
+// write (a `gh issue create` candidate, resolution `apply`) for `Category: tangential` findings
+// — `convention`/`observation` findings share the same filename prefix but carry no
+// `Title:`/`Type:`/`Labels:` header for record creation to read, so routing them into Queue
+// writes/`apply` the same as a tangential finding would attempt to file a malformed issue
+// (#2473). A `Category:` value other than `tangential` reroutes to Pending review via the
+// existing reason-forces-pending mechanism below; a file with no `Category:` line at all (every
+// other QUEUE-bucket producer — `digest-promotion-*`, `leftover-*`, etc. — none of which carry
+// this field) is unaffected and keeps today's Queue writes/`apply` classification.
+function classifyStagedItem(filename, text) {
+  for (const [re, section, reason] of SECTION_MAP) {
+    if (!re.test(filename)) continue;
+    if (section === SECTIONS.QUEUE && !reason) {
+      const category = parseCategory(text);
+      if (category && category.toLowerCase() !== 'tangential') {
+        return { section: SECTIONS.PENDING, reason: `non-tangential-category:${category}` };
+      }
+    }
+    return reason ? { section, reason } : { section };
+  }
   return { section: SECTIONS.PENDING, reason: 'unmapped-prefix' };
 }
 
@@ -124,7 +153,7 @@ function readSnapshot({ runDir, deps }) {
   const staged = deps.readdir(stagedDir).filter((n) => !n.startsWith('.')).sort().map((name) => ({
     name,
     path: path.join(stagedDir, name),
-    text: name.endsWith('.patch') ? readText(deps, path.join(stagedDir, name)) : null,
+    text: (name.endsWith('.patch') || name.endsWith('.md')) ? readText(deps, path.join(stagedDir, name)) : null,
   }));
   const engineState = readJson(deps, path.join(runDir, 'engine-state.json'));
   const members = readMembers(deps, runDir);
@@ -232,7 +261,7 @@ function stagedItems(snapshot) {
   const refused = refusedStagedNames(snapshot.decisions);
   return snapshot.staged.map((s) => {
     if (refused.has(s.name)) return { id: s.name, section: SECTIONS.REFUSED, ...SECTION_STANCES[SECTIONS.REFUSED] };
-    const { section, reason } = classifyStagedItem(s.name);
+    const { section, reason } = classifyStagedItem(s.name, s.text);
     if (reason) return { id: s.name, section, resolution: 'pending', reason };
     const stance = SECTION_STANCES[section];
     if (s.name.endsWith('.patch')) {

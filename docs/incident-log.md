@@ -1559,3 +1559,27 @@ owned the question.
 shaping mode mechanically requires a stated headless-refusal outcome for any deliverable that is
 a flag or mode whose consumer is a Routine firing — at that point the spec can no longer be
 written this way and the rule is enforced rather than remembered.
+
+## IL-157 — A shared find-hit skeleton extraction moved a caller's pre-delegation computation out from under its own guard
+
+During record #2504's build (extracting `findOrCreateIssue`/`findHitForResolve` shared skeletons
+out of `escalate-residue.js`'s four escalate/resolve functions, 2026-09-16), `escalateResidue`'s
+own `if (!repo) return {...}` guard — which used to run before its `residueBody(...)` call (a call
+that can throw `RangeError` from `new Date(firstFailedAt).toISOString()` on a malformed
+`firstFailedAt`) — moved *inside* the new `findOrCreateIssue` helper, but `residueBody(...)` is
+still called from `escalateResidue` itself, before delegating to the helper. The guard no longer
+protects the computation it used to run ahead of, silently widening the "Never throws" contract's
+exposed surface for the no-repo + malformed-timestamp combination. The plan's own Task 1 wrote the
+shared helper with its guard correctly in place, but never audited whether every caller's own
+pre-delegation code was still covered.
+
+Caught by `/claude-tweaks:review` Step 3 lens 3c (Error Handling) at low-tier single-read dispatch,
+elevated to `confirmed` via the direct-verification override (the reviewing agent independently
+read both the pre-refactor and post-refactor source). Fixed within the same review pass by
+restoring the guard ahead of the `residueBody(...)` call, matching the pre-refactor order.
+
+Cost on the #2504 run: one extra review fix-round (~2 minutes) plus two extra full-suite re-runs
+(~110s total) — caught before merge, so no shipped defect.
+
+**Removal condition:** none proposed — a single-instance record, kept for pattern recognition on
+a future guard-extraction refactor rather than an enforced rule with a mechanical retirement test.

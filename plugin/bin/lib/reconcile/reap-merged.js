@@ -74,8 +74,8 @@ function decideReap(prState) {
 // duplicating the success/fail branch. `escalate` stays injectable so a test
 // can assert escalation fired (and how many times) without touching real
 // `gh`.
-function trackReapResidue(root, repoSlug, real, { failed, lastError }, { escalate = escalateResidue } = {}) {
-  trackResidue(root, repoSlug, 'removal-failed', real, { failed, lastError }, { escalate });
+function trackReapResidue(root, repoSlug, real, { failed, lastError }, { escalate = escalateResidue, runner } = {}) {
+  trackResidue(root, repoSlug, 'removal-failed', real, { failed, lastError }, { escalate, runner });
 }
 
 // A candidate worktree the CALLING process is standing inside (or under),
@@ -90,7 +90,7 @@ function isOwnCwd(here, real) {
   return isPathContained(here, real, { orEqual: true });
 }
 
-function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault } = {}) {
+function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault, runner } = {}) {
   const reaped = [];
   const skipped = [];
   // See worktree-reap.js's reapWorktrees for the shape rationale: only ever
@@ -142,13 +142,13 @@ function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault } 
       // #1341 — carry git's real stderr as lastError, falling back to the
       // bare category only when git produced no stderr at all (e.g. an
       // indeterminate timeout/spawn failure with nothing to say).
-      trackReapResidue(root, repoSlug, real, { failed: true, lastError: rm.stderr || rm.failure });
+      trackReapResidue(root, repoSlug, real, { failed: true, lastError: rm.stderr || rm.failure }, { runner });
       continue;
     }
     // A path that just succeeded has no more residue to track (#644) — clear
     // any streak so a later failure on this same path (re-created worktree,
     // reused path) starts counting fresh rather than resuming a stale one.
-    trackReapResidue(root, repoSlug, real, { failed: false });
+    trackReapResidue(root, repoSlug, real, { failed: false }, { runner });
     logReapEvent(owningRunDir, 'worktree-reaped', { prNumber: prState.number });
     reaped.push(real);
     try {
