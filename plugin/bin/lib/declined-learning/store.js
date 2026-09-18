@@ -29,6 +29,20 @@
 // could each read the same pre-write store and the second write would silently drop the first's
 // entry (review finding). Best-effort/fail-open, same posture as writeRunState: a write that
 // can't acquire the lock in time still proceeds unlocked rather than hang the caller.
+//
+// Risk-tolerance decision (#1400, review of #1033's Security lens): `subject` is agent-authored,
+// not raw user input — an indirect channel, since a human never types it directly. The mitigation
+// chosen is storage-time length capping here (MAX_SUBJECT_LENGTH below) plus render-time
+// delimiting in transcript-judge/watermark.js's formatOffsetClause (the two call sites review
+// flagged), not "accept and document" alone — both are cheap, mechanical, and additive with no
+// behavior change for a well-formed subject. This fix is scoped to declined-learning only; it does
+// NOT generalize to the wider ledger-entry/decisions.md/staged-proposal pattern of recirculating
+// agent-authored prose into future prompts — that pattern is pervasive, already shipped, and
+// carries a different risk profile (much of it passes through the Review Console before reaching
+// another prompt), so generalizing it needs its own separately-scoped decision, not a bundle-in
+// here. Full reasoning: docs/superpowers/plans/2026-09-18-declined-learning-subject-sanitization.md's
+// "Decision" section (this plan is deleted once #1400 ships and closes, per this repo's specs/
+// close-out convention — this comment is the durable copy).
 'use strict';
 
 const fs = require('fs');
