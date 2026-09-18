@@ -236,7 +236,7 @@ else
 fi
 ```
 
-Check per `_shared/work-record.md`'s spec-shaped body definition: the sections `## Current State`, `## Deliverables`, and `## Acceptance Criteria` are present and each non-empty, and no unresolved placeholder marker (`TBD`, `TODO`, `<!-- ambiguity:`) remains anywhere outside the verbatim-preserved `## Original request` section (exempt per that definition's #1240 clause). This is structural-plus-minimal — whether the deliverables are the *right* ones stays human judgment (the batch table just confirmed), not this check.
+Check per `_shared/work-record.md`'s spec-shaped body definition: the sections `## Current State`, `## Deliverables`, `## Acceptance Criteria`, and `## Release Note` are present and each non-empty, and no unresolved placeholder marker (`TBD`, `TODO`, `<!-- ambiguity:`) remains anywhere outside the verbatim-preserved `## Original request` section (exempt per that definition's #1240 clause). This is structural-plus-minimal — whether the deliverables are the *right* ones stays human judgment (the batch table just confirmed), not this check.
 
 A failing row auto-downgrades to flag-back, using Step 5's flag-back mechanics with this exact comment (substitute the missing/empty section list and issue number):
 
