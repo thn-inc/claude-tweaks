@@ -9,9 +9,9 @@
 // anywhere in the message), a required `Release-Note: {line}` paragraph
 // (single-line by construction — see the inline comment at its push site),
 // `Fixes #n` footer lines, and a trailing `BREAKING CHANGE: {note}` footer
-// when `breaking` is set. release-please and
-// the local release engine both parse exactly this shape back out, which is
-// why there is one writer and no per-site variation. Pure function, zero deps.
+// when `breaking` is set. release-please and the local release engine both
+// parse exactly this shape back out, which is why there is one writer and no
+// per-site variation. Pure function, zero deps.
 'use strict';
 
 const TYPE_PREFIX = { feature: 'feat', bug: 'fix', task: 'chore' };
