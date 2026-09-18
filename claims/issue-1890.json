@@ -1,6 +1,7 @@
 {
-  "released": true,
-  "runId": "2026-09-14T181636-record-1890",
-  "reason": "failed: blocked-dependency (create_webhook_trigger/RemoteTrigger tool unreachable via ToolSearch in this session; 10th consecutive miss)",
-  "releasedAt": "2026-09-14T18:21:54.565Z"
+  "runId": "2026-09-18T162419-record-1890",
+  "sessionId": "67ee97a2-1d7e-5629-9410-d241f27ea72c",
+  "claimedAt": "2026-09-18T16:27:51.884Z",
+  "ttlHours": 72,
+  "host": "vm"
 }
