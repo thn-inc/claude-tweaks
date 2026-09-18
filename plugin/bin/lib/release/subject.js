@@ -51,7 +51,7 @@ function truncateHead(head, prefix, suffixLength) {
   return cut.replace(/[\s.,;:—-]+$/u, '') + ELLIPSIS;
 }
 
-// { type, title, number, breaking?, summary?, migrationNote?, fixes?, tag?, breakingRecords? } -> { title, body }
+// { type, title, number, breaking?, summary?, migrationNote?, releaseNote, fixes?, tag?, breakingRecords? } -> { title, body }
 function composeSubject({ type, title, number, breaking = false, summary, migrationNote, releaseNote, fixes, tag, breakingRecords } = {}) {
   // number is validated first so the type/title usage errors below can cite "for #{number}".
   if (!Number.isInteger(number) || number <= 0) throw usage(`number must be a positive integer, got ${JSON.stringify(number)}`);
@@ -68,9 +68,7 @@ function composeSubject({ type, title, number, breaking = false, summary, migrat
   }
 
   const cleanReleaseNote = typeof releaseNote === 'string' ? releaseNote.trim() : '';
-  if (!cleanReleaseNote) {
-    throw usage(`releaseNote must be a non-empty string for #${number}`);
-  }
+  if (!cleanReleaseNote) throw usage(`releaseNote must be a non-empty string for #${number}`);
 
   const prefix = breaking ? `${prefixBase}!` : prefixBase;
   const suffix = ` (#${number})`;
