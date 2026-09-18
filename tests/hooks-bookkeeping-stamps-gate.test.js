@@ -1049,3 +1049,107 @@ test('bookkeeping-stamps gate (#1258): a caught model-resolution exception never
     'a caught resolution exception must never persist prExempt — a later call might resolve pr-first and need to enforce',
   );
 });
+
+// --- #1460: an unrelated dangling run must not deny a fresh scratch worktree ---
+//
+// _shared/scratch-worktree.md's throwaway checkouts (used by /tidy, /wrap-up's
+// residue sweep, /init) never call materialize or record-worktree for
+// themselves — they have no run-state.json of their own. When such a worktree's
+// first Edit/Write resolves ctx.runDir to some OTHER, unrelated non-terminal run
+// (bin/hooks.js's resolveRunDir has no session-id filtering and picks the newest
+// non-terminal run repo-wide), a dangling run whose materialize commit landed
+// elsewhere but was never followed by record-worktree must not have its
+// missing-worktree-stamp deny fire against this unrelated scratch worktree.
+//
+// A fixture where the victim commit sits on a branch that never merges anywhere
+// (e.g. an unmerged PR) can't actually exercise this: that commit is simply
+// unreachable from any other worktree's HEAD regardless of hasMaterializeCommit's
+// range bound, so a naive version of this test would pass identically whether
+// or not #1674's fix exists — proving nothing (confirmed empirically: forcing
+// hasMaterializeCommit's `integration` bound to null and re-running such a
+// fixture left the assertion green). #1460's own cited reproduction — run
+// 2026-08-23T204821-record-361, PR #1339 — did not stay unmerged: `gh pr view
+// 1339` shows `state: MERGED` (2026-08-25) into `main`, even though that run's
+// own run-state.json was left `status: interrupted` with no worktree ever
+// recorded. So this fixture merges the victim's materialize commit into `main`
+// before branching the scratch worktree — the one topology that actually puts
+// the commit in a later worktree's inherited history, which is exactly the
+// precondition hasMaterializeCommit's #1674 range-bound (`{integration}..HEAD`,
+// this worktree's own unique commits only) exists to exclude. Verified by
+// reverting that bound locally (forcing the unbounded pre-#1674 walk) against
+// this exact fixture: the gate arms (hasMaterializeCommit returns true) — so
+// this fixture, unlike the disconnected-branch version, genuinely regresses if
+// the bound is ever removed.
+test('bookkeeping-stamps gate (#1460): an unrelated dangling run (materialize commit merged into main via an already-closed PR, no worktree recorded) does not deny a fresh scratch worktree', () => {
+  const main = gitRepo();
+
+  // The dangling run's OWN worktree — a genuine prior /build attempt whose
+  // materialize commit landed here.
+  const victimWt = linkedWorktreeOf(main);
+  const runId = '2026-08-23T204821-record-361';
+  commitMaterializedSpec(victimWt, path.join('work', '361-spec.md'), runId);
+
+  // Merge that commit into `main`, simulating PR #1339's real, confirmed merge
+  // — this is what puts it into every LATER worktree's inherited history.
+  const victimBranch = execFileSync('git', ['-C', victimWt, 'branch', '--show-current'], { encoding: 'utf8' }).trim();
+  execFileSync('git', ['-C', main, 'merge', '--no-ff', victimBranch, '-m', 'Merge PR #1339', '-q']);
+
+  // The dangling run dir: materialize commit landed and merged (per victimWt
+  // above), but record-worktree never ran — no `worktree`/`sessionId` field at
+  // all, the exact "interrupted, no worktree ever recorded" shape #1460
+  // describes, matching run-361's real state despite PR #1339 having merged.
+  const project = projectDir();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'interrupted' }));
+
+  // A separate scratch worktree, freshly branched from main's CURRENT
+  // (post-merge) tip — has made zero commits of its own, but its HEAD now
+  // contains victimWt's materialize commit via ordinary ancestry, the same as
+  // any real worktree created after that PR merged.
+  const scratchWt = linkedWorktreeOf(main);
+
+  const out = pre.run({
+    input: editInput(path.join(scratchWt, 'src', 'x.js')),
+    runDir: run,
+    runState: { status: 'interrupted' },
+    cwd: scratchWt,
+  });
+  assert.deepStrictEqual(
+    out, {},
+    'a scratch worktree with no commits of its own must not be denied on account of an unrelated dangling run\'s inherited materialize commit',
+  );
+});
+
+// Control for the test above: the SAME dangling-run shape (materialize landed,
+// no worktree recorded) still denies when the calling worktree IS the one the
+// materialize commit actually landed in — proving the allow above comes from
+// "this worktree never touched that run," not from a broken fixture or a
+// gate that stopped enforcing the record-worktree stamp altogether. This is
+// the AC2 case (genuine /build worktree missing its own stamp must still be
+// denied) exercised with THIS test's own fixture shape rather than reusing the
+// file's line-97 test's fixture — the record-worktree deny AC2 already asks
+// for is already covered there, but this control keeps the #1460 scenario's
+// own fixtures self-verifying, the same pairing the file's existing I2.1 test
+// (line 615) uses.
+test('bookkeeping-stamps gate (#1460 control): the same dangling-run shape still denies when the calling worktree IS the one that materialized it', () => {
+  const main = gitRepo();
+  const ownWt = linkedWorktreeOf(main);
+  const runId = '2026-08-23T204821-record-361';
+  commitMaterializedSpec(ownWt, path.join('work', '361-spec.md'), runId);
+
+  const project = projectDir();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'interrupted' }));
+
+  const out = pre.run({
+    input: editInput(path.join(ownWt, 'src', 'x.js')),
+    runDir: run,
+    runState: { status: 'interrupted' },
+    cwd: ownWt,
+  });
+  assert.ok(out.json && out.json.hookSpecificOutput, 'control: the worktree that actually materialized this run must still be denied for its missing worktree stamp');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/);
+});
