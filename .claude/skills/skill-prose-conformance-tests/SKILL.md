@@ -208,12 +208,29 @@ A varying failure count across runs on byte-identical code tracks machine load f
 | Anchoring a snippet-extraction regex on a prose sentence | The sentence is the part of the doc most likely to be reworded, so the suite goes red on its own anchor instead of on the procedure — and the tempting fix is to loosen the regex, which quietly stops pinning the fence at all |
 | Proving a prose pin discriminates by mutating the tree (revert the fix, delete the pinned sentence) and re-running | The mutation is live working-tree state with no owner but the running agent — one killed mid-cycle leaves it sitting in the tree, reading as ordinary work in progress to whoever looks next. `git show {base}:{file}` proves the same thing with zero mutation — see "Proving discrimination without editing the tree" below. Where a real mutation is unavoidable, commit first and drive the whole cycle from one script, and `git status` after any agent death |
 | Authoring a new pin against a multi-file concatenated corpus without checking for an existing single-file pin of the same property | The same literal often exists in more than one concatenated member, so the new pin can silently match the wrong file, and a stronger pin scoped to the real source file may already exist elsewhere in the suite. `#2022` hit both variants in one record: build's own SCRATCH pin initially matched the wrong template inside the concatenation, and review's Simplify pass then found a newly-authored CALIBRATION byte-identical pin duplicating, more weakly, an existing correctly-scoped one in a sibling test file — grep the suite for the property first |
+| Reading the `{base}` snapshot at module scope, unguarded | An unreachable SHA throws before a single test registers, so `node --test` reports a whole-file failure where only the one go-red control was affected — and a shallow or partial clone makes that the ordinary sandbox outcome rather than a history rewrite (#2436) |
 
 ## Proving discrimination without editing the tree
 
 A pin's red state can be proven after the fact, with zero tree mutation: `git show {base}:{file} | grep -c -F '{pinned literal}'` must print 0 where the same grep at HEAD prints 1 (or N). This is the check to reach for when a red-run step was skipped (it retroactively proves the assertion could have failed), when reviewing someone else's pin, or when a revert-and-rerun would risk leaving the tree dirty — `git show` mutates nothing. Run it per pinned literal, not per file: one literal that pre-exists at base is a vacuous pin even when its siblings discriminate. (First applied across record #1071's four prose pins; the whole-branch review ran the same table independently.)
 
 **`{base}` must be a fixed, independently-verified ancestor SHA — never a moving ref like `HEAD`.** A moving ref is self-defeating once the change lands: `HEAD` at that point already carries the post-change content, so the "red" side of the comparison silently becomes the same as the "green" side. Pair the pin with its own ancestor-precondition test (`git merge-base --is-ancestor {base-sha} HEAD`) so a rebase or history rewrite that invalidates the fixed SHA fails loudly instead of passing vacuously. Record #1488 shipped both the mistake and the fix in one build: one pin used a fixed SHA with only a rationale comment, no precondition test; a sibling pin landed the correct fixed-SHA-plus-precondition-test form.
+
+**A fixed ancestor SHA is not necessarily a *reachable* one — where the read happens decides the blast radius.** `git show {base}:{file}` resolves only against the objects this checkout actually holds, and a shallow or partial clone (`--depth`, `--filter=blob:none` — an ordinary CI and sandbox provisioning shape) legitimately lacks an ancestor that `origin/main` really does carry. That is neither a history rewrite nor a regression, so the ancestor-precondition test above is the wrong instrument for it: `git merge-base --is-ancestor` fails there too, and failing loudly is exactly what you do *not* want when the cause is how the clone was fetched. Prefer calling the read **from inside the test body** — `tests/demo-visual-decision-adoption.test.js`'s `countAtPreChange(relPath, literal)` and `tests/session-limit-degrade-conformance.test.js`'s equivalent are the shape to copy — so an unreachable SHA fails only the control that needed it. When several tests share one snapshot and the read must stay at module scope, guard it and degrade just the control through node:test's `{ skip: reason }` option:
+
+```js
+let goRedControlSkip = false;
+try {
+  PRE_CHANGE = execFileSync('git', ['show', `${BASE_SHA}:${REL_PATH}`], { cwd: ROOT, encoding: 'utf8' });
+} catch (err) {
+  goRedControlSkip = `commit ${BASE_SHA} is not reachable in this checkout's git history ` +
+    `— the go-red control needs full history: ${String(err.message).split('\n')[0]}`;
+}
+
+test('go-red control: …', { skip: goRedControlSkip }, () => { /* reads PRE_CHANGE */ });
+```
+
+The stated reason is the load-bearing half — a bare `skip: true` makes an unfetched-history environment and a control that genuinely has nothing to check read identically in the runner's output. Record #2436 is the shipped instance: `tests/shaping-mode-needs-removal.test.js` and `tests/tidy-needs-worklist-rule.test.js` had unguarded module-scope reads turning one unreachable commit into two whole-file `node --test` failures, and the fix moves each control's assertions inside its test body alongside the guard.
 
 **Normalize the base haystack exactly as the live one — a line-based baseline check is vacuous for every literal that wraps.**
 The `grep -c -F` form above matches per *line*, and shipped skill prose is hard-wrapped, so a pinned literal that spans a
