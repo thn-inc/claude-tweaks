@@ -1,7 +1,6 @@
 {
+  "released": true,
   "runId": "2026-09-18T122316-record-2466",
-  "sessionId": "c925b3a1-546a-51c7-ad18-57763df71f8d",
-  "claimedAt": "2026-09-18T12:27:10.168Z",
-  "ttlHours": 72,
-  "host": "vm"
+  "reason": "failed: build-structural-mismatch",
+  "releasedAt": "2026-09-18T12:27:57.517Z"
 }
