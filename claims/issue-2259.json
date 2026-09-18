@@ -1,7 +1,6 @@
 {
+  "released": true,
   "runId": "2026-09-18T201925-record-2259",
-  "sessionId": "2299ad48-103f-553f-95e3-ca882261784d",
-  "claimedAt": "2026-09-18T20:22:25.750Z",
-  "ttlHours": 72,
-  "host": "vm"
+  "reason": "failed: blocked-by-incomplete-prerequisite (unit 7 / #2257 still open)",
+  "releasedAt": "2026-09-18T20:29:53.639Z"
 }
