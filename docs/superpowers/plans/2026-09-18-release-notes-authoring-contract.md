@@ -20,7 +20,7 @@
 
 ---
 
-## Task 1: `## Release Note` is a required spec-template section
+### Task 1: `## Release Note` is a required spec-template section
 
 **Files:**
 - Modify: `plugin/skills/specify/spec-template.md:60-66` (insert a new `## Release Note` section immediately after `## Acceptance Criteria`, before `## Technical Approach`)
@@ -76,7 +76,7 @@ git commit -m "Add required Release Note section to spec template + spec-shaped-
 
 ---
 
-## Task 2: `compose-record/compose.js`'s structural gate requires `## Release Note`
+### Task 2: `compose-record/compose.js`'s structural gate requires `## Release Note`
 
 **Files:**
 - Modify: `plugin/bin/lib/compose-record/compose.js:11`
@@ -184,7 +184,7 @@ git commit -m "compose-record: require a non-empty Release Note section"
 
 ---
 
-## Task 3: `composeSubject` gains a required `releaseNote` parameter
+### Task 3: `composeSubject` gains a required `releaseNote` parameter
 
 **Files:**
 - Modify: `plugin/bin/lib/release/subject.js`
@@ -352,7 +352,7 @@ git commit -m "composeSubject: require releaseNote, insert Release-Note: paragra
 
 ---
 
-## Task 4: `compose-subject.js` derives and enforces `releaseNote`
+### Task 4: `compose-subject.js` derives and enforces `releaseNote`
 
 **Files:**
 - Modify: `plugin/bin/lib/compose-subject.js`
@@ -526,7 +526,7 @@ git commit -m "compose-subject: derive releaseNote from the subject record, requ
 
 ---
 
-## Task 5: Full-suite verification and call-site/fixture audit
+### Task 5: Full-suite verification and call-site/fixture audit
 
 **Files:** none modified (verification + a documented audit) — **except** as noted in Step 3, which is a no-op edit (confirmed, not applied).
 
@@ -577,7 +577,7 @@ Expected: PASS — 0 failures. (If the count differs from a previous full run on
 
 ---
 
-## Task 6: File a follow-up for two prose restatements of the spec-shaped-body check
+### Task 6: File a follow-up for two prose restatements of the spec-shaped-body check
 
 **Files:** none modified by this plan — this task only files a backlog record.
 
