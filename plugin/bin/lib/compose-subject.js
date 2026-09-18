@@ -7,7 +7,10 @@
 // under-bump the release); `breaking` via parseRecordFacets; summary = ##
 // Overview's first sentence, falling back to ## Current State's first
 // sentence for shaping-mode/specShapedBody records, which carry no ##
-// Overview; migrationNote = the ## Breaking Change section), and prints
+// Overview; migrationNote = the ## Breaking Change section; releaseNote =
+// the subject record's own ## Release Note section, never aggregated across
+// a bundle — every record in the bundle must still carry a non-empty
+// section, but only the subject's text is rendered), and prints
 // bin/lib/release/subject.js's composeSubject() output. Skill prose reaches
 // the composer only through this CLI — the pure module has no shell surface.
 //
@@ -204,7 +207,13 @@ function run(argv, deps = realDeps) {
     deps.stderr(`compose-subject.js: breaking is set on #${missing.map((r) => r.number).join(', #')} but the record carries no non-empty "## Breaking Change" section\n`);
     return 1;
   }
+  const releaseNoteMissing = records.filter((r) => !extractSection(r.body, 'Release Note'));
+  if (releaseNoteMissing.length) {
+    deps.stderr(`compose-subject.js: record(s) #${releaseNoteMissing.map((r) => r.number).join(', #')} carry no non-empty "## Release Note" section\n`);
+    return 1;
+  }
   const migrationNote = breakingRecords.map((r) => extractSection(r.body, 'Breaking Change')).filter(Boolean).join('\n\n');
+  const releaseNote = extractSection(subjectRecord.body, 'Release Note');
 
   let composed;
   try {
@@ -215,6 +224,7 @@ function run(argv, deps = realDeps) {
       breaking: breakingRecords.length > 0,
       summary: firstSentence(extractSection(subjectRecord.body, 'Overview') || extractSection(subjectRecord.body, 'Current State')),
       migrationNote,
+      releaseNote,
       fixes: opts.numbers,
       tag: opts.tag,
       breakingRecords: breakingRecords.map((r) => r.number),
