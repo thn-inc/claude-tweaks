@@ -1,6 +1,7 @@
 {
-  "released": true,
-  "runId": "2026-09-17T165537-record-2466",
-  "reason": "failed: record-requires-main-checkout-not-worktree",
-  "releasedAt": "2026-09-17T16:59:39.428Z"
+  "runId": "2026-09-18T122316-record-2466",
+  "sessionId": "c925b3a1-546a-51c7-ad18-57763df71f8d",
+  "claimedAt": "2026-09-18T12:27:10.168Z",
+  "ttlHours": 72,
+  "host": "vm"
 }
