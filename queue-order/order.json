@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-18T06:01:18.464Z",
+  "computedAt": "2026-09-18T06:30:22.799Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -15,7 +15,7 @@
       },
       {
         "number": 2512,
-        "updatedAt": "2026-09-17T17:30:46Z",
+        "updatedAt": "2026-09-18T06:03:03Z",
         "state": "OPEN"
       },
       {
@@ -50,7 +50,7 @@
       },
       {
         "number": 2477,
-        "updatedAt": "2026-09-17T17:13:44Z",
+        "updatedAt": "2026-09-18T06:29:55Z",
         "state": "OPEN"
       },
       {
@@ -461,78 +461,6 @@
           "grants": {
             "build": true,
             "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: ledger resolve gate (wrap-up of #2462)\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n`npm test` on this worktree's unmodified checkout (HEAD `06ea3a588`, base `6ac1d339d`) reports\n9140 tests, 9107 pass, 9 fail — reproduced identically across two independent full-suite runs\nduring #2462's wrap-up (run 1: reported in `report.json`; run 2: this run's own fresh `npm test`\nre-execution, same 9 test names, same failure messages). None of the failing files, or any file\nthey exercise, appear in #2462's diff (2 non-code files: a materialized spec and a ledger).\n\nFailing tests, by file:\n- `tests/bin-lib/hooks/reconcile-background.test.js` — \"the same abandoned interrupted run IS\n  archived when CLAUDE_TWEAKS_SESSION_ID is unset\" (control precondition, #1687 AC2)\n- `tests/bin-lib/visual-decide/cli.test.js` — \"stop is stale-PID tolerant (dead PID ->\n  already-stopped, exit 0)\"\n- `tests/console-execute.test.js` — \"reconcile(): the console check is wired in and reachable\n  via ALL_CHECKS on a pr-first project\"\n- `tests/impeccable-plugin-contract.test.js` (x3) — \"the installed plugin matches the pinned\n  version\", \"gatherSignals() executes cleanly and returns the documented shape\", \"the CLI\n  entrypoint accepts no flags\" — all three cascade from one root cause: Impeccable 4.3.1 is\n  installed in this environment against a 4.0.2 pin.\n- `tests/needs-worklist-rule-cross-consumer.test.js` — \"go-red control precondition: BASE_SHA is\n  a real ancestor of HEAD\"\n- `tests/session-limit-degrade-conformance.test.js` — \"base SHA is a real ancestor of HEAD\n  (precondition for the git-show proof below)\"\n- `tests/untrusted-record-content-conformance.test.js` — \"base SHA is a valid ancestor of HEAD\n  (pin precondition)\"\n\nThe three base-SHA-ancestor failures share a second root cause: a precondition assuming a\nspecific git history shape (BASE_SHA being an ancestor of HEAD) that this worktree's history\ndoes not currently satisfy.\n\n## Deliverables\n\nTwo independent fixes, tracked as one record since both are environment/precondition failures\nrather than product defects:\n\n1. Update the pinned Impeccable version in whatever manifest `tests/impeccable-plugin-contract.test.js`\n   checks against to 4.3.1 (or otherwise resolve the installed-vs-pinned mismatch), clearing all\n   three cascading failures in that file.\n2. Investigate why `tests/needs-worklist-rule-cross-consumer.test.js`,\n   `tests/session-limit-degrade-conformance.test.js`, and\n   `tests/untrusted-record-content-conformance.test.js`'s shared BASE_SHA-ancestor precondition no\n   longer holds in this worktree's git history, and either fix the precondition's derivation or\n   the history gap it depends on.\n3. Investigate `reconcile-background.test.js`'s and `visual-decide/cli.test.js`'s individual\n   failures (unrelated to each other and to items 1-2) — likely timing/environment sensitive\n   given their assertions concern process/PID and session-archival state.\n\n## Acceptance Criteria\n\n`node --test tests/impeccable-plugin-contract.test.js`,\n`node --test tests/needs-worklist-rule-cross-consumer.test.js tests/session-limit-degrade-conformance.test.js tests/untrusted-record-content-conformance.test.js`,\n`node --test tests/bin-lib/hooks/reconcile-background.test.js`, and\n`node --test tests/bin-lib/visual-decide/cli.test.js` all pass on a fresh worktree checkout of\n`main`. A full `npm test` run reports 0 failures (absent unrelated flake introduced after this\nrecord is filed).\n\n_Filed by `ledger resolve gate` via specShapedBody._",
-        "createdAt": "2026-09-16T01:00:52Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          }
-        ],
-        "number": 2512,
-        "state": "OPEN",
-        "title": "9 pre-existing npm test failures unrelated to any single record (base-SHA-ancestor and version-pin preconditions)",
-        "updatedAt": "2026-09-17T17:30:46Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
           },
           "bot": {
             "inProgress": false,
@@ -1045,96 +973,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\n\nOrigin: wrap-up for #2428\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n`bin/lib/wrap-up/engine-verify.js`'s `acceptance-labeling` check (registered around line 467)\nunconditionally requires a resolved issue to carry `demo:pending` once it has a resolvable\ncarrier commit — `if (!labels.some((l) => l.name === 'demo:pending')) { failing.push(...'missing\ndemo:pending label'); }` — with no awareness of `verification-brief.md`'s Oversight-floor gate\n(`#367`, `exceedsOversightFloor` in `bin/lib/issues/oversight-floor.js`). That gate deliberately\nskips Steps 1-4 (no `demo:pending` bootstrap at all) whenever a record's `risk:*`/`size:*` facets\ndon't clear the project's `risk-floor`/`size-floor` policy — a documented, intentional \"not\nrequired\" outcome, not a defect (`verification-brief.md`'s Oversight-floor gate section: \"The\nrecord closes with no `demo:*` label and no ceremony... It stays demoable later on request\").\n\nReproduced during `/claude-tweaks:wrap-up`'s Phase 4 verify step for #2428 (`risk:medium`,\n`size:medium` against a project's `risk-floor: high`/`size-floor: high` — `exceedsOversightFloor`\ncorrectly returned `{exceeds: false}`, Steps 1-4 correctly skipped, no `demo:pending` applied).\nThe `acceptance-labeling` check then reported `fail — #2428: missing demo:pending label`,\nforcing wrap-up to exit code 3 (`On exit code 3, do NOT emit the closure line: surface BLOCKED`)\nfor a record that did nothing wrong.\n\n## Deliverables\n\n- Give `acceptance-labeling` a way to recognize a legitimate Oversight-floor skip and render\n  `skip (below oversight floor -- demo:pending not required)` instead of `fail` for that case,\n  without weakening the check for a record that genuinely should carry the label but doesn't.\n- Likely shape: re-run (or read a cached result of) `exceedsOversightFloor` against the same\n  `risk-floor`/`size-floor` policy values `verification-brief.md` used, keyed off the resolved\n  issue's own `risk:*`/`size:*` facets — mirroring the same computation, not inventing a new\n  signal. Consider whether this belongs in `engine-verify.js` directly or as a new\n  `verify-expectations.json` field the Oversight-floor gate writes at skip time (parallel to how\n  `MULTISPEC_REVIEW_DEFER`'s `deferred` array already tells other `verify` checks about a\n  legitimate skip) -- the latter avoids a second live `gh`/policy read inside `verify` and keeps\n  the \"why\" attached to the moment the skip decision was actually made.\n\n## Acceptance Criteria\n\n- A record whose Oversight-floor gate resolved `exceeds: false` (no `demo:pending` applied by\n  design) passes `wrap-up-engine.js verify`'s `acceptance-labeling` check with a `skip` result,\n  not a `fail`.\n- A record that should carry `demo:pending` (oversight floor cleared) but doesn't still fails the\n  check exactly as today -- no coverage regression.\n- A `node --test` case pins both branches.\n\n## Technical Approach\n\nPrefer the `verify-expectations.json` field approach over a second live read inside `verify`: have `verification-brief.md`'s Oversight-floor gate write a flag (e.g. `oversightFloorSkip: true`) into `verify-expectations.json` at the moment it decides to skip Steps 1-4, the same way `MULTISPEC_REVIEW_DEFER`'s `deferred` array already communicates a legitimate skip to other `verify` checks. Then `acceptance-labeling` in `engine-verify.js` reads that flag before failing on a missing `demo:pending` label — present and true means `skip (below oversight floor -- demo:pending not required)`; absent means the check runs exactly as it does today.\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/engine-verify.js` — the `acceptance-labeling` check (~line 467)\n- `plugin/skills/wrap-up/verification-brief.md` — the Oversight-floor gate that decides the skip\n- `plugin/bin/lib/issues/oversight-floor.js` — `exceedsOversightFloor`, read (not changed) by both sides\n- `tests/bin-lib/wrap-up/engine-verify.test.js` — add both branches (skip vs. genuine fail) as pinned cases\n\n## Gotchas\n\n- Don't weaken the check itself — a record that genuinely should carry `demo:pending` but doesn't must still fail exactly as today; only the oversight-floor-skip case gets the new `skip` outcome.\n",
-        "createdAt": "2026-09-14T19:46:56Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2477,
-        "state": "OPEN",
-        "title": "wrap-up verify: acceptance-labeling check doesn't recognize the Oversight-floor gate's legitimate demo:pending skip",
-        "updatedAt": "2026-09-17T17:13:44Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
