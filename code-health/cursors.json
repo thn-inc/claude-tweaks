@@ -202,5 +202,9 @@
   "plugin/bin/lib/release-claim": {
     "lastSweptMs": 1789614759725,
     "lastHash": "09eb6ef294bfa8385c5d929630108f71a99af544"
+  },
+  "plugin/bin/lib/release-local": {
+    "lastSweptMs": 1789787525466,
+    "lastHash": "69ca7d51e89429e1f9e8688c0d514965c91d1a2c"
   }
 }
