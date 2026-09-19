@@ -178,6 +178,7 @@ Never delete anything here — report only. A path under `{ctx-dir}` is a siblin
 - Errors logged with sufficient context for debugging?
 - User-facing errors safe (no internal details leaked)?
 - No `fs.existsSync(...)`-then-`fs.readFileSync(...)` TOCTOU races — read directly and catch, treating a read failure the same as "absent," rather than checking existence first? (#901's hindsight: this exact pattern has recurred independently 4 times within fresh code, most recently #1269 (`[IL-146]`), in a project where concurrent sibling sessions routinely archive/prune the exact directories these readers walk. See `docs/donts.md`'s matching rule for the write-time version of this callout.)
+- Before staging a fix for an asymmetry between two similarly-shaped validators/gates (one handles a case the other doesn't), has the spec's own issue body (Non-Goals/Gotchas/Acceptance Criteria) been checked for an explicit statement that the asymmetry is deliberate? (#2580's hindsight: this lens flagged 3 findings from code-shape comparison alone — all 3 had already been addressed deliberately in the issue's own Gotchas paragraph — costing a full stage/verify/revert cycle before the mismatch traced back to the primary spec text.)
 
 ### 3d: Performance
 

@@ -15,7 +15,25 @@ If CLAUDE.md doesn't document verification commands, scan `package.json` scripts
 
 ## Step 2: Execute
 
-Run every resolved check through the deterministic runner — one plain command at the invocation level (no `;`, `&&`, or pipe chains):
+**Before running anything below, check whether verification can be skipped.** This is the first thing to evaluate in this step, not a caveat to discover after the runner has already been invoked — a `/flow` pipeline call that skips straight to the command below without checking this first defeats the whole point of the skip.
+
+### Skip-if-recent (for /flow pipelines)
+
+When running inside a `/claude-tweaks:flow` pipeline and the previous step already ran verification successfully (indicated by `VERIFICATION_PASSED=true` in the pipeline context), check the accompanying `VERIFICATION_SHA` (set by `build/SKILL.md` Common Step 5) against the current `git rev-parse HEAD`:
+
+- **Match** — `skip this procedure entirely` and note: "Verification skipped — passed in previous pipeline step." This prevents redundant type check + lint + test runs when `/flow` chains build → test.
+- **Mismatch** (`VERIFICATION_SHA` present but different from `HEAD`) — the tree changed since build's verification — **do not skip**; run the full procedure below and note why: "Verification re-run — tree changed since build's pass ({old-sha} → {current-sha})."
+- **Signal absent** (`VERIFICATION_PASSED` unset, or `VERIFICATION_SHA` missing — the second call of a dispatched group, whose conversation never saw the first call's signal) — read the runner's own artifact instead (#1921), one plain command:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status
+```
+
+  It prints one JSON object — `{present, sha, head, dirty, scope, fullSha, match, verifiedHead, reportPath, legacy}` — and exits 0 in every case (status is data, not failure). `verifiedHead: true` (a clean HEAD covered by a full pass — `match: true` — or by a passing scoped run whose `fullSha` is still an ancestor of HEAD) → skip with the note `Verification skipped — runner stamp {sha} ({scope}) verifies HEAD; report: {reportPath}` and log an `AUTO` decision per `_shared/auto-decision-log.md` (`--step "Skip-if-recent (runner stamp)"`). Any other state → consult the scoping table below: with a declaration and a usable anchor the re-verify sites run scoped; otherwise run the full procedure and note why (`Verification re-run — runner stamp {absent | {sha} ≠ HEAD {head} | dirty tree | scope {scope}}`). The conversation signal keeps precedence when present; the stamp is the path for a caller that has none. Fail-open: a missing or stale stamp is never a reason to trust a skip, only a matching one is.
+
+**Note:** Skipping verification does not skip QA. When `/claude-tweaks:test` skips this procedure — by conversation signal or by a matching runner stamp — and QA stories exist, it still runs QA story validation separately.
+
+**Not skipped — execute.** Run every resolved check through the deterministic runner — one plain command at the invocation level (no `;`, `&&`, or pipe chains):
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --run "$PIPELINE_RUN_DIR" --cmd types="tsc --noEmit" --cmd lint="eslint ." --cmd tests="npm test"
@@ -40,22 +58,6 @@ The runner's stdout is already bounded — one table row per check plus at most 
 ### Suite-count regression caveat (#881)
 
 When a count stamp is in play (passed explicitly, or the in-checkout default), the runner compares the `tests` check's own parsed count (`counts.tests`) against the count persisted at that path by the previous run, and rewrites the stamp with this run's count regardless of outcome. A **drop** — this run's count strictly lower than the previous one — never fails the run (the `tests` check's `exitCode` alone still decides pass/fail); it surfaces as a `CAVEAT:` line in the runner's stdout, distinct from the pass/fail table, and as a `testCountRegression: {previousTests, currentTests, droppedBy}` field on `report.json`. Present that line verbatim in Step 3's report when it fires — a quieter suite reads identical to a clean pass otherwise (IL-84: an enumerated glob silently excluded a whole test directory while `npm test` still exited 0). A steady or higher count, or no previous stamp (first run — bootstrap), produces no caveat. A legitimate test removal also drops the count; the caveat flags it for a human to judge, not to block on.
-
-### Skip-if-recent (for /flow pipelines)
-
-When running inside a `/claude-tweaks:flow` pipeline and the previous step already ran verification successfully (indicated by `VERIFICATION_PASSED=true` in the pipeline context), check the accompanying `VERIFICATION_SHA` (set by `build/SKILL.md` Common Step 5) against the current `git rev-parse HEAD`:
-
-- **Match** — `skip this procedure entirely` and note: "Verification skipped — passed in previous pipeline step." This prevents redundant type check + lint + test runs when `/flow` chains build → test.
-- **Mismatch** (`VERIFICATION_SHA` present but different from `HEAD`) — the tree changed since build's verification — **do not skip**; run the full procedure below and note why: "Verification re-run — tree changed since build's pass ({old-sha} → {current-sha})."
-- **Signal absent** (`VERIFICATION_PASSED` unset, or `VERIFICATION_SHA` missing — the second call of a dispatched group, whose conversation never saw the first call's signal) — read the runner's own artifact instead (#1921), one plain command:
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status
-```
-
-  It prints one JSON object — `{present, sha, head, dirty, scope, fullSha, match, verifiedHead, reportPath, legacy}` — and exits 0 in every case (status is data, not failure). `verifiedHead: true` (a clean HEAD covered by a full pass — `match: true` — or by a passing scoped run whose `fullSha` is still an ancestor of HEAD) → skip with the note `Verification skipped — runner stamp {sha} ({scope}) verifies HEAD; report: {reportPath}` and log an `AUTO` decision per `_shared/auto-decision-log.md` (`--step "Skip-if-recent (runner stamp)"`). Any other state → consult the scoping table below: with a declaration and a usable anchor the re-verify sites run scoped; otherwise run the full procedure and note why (`Verification re-run — runner stamp {absent | {sha} ≠ HEAD {head} | dirty tree | scope {scope}}`). The conversation signal keeps precedence when present; the stamp is the path for a caller that has none. Fail-open: a missing or stale stamp is never a reason to trust a skip, only a matching one is.
-
-**Note:** Skipping verification does not skip QA. When `/claude-tweaks:test` skips this procedure — by conversation signal or by a matching runner stamp — and QA stories exist, it still runs QA story validation separately.
 
 ### Re-verify scoping (#1923)
 

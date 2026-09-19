@@ -5,6 +5,8 @@
 // An unparseable subject is reported as `unconventional`, never dropped
 // (.claude/skills/parse-signal-discipline): it is real signal that someone
 // bypassed the merge-time composer.
+const { RELEASE_NOTE_FOOTER_RE } = require('../release-notes');
+
 const HEADER_RE = /^(\w+)(\([^)]*\))?(!)?: (.+)$/;
 // Conventional Commits declares `BREAKING CHANGE:` and `BREAKING-CHANGE:` equivalent.
 const BREAKING_FOOTER_RE = /^BREAKING[ -]CHANGE: ?(.*)$/m;
@@ -25,14 +27,18 @@ function lastTag(git, ref = 'HEAD') {
 function parseCommit({ sha, subject, body = '' }) {
   const m = HEADER_RE.exec(subject);
   const footer = BREAKING_FOOTER_RE.exec(body);
+  // Single-line by construction (#2580/#2581) — a multi-line `Release-Note:` section
+  // is truncated to its first line here, mirroring `footer`'s own extraction shape.
+  const releaseNoteFooter = RELEASE_NOTE_FOOTER_RE.exec(body);
+  const releaseNote = releaseNoteFooter ? releaseNoteFooter[1].trim() : null;
   if (!m) {
     // An empty `BREAKING CHANGE:` footer (no description of its own) falls back to
     // the subject, exactly as the conventional path does for its header form (m[4]).
-    return { sha, subject, type: null, scope: null, breaking: footer !== null, breakingNote: footer ? (footer[1].trim() || subject) : null, description: subject, unconventional: true };
+    return { sha, subject, type: null, scope: null, breaking: footer !== null, breakingNote: footer ? (footer[1].trim() || subject) : null, description: subject, unconventional: true, releaseNote };
   }
   const breaking = m[3] === '!' || footer !== null;
   const breakingNote = footer ? (footer[1].trim() || m[4]) : (breaking ? m[4] : null);
-  return { sha, subject, type: m[1], scope: m[2] ? m[2].slice(1, -1) : null, breaking, breakingNote, description: m[4], unconventional: false };
+  return { sha, subject, type: m[1], scope: m[2] ? m[2].slice(1, -1) : null, breaking, breakingNote, description: m[4], unconventional: false, releaseNote };
 }
 
 function readCommits(git, tag, ref = 'HEAD') {

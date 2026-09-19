@@ -337,6 +337,39 @@ test('#2240: link-records CLI threads a non-github.com --repo host through resol
   for (const post of posts) assert.deepEqual(post.slice(-2), ['--hostname', 'ghe.example.com']);
 });
 
+// #2444 review fix: a caller-supplied --repo can itself be a host-qualified
+// `host/owner/repo` slug (repoSlug()'s GHE output), not just the bare
+// `owner/repo` form the #2240 test above exercises via the git remote path.
+// Before this fix, --repo was always prefixed with `github.com/` regardless
+// of shape, producing an unparseable 4-segment string for a slug like this.
+test('#2444 fix: a host-qualified --repo slug threads --hostname (not silently discarded)', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isGraphQL(args)) return graphqlJSON({ 598: 3, 595: 2 });
+    return '{}';
+  };
+  const { deps } = cliDeps({ runner });
+  const code = run(['--blocked-by', '598:595', '--repo', 'ghe.example.com/acme/widgets'], deps);
+  assert.equal(code, 0);
+  const graphqlCall = calls.find(isGraphQL);
+  assert.deepEqual(graphqlCall.slice(-2), ['--hostname', 'ghe.example.com']);
+});
+
+test('#2444 fix: a bare --repo owner/repo still resolves to github.com (unchanged)', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isGraphQL(args)) return graphqlJSON({ 598: 3, 595: 2 });
+    return '{}';
+  };
+  const { deps } = cliDeps({ runner });
+  const code = run(['--blocked-by', '598:595', '--repo', 'acme/widgets'], deps);
+  assert.equal(code, 0);
+  const graphqlCall = calls.find(isGraphQL);
+  assert.doesNotMatch(graphqlCall.join(' '), /--hostname/);
+});
+
 test('linkBlockedBy: a blocker absent from the ids map lands in failed, no POST attempted', () => {
   const calls = [];
   const runner = (args) => { calls.push(args); return '{}'; };

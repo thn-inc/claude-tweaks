@@ -324,7 +324,7 @@ function run(argv, deps = realDeps) {
 
     let remote = null;
     if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-    repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
+    repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
     if (!repoSpec) { deps.stderr('materialize.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
     const { host, owner, repo } = repoSpec;
 

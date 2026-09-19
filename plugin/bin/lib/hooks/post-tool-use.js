@@ -16,7 +16,7 @@ const preToolUse = require('./pre-tool-use');
 // check" identically, so they read `.stdout` and ignore `.failure`. The
 // indeterminate/definitive distinction runGit now draws matters only where a
 // gate acts on the answer (worktree-detect -> pre-tool-use's worktree gate).
-const { runGit } = require('./git-exec');
+const { runGit, isIndeterminate } = require('./git-exec');
 const { ISSUE_REF_SOURCE } = require('../issue-branch-tracking');
 // Reused rather than reimplemented a third time (CLAUDE.md's don't-duplicate
 // rule) — `resolveIntegrationBranch`'s fallback profile (no explicit arg,
@@ -522,7 +522,17 @@ function checkWindowsLongpaths(ctx) {
     // explicit `false` are both treated as "not enabled" — only a literal
     // `true` skips the nudge.
     const result = runGit(['config', '--get', 'core.longpaths'], worktreePath);
-    if (!result.failure && result.stdout === 'true') {
+    // An unset key is a definitive answer from git itself (`config --get`
+    // exits 1 with no output) — classified 'git-error', not indeterminate.
+    // Only a real check failure (timeout/spawn/no-git — the question was
+    // never actually answered) skips the "not enabled" assertion; a
+    // definitive non-'true' answer still falls through to the 'unset'
+    // branch below, unchanged.
+    if (isIndeterminate(result.failure)) {
+      logWindowsLongpathsEvent(ctx, { worktree: worktreePath, result: 'check-failed', reason: result.failure });
+      return null;
+    }
+    if (result.stdout === 'true') {
       logWindowsLongpathsEvent(ctx, { worktree: worktreePath, result: 'enabled' });
       return null;
     }
