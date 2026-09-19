@@ -48,13 +48,28 @@ const MAX_PREMISE_ANCHOR_LENGTH = 400;
 // string can't be safely anchored (empty, multi-line, or over the length
 // ceiling above). materialize.js's own "no Premise-check: line" fallback
 // handles the undefined case.
+//
+// Fail-safe when the target file can't be read at check time (#2621): this
+// command can run on a different machine/sandbox than the one that resolved
+// targetPath (a scheduled cloud Routine vs. a build checkout), so the
+// baked-in absolute path may not exist there. Empirically (see
+// final-fix-report.md): a bare `grep` on a missing file exits 2, and a
+// missing-file exit 2 is non-zero — for the removal polarity (a bare grep,
+// no `!`), that reads as "resolved" (false auto-close risk) when it should
+// read as "can't tell, still unresolved." The `! test -r ... ||` guard
+// short-circuits to exit 0 ("unresolved") whenever the file isn't a
+// readable regular file, and is a no-op (same exit code as the bare grep)
+// whenever it is — verified below. The additive branch needs no such guard:
+// `! grep -qF x /missing/path` exits 0 empirically (negating grep's exit 2),
+// which already reads as "unresolved" — the correct fail-safe answer for
+// that polarity, with no change needed.
 function buildPremiseCheck(finding, targetPath) {
   if (finding.kind !== 'patch' || !targetPath) return undefined;
   const isRemoval = finding.intent === 'remove';
   const anchor = isRemoval ? finding.oldString : finding.newString;
   if (!anchor || anchor.includes('\n') || anchor.length > MAX_PREMISE_ANCHOR_LENGTH) return undefined;
   const grep = `grep -qF -- ${shQuote(anchor)} ${shQuote(targetPath)}`;
-  return isRemoval ? grep : `! ${grep}`;
+  return isRemoval ? `! test -r ${shQuote(targetPath)} || ${grep}` : `! ${grep}`;
 }
 
 // verifiedAsOf (#117): the sha the sweep read this repo at, resolved ONCE per

@@ -1,5 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
+const { execSync } = require('child_process');
 const { toIssuePayload } = require('../../../plugin/bin/lib/harness-health/issue-payload');
 const { extractFingerprint, extractVerifiedAsOf } = require('../../../plugin/bin/lib/issues/record');
 
@@ -278,6 +279,19 @@ test('intent survives into the payload for downstream consumers', () => {
   assert.strictEqual(toIssuePayload(patchFinding()).intent, undefined);
 });
 
+test('buildPremiseCheck for a removal against a nonexistent target file composes a command that exits 0 (still unresolved), never falsely "resolved"', () => {
+  const finding = removalFinding();
+  const missingPath = '/definitely/missing/harness-health-premise-check-target.md';
+  const cmd = buildPremiseCheck(finding, missingPath);
+  let status = 0;
+  try {
+    execSync(cmd, { shell: true, stdio: 'ignore' });
+  } catch (err) {
+    status = err.status;
+  }
+  assert.strictEqual(status, 0, `expected exit 0 ("still unresolved") for a missing target file, got ${status}`);
+});
+
 test('an ordinary patch still renders Current/Proposed', () => {
   const payload = toIssuePayload(patchFinding());
   assert.match(payload.body, /\*\*Current:\*\*/);
@@ -308,10 +322,10 @@ test('buildPremiseCheck for an additive patch checks for the proposed string\'s 
   assert.strictEqual(cmd, "! grep -qF -- 'new text' '/repo/.claude/skills/auth.md'");
 });
 
-test('buildPremiseCheck for a removal checks for the old string\'s presence', () => {
+test('buildPremiseCheck for a removal checks for the old string\'s presence, guarded by a readability check', () => {
   const finding = patchFinding({ intent: 'remove', oldString: 'old text', newString: '' });
   const cmd = buildPremiseCheck(finding, '/repo/CLAUDE.md');
-  assert.strictEqual(cmd, "grep -qF -- 'old text' '/repo/CLAUDE.md'");
+  assert.strictEqual(cmd, "! test -r '/repo/CLAUDE.md' || grep -qF -- 'old text' '/repo/CLAUDE.md'");
 });
 
 test('buildPremiseCheck single-quote-escapes an anchor string containing a literal quote', () => {
@@ -324,6 +338,12 @@ test('buildPremiseCheck single-quote-escapes a target path containing a space', 
   const finding = patchFinding({ oldString: 'old', newString: 'new' });
   const cmd = buildPremiseCheck(finding, '/repo/my skills/auth.md');
   assert.strictEqual(cmd, "! grep -qF -- 'new' '/repo/my skills/auth.md'");
+});
+
+test('buildPremiseCheck single-quote-escapes a target path containing a literal single quote', () => {
+  const finding = patchFinding({ oldString: 'old', newString: 'new' });
+  const cmd = buildPremiseCheck(finding, "/repo/o'brien/CLAUDE.md");
+  assert.strictEqual(cmd, "! grep -qF -- 'new' '/repo/o'\\''brien/CLAUDE.md'");
 });
 
 test('buildPremiseCheck returns undefined for a new-skill finding', () => {

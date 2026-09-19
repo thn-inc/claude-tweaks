@@ -157,6 +157,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/harness-health.js" validate-findings "${FINDINGS
   --root "${ROOT:-$PWD}" \
   ${ISSUES_FILE:+--issues "$ISSUES_FILE"} \
   ${TARGET_ID:+--target "$TARGET_ID"} ${TARGET_KIND:+--kind "$TARGET_KIND"} \
+  ${MEMORY_DIR:+--memory-dir "$MEMORY_DIR"} \
   ${GAP_SCAN_RAN:+--gap-scan} \
   ${MIN_CONFIDENCE:+--min-confidence "$MIN_CONFIDENCE"} \
   ${DRY_RUN:+--dry-run} \
