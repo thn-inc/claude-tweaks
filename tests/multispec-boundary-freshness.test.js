@@ -69,3 +69,45 @@ test('multispec-batch-curation.md derives its batch diff base from git merge-bas
   assert.match(fence, /--base "\$\(git merge-base /, '--base must come from git merge-base');
   assert.doesNotMatch(text, /yq '\.multispec\.baseSha'/, 'the baseSha yq read must be gone');
 });
+
+test('multispec-freshness.md states an autonomy:unattended default before the AskUserQuestion call', () => {
+  const text = fs.readFileSync(FRESHNESS, 'utf8');
+  const escalationStart = text.indexOf('## Escalation');
+  assert.notStrictEqual(escalationStart, -1, 'Escalation section must exist');
+  const askAt = text.indexOf('Call `AskUserQuestion`', escalationStart);
+  assert.notStrictEqual(askAt, -1, 'AskUserQuestion call must exist in Escalation section');
+  const unattendedAt = text.indexOf('**Unattended default.**', escalationStart);
+  assert.notStrictEqual(unattendedAt, -1, 'Unattended default subsection must exist');
+  assert.ok(unattendedAt < askAt, 'Unattended default subsection must precede the AskUserQuestion call');
+});
+
+test('multispec-freshness.md unattended default resolves the autonomy policy and gates on unattended only', () => {
+  const text = fs.readFileSync(FRESHNESS, 'utf8');
+  assert.match(text, /resolve-policy\.js"\s+--values autonomy/, 'must resolve the autonomy policy value');
+  assert.match(text, /autonomy: unattended/, 'must name the unattended tier explicitly');
+  assert.match(text, /`supervised`\/`trusted`.*fall through to `AskUserQuestion`/, 'must state supervised/trusted are unaffected');
+});
+
+test('multispec-freshness.md unattended default reuses the existing overlap sets, never a fresh computation', () => {
+  const text = fs.readFileSync(FRESHNESS, 'utf8');
+  const escalationStart = text.indexOf('## Escalation');
+  const section = text.slice(escalationStart);
+  assert.match(section, /incoming.*remaining-Key-Files/, 'must test incoming against remaining-Key-Files');
+  assert.match(section, /never a fresh, independently-derived computation/, 'must disclaim a fresh computation');
+});
+
+test('multispec-freshness.md unattended default auto-applies option 1 and logs a distinct AUTO line on clean, non-overlapping merges', () => {
+  const text = fs.readFileSync(FRESHNESS, 'utf8');
+  assert.match(text, /auto-selected option 1 under autonomy:unattended/, 'must log a distinct AUTO entry naming the auto-select');
+  assert.match(text, /no `AskUserQuestion` for this boundary/, 'must state no AskUserQuestion fires on the auto-select path');
+});
+
+test('multispec-freshness.md unattended default still stops for a remaining-spec overlap, a merge conflict, or a broken premise', () => {
+  const text = fs.readFileSync(FRESHNESS, 'utf8');
+  const escalationStart = text.indexOf('## Escalation');
+  const section = text.slice(escalationStart);
+  assert.match(section, /overlap reaches a remaining spec's `### Key Files`/, 'must still escalate on remaining-spec overlap');
+  assert.match(section, /or the merge conflicts/, 'must still escalate on merge conflict');
+  assert.match(section, /git merge --abort/, 'a conflicting auto-attempt must abort to restore the clean tree');
+  assert.match(section, /[Ss]omething broke.*fall through to `AskUserQuestion`/, 'a broken premise found during auto-revalidation must still escalate');
+});
