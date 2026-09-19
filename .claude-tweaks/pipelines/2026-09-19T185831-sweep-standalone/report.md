@@ -2,8 +2,8 @@
 
 **Applied automatically**
 ```text
-deleted       —     10 orphaned execution plans (all cited records closed)         commit pending
-deleted       #2240 orphaned ledger, record closed, no live run dir                commit pending
+deleted       —     10 orphaned execution plans (all cited records closed)         PR #2616 merged
+deleted       #2240 orphaned ledger, record closed, no live run dir                PR #2616 merged
 archived      —     4 clean pipeline-run dirs into archive/index-2026-09.md        reversible: high
 removed       —     stale worktree checkout record-1676 (branch preserved)         reversible: high
 ```
