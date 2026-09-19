@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-19T20:57:54.551Z",
+  "computedAt": "2026-09-19T21:29:48.574Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -70,7 +70,7 @@
       },
       {
         "number": 2405,
-        "updatedAt": "2026-09-18T18:30:09Z",
+        "updatedAt": "2026-09-19T21:02:38Z",
         "state": "OPEN"
       },
       {
@@ -3259,90 +3259,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "**CLAUDE.md:** CLAUDE | **Section:** ## claude-tweaks Pipeline | **Category:** template-conformance | **Classification:** additive | **Confidence:** high\n\nVerified-as-of: 1941be706a53ea4f6dbd5c9b4c385991cc72811e\n\n## Current State\n\n`skills/init/claude-md-template.md` (the installed plugin's own generator, v6.120.0) includes a 'Spec close-out' bullet immediately after 'Artifacts' in every generated `## claude-tweaks Pipeline` section; CLAUDE.md's copy of this section omits it entirely. `specs/` in this repo currently holds one file, so the discipline this bullet establishes (delete after shipping, don't accumulate a permanent index) is directly applicable, not dead weight.\n\n## Deliverables\n\n**Current:**\n```\n**Artifacts:** design doc (one file, phases = `## Phase N` sections) → spec (one per work unit, via `/claude-tweaks:specify`) → `/claude-tweaks:flow`. No multi-phase plan files (`*-P1.md`, `*-P2.md`, …); a single plan per spec via `/superpowers:writing-plans`, stopped before its execution-choice offer, is expected and normal.\n```\n\n**Proposed:**\n```\n**Artifacts:** design doc (one file, phases = `## Phase N` sections) → spec (one per work unit, via `/claude-tweaks:specify`) → `/claude-tweaks:flow`. No multi-phase plan files (`*-P1.md`, `*-P2.md`, …); a single plan per spec via `/superpowers:writing-plans`, stopped before its execution-choice offer, is expected and normal.\n\n**Spec close-out:** `specs/` is a working directory, not a permanent historical index — once a spec ships and is verified, promote any durable reference content to `docs/reference/*.md` or a skill, repoint by-number citations elsewhere in the repo to the closing commit or PR, then delete the spec file. A permanent tracker file (e.g. `specs/INDEX.md`) is an anti-pattern here, not a convention to preserve.\n```\n\n## Acceptance Criteria\n\nCLAUDE.md's `## claude-tweaks Pipeline` section is missing the 'Spec close-out' convention that the currently installed claude-tweaks v6.120.0 plugin's own `claude-md-template.md` mandates for every generated CLAUDE.md, and this repo actively uses `specs/` (one file present) so the missing convention is not merely theoretical.\n\n_Filed by `/claude-tweaks:harness-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n\n<!-- work-fingerprint: harnesshealth-6ac3a5eb -->\nwork-fingerprint: harnesshealth-6ac3a5eb",
-        "createdAt": "2026-09-14T05:15:47Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACvj9UVg",
-            "name": "by:harness-health",
-            "description": "",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACvj9UWQ",
-            "name": "harness-health:additive",
-            "description": "",
-            "color": "ededed"
-          }
-        ],
-        "number": 2405,
-        "state": "OPEN",
-        "title": "CLAUDE.md structure: CLAUDE — ## claude-tweaks Pipeline",
-        "updatedAt": "2026-09-18T18:30:09Z",
-        "facets": {
-          "origin": "harness-health",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
           "stage": "ready",
           "grants": {
             "build": true,
