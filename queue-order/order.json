@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-19T19:03:19.626Z",
+  "computedAt": "2026-09-19T20:16:06.885Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -10,7 +10,7 @@
       },
       {
         "number": 2541,
-        "updatedAt": "2026-09-19T13:44:25Z",
+        "updatedAt": "2026-09-19T19:09:05Z",
         "state": "OPEN"
       },
       {
@@ -40,7 +40,7 @@
       },
       {
         "number": 2492,
-        "updatedAt": "2026-09-16T18:21:35Z",
+        "updatedAt": "2026-09-19T19:58:44Z",
         "state": "OPEN"
       },
       {
@@ -445,96 +445,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nThe per-spec boundary freshness check introduced by #1074/#1076 (`skills/flow/multispec-freshness.md`, invoked from `multi-spec.md`'s per-spec scaffold) requires an `AskUserQuestion` when `origin/{integration-branch}` has moved past the batch base, even when the run is `auto` and the project's `autonomy` is `unattended`. On an unattended multi-spec run the gate therefore fires at every spec boundary the integration branch has moved past — on an active repository that is most boundaries — and the run stalls with nobody present to answer.\n\nObserved on a two-spec `/claude-tweaks:flow` run (auto, `autonomy: unattended`, plugin 6.123.0, Windows 11 / Claude Code CLI): the gate fired between spec 1 and spec 2 after the integration branch gained three unrelated commits. The controller applied the gate's own option 1 (merge the integration branch, re-validate the spec premises) as a logged ruling because no human was there; the merge was clean and the run completed. The outcome was right, but it was reached outside the contract.\n\n## Deliverables\n\n- [ ] Give the gate an unattended default: under `autonomy: unattended` (the same tier that unlocks `consoleAutoResolve`), auto-select option 1 (merge, re-validate premises) when the merge is conflict-free and the moved hunks do not touch the next spec's declared files, and log it as an `AUTO` decision with the moved commits named\n- [ ] Keep the stop for the two cases that need a human: a conflicting merge, or moved hunks that overlap the next spec's files\n\n## Acceptance Criteria\n\n- [ ] An unattended multi-spec run whose integration branch moved by disjoint commits proceeds past the boundary with an `AUTO` line in `decisions.md` and no `AskUserQuestion`\n- [ ] The same run with an overlapping or conflicting move still stops at the gate exactly as today\n- [ ] `supervised`/`trusted` behaviour is unchanged\n- [ ] `npm test` passes, including new coverage for the unattended auto-select path\n\n## Technical Approach\n\nIn `skills/flow/multispec-freshness.md`'s per-boundary check, before raising the `HARD-GATE` `AskUserQuestion`, branch on `autonomy: unattended`: attempt the merge, and when it is conflict-free and the incoming diff does not overlap run-modified paths or the remaining specs' Key Files (the same overlap check the gate already computes to decide whether to escalate at all), apply option 1 automatically and log an `AUTO` decisions.md line naming the moved commits. When the merge conflicts, or the diff overlaps declared files, fall through to today's `AskUserQuestion` unchanged — this is the same two-way branch `multi-spec.md`'s own boundary-freshness paragraph already documents (trivial drift merges automatically; a conflict or overlap escalates), just gated on the autonomy tier for which branch of that existing behavior applies without a human present.\n\n### Key Files\n\n- `plugin/skills/flow/multispec-freshness.md` — the per-boundary check and its `HARD-GATE` `AskUserQuestion`\n- `plugin/skills/flow/multi-spec.md` — the caller invoking the check per spec boundary\n\n## Gotchas\n\n- The auto-select path must reuse the gate's own existing overlap computation (run-modified paths, remaining specs' Key Files) rather than a separate, potentially-diverging check — two independently-maintained overlap definitions would drift.\n- `MULTISPEC_KEEP_GOING` explicitly does not bypass this HARD-GATE today (per `multi-spec.md`) — the new unattended auto-select must not be confused with that env var's bypass; it is a distinct, autonomy-tier-gated default, not a way to skip the escalation cases.\n\n## Original request\n\nflow multi-spec: boundary freshness HARD-GATE has no unattended default\n\nSurface: skill (`skills/flow/multispec-freshness.md`)\n\n## Current State\n\nThe per-spec boundary freshness check introduced by #1074/#1076 requires an `AskUserQuestion` when `origin/{integration-branch}` has moved past the batch base, even when the run is `auto` and the project's `autonomy` is `unattended`. On an unattended multi-spec run the gate therefore fires at every spec boundary the integration branch has moved past — on an active repository that is most boundaries — and the run stalls with nobody present to answer.\n\nObserved on a two-spec `/claude-tweaks:flow` run (auto, `autonomy: unattended`, plugin 6.123.0, Windows 11 / Claude Code CLI): the gate fired between spec 1 and spec 2 after the integration branch gained three unrelated commits. The controller applied the gate's own option 1 (merge the integration branch, re-validate the spec premises) as a logged ruling because no human was there; the merge was clean and the run completed. The outcome was right, but it was reached outside the contract.\n\n## Deliverables\n\n- Give the gate an unattended default: under `autonomy: unattended` (the same tier that unlocks `consoleAutoResolve`), auto-select option 1 when the merge is conflict-free and the moved hunks do not touch the next spec's declared files, and log it as an `AUTO` decision with the moved commits named.\n- Keep the stop for the two cases that need a human: a conflicting merge, or moved hunks that overlap the next spec's files.\n\n## Acceptance Criteria\n\n1. An unattended multi-spec run whose integration branch moved by disjoint commits proceeds past the boundary with an `AUTO` line in `decisions.md` and no `AskUserQuestion`.\n2. The same run with an overlapping or conflicting move still stops at the gate exactly as today.\n3. `supervised`/`trusted` behaviour is unchanged.\n<!-- fingerprint: feedback-46d9f5f9 -->\n",
-        "createdAt": "2026-09-17T10:50:44Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2541,
-        "state": "OPEN",
-        "title": "flow multi-spec: boundary freshness HARD-GATE has no unattended default",
-        "updatedAt": "2026-09-19T13:44:25Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
@@ -3287,6 +3197,84 @@
           "grants": {
             "build": true,
             "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Title: flow Step 2.8 claim-write did not land for #2322's build/test dispatch — verify claiming actually fires\nType: bug\nLabels: type:task\nDefer-reason: tangential\n\n# Reflect — staged finding 1\n\n**Category:** tangential\n\n## Origin\n\nOrigin: reflect light from #2322\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:flow`'s Step 2.8 documents that a record reference run with `build`/`test` in the\nresolved step list claims its targets via `bin/claim-targets.js` before the pipeline proper\nstarts, writing `claims/issue-{n}.json` on the `claims-registry` branch. For record #2322 (this\nrun's own worktree, `worktree-record-2322`, PR #2483), the earlier `/flow #2322` call ran\n`build,test` and completed both successfully (commits `5abbceffa..72c61d3b8`, PR opened and\npushed). At wrap-up time for the `review,polish,wrap-up` follow-up call, a direct check of the\nclaims registry found no `claims/issue-2322.json` blob was ever written — `gh api\nrepos/thomasholknielsen/claude-tweaks/contents/claims/issue-2322.json?ref=claims-registry` returns\n404, and `gh api repos/.../commits?path=claims/issue-2322.json&sha=claims-registry` returns an\nempty array (no commit in that path's history at all). The issue also carries no `bot:in-progress`\nlabel. No harm resulted this run — the same session held the worktree continuously and no\ncompeting agent contended for the record — but the absence means the cross-agent claim-lock\nprotocol documented for `/flow`'s Step 2.8 did not actually fire (or fired and was silently\ndropped) for this dispatch path.\n\n## Deliverables\n\n- [ ] Reproduce a `/flow #{n}` invocation with `build,test` in the resolved step list against a\n      fresh record and confirm whether `bin/claim-targets.js` is actually invoked at Step 2.8\n- [ ] If it is invoked but the write silently fails (e.g. a skip-guard condition matching\n      unexpectedly, or a swallowed error from `claim-store.js`), fix the gap and add a regression\n      test pinning that a `build`/`test` step-list run always produces a live claim blob\n      immediately after Step 2.8 passes\n- [ ] If claiming is intentionally skipped for this dispatch shape (e.g. a direct `/flow` call\n      that isn't `/dispatch`-originated), confirm that's documented and that the \"already-claimed\"\n      framing other skills assume (e.g. a follow-up `review,polish,wrap-up` call being told the\n      group is \"already-claimed\") doesn't silently rely on a claim that was never actually written\n\n## Acceptance Criteria\n\n- [ ] A `/flow #{n}` run with `build` or `test` in its step list either (a) demonstrably writes a\n      live `claims/issue-{n}.json` blob before Step 4 begins, confirmed by a fresh `gh api` read,\n      or (b) the skip condition it took is named and intentional, with no follow-on skill treating\n      a never-claimed record as if a claim exists\n\n_Filed by `reflect` via specShapedBody._\n\n## Suggested resolution\n\nInvestigate `bin/claim-targets.js` / `bin/lib/claim-targets/claim-targets.js`'s invocation from\n`flow/claim-targets.md`'s Step 2.8 skip-guard list against this exact dispatch shape (a\ndispatcher-minted, non-empty `PIPELINE_RUN_DIR` handed to `/flow #{n}` directly) to see whether one\nof the documented skip conditions unexpectedly matched.\n\n## Decision-log reference\n\nSTAGED — Step 3: tangential idea \"flow Step 2.8 claim-write did not land for #2322\" — backlog\ncandidate — landing: born-ready (defer-reason: tangential). Surface at the Queue writes gate.\n",
+        "createdAt": "2026-09-14T21:08:43Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxTu0eA",
+            "name": "by:reflect",
+            "description": "Origin: filed via /reflect (wrap-up Phase 1)",
+            "color": "ededed"
+          }
+        ],
+        "number": 2492,
+        "state": "OPEN",
+        "title": "flow Step 2.8 claim-write did not land for #2322's build/test dispatch — verify claiming actually fires",
+        "updatedAt": "2026-09-19T19:58:44Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
           },
           "bot": {
             "inProgress": false,
