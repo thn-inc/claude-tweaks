@@ -1,11 +1,11 @@
 {
-  "computedAt": "2026-09-19T21:29:48.574Z",
+  "computedAt": "2026-09-19T22:13:10.954Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
       {
         "number": 2598,
-        "updatedAt": "2026-09-18T09:04:20Z",
+        "updatedAt": "2026-09-19T21:32:40Z",
         "state": "OPEN"
       },
       {
@@ -376,78 +376,6 @@
     ]
   },
   "groups": [
-    [
-      {
-        "body": "Origin: scheduled dispatch Routine firing, 2026-09-18T08:14Z (run `2026-09-18T081427-dispatch-standalone`, group run `2026-09-18T082615-record-1739-2336`)\n\nDefer-reason: tangential — found while dispatching #1739/#2336 to a successful merge (PR #2596); the dispatch task itself completed correctly (the dispatching session closed the gap manually), this is a follow-up on the template defect observed along the way.\n\n## Current State\n\n`plugin/skills/dispatch/task-prompt.md`'s second-call template (review,polish,wrap-up) contains two directly contradictory instructions about who archives the run directory when `OUTCOME: merged`:\n\n- The \"Working directory\" paragraph states, unconditionally: \"Worktree removal and run-dir archival are the dispatching session's responsibility, not yours — do NOT call `ExitWorktree` or `git worktree remove`, and do NOT archive the run directory yourself, **on any outcome (merged, armed, pending-review, ready-to-merge, failed, or blocked)**.\"\n- The `integration-model: pr-first` outcome-vocabulary paragraph, two sections later, states: \"`merged` means you also completed claim release and run-dir archival directly (that procedure's Step 4) — but not worktree removal...\"\n\nA dispatched second-call agent hit this directly on 2026-09-18: it completed claim release but treated the explicit, outcome-enumerated \"do NOT archive… on any outcome (merged, …)\" sentence as controlling, and left the run directory unarchived, flagging the contradiction back to the dispatching session rather than guessing. The dispatching session then closed and archived the run directory manually. No data was lost, but every future `pr-first` + `merged` second call will hit the same ambiguity and (correctly, per the more specific sentence a careful reader would find) either skip archival or have to stop and ask, unless one of the two paragraphs is fixed to agree with the other.\n\n## Deliverables\n\n- [ ] Reconcile the two paragraphs in `plugin/skills/dispatch/task-prompt.md`'s second-call template so they agree on whether the second call archives the run directory when `OUTCOME: merged` under `integration-model: pr-first`.\n- [ ] If the outcome-vocabulary paragraph is correct (the second call does archive on `merged`), the \"Working directory\" paragraph's blanket \"on any outcome (merged, armed, ...)\" list should drop `merged` (and possibly `ready-to-merge`, if `local-merge`'s labeling-only stop also doesn't archive) or otherwise carve out the exception explicitly.\n- [ ] If the \"Working directory\" paragraph is correct (the dispatching session always archives, even on `merged`), the outcome-vocabulary paragraph's \"run-dir archival directly\" clause should be removed or corrected to say the dispatching session does it instead.\n- [ ] Cross-check `skills/dispatch/settle-and-merge.md` (cited by the outcome-vocabulary paragraph as \"that procedure's Step 4\") for which behavior it actually documents, and align both `task-prompt.md` paragraphs to match it rather than picking arbitrarily.\n\n## Acceptance Criteria\n\n1. `task-prompt.md`'s second-call template no longer contains two paragraphs that give opposite instructions for the same case (`OUTCOME: merged` under `pr-first`).\n2. A dispatched second-call agent reaching `OUTCOME: merged` has exactly one correct action to take regarding run-dir archival, sourced from a single unambiguous instruction.\n\n## Original request\n\nFiled during a scheduled `/claude-tweaks:dispatch` Routine firing (session `session_01F8C6998UPYjjFT226Ptq5j`), while dispatching group [#1739,#2336] to PR #2596.\n",
-        "createdAt": "2026-09-18T09:04:20Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2598,
-        "state": "OPEN",
-        "title": "dispatch/task-prompt.md's second-call template contradicts itself on run-dir archival for OUTCOME: merged",
-        "updatedAt": "2026-09-18T09:04:20Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
     [
       {
         "body": "Surface: infra\n\n## Current State\n\nOn a GitHub Enterprise remote, `wrap-up-pack.js`'s `unblocked` probe always reports `ok: false`, and `resolve-blockers.js`, `materialize.js`, and `preflight-records.js` fail with \"Could not resolve to a Repository\" unless the caller both exports `GH_HOST=<enterprise host>` and passes `--repo owner/name` — the plugin never derives host or repo from `origin`. #2425 fixed the `--repo` half of the pack probe; the `GH_HOST` half and the three sibling CLIs remain unfixed as of 6.123.0. Confirmed against the current files: none of `wrap-up-pack.js`/`resolve-blockers.js`/`materialize.js`/`preflight-records.js` reference `GH_HOST` or `nameWithOwner` today.\n\nA private project hosted on a GitHub Enterprise host (origin `https://<enterprise-host>/<org>/<repo>.git`) running `/claude-tweaks:flow` with `work-backend: github-issues` hits this on every wrap-up: the fact pack's `unblocked` probe fails (\"could not resolve owner/repo — pass --repo owner/name\"), forcing the operator to re-run `resolve-blockers.js` by hand with `GH_HOST` exported and `--repo` passed; `materialize.js` fails the same way at every spec boundary even with `--repo` given, since `gh` never infers the host outside a clone.\n\n## Deliverables\n\n- [ ] Add a shared helper that derives `{host, ownerRepo}` once from `git remote get-url origin` (or `gh repo view --json nameWithOwner,url` run inside the checkout)\n- [ ] Thread the derived `GH_HOST` env var and `--repo owner/name` flag into every child `gh` call in `wrap-up-pack.js`'s `unblocked` probe, `resolve-blockers.js`, `materialize.js`, and `preflight-records.js`\n- [ ] Have each of the four CLIs print the derived repo/host so a mismatch is visible to the operator\n\n## Acceptance Criteria\n\n- [ ] On a GitHub Enterprise remote, `wrap-up-pack.js`'s `unblocked` probe, `resolve-blockers.js`, `materialize.js`, and `preflight-records.js` all resolve the correct repository with no manually exported `GH_HOST` or passed `--repo`\n- [ ] Existing github.com-hosted behavior is unchanged (no regression when there's no enterprise host to derive)\n- [ ] `npm test` passes, including new coverage for the derivation helper\n\n## Technical Approach\n\nAdd one small derivation helper (host + owner/repo from `git remote get-url origin`, falling back to `gh repo view --json nameWithOwner,url` run inside the checkout) and call it once per invocation in each of the four CLIs, exporting `GH_HOST` and passing `--repo` to every child `gh` call those files make — the same shape #2425 already applied to `wrap-up-pack.js`'s `--repo` half, extended to cover `GH_HOST` there and both flags in the three sibling CLIs.\n\n### Key Files\n\n- `plugin/bin/wrap-up-pack.js` — the `unblocked` probe; already has partial `--repo` handling from #2425 to extend with `GH_HOST`\n- `plugin/bin/resolve-blockers.js` — needs both `GH_HOST` and `--repo` derivation\n- `plugin/bin/materialize.js` — needs both `GH_HOST` and `--repo` derivation\n- `plugin/bin/preflight-records.js` — needs both `GH_HOST` and `--repo` derivation\n\n## Gotchas\n\n- `gh` does not infer the host outside a clone — a derived `GH_HOST` must be exported into the child process environment, not just computed and discarded.\n- Keep the github.com case a true no-op: deriving and passing `--repo`/`GH_HOST` unconditionally must not change behavior (or introduce a new failure mode) for the common non-Enterprise case.\n\n## Original request\n\nwrap-up-pack / resolve-blockers / materialize / preflight-records: on a GitHub Enterprise remote the host is never derived, so every child gh call needs GH_HOST exported by hand\n\n**Summary:** On a GitHub Enterprise remote, `wrap-up-pack.js`'s `unblocked` probe always reports `ok: false`, and `resolve-blockers.js`, `materialize.js` and `preflight-records.js` fail with \"Could not resolve to a Repository\" unless the caller both exports `GH_HOST=<enterprise host>` and passes `--repo owner/name` — the plugin never derives host or repo from `origin`. (#2425 fixed the `--repo` half of the pack probe; the `GH_HOST` half and the sibling CLIs remain on 6.123.0.)\n\n**Kind:** Gap\n\n**Affected component:** `bin/wrap-up-pack.js` (unblocked probe), `bin/resolve-blockers.js`, `bin/materialize.js`, `bin/preflight-records.js`\n\n**Use case:** A private project hosted on a GitHub Enterprise host (origin `https://<enterprise-host>/<org>/<repo>.git`) running `/claude-tweaks:flow` with `work-backend: github-issues`. Every wrap-up's fact pack shows the `unblocked` probe failing (\"could not resolve owner/repo — pass --repo owner/name\"), so the operator re-runs `resolve-blockers.js` by hand with `GH_HOST` exported and `--repo` passed; `materialize.js` fails the same way at every spec boundary until invoked with `GH_HOST` set, even with `--repo` given — `gh` does not infer the host outside a clone. Suggested behaviour: derive owner/repo AND host once from `git remote get-url origin` (or `gh repo view --json nameWithOwner,url` run inside the checkout) and pass `--repo` plus `GH_HOST` to every child `gh` call; have the pack print the derived repo so a mismatch is visible.\n\n**Definition:** Clear\n\n**Plugin version:** 6.123.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-942b225b -->\n",
