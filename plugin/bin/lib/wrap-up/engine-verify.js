@@ -527,38 +527,26 @@ registerCheck('acceptance-labeling', ({ runDir, deps, cwd, expectations }) => {
   const prNumber = resolvePrNumber(runDir);
 
   for (const target of targets) {
-    let labelsRaw;
+    let issueRaw;
     try {
-      labelsRaw = deps.gh(['issue', 'view', String(target), '--json', 'labels'], cwd);
+      issueRaw = deps.gh(['issue', 'view', String(target), '--json', 'labels,comments'], cwd);
     } catch (err) {
       failing.push(`#${target}: gh issue view failed (${err.message})`);
       continue;
     }
-    let labels;
+    let issueData;
     try {
-      labels = JSON.parse(labelsRaw).labels || [];
+      issueData = JSON.parse(issueRaw);
     } catch {
-      failing.push(`#${target}: could not parse labels JSON`);
+      failing.push(`#${target}: could not parse labels/comments JSON`);
       continue;
     }
+    const labels = issueData.labels || [];
     if (!labels.some((l) => l.name === 'demo:pending')) {
       failing.push(`#${target}: missing demo:pending label`);
       continue;
     }
-    let commentsRaw;
-    try {
-      commentsRaw = deps.gh(['issue', 'view', String(target), '--json', 'comments'], cwd);
-    } catch (err) {
-      failing.push(`#${target}: gh issue view (comments) failed (${err.message})`);
-      continue;
-    }
-    let comments;
-    try {
-      comments = JSON.parse(commentsRaw).comments || [];
-    } catch {
-      failing.push(`#${target}: could not parse comments JSON`);
-      continue;
-    }
+    const comments = issueData.comments || [];
     const hasFullBrief = comments.some((c) => c.body && c.body.includes('## Verification Brief') && c.body.includes('### Confirmed'));
     if (hasFullBrief) continue;
 
