@@ -296,3 +296,88 @@ test('toIssuePayload threads verifiedAsOf through to the composed body', () => {
   const payload = toIssuePayload(patchFinding(), 'abc1234');
   assert.strictEqual(extractVerifiedAsOf(payload.body), 'abc1234');
 });
+
+// ── Premise-check threading (#2621) ─────────────────────────────────────────
+
+const { buildPremiseCheck } = require('../../../plugin/bin/lib/harness-health/issue-payload');
+const { extractPremiseCheck } = require('../../../plugin/bin/lib/issues/record');
+
+test('buildPremiseCheck for an additive patch checks for the proposed string\'s absence', () => {
+  const finding = patchFinding({ oldString: 'old text', newString: 'new text' });
+  const cmd = buildPremiseCheck(finding, '/repo/.claude/skills/auth.md');
+  assert.strictEqual(cmd, "! grep -qF -- 'new text' '/repo/.claude/skills/auth.md'");
+});
+
+test('buildPremiseCheck for a removal checks for the old string\'s presence', () => {
+  const finding = patchFinding({ intent: 'remove', oldString: 'old text', newString: '' });
+  const cmd = buildPremiseCheck(finding, '/repo/CLAUDE.md');
+  assert.strictEqual(cmd, "grep -qF -- 'old text' '/repo/CLAUDE.md'");
+});
+
+test('buildPremiseCheck single-quote-escapes an anchor string containing a literal quote', () => {
+  const finding = patchFinding({ oldString: 'old', newString: "it's new" });
+  const cmd = buildPremiseCheck(finding, '/repo/CLAUDE.md');
+  assert.strictEqual(cmd, "! grep -qF -- 'it'\\''s new' '/repo/CLAUDE.md'");
+});
+
+test('buildPremiseCheck single-quote-escapes a target path containing a space', () => {
+  const finding = patchFinding({ oldString: 'old', newString: 'new' });
+  const cmd = buildPremiseCheck(finding, '/repo/my skills/auth.md');
+  assert.strictEqual(cmd, "! grep -qF -- 'new' '/repo/my skills/auth.md'");
+});
+
+test('buildPremiseCheck returns undefined for a new-skill finding', () => {
+  const finding = newSkillFinding();
+  assert.strictEqual(buildPremiseCheck(finding, '/repo/.claude/skills/queue.md'), undefined);
+});
+
+test('buildPremiseCheck returns undefined when no target path was resolved', () => {
+  const finding = patchFinding();
+  assert.strictEqual(buildPremiseCheck(finding, null), undefined);
+  assert.strictEqual(buildPremiseCheck(finding, undefined), undefined);
+});
+
+test('buildPremiseCheck returns undefined when the anchor string is multi-line', () => {
+  const finding = patchFinding({ oldString: 'old', newString: 'line one\nline two' });
+  assert.strictEqual(buildPremiseCheck(finding, '/repo/CLAUDE.md'), undefined);
+});
+
+test('buildPremiseCheck returns undefined when the anchor string is empty', () => {
+  const finding = patchFinding({ oldString: 'old', newString: '' });
+  assert.strictEqual(buildPremiseCheck(finding, '/repo/CLAUDE.md'), undefined);
+});
+
+test('buildPremiseCheck returns undefined when the anchor string is over the length ceiling', () => {
+  const finding = patchFinding({ oldString: 'old', newString: 'x'.repeat(401) });
+  assert.strictEqual(buildPremiseCheck(finding, '/repo/CLAUDE.md'), undefined);
+});
+
+test('buildPremiseCheck accepts an anchor string exactly at the length ceiling', () => {
+  const finding = patchFinding({ oldString: 'old', newString: 'x'.repeat(400) });
+  assert.ok(buildPremiseCheck(finding, '/repo/CLAUDE.md'));
+});
+
+// ── Wired into toIssuePayload's composed body ───────────────────────────────
+
+test('toIssuePayload includes a Premise-check: line when finding.path resolves', () => {
+  const finding = patchFinding({ path: '/repo/.claude/skills/auth.md', oldString: 'old', newString: 'new' });
+  const payload = toIssuePayload(finding);
+  assert.strictEqual(extractPremiseCheck(payload.body), "! grep -qF -- 'new' '/repo/.claude/skills/auth.md'");
+});
+
+test('toIssuePayload omits Premise-check: when finding.path is absent', () => {
+  const payload = toIssuePayload(patchFinding());
+  assert.strictEqual(extractPremiseCheck(payload.body), null);
+});
+
+test('toIssuePayload omits Premise-check: for a new-skill finding even if path were present', () => {
+  const payload = toIssuePayload({ ...newSkillFinding(), path: '/repo/.claude/skills/queue.md' });
+  assert.strictEqual(extractPremiseCheck(payload.body), null);
+});
+
+test('toIssuePayload composes Premise-check: alongside an existing verifiedAsOf stamp', () => {
+  const finding = patchFinding({ path: '/repo/CLAUDE.md', oldString: 'old', newString: 'new' });
+  const payload = toIssuePayload(finding, 'abc1234');
+  assert.strictEqual(extractVerifiedAsOf(payload.body), 'abc1234');
+  assert.strictEqual(extractPremiseCheck(payload.body), "! grep -qF -- 'new' '/repo/CLAUDE.md'");
+});
