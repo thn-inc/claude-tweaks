@@ -17,7 +17,7 @@ const { decide } = require('./lib/harness-health/dedup');
 const { validateFinding } = require('./lib/harness-health/validate-finding');
 const { toIssuePayload } = require('./lib/harness-health/issue-payload');
 const {
-  selectTarget, listTargets, listMemory, selectMemoryTarget,
+  selectTarget, listTargets, listMemory, selectMemoryTarget, resolveTargetPath,
 } = require('./lib/harness-health/scope');
 const { STALE_DAYS } = require('./lib/harness-health/score');
 
@@ -214,7 +214,16 @@ function cmdValidateFindings(args) {
       section: v.value.section || v.value.kind,
       description: v.value.description,
     });
-    const value = { ...v.value, id };
+    // Resolved once per batch, not per finding: a findings file always
+    // corresponds to one target (judge-procedure.md's per-target dispatch),
+    // so every finding in it shares the same assetType/target this CLI
+    // invocation was already given via --kind/--target. issue-payload.js's
+    // buildPremiseCheck reads this to anchor a Premise-check: command
+    // against the target's live content (#2621) — undefined here (no
+    // --target/--kind, or an unresolvable one, e.g. a --gap-scan-only run)
+    // simply means no Premise-check: line gets emitted, never a wrong one.
+    const targetPath = resolveTargetPath(root, args.kind, args.target, args.memoryDir) || undefined;
+    const value = { ...v.value, id, path: targetPath };
     if (args.minConfidence) {
       const rank = CONFIDENCE_RANK[value.confidence];
       const floorRank = CONFIDENCE_RANK[args.minConfidence];
