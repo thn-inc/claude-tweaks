@@ -1,11 +1,76 @@
 {
-  "computedAt": "2026-09-19T22:13:10.954Z",
+  "computedAt": "2026-09-19T22:55:29.068Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
       {
+        "number": 2627,
+        "updatedAt": "2026-09-19T22:53:03Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 2626,
+        "updatedAt": "2026-09-19T22:53:00Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 2621,
+        "updatedAt": "2026-09-19T22:46:40Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 2613,
+        "updatedAt": "2026-09-19T22:47:01Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 2612,
+        "updatedAt": "2026-09-19T22:47:03Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 2605,
+        "updatedAt": "2026-09-19T22:46:43Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 2603,
+        "updatedAt": "2026-09-19T22:46:46Z",
+        "state": "OPEN"
+      },
+      {
         "number": 2598,
         "updatedAt": "2026-09-19T21:32:40Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 2592,
+        "updatedAt": "2026-09-19T22:47:05Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 2590,
+        "updatedAt": "2026-09-19T22:47:08Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 2589,
+        "updatedAt": "2026-09-19T22:46:48Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 2587,
+        "updatedAt": "2026-09-19T22:46:51Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 2585,
+        "updatedAt": "2026-09-19T22:46:53Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 2571,
+        "updatedAt": "2026-09-19T22:47:10Z",
         "state": "OPEN"
       },
       {
@@ -19,8 +84,18 @@
         "state": "OPEN"
       },
       {
+        "number": 2539,
+        "updatedAt": "2026-09-19T22:46:58Z",
+        "state": "OPEN"
+      },
+      {
         "number": 2538,
         "updatedAt": "2026-09-19T13:44:33Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 2532,
+        "updatedAt": "2026-09-19T22:46:56Z",
         "state": "OPEN"
       },
       {
@@ -377,6 +452,542 @@
   },
   "groups": [
     [
+      {
+        "body": "Surface: infra\n**Related:** #2537, #1768\n\n## Current State\n\n`agent-browser` (this plugin's current browser-automation backend) has two confirmed defects\ntracked in #2537: a synthetic locator click can report success without the target's registered\nhandler firing (repro: icon-sized buttons inside table rows), and the screenshot pipeline can\nsilently return a stale/dead frame after an `os error 35` (EAGAIN) failure with no daemon-side\nself-heal. Neither defect is fixable from this repo — `agent-browser`'s source isn't vendored\nhere.\n\nAfter research (comparing Playwright CLI, Playwright MCP, Stagehand, and Browser Use against this\nplugin's hard constraint — every consumer must work in both interactive sessions and hosted\nRoutines, which is why `mcp__claude-in-chrome__*` was already ruled out per `docs/donts.md`) and a\nspike, Playwright CLI (`@playwright/cli` 0.1.21, the exact version the spike installed and\nvalidated against) was chosen as the replacement backend. The spike confirmed: it launches\ngenuinely headless with no display server needed, and its default `click` fired the real handler\non a built repro of the icon-button-in-table-row case (confirmed via re-snapshotting DOM state,\nnot just trusting the tool's own success report) — the exact failure mode `agent-browser` has.\nThe spike tested only `click`, `goto`, `snapshot`, and `screenshot` this way; it did not test the\n`os error 35`-equivalent screenshot-degradation case, and every other command in the vocabulary\ntable below (Technical Approach) is documented from the tool's own published reference, not\nindependently spike-verified.\n\nThis is sub-project 2 of a four-part migration (1: spike, done; 2: this record; 3: migrate the\n~28 consumer files onto the new backend; 4: retire `agent-browser`). Today's `agent-browser`\nintegration is a pure markdown convention-pin — `plugin/skills/browse/agent-browser-reference.md`\ndocuments the abstract operation vocabulary, and `plugin/skills/_shared/browser-detection.md`\nholds the actual detect/install/verify commands (used by `/browse`, `/init`, `/visual-review`) —\nthere is no Node.js code layer anywhere in this pattern, and none is being introduced here —\nnothing in the spike surfaced a reliability gap Playwright CLI's own `click`/`screenshot`\ncommands don't already cover, so there is nothing for a wrapper layer to do that the existing\ndoc-only pattern doesn't already handle.\n\n## Deliverables\n\n- A new reference doc, `plugin/skills/browse/playwright-cli-reference.md`, mirroring\n  `agent-browser-reference.md`'s structure: Authority (pins `@playwright/cli` 0.1.21, defers to\n  the tool's own bundled self-docs — `node_modules/playwright-core/lib/tools/skills/\n  playwright-cli/SKILL.md` plus its `references/` sub-docs — for anything not covered here, and\n  instructs a cross-check of every row in the vocabulary table below against those bundled docs\n  before the file is finalized, since this record's table is transcribed from research, not\n  independently verified command-by-command), Session model (`-s=<name>` named sessions;\n  `list`/`close-all`/`kill-all` — no daemon, see caution below), and the Operation vocabulary\n  translation table (see Technical Approach for the exact table).\n- Update **both** `plugin/skills/init/bootstrap/step-07-browser-integration.md` **and**\n  `plugin/skills/_shared/browser-detection.md` to detect `playwright-cli` instead of\n  `agent-browser`. Both files must change together: step-07 only points at the shared file for\n  the actual detect/install/verify commands (`which agent-browser`/`agent-browser --version`, the\n  install `AskUserQuestion` text, the `agent-browser session list` verify step, the daemon-lifecycle\n  note) — updating step-07's own prose alone has no functional effect. Same \"missing → hint and\n  continue, never block init\" posture in both files; only the tool name and the concrete\n  detect/install/verify commands change.\n\nOut of scope (later sub-projects, not this record): rewriting any of the ~28 files that currently\ncite `agent-browser-reference.md` to actually use the new doc; removing\n`agent-browser-reference.md` or any other `agent-browser` mention; anything in `docs/donts.md`.\n\n## Acceptance Criteria\n\n- `plugin/skills/browse/playwright-cli-reference.md` exists, documents the operation vocabulary\n  table below in full, and explicitly states the behavioral differences from `agent-browser` that\n  a future migrating consumer must not assume away: (1) `find` here is read-only (search + return\n  matching nodes) — the opposite of `agent-browser`'s bare `find`, whose action-less form defaults\n  to clicking — **and** that Playwright CLI's `find` is text-search only, with no direct\n  translation for `agent-browser`'s role/testid/css-based `find <locator> <value> <action>`\n  patterns; a consumer using a non-text locator must be re-derived per-consumer in sub-project 3\n  using `snapshot` + a ref-based `click`/`fill`, not assumed to have a mechanical 1:1 replacement;\n  (2) output paths (screenshots, and anything else the CLI writes to disk) must always be passed\n  as absolute paths — a relative path resolves against the invoking shell's cwd, which is not\n  guaranteed stable across separate tool calls; (3) `close-all` and `kill-all` are distinct —\n  `close-all` closes sessions gracefully, `kill-all` forcefully terminates the underlying browser\n  processes; document both, not just `close-all`.\n- `step-07-browser-integration.md` **and** `browser-detection.md` both detect `playwright-cli`\n  (via `npx --no-install playwright-cli --version`, per the tool's own published presence-check\n  convention — not independently spike-verified here, so the reference doc should note this is\n  per the tool's docs rather than empirically confirmed) instead of `agent-browser`, with the\n  identical \"optional, never blocks init\" behavior preserved in both.\n- No other file is modified — the ~28 consumer files and `agent-browser-reference.md` itself are\n  untouched by this record.\n\n## Technical Approach\n\nWrite `plugin/skills/browse/playwright-cli-reference.md` following `agent-browser-reference.md`'s\nexisting section shape, with this operation vocabulary translation table:\n\n| Operation | agent-browser (today) | Playwright CLI (new) |\n|---|---|---|\n| Open a session at a URL | `agent-browser --session <name> open <url>` | `playwright-cli -s=<name> open <url>` (spike-confirmed) |\n| Navigate within a session | `agent-browser --session <name> open <url>` | `playwright-cli -s=<name> goto <url>` (spike-confirmed; note both agent-browser cells are the same command — agent-browser's `open` is overloaded for both first-open and subsequent navigation, where Playwright CLI splits them into `open`/`goto`) |\n| Close a session | `agent-browser --session <name> close` | `playwright-cli -s=<name> close` (per tool docs) |\n| Close every session (graceful) | `agent-browser close --all` | `playwright-cli close-all` (per tool docs) |\n| Force-kill every browser process | *(no agent-browser equivalent documented)* | `playwright-cli kill-all` (per tool docs — distinct from `close-all`: forcefully terminates the underlying browser processes rather than closing sessions gracefully) |\n| List active sessions | `agent-browser session list` | `playwright-cli list` (per tool docs) |\n| Ref-based element snapshot | `snapshot -i -c` (`@eN` refs) | `snapshot` (`eN` refs) (spike-confirmed) |\n| Act on a ref | `click @e3` | `click e3` (spike-confirmed) |\n| Locator-based find+act | `find <locator> <value> <action>` | `find \"<text>\"` — **read-only, text-only** (see caution below; no direct translation for role/testid/css locators) |\n| Fill a field | `fill @e5 \"<text>\"` | `fill e5 \"<text>\"` (per tool docs, not spike-tested) |\n| Screenshot | `screenshot <path>` (positional) | `screenshot --filename=<path>` (flag) (spike-confirmed) |\n| Text-only assertion | plain `snapshot` (no refs) | `find \"<text>\"` or `eval` against the page (per tool docs) |\n\nCarry forward two cautions from `agent-browser-reference.md`, restated for the new tool, plus two\nnew ones from the spike and this record's own red-team review:\n- Refs are session-scoped and regenerate on every snapshot — never store them (unchanged rule,\n  unchanged mechanism).\n- `find` under Playwright CLI is read-only and text-only — the opposite of `agent-browser`'s\n  action-defaulting, locator-flexible `find`. This is not a mechanical rename: an\n  `agent-browser` call using a role/testid/css locator (not plain text) has no direct\n  Playwright CLI equivalent — the migrating consumer (sub-project 3) must re-derive it as\n  `snapshot` to obtain a ref, then a separate `click <ref>`/`fill <ref> <text>`. State this\n  prominently; a future migration inheriting the old \"find always finds-and-acts\" assumption\n  would silently either fail to translate or, worse, mutate a page it meant only to inspect.\n- Always pass absolute output paths — confirmed during the spike that a relative path resolves\n  against the invoking shell's cwd, not against any stable location.\n- Only `open`/`goto`/`snapshot`/`click`/`screenshot` were spike-verified against a real repro;\n  every other row above is transcribed from Playwright CLI's own published documentation, not\n  independently confirmed. Mark this distinction in the shipped reference doc (the per-row\n  parentheticals above) rather than presenting every row with equal confidence.\n\nThere is no persistent background daemon (unlike `agent-browser`, which auto-starts one on port\n4848) — each `open`/`attach` call starts or reuses a named browser process directly, and\n`list`/`close-all`/`kill-all` operate on that set of processes this CLI invocation tree manages,\nnot on a daemon. For the installation/detection section: `npx --no-install playwright-cli\n--version` is the tool's own documented presence check (per its docs — not independently\nspike-verified here).\n\nFor `step-07-browser-integration.md` **and** `browser-detection.md` (both required — see\nDeliverables above for why step-07 alone has no functional effect): replace every\n`agent-browser`-specific command (`which agent-browser`/`agent-browser --version`, the install\nstep, the `agent-browser session list` verify step, the daemon-lifecycle note) with the\nPlaywright CLI equivalent from the table above; keep the \"missing → surface the install hint and\ncontinue, never block init\" structure exactly as it reads today in both files — only the tool\nname and the concrete commands change. `browser-detection.md`'s \"Daemon lifecycle\" section should\nbe replaced with a short note that Playwright CLI has no equivalent auto-starting daemon (per the\nparagraph above), not simply deleted, so a future reader isn't left wondering why the section\ndisappeared.\n\n### Key Files\n\n- `plugin/skills/browse/playwright-cli-reference.md` — new file, the reference doc described above\n- `plugin/skills/browse/agent-browser-reference.md` — read as the structural template to mirror; not modified\n- `plugin/skills/init/bootstrap/step-07-browser-integration.md` — tool name references updated\n- `plugin/skills/_shared/browser-detection.md` — the actual detect/install/verify commands and daemon-lifecycle note, updated for Playwright CLI\n\n## Gotchas\n\n- Do not rewrite any of the ~28 files that currently cite `agent-browser-reference.md` — that\n  migration is sub-project 3, deliberately out of scope here. This record only adds the new\n  reference doc; nothing yet points at it.\n- The `os error 35`-equivalent screenshot-degradation case was not validated during the spike —\n  don't claim full parity coverage in the new reference doc; if a future consumer needs\n  degradation-detection guidance, that's new content to add then, not something to backfill here\n  speculatively.\n- Only `open`/`goto`/`snapshot`/`click`/`screenshot` were spike-confirmed; every other command in\n  the vocabulary table is transcribed from Playwright CLI's own docs, not independently verified —\n  the reference doc's Authority section instructs a cross-check against the tool's bundled\n  self-docs before finalizing (see Deliverables) precisely because of this gap.\n- No `npm test` coverage applies — both changes are markdown/prose, matching\n  `agent-browser-reference.md`'s own precedent of having no test suite.\n",
+        "createdAt": "2026-09-19T22:41:20Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Size: medium effort",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: standard review",
+            "color": "c5def5"
+          }
+        ],
+        "number": 2627,
+        "state": "OPEN",
+        "title": "browse: add Playwright CLI reference doc + init detection (agent-browser migration, part 2)",
+        "updatedAt": "2026-09-19T22:53:03Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      },
+      {
+        "body": "Surface: infra\n\n## Current State\n\n`agent-browser` (this plugin's current browser-automation backend) has two confirmed defects\ntracked in #2537: a synthetic locator click can report success without the target's registered\nhandler firing (repro: icon-sized buttons inside table rows), and the screenshot pipeline can\nsilently return a stale/dead frame after an `os error 35` (EAGAIN) failure with no daemon-side\nself-heal. Neither defect is fixable from this repo — `agent-browser`'s source isn't vendored\nhere.\n\nAfter research (comparing Playwright CLI, Playwright MCP, Stagehand, and Browser Use against this\nplugin's hard constraint — every consumer must work in both interactive sessions and hosted\nRoutines, which is why `mcp__claude-in-chrome__*` was already ruled out per `docs/donts.md`) and a\nspike, Playwright CLI (`@playwright/cli`) was chosen as the replacement backend. The spike\nconfirmed: it launches genuinely headless with no display server needed, and its default `click`\nfired the real handler on a built repro of the icon-button-in-table-row case (confirmed via\nre-snapshotting DOM state, not just trusting the tool's own success report) — the exact failure\nmode `agent-browser` has. The spike did not test the `os error 35`-equivalent screenshot-degradation\ncase specifically.\n\nThis is sub-project 2 of a four-part migration (1: spike, done; 2: this record; 3: migrate the\n~28 consumer files onto the new backend; 4: retire `agent-browser`). Today's `agent-browser`\nintegration is a pure markdown convention-pin — `plugin/skills/browse/agent-browser-reference.md`\ndocuments the abstract operation vocabulary and defers to the tool's own self-docs for anything\nbeyond that; there is no Node.js code layer anywhere in this pattern, and none is being introduced\nhere — nothing in the spike surfaced a reliability gap Playwright CLI's own `click`/`screenshot`\ncommands don't already cover, so there is nothing for a wrapper layer to do that the existing\ndoc-only pattern doesn't already handle.\n\n## Deliverables\n\n- A new reference doc, `plugin/skills/browse/playwright-cli-reference.md`, mirroring\n  `agent-browser-reference.md`'s structure: Authority (pins a specific `@playwright/cli` version,\n  defers to the tool's own bundled self-docs — `node_modules/playwright-core/lib/tools/skills/\n  playwright-cli/SKILL.md` plus its `references/` sub-docs — for anything not covered here),\n  Daemon/session model (`-s=<name>` named sessions, `list`/`close-all`/`kill-all`), and the\n  Operation vocabulary translation table (see Technical Approach for the exact table).\n- Update `plugin/skills/init/bootstrap/step-07-browser-integration.md` to detect `playwright-cli`\n  instead of `agent-browser` — same \"missing → hint and continue, never block init\" posture,\n  only the tool name and presence-check command change.\n\nOut of scope (later sub-projects, not this record): rewriting any of the ~28 files that currently\ncite `agent-browser-reference.md` to actually use the new doc; removing\n`agent-browser-reference.md` or any other `agent-browser` mention; anything in `docs/donts.md`.\n\n## Acceptance Criteria\n\n- `plugin/skills/browse/playwright-cli-reference.md` exists, documents the operation vocabulary\n  table below in full, and explicitly states the two behavioral differences from `agent-browser`\n  that a future migrating consumer must not assume away: (1) `find` here is read-only (search +\n  return matching nodes) — the opposite of `agent-browser`'s bare `find`, whose action-less form\n  defaults to clicking; (2) output paths (screenshots, and anything else the CLI writes to disk)\n  must always be passed as absolute paths — a relative path resolves against the invoking shell's\n  cwd, which is not guaranteed stable across separate tool calls.\n- `step-07-browser-integration.md` detects `playwright-cli` (via `npx --no-install playwright-cli\n  --version`, the tool's own documented presence check) instead of `agent-browser`, with the\n  identical \"optional, never blocks init\" behavior preserved.\n- No other file is modified — the ~28 consumer files and `agent-browser-reference.md` itself are\n  untouched by this record.\n\n## Technical Approach\n\nWrite `plugin/skills/browse/playwright-cli-reference.md` following `agent-browser-reference.md`'s\nexisting section shape, with this operation vocabulary translation table:\n\n| Operation | agent-browser (today) | Playwright CLI (new) |\n|---|---|---|\n| Open a session at a URL | `agent-browser --session <name> open <url>` | `playwright-cli -s=<name> open <url>` |\n| Navigate within a session | `agent-browser --session <name> open <url>` | `playwright-cli -s=<name> goto <url>` |\n| Close a session | `agent-browser --session <name> close` | `playwright-cli -s=<name> close` |\n| Close every session | `agent-browser close --all` | `playwright-cli close-all` |\n| List active sessions | `agent-browser session list` | `playwright-cli list` |\n| Ref-based element snapshot | `snapshot -i -c` (`@eN` refs) | `snapshot` (`eN` refs) |\n| Act on a ref | `click @e3` | `click e3` |\n| Locator-based find+act | `find <locator> <value> <action>` | `find \"<text>\"` (read-only — see caution below) |\n| Fill a field | `fill @e5 \"<text>\"` | `fill e5 \"<text>\"` |\n| Screenshot | `screenshot <path>` (positional) | `screenshot --filename=<path>` (flag) |\n| Text-only assertion | plain `snapshot` (no refs) | `find \"<text>\"` or `eval` against the page |\n\nCarry forward two cautions from `agent-browser-reference.md`, restated for the new tool, plus one\nnew one from the spike:\n- Refs are session-scoped and regenerate on every snapshot — never store them (unchanged rule,\n  unchanged mechanism).\n- `find` under Playwright CLI is read-only — the opposite of `agent-browser`'s action-defaulting\n  bare `find`. State this explicitly and prominently; it is the one place the translation is not a\n  mechanical rename, and a future migration inheriting the old assumption would silently mutate\n  pages it meant only to inspect.\n- Always pass absolute output paths — confirmed during the spike that a relative path resolves\n  against the invoking shell's cwd, not against any stable location.\n\nFor the installation/detection section: `npx --no-install playwright-cli --version` is the tool's\nown documented presence check (falls back cleanly when not installed). No implicit daemon to\ndocument, unlike `agent-browser` — each `open`/`attach` call is explicit.\n\nFor `step-07-browser-integration.md`: replace the `agent-browser`-specific detection command and\ninstall hint with the Playwright CLI equivalent above; keep the \"missing → surface the install\nhint and continue, never block init\" structure exactly as it reads today — only the tool name and\nthe one command change.\n\n### Key Files\n\n- `plugin/skills/browse/playwright-cli-reference.md` — new file, the reference doc described above\n- `plugin/skills/browse/agent-browser-reference.md` — read as the structural template to mirror; not modified\n- `plugin/skills/init/bootstrap/step-07-browser-integration.md` — detection command + tool name updated\n\n## Gotchas\n\n- Do not rewrite any of the ~28 files that currently cite `agent-browser-reference.md` — that\n  migration is sub-project 3, deliberately out of scope here. This record only adds the new\n  reference doc; nothing yet points at it.\n- The `os error 35`-equivalent screenshot-degradation case was not validated during the spike —\n  don't claim full parity coverage in the new reference doc; if a future consumer needs\n  degradation-detection guidance, that's new content to add then, not something to backfill here\n  speculatively.\n- No `npm test` coverage applies — both changes are markdown/prose, matching\n  `agent-browser-reference.md`'s own precedent of having no test suite.\n",
+        "createdAt": "2026-09-19T22:41:11Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Size: medium effort",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: standard review",
+            "color": "c5def5"
+          }
+        ],
+        "number": 2626,
+        "state": "OPEN",
+        "title": "browse: add Playwright CLI reference doc + init detection (agent-browser migration, part 2)",
+        "updatedAt": "2026-09-19T22:53:00Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "## Current State\n\nmaterialize.js's premise-check machinery (built for #1829: record.js's specShapedBody/PREMISE_CHECK_RE, the author-association-gated execution in materialize.js, and build/SKILL.md's routing of premise.satisfiedAtBase to the Wrap-Up Review Console) is fully wired end-to-end and already exercised in production — but by exactly one filing site today: wrap-up/claude-md-curation.md's over-budget CLAUDE.md filing. toIssuePayload in plugin/bin/lib/harness-health/issue-payload.js (lines 51-58) calls specShapedBody({ header, currentState, deliverables, acceptanceCriteria, filedBy, verifiedAsOf }) and never populates the premiseCheck parameter, even though the parameter and its consumer chain already exist. The identical gap exists in docs-health, journey-health, and code-health's own issue-payload.js modules (confirmed via grep -n \"premiseCheck\" plugin/bin/lib/{docs,journey,code}-health/issue-payload.js returning nothing).\n\nThis was surfaced by /claude-tweaks:wrap-up's Skills curation row during record #2405's own wrap-up, which is the seeded incident: a harness-health-filed \"add a CLAUDE.md bullet\" finding sat 136 commits stale after an unrelated commit had already added the bullet, caught only via manual grep verification at build time because materialize.js's drift check had nothing but the Verified-as-of age stamp to go on. Full staged analysis: .claude-tweaks/pipelines/2026-09-19T210012-record-2405/staged/wrap-up-skill-1.md.\n\n## Deliverables\n\nThread Premise-check: through harness-health's toIssuePayload in plugin/bin/lib/harness-health/issue-payload.js for mechanically re-checkable patch findings: additive intent (finding.newString present) checks for that string's absence in finding.target (exit 0 while absent, non-zero once present, mirroring the existing wc -l-over-budget shape's polarity); remove intent checks the opposite way against finding.oldString. new-skill candidates have no existing file content to check against and stay premise-check-less. Needs its own design pass on safe command construction (quoting/escaping oldString/newString — no shell injection, no false \"resolved\" reads from a substring match against multi-line or punctuation-heavy content) and a null-degradation path (materialize.js's existing \"no Premise-check: line\" fallback) when a string is too long or multi-line to anchor safely — never guess wrong. Needs its own test coverage: qualifying/non-qualifying finding shapes, escaping edge cases, the null-degradation path.\n\nScope this record to harness-health only. The identical fix in docs-health/journey-health/code-health's issue-payload.js is a natural, separately-specced follow-up once this approach is proven — not folded in here.\n\n## Acceptance Criteria\n\nA harness-health patch finding whose Current State claim is mechanically re-checkable against its target file's live content carries a Premise-check: line in its filed issue body, so materialize.js's existing premise-check machinery can auto-detect an already-resolved finding before a build starts, instead of relying solely on the Verified-as-of staleness-age signal or manual grep verification. A patch finding whose content can't be safely anchored (too long/multi-line) degrades to no Premise-check: line rather than a wrong one. New-skill candidates carry no Premise-check: line. Test coverage exists for the qualifying/non-qualifying/degradation paths.\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-09-19T21:23:45Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Size: medium effort",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          }
+        ],
+        "number": 2621,
+        "state": "OPEN",
+        "title": "harness-health filed findings never populate Premise-check:, so materialize's premise-check machinery never fires for them",
+        "updatedAt": "2026-09-19T22:46:40Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "low",
+          "size": "medium",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\n\n## Current State\n\n`/claude-tweaks:tidy`'s Step 4.7 claims-registry audit (`issue-claims-backstops.md`, \"Primary: list the `claims/` blob keyspace\") documents a full list-then-classify-each-blob procedure with no batched alternative and no explicit warning that sampling the keyspace is unsafe — every blob genuinely needs checking, since a claim's presence/staleness is a binary fact, not something a statistical sample can approximate.\n\nObserved directly this session: an earlier standalone tidy run against this repo's claims-registry (now ~1000 blobs) sampled only ~10 of them instead of following the documented full listing, and flagged 14 issues as having \"no active claim.\" The run's own report already carried a stated Concern about this sampling gap. On mandatory pre-write re-verification (this session), 13 of those 14 (93%) turned out to have real, non-expired claims from active sessions — the batch was almost entirely false positives, caught only because the re-verification step exists.\n\nRoot cause (confirmed by reading the existing code): `plugin/bin/lib/issues/claims-git-cas.js`'s `readClaimBlobGit` already amortizes the branch-tip fetch across a batch (#1467's `knownTip` seam), but still reads each blob's content with its own `git show {tip}:{path}` subprocess call — one spawn per blob. The no-git-CAS fallback (`claim-store.js`'s `readClaimBlobContentsApi`) is worse: one network round-trip per blob, with no batched-content endpoint on GitHub's REST contents API. Neither path scales to a ~1000-blob registry without either taking real time or inviting exactly the sampling shortcut that produced this session's false-positive batch.\n\n## Deliverables\n\n- Add `readClaimBlobsGitBatch(issueNumbers, { tip, ... })` to `claims-git-cas.js`: one `git ls-tree -r {tip} -- claims/` call to confirm the full blob set, then one `git cat-file --batch` call fed every target blob's sha via stdin, parsing the streamed multi-blob output — replacing N `git show` calls with 2 total subprocess invocations for the git-CAS transport, regardless of registry size.\n- Wire the claims-registry audit scan (`issue-claims-backstops.md`'s \"Primary: list the `claims/` blob keyspace\" procedure) to call the new batched path when a `gitRunner` is available, falling back to today's existing per-blob behavior only when it is not (contents-API-only environments) — that fallback path is explicitly out of scope for batching here (see Technical Approach).\n- Add an explicit statement to `issue-claims-backstops.md`: sampling this check is unsafe — a claim's live/stale/unreadable state is a binary per-issue fact, not something a statistical sample can approximate — with a pointer to the batched path so a future session under time/cost pressure has a documented non-shortcut instead of an implicit expectation.\n\n## Acceptance Criteria\n\n- The documented claims-registry audit procedure scales to a registry with hundreds-to-thousands of blobs without requiring one subprocess call or one API round-trip per blob, on the git-CAS transport.\n- `issue-claims-backstops.md` explicitly states that a partial/sampled scan of this check is not an acceptable substitute for the full listing.\n- `npm test` passes, including new coverage: (1) `readClaimBlobsGitBatch` returns identical per-blob classification to N sequential `readClaimBlobGit` calls against the same fixture claims-registry; (2) a mocked-runner call-count assertion proves the batch path issues exactly 2 subprocess invocations regardless of blob count.\n\n## Technical Approach\n\nBatch the git-CAS transport; leave the contents-API-only fallback as-is. The git-CAS path (`claims-git-cas.js`) already has everything needed to batch: a known branch tip (via `knownTip`, already amortized across a batch per #1467) and `git`'s own `cat-file --batch` command, which reads an arbitrary list of object shas from stdin and streams their content on stdout in one process — the standard efficient way to bulk-read git blobs, vs. one `show` per blob. `git ls-tree -r {tip} -- claims/` gives the full path→sha mapping for the `claims/` subtree in one call; the shas for the target issue numbers' paths feed directly into `cat-file --batch`.\n\nThe contents-API-only fallback (no local git access — a `gh`-only sandbox) is scoped out: GitHub's REST contents API has no batched-content endpoint, and a GraphQL-aliased batch query would need its own investigation and is a narrower, already-documented-as-degraded transport (the git-CAS path is the common case any full-registry audit runs from, since it requires a local checkout with the `claims-registry` ref reachable — the same requirement the existing `gitRunner`-present branch already assumes). This fix closes the dominant cost driver, not every driver; the remaining API-only gap is a smaller, already-accepted-degrade case, not a new one this record introduces.\n\n### Key Files\n\n- `plugin/bin/lib/issues/claims-git-cas.js` — new `readClaimBlobsGitBatch`, alongside the existing single-blob `readClaimBlobGit`/`writeClaimBlobGit`\n- `plugin/skills/tidy/issue-claims-backstops.md` — wire the audit procedure to the batched path; add the sampling-is-unsafe statement\n- `plugin/skills/_shared/issue-claims.md` — cited by the audit procedure for per-blob \"stale/unreadable/live\" classification rules; unchanged, but read alongside the above to confirm the batch path's output still classifies each blob per those existing rules\n- `tests/bin-lib/issues/claims-git-cas.test.js` — new coverage for the batch read\n\n## Gotchas\n\n- Any batched-fetch replacement must still classify each blob per `_shared/issue-claims.md`'s existing \"stale/unreadable/live\" rules — this is about the fetch mechanism's cost, not the classification logic.\n- `git cat-file --batch`'s output framing (each object preceded by a `{sha} {type} {size}\\n` header line) needs careful parsing to correctly split concatenated blob contents — a naive line-split will corrupt any blob content containing embedded newlines (claim blobs are small JSON-ish text today, but the parser should not assume that silently).\n- The contents-API-only fallback is unchanged by this record — a future session hitting the sampling temptation from that transport (no local git access) still has only the per-blob path available; that gap is named explicitly in Technical Approach rather than silently left unaddressed.\n\n## Breaking Change\n\nNone — this adds a new function to an internal library module and updates a skill's internal audit procedure. No public flag, CLI verb, exported function signature, or `_shared/*.md` convention that external consumers rely on is removed or renamed.\n\n## Original request\n\ntidy claims-registry audit: documented full-scan procedure has no batched alternative, inviting a sampling shortcut that produced a 93% false-positive rate on a ~1000-blob registry\n\nOrigin: reflect full mode from standalone wrap-up (session-backlog-and-fixes)\nDefer-reason: tangential\n**Related:** #2612\n\n## Current State\n\n`/claude-tweaks:tidy`'s Step 4.7 claims-registry audit (`issue-claims-backstops.md`, \"Primary: list the `claims/` blob keyspace\") documents a full list-then-classify-each-blob procedure with no batched alternative and no explicit warning that sampling the keyspace is unsafe — every blob genuinely needs checking, since a claim's presence/staleness is a binary fact, not something a statistical sample can approximate.\n\nObserved directly this session: an earlier standalone tidy run against this repo's claims-registry (now ~1000 blobs) sampled only ~10 of them instead of following the documented full listing, and flagged 14 issues as having \"no active claim.\" The run's own report already carried a stated Concern about this sampling gap. On mandatory pre-write re-verification (this session), 13 of those 14 (93%) turned out to have real, non-expired claims from active sessions — the batch was almost entirely false positives, caught only because the re-verification step exists.\n\nThe likely pressure: following the documented procedure literally against a ~1000-blob registry means ~1000 individual `gh api`/`gh issue view` round-trips, which is expensive enough to invite exactly this kind of shortcut, and nothing in the skill's text acknowledges that cost or offers a cheaper correct alternative (e.g. a single `git ls-tree -r claims-registry` plus a batched content fetch, rather than one API call per blob).\n\n## Deliverables\n\n- Add an efficient batched-fetch path for the claims-registry listing (e.g. a single tree listing plus batched blob reads) so the correct full-audit no longer requires ~1000 sequential API calls on a registry this size.\n- Add an explicit statement in `issue-claims-backstops.md` that sampling this check is unsafe (a claim's state is binary per-issue, not statistically approximable) — so a future session under time/cost pressure has a documented reason not to shortcut it, not just an implicit expectation.\n\n## Acceptance Criteria\n\n- The documented claims-registry audit procedure scales to a registry with hundreds-to-thousands of blobs without requiring one API call per blob.\n- `issue-claims-backstops.md` explicitly states that a partial/sampled scan of this check is not an acceptable substitute for the full listing.\n- `npm test` passes, including new coverage for the batched-fetch path.\n\n## Technical Approach\n\nNot scoped here — the batched-fetch mechanism (git tree API vs. some other bulk-read path) needs its own investigation before implementation.\n\n### Key Files\n\n- `plugin/skills/tidy/issue-claims-backstops.md` — the documented full-listing procedure\n- `plugin/skills/_shared/issue-claims.md` — \"The lock\" section this procedure cites for per-blob classification\n\n## Gotchas\n\n- Any batched-fetch replacement must still classify each blob per `_shared/issue-claims.md`'s existing \"stale/unreadable/live\" rules — this is about the fetch mechanism's cost, not the classification logic.\n\n## Original request\n\ntidy claims-registry audit: documented full-scan procedure has no batched alternative, inviting a sampling shortcut that produced a 93% false-positive rate on a ~1000-blob registry\n\nSurfaced by `/claude-tweaks:reflect` (full mode, Near-misses lens) during a standalone `/claude-tweaks:wrap-up`. `CAUSAL: systemic` — chain: the documented procedure is correct but expensive at scale; nothing warns against or prevents a sampling shortcut, which is exactly what produced this session's false-positive batch.\n\n**Definition:** Needed — the batched-fetch mechanism is not decided.\n\n**Plugin version:** 6.126.0\n\n---\nFiled via reflect (full mode) during /claude-tweaks:wrap-up.\n",
+        "createdAt": "2026-09-19T14:09:46Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Size: medium effort",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: standard review",
+            "color": "c5def5"
+          }
+        ],
+        "number": 2613,
+        "state": "OPEN",
+        "title": "tidy claims-registry audit: documented full-scan procedure has no batched alternative, inviting a sampling shortcut that produced a 93% false-positive rate",
+        "updatedAt": "2026-09-19T22:47:01Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      },
+      {
+        "body": "Origin: capture\n\n## Current State\n\n`plugin/bin/lib/issues/materialize-format.js`'s `REQUIRED_SECTIONS` constant (line 9) still\nlists only three sections — `## Current State`, `## Deliverables`, `## Acceptance Criteria` —\nwith no `## Release Note`. This means `/claude-tweaks:flow`'s own Materialization hard gate\n(and `flow/materialize.md`'s own prose describing that gate) does not enforce the fourth\nrequired section, even though `_shared/work-record.md` (line 276) and\n`plugin/bin/lib/compose-record/compose.js`'s `REQUIRED_SECTIONS` (line 11) both require four\nsections as of #2580. This is a genuine drift discovered while building #2589 (which fixed\nthree other stale three-section prose restatements but was explicitly scoped to exclude this\nfile) — a `ready` record missing only `## Release Note` will pass `/flow`'s materialize-time\nhard gate silently, and only get caught later by `compose-subject.js`'s merge-time gate.\n\n## Deliverables\n\n- [ ] Add `'## Release Note'` to `plugin/bin/lib/issues/materialize-format.js`'s\n      `REQUIRED_SECTIONS` array (line 9)\n- [ ] Update `flow/materialize.md`'s \"Materialization hard gate\" section prose (currently:\n      \"the sections `## Current State`, `## Deliverables`, and `## Acceptance Criteria` are\n      present and each non-empty\") to name all four sections, matching the fix pattern #2589\n      already applied to shaping-mode.md/capture/SKILL.md/refine-mode.md\n- [ ] Check `tests/bin-lib/issues/materialize-format.test.js` for any fixture relying on the\n      three-section gate and update if needed\n\n## Acceptance Criteria\n\n1. `materialize-format.js`'s `REQUIRED_SECTIONS` matches `_shared/work-record.md`'s canonical\n   four-section definition\n2. A record materialized via `/claude-tweaks:flow` whose only gap is a missing/empty\n   `## Release Note` section is stopped by the Materialization hard gate, the same way a\n   missing `## Current State` already is\n3. `flow/materialize.md`'s hard-gate prose names all four sections\n\n## Release Note\n\nClosed the last mechanical gap in the four-section spec-shaped-body rollout (#2580): /flow's\nown materialize-time hard gate now enforces `## Release Note` too.\n\n## Technical Approach\n\nSame class of fix as #2589 (one-clause prose/constant sync to the already-shipped four-section\ncanonical definition), but in the mechanical JS gate rather than human-facing prose —\n`materialize-format.js`'s `REQUIRED_SECTIONS` array is a one-line change; `flow/materialize.md`'s\nhard-gate section needs the same prose update #2589 applied elsewhere.\n\n### Key Files\n\n- `plugin/bin/lib/issues/materialize-format.js` — line 9's `REQUIRED_SECTIONS` array\n- `plugin/skills/flow/materialize.md` — \"Materialization hard gate\" section prose\n\n## Gotchas\n\n- Verify current line numbers at build time — discovered 2026-09-18 during #2589/#2592's\n  build; other work may have shifted them since\n- Check whether any currently-`ready` record in the live backlog would newly fail this\n  tightened gate (a record materialized under the old three-section gate that never got a\n  Release Note added) — if so, that's a pre-existing gap this fix would surface, not a\n  regression it introduces\n- `bin/lib/issues/record.js`'s `specShapedBody()` composer (used by `/capture`'s Shaped-body\n  branch and every health-sweep filing) also does not compose a `## Release Note` section —\n  noticed while filing this very record by hand. Out of this record's own named scope\n  (`materialize-format.js` + `materialize.md` only), but worth a human glance when this is\n  picked up: it may be the same drift class at a fourth site.\n\n_Filed by `capture` via specShapedBody._\n",
+        "createdAt": "2026-09-18T21:15:24Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          }
+        ],
+        "number": 2603,
+        "state": "OPEN",
+        "title": "materialize-format.js's REQUIRED_SECTIONS still enforces only three sections, not the four the canonical check requires",
+        "updatedAt": "2026-09-19T22:46:46Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      },
+      {
+        "body": "Surface: backend\n\n## Current State\n\n`plugin/skills/_shared/pr-run-comments.md`'s `verdict` comment kind uses one marker\n(`<!-- run-comment: verdict -->`) per PR, found-and-updated-in-place per its \"Post-or-update\nprocedure\" — designed for a single-spec run where a re-triggered review edits the same comment.\n\nA multi-spec `/claude-tweaks:flow` run shares one PR across every spec (`flow/multi-spec.md`).\nEach spec's own `/claude-tweaks:review` Step 7 posts this same `verdict`-marked comment\nindependently. Observed directly on run `2026-09-18T054643-spec-2580-2581` (PR #2586, records\n#2580 and #2581): #2580's review posted a verdict comment; #2581's review, following the exact\nsame documented procedure, found the existing marker and updated it in place — silently\nreplacing #2580's verdict content with #2581's. Nothing in `pr-run-comments.md` names this\nmulti-spec case or says what should happen instead.\n\n## Deliverables\n\n- [ ] Decide the intended multi-spec shape for the `verdict` comment kind: one comment per spec\n      (would need a spec-qualified marker, e.g. `<!-- run-comment: verdict:{spec} -->`, and a\n      change to the \"one comment per kind per run\" framing), or one running combined comment\n      that each spec's review appends its own section to rather than replacing the whole body.\n- [ ] Update `pr-run-comments.md`'s Comment kinds / Post-or-update procedure to document the\n      chosen shape explicitly for multi-spec runs, the same way `flow/multispec-pr-checklist.md`\n      already documents the phase-checklist's own multi-spec (cumulative, never-reset) shape.\n- [ ] Update `review/code-mode-steps.md` Step 7's verdict-comment composition instructions to\n      match.\n\n## Acceptance Criteria\n\n1. A second spec's review verdict in a multi-spec run no longer silently discards the first\n   spec's verdict content from the PR's `verdict` comment.\n2. `pr-run-comments.md` states the multi-spec behavior explicitly, mirroring how it already\n   states the single-spec re-run-edits-in-place behavior.\n\n## Release Note\n\nFixed the multi-spec Review verdict PR comment silently overwriting an earlier spec's verdict in the same run.\n\n## Technical Approach\n\nRecommend the spec-qualified-marker shape (`<!-- run-comment: verdict:{spec} -->`, one comment\nper spec) over the appended-sections alternative: `pr-run-comments.md`'s existing Post-or-update\nprocedure already finds-and-updates by exact marker text, so a spec-qualified marker reuses that\nsame find-or-create logic unchanged per spec, whereas the appended-sections shape needs new\nlogic to locate and replace only this spec's own section within a shared comment body without\ndisturbing siblings' sections — more moving parts for the same outcome. This is a\nrecommendation for the build to weigh, not a foreclosed decision — the Deliverables above still\nname both candidates.\n\nWhichever shape is chosen, `review/code-mode-steps.md` Step 7's comment-composition call\n(`<!-- run-comment: verdict -->` as currently hardcoded) needs the spec identifier threaded\ninto the marker it composes, and `pr-run-comments.md`'s Comment kinds table (currently listing\n`verdict` as a single per-PR marker) needs its multi-spec behavior stated explicitly, the same\nway `flow/multispec-pr-checklist.md` already documents the phase-checklist's cumulative shape\nfor the same multi-spec-shared-PR situation.\n\n### Key Files\n\n- `plugin/skills/_shared/pr-run-comments.md` — Comment kinds table (`verdict` row) and the\n  Post-or-update procedure\n- `plugin/skills/review/code-mode-steps.md` — Step 7's verdict-comment composition (the\n  `<!-- run-comment: verdict -->` literal)\n\n## Gotchas\n\n- The chosen shape must not break `/claude-tweaks:wrap-up`'s or any other consumer's expectation\n  that the `verdict` marker is a single, PR-wide comment kind — grep for `run-comment: verdict`\n  across `plugin/skills/**/*.md` before finalizing the shape, to catch any other reader of this\n  marker beyond the two files named above.\n- This is a real, live-observed bug (not a hypothetical) — a regression test reproducing the\n  two-spec-same-PR sequence (post spec A's verdict, then post spec B's verdict, assert both\n  survive in some form) is worth adding alongside the fix, not just a unit test on the\n  marker-matching logic in isolation.\n\n## Original request\n\nMulti-spec review verdict PR comment: later spec silently overwrites earlier spec's verdict\n\n## Current State\n\n`plugin/skills/_shared/pr-run-comments.md`'s `verdict` comment kind uses one marker\n(`<!-- run-comment: verdict -->`) per PR, found-and-updated-in-place per its \"Post-or-update\nprocedure\" — designed for a single-spec run where a re-triggered review edits the same comment.\n\nA multi-spec `/claude-tweaks:flow` run shares one PR across every spec (`flow/multi-spec.md`).\nEach spec's own `/claude-tweaks:review` Step 7 posts this same `verdict`-marked comment\nindependently. Observed directly on run `2026-09-18T054643-spec-2580-2581` (PR #2586, records\n#2580 and #2581): #2580's review posted a verdict comment; #2581's review, following the exact\nsame documented procedure, found the existing marker and updated it in place — silently\nreplacing #2580's verdict content with #2581's. Nothing in `pr-run-comments.md` names this\nmulti-spec case or says what should happen instead.\n\n## Deliverables\n\n- [ ] Decide the intended multi-spec shape for the `verdict` comment kind: one comment per spec\n      (would need a spec-qualified marker, e.g. `<!-- run-comment: verdict:{spec} -->`, and a\n      change to the \"one comment per kind per run\" framing), or one running combined comment\n      that each spec's review appends its own section to rather than replacing the whole body.\n- [ ] Update `pr-run-comments.md`'s Comment kinds / Post-or-update procedure to document the\n      chosen shape explicitly for multi-spec runs, the same way `flow/multispec-pr-checklist.md`\n      already documents the phase-checklist's own multi-spec (cumulative, never-reset) shape.\n- [ ] Update `review/code-mode-steps.md` Step 7's verdict-comment composition instructions to\n      match.\n\n## Acceptance Criteria\n\n1. A second spec's review verdict in a multi-spec run no longer silently discards the first\n   spec's verdict content from the PR's `verdict` comment.\n2. `pr-run-comments.md` states the multi-spec behavior explicitly, mirroring how it already\n   states the single-spec re-run-edits-in-place behavior.\n\n## Release Note\n\nFixed the multi-spec Review verdict PR comment silently overwriting an earlier spec's verdict in the same run.\n",
+        "createdAt": "2026-09-18T07:23:54Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Size: medium effort",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Risk: medium blast radius",
+            "color": "fbca04"
+          }
+        ],
+        "number": 2592,
+        "state": "OPEN",
+        "title": "Multi-spec review verdict PR comment: later spec silently overwrites earlier spec's verdict",
+        "updatedAt": "2026-09-19T22:47:05Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      },
+      {
+        "body": "Surface: backend\n\n## Current State\n\n`plugin/skills/specify/shaping-mode.md`'s Read-back verification step,\n`plugin/skills/capture/SKILL.md`'s Shaped-body branch, and\n`plugin/skills/backlog/refine-mode.md`'s spec-shaped-body check (used to\nbuild a live flag-back comment) all restate `_shared/work-record.md`'s\nspec-shaped-body check in prose (per `plugin/bin/lib/compose-record/compose.js`'s\nown header comment) as a three-section check (Current State, Deliverables,\nAcceptance Criteria). #2580 added a fourth required section, `## Release\nNote`, to the mechanical definition (`_shared/work-record.md`,\n`compose-record/compose.js`'s `REQUIRED_SECTIONS`) but did not touch these\nthree files' own prose restatements, since none is a blocking dependency for\n#2580's own Acceptance Criteria (the two mechanical gates —\n`materialize-format.js`'s hard gate and `compose-record/compose.js`'s\n`validateShaped` — are unaffected by what a human-facing prose checklist\nsays; `compose-subject.js`'s merge-time gate still catches an under-shaped\nrecord regardless of what any of these three prose checks say).\n\n`refine-mode.md`'s case is the same class of gap but with live behavior: its\ncheck auto-downgrades a `ready` row to flag-back with a message listing\n\"missing/empty\" sections — until fixed, a record missing only `## Release\nNote` passes this check silently (no flag-back), and would only be caught\nlater, at merge time, by `compose-subject.js`'s unconditional gate.\n\n## Deliverables\n\n- [ ] Update `shaping-mode.md`'s Read-back verification prose to name all\n      four required sections\n- [ ] Update `capture/SKILL.md`'s Shaped-body branch prose to name all four\n      required sections\n- [ ] Update `refine-mode.md`'s spec-shaped-body check prose (and its\n      flag-back comment's missing-section enumeration) to name all four\n      required sections\n\n## Acceptance Criteria\n\n1. None of the three files' prose restatements of the spec-shaped-body check\n   omits `## Release Note`\n2. A `ready` record whose only gap is a missing/empty `## Release Note`\n   section is flagged back by `/claude-tweaks:backlog refine`'s check, the\n   same way a missing `## Current State` already is\n\n## Release Note\n\nKept three authoring-time human checklists in sync with the four-section spec-shaped-body definition.\n\n## Technical Approach\n\nEach file restates the same underlying `_shared/work-record.md` definition independently in\nprose (none calls a shared function for this human-facing description), so this is three\nsmall, independent one-clause edits — no shared helper to touch, no behavioral change beyond\nwhat each restatement names.\n\n- `shaping-mode.md:69` says spec-shaped-body's structural minimum is \"Current State,\n  Deliverables, and Acceptance Criteria\" and that `_shared/work-record.md`'s check\n  \"re-verifies exactly these three\" — change to name four, including `## Release Note`.\n- `capture/SKILL.md:260` detects a \"shaped\" body as containing `## Current State`,\n  `## Deliverables`, and exactly one of `## Acceptance Criteria` / `## Open Question` — add\n  `## Release Note` to the required set (`## Open Question` is capture's own alternate-AC\n  form and is unaffected by this record's scope otherwise).\n- `refine-mode.md:239` describes the check as verifying \"`## Current State`, `## Deliverables`,\n  and `## Acceptance Criteria` are present and each non-empty\" — add `## Release Note` to this\n  sentence. The flag-back comment template at line 244/249 already substitutes a dynamic\n  `{list}`/`$MISSING_LIST` computed from whichever sections are actually missing — no template\n  change needed there, only the prose describing which sections that computation checks.\n\n### Key Files\n\n- `plugin/skills/specify/shaping-mode.md` — line 69's three-section restatement\n- `plugin/skills/capture/SKILL.md` — line 260's Shaped-body detection prose\n- `plugin/skills/backlog/refine-mode.md` — line 239's spec-shaped-body check description\n\n## Gotchas\n\n- These are three independent, out-of-sync prose copies of the same underlying check (no\n  shared function) — verify each edit against the *current* line numbers at build time, since\n  intervening commits between this record's authoring and its build may have shifted them.\n\n## Original request\n\nshaping-mode.md, capture/SKILL.md, and refine-mode.md's shaped-body prose still name only three required sections\n\n## Current State\n\n`plugin/skills/specify/shaping-mode.md`'s Read-back verification step,\n`plugin/skills/capture/SKILL.md`'s Shaped-body branch, and\n`plugin/skills/backlog/refine-mode.md`'s spec-shaped-body check (used to\nbuild a live flag-back comment) all restate `_shared/work-record.md`'s\nspec-shaped-body check in prose (per `plugin/bin/lib/compose-record/compose.js`'s\nown header comment) as a three-section check (Current State, Deliverables,\nAcceptance Criteria). #2580 added a fourth required section, `## Release\nNote`, to the mechanical definition (`_shared/work-record.md`,\n`compose-record/compose.js`'s `REQUIRED_SECTIONS`) but did not touch these\nthree files' own prose restatements, since none is a blocking dependency for\n#2580's own Acceptance Criteria (the two mechanical gates —\n`materialize-format.js`'s hard gate and `compose-record/compose.js`'s\n`validateShaped` — are unaffected by what a human-facing prose checklist\nsays; `compose-subject.js`'s merge-time gate still catches an under-shaped\nrecord regardless of what any of these three prose checks say).\n\n`refine-mode.md`'s case is the same class of gap but with live behavior: its\ncheck auto-downgrades a `ready` row to flag-back with a message listing\n\"missing/empty\" sections — until fixed, a record missing only `## Release\nNote` passes this check silently (no flag-back), and would only be caught\nlater, at merge time, by `compose-subject.js`'s unconditional gate.\n\n## Deliverables\n\n- [ ] Update `shaping-mode.md`'s Read-back verification prose to name all\n      four required sections\n- [ ] Update `capture/SKILL.md`'s Shaped-body branch prose to name all four\n      required sections\n- [ ] Update `refine-mode.md`'s spec-shaped-body check prose (and its\n      flag-back comment's missing-section enumeration) to name all four\n      required sections\n\n## Acceptance Criteria\n\n1. None of the three files' prose restatements of the spec-shaped-body check\n   omits `## Release Note`\n2. A `ready` record whose only gap is a missing/empty `## Release Note`\n   section is flagged back by `/claude-tweaks:backlog refine`'s check, the\n   same way a missing `## Current State` already is\n\n## Release Note\n\nKept three authoring-time human checklists in sync with the four-section spec-shaped-body definition.\n",
+        "createdAt": "2026-09-18T06:16:54Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          }
+        ],
+        "number": 2589,
+        "state": "OPEN",
+        "title": "shaping-mode.md, capture/SKILL.md, and refine-mode.md's shaped-body prose still name only three required sections",
+        "updatedAt": "2026-09-19T22:46:48Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      },
       {
         "body": "Surface: infra\n\n## Current State\n\nOn a GitHub Enterprise remote, `wrap-up-pack.js`'s `unblocked` probe always reports `ok: false`, and `resolve-blockers.js`, `materialize.js`, and `preflight-records.js` fail with \"Could not resolve to a Repository\" unless the caller both exports `GH_HOST=<enterprise host>` and passes `--repo owner/name` — the plugin never derives host or repo from `origin`. #2425 fixed the `--repo` half of the pack probe; the `GH_HOST` half and the three sibling CLIs remain unfixed as of 6.123.0. Confirmed against the current files: none of `wrap-up-pack.js`/`resolve-blockers.js`/`materialize.js`/`preflight-records.js` reference `GH_HOST` or `nameWithOwner` today.\n\nA private project hosted on a GitHub Enterprise host (origin `https://<enterprise-host>/<org>/<repo>.git`) running `/claude-tweaks:flow` with `work-backend: github-issues` hits this on every wrap-up: the fact pack's `unblocked` probe fails (\"could not resolve owner/repo — pass --repo owner/name\"), forcing the operator to re-run `resolve-blockers.js` by hand with `GH_HOST` exported and `--repo` passed; `materialize.js` fails the same way at every spec boundary even with `--repo` given, since `gh` never infers the host outside a clone.\n\n## Deliverables\n\n- [ ] Add a shared helper that derives `{host, ownerRepo}` once from `git remote get-url origin` (or `gh repo view --json nameWithOwner,url` run inside the checkout)\n- [ ] Thread the derived `GH_HOST` env var and `--repo owner/name` flag into every child `gh` call in `wrap-up-pack.js`'s `unblocked` probe, `resolve-blockers.js`, `materialize.js`, and `preflight-records.js`\n- [ ] Have each of the four CLIs print the derived repo/host so a mismatch is visible to the operator\n\n## Acceptance Criteria\n\n- [ ] On a GitHub Enterprise remote, `wrap-up-pack.js`'s `unblocked` probe, `resolve-blockers.js`, `materialize.js`, and `preflight-records.js` all resolve the correct repository with no manually exported `GH_HOST` or passed `--repo`\n- [ ] Existing github.com-hosted behavior is unchanged (no regression when there's no enterprise host to derive)\n- [ ] `npm test` passes, including new coverage for the derivation helper\n\n## Technical Approach\n\nAdd one small derivation helper (host + owner/repo from `git remote get-url origin`, falling back to `gh repo view --json nameWithOwner,url` run inside the checkout) and call it once per invocation in each of the four CLIs, exporting `GH_HOST` and passing `--repo` to every child `gh` call those files make — the same shape #2425 already applied to `wrap-up-pack.js`'s `--repo` half, extended to cover `GH_HOST` there and both flags in the three sibling CLIs.\n\n### Key Files\n\n- `plugin/bin/wrap-up-pack.js` — the `unblocked` probe; already has partial `--repo` handling from #2425 to extend with `GH_HOST`\n- `plugin/bin/resolve-blockers.js` — needs both `GH_HOST` and `--repo` derivation\n- `plugin/bin/materialize.js` — needs both `GH_HOST` and `--repo` derivation\n- `plugin/bin/preflight-records.js` — needs both `GH_HOST` and `--repo` derivation\n\n## Gotchas\n\n- `gh` does not infer the host outside a clone — a derived `GH_HOST` must be exported into the child process environment, not just computed and discarded.\n- Keep the github.com case a true no-op: deriving and passing `--repo`/`GH_HOST` unconditionally must not change behavior (or introduce a new failure mode) for the common non-Enterprise case.\n\n## Original request\n\nwrap-up-pack / resolve-blockers / materialize / preflight-records: on a GitHub Enterprise remote the host is never derived, so every child gh call needs GH_HOST exported by hand\n\n**Summary:** On a GitHub Enterprise remote, `wrap-up-pack.js`'s `unblocked` probe always reports `ok: false`, and `resolve-blockers.js`, `materialize.js` and `preflight-records.js` fail with \"Could not resolve to a Repository\" unless the caller both exports `GH_HOST=<enterprise host>` and passes `--repo owner/name` — the plugin never derives host or repo from `origin`. (#2425 fixed the `--repo` half of the pack probe; the `GH_HOST` half and the sibling CLIs remain on 6.123.0.)\n\n**Kind:** Gap\n\n**Affected component:** `bin/wrap-up-pack.js` (unblocked probe), `bin/resolve-blockers.js`, `bin/materialize.js`, `bin/preflight-records.js`\n\n**Use case:** A private project hosted on a GitHub Enterprise host (origin `https://<enterprise-host>/<org>/<repo>.git`) running `/claude-tweaks:flow` with `work-backend: github-issues`. Every wrap-up's fact pack shows the `unblocked` probe failing (\"could not resolve owner/repo — pass --repo owner/name\"), so the operator re-runs `resolve-blockers.js` by hand with `GH_HOST` exported and `--repo` passed; `materialize.js` fails the same way at every spec boundary until invoked with `GH_HOST` set, even with `--repo` given — `gh` does not infer the host outside a clone. Suggested behaviour: derive owner/repo AND host once from `git remote get-url origin` (or `gh repo view --json nameWithOwner,url` run inside the checkout) and pass `--repo` plus `GH_HOST` to every child `gh` call; have the pack print the derived repo so a mismatch is visible.\n\n**Definition:** Clear\n\n**Plugin version:** 6.123.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-942b225b -->\n",
         "createdAt": "2026-09-17T05:13:23Z",
@@ -2967,6 +3578,660 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\n\n## Current State\n\n`/claude-tweaks:tidy`'s standalone-auto Approve report (`report-condensed.md`) is agent-composed prose, written independently from the `staged/*.md` files it describes — nothing in the skill's own procedure cross-checks that the two agree before a run is considered complete. Observed directly this session: a prior standalone tidy run's `report-condensed.md` listed 14 Approve items (title, finding, proposed command, full text) while `staged/` on disk held zero files — `/claude-tweaks:tidy --approve` on that run had nothing to resume from. The 14 files had to be hand-reconstructed from the report's own text, matching the exact template a prior run's staged files used, before `--approve` could execute anything.\n\nRoot-cause chain (confirmed): no script generates `report-condensed.md` — `plugin/skills/tidy/step-6-auto.md` and `SKILL.md` are the only hits for the filename, both skill prose, not a `bin/*.js` renderer. The report and the staged files are two independent writes from the same tidy pass, with no shared source of truth and no later verification that both landed.\n\n## Deliverables\n\n- Standardize each `staged/*.md` proposal item with a machine-readable sidecar written alongside it at staging time: `staged/{name}.json` — an array of `{tag, record, title, action, command}` objects, one per proposal item in that file.\n- Add `plugin/bin/render-tidy-report.js` — reads every `staged/*.json` sidecar under a run dir and renders the Approve section's exact three-line-per-item shape (number + tag + record + title, then the staged action, then the exact command).\n- `step-6-auto.md`'s Step 6 stops hand-composing the Approve section as independent prose — it invokes the renderer and uses its output verbatim for both `report.md`/`report-condensed.md`.\n- `approve-mode.md`'s \"Re-entering the Approve rendering\" step reuses the same renderer instead of its own re-composition instructions, so a later `--approve` run reads the identical rendering path a fresh run would.\n- Update `plugin/bin/tidy-report-lint.js`: drop the Approve-section format checks the renderer now guarantees by construction (or repoint them at the renderer's own output), so the lint and the renderer never enforce the same rule two different ways.\n\n## Acceptance Criteria\n\n- A tidy standalone-auto run whose `report-condensed.md` Approve section and `staged/` directory could previously disagree can no longer diverge — the Approve section is generated by iterating `staged/*.json`, so it cannot describe an item that isn't on disk, and cannot omit one that is (inverse drift closed by construction, not by a separate check).\n- `npm test` passes, including new coverage in `tests/bin/render-tidy-report.test.js`: (1) the renderer produces the exact expected Approve-section text from a fixture `staged/` directory holding multiple `.json` sidecars; (2) a staged item added to the fixture after an initial render is present on the next render, proving the report can never trail `staged/`'s actual contents.\n- `node \"${CLAUDE_PLUGIN_ROOT}/bin/tidy-report-lint.js\" --surface=condensed` still passes against a renderer-produced report.\n\n## Technical Approach\n\nRender-from-staged (chosen over a post-write parity assertion, which would only detect drift after the fact rather than making it structurally impossible): `staged/*.json` becomes the single source of truth for the Approve section's content. `step-6-auto.md`'s Step 6/7 write each staged item's `.json` sidecar at the same point it already writes the item's human-readable `.md` file — both describe the same proposal, but only the `.json` is ever read back to render the Approve section. `render-tidy-report.js` takes a run dir, globs `staged/*.json`, flattens every file's item array in file-then-item order, and renders the fixed three-line-per-item template — this becomes the one place that template is implemented, replacing today's duplicated agent-prose composition.\n\n### Key Files\n\n- `plugin/bin/render-tidy-report.js` — new renderer; reads `staged/*.json`, renders the Approve section\n- `plugin/skills/tidy/step-6-auto.md` — Step 6/7 staging + report-composition instructions\n- `plugin/skills/tidy/approve-mode.md` — \"Re-entering the Approve rendering\" step\n- `plugin/bin/tidy-report-lint.js` — Approve-section format checks, now redundant with the renderer\n- `tests/bin/render-tidy-report.test.js` — new test coverage\n\n## Gotchas\n\n- The `.json` sidecar and the `.md` file describe the same proposal from two writes; nothing enforces they stay in sync with each other (only that the Approve section stays in sync with the `.json` side) — a future divergence between a staged item's human-readable prose and its machine-readable fields is a smaller, cosmetic version of the bug this record fixes, not eliminated by this design. Worth a one-line note in `step-6-auto.md` calling this out explicitly so it isn't rediscovered the same way #2612 itself was.\n- `tidy-report-lint.js`'s existing Approve-section checks need to be reconciled with the renderer rather than left running in parallel — two independent enforcers of the same format is the same class of drift risk this record is fixing, at one remove.\n\n## Breaking Change\n\nNone — this is an internal tooling/format change to `/claude-tweaks:tidy`'s own run-directory contents. No public flag, CLI verb, exported function, or `_shared/*.md` convention that external consumers rely on is removed or renamed; `staged/*.json` is new, additive content alongside the existing `staged/*.md` files.\n\n## Original request\n\ntidy standalone-auto: report-condensed.md and staged/ can silently drift, leaving --approve nothing to resume from\n\nOrigin: reflect full mode from standalone wrap-up (session-backlog-and-fixes)\nDefer-reason: tangential\n**Related:** #2613\n\n## Current State\n\n`/claude-tweaks:tidy`'s standalone-auto Approve report (`report-condensed.md`) is agent-composed prose, written independently from the `staged/*.md` files it describes — nothing in the skill's own procedure cross-checks that the two agree before a run is considered complete. Observed directly this session: a prior standalone tidy run's `report-condensed.md` listed 14 Approve items (title, finding, proposed command, full text) while `staged/` on disk held zero files — `/claude-tweaks:tidy --approve` on that run had nothing to resume from. The 14 files had to be hand-reconstructed from the report's own text, matching the exact template a prior run's staged files used, before `--approve` could execute anything.\n\nRoot-cause chain (not fully diagnosed, but the structural gap is confirmed): no script generates `report-condensed.md` — `plugin/skills/tidy/step-6-auto.md` and `SKILL.md` are the only hits for the filename, both skill prose, not a `bin/*.js` renderer. The report and the staged files are two independent writes from the same tidy pass, with no shared source of truth and no later verification that both landed.\n\n## Deliverables\n\n- Scope and implement a cross-check (or a single-source-of-truth refactor) so `report-condensed.md`'s Approve section can never describe a staged item that doesn't actually exist on disk — e.g. render the report FROM the staged files rather than composing both independently, or add a post-write assertion (count of Approve rows == count of files in `staged/`) that fails loudly before the run is marked complete.\n- Decide whether this needs to also detect the inverse drift (a staged file with no corresponding report row).\n\n## Acceptance Criteria\n\n- A tidy standalone-auto run whose `report-condensed.md` Approve section and `staged/` directory disagree is caught and reported (or prevented) rather than silently leaving a resume with nothing to act on.\n- `npm test` passes, including new coverage for the drift-detection mechanism chosen.\n\n## Technical Approach\n\nNot scoped here — two directions are viable (report-renders-from-staged vs. a post-write parity assertion) with no stated preference; whoever picks this up should choose and justify one.\n\n### Key Files\n\n- `plugin/skills/tidy/step-6-auto.md` — where the Approve report and staged files are both composed\n- `plugin/skills/tidy/SKILL.md` — Step 6/7's report/staged handoff\n\n## Gotchas\n\n- This was caught retrospectively (the 14 files were reconstructed by hand from the report's own text) — there is no live repro; a fix should add a test that constructs the drift scenario deliberately rather than relying on the report having survived to diagnose it.\n\n## Original request\n\ntidy standalone-auto: report-condensed.md and staged/ can silently drift, leaving --approve nothing to resume from\n\nSurfaced by `/claude-tweaks:reflect` (full mode, Near-misses lens) during a standalone `/claude-tweaks:wrap-up` closing a multi-action backlog/gate-fix session. `CAUSAL: systemic` — chain: report is independently-composed prose, not rendered from the staged files it describes; nothing cross-checks the two.\n\n**Definition:** Needed — the fix direction (render-from-staged vs. parity assertion) is not decided.\n\n**Plugin version:** 6.126.0\n\n---\nFiled via reflect (full mode) during /claude-tweaks:wrap-up.\n",
+        "createdAt": "2026-09-19T14:04:53Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Size: medium effort",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: standard review",
+            "color": "c5def5"
+          }
+        ],
+        "number": 2612,
+        "state": "OPEN",
+        "title": "tidy standalone-auto: report-condensed.md and staged/ can silently drift, leaving --approve nothing to resume from",
+        "updatedAt": "2026-09-19T22:47:03Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "**Skill:** skill-prose-conformance-tests | **Section:** Anti-Patterns | **Category:** best-practice | **Classification:** additive | **Confidence:** high\n\nVerified-as-of: 9f25890b495ba5bbb1ba2e79fa56e2ad6b9c9371\n\n## Current State\n\nThe context-cost bloat scan (bloat.js) flags this row at 678 B against a 216 B corpus median across the 34 Anti-Pattern rows in this file (over the 2x-median flag threshold of 432 B, alongside two other flagged rows at L203/L209). Reading the flagged text confirms it is a resolved-incident summary of what happened in a specific past record (#2022's build and review passes) rather than a reusable constraint — the row's first sentence already states the generalizable rule ('the same literal often exists in more than one concatenated member...a stronger pin...may already exist elsewhere') on its own. Per the bloat-signal guard in _shared/harness-health-analysis.md dimension 9 ('Over-long rows...What is not legitimate is a row that has absorbed the reason it was added — an incident narrative, a summary of what a past change did — which belongs in the project's incident log, not in a table re-read on every invocation'), and docs/incident-log.md carries no #2022 entry, so the narrative isn't even duplicating a canonical home — it exists only in this table.\n\n## Deliverables\n\n**Current:**\n```\n `#2022` hit both variants in one record: build's own SCRATCH pin initially matched the wrong template inside the concatenation, and review's Simplify pass then found a newly-authored CALIBRATION byte-identical pin duplicating, more weakly, an existing correctly-scoped one in a sibling test file — grep the suite for the property first\n```\n\n**Proposed:**\n```\n Grep the suite for the property first.\n```\n\n## Acceptance Criteria\n\nThe Anti-Patterns row for 'Authoring a new pin against a multi-file concatenated corpus without checking for an existing single-file pin of the same property' has absorbed an incident narrative — naming record #2022's specific build/review sequence — that is not recorded in docs/incident-log.md and is not needed to act on the row's guidance.\n\n_Filed by `/claude-tweaks:harness-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n\n<!-- work-fingerprint: harnesshealth-1e92fbb0 -->\nwork-fingerprint: harnesshealth-1e92fbb0",
+        "createdAt": "2026-09-19T05:13:17Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACvj9UVg",
+            "name": "by:harness-health",
+            "description": "",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACvj9UWQ",
+            "name": "harness-health:additive",
+            "description": "",
+            "color": "ededed"
+          }
+        ],
+        "number": 2605,
+        "state": "OPEN",
+        "title": "Skill best-practice: skill-prose-conformance-tests — Anti-Patterns",
+        "updatedAt": "2026-09-19T22:46:43Z",
+        "facets": {
+          "origin": "harness-health",
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Origin: reflect full mode from #2512\nDefer-reason: tangential\n\n## Current State\n\nRecord #2512 (\"9 pre-existing npm test failures unrelated to any single record\") was filed by\n`ledger resolve gate` during #2462's wrap-up. Before this run, a prior worktree run had already\nbuilt out the identical investigation, reached the identical conclusion (\"premise no longer\nholds — all 9 originally-cited tests pass, full suite is 9127/9127 clean\"), and opened PR #2560\nstating exactly that — which was subsequently closed without merging, leaving #2512 open and\nunauthorized-for-close. This run's own `/flow #2512 build,test` step then independently\nre-ran the entire investigation from scratch (a ~75-115s full `npm test` invocation, twice more\nacross build/test/review), reaching the same conclusion again and opening a second PR (#2588) for\nthe same record. No step in `/claude-tweaks:flow`, `/claude-tweaks:dispatch`, or\n`/claude-tweaks:build`'s materialize/pre-flight checks looks for a closed PR whose body already\nstates \"record's premise no longer holds\" for the same issue number before starting a fresh\nfull-pipeline investigation.\n\n## Deliverables\n\nAdd a check (materialize.md's resolution step, or dispatch's own pre-flight) that greps closed\nPRs referencing the target issue (`gh pr list --search \"linked:issue-{n}\" --state closed`, or a\nbody/title search for the issue number) for language indicating the same \"premise already\nresolved\" conclusion, and surfaces it as a hint before re-running the full investigation — at\nminimum logging a `SCANNED` decision citing the prior PR instead of silently redoing the same\nwork with no acknowledgment that a sibling attempt already reached the same finding.\n\n## Acceptance Criteria\n\nA record whose premise a closed sibling PR (referencing the same issue number) already disproved\nis flagged at materialize or pre-flight time with a citation to that PR, before the pipeline\nre-runs a fresh full-suite investigation from scratch.\n\n_Filed by `reflect` via specShapedBody._\n",
+        "createdAt": "2026-09-18T06:26:41Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          }
+        ],
+        "number": 2590,
+        "state": "OPEN",
+        "title": "Dispatch/materialize has no dedup check against an already-closed sibling PR that disproved a record's premise",
+        "updatedAt": "2026-09-19T22:47:08Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "**Doc:** plans/2026-09-14-record-1892-ledger | **Section:** Open Items table, row 1 | **Category:** staleness | **Misleads:** human engineer + coding agent | **Classification:** additive | **Confidence:** high\n\nVerified-as-of: ae15b6c0ee733ce39ecd98062c254dcafa8d3e04\n\n## Current State\n\nRow 1's Resolution column says the close-vs-merge decision on #1892 'is left for the human reviewing the PR (outcome: pending-review, no `auto:merge` grant on #1892)'. Live GitHub state (verified via the GitHub API) shows issue #1892 is CLOSED with state_reason 'completed', closed_at 2026-09-14T22:13:15Z, closed by merged PR #2447 (merged_at 2026-09-14T22:13:14Z) via its 'Fixes #1892' keyword. PR #2447's own body confirms it carried 'No code changes ... beyond the materialized spec header', i.e. the human resolved the deferred decision in favor of exactly the close recommendation this row made. The ledger's Status column ('deferred') is still correct per the closed status enum, but the Resolution prose describing the outcome as still-open/pending is factually stale and would mislead a later reader (human or an agent doing cross-reference/context-gathering) into thinking this decision is still unresolved.\n\n## Deliverables\n\n**Current:**\n```\nPosted as a PR comment on #2447 (https://github.com/thomasholknielsen/claude-tweaks/pull/2447#issuecomment-5666497944) summarizing the independently-re-verified evidence and the close-vs-merge recommendation; the decision itself is left for the human reviewing the PR (outcome: pending-review, no `auto:merge` grant on #1892).\n```\n\n**Proposed:**\n```\nPosted as a PR comment on #2447 (https://github.com/thomasholknielsen/claude-tweaks/pull/2447#issuecomment-5666497944) summarizing the independently-re-verified evidence and the close-vs-merge recommendation. PR #2447 merged 2026-09-14T22:13:14Z (header-only, no code changes) and its `Fixes #1892` keyword closed #1892 as completed — the human resolved the deferred decision in favor of the close recommendation.\n```\n\n## Acceptance Criteria\n\nRow 1's Resolution text must state that PR #2447 merged and closed #1892 as completed, replacing the now-outdated 'pending-review' framing.\n\n_Filed by `/claude-tweaks:docs-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n\n<!-- work-fingerprint: docshealth-1cea8c3e -->\nwork-fingerprint: docshealth-1cea8c3e",
+        "createdAt": "2026-09-18T06:07:39Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACverRqw",
+            "name": "by:docs-health",
+            "description": "",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACverRrA",
+            "name": "docs-health:additive",
+            "description": "",
+            "color": "ededed"
+          }
+        ],
+        "number": 2587,
+        "state": "OPEN",
+        "title": "Doc staleness: plans/2026-09-14-record-1892-ledger — Open Items table, row 1",
+        "updatedAt": "2026-09-19T22:46:51Z",
+        "facets": {
+          "origin": "docs-health",
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "# Reflect — staged finding 1\n\n**Category:** tangential\n\n## Current State\n\nDuring #2527's build step, `events.jsonl` recorded a `bookkeeping-stamp-deny` for the\n`record-worktree` stamp on that run's worktree at 05:40:14Z, followed ten seconds later by a\nsuccessful push at 05:40:24Z. The build step recovered via the correct sanctioned path with no\nvisible cost to that conversation, but it is untraced whether the initial attempt used a tool\npath that should either be allowed or documented as the wrong path to reach for, or whether this\nis simply `checkBookkeepingStampsGate` (`pre-tool-use.js`) working as intended against a first\nmis-attempt.\n\n## Deliverables\n\n- [ ] Sample a handful of recent runs' `events.jsonl` for the same `bookkeeping-stamp-deny` →\n      quick-recover pattern on the `record-worktree` stamp\n- [ ] If the pattern is common, add a short note to the relevant skill prose (or the gate's own\n      comments) naming the correct call shape so a build step doesn't rediscover it via a denial\n      each time\n- [ ] If the pattern is rare or this instance looks like ordinary gate-working-as-intended\n      behavior, close with that finding recorded\n\n## Acceptance Criteria\n\n- [ ] Either a doc/prose note is added naming the correct `record-worktree` stamp call shape, or\n      a short note explains why no change is needed (gate behaving as intended, isolated\n      incident)\n\n_Filed by `reflect` via specShapedBody._\n\n## Decision-log reference\n\nSTAGED — Step 3: pattern observation \"record-worktree bookkeeping-stamp-deny recovered within\n10s during #2527's build step\". Stage path: staged/reflect-1.md.\n",
+        "createdAt": "2026-09-18T05:55:14Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxTu0eA",
+            "name": "by:reflect",
+            "description": "Origin: filed via /reflect (wrap-up Phase 1)",
+            "color": "ededed"
+          }
+        ],
+        "number": 2585,
+        "state": "OPEN",
+        "title": "Check whether record-worktree bookkeeping-stamp-deny commonly recovers within seconds",
+        "updatedAt": "2026-09-19T22:46:53Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Origin: Review finding on #2472\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n#2472 added a phase-boundary PR-bookkeeping precondition check (`plugin/bin/check-pr-bookkeeping.js` + `plugin/bin/lib/pr-bookkeeping/precondition.js`), wired into `/claude-tweaks:test`'s Step 0 with `$PIPELINE_RUN_DIR`. `checkPrBookkeepingPrecondition` calls the pre-existing `hasMaterializeCommit(worktreeRoot, runDir)` (in `plugin/bin/lib/hooks/pre-tool-use.js`) to detect whether this run's materialize commit has landed. That function derives its git pathspec from `path.basename(runDir)`, on the documented assumption that `runDir` is the *parent* run directory (so the pathspec's trailing `spec-*/work/*` wildcard reaches any nested per-record subdirectory).\n\nIn a multi-spec `/flow` run — the pattern `/claude-tweaks:dispatch` uses for every bundled file-overlap group — `flow/multi-spec.md`'s own env-var table documents that each per-spec skill invocation (including `/test`) receives `$PIPELINE_RUN_DIR` = `{parent}/spec-{N}/`, NOT the parent directory. `path.basename()` of that value is `spec-{N}`, not the parent run's id, so `hasMaterializeCommit`'s pathspec never matches the real committed path `{parent-run-id}/spec-{N}/work/{N}-spec.md`.\n\nConfirmed empirically (not just read): a reproduction script (git init + linked worktree + a real materialize commit at the multi-spec path shape) shows `hasMaterializeCommit(worktreeRoot, parentRunDir)` returns `true`, but `hasMaterializeCommit(worktreeRoot, path.join(parentRunDir, 'spec-42'))` returns `false` for the identical commit. `checkPrBookkeepingPrecondition` therefore always resolves `{ok: true, reason: 'not-materialized-yet'}` for a multi-spec per-spec `/test` invocation — the check never reaches its worktree-stamp or PR-stamp logic at all.\n\nThis is fail-open (no false HARD-GATE denials, no regression), but it means the new gate provides zero coverage for the exact defense-in-depth scenario #2472 exists to catch, in exactly the run shape `/claude-tweaks:dispatch` uses for bundled groups — undermining the spec's own architecture-alignment claim that placing the check at `/test`'s entry gives \"a second, independent layer of defense-in-depth.\"\n\n## Deliverables\n\n- Determine whether `plugin/bin/lib/hooks/pre-tool-use.js`'s pre-existing `checkBookkeepingStampsGate` (the PreToolUse hook, the *first* defense-in-depth layer) shares this exact blind spot for multi-spec runs — if so, multi-spec runs currently have NO effective defense against the #2472 failure mode from either layer, which raises the stakes on the fix.\n- Also determine where `run-state.json` (the `worktree`/`pr` fields `checkPrBookkeepingPrecondition` reads) actually lives for a multi-spec run — shared at the parent, or duplicated per-spec — since `readRunState(runDir)` in `precondition.js` reads from the per-spec `$PIPELINE_RUN_DIR` too, and may have the same \"wrong directory\" problem independent of `hasMaterializeCommit`.\n- Fix `check-pr-bookkeeping.js`'s call site (and/or `hasMaterializeCommit`'s contract) so the check resolves the correct top-level run directory when invoked with a multi-spec per-spec `$PIPELINE_RUN_DIR` — without breaking `hasMaterializeCommit`'s other live caller (`checkBookkeepingStampsGate`) or its single-record contract.\n- Add a regression test exercising the multi-spec directory shape end-to-end through `checkPrBookkeepingPrecondition`/`check-pr-bookkeeping.js`'s CLI, mirroring the existing single-record fixtures in `tests/bin-lib/pr-bookkeeping/`.\n\n## Acceptance Criteria\n\nA multi-spec `/claude-tweaks:flow #A,#B` run whose build phase never invokes `pr-early-run-lifecycle.md` (or invokes it and it fails silently) for one of its specs is caught by `/test`'s Step 0 gate before that spec reaches review/wrap-up — verified by a test that reproduces the real multi-spec directory shape (`{parent}/spec-{N}/`), not just the single-record shape.\n\n_Filed by `review` (of #2472) via specShapedBody._\n",
+        "createdAt": "2026-09-17T19:25:49Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Size: medium effort",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Risk: medium blast radius",
+            "color": "fbca04"
+          }
+        ],
+        "number": 2571,
+        "state": "OPEN",
+        "title": "check-pr-bookkeeping.js's Step 0 gate is a silent no-op for multi-spec /flow runs",
+        "updatedAt": "2026-09-19T22:47:10Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "**Skill:** gh-api-module-pattern | **Section:** The CLI wrapper contract | **Category:** best-practice | **Classification:** restructural | **Confidence:** high\n\nVerified-as-of: a0cbd79e23a3c27e00cfb636b7c9ab691817c2c3\n\n## Current State\n\nRunning bin/lib/skill-audit/bloat.js's bloatReport() against this target (harness-health Step 1 check 9, corpus = .claude/skills/*.md and .claude/skills/*/*.md) reports: \"ceiling: 55401 B, over the 46080 B soft ceiling by 9321 B\" — the only signal it flags for this file (no over-long Anti-Pattern rows, no provenance narration, no degenerate tables). Per _shared/harness-health-analysis.md's bloat-signal guard, the fix for a skill file over the ceiling is composition/extraction to a genuinely lazy sub-file, never raising the ceiling. \"The CLI wrapper contract\" (16416 B, awk-measured) is the single largest of the file's five sections and the most topically self-contained — it covers the run(argv, deps)/exit-code/run-dir-anchoring contract for bin/ CLI wrappers, a distinct concern from the runner-injection and gh api flag-mechanics content the rest of the skill exists to teach, and the file's own frontmatter already calls it out as governing a separate class of consumer (shell-out-to-nothing CLIs). Extracting it alone brings the file to roughly 39 KB, comfortably under budget.\n\n## Deliverables\n\n**Current:**\n```\n## The CLI wrapper contract\n\n- Logic lives in an exported `run(argv, deps)`; every side effect (`runner`, `ghAvailable`, `remoteUrl`, `stdout`, `stderr`) goes through `deps` so tests inject fakes. **Every** `deps` call that can throw (e.g. `remoteUrl` outside a git repo) is try/caught into the documented exit-code contract — an un-wrapped deps call is where #610's one post-review high landed.\n- `require.main === module` guard sets `process.exitCode = run(...)` (never `process.exit`, which can truncate piped stdout). `--help` short-circuits before any availability probe. **This one is pinned mechanically, not by grep** — `tests/bin-lib/exit-code-conformance.test.js` (#1903) walks every `plugin/bin/**/*.js`, extracts the text each `require.main === module` guard governs, and fails on a direct `process.exit(...)` inside it. Three prior records (#1176, #1313, #1535) each closed one violation of this rule found by a manual sweep that missed another, which is why the sweep was replaced. A new guard needs no registration; a deliberate exception goes in that test's `ALLOWLIST` with its reason stated beside it (today: `bin/hooks.js`, whose stdout is a synchronous `fs.writeSync(1, …)` with nothing pending to flush, and `bin/lib/statusline-wrapper-source.js`, which deliberately hard-stops on a child process's own exit code).\n- **The guard rule above only sees a file's own entry-point guard — it does not follow the call graph into a library function that guard invokes.** `plugin/bin/lib/health-core/*.js` are shared library files invoked from deep inside all four health-suite CLIs' (`code-health.js`, `harness-health.js`, `journey-health.js`, `docs-health.js`) own correctly-guarded `main()` — outside any guard #1903's scan can see, so a `process.exit()` there was invisible to it (#2053: `churn-report.js`, `mark.js`, `retry-cli.js`'s `update` each did this after a pending stdout/stderr write). The fix mirrors the guard rule's own shape one level down rather than making the mechanical scan call-graph-aware (disproportionate for a bug class with exactly three known instances): each library function returns a numeric code (or `undefined`) instead of exiting, and each CLI's `main()` dispatch line captures that return value into `process.exitCode`, e.g. `if (cmd === 'churn-report') { const code = cmdChurnReport(args); if (code) process.exitCode = code; return; }` — the same `process.exitCode = N; return;` shape every other branch in the same `main()` already uses. `tests/bin-lib/exit-code-conformance.test.js` adds a second, narrower rule for this: a flat per-file sweep of `plugin/bin/lib/health-core/*.js` (no guard extraction, no call-graph walk) failing on any direct `process.exit(` anywhere in the file. Never widen this scope to all of `plugin/bin/lib/**` — `bin/lib/statusline-wrapper-source.js`'s own `process.exit()` calls are a different case (a guard-less whole-script file, not a library function invoked from another file's guard) already covered by the guard-scoped test's own `ALLOWLIST` above.\n- **A multi-verb dispatcher needs one table-driven guard, not N per-verb ones.** `plugin/bin/hooks.js` isn't a single-purpose CLI in the sense above — it's one `main(argv)` dispatching 14 documented subcommands (plus 6 harness-invoked EVENTS names). Before #1143, each subcommand branch treated a stray `--help`/`-h` as an ordinary argument, ran for real, and on the `--run`-omitted verbs could fall through to `resolveRunArg`'s implicit \"newest non-terminal run\" guess — silently stamping a *sibling session's* `run-state.json` (observed 2026-08-20). The fix generalizes the single-CLI `--help` short-circuit above into one `USAGE` lookup table (verb → usage string) checked once, ahead of every branch in `main()`, before any lib call or `resolveRunArg` scan — not a per-verb early-return copy-pasted 14 times. Regression risk for this shape specifically: the guard's own coverage can silently drift from the dispatch table it guards (a verb added to `main()`'s `cmd === '...'` chain with no matching `USAGE` entry gets no guard at all) — `tests/hooks-help-guard.test.js` pins this with a structural test scanning `main()`'s source for every `cmd === '...'` branch and asserting each has a `USAGE` entry, not just the reverse (iterating `USAGE`'s own keys, which proves nothing about branches missing from the table).\n- Exit codes are a documented contract, and this repo ships **three** base vocabularies — pick the one the CLI's sibling and its consuming prose already use, then spell it out in the file's header comment and `USAGE`:\n  - *Combined-2* (`plugin/bin/link-records.js`): 0 success or partial-with-`failed`, 1 upstream resolution failure, 2 malformed invocation **or** missing dependency.\n  - *Split-1/2* (`plugin/bin/resolve-blockers.js`, `plugin/bin/fetch-sub-issues.js`): 0 success, 1 malformed invocation, 2 missing dependency or unresolvable owner/repo, 3 the remote call itself failed.\n  - *Sanctioned-writer* (`plugin/bin/log-decision.js`, `plugin/bin/stage-item.js`, `plugin/bin/set-config.js`): 0 written (the written path echoed to stdout), 2 malformed invocation, 3 the run dir is missing or not anchored under the main checkout, or the target file is unwritable — **no 1 at all**. These are the run-directory writers a worktree-isolated session reaches for when Edit/Write refuses the run dir (`decisions.md`, `staged/`, `config.yml` respectively), and the skill prose that invokes them branches on 3 as \"wrong run dir — re-resolve `$RUN_ROOT`\". Copying *Split-1/2* into a fourth writer would make its malformed case land on a code its siblings use for an anchoring failure.\n\n  Never mix them inside one family: a caller that branches on a sibling's codes reads the wrong branch silently.\n- Every malformed-input class must actually reach its malformed code — `Number('') === 0` passes `Number.isInteger`, so validate positivity and pair-structure explicitly.\n- **Codes above the base vocabulary are per-CLI domain outcomes and are not portable.** `plugin/bin/claim-targets.js` ships 3 (contested — holder JSON on stdout) and 4 (transient `gh` failure), branched on by `plugin/skills/flow/claim-targets.md` Step 2.8; `plugin/bin/fetch-sub-issues.js` ships 4 for \"the capability probe says the GraphQL field is unavailable — take the documented fallback\". Spell each one out in that CLI's own `USAGE` and in the prose that branches on it; never assume a number carries its meaning across CLIs.\n- **The inverse decision needs the same evidence: a domain outcome no caller can act on differently stays on the base code, overloaded and documented.** A new code is earned by a caller that *branches* on it (the bullet above: `claim-targets.js`'s 3/4, branched on by `plugin/skills/flow/claim-targets.md` Step 2.8; `fetch-sub-issues.js`'s 4), not by the outcome being conceptually distinct — so \"this is really two different failures\" is not by itself a reason to allocate a fourth number. `plugin/bin/lib/compose-subject.js` (#2319) keeps *Split-1/2*'s exit 1 deliberately overloaded across a malformed invocation **and** an uncomposable record, because all six merge sites that call it — the two squash sites in `plugin/skills/_shared/pr-first-merge.md` and the four in `tests/merge-subject-composer-conformance.test.js`'s `LOCAL_SITES` — fence the call as `|| exit 1` and treat every non-zero exit identically; splitting them would mean editing six fences for a distinction nothing reads. Say so in the file's header comment beside the vocabulary, with the condition that would reopen it (compose-subject.js names its own: a caller that needs to park a shaping defect differently from reporting a bad call), so the next reader finds a decision rather than re-filing it as a missing code.\n- **A read-only *status* verb is status-as-data: it exits 0 in every state, and the JSON on stdout is the answer.** The vocabularies above key *the outcome of doing something*; a verb that only reports the state of an artifact the CLI itself wrote has no such outcome to key. `plugin/bin/verify.js --stamp-status` (#1921) is the shipped instance — its header states the rule outright (\"Status is data, never a failure — exit 0 in every case, including 'no checkout at all'\") — and it prints `{present, match, …}` whether the pass stamp is absent, present-but-mismatched, or unreadable because there is no git dir to read from. Spending a non-zero code on \"absent\" would force every consuming skill to reimplement the state machine in shell, and a sibling reading that code as \"not verified\" is exactly the misread it prevents. Two constraints keep the exemption honest: malformed invocation of the status verb still throws into the vocabulary's usage code (`--stamp-status` rejects `--cmd`, `--scope`, `--base`, `--integration-branch`), and the exemption is declared in the CLI's own `USAGE` alongside its other modes so a reader sees which verbs it covers.\n- **A guard added to an existing `run(argv, deps)` reaches the environment through `deps` too.** The seam above is stated as \"every side effect\", so an argument-validation *read* — `process.cwd()`, a git-root probe, a stat — reads as exempt and gets called directly. It isn't. `plugin/bin/materialize.js`'s `--run-dir` anchoring guard (#790) shipped calling `plugin/bin/lib/hooks/worktree-detect.js`'s `isAnchoredUnderRoot` directly while the `cwd`/`mainRoot` calls beside it were already injected; only a review lens caught the one-of-three gap. A validation guard bolted onto an already-seamed CLI is exactly where the seam gets holed, because it doesn't feel like a side effect — inject it (`deps.cwd`, `deps.mainRoot`, `deps.isAnchored`) as you write it, and add the fake to every consuming test's deps object in the same commit.\n- **A run-directory argument gets one of four boundary guards; pick before writing the check.** `plugin/skills/_shared/pipeline-run-dir.md`'s CLI-argument-boundary section is canonical and enumerates all four itself (\"Four shapes live at this boundary\"); this bullet is the `bin/`-side summary, never a second registry. **(1) Pipeline-owned binaries** (`hooks.js`, `wrap-up-engine.js`, `materialize.js`, `apply-refine-labels.js`) refuse any value not anchored under the main checkout and exit 2. **(2) The two resolver CLIs** (`plugin/bin/resolve-profile.js`, `plugin/bin/resolve-policy.js`, #1065) call `worktree-detect.js`'s `checkRunDirAnchoredOrOutside` — a resolved path inside any checkout must be anchored, a path outside every checkout is accepted as-is — and exit 1, their own documented invocation-failure code. **(3) The *Sanctioned-writer* family above** (`log-decision.js`, `stage-item.js`, `set-config.js`) applies the same strict anchoring, but through `plugin/bin/lib/stage-item/write.js`'s exported `resolveTarget` rather than `worktree-detect.js` directly, and refuses with exit **3**, not 2. Import that `resolveTarget` when you add a fourth writer instead of re-deriving the predicate — `set-config.js` (#1376) does, on its record's own instruction — and pin the refusal with a fixture carrying both a real main-checkout run dir and a worktree-local shadow of it, asserting the shadow's file is byte-unchanged after the exit 3. **(4) The composer CLI** (`plugin/bin/compose-context.js`, #1988) is a run-directory *writer* (`{run}/context/{step}.md`) that nonetheless takes the *resolver* family's anchored-or-outside rule — through `plugin/bin/lib/run-dir-guard.js`'s `anchoredOrOutsideMessage`, the shared message renderer the two resolvers already call — and rejects with exit **2**, its malformed-invocation code, not 3. Strict is the default; anchored-or-outside needs a *documented* legitimate outside-repo use, and shape 4's is narrow enough to be non-precedential: its callers never branch on a run-dir code (a skill step's documented fallback on any non-zero exit is to read the named source files directly), and its tests spawn the real binary against tmp-root fixtures outside any checkout, the same documented use the resolvers have. A fifth writer inherits shape 4's reasoning only if its own callers share it; otherwise shape 3 is the default. The deps-injection rule above is scoped to binaries that already have a path-handling seam: the two resolvers are `main(argv)` CLIs with none, so their guard calls `worktree-detect` directly and is tested by spawning the real binary against `tests/helpers/git-fixtures.js` repos rather than by a fake — `compose-context.js` does have the seam and injects every path-handling call through it (`deps.cwd`, `deps.mainRoot`, `deps.isDirectory`, `deps.anchoredOrOutsideMessage`), which is the shape a new run-dir-taking CLI should copy.\n- **A sanctioned writer that read-modify-writes a shared file guards it; a create-only writer doesn't.** The *Sanctioned-writer* family above splits on write shape, not on file type. `plugin/bin/lib/log-decision/append.js`'s `appendEntry` read-modify-writes one shared `decisions.md` that concurrent `bin/log-decision.js` processes contend for, so it runs the whole read-modify-write-rename under `plugin/bin/lib/file-lock.js`'s `withLock` (mkdir-based, best-effort/fail-open — a lock it can't acquire in `LOCK_WAIT_MS` proceeds unlocked rather than hanging the caller) and renames a per-process `decisions.md.tmp-${process.pid}` over the target, so a concurrent reader never sees a torn file even when the lock was missed (#816). `plugin/bin/lib/stage-item/write.js` needs neither: it creates `staged/<id><ext>` at a per-item path, so there is no read-modify-write to lose. **The family's third member is guarded by neither, and the bullet above does not classify it:** `plugin/bin/lib/set-config/write.js`'s `setConfigLever` read-modify-writes the shared `config.yml` (replace the key's line, drop later duplicate lines, append when absent) through a bare `fs.writeFileSync` — no `withLock`, no tmp+rename. That is tolerable only because `config.yml` has no concurrent multi-process writer the way `decisions.md` does: the Manifesto writes it once per run, and the ceremony escape hatch downgrades a single lever in place later in that same run. #1580's `--set` batch form narrows the margin rather than widening it — it runs the whole read-modify-write once per lever in a sequential loop (13 rewrites for a full Manifesto), so a downstream `bin/resolve-policy.js --run` read racing that loop can land between two rewrites, and `writeFileSync`'s truncate-then-write opens a short-read window on each one. Before adding a second concurrent writer of `config.yml`, or widening the batch further, give `setConfigLever` the same `withLock` + tmp+rename pairing `appendEntry` already has. The pairing is the repo's established shape for a contended bookkeeping file — `plugin/bin/lib/hooks/context.js` (run-state.json), `plugin/bin/lib/flow/manifest.js` (manifest.yml, tmp+rename only), `plugin/bin/lib/json-store.js`, and `plugin/bin/lib/declined-learning/store.js` all ship some combination of it — but it is documented only in `file-lock.js`'s own header, so a new writer copied from a sibling silently inherits whichever half that sibling happened to have. Decide the shape before writing the file, and reuse `withLock` rather than hand-rolling a second mutex.\n- When an endpoint has no GitHub MCP equivalent, say so and name the real fallback; never invent an MCP row in `plugin/skills/_shared/github-write-transport.md`.\n- **Hoist a warning-emitting check ahead of the destructive call it warns about, not after.** `plugin/bin/repair-claim.js` (commit `387b53f4e`, spec #1608 Finding 3) and `plugin/bin/release-claim.js` (spec #1710) both shipped the same bug independently: `resolveTarget` — the run-dir anchoring check whose stderr warning tells an operator `decisions.md` will not be written — ran *after* the CLI's own destructive write (`repair`/`release.releaseClaim`), so the warning arrived only once the irreversible part was already done. Both fixes were pure reorderings — compute `resolveTarget` (and emit its warning) before the destructive call, leave `formatEntry`/`appendEntry` after it since they need the outcome. Two independent CLIs shipping the identical ordering mistake is a pattern, not a coincidence: when a CLI on this seam pairs a destructive write with a warning about why its own audit trail might not land, write the warning-emitting check first.\n\n```\n\n**Proposed:**\n```\n## The CLI wrapper contract\n\nSee `cli-wrapper-contract.md` in this skill's directory for the CLI dispatcher pattern, exit-code vocabularies (Combined-2 / Split-1/2 / Sanctioned-writer), and the four run-directory boundary-guard shapes bin/ CLI wrappers must follow.\n\n```\n\n## Acceptance Criteria\n\ngh-api-module-pattern/SKILL.md is 55401 B, 9321 B over the 46080 B (45 KB) soft ceiling that bin/lib/skill-audit/bloat.js enforces for skill files loaded in full on every invocation; extract its largest self-contained section (\"The CLI wrapper contract\", 16416 B) into a new lazy-loaded sub-file `cli-wrapper-contract.md` alongside SKILL.md, leaving a short pointer stub in its place, and update SKILL.md's frontmatter description (already treats CLI-wrapper-contract content as a distinct governed concern for shell-out-to-nothing CLIs) to note the sub-file split. Acceptance: SKILL.md back under the 46080 B ceiling, cli-wrapper-contract.md created with the exact extracted content, and any skill/doc citing individual CLI-wrapper-contract bullets still resolve.\n\n_Filed by `/claude-tweaks:harness-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n\n<!-- work-fingerprint: harnesshealth-eb0b7f33 -->\nwork-fingerprint: harnesshealth-eb0b7f33",
+        "createdAt": "2026-09-17T05:13:43Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
+            "name": "size:high",
+            "description": "Scoring: large change — consider decomposition before building",
+            "color": "BFD4F2"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Risk: medium blast radius",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACvj9UVg",
+            "name": "by:harness-health",
+            "description": "",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACvkQZvw",
+            "name": "harness-health:restructural",
+            "description": "",
+            "color": "ededed"
+          }
+        ],
+        "number": 2539,
+        "state": "OPEN",
+        "title": "Skill best-practice: gh-api-module-pattern — The CLI wrapper contract",
+        "updatedAt": "2026-09-19T22:46:58Z",
+        "facets": {
+          "origin": "harness-health",
+          "risk": "medium",
+          "size": "high",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Origin: ledger resolve gate (wrap-up, record #2436)\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nWhile fixing #2436's two whole-file test crashes (`tests/shaping-mode-needs-removal.test.js`,\n`tests/tidy-needs-worklist-rule.test.js` — both called `execFileSync('git', ['show', {historical-sha}:{path}])`\nunguarded at module-load time, crashing the whole file in a shallow/partial clone where the\nhistorical commit is unreachable), this run's wrap-up Docs curation pass found 5 more test files\nwith the same unguarded `execFileSync('git', ['show', ...])` idiom:\n\n- `tests/session-limit-degrade-conformance.test.js` (line 30, called at lines 98/104)\n- `tests/needs-worklist-rule-cross-consumer.test.js` (line 26, called at lines 64/78)\n- `tests/untrusted-record-content-conformance.test.js` (line 275, called via `assertGoRedAbsent`)\n- `tests/demo-visual-decision-adoption.test.js` (line 29, called via `countAtPreChange`)\n- `tests/demo-full-verification-pointer.test.js` (line 26, called via `countAtPreChange`)\n\nVerified independently (not merely cited from the judge agent's report, which originally\nmischaracterized these as \"crash-prone\" like #2436's bug): in all 5 files, every one of these\n`execFileSync` calls sits *inside* a `test(..., () => {...})` callback, not at module top level.\nnode --test isolates a throw inside a test callback to that one test — so in a shallow clone,\neach of these tests would FAIL outright (a real, misleading red in an environment where the\ncurrent code is fine), not crash the whole file the way #2436's bug did. Lower blast radius than\n#2436, but the same root cause and the same false-negative-CI risk in a shallow/partial clone.\n\n## Deliverables\n\n- [ ] For each of the 5 files, apply the same guard pattern #2436 established: wrap the\n      `execFileSync('git', ['show', ...])` read in try/catch; on failure, skip only the specific\n      test(s) that depend on that read via node:test's `{ skip: reason }` option (stating the\n      real underlying git error), rather than letting the assertion fail with a misleading\n      \"assertion failed\" message that obscures the actual cause (unreachable historical commit).\n\n## Acceptance Criteria\n\n1. Each of the 5 files' historical git-show read is guarded the same way #2436's fix guards its\n   two files.\n2. A `--depth 1` shallow clone of this repo degrades each of these 5 files' affected test(s) to a\n   skip with a stated reason, instead of a hard failure.\n3. `npm test` as a normal user on this checkout stays green throughout (no regression to the\n   full-history pass path).\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
+        "createdAt": "2026-09-16T23:39:33Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          }
+        ],
+        "number": 2532,
+        "state": "OPEN",
+        "title": "5 test files fail outright (not skip) in a shallow-clone sandbox on an unguarded historical git-show read",
+        "updatedAt": "2026-09-19T22:46:56Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
         }
       }
     ],
