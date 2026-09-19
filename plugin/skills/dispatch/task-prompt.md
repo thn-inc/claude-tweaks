@@ -213,15 +213,19 @@ section already describes for ordinary `pending-review` parking.
 
 Working directory: the dispatching session is still in this group's worktree (unchanged since
 the first call) -- you inherit it. Do NOT create, enter, or switch worktrees, and do not invoke
-/superpowers:using-git-worktrees. Worktree removal and run-dir archival are the dispatching
-session's responsibility, not yours -- do NOT call `ExitWorktree` or `git worktree remove`,
-and do NOT archive the run directory yourself, on any outcome (merged, armed, pending-review,
-ready-to-merge, failed, or blocked): this call inherited the worktree without ever entering it
-(no `EnterWorktree` of its own), so it structurally cannot tear it down, and the run dir's
-fate is settled by whichever integration path your OUTCOME resolves to below, never by an
-explicit teardown step here. Echo `pwd` and `git rev-parse --show-toplevel` before any
-commit and verify both resolve to that inherited worktree; if they resolve to the main
-checkout instead, STOP and report BLOCKED.
+/superpowers:using-git-worktrees. Worktree removal is the dispatching session's responsibility,
+not yours -- do NOT call `ExitWorktree` or `git worktree remove`, on any outcome (merged, armed,
+pending-review, ready-to-merge, failed, or blocked): this call inherited the worktree without
+ever entering it (no `EnterWorktree` of its own), so it structurally cannot tear it down,
+regardless of outcome. Run-dir archival follows that same "not yours" rule with exactly one
+exception: `merged` under `integration-model: pr-first`, where you complete claim release and
+run-dir archival yourself as part of the merge procedure you run in this same call (see the
+`integration-model: pr-first` outcome-vocabulary paragraph below). On every other outcome --
+`armed`, `pending-review`, `ready-to-merge`, `failed`, or `blocked` -- do NOT archive the run
+directory yourself: its fate is settled by whichever integration path your OUTCOME resolves to
+below, never by an explicit teardown step here. Echo `pwd` and `git rev-parse --show-toplevel`
+before any commit and verify both resolve to that inherited worktree; if they resolve to the
+main checkout instead, STOP and report BLOCKED.
 If your first commit is denied by the working-directory hook even though `pwd` and
 `git rev-parse --show-toplevel` both resolve to the worktree above, re-stamp the run's worktree
 assignment once with `node "{plugin-root}/bin/hooks.js" record-worktree --run "<RUN_DIR>" "<WORKTREE>"`
