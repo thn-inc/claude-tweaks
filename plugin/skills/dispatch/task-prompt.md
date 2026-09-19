@@ -212,12 +212,12 @@ or for the retry ceiling to escalate it, the same disposition `dispatch/SKILL.md
 section already describes for ordinary `pending-review` parking.
 
 Working directory: the dispatching session is still in this group's worktree (unchanged since
-the first call) -- you inherit it. Do NOT create, enter, or switch worktrees, and do not invoke
+the first call) -- you inherit it. Do NOT create, enter, or switch worktrees, and do NOT invoke
 /superpowers:using-git-worktrees. Worktree removal is the dispatching session's responsibility,
 not yours -- do NOT call `ExitWorktree` or `git worktree remove`, on any outcome (merged, armed,
 pending-review, ready-to-merge, failed, or blocked): this call inherited the worktree without
-ever entering it (no `EnterWorktree` of its own), so it structurally cannot tear it down,
-regardless of outcome. Run-dir archival follows that same "not yours" rule with exactly one
+ever entering it (no `EnterWorktree` of its own), so it structurally cannot tear it down. Run-dir
+archival follows that same "not yours" rule with exactly one
 exception: `merged` under `integration-model: pr-first`, where you complete claim release and
 run-dir archival yourself as part of the merge procedure you run in this same call (see the
 `integration-model: pr-first` outcome-vocabulary paragraph below). On every other outcome --
