@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-19T20:16:06.885Z",
+  "computedAt": "2026-09-19T20:57:54.551Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -15,7 +15,7 @@
       },
       {
         "number": 2540,
-        "updatedAt": "2026-09-19T13:44:35Z",
+        "updatedAt": "2026-09-19T20:18:14Z",
         "state": "OPEN"
       },
       {
@@ -445,96 +445,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`/claude-tweaks:specify`'s Step 2.5b-ii variant exploration (layout tournament → single-scaffold `live`) is mandatory ceremony on every frontend decomposition, `explore` always skips on a current Impeccable install, and the `live` fallback is far heavier than the change it is offered for. Concretely, on a decomposition whose one frontend phase was a copy-and-ticks change inside an already-shipped fieldset (a third window axis on an existing slider component): (1) `explore --scope layout` skipped because `impeccable-plugin.md` pins `impeccable-plugin@4.0.2` while the cache held 4.1.1 and 4.3.1 — the tournament can never run for anyone on a current Impeccable release, yet the offer is still presented as \"Recommended\" before the availability check runs; (2) the fallback `live` path then required writing a throwaway scaffold, starting an ephemeral static server, and booting Impeccable's live helper, which injected a `<script src=\"http://localhost:8400/live.js?token=...\">` tag into BOTH tracked scaffold files under `docs/plans/` (not just the new one), plus a background `live-poll` loop and a human in a browser — for a change whose whole visual delta was two slider captions, a floor sentence, and two tick labels; (3) `_shared/policy-schema.md` has no key governing Step 2.5b-ii, so the only way to avoid both prompts is to answer \"Skip\" every time.\n\n## Deliverables\n\n- [ ] Add a policy key (`design-variant-exploration: off|offer`, default `off`) to `_shared/policy-schema.md` that skips Step 2.5b-ii entirely when set to `off`, so projects that only want `shape`/`critique`/`audit` never see the tournament or scaffold-live offers\n- [ ] Run the exact-pin availability check in `design-wrapper`'s `explore` mode BEFORE offering it in `specify/design-pre-steps.md` Step 2.5b-ii, and omit the option (or mark it unavailable, naming the installed vs. pinned versions) when it cannot run, instead of recommending it\n- [ ] Scope `live-inject` (`design-wrapper`'s `live` mode) to the scaffold the session was booted with (`--target`), not every page file it can find under the scaffold directory\n\n## Acceptance Criteria\n\n- [ ] With `design-variant-exploration: off` (the new default), Step 2.5b-ii's tournament and scaffold-live offers never fire during decomposition\n- [ ] With the policy at `offer`, `explore` is only presented as an option when the exact-pin availability check already passed — an unavailable pin shows as unavailable (naming the versions), never as \"Recommended\"\n- [ ] `live-inject` only modifies the scaffold file the session was booted against, never other tracked files under the scaffold directory\n- [ ] `npm test` passes, including new coverage for the policy key and the reordered availability check\n\n## Technical Approach\n\nAdd `design-variant-exploration` to `_shared/policy-schema.md`'s schema (default `off`) and gate `specify/design-pre-steps.md`'s Step 2.5b-ii on it before any tournament/live offer is rendered. In `design-wrapper`'s `explore` mode, move the exact-pin `resolveImpeccablePlugin` availability check ahead of the option-presentation logic so an off-pin install is surfaced as unavailable (with both installed and pinned versions named) rather than as a recommended-but-silently-skipping option. In `live` mode, scope the live-inject step to the `--target` scaffold path explicitly rather than scanning the whole scaffold directory for injectable page files.\n\n### Key Files\n\n- `plugin/skills/_shared/policy-schema.md` — add the `design-variant-exploration` key\n- `plugin/skills/specify/design-pre-steps.md` — gate Step 2.5b-ii on the new policy key\n- `plugin/skills/design-wrapper/modes/explore.md` (and its availability-check call site) — reorder the exact-pin check ahead of option presentation\n- `plugin/skills/design-wrapper/modes/live.md` — scope `live-inject` to `--target` only\n\n## Gotchas\n\n- The policy default (`off`) is a behavior change for existing projects that never explicitly opted into variant exploration — confirm this matches what most installs already effectively get today (the tournament already always skips on a current Impeccable pin per the observed evidence, so `off` mostly formalizes existing behavior rather than removing a working feature).\n- Reordering the availability check must not silently swallow a *different* kind of `explore` failure (a transport/exec error) as \"unavailable\" — keep the two failure classes distinguishable in the rendered message.\n\n## Original request\n\nspecify Step 2.5b-ii: variant exploration (explore/live) is mandatory ceremony with no policy off-switch; explore always skips on current Impeccable\n\n**Summary:** `/claude-tweaks:specify`'s Step 2.5b-ii variant exploration (layout tournament → single-scaffold `live`) is mandatory ceremony on every frontend decomposition, `explore` always skips on a current Impeccable install, and the `live` fallback is far heavier than the change it is offered for.\n\n**Kind:** Gap\n\n**Affected component:** `skills/specify/design-pre-steps.md` Step 2.5b-ii (and `skills/design-wrapper` `explore`/`live` modes)\n\n**Use case:** Decomposing a design doc whose one frontend phase is a copy-and-ticks change inside an already-shipped fieldset (a third window axis on an existing slider component). After the shape brief was confirmed, Step 2.5b-ii asked two more questions (layout tournament, then the single-scaffold offer) before decomposition could continue. What happened on this machine:\n\n1. `explore --scope layout` skipped: `impeccable-plugin.md` pins `impeccable-plugin@4.0.2`, the cache held 4.1.1 and 4.3.1, so the tournament can never run for anyone on a current Impeccable release. The offer is still presented as \"Recommended\" before the availability check runs.\n2. The fallback `live` path then required: writing a throwaway scaffold, starting an ephemeral static server, booting Impeccable's live helper (which injected a `<script src=\"http://localhost:8400/live.js?token=...\">` tag into BOTH tracked scaffold files under `docs/plans/`, not just the new one), a background `live-poll` loop, and a human in a browser — for a change whose whole visual delta is two slider captions, a floor sentence and two tick labels. The user's reaction was to ask for the live integration to be removed from the project entirely.\n3. There is no policy lever to turn the step off: `_shared/policy-schema.md` has no key governing Step 2.5b-ii, so the only way to avoid the two prompts is to answer \"Skip\" every time.\n\nRequested:\n- A policy key (e.g. `design-variant-exploration: off|offer`, default `off`) that skips Step 2.5b-ii entirely, so projects that only want `shape`/`critique`/`audit` never see the tournament or scaffold-live offers.\n- Run the exact-pin availability check BEFORE offering `explore`, and omit the option (or mark it unavailable, naming the versions) when it cannot run, instead of recommending it.\n- Scope `live-inject` to the scaffold the session was booted with (`--target`), not every page file it can find under the scaffold directory.\n\n**Definition:** Clear\n\n**Plugin version:** 6.123.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-117eb494 -->\n",
-        "createdAt": "2026-09-17T08:38:12Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2540,
-        "state": "OPEN",
-        "title": "specify Step 2.5b-ii: variant exploration (explore/live) is mandatory ceremony with no policy off-switch; explore always skips on current Impeccable",
-        "updatedAt": "2026-09-19T13:44:35Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
