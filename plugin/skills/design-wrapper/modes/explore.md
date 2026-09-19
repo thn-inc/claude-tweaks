@@ -37,6 +37,20 @@ The genesis worlds tournament renders CSS skins over an HTML scaffold in a brows
 
 **Availability** is exact-pin `resolveImpeccablePlugin`, `doctor`-class — not the looser skill-resolution check `review`/`shape`/`polish`/`live` use. `concept-seed.mjs` is a bundled script that does not exist at every plugin version satisfying skill resolution (`../impeccable-plugin.md`'s "The pin is not pedantry"), so never glob the plugin cache directly, and never treat a resolved `/impeccable:impeccable*` skill as proof the script is present.
 
+## Availability (exact-pin, checked before any option is presented)
+
+Run this immediately after Preconditions, before Scope resolution's `PRODUCT.md` offer below — never after, and never deferred to Deal and derive's own resolve call. A caller (`specify/design-pre-steps.md` Step 2.5b-ii) may already have run this same check on its own side before ever offering the tournament; when it has, this mode still re-confirms rather than trusting an unvalidated caller claim, but the two checks read the identical fact and cannot disagree.
+
+Call `resolveImpeccablePlugin({searchRoot})` per `../impeccable-plugin.md`'s Resolution procedure. On a miss (`null`), return immediately — before the `PRODUCT.md` check, before any `AskUserQuestion` call:
+
+```json
+{ "mode": "explore", "skipped": "Impeccable plugin not installed | Impeccable plugin {found} does not match the pinned {pinned}" }
+```
+
+naming every version found on a mismatch, per `impeccable-plugin.md`'s degradation table. On a hit, carry the resolved `{root, version}` forward — Deal and derive (both scopes) reuses this same result and never re-globs the cache within one invocation.
+
+This reorders what was previously an implicit resolve buried inside Deal and derive, reached only after Scope resolution and the `PRODUCT.md` offer had already run — so an off-pin install used to surface only after the user had already answered two upstream questions. Resolving it here means an unavailable pin is known before Scope resolution's own `PRODUCT.md` offer ever renders.
+
 ## Scope resolution
 
 A short table, run before any procedure step below. Layer 0's `hasDesign` signal is read per `../impeccable-plugin.md`; when Layer 0 degraded, fall back to a direct existence check for `DESIGN.md` at the project root.
@@ -65,7 +79,7 @@ Each step below carries a **stable heading name** — a later record reuses thes
 
 ### Deal and derive
 
-Resolve `concept-seed.mjs` via `resolveImpeccablePlugin` (reuse Layer 0's `root` when already resolved this invocation), then run:
+`concept-seed.mjs`'s path is `<root>/skills/impeccable/scripts/concept-seed.mjs`, where `<root>` is already resolved — by the `## Availability` section above, which now runs ahead of this step and ahead of Scope resolution's `PRODUCT.md` offer, never re-derived here. Then run:
 
 ```bash
 node "<root>/skills/impeccable/scripts/concept-seed.mjs" --scope direction --mode <mode>
