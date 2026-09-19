@@ -864,8 +864,9 @@ test('acceptance-labeling check passes when demo:pending label and a brief comme
   const fakeGh = (args) => {
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
-    if (args.includes('labels')) return JSON.stringify({ labels: [{ name: 'demo:pending' }] });
-    if (args.includes('comments')) return JSON.stringify({ comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+    if (args.includes('labels,comments')) {
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+    }
     return '';
   };
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
@@ -879,8 +880,8 @@ test('acceptance-labeling check fails when demo:pending label missing', () => {
   const fakeGh = (args) => {
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
-    if (args.includes('labels')) return JSON.stringify({ labels: [] });
-    return JSON.stringify({ comments: [] });
+    if (args.includes('labels,comments')) return JSON.stringify({ labels: [], comments: [] });
+    return '';
   };
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
@@ -923,8 +924,8 @@ test('acceptance-labeling check still fails a non-exempt issue when a sibling is
   const fakeGh = (args) => {
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
-    if (args.includes('labels')) return JSON.stringify({ labels: [] });
-    return JSON.stringify({ comments: [] });
+    if (args.includes('labels,comments')) return JSON.stringify({ labels: [], comments: [] });
+    return '';
   };
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
@@ -947,8 +948,9 @@ test('acceptance-labeling check resolves issue numbers from verify-expectations.
   const fakeGh = (args) => {
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
-    if (args.includes('labels')) return JSON.stringify({ labels: [{ name: 'demo:pending' }] });
-    if (args.includes('comments')) return JSON.stringify({ comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+    if (args.includes('labels,comments')) {
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+    }
     return '';
   };
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
@@ -964,18 +966,17 @@ test('acceptance-labeling check redirects to a resolvable parent, never checking
     calls.push(args);
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), 898);
-    if (args.includes('labels')) return JSON.stringify({ labels: [{ name: 'demo:pending' }] });
-    if (args.includes('comments')) return JSON.stringify({ comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+    if (args.includes('labels,comments')) {
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+    }
     return '';
   };
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'pass');
-  const labelCalls = calls.filter((a) => a.includes('labels'));
-  assert.strictEqual(labelCalls.length, 1);
-  assert.strictEqual(labelCalls[0][2], '898', 'the labels check must target the parent #898, not the sub-issue #900');
-  const commentCalls = calls.filter((a) => a[0] === 'issue' && a.includes('comments'));
-  assert.strictEqual(commentCalls[0][2], '898', 'the comments check must target the parent #898, not the sub-issue #900');
+  const issueCalls = calls.filter((a) => a[0] === 'issue' && a.includes('labels,comments'));
+  assert.strictEqual(issueCalls.length, 1);
+  assert.strictEqual(issueCalls[0][2], '898', 'the labels/comments check must target the parent #898, not the sub-issue #900');
 });
 
 test('acceptance-labeling check queries a shared parent exactly once for two sub-issues', () => {
@@ -987,17 +988,16 @@ test('acceptance-labeling check queries a shared parent exactly once for two sub
     calls.push(args);
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), 898);
-    if (args.includes('labels')) return JSON.stringify({ labels: [{ name: 'demo:pending' }] });
-    if (args.includes('comments')) return JSON.stringify({ comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+    if (args.includes('labels,comments')) {
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+    }
     return '';
   };
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'pass');
-  const labelCalls = calls.filter((a) => a.includes('labels'));
-  assert.strictEqual(labelCalls.length, 1, 'parent #898 must only be checked once despite two sub-issues resolving to it');
-  const commentCalls = calls.filter((a) => a[0] === 'issue' && a.includes('comments'));
-  assert.strictEqual(commentCalls.length, 1, 'parent #898 comments must only be fetched once');
+  const issueCalls = calls.filter((a) => a[0] === 'issue' && a.includes('labels,comments'));
+  assert.strictEqual(issueCalls.length, 1, 'parent #898 must only be checked once despite two sub-issues resolving to it');
   assert.strictEqual(row.detail, '');
 });
 
@@ -1008,12 +1008,14 @@ test('acceptance-labeling check passes via the pr-first pointer+brief form (full
   const fakeGh = (args) => {
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
-    if (args.includes('labels')) return JSON.stringify({ labels: [{ name: 'demo:pending' }] });
     if (args[0] === 'pr' && args[1] === 'view') {
       return JSON.stringify({ comments: [{ body: '<!-- run-comment: brief -->\n\n## Verification Brief\n### Confirmed\n' }] });
     }
-    if (args.includes('comments')) {
-      return JSON.stringify({ comments: [{ body: 'Verification Brief posted to PR #1199: https://github.com/org/repo/pull/1199' }] });
+    if (args.includes('labels,comments')) {
+      return JSON.stringify({
+        labels: [{ name: 'demo:pending' }],
+        comments: [{ body: 'Verification Brief posted to PR #1199: https://github.com/org/repo/pull/1199' }],
+      });
     }
     return '';
   };
@@ -1029,10 +1031,12 @@ test('acceptance-labeling check fails when the pr-first pointer is present but t
   const fakeGh = (args) => {
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
-    if (args.includes('labels')) return JSON.stringify({ labels: [{ name: 'demo:pending' }] });
     if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ comments: [] });
-    if (args.includes('comments')) {
-      return JSON.stringify({ comments: [{ body: 'Verification Brief posted to PR #1199: https://github.com/org/repo/pull/1199' }] });
+    if (args.includes('labels,comments')) {
+      return JSON.stringify({
+        labels: [{ name: 'demo:pending' }],
+        comments: [{ body: 'Verification Brief posted to PR #1199: https://github.com/org/repo/pull/1199' }],
+      });
     }
     return '';
   };
@@ -1422,8 +1426,9 @@ test('acceptance-labeling check runs its gh probe, issue view, and comments call
     calls.push({ args, cwd: callCwd });
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
-    if (args.includes('labels')) return JSON.stringify({ labels: [{ name: 'demo:pending' }] });
-    if (args.includes('comments')) return JSON.stringify({ comments: [{ body: '## Verification Brief\n### Confirmed' }] });
+    if (args.includes('labels,comments')) {
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed' }] });
+    }
     return '{}';
   };
   try {
