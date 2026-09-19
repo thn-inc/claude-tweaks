@@ -109,5 +109,5 @@ test('multispec-freshness.md unattended default still stops for a remaining-spec
   assert.match(section, /overlap reaches a remaining spec's `### Key Files`/, 'must still escalate on remaining-spec overlap');
   assert.match(section, /or the merge conflicts/, 'must still escalate on merge conflict');
   assert.match(section, /git merge --abort/, 'a conflicting auto-attempt must abort to restore the clean tree');
-  assert.match(section, /[Ss]omething broke.*fall through to `AskUserQuestion`/, 'a broken premise found during auto-revalidation must still escalate');
+  assert.match(section, /[Ss]omething broke.*route straight to option 1's own follow-up decision/, 'a broken premise found during auto-revalidation must still escalate to a human decision');
 });
