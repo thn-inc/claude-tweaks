@@ -92,6 +92,15 @@ checkout` or `git pull` in the shared checkout to accomplish this fast-forward �
 mirror-ff is the sanctioned, worktree-safe mechanism (it never merges, runs strict
 `--ff-only`, and needs no worktree guard).
 
+**Pushing the other direction.** When the main checkout's own `{integration-branch}` ends up
+*ahead* of `origin/{integration-branch}` (a local merge that combined a fetched update with
+local-only commits — this repo's own reconcile-archive commits are the recurring example), a
+plain `git push origin {integration-branch}` from the main checkout no longer needs a
+workaround: the worktree-always gate exempts a push of the integration branch when it is a
+provable fast-forward (no `--force`, no divergent history) — `#2542`'s fix. Anything short of a
+clean fast-forward — a force push, or a push the gate cannot prove is one — still denies and
+still needs a worktree.
+
 ## Post-creation catch-up
 
 For the rest of this session's lifetime inside the new worktree, the harness's Bash-shape guard

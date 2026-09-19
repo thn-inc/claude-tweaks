@@ -30,7 +30,7 @@ const {
 const ctxLib = require('./context');
 const policy = require('../policy');
 const wtDetect = require('./worktree-detect');
-const { resolveIntegrationBranch, preferRemoteTrackingRef } = require('./worktree-reap');
+const { resolveIntegrationBranch, preferRemoteTrackingRef, bareIntegrationName } = require('./worktree-reap');
 const { runGit, FAILURE } = require('./git-exec');
 const { detectIntegrationModel, resolvePolicyConfig } = require('../policy-schema');
 const { isPathContained } = require('../shared-primitives');
@@ -141,7 +141,7 @@ const GATE_COVERAGE = Object.freeze({
   exemptions: Object.freeze({
     paths: Object.freeze([`${toPosix(PIPELINE_STATE_DIR)}/`, toPosix(POLICY_FILE)]),
     commit: 'policy-only',
-    push: 'delete-only',
+    push: 'delete-only or ff-integration-branch',
     target: 'gitignored',
   }),
 });
@@ -344,6 +344,50 @@ const DELETE_ONLY_PUSH_ALLOWLIST = Object.freeze(new RegExp(
 
 function isDeleteOnlyPush(command) {
   return typeof command === 'string' && DELETE_ONLY_PUSH_ALLOWLIST.test(command);
+}
+
+// The integration-branch fast-forward push exemption (#2542): admits EXACTLY
+// `git push <remote> <branch>` — one remote, one branch, nothing else — no
+// `--force`/`-f`, no `+`-prefixed refspec, no `:`-refspec, no other flag, no
+// shell operator, no env-var prefix, no path to git other than the bare
+// word. Same default-deny-by-construction grammar as the delete-only
+// exemption above; unlike that one, this needs a live git query — a
+// fast-forward is a fact about ref state, not something the command text
+// alone can prove.
+const INTEGRATION_BRANCH_PUSH_RE = Object.freeze(new RegExp(
+  `^\\s*git\\s+push\\s+(${CQ_ARG})\\s+(${CQ_ARG})\\s*$`,
+));
+
+function unquoteCqArg(raw) {
+  if (raw.length >= 2) {
+    if (raw[0] === "'" && raw[raw.length - 1] === "'") return raw.slice(1, -1);
+    if (raw[0] === '"' && raw[raw.length - 1] === '"') return raw.slice(1, -1);
+  }
+  return raw;
+}
+
+// Only a push of the CANONICAL integration branch qualifies, resolved the
+// same way the materialize-commit range check below resolves it (policy
+// `integration-branch:` key, else a local main/master probe) — never
+// re-derived from the command text, so a command naming some OTHER branch is
+// correctly left to fall through to the deny below on its own, by simple
+// name mismatch. No remote-tracking ref to compare against, or the branch is
+// not actually an ancestor of it (not provably a fast-forward) — not exempt,
+// the same fail-closed posture as every other check in this file.
+function isIntegrationBranchFastForwardPush(command, cwd) {
+  if (typeof command !== 'string') return false;
+  const m = command.match(INTEGRATION_BRANCH_PUSH_RE);
+  if (!m) return false;
+  const remote = unquoteCqArg(m[1]);
+  const branch = unquoteCqArg(m[2]);
+  if (remote !== 'origin') return false;
+  const bound = resolveIntegrationBranch(cwd) || resolveLocalDefaultBranchBound(cwd);
+  if (!bound || branch !== bareIntegrationName(bound)) return false;
+  const remoteRef = `refs/remotes/origin/${branch}`;
+  const { failure: refMissing } = runGit(['rev-parse', '--verify', '--quiet', remoteRef], cwd);
+  if (refMissing) return false;
+  const { failure } = runGit(['merge-base', '--is-ancestor', remoteRef, branch], cwd);
+  return !failure;
 }
 
 // Kept returning `string | null` — E1's own callers below compare toplevels for
@@ -855,6 +899,14 @@ function checkWorktreeRequired(ctx, precomputedGitTargets, indeterminateTargets 
     // resolved from a 'push' action, and only when the ENTIRE command
     // matches the allowlist grammar above.
     if (action === 'push' && isDeleteOnlyPush(bashCommand)) continue;
+    // The integration-branch fast-forward push exemption (#2542): ONLY for a
+    // target this loop resolved from a 'push' action, and only when the
+    // entire command matches the allowlist grammar above AND a live query
+    // proves it a fast-forward of the canonical integration branch. Reuses
+    // `ctx.cwd`, not `targetPath`, for the same reason `isPolicyOnlyCommit`
+    // does just above: `targetPath` here is the command's working directory,
+    // not a file.
+    if (action === 'push' && isIntegrationBranchFastForwardPush(bashCommand, ctx.cwd)) continue;
 
     // Breadcrumb for the residue sweep's judgment class (#185, Task 12) —
     // scoped to ctx.ownedRun, NEVER ctx.runDir: this gate fires before any
