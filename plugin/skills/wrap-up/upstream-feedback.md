@@ -23,15 +23,25 @@ The stage file holds the fully drafted **and already scrubbed** body. Scrubbing 
 time, not at filing time — the approver reads what will actually be published, and a body scrubbed
 later is a body nobody approved.
 
+**Causal-verdict tag (#2551).** When the learning being staged carries a `CAUSAL: systemic`
+verdict from reflect's Near-misses chain-walk (`full-mode.md`'s Near-misses Chain Walk section),
+prepend a `**Causal:** systemic` line to the staged draft body, before the drafted content —
+`review-console.md`'s Step 9 reads this line to decide the item's "Approve all" default (below).
+Omit the line entirely when the learning carries no causal verdict (most D5 findings won't —
+the chain-walk is Near-misses-specific), the same omit-when-absent convention `SKILL.md`'s own
+Causal column already uses. Also note it in the `STAGED` line above: append `; causal: systemic`
+after the stage-path parenthetical when the tag applies, omitted otherwise.
+
 Filing happens on approval, at `review-console.md`'s **On approval step 9** — that is what invokes
 `/claude-tweaks:feedback --pre-confirmed` for each checked `U#` row. The console's own *Upstream
 feedback section* does not file directly. Filing follows `_shared/auto-mode-card.md` /
 `_shared/auto-mode-contract.md`'s tiered stance: at `supervised`/`trusted`, this row (`U#`) is
-covered by the Review Console's batch "Approve all" — it files by default with zero further
-`AskUserQuestion` calls. At `unattended`, it auto-resolves the same way under `consoleAutoResolve`.
-Per-item chunking (inspect each scrubbed draft via `_shared/upstream-feedback-batch.md`'s
-unchecked-by-default `multiSelect` drill before checking it to file) survives only inside the
-Override drill — never as part of "Approve all". Phase 4's execution step files nothing either —
-it only confirms the filing landed; see `execution-and-verification.md`. The scrub gate (Step 2
-above) still runs in every mode regardless of tier — only the filing approval itself follows the
-tiered stance.
+covered by the Review Console's batch "Approve all" — it defaults to filed when the staged draft
+carries the `**Causal:** systemic` tag above, else it defaults to declined, with zero further
+`AskUserQuestion` calls either way. At `unattended`, it auto-resolves to filed unconditionally
+(causal tag or not) under `consoleAutoResolve`. Per-item chunking (inspect each scrubbed draft via
+`_shared/upstream-feedback-batch.md`'s unchecked-by-default `multiSelect` drill before checking it
+to file) survives only inside the Override drill — never as part of "Approve all". Phase 4's
+execution step files nothing either — it only confirms the filing landed; see
+`execution-and-verification.md`. The scrub gate (Step 2 above) still runs in every mode regardless
+of tier — only the filing approval itself follows the tiered stance.
