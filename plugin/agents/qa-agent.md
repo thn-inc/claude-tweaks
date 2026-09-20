@@ -68,9 +68,8 @@ playwright-cli -s=<story-id> tracing-start
 Recording must start here, before any step runs — `tracing-stop` (Section 6 Step 1) can only save what was recorded, and a failure with no recording started yields no trace.
 
 d. **Set viewport.** Use the story's `**Viewport:**` value when specified; otherwise default to `1440x1600` — a below-the-fold control (e.g. a form's conditional fields expanding the page) is otherwise unreachable, since `click`/`find` never auto-scrolls a target into view (`skills/browse/playwright-cli-reference.md`'s Operation vocabulary note). The flag is cross-platform — no shell-specific env-var workarounds needed.
-<!-- playwright-cli: `set viewport` has no row in playwright-cli-reference.md's Operation vocabulary table — out of scope for #2645 (see its Non-Goals), left untranslated -->
 ```
-agent-browser --session <story-id> set viewport <width> <height>
+playwright-cli -s=<story-id> resize <width> <height>
 ```
 
 e. **Apply auth** before any interactive step:
