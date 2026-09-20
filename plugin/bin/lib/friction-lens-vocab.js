@@ -13,6 +13,12 @@ const FRICTION_EVENT_TYPES = Object.freeze([
   'bookkeeping-stamp-deny',
   'contract-violation',
   'ask-user-question',
+  // #2282: worktree-isolation-guard refusals that previously left no
+  // friction-event trace at all — checkTeardownGate's own-cwd-removal deny
+  // and checkPipelineShadowGuard's shadow-run-dir-creation deny (both in
+  // bin/lib/hooks/pre-tool-use.js), neither of which is checkWorktreeRequired's
+  // own already-logged gate-denial path.
+  'wd-guard-refusal',
   // #2345: a verdict/findings/pass-fail claim from an agent whose transcript
   // carries zero tool-use blocks — a failed dispatch, never evidence.
   'zero-tool-use-verdict',

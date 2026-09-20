@@ -14,6 +14,7 @@ const ROOT = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
 const SUMMARY = read('plugin', 'skills', 'flow', 'summary-template.md');
 const AUTHORING = read('docs', 'skill-authoring.md');
+const GATE = read('plugin', 'skills', '_shared', 'release-recommendation-gate.md');
 
 test('skill-authoring.md: Next Actions convention names the premise-verification rule for state-changing options', () => {
   assert.match(
@@ -23,22 +24,32 @@ test('skill-authoring.md: Next Actions convention names the premise-verification
   assert.match(AUTHORING, /the option is omitted entirely when that check didn't run/);
 });
 
-test('summary-template.md: the release row is conditional and mutually exclusive on the ancestry check result', () => {
-  assert.match(SUMMARY, /Render only when the project has a documented release procedure/);
-  assert.match(SUMMARY, /never render a release row from an unverified premise, and never render one at all when the check couldn't run/);
-  assert.match(SUMMARY, /not yet in a release — bump pending.*cut the release/s);
-  assert.match(SUMMARY, /already shipped in vX\.Y\.Z, backfill the CHANGELOG/);
+// #2257: the release row's own gating moved from summary-template.md's inline
+// ancestry-check prose to the shared `_shared/release-recommendation-gate.md`
+// file (byte-budget pressure on summary-template.md and reuse across
+// flow/multispec-summary.md and wrap-up/SKILL.md) — pin the gate file itself
+// for the premise-verification substance, and summary-template.md only for
+// citing it.
+
+test('summary-template.md: the release row cites the shared gate file, never rendering from an unverified premise itself', () => {
+  assert.match(SUMMARY, /_shared\/release-recommendation-gate\.md/);
 });
 
-test('summary-template.md: the release row cites the #678 release-status subcommand as its source, falling back to inline git commands', () => {
-  assert.match(SUMMARY, /reuse that value verbatim rather than re-running the check/);
-  assert.match(SUMMARY, /no `plugin\/bin\/release\.js status`-shaped subcommand.*render the row from the two inline git commands/s);
-  assert.match(SUMMARY, /git merge-base --is-ancestor <merge> <newest-bump-commit>/);
+test('release-recommendation-gate.md: gates on the preflight pack\'s unreleased field, never an unverified premise', () => {
+  assert.match(GATE, /release-preflight\.json/);
+  assert.match(GATE, /unreleased/);
+  assert.match(GATE, /#680/);
+  assert.match(GATE, /never recommend from an unverified premise/);
+  assert.match(GATE, /no preflight pack was produced for this run/);
 });
 
-test('summary-template.md: neither release-row form is unconditionally Recommended', () => {
+test('release-recommendation-gate.md: a degraded (ok: false) unreleased field omits the row, distinct from an empty commits array', () => {
+  assert.match(GATE, /\{ok: false, error: \.\.\.\}.*Omit/);
+  assert.match(GATE, /\{ok: true, value: \{commits: \[\]\}\}.*Omit/);
+});
+
+test('summary-template.md: the release row is never unconditionally Recommended', () => {
   assert.match(SUMMARY, /is never marked `\(recommended\)` while `\/claude-tweaks:flow \{next spec\}` is present/);
-  assert.match(SUMMARY, /the "backfill the CHANGELOG" form is never marked `\(recommended\)`/);
 });
 
 test('summary-template.md: Next Actions still documents assembling only applicable lines, base 2 plus conditionals', () => {

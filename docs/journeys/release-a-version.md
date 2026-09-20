@@ -50,4 +50,5 @@ files:
 ## Origin
 - Created during build of #2256 (record: The `/claude-tweaks:release` skill)
 - Steps 1-4 built in this session
-- Related specs: #2254 (local engine), #2255 (preflight pack), #2257 (lifecycle wiring — will retire `release-a-plugin-version.md` in favour of this journey), #2258 (release train Routine), #2250 (design)
+- Renamed from `release-a-version-2256.md` by #2257 (lifecycle wiring) — this is the payload's own release journey, for any consuming project using `/claude-tweaks:release`. It does **not** replace `release-a-plugin-version.md`: this repo's own release still runs through `plugin/bin/release.js <minor|patch>` (a genuinely different, still-active mechanism — `docs/releasing.md` — until this repo migrates onto the shipped path, #2259, a deliberate future decision, not a default). An earlier draft of this note assumed that file would retire here; empirically it does not.
+- Related specs: #2254 (local engine), #2255 (preflight pack), #2258 (release train Routine), #2250 (design)
