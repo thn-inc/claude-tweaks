@@ -142,5 +142,9 @@
   "skill:browse": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1789893217022
+  },
+  "skill:init": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1789893220478
   }
 }
