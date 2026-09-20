@@ -103,6 +103,10 @@ const PREMISE_CHECK_TIMEOUT_MS = 5000;
 // runner).
 const TRUSTED_AUTHOR_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 const AUTHOR_ASSOCIATION_TIMEOUT_MS = 5000;
+// #2590: bounds the sibling-PR search below — execFileSync has no default
+// timeout, so an unbounded remote call can hang materialize.js indefinitely
+// on a black-holed network (see .claude/skills/gh-api-module-pattern).
+const SIBLING_PREMISE_SEARCH_TIMEOUT_MS = 5000;
 
 // command -> exit code, run from the checkout root. Distinguishes "the
 // command ran and exited non-zero" (a normal outcome — execFileSync throws
@@ -176,7 +180,7 @@ const realDeps = {
   // "premise disproved" conclusion. Read-only; no author-association gate
   // needed (unlike ghAuthorAssociation/runPremiseCheck, nothing here
   // executes body content — it only searches and pattern-matches it).
-  ghSearchClosedPRs: (owner, repo, n, host) => execFileSync('gh', ['pr', 'list', '--repo', repoSlug({ host, owner, repo }), '--state', 'closed', '--search', `#${n} in:body`, '--json', 'number,url,body'], { encoding: 'utf8' }),
+  ghSearchClosedPRs: (owner, repo, n, host) => execFileSync('gh', ['pr', 'list', '--repo', repoSlug({ host, owner, repo }), '--state', 'closed', '--search', `#${n} in:body`, '--json', 'number,url,body'], { encoding: 'utf8', timeout: SIBLING_PREMISE_SEARCH_TIMEOUT_MS }),
   // Security fix (see TRUSTED_AUTHOR_ASSOCIATIONS above): GitHub's REST API
   // computes author_association from the issue author's *current* repo
   // relationship — not body content, so it can't be spoofed by editing the
