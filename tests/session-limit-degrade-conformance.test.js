@@ -30,10 +30,24 @@ function readAtRev(rev, file) {
   return execFileSync('git', ['show', `${rev}:${file}`], { cwd: ROOT, encoding: 'utf8' });
 }
 
-test('base SHA is a real ancestor of HEAD (precondition for the git-show proof below)', () => {
+test('base SHA is a real ancestor of HEAD (precondition for the git-show proof below)', (t) => {
   // Throws (non-zero exit) if BASE_SHA is not an ancestor — fails loud on a rebase or
   // history rewrite that would otherwise silently invalidate the go-red proof.
-  execFileSync('git', ['merge-base', '--is-ancestor', BASE_SHA, 'HEAD'], { cwd: ROOT });
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', BASE_SHA, 'HEAD'], { cwd: ROOT });
+  } catch (err) {
+    // #2532: a shallow/partial clone doesn't have BASE_SHA's object at all — skip this
+    // precondition (with the real git error) instead of failing loud on a gap that has
+    // nothing to do with a rebase or history rewrite.
+    if (/Not a valid (commit|object) name/.test(String(err.message))) {
+      t.skip(
+        `commit ${BASE_SHA} is not reachable in this checkout's git history — this ` +
+          `precondition needs full history: ${String(err.message).split('\n')[0]}`,
+      );
+      return;
+    }
+    throw err;
+  }
 });
 
 test('step3-lens-dispatch.md names the session-limit degrade path (#1449 AC1)', () => {

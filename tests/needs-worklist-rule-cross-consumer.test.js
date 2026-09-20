@@ -26,12 +26,25 @@ const readAtBase = (rel) =>
   execFileSync('git', ['show', `${BASE_SHA}:${rel}`], { cwd: ROOT, encoding: 'utf8' });
 const readAtBaseFlat = (rel) => readAtBase(rel).replace(/\s+/g, ' ');
 
-test('go-red control precondition: BASE_SHA is a real ancestor of HEAD', () => {
+test('go-red control precondition: BASE_SHA is a real ancestor of HEAD', (t) => {
   // If this ever fails, BASE_SHA needs updating — the two go-red controls below would
   // otherwise be reading either a nonexistent commit or (worse) a descendant of HEAD.
-  assert.doesNotThrow(() => {
+  try {
     execFileSync('git', ['merge-base', '--is-ancestor', BASE_SHA, 'HEAD'], { cwd: ROOT });
-  }, 'BASE_SHA must be an ancestor of HEAD');
+  } catch (err) {
+    // #2532: a shallow/partial clone doesn't have BASE_SHA's object at all — git reports
+    // "Not a valid commit name" rather than a plain non-zero exit, so this precondition can
+    // tell "unreachable in a shallow clone" apart from a genuine non-ancestor and skip only
+    // the former.
+    if (/Not a valid (commit|object) name/.test(String(err.message))) {
+      t.skip(
+        `commit ${BASE_SHA} is not reachable in this checkout's git history — this ` +
+          `precondition needs full history: ${String(err.message).split('\n')[0]}`,
+      );
+      return;
+    }
+    throw err;
+  }
 });
 
 test('grant-gate.js denies a record carrying an arbitrary future needs:*-prefixed label, not just the two named today', () => {

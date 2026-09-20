@@ -311,10 +311,24 @@ function assertGoRedAbsentOrSkip(t, relPath, literal, label) {
   }
 }
 
-test('base SHA is a valid ancestor of HEAD (pin precondition)', () => {
+test('base SHA is a valid ancestor of HEAD (pin precondition)', (t) => {
   // Throws (non-zero exit) if BASE_SHA is not an ancestor of HEAD — fails loud rather
   // than silently comparing against a moved/rewritten history.
-  execFileSync('git', ['merge-base', '--is-ancestor', BASE_SHA, 'HEAD'], { cwd: ROOT });
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', BASE_SHA, 'HEAD'], { cwd: ROOT });
+  } catch (err) {
+    // #2532: a shallow/partial clone doesn't have BASE_SHA's object at all — skip this
+    // precondition (with the real git error) instead of failing loud on a gap unrelated to
+    // a moved/rewritten history.
+    if (/Not a valid (commit|object) name/.test(String(err.message))) {
+      t.skip(
+        `commit ${BASE_SHA} is not reachable in this checkout's git history — this ` +
+          `precondition needs full history: ${String(err.message).split('\n')[0]}`,
+      );
+      return;
+    }
+    throw err;
+  }
 });
 
 test('refine-mode.md wraps per the contract and pins the RECOMMEND_BUILD/RECOMMEND_MERGE verdict source', (t) => {
