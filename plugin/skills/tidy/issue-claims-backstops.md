@@ -15,11 +15,45 @@ The Working-directory discipline note at the top of `scan-procedures.md`'s Step 
 to that step's primary claim listing — both `find .claude-tweaks/pipelines` backstops take
 `{RUN_ROOT}`, the `gh issue list` backstop takes `{REPO_ROOT}`.
 
-**Never sample the primary claim listing (#2613).** The explicit statement, the batched
-git-CAS reader (`readClaimBlobsGitBatch`), and the per-blob fallback all live in
-`scan-procedures.md`'s own Step 4.7 section (the "Primary" heading, immediately before this
-file's own content in the assembled prompt) — this pointer exists only so a reference to this
-file also finds it, without duplicating the procedure here.
+### Batched read: the preferred transport for the primary claim listing
+
+**Why this exists (#2613).** A claim's live/stale/unreadable state is a binary per-issue
+fact, not something a statistical sample can approximate. A standalone tidy run against this
+repo's own ~1000-blob registry once sampled ~10 blobs instead of following the documented
+full listing, flagged 14 issues as "no active claim," and 13 of those 14 (93%) turned out to
+have real, non-expired claims — caught only because a downstream pre-write re-verification
+step happened to exist. `scan-procedures.md`'s primary listing (immediately before this file
+in the assembled prompt) states the rule: every blob in the keyspace gets classified, every
+time this step runs. This section is where to go instead of sampling.
+
+**When a local git checkout with network access to `claims-registry` is available** — the
+common case, since this is the same git-CAS transport `_shared/issue-claims.md`'s write path
+already prefers — use the batched reader instead of one `gh api`/`gh issue view` round-trip
+per blob. `readClaimBlobsGitBatch` (`bin/lib/issues/claims-git-cas.js`) turns the whole
+listing + read into exactly 2 subprocess calls (`git ls-tree` + `git cat-file --batch`)
+regardless of registry size — the `ls-tree` call alone already IS the full keyspace listing,
+so this replaces the `gh api contents/claims` call too, not just the per-blob reads:
+
+```bash
+node -e "
+  const { execFileSync } = require('child_process');
+  const { readClaimBlobsGitBatch, CLAIMS_BRANCH } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims-git-cas');
+  const scratchRef = \`refs/claims-audit-read/\${process.pid}-\${Date.now()}\`;
+  execFileSync('git', ['fetch', '-q', 'origin', \`\${CLAIMS_BRANCH}:\${scratchRef}\`]);
+  const tip = execFileSync('git', ['rev-parse', scratchRef], { encoding: 'utf8' }).trim();
+  execFileSync('git', ['update-ref', '-d', scratchRef]);
+  const { results, failure } = readClaimBlobsGitBatch({ tip });
+  if (failure) { console.error(failure); process.exit(1); }
+  console.log(JSON.stringify(results));
+"
+# {results} maps issueNumber -> {content, tipSha, absent, failure} — feed each
+# entry's .content (when not absent/failure) into "The lock" steps 1-2's
+# CLASSIFY_INPUT exactly as scan-procedures.md's per-blob form does, then
+# gh issue view <n> --json state -q .state for each surviving number.
+```
+
+Falls back to `scan-procedures.md`'s per-blob `gh api` form only when no local git access to
+`claims-registry` exists (a contents-API-only sandbox, or no git remote reachable).
 
 ---
 
