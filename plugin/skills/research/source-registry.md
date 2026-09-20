@@ -161,7 +161,7 @@ provenance: {file:line, or command + exit status, or URL, or record ref}
 checked-at: {output of `git rev-parse HEAD`}
 
 Report one of these as the last non-empty line of your reply, alone, labeled `STATUS: {WORD}`:
-STATUS: DONE | STATUS: DONE_WITH_CONCERNS | STATUS: NEEDS_CONTEXT | STATUS: BLOCKED
+STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 
 If your source returns nothing, that is an answer, not a failure — but map it
 to the outcome your claim actually takes. If your claim asserted something is
