@@ -94,6 +94,11 @@ const POLICY_KEYS = [
   { key: 'overlap', type: 'enum', values: ['companion', 'extend', 'skip', 'replace'], default: 'companion', summary: "Decides how a new spec is treated when it duplicates an existing one: run beside it, extend it, skip it, or replace it.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'design-intent', type: 'enum', values: ['none', 'bold', 'quiet', 'minimal', 'delightful', 'onboarding'], default: 'none', summary: "Sets the visual and UX ambition a build aims for — bold, quiet, minimal, delightful, onboarding-focused, or none at all.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'ui-stack', type: 'string', summary: "Names the UI component library / styling approach a frontend build should use, or an explicit no-preference answer.", category: 'pipeline-behavior', tier: 'advanced' },
+  // #2540: Step 2.5b-ii's variant-exploration tournament/live offers were
+  // mandatory ceremony with no off-switch, and `explore` silently skips on
+  // any current Impeccable pin anyway. Default 'off' formalizes the
+  // already-observed no-op behavior rather than removing a working feature.
+  { key: 'design-variant-exploration', type: 'enum', values: ['off', 'offer'], default: 'off', summary: "Turns specify's layout-tournament and scaffold-live variant-exploration offers on or off before decomposition.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'design-critique', type: 'enum', values: ['off', 'auto', 'full'], default: 'auto', summary: "Sets whether project-local design critics run at review time: never, when the project shows design investment or the record asks, or always.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'leftover-default', type: 'enum', values: ['defer', 'backlog', 'drop'], default: 'defer', summary: "Decides what happens to loose ends found at the end of a run: leave them for later, file them as backlog, or drop them.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'auto-fix-threshold', type: 'enum', values: ['lint-only', 'lint+type', 'lint+type+test'], default: 'lint+type', summary: "Sets how much a test pass auto-fixes before stopping — lint alone, lint and types, or lint, types, and tests.", category: 'pipeline-behavior', tier: 'advanced' },

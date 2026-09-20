@@ -42,15 +42,24 @@ On `{skipped}` (Impeccable not installed, design integration disabled): note the
 
 Runs only when Step 2.5b's shape pre-step actually produced a confirmed brief (option 1 was taken and Impeccable's own brief-confirmation exchange completed) — skip entirely if Step 2.5b was skipped, auto-ran, or returned `{skipped}`. **No auto-mode branch** — this step requires a human in a browser by construction (same reason `/impeccable:impeccable live` itself has no non-interactive mode); auto-mode design docs proceed straight from the text brief.
 
+**Policy gate.** Resolve `design-variant-exploration` before anything else in this step: `DESIGN_VARIANT_EXPLORATION=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values design-variant-exploration)`. At the default `off`, skip this step entirely — no tournament offer, no single-scaffold offer, proceed to Step 2.5c with no `Visual-reference:` line, exactly as if the user had answered "Skip" to every offer below. Only `offer` continues into the rest of this step. This does not reflect a project's fixed capability — it is a project-level default a human sets in `policy.yml`, independent of whether Impeccable happens to be at the pin this session; the availability pre-check below is the per-session capability question, orthogonal to this per-project preference one.
+
 **Skip entirely for a native surface** — `Surface: mobile`, or any surface where the project's `PRODUCT.md` declares a `Platform` of `ios` / `android` / `adaptive`. Both halves of this step are web-only: the scaffold it writes is a static HTML file, and `live` refuses the native track outright (`design-wrapper/modes/live.md` Step 1.5). Proceed to Step 2.5c with no `Visual-reference:` line, exactly as option 2 does. This step is where the check belongs, because it is the only point in the chain that knows the surface before the scaffold gets written — `live` mode itself never receives a `Surface:` line to read.
 
 **Scope-resolved pre-check.** Before offering anything below, resolve the tournament scope once, on this side: read Layer 0's `hasDesign` signal per `skills/design-wrapper/impeccable-plugin.md`; when Layer 0 is degraded, fall back to a direct existence check for `DESIGN.md` at the project root. Every `/claude-tweaks:design-wrapper explore` invocation below passes `--scope` explicitly, so the mode's own auto-resolution never runs on this path — the two sides read the same fact and cannot disagree.
+
+**Exact-pin availability pre-check.** Also before offering anything below — and before either branch's own `AskUserQuestion` call — resolve whether `explore` can actually run this session, per `skills/design-wrapper/impeccable-plugin.md`'s Resolution procedure: glob `~/.claude/plugins/cache/*/impeccable/*/.claude-plugin/plugin.json`, read each candidate's own `version` field, and check whether any equals the pin recorded in that file's `<!-- upstream-pin: impeccable-plugin@X.Y.Z -->` comment. This is the same exact-pin check `explore` mode's own Preconditions section names (`design-wrapper/modes/explore.md`'s "Availability" paragraph) and `availability.md`'s per-mode verification table already requires for `explore` — run here, once, ahead of rendering any option, rather than discovered only after the user has already said yes and `explore` returns `{skipped}`. Record the result as `EXPLORE_AVAILABLE` (`true`/`false`) plus, when `false`, the found version list and the pinned version — both branches below read this same result, so neither the identity nor the layout branch re-globs the cache.
+
+- `EXPLORE_AVAILABLE: true` → offer the tournament option normally, exactly as each branch's `AskUserQuestion` block below already states.
+- `EXPLORE_AVAILABLE: false` (absent, or every candidate off-pin) → the tournament option is never presented as "Recommended." Replace Option 1's label/description in both branches' `AskUserQuestion` calls below with: `label`: `"Explore identities/layouts — unavailable"`, `description`: `"Impeccable plugin {found, or \"not installed\"} does not match the pinned {pinned} — explore cannot run this session."`, and drop the `(Recommended)` suffix. Option 2 ("Skip") becomes the de facto default; nothing here auto-selects it — the question still renders and waits for an answer, it simply never recommends an option that cannot run.
+
+This closes the gap the record's Current State describes: naming the installed-vs-pinned mismatch *before* the offer, not after a "Recommended" pick silently returns `{skipped}` deep inside `explore` mode.
 
 ### No `DESIGN.md` — identity branch
 
 Replaces the single-scaffold offer below entirely.
 
-**Call `AskUserQuestion`:**
+**Call `AskUserQuestion`** — Option 1 below renders per the Exact-pin availability pre-check above: shown as written when `EXPLORE_AVAILABLE: true`; substituted with the unavailable label/description (no `(Recommended)` suffix) when `EXPLORE_AVAILABLE: false`.
 
 - `question`: `"No design identity is locked yet (no DESIGN.md). Want to explore competing visual identities for {primary surface} in the browser before decomposition?"`, `header`: `"Design identity"`, `multiSelect`: `false`
 - Option 1 — `label`: `"Yes — run the worlds tournament (Recommended)"`, `description`: `"/claude-tweaks:design-wrapper explore --scope identity --source specify — compare rendered identities, lock the pick into DESIGN.md"`
@@ -67,7 +76,7 @@ On option 2, or no affirmative response: proceed to Step 2.5c with no further ac
 
 Offers the layout tournament ahead of the single-scaffold offer below.
 
-**Call `AskUserQuestion`:**
+**Call `AskUserQuestion`** — Option 1 below renders per the Exact-pin availability pre-check above: shown as written when `EXPLORE_AVAILABLE: true`; substituted with the unavailable label/description (no `(Recommended)` suffix) when `EXPLORE_AVAILABLE: false`.
 
 - `question`: `"Want to compare rendered layout variants of {primary surface} (identity held fixed) before I build it for real?"`, `header`: `"Layout variants"`, `multiSelect`: `false`
 - Option 1 — `label`: `"Yes — run the layout tournament (Recommended)"`, `description`: `"/claude-tweaks:design-wrapper explore {surface-topic} --scope layout --source specify — pick a composition, then optionally tune it with live"`
