@@ -5,7 +5,7 @@
   },
   "__gapScan": {
     "lastScannedSha": null,
-    "lastScannedMs": 1788753914535
+    "lastScannedMs": 1789893217022
   },
   "library-shape:library-shape": {
     "lastAuditedSha": null,
@@ -138,5 +138,9 @@
   "skill:harness-health": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1789400077489
+  },
+  "skill:browse": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1789893217022
   }
 }
