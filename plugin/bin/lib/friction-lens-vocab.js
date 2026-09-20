@@ -19,6 +19,9 @@ const FRICTION_EVENT_TYPES = Object.freeze([
   // bin/lib/hooks/pre-tool-use.js), neither of which is checkWorktreeRequired's
   // own already-logged gate-denial path.
   'wd-guard-refusal',
+  // #2345: a verdict/findings/pass-fail claim from an agent whose transcript
+  // carries zero tool-use blocks — a failed dispatch, never evidence.
+  'zero-tool-use-verdict',
 ]);
 
 module.exports = { FRICTION_EVENT_TYPES };

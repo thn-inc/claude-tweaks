@@ -1043,6 +1043,32 @@ function resolveLocalDefaultBranchBound(repoRoot) {
   return null;
 }
 
+// A multi-spec run's per-spec skill invocations (including this gate's own
+// caller, checkBookkeepingStampsGate) receive `$PIPELINE_RUN_DIR` =
+// `{parent}/spec-{N}/`, NOT the parent directory (flow/multi-spec.md's env-var
+// table) — the same per-spec shape #2571 found `checkPrBookkeepingPrecondition`
+// blind to. `path.basename(runDir)` of that value is `spec-{N}`, which carries
+// no ISO-timestamp prefix and is never itself a real top-level run id, so the
+// single-record branch below would build a pathspec rooted at a nonexistent
+// `.../spec-{N}/work` sibling and never match the real committed path
+// `{parent-run-id}/spec-{N}/work/{N}-spec.md`. Detect this shape here — a
+// bare `spec-{digits}` basename whose PARENT directory basename *does* look
+// like a canonical run id (RUN_ID_RE) — and resolve the pathspec against the
+// PARENT's run id, scoped to this one spec's own nested `work/` (never the
+// `spec-*` wildcard the parent-dir branch below uses, since a per-spec caller
+// only ever cares about its own materialize commit, not a sibling spec's).
+// Returns null for every other shape (a real top-level run dir, an unrelated
+// directory, or a `spec-{N}` dir with no run-id-shaped parent) so the caller
+// falls through to the existing single-record/parent-dir pathspec unchanged.
+const PER_SPEC_SUBDIR_RE = /^spec-\d+$/;
+function perSpecPathspec(runDir, runId) {
+  if (!PER_SPEC_SUBDIR_RE.test(runId)) return null;
+  const parentId = path.basename(path.dirname(runDir));
+  if (!ctxLib.RUN_ID_RE.test(parentId)) return null;
+  const parentRel = toPosix(path.join(PIPELINE_STATE_DIR, parentId));
+  return ['--', `${parentRel}/${runId}/work/*`];
+}
+
 // Read-only, best-effort: any git failure (no commits yet, git unavailable)
 // and an unusable runDir both resolve to false — ambiguity never triggers the
 // gate, same posture as every other check in this file.
@@ -1050,6 +1076,7 @@ function hasMaterializeCommit(worktreeRoot, runDir) {
   if (typeof runDir !== 'string' || !runDir) return false;
   const runId = path.basename(runDir);
   if (!runId || runId === '.' || runId === '..') return false;
+  const perSpec = perSpecPathspec(runDir, runId);
   // PIPELINE_STATE_DIR (not a second hardcoded literal) + toPosix, since git
   // pathspecs are always forward-slash regardless of platform.
   const runRel = toPosix(path.join(PIPELINE_STATE_DIR, runId));
@@ -1113,7 +1140,7 @@ function hasMaterializeCommit(worktreeRoot, runDir) {
   // ref when one exists (no fetch — see `preferRemoteTrackingRef` in
   // worktree-reap.js). The probed `main`/`master` fallback just below gets the
   // same upgrade for the same reason.
-  const paths = ['--', `${runRel}/work`, `${runRel}/spec-*/work/*`];
+  const paths = perSpec || ['--', `${runRel}/work`, `${runRel}/spec-*/work/*`];
   const bound = resolveIntegrationBranch(worktreeRoot) || resolveLocalDefaultBranchBound(worktreeRoot);
   const integration = bound ? preferRemoteTrackingRef(worktreeRoot, bound) : null;
   // Two distinct ways the bound can be unusable, and both must fall back the

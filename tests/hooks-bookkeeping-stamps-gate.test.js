@@ -94,6 +94,56 @@ test('bookkeeping-stamps gate: multi-record materialize commit (spec-{slug}/work
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
 });
 
+// #2571: a multi-spec /flow run's per-spec skill invocations receive
+// `$PIPELINE_RUN_DIR` = `{parent}/spec-{N}/` (flow/multi-spec.md's env-var
+// table), NOT the parent directory — so `ctx.runDir` passed into this gate is
+// the CHILD subdirectory, not the RUN_ID-shaped parent the two tests above
+// exercise. Before the fix, `path.basename(childRunDir)` was `spec-991` (no
+// ISO-timestamp prefix, never a real run id), so the pathspec built from it
+// never matched the real committed path `{parent}/spec-991/work/991-spec.md`
+// and the gate stayed permanently disarmed for every multi-spec run.
+test('bookkeeping-stamps gate (#2571): a multi-spec per-spec runDir ({parent}/spec-{N}/) still recognizes this spec\'s own materialize commit -> deny reachable', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('spec-991', 'work', '991-spec.md'));
+  const { run: parentRun } = mkRunDir(projectDir(), null, undefined);
+  const childRunDir = path.join(parentRun, 'spec-991');
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: childRunDir, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'a per-spec $PIPELINE_RUN_DIR must still recognize its own committed spec-{N}/work/{n}-spec.md as the materialize sentinel');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+test('bookkeeping-stamps gate (#2571): a multi-spec per-spec runDir does NOT match a SIBLING spec\'s materialize commit', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  // Only spec-995 has materialized so far; this call is on behalf of spec-991.
+  commitMaterializedSpec(wt, path.join('spec-995', 'work', '995-spec.md'));
+  const { run: parentRun } = mkRunDir(projectDir(), null, undefined);
+  const childRunDir = path.join(parentRun, 'spec-991');
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: childRunDir, runState: { status: 'active' }, cwd: wt });
+  assert.deepStrictEqual(out, {}, 'spec-991\'s own gate must not arm off a sibling spec\'s materialize commit');
+});
+
+test('bookkeeping-stamps gate (#2571 unit): hasMaterializeCommit resolves a per-spec runDir against its parent\'s run id', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('spec-991', 'work', '991-spec.md'));
+  const { run: parentRun } = mkRunDir(projectDir(), null, undefined);
+  assert.strictEqual(pre.hasMaterializeCommit(wt, path.join(parentRun, 'spec-991')), true);
+  assert.strictEqual(pre.hasMaterializeCommit(wt, path.join(parentRun, 'spec-995')), false);
+});
+
+test('bookkeeping-stamps gate (#2571 unit): a spec-{N}-shaped runDir with no run-id-shaped parent falls through unchanged (not misdetected as a multi-spec child)', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  // Parent of ".../orphan/spec-991" is "orphan" — not RUN_ID_RE-shaped — so
+  // the per-spec branch must not fire; falls through to the ordinary
+  // single-record pathspec rooted at "spec-991" itself, which finds nothing
+  // (no materialize commit landed anywhere in this fixture).
+  const orphanParent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-orphan-'));
+  assert.strictEqual(pre.hasMaterializeCommit(wt, path.join(orphanParent, 'spec-991')), false);
+});
+
 test('bookkeeping-stamps gate: materialize commit landed, run resolved, no worktree stamp -> deny', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);

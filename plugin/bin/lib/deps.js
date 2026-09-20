@@ -57,9 +57,16 @@ function detectVersionManager() {
   return null;
 }
 
-function agentBrowserMessage() {
-  if (!has('agent-browser')) {
-    return 'claude-tweaks: Browser features require agent-browser. Install: npm install -g agent-browser. Browser features are optional.';
+function playwrightCliMessage() {
+  let installed;
+  try {
+    execSync('npx --no-install playwright-cli --version', { stdio: 'ignore' });
+    installed = true;
+  } catch {
+    installed = false;
+  }
+  if (!installed) {
+    return 'claude-tweaks: Browser features require playwright-cli. Install: npm install -g @playwright/cli. Browser features are optional.';
   }
   return null;
 }
@@ -89,8 +96,8 @@ function collect() {
   const msgs = [];
   if (!has('node')) msgs.push(missingMessage('node', pm, vm));
   if (!has('git')) msgs.push(missingMessage('git', pm, null));
-  const ab = agentBrowserMessage();
-  if (ab) msgs.push(ab);
+  const pw = playwrightCliMessage();
+  if (pw) msgs.push(pw);
   return msgs;
 }
 
