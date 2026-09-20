@@ -131,6 +131,29 @@ test('recordDecline: subject is included on the entry when passed', () => {
   assert.deepEqual(store.lookupDecline('feedback-deadbeef', deps), entry);
 });
 
+test('recordDecline: a subject at or under the length cap is stored verbatim', () => {
+  const deps = makeStore();
+  const subject = 'x'.repeat(store.MAX_SUBJECT_LENGTH);
+  const entry = store.recordDecline('feedback-cap', { source: 'feedback', subject }, deps);
+
+  assert.equal(entry.subject, subject);
+});
+
+test('recordDecline: a subject over the length cap is truncated with a visible marker', () => {
+  const deps = makeStore();
+  const subject = `${'x'.repeat(store.MAX_SUBJECT_LENGTH)}OVERFLOW`;
+  const entry = store.recordDecline('feedback-overflow', { source: 'feedback', subject }, deps);
+
+  assert.equal(entry.subject.length, store.MAX_SUBJECT_LENGTH + '… [truncated]'.length);
+  assert.ok(entry.subject.startsWith('x'.repeat(store.MAX_SUBJECT_LENGTH)));
+  assert.ok(entry.subject.endsWith('… [truncated]'));
+  assert.ok(!entry.subject.includes('OVERFLOW'));
+});
+
+test('recordDecline: MAX_SUBJECT_LENGTH is a sane positive number (guards against an accidental 0/negative edit)', () => {
+  assert.ok(Number.isInteger(store.MAX_SUBJECT_LENGTH) && store.MAX_SUBJECT_LENGTH > 0);
+});
+
 test('recordDecline: omitting subject writes the same three-key shape as before (no forced subject: null)', () => {
   const deps = makeStore();
   const entry = store.recordDecline('feedback-deadbeef', { reason: 'stale rubric', source: 'feedback', declinedAt: '2026-08-20T00:00:00Z' }, deps);
