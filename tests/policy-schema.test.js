@@ -124,8 +124,12 @@ test('POLICY_KEYS entries are unique', () => {
   // 69 -> 70, #2540 (variant-exploration off-switch): design-variant-exploration
   // — off|offer, default off — gates /specify's Step 2.5b-ii layout-tournament
   // and scaffold-live offers, which previously had no policy lever at all.
-  assert.strictEqual(POLICY_KEYS.length, 70);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 70);
+  // 70 -> 71, #2567 (configurable gh timeout): gh-timeout-ms — bounds
+  // (1000-60000) how long a shared-primitives.js `gh` subprocess call may
+  // run before it is killed and retried once; env var
+  // CLAUDE_TWEAKS_GH_TIMEOUT_MS takes precedence over this when both are set.
+  assert.strictEqual(POLICY_KEYS.length, 71);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 71);
 });
 
 test('dispatch-batch-size is registered alongside its deprecated alias', () => {

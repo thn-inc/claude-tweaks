@@ -44,6 +44,7 @@ const wtDetect = require('./lib/hooks/worktree-detect');
 const {
   parseRepo, ghAvailable, repoSlug, repoResolutionNote,
 } = require('./lib/repo-resolve');
+const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
 const { resolveTarget: resolveStageTarget, writeStagedItem } = require('./lib/stage-item/write');
 
@@ -104,11 +105,16 @@ const PREMISE_CHECK_TIMEOUT_MS = 5000;
 // fail-open posture (computePremise's own degrade-to-null on a throwing
 // runner).
 const TRUSTED_AUTHOR_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
-const AUTHOR_ASSOCIATION_TIMEOUT_MS = 5000;
+// #2567: both bounds below are the shared GH_TIMEOUT_MS, not a local
+// re-derivation of its 5000 default — a project's `gh-timeout-ms` policy
+// override (or CLAUDE_TWEAKS_GH_TIMEOUT_MS env override) reaches these two
+// `gh` calls too. Kept as their own named constants (not inlined) since
+// each documents a distinct call's rationale below.
+const AUTHOR_ASSOCIATION_TIMEOUT_MS = GH_TIMEOUT_MS;
 // #2590: bounds the sibling-PR search below — execFileSync has no default
 // timeout, so an unbounded remote call can hang materialize.js indefinitely
 // on a black-holed network (see .claude/skills/gh-api-module-pattern).
-const SIBLING_PREMISE_SEARCH_TIMEOUT_MS = 5000;
+const SIBLING_PREMISE_SEARCH_TIMEOUT_MS = GH_TIMEOUT_MS;
 
 // command -> exit code, run from the checkout root. Distinguishes "the
 // command ran and exited non-zero" (a normal outcome — execFileSync throws

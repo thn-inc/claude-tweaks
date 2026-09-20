@@ -11,6 +11,7 @@
 // `gh --version` probe (the six-call-site consolidation).
 'use strict';
 const { execFileSync } = require('child_process');
+const { GH_TIMEOUT_MS } = require('./shared-primitives');
 
 // A git remote URL (SSH or HTTPS, with or without .git, on github.com or an
 // arbitrary GitHub Enterprise Server host, or an `owner/name` string wrapped
@@ -27,9 +28,10 @@ function parseRepo(url) {
 
 // gh-api-module-pattern: bound every remote-contacting call on the seam.
 // --version is local-only, but the bound is free and keeps this the one
-// options object every call site below now shares.
-const GH_TIMEOUT_MS = 5000;
-
+// options object every call site below now shares. #2567: shared, not a
+// local re-derivation of the same 5000 default, so a project's
+// `gh-timeout-ms` policy override (or CLAUDE_TWEAKS_GH_TIMEOUT_MS env
+// override) reaches this call too.
 function ghAvailable(deps = {}) {
   const exec = deps.execFileSync || execFileSync;
   try {
