@@ -37,13 +37,19 @@ on purpose.
 
 ## Re-entering the Approve rendering
 
-Re-render `step-6-auto.md`'s `**Approve ({N})**` report section (same three-line-per-item shape —
-number + tag + record + title, then the staged action, then the exact command or mutation) over
-every file under the resolved run's `staged/`, then obtain approval the interactive way — this
-skill's own Interaction style directive at the top of `SKILL.md`: one `AskUserQuestion` call, one
-option ("Approve all") marked Recommended, plus an override path naming specific items to exclude.
-This mode is never reached from `auto` mode itself — it exists precisely because an earlier auto
-or interactive run left items staged rather than applied.
+Re-render `step-6-auto.md`'s `**Approve ({N})**` report section with the same renderer Step 6
+itself uses (#2612) — never by hand-re-deriving the three-line-per-item shape:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/render-tidy-report.js" --run "{run-dir}"
+```
+
+This reads `staged/*.json` sidecars directly, so a later `--approve` run renders the identical
+Approve section a fresh run would from the same `staged/` contents. Then obtain approval the
+interactive way — this skill's own Interaction style directive at the top of `SKILL.md`: one
+`AskUserQuestion` call, one option ("Approve all") marked Recommended, plus an override path
+naming specific items to exclude. This mode is never reached from `auto` mode itself — it exists
+precisely because an earlier auto or interactive run left items staged rather than applied.
 
 ## Re-verify before applying
 
