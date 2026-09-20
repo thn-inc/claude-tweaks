@@ -23,22 +23,50 @@ const demoSkill = fs.readFileSync(path.join(ROOT, DEMO_SKILL_PATH), 'utf8');
 const PRE_CHANGE_SHA = '01ec5033ad10b5d1cc89b9d5c7777e70fef02bc8';
 
 function countAtPreChange(relPath, literal) {
-  const out = execFileSync('git', ['show', `${PRE_CHANGE_SHA}:${relPath}`], {
-    cwd: ROOT,
-    encoding: 'utf8',
-  });
+  let out;
+  try {
+    out = execFileSync('git', ['show', `${PRE_CHANGE_SHA}:${relPath}`], {
+      cwd: ROOT,
+      encoding: 'utf8',
+    });
+  } catch (err) {
+    // #2532: a shallow/partial clone doesn't have PRE_CHANGE_SHA's tree reachable — tag the
+    // error so callers can distinguish it from a real assertion failure and skip instead.
+    const wrapped = new Error(
+      `commit ${PRE_CHANGE_SHA} is not reachable in this checkout's git history — this go-red ` +
+        `check needs full history: ${String(err.message).split('\n')[0]}`,
+    );
+    wrapped.gitUnreachable = true;
+    throw wrapped;
+  }
   return out.split(literal).length - 1;
 }
 
-test('observation-plan.md declares Full verification with Parent/Pending/Then, inside the Schema fence', () => {
+// #2532: run one countAtPreChange call under the shallow-clone guard — an unreachable
+// PRE_CHANGE_SHA skips the calling test (with the real git error stated) instead of failing on
+// a misleading assertion message. Returns { ok: false } (and has already called t.skip) when the
+// caller should stop.
+function countAtPreChangeOrSkip(t, relPath, literal) {
+  try {
+    return { ok: true, count: countAtPreChange(relPath, literal) };
+  } catch (err) {
+    if (!err.gitUnreachable) throw err;
+    t.skip(err.message);
+    return { ok: false };
+  }
+}
+
+test('observation-plan.md declares Full verification with Parent/Pending/Then, inside the Schema fence', (t) => {
   const schemaFence = observationPlan.match(/## Schema\n\n```markdown([\s\S]*?)```/);
   assert.ok(schemaFence, 'Schema fenced block not found');
   assert.match(schemaFence[1], /- Full verification:/);
   assert.match(schemaFence[1], /- Parent: #P/);
   assert.match(schemaFence[1], /- Pending: #X/);
   assert.match(schemaFence[1], /- Then:/);
+  const preChange = countAtPreChangeOrSkip(t, OBSERVATION_PLAN_PATH, 'Full verification:');
+  if (!preChange.ok) return;
   assert.strictEqual(
-    countAtPreChange(OBSERVATION_PLAN_PATH, 'Full verification:'), 0,
+    preChange.count, 0,
     'Full verification: must not have existed pre-change (proves this assertion can go red)',
   );
 
@@ -51,39 +79,45 @@ test('observation-plan.md declares Full verification with Parent/Pending/Then, i
   );
 });
 
-test('observation-plan.md has a Producer section stating demo composes the block, wrap-up never does', () => {
+test('observation-plan.md has a Producer section stating demo composes the block, wrap-up never does', (t) => {
   assert.match(
     observationPlan,
     /Composed only by `\/claude-tweaks:demo`'s `#N`-branch composers/,
   );
+  const preChange = countAtPreChangeOrSkip(t, OBSERVATION_PLAN_PATH, 'Composed only by');
+  if (!preChange.ok) return;
   assert.strictEqual(
-    countAtPreChange(OBSERVATION_PLAN_PATH, 'Composed only by'), 0,
+    preChange.count, 0,
     'Producer section must not have existed pre-change',
   );
 });
 
-test('observation-plan.md Grammar rules name Parent:/Pending:/Then: and the closed-siblings literal', () => {
+test('observation-plan.md Grammar rules name Parent:/Pending:/Then: and the closed-siblings literal', (t) => {
   assert.match(observationPlan, /`Parent:`/);
   assert.match(observationPlan, /`Pending:`/);
   assert.match(observationPlan, /`Then:`/);
   assert.match(observationPlan, /none — every sibling closed; parent gate/);
+  const preChange = countAtPreChangeOrSkip(t, OBSERVATION_PLAN_PATH, 'none — every sibling closed; parent gate');
+  if (!preChange.ok) return;
   assert.strictEqual(
-    countAtPreChange(OBSERVATION_PLAN_PATH, 'none — every sibling closed; parent gate'), 0,
+    preChange.count, 0,
     'closed-siblings literal must not have existed pre-change',
   );
 });
 
-test('entry-paths.md cites buildNativeParentQuery, cross-spec-promise-check.md, and the fail-open line', () => {
+test('entry-paths.md cites buildNativeParentQuery, cross-spec-promise-check.md, and the fail-open line', (t) => {
   assert.match(entryPaths, /buildNativeParentQuery/);
   assert.match(entryPaths, /cross-spec-promise-check\.md/);
   assert.match(entryPaths, /one plain line above the verdict/);
+  const preChange = countAtPreChangeOrSkip(t, ENTRY_PATHS_PATH, 'buildNativeParentQuery');
+  if (!preChange.ok) return;
   assert.strictEqual(
-    countAtPreChange(ENTRY_PATHS_PATH, 'buildNativeParentQuery'), 0,
+    preChange.count, 0,
     'buildNativeParentQuery must not have existed pre-change',
   );
 });
 
-test('demo/SKILL.md renders Full verification between Show and Verdict, and has the Anti-Patterns row', () => {
+test('demo/SKILL.md renders Full verification between Show and Verdict, and has the Anti-Patterns row', (t) => {
   const showIdx = demoSkill.indexOf('**Show** — by Surface kind:');
   const verdictIdx = demoSkill.indexOf('### Verdict');
   assert.ok(showIdx > -1, 'Show subsection not found');
@@ -91,8 +125,10 @@ test('demo/SKILL.md renders Full verification between Show and Verdict, and has 
   const between = demoSkill.slice(showIdx, verdictIdx);
   assert.match(between, /Full verification/);
   assert.match(demoSkill, /as if the slice were the feature/);
+  const preChange = countAtPreChangeOrSkip(t, DEMO_SKILL_PATH, 'as if the slice were the feature');
+  if (!preChange.ok) return;
   assert.strictEqual(
-    countAtPreChange(DEMO_SKILL_PATH, 'as if the slice were the feature'), 0,
+    preChange.count, 0,
     'Anti-Patterns row must not have existed pre-change',
   );
 });
