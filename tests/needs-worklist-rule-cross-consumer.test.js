@@ -26,12 +26,25 @@ const readAtBase = (rel) =>
   execFileSync('git', ['show', `${BASE_SHA}:${rel}`], { cwd: ROOT, encoding: 'utf8' });
 const readAtBaseFlat = (rel) => readAtBase(rel).replace(/\s+/g, ' ');
 
-test('go-red control precondition: BASE_SHA is a real ancestor of HEAD', () => {
+test('go-red control precondition: BASE_SHA is a real ancestor of HEAD', (t) => {
   // If this ever fails, BASE_SHA needs updating — the two go-red controls below would
   // otherwise be reading either a nonexistent commit or (worse) a descendant of HEAD.
-  assert.doesNotThrow(() => {
+  try {
     execFileSync('git', ['merge-base', '--is-ancestor', BASE_SHA, 'HEAD'], { cwd: ROOT });
-  }, 'BASE_SHA must be an ancestor of HEAD');
+  } catch (err) {
+    // #2532: a shallow/partial clone doesn't have BASE_SHA's object at all — git reports
+    // "Not a valid commit name" rather than a plain non-zero exit, so this precondition can
+    // tell "unreachable in a shallow clone" apart from a genuine non-ancestor and skip only
+    // the former.
+    if (/Not a valid (commit|object) name/.test(String(err.message))) {
+      t.skip(
+        `commit ${BASE_SHA} is not reachable in this checkout's git history — this ` +
+          `precondition needs full history: ${String(err.message).split('\n')[0]}`,
+      );
+      return;
+    }
+    throw err;
+  }
 });
 
 test('grant-gate.js denies a record carrying an arbitrary future needs:*-prefixed label, not just the two named today', () => {
@@ -60,8 +73,20 @@ test('tidy/step-1-records.md worklist-rule paragraph names the same /^needs:/ pr
 // since HEAD for these files IS the post-change content from here forward). Each control
 // proves the corresponding assertion above is capable of failing against real history.
 
-test('go-red control: pre-change grant-gate.js has no needs: prefix check at all (real content @ BASE_SHA)', () => {
-  const GRANT_GATE_AT_BASE = readAtBase('plugin/bin/lib/issues/grant-gate.js');
+test('go-red control: pre-change grant-gate.js has no needs: prefix check at all (real content @ BASE_SHA)', (t) => {
+  // #2532: a shallow/partial clone doesn't have BASE_SHA's tree reachable — guard the read so
+  // this one test degrades to a skip with the real git error, instead of a misleading
+  // assertion failure.
+  let GRANT_GATE_AT_BASE;
+  try {
+    GRANT_GATE_AT_BASE = readAtBase('plugin/bin/lib/issues/grant-gate.js');
+  } catch (err) {
+    t.skip(
+      `commit ${BASE_SHA} is not reachable in this checkout's git history — this go-red control ` +
+        `needs full history: ${String(err.message).split('\n')[0]}`,
+    );
+    return;
+  }
   assert.ok(
     !GRANT_GATE_AT_BASE.includes("startsWith('needs:')"),
     'pre-change grant-gate.js must not already have a prefix check'
@@ -74,8 +99,18 @@ test('go-red control: pre-change grant-gate.js has no needs: prefix check at all
   );
 });
 
-test('go-red control: pre-change next-mode.md EXCLUDE construction has no needs: prefix check at all (real content @ BASE_SHA)', () => {
-  const NEXT_MODE_AT_BASE_FLAT = readAtBaseFlat('plugin/skills/specify/next-mode.md');
+test('go-red control: pre-change next-mode.md EXCLUDE construction has no needs: prefix check at all (real content @ BASE_SHA)', (t) => {
+  // #2532: same shallow-clone guard as the grant-gate.js control above.
+  let NEXT_MODE_AT_BASE_FLAT;
+  try {
+    NEXT_MODE_AT_BASE_FLAT = readAtBaseFlat('plugin/skills/specify/next-mode.md');
+  } catch (err) {
+    t.skip(
+      `commit ${BASE_SHA} is not reachable in this checkout's git history — this go-red control ` +
+        `needs full history: ${String(err.message).split('\n')[0]}`,
+    );
+    return;
+  }
   assert.ok(
     !NEXT_MODE_AT_BASE_FLAT.includes("startsWith('needs:')"),
     'pre-change next-mode.md must not already have a prefix check'

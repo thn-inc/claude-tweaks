@@ -219,7 +219,7 @@ result.
 **(e) Dispatch.** One `Task()` per available critic.
 
 > **Parallel execution:** Dispatch the available critics as parallel Task agents — each runs independently and returns findings in Template A format (with the extra `Target` column below). Assemble results after all agents complete.
-> **Contract:** Each agent follows the Subagent Contract (`../../_shared/subagent-output-contract.md`) — minimal input (scope + paths + output template, no conversation), one of {DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED} as its first line, then the table. Profile: Standard (`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard` — the placeholder is model-resolved per `docs/skill-authoring.md`'s Plugin-root references; `../../_shared/subagent-dispatch-core.md` §Model Selection) — a review-style fan-out, never Frontier. Dispatch shape: single-assistant-message rule (`../../_shared/subagent-dispatch-core.md`'s fan-out section) applies. Inline the template literally; reject and re-prompt on format violations.
+> **Contract:** Each agent follows the Subagent Contract (`../../_shared/subagent-output-contract.md`) — minimal input (scope + paths + output template, no conversation), the table followed by a trailing `STATUS: {WORD}` line (one of DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) as the last non-empty line of the reply. Profile: Standard (`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard` — the placeholder is model-resolved per `docs/skill-authoring.md`'s Plugin-root references; `../../_shared/subagent-dispatch-core.md` §Model Selection) — a review-style fan-out, never Frontier. Dispatch shape: single-assistant-message rule (`../../_shared/subagent-dispatch-core.md`'s fan-out section) applies. Inline the template literally; reject and re-prompt on format violations.
 
 `subagent_type: general-purpose`. Do **not** pass `isolation: "worktree"` — this mode routinely runs
 inside a worktree already set up for the task, and a second one orphans everything written into it
@@ -265,8 +265,8 @@ If no findings: return literal text "No findings."
 Return at most 15 rows, highest severity first; if more were found, append a final row reading "+N more" with the count in place of N — never omit this row when findings exceed the cap.
 Do not add narration, headers, or summaries before or after the table.
 
-After the table, on its own trailing line — the last non-empty line of your reply — write exactly
-one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
+After the table, on its own trailing line — the last non-empty line of your reply — must read
+exactly `STATUS: DONE` (or DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED).
 
 [Use: Standard]
 ```
@@ -279,7 +279,7 @@ entry; the outcomes are distinct encodings, and none of them may be reported as 
 | Outcome | How it looks | `craft_critics` entry | Log |
 |---|---|---|---|
 | **Failed** | `Task()` errored, or returned nothing | `{provider, ran: true, parsed: false, reason: "dispatch failed: <error text or 'empty reply'>"}` | `SCANNED` naming provider + reason |
-| **Refused** | First line `BLOCKED` or `NEEDS_CONTEXT` | `{provider, ran: true, parsed: false, reason: "<status>: <agent's own text>"}` | `SCANNED` naming provider + reason |
+| **Refused** | Trailing `STATUS: BLOCKED` or `STATUS: NEEDS_CONTEXT` line | `{provider, ran: true, parsed: false, reason: "<status>: <agent's own text>"}` | `SCANNED` naming provider + reason |
 | **Unparseable** | `DONE`/`DONE_WITH_CONCERNS`, but no table with the header above and no literal "No findings." | `{provider, ran: true, parsed: false, reason: "unparseable"}` — do **not** mine prose for something finding-shaped | `SCANNED` naming provider + reason |
 | **Parsed** | The table (or the literal "No findings.") | `{provider, ran: true, parsed: true}` — "No findings." is a real, clean result | — |
 

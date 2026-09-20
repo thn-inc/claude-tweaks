@@ -8,7 +8,7 @@
 
 const { recordPayload } = require('../issues/record');
 
-const REQUIRED_SECTIONS = ['Current State', 'Deliverables', 'Acceptance Criteria'];
+const REQUIRED_SECTIONS = ['Current State', 'Deliverables', 'Acceptance Criteria', 'Release Note'];
 const PLACEHOLDER_MARKERS = ['TBD', 'TODO', '<!-- ambiguity:'];
 
 // Everything from the `## Original request` heading to end of body is a verbatim copy of the

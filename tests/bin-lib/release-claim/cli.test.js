@@ -150,6 +150,32 @@ test('--repo ../evil is rejected before any gh call', () => {
   assert.deepEqual(calls, []);
 });
 
+// #2444 review fix: a caller-supplied --repo can itself be a host-qualified
+// `host/owner/repo` slug (repoSlug()'s GHE output) — before this fix, --repo
+// was always prefixed with `github.com/` regardless of shape, producing an
+// unparseable 4-segment string for a slug like this.
+test('#2444 fix: a host-qualified --repo slug threads --hostname onto the get/put calls', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { calls, d } = deps({ content: live(RUN_DIR_NAME), out, mainRoot: rootOf(runDir) });
+  const code = run(['999', '--run', runDir, '--reason', 'merged: spec 999', '--repo', 'ghe.example.com/acme/w'], d);
+  assert.equal(code, 0);
+  const get = calls.find(isGet);
+  const put = calls.find(isPut);
+  assert.deepEqual(get.slice(-2), ['--hostname', 'ghe.example.com']);
+  assert.deepEqual(put.slice(-2), ['--hostname', 'ghe.example.com']);
+});
+
+test('#2444 fix: a bare --repo owner/repo still resolves to github.com (unchanged, no --hostname)', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { calls, d } = deps({ content: live(RUN_DIR_NAME), out, mainRoot: rootOf(runDir) });
+  const code = run(['999', '--run', runDir, '--reason', 'merged: spec 999', '--repo', 'acme/w'], d);
+  assert.equal(code, 0);
+  const get = calls.find(isGet);
+  assert.doesNotMatch(get.join(' '), /--hostname/);
+});
+
 test('a failed label removal (issue edit throws) warns to stderr and logs "label removal failed"; exit unchanged', () => {
   const runDir = mkRun();
   const out = [];

@@ -171,6 +171,23 @@ test('analyzeDiff: non-string input degrades to empty rather than throwing', () 
   assert.deepEqual(sl.analyzeDiff(null), []);
 });
 
+const TRIPLE_CHAR_CONTENT_DIFF = `diff --git a/src/components/Widget.tsx b/src/components/Widget.tsx
+index 1111111..2222222 100644
+--- a/src/components/Widget.tsx
++++ b/src/components/Widget.tsx
+@@ -10,3 +10,4 @@ export function Widget() {
++++counter;
++  return <div className="widget">{counter}</div>;
+---marker;
+`;
+
+test('analyzeDiff: a content line starting with +++ or --- is counted, not mistaken for a header', () => {
+  const files = sl.analyzeDiff(TRIPLE_CHAR_CONTENT_DIFF);
+  assert.equal(files.length, 1);
+  assert.equal(files[0].changedLines, 3);
+  assert.equal(files[0].surface, true);
+});
+
 test('analyzeDiff: a non-jsx/style/template file (.ts) is never surface', () => {
   const diff = `diff --git a/src/hooks/useWidget.ts b/src/hooks/useWidget.ts
 index 1111111..2222222 100644

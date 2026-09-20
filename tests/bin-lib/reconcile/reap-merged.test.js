@@ -8,6 +8,7 @@ const path = require('path');
 const { reapMerged, isOwnCwd, decideReap, trackReapResidue } = require('../../../plugin/bin/lib/reconcile/reap-merged');
 const { writeRunState } = require('../../../plugin/bin/lib/hooks/context');
 const { listResidueFailures, RESIDUE_ESCALATE_THRESHOLD } = require('../../../plugin/bin/lib/reconcile/cache');
+const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
 const { reconcile } = require('../../../plugin/bin/lib/reconcile');
 const { residueBody } = require('../../../plugin/bin/lib/reconcile/escalate-residue');
 
@@ -299,6 +300,44 @@ test('trackReapResidue: escalates exactly once at the threshold via an injected 
   // part of that clear.
   trackReapResidue(root, 'o/r', '/x/wt', { failed: false }, { escalate });
   assert.equal(calls.length, 1);
+});
+
+// #2505 — two independent (reason, path) entries both crossing the
+// escalation threshold in the SAME pass must share one injected runner —
+// proof that trackReapResidue actually forwards it into escalateResidue's
+// own runner param, the same wiring reapMerged's real call sites use.
+test('trackReapResidue: two paths crossing threshold share one injected runner — only one underlying issue-list call fires', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-track-runner-'));
+  const calls = [];
+  // Wrapped through Task 1's createIssueListCache, the same shape
+  // reconcile/index.js's own (Task 5) shared cache produces — a bare
+  // counting closure has no memoization of its own, so each independent
+  // trackReapResidue call's escalateResidue->findResidueDuplicate would hit
+  // it separately (2 issue-list calls, not 1). The cache's per-repo memo is
+  // what makes the second call's fetch reuse the first call's result.
+  const base = (argv) => { calls.push(argv); return '[]'; };
+  const { runner } = createIssueListCache({ base });
+
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    trackReapResidue(root, 'o/r', '/x/wt-runner-a', { failed: true, lastError: 'removal-failed' }, { runner });
+  }
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    trackReapResidue(root, 'o/r', '/x/wt-runner-b', { failed: true, lastError: 'removal-failed' }, { runner });
+  }
+
+  const issueListCalls = calls.filter((c) => c[0] === 'issue' && c[1] === 'list');
+  assert.equal(issueListCalls.length, 1, `expected exactly one issue-list call across both paths, got ${issueListCalls.length}: ${JSON.stringify(calls)}`);
+});
+
+test('trackReapResidue: omitting `runner` is unaffected by this change', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-track-no-runner-'));
+  const calls = [];
+  const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    trackReapResidue(root, 'o/r', '/x/wt-no-runner', { failed: true, lastError: 'x' }, { escalate });
+  }
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].runner, undefined);
 });
 
 // #1341 acceptance criterion — trackReapResidue's `escalate` call must carry

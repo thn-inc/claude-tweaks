@@ -173,6 +173,22 @@ test('run: on a GitHub Enterprise Server remote, --repo is host-qualified', () =
   ]);
 });
 
+// #2444 review fix: a caller-supplied --repo can itself already be a
+// host-qualified `host/owner/repo` slug (repoSlug()'s GHE output) — before
+// this fix, --repo was always prefixed with `github.com/` regardless of
+// shape, producing an unparseable 4-segment string for a slug like this.
+test('run: a host-qualified --repo flag value passes through unmangled (#2444)', () => {
+  const deps = fakeDeps({
+    readFile: () => JSON.stringify([{ issue: 118, addLabels: ['auto:build'] }]),
+    remoteUrl: () => { throw new Error('remoteUrl should not be called when --repo is passed'); },
+  });
+  const code = run(['actions.json', '--repo', 'ghe.example.com/acme/widgets'], deps);
+  assert.strictEqual(code, 0);
+  assert.deepStrictEqual(deps.calls.gh, [
+    ['issue', 'edit', '118', '--repo', 'ghe.example.com/acme/widgets', '--add-label', 'auto:build'],
+  ]);
+});
+
 test('run: one failed gh call is isolated — other actions still apply, failure reported in the summary', () => {
   let call = 0;
   const deps = fakeDeps({

@@ -145,6 +145,19 @@ still drops the cache entry; the record is left for a human to close manually). 
 that is already closed gets a comment + reopened rather than a duplicate filing — one record per
 path across its whole open/closed/reopened lifetime.
 
+**Shared per-pass `gh issue list` cache (#2505).** `findResidueDuplicate`'s `gh issue list --state
+all --limit 10000` fetch is identical for every escalate/resolve call in one reconcile pass
+regardless of which marker it's filtering for — `reconcile/index.js`'s `reconcile()` creates one
+`issue-list-cache.js`'s `createIssueListCache()` instance per pass and threads its `runner` into
+both `archiveMerged` and `reapMerged` (and, transitively, `cache.js`'s `trackResidue`/
+`pruneResidueFailures`), so a pass touching N stuck dirs/paths makes at most one such call per
+repo, not N. The cache is write-aware, not a naive read-through: `escalateResidue`/
+`resolveResidue` write through the same runner (`issue create`/`edit`/`close`/`reopen`) and then
+read back within the same pass — most visibly for the path-less `structurally-stuck` marker, where
+every stuck dir in a pass converges on one consolidated record — so the cache applies each write's
+effect to its own memoized array directly rather than serving a stale read. Scoped to one
+`createIssueListCache()` instance's lifetime; nothing persists across passes or processes.
+
 ## `archive-merged.js`'s lifecycle classifier (#1732)
 
 `archiveMerged()`'s main loop no longer carries five independent, interleaved detection
@@ -198,6 +211,33 @@ main loop, landed via #1962/#2226/#2228/#2231):
   removes just that path from the shared record's body — the record only actually closes once every
   path it named has resolved, so fixing directory A never silently closes the record while
   directory B is still genuinely stuck.
+
+## gh-absent preflight: accepted MCP gap (#2523)
+
+`reconcile()` (`plugin/bin/lib/reconcile/index.js`) is a plain Node subprocess, not an agent-session
+skill — it cannot reach an agent session's MCP tools, only `gh`. When `gh` is absent (a cloud
+Routine sandbox with GitHub MCP tools instead of the CLI), every GitHub-dependent check —
+`red-tip`, `reap`, `release`, `archive`, `archive-branches`, `remote-prune`, `console` — is skipped
+via the preflight gate (`ghHealthCheck`/`ghHealthCheckAsync`, `preflight.js`), reported as
+`{"skipped":[{"check":"red-tip,reap,release,archive,archive-branches,remote-prune,console","reason":"preflight-gh-absent"}]}`.
+`mirror` is the one exception — pure git, no `gh` call — and keeps running.
+
+This is an **accepted gap, not a bug to fix here**: unlike `/claude-tweaks:dispatch`'s own queue-pull
+(`dispatch/mcp-transport.md`), which runs inside an agent-session skill and therefore *can* call
+MCP tools directly, `reconcile()` runs as a detached background child process
+(`bin/hooks.js`'s `reconcile-background`) with no agent session attached to hand it MCP access —
+bridging it would mean either giving a bare Node subprocess its own MCP client (a much larger
+architectural change, out of scope here) or moving these checks into an agent-session skill
+entirely (changing when/how they run, not just how they reach GitHub).
+
+**Consequence:** in a `gh`-absent sandbox, merged-PR residue (a group's worktree under
+`.claude/worktrees/`, its run directory under `.claude-tweaks/pipelines/`) is never reaped or
+archived automatically — it accumulates indefinitely across every `gh`-absent firing until either
+`gh` becomes available in that sandbox, or a human runs `bin/hooks.js reconcile` manually from an
+environment with `gh`. This is harmless (stale local state, not a correctness bug — the merged PR
+and closed issue are still the source of truth on GitHub), but it is unbounded, so a project running
+its scheduled Routines exclusively in `gh`-absent sandboxes should periodically reconcile from a
+`gh`-present environment to bound the residue.
 
 ## Referenced by
 

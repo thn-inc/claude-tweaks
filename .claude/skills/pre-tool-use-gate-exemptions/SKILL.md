@@ -21,6 +21,8 @@ description: Use when adding or reviewing a scoping exemption in `plugin/bin/lib
 
 - **Every new exemption needs a regression test proven to go red on revert.** Write the test, revert only the code fix (`git checkout -- {file}` on that one file, not `git stash`), confirm the new test — and only the new test — fails, then restore the fix. A green suite alone is not evidence the test discriminates.
 
+- **Not every exemption is decidable from the command grammar alone — some need a live query.** Every exemption above this line is a pure string match: the command text alone proves the exemption holds. `isIntegrationBranchFastForwardPush` (#2542) is the first exemption of a second shape — a fast-forward is a fact about ref state, not something the command text can prove, so the grammar match (`git push <remote> <branch>`, nothing else) is only step one; the exemption still requires a live `git merge-base --is-ancestor` query against the resolved integration branch before it can return true. Keep the two steps in that order and don't let the grammar match alone stand in for the live check — a syntactically-clean fast-forward-shaped command is not evidence of an actual fast-forward.
+
 ## Existing coverage, checked
 
 `gh-api-module-pattern` governs the `run(argv, deps)`/`execFileSync` seam elsewhere in `plugin/bin/lib/` — not this file's deny-gate exemptions, which call `wtDetect` directly (no injectable seam; `deps` here is a single test-only `resolveIntegrationModel` override). Nothing else in `.claude/skills/` touches hooks.

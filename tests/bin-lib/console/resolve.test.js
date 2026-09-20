@@ -112,6 +112,30 @@ test('a staged item named on a REFUSED line in decisions.md resolves to refused,
   assert.strictEqual(by['leftover-y.md'].resolution, 'apply', 'an unrefused sibling keeps its Queue writes stance');
 });
 
+test('a Category: observation/convention reflect finding never resolves to Queue writes/apply, but Category: tangential still does (#2473)', () => {
+  const observation = '# Reflect — staged finding 1\n\n**Category:** observation\n**Severity:** low\n**Reversibility:** high\n**Source:** full mode, lens "Near-misses"\n**Files:** general (test suite infrastructure)\n\n## Finding\n\nSome observation with no Title:/Type:/Labels: header.\n';
+  const convention = '# Reflect — staged finding 2\n\n**Category:** convention\n**Severity:** low\n**Reversibility:** high\n**Source:** full mode, lens "Approach"\n**Files:** general\n\n## Finding\n\nA convention-drift finding.\n';
+  const tangential = 'Title: Some backlog idea\nType: task\nLabels: none\nDefer-reason: tangential\n\n# Reflect — staged finding 3\n\n**Category:** tangential\n\n## Current State\n\nx\n\n## Deliverables\n\n- [ ] y\n\n## Acceptance Criteria\n\n1. z\n';
+
+  assert.strictEqual(classifyStagedItem('reflect-1.md', observation).section, 'Pending review');
+  assert.strictEqual(classifyStagedItem('reflect-1.md', observation).reason, 'non-tangential-category:observation');
+  assert.strictEqual(classifyStagedItem('reflect-2.md', convention).reason, 'non-tangential-category:convention');
+  assert.deepStrictEqual(classifyStagedItem('reflect-3.md', tangential), { section: 'Queue writes' });
+
+  const r = resolveAll({
+    runDir: fixture({ staged: { 'reflect-1.md': observation, 'reflect-2.md': convention, 'reflect-3.md': tangential }, headers: [7] }),
+    policy: 'console-auto',
+    deps: deps(),
+  });
+  const by = Object.fromEntries(r.items.map((i) => [i.id, i]));
+  assert.strictEqual(by['reflect-1.md'].section, 'Pending review');
+  assert.strictEqual(by['reflect-1.md'].resolution, 'pending');
+  assert.strictEqual(by['reflect-2.md'].section, 'Pending review');
+  assert.strictEqual(by['reflect-2.md'].resolution, 'pending');
+  assert.strictEqual(by['reflect-3.md'].section, 'Queue writes', 'a genuine tangential finding still classifies into Queue writes');
+  assert.strictEqual(by['reflect-3.md'].resolution, 'apply', 'a genuine tangential finding still auto-resolves to apply, unchanged from today');
+});
+
 test('every ENGINE_ROW_SECTIONS row classifies a staged finding into its own console section (#1932 M9)', () => {
   const rows = { skills: 'Skill updates', docs: 'Documentation updates', journeys: 'Journey updates', 'claude-md': 'Configuration updates', 'decision-records': 'Configuration updates', references: 'Reference repairs' };
   const results = {};

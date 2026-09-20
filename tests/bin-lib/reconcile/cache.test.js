@@ -198,6 +198,30 @@ test('trackResidue: never throws when escalate itself throws (best-effort)', () 
   }
 });
 
+test('trackResidue: forwards an injected `runner` into the escalate call', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reconcile-cache-runner-'));
+  const calls = [];
+  const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
+  const runner = () => '[]';
+  let last;
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    last = trackResidue(root, 'o/r', 'removal-failed', '/x/wt-runner', { failed: true, lastError: 'x' }, { escalate, runner });
+  }
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].runner, runner, 'the escalate call must receive the same runner reference this call was given');
+});
+
+test('trackResidue: omitting `runner` is unaffected — escalate receives runner: undefined, same as before this change', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reconcile-cache-runner-'));
+  const calls = [];
+  const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    trackResidue(root, 'o/r', 'removal-failed', '/x/wt-no-runner', { failed: true, lastError: 'x' }, { escalate });
+  }
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].runner, undefined);
+});
+
 // #1892 Deliverable 3 — pruneResidueFailures drops any entry whose live path
 // is gone, regardless of reason (reason-agnostic by design — #1811's
 // structurally-stuck prune shares this same call).
@@ -263,4 +287,19 @@ test('pruneResidueFailures: reason-agnostic — a structurally-stuck entry whose
   pruneResidueFailures(root, 'o/r');
 
   assert.deepEqual(listResidueFailures(root), []);
+});
+
+test('pruneResidueFailures: forwards an injected `runner` into the resolve call', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reconcile-cache-prune-runner-'));
+  const gonePath = path.join(root, 'gone-runner');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    recordResidueFailure(root, 'move-failed', gonePath, { lastError: 'x' });
+  }
+  assert.equal(listResidueFailures(root)[0].escalated, true);
+  const calls = [];
+  const resolve = (args) => { calls.push(args); return { status: 'closed', number: 1 }; };
+  const runner = () => '[]';
+  pruneResidueFailures(root, 'o/r', { resolve, runner });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].runner, runner);
 });

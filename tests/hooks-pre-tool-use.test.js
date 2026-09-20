@@ -465,6 +465,55 @@ test('worktree-required: policy on allows "git push" from inside a linked worktr
   assert.deepStrictEqual(out, {});
 });
 
+// #2542: the ff-integration-branch push exemption. `cloneWithOrigin` gives the
+// clone a real `origin` remote (and populated `refs/remotes/origin/HEAD` +
+// `refs/remotes/origin/{branch}`), so `resolveIntegrationBranch` succeeds via
+// its origin/HEAD probe with no `integration-branch:` policy key needed —
+// deliberately branch-name-agnostic, since `init.defaultBranch` varies by
+// host git config.
+function cloneWithOrigin() {
+  const origin = gitRepoWithCommit();
+  const local = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-clone-'));
+  execFileSync('git', ['clone', '-q', origin, local]);
+  const branch = execFileSync('git', ['-C', local, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
+  return { local: fs.realpathSync(local), branch };
+}
+
+test('ff-integration-branch push exemption: a provable fast-forward push of the integration branch is allowed from the main checkout', () => {
+  const { local, branch } = cloneWithOrigin();
+  withPolicy(local, 'worktree-always: true\n');
+  execFileSync('git', ['-C', local, 'commit', '--allow-empty', '-m', 'local advance', '-q']);
+  const out = pre.run({ input: bashInput(`git push origin ${branch}`, local), runDir: null, runState: null, cwd: local });
+  assert.deepStrictEqual(out, {}, 'a pure fast-forward of the integration branch must be exempt');
+});
+
+test('ff-integration-branch push exemption: a diverged (non-fast-forward) push of the integration branch stays denied', () => {
+  const { local, branch } = cloneWithOrigin();
+  withPolicy(local, 'worktree-always: true\n');
+  // Diverge: rewrite local HEAD instead of advancing it, so origin/{branch}
+  // is no longer an ancestor.
+  execFileSync('git', ['-C', local, 'commit', '--amend', '--allow-empty', '-m', 'diverged', '-q']);
+  const out = pre.run({ input: bashInput(`git push origin ${branch}`, local), runDir: null, runState: null, cwd: local });
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny', 'a diverged push must not be exempt');
+});
+
+test('ff-integration-branch push exemption: a --force push of an otherwise-fast-forward integration branch stays denied', () => {
+  const { local, branch } = cloneWithOrigin();
+  withPolicy(local, 'worktree-always: true\n');
+  execFileSync('git', ['-C', local, 'commit', '--allow-empty', '-m', 'local advance', '-q']);
+  const out = pre.run({ input: bashInput(`git push origin ${branch} --force`, local), runDir: null, runState: null, cwd: local });
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny', 'the exemption grammar admits no flags at all, --force included');
+});
+
+test('ff-integration-branch push exemption: a fast-forward push of a NON-integration branch stays denied', () => {
+  const { local } = cloneWithOrigin();
+  withPolicy(local, 'worktree-always: true\n');
+  execFileSync('git', ['-C', local, 'checkout', '-q', '-b', 'feature-branch']);
+  execFileSync('git', ['-C', local, 'commit', '--allow-empty', '-m', 'feature work', '-q']);
+  const out = pre.run({ input: bashInput('git push origin feature-branch', local), runDir: null, runState: null, cwd: local });
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny', 'only the resolved integration branch itself qualifies');
+});
+
 test('worktree-required: policy is read from the EDIT TARGET\'s own repo, not the session cwd', () => {
   const policyRepo = gitRepoWithCommit();
   withPolicy(policyRepo, 'worktree-always: true\n');
