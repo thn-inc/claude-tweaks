@@ -298,7 +298,7 @@ function resolveInputs({ runDir, cwd, deps }) {
   // record-scoped questions ("what did closing it unblock?") have no single
   // answer — null rather than a silently-picked first element.
   const record = records.length === 1 ? records[0] : null;
-  return { records, record, pr, base: mb.base, baseRef: mb.ref, integrationBranch, worktree, policy, sources };
+  return { records, record, pr, base: mb.base, baseRef: mb.ref, integrationBranch, worktree, policy, sources, runDir };
 }
 
 async function wrapProbe(name, fn, now) {
@@ -355,14 +355,43 @@ function parseLedger(text) {
 // A ledger filename names record {n} only at a `-{n}-` or `-{n}.` boundary. A
 // bare substring test let the date prefix answer for a record number
 // (`#26` matching `2026-09-05-…`), silently folding a stranger's ledger into
-// this run's counts (#1930 review M5).
+// this run's counts (#1930 review M5). `_shared/ledger-format.md`'s Location
+// section defines the canonical filename as embedding the plan/spec TOPIC
+// slug, not the record number — this check recognizes only the minority of
+// ledgers that happen to be named after a record — so `ledgerProbe` below
+// uses it as a disambiguator between multiple candidates, never as the sole
+// positive-match test (#2563).
 function namesRecord(file, n) {
   return file.includes(`-${n}-`) || file.includes(`-${n}.`);
 }
 
 function ledgerProbe(inputs, deps) {
+  // _shared/ledger-format.md's Location section: a gated no-worktree run
+  // (worktree-always with no worktree resolved) writes its ledger at
+  // {run-dir}/ledger.md instead of docs/plans/ — the mechanical PreToolUse
+  // gate would deny a docs/plans/ write from the main checkout in that
+  // shape. That file, when present, is authoritative; the docs/plans/ glob
+  // below is only the fallback for every other run (#2563 AC4).
+  const runDirLedgerText = readText(deps, path.join(inputs.runDir, 'ledger.md'));
+  if (runDirLedgerText !== null) {
+    const one = parseLedger(runDirLedgerText);
+    return {
+      open: one.open, total: one.total, byPhase: one.byPhase, files: ['ledger.md'],
+      unrecognized: one.unrecognized, unrecognizedValues: one.unrecognizedValues,
+    };
+  }
+
   const dir = path.join(inputs.worktree, 'docs', 'plans');
-  const files = deps.readdir(dir).filter((f) => f.endsWith('-ledger.md') && inputs.records.some((n) => namesRecord(f, n)));
+  const candidates = deps.readdir(dir).filter((f) => f.endsWith('-ledger.md'));
+  // "One ledger per pipeline run" (_shared/ledger-format.md): when exactly
+  // one *-ledger.md file exists in the worktree, it's unambiguously this
+  // run's regardless of how its {feature} slug was named — a real
+  // topic-slug ledger (the observed #2563 case) has no filename convention
+  // `namesRecord` can positively match. Only when more than one candidate is
+  // present does the record-number boundary disambiguate a leftover
+  // stranger ledger from an earlier, uncleaned run (#1930 review M5's
+  // original false-positive fix) from this run's own.
+  const files = candidates.length <= 1 ? candidates : candidates.filter((f) => inputs.records.some((n) => namesRecord(f, n)));
   const totals = {
     open: 0, total: 0, byPhase: {}, files: files.map((f) => path.posix.join('docs', 'plans', f)),
     unrecognized: 0, unrecognizedValues: [],
