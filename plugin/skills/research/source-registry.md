@@ -150,11 +150,8 @@ source agent returns a verdict, and Template A's severity/path/finding columns c
 The contract's input discipline, four-value status line, and model profile selection all still apply.
 
 ```
-Report one of these as your FIRST line, alone:
-DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
-
 OUTPUT FORMAT (required):
-Then return ONLY these six lines, no preamble and no narration:
+Return ONLY these six lines, no preamble and no narration:
 
 claim:      {the specific proposition you checked, stated so it can be true or false}
 outcome:    verified | falsified | unverified
@@ -162,6 +159,9 @@ source:     {the one source you were assigned}
 confidence: high | medium
 provenance: {file:line, or command + exit status, or URL, or record ref}
 checked-at: {output of `git rev-parse HEAD`}
+
+Report one of these as the last non-empty line of your reply, alone, labeled `STATUS: {WORD}`:
+STATUS: DONE | STATUS: DONE_WITH_CONCERNS | STATUS: NEEDS_CONTEXT | STATUS: BLOCKED
 
 If your source returns nothing, that is an answer, not a failure — but map it
 to the outcome your claim actually takes. If your claim asserted something is

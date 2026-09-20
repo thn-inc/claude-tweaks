@@ -51,7 +51,8 @@ Maintainer / Skeptical Reviewer persona roster scoped to surfacing spec ambiguit
 > independently and returns a verdict. Assemble results after all agents complete.
 > **Contract:** Each agent follows the Subagent Contract
 > (`skills/_shared/subagent-output-contract.md`) — minimal input (the claim + its source quote
-> + URL), one of `DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED` as its first line, then
+> + URL), one of `STATUS: DONE / STATUS: DONE_WITH_CONCERNS / STATUS: NEEDS_CONTEXT / STATUS: BLOCKED`
+> as the last non-empty line of the reply, then
 > the literal output format (Template C), inlined verbatim in the dispatch prompt:
 > ```
 > OUTPUT FORMAT (required):
