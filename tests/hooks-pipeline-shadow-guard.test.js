@@ -105,6 +105,30 @@ test('a cp write shape creating a new pipelines run dir file inside a linked wor
   assertDenied(out);
 });
 
+// --- #2282: this deny previously left no friction-event trace at all. A
+// `session_id` on the input is required for stampAdHocRunDirForDenial to
+// mint a run dir to log into (bin/lib/hooks/context.js) — the other tests
+// above omit it deliberately (appendEvent(null, ...) is then a documented
+// no-op), so these two are the only ones in this file that need it.
+
+test('#2282: a denied mkdir logs a wd-guard-refusal event (reason: shadow-run-dir) to a stamped ad-hoc run dir', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', 'x');
+  const input = { ...bashInput(`mkdir -p "${target}"`, wt), session_id: 'sess-2282-shadow' };
+  const out = pre.run({ input, runDir: null, runState: null, cwd: wt });
+  assertDenied(out);
+  const pipelinesDir = path.join(main, '.claude-tweaks', 'pipelines');
+  const adhocDirs = fs.readdirSync(pipelinesDir).filter((d) => d.endsWith('-adhoc-standalone'));
+  assert.strictEqual(adhocDirs.length, 1, 'expected exactly one stamped ad-hoc run dir');
+  const events = fs.readFileSync(path.join(pipelinesDir, adhocDirs[0], 'events.jsonl'), 'utf8')
+    .trim().split('\n').map((l) => JSON.parse(l));
+  const hit = events.find((e) => e.type === 'wd-guard-refusal');
+  assert.ok(hit, 'expected a wd-guard-refusal event, got: ' + JSON.stringify(events));
+  assert.strictEqual(hit.reason, 'shadow-run-dir');
+  assert.strictEqual(path.resolve(hit.path), path.resolve(target));
+});
+
 test('an unrelated Write inside a linked worktree (outside .claude-tweaks/pipelines/) is unaffected', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);

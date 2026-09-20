@@ -7,10 +7,8 @@
 'use strict';
 
 const { execFileSync } = require('node:child_process');
-const fs = require('node:fs');
 const path = require('node:path');
 const { LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
-const { MANIFEST_PATHS } = require('./lib/manifest-path');
 const { resolveScope } = require('./lib/residue/scope');
 const { hasTestScript } = require('./lib/residue/detect-test-script');
 const { probeWorktrees } = require('./lib/residue/probes/worktrees');
@@ -74,21 +72,6 @@ function runner(cwd) {
   };
 }
 
-// Both spellings of this repo's own manifest, new path first (#418's payload
-// cutover moved it under `plugin/`). Reading only one spelling makes
-// probeRelease's `manifest.name === 'claude-tweaks'` guard trip forever and
-// report "not applicable" in the single repo the release triple exists for.
-// An absent — or unparseable — manifest stays normal: every other project this
-// CLI runs in has none.
-function readProjectManifest(cwd) {
-  for (const manifestPath of MANIFEST_PATHS) {
-    try {
-      return JSON.parse(fs.readFileSync(path.join(cwd, manifestPath), 'utf8'));
-    } catch { /* try the next spelling */ }
-  }
-  return null;
-}
-
 function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (!opts.base) {
@@ -105,8 +88,6 @@ function main() {
   const run = runner(cwd);
   const git = (args, execOpts) => run(['git', ...args], execOpts);
   const scope = resolveScope({ base: opts.base, run: git });
-
-  const manifest = readProjectManifest(cwd);
 
   const suiteRun = () => {
     try {
@@ -154,7 +135,9 @@ function main() {
     probeBranches({ scope, integrationBranch: opts.integrationBranch, run: git }),
     probeForge({ scope, run, ownPr: opts.ownPr }),
     suiteResult,
-    probeRelease({ scope, manifest, run }),
+    // #2257: generalized past a manifest.name gate — runs on any project
+    // whose repo ever bootstrapped .release-please-manifest.json.
+    probeRelease({ scope, run }),
     probePipelineRuns({
       cwd,
       // The invoking run's identity, when one is threaded (wrap-up runs
@@ -177,5 +160,3 @@ function main() {
 }
 
 if (require.main === module) main();
-
-module.exports = { readProjectManifest };

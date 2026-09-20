@@ -25,6 +25,9 @@ const SHAPED_BODY = [
   '',
   '## Acceptance Criteria',
   '1. It works',
+  '',
+  '## Release Note',
+  'Fixed the thing.',
 ].join('\n');
 
 function withCwd(dir, fn) {

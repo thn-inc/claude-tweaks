@@ -20,6 +20,7 @@ const { LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
 const { PRIORITIES, TIERS, parseRecordFacets } = require('./record');
 const { blockersOf } = require('./ranking');
 const { evaluateGrantGate } = require('./grant-gate');
+const { isBotParked } = require('./record-buckets');
 
 // Urgency order shared by both bands (high first). Values are validated
 // against record.js's canonical PRIORITIES/TIERS vocabulary before this
@@ -163,16 +164,20 @@ function readyGrantedSubset(records) {
 }
 
 // records[] -> { captured, prioritized, specified, granted, dispatchable,
-// inFlight, parked, notPlanned, parents, needsYou }. The nine stage keys
-// (captured..parents) are mutually exclusive buckets over the post-merge
+// inFlight, botParked, parked, notPlanned, parents, needsYou }. The ten stage
+// keys (captured..parents) are mutually exclusive buckets over the post-merge
 // faceted set (github + unsynced); needsYou is a separate overlay, not a
 // bucket — see the overlay loop's comment below. Together they form the funnel
 // decision surface /claude-tweaks:backlog overview's bare mode renders. First
-// match wins, in this order for the nine stage keys; the precedence
+// match wins, in this order for the ten stage keys; the precedence
 // rationale: bot-state outranks stage labels because live work reflects current
 // reality (a record simultaneously bot:in-progress and parked/ready resolves
 // toward what is actually happening right now), and granted is checked before
-// dispatchable so a blocked grant can never render as go-now. Blocker
+// dispatchable so a blocked grant can never render as go-now. `botParked`
+// (the merge-verification-gate `bot:parked` facet, distinct from the
+// workflow-stage `parked` bucket below) sits at the same bot-state tier as
+// `inFlight` — a parked record keeps its `auto:*` grants intact, but must
+// never render as buildable via `granted`/`dispatchable` while parked. Blocker
 // resolution — including the unsynced-namespace short-circuit (parent #512
 // promise F1) — is delegated to ranking.js's `blockersOf`, the single owner
 // of precedence (unsynced → top-level `r.blockedBy` → `facets.blockedBy` →
@@ -190,7 +195,7 @@ function readyGrantedSubset(records) {
 function funnelBuckets(records) {
   const buckets = {
     captured: [], prioritized: [], specified: [], granted: [],
-    dispatchable: [], inFlight: [], parked: [], notPlanned: [], parents: [],
+    dispatchable: [], inFlight: [], botParked: [], parked: [], notPlanned: [], parents: [],
   };
   const openIds = new Set(records.map((r) => r.number ?? r.id).filter((n) => n != null));
   for (const r of records) {
@@ -201,6 +206,7 @@ function funnelBuckets(records) {
     // rankNextToBuild (refs #514).
     const inSetBlockers = blockersOf(r).filter((id) => openIds.has(id));
     if (f.bot.inProgress) buckets.inFlight.push(r);
+    else if (isBotParked(r)) buckets.botParked.push(r);
     else if (f.stage === 'parked') buckets.parked.push(r);
     else if (f.notPlanned) buckets.notPlanned.push(r);
     else if (f.isParentIssue) buckets.parents.push(r);
@@ -210,7 +216,7 @@ function funnelBuckets(records) {
     else if (f.priority) buckets.prioritized.push(r);
     else buckets.captured.push(r);
   }
-  // needsYou is an OVERLAY, never a tenth stage: every record above keeps its
+  // needsYou is an OVERLAY, never an eleventh stage: every record above keeps its
   // one primary bucket (exclusivity and sum-to-total invariants untouched).
   // Both needs-facets are LIVE on both drivers (record.js for github-issues,
   // local-store.js for local-files): needsDefinition since the needs:definition

@@ -6,7 +6,7 @@
 // header format has exactly one implementation instead of a copy per caller.
 'use strict';
 
-const REQUIRED_SECTIONS = ['## Current State', '## Deliverables', '## Acceptance Criteria'];
+const REQUIRED_SECTIONS = ['## Current State', '## Deliverables', '## Acceptance Criteria', '## Release Note'];
 const PLACEHOLDER_RE = /\bTBD\b|\bTODO\b|<!--\s*ambiguity:/;
 
 // Everything from the `## Original request` heading to end of body is a

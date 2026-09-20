@@ -115,6 +115,7 @@ swept by this path, no matter its age, preserving this section's own invariant.*
 - `bookkeeping-stamp-deny`: `bin/lib/hooks/pre-tool-use.js`
 - `contract-violation`: `bin/lib/hooks/subagent-stop.js`
 - `ask-user-question`: `bin/lib/hooks/post-tool-use.js`
+- `wd-guard-refusal`: `bin/lib/hooks/pre-tool-use.js`
 - `zero-tool-use-verdict`: `bin/lib/hooks/subagent-stop.js`
 <!-- friction-lens-vocab:end -->
 
@@ -128,7 +129,12 @@ image of that same reason. `wd-foreign-teardown` is excluded for
 the same bystander reason — it's written when a *different* session attempts a teardown, not this
 run's own operator's friction. `wd-ambiguous` and `wd-push-mismatch` are excluded on a different
 basis: both resolve to allow, not a denial, and emit no `systemMessage` — they're silent
-breadcrumbs, not friction.
+breadcrumbs, not friction. `wd-guard-refusal` (#2282) is included — it covers two real,
+own-operator worktree-isolation-guard denials that previously left no friction-event trace at
+all: `checkTeardownGate`'s own-cwd `git worktree remove` refusal, and
+`checkPipelineShadowGuard`'s refusal to create a new pipeline run directory inside a linked
+worktree — both distinct from `gate-denial` (`checkWorktreeRequired`'s own, already-logged
+Edit/Write/commit/push refusal) and from `wd-deny` (E1's assigned-worktree mismatch).
 
 **Per-event avoidability.** For each qualifying event, judge whether it was necessary or whether
 it indicates a claude-tweaks defect (a gate that shouldn't have fired) or gap (a decision the
