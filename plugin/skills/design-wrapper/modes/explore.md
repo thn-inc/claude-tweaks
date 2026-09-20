@@ -89,7 +89,7 @@ Build one disposable semantic HTML scaffold of the primary surface, sourced from
 
 ### Parallel skin builders
 
-One Task agent per presented direction, per `skills/_shared/subagent-output-contract.md`: **Standard** profile (fan-out — never Frontier), a status line as the first line of the reply, and clean-room input limited to the synthesized direction card plus the shared markup path (read-only). Builders never restructure markup to compensate for a direction that doesn't fit — see the previous step.
+One Task agent per presented direction, per `skills/_shared/subagent-output-contract.md`: **Standard** profile (fan-out — never Frontier), a trailing `STATUS: {WORD}` line as the last non-empty line of the reply, and clean-room input limited to the synthesized direction card plus the shared markup path (read-only). Builders never restructure markup to compensate for a direction that doesn't fit — see the previous step.
 
 Each dispatch prompt also carries the **principles layer**, assembled at composition time per `_shared/design-craft.md` and inlined verbatim — a reference inside the prompt reaches nothing — naming its sources per the contract: Emil Kowalski's skills as its relevance map selects them (when installed), plus Impeccable reference files, alongside the dealt world's card. This scope assembles principles only: no `DESIGN.md` and no sidecar read — at genesis there are no decisions to load, by definition. Selection and gating live in the contract; an absent Emil install is noted once in the offer text presented before building (this interactive-only mode has no `missed` output field) and never gates the round.
 
@@ -107,7 +107,8 @@ faithfully expressed as a pure restyle of the shared markup, report DONE_WITH_CO
 could not be expressed rather than restructuring around it.
 
 Status line (required): after everything above, on its own trailing line — the last non-empty
-line of your reply — write exactly one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
+line of your reply — must read exactly `STATUS: DONE` (or DONE_WITH_CONCERNS / NEEDS_CONTEXT /
+BLOCKED).
 ```
 
 **Degraded variant slot:** a `BLOCKED`/failed builder, or one that reports `DONE_WITH_CONCERNS` because its direction cannot be faithfully expressed as a pure restyle, still gets a slot in the switcher — counted in the "1 / N" indicator, visibly naming the direction and the failure or concern — but that slot is **not pickable** as a winner in the Verdict step below.
