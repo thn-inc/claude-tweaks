@@ -272,6 +272,52 @@ function extractFingerprint(body) {
   return plain ? plain[1] : null;
 }
 
+// (#2658) `specify/record-creation.md`'s Idempotency (resume path) section
+// documents a check-before-create + update-after-create discipline against a
+// fingerprint->number map, but names it only as a paragraph of prose — there
+// was no literal code the executing agent's create call sites were required
+// to run, so the check could be silently skipped under time pressure or
+// mid-loop distraction (confirmed mechanism behind #2626/#2627's
+// 9-second-apart duplicate). These two pure functions are that mechanical
+// enforcement: `checkFingerprint` before every `gh issue create`/`gh issue
+// edit` call (both `record-creation.md`'s parent-creation block and
+// `record-creation-subissues.md`'s sub-issue-creation block), `recordFingerprint`
+// immediately after every successful create, mutating the SAME map object a
+// caller keeps re-passing through the rest of its loop — matching the
+// "stays live for the whole loop rather than a snapshot" semantics the prose
+// already specified. No I/O of their own (map read/write to
+// `$SPECIFY_EXISTING_FINGERPRINTS` stays the caller's job, exactly as it
+// already was) — pure functions only, so a caller embedding them in a
+// `node -e` snippet needs no injected deps to unit test them directly.
+
+// (map, fingerprint) -> the existing record's number when the fingerprint is
+// already present in the map, or null when it is genuinely new. `map` is a
+// plain `{fingerprint: number}` object (`JSON.parse` of
+// `$SPECIFY_EXISTING_FINGERPRINTS`'s content) — never a `Map` instance, so
+// the map building code already in record-creation.md/record-creation-
+// subissues.md needs no change to keep using it directly.
+function checkFingerprint(map, fingerprint) {
+  if (!map || typeof map !== 'object' || typeof fingerprint !== 'string' || !fingerprint) return null;
+  return Object.prototype.hasOwnProperty.call(map, fingerprint) ? map[fingerprint] : null;
+}
+
+// (map, fingerprint, number) -> void. Mutates `map` in place — the same
+// object reference `checkFingerprint` above was just given — so a caller
+// re-reading its own map after this call sees the just-created record
+// without a second file read, and a later `fs.writeFileSync` of that same
+// object persists it for the next iteration/process. Never validates
+// `number`'s shape beyond requiring a positive integer — a caller passing
+// something else is a caller bug, and failing loudly here (rather than
+// silently coercing) is safer than writing a corrupt map entry a later
+// checkFingerprint call would then wrongly treat as "already exists" under
+// some other number.
+function recordFingerprint(map, fingerprint, number) {
+  if (!map || typeof map !== 'object') throw new TypeError('recordFingerprint: map must be an object');
+  if (typeof fingerprint !== 'string' || !fingerprint) throw new TypeError('recordFingerprint: fingerprint must be a non-empty string');
+  if (!Number.isInteger(number) || number <= 0) throw new TypeError(`recordFingerprint: number must be a positive integer, got ${JSON.stringify(number)}`);
+  map[fingerprint] = number;
+}
+
 // body -> the git sha the sweep read when it filed this issue, or null when
 // absent (a pre-#117 issue, or a body that was never run through
 // specShapedBody's verifiedAsOf param). Consumers (e.g. bin/materialize.js)
@@ -712,7 +758,7 @@ function specShapedBody({
 
 module.exports = {
   ORIGINS, TYPES, TIERS, PRIORITIES, DEFER_REASONS, LABELS, TYPE_LABELS, recordPayload, specShapedBody,
-  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, extractVerifiedAsOf, extractPremiseCheck, normalizeLabelNames, parseRecordFacets,
+  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, normalizeLabelNames, parseRecordFacets,
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
   hasOpenNativeBlocker, CLASSIFICATION_SCORING, fenceFor, fencedBlock, parseSubIssues,
   buildNativeSubIssuesQuery, buildNativeParentQuery, partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,

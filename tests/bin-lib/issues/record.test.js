@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   recordPayload, TYPE_LABELS, CLASSIFICATION_SCORING, LABELS, DEFER_REASONS,
-  extractFingerprint, extractVerifiedAsOf, extractPremiseCheck, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
+  extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
   buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, buildNativeSubIssuesQuery,
   buildNativeParentQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
@@ -182,6 +182,48 @@ test('extractFingerprint prefers the new work-fingerprint marker when both are p
     extractFingerprint('<!-- code-health-fingerprint: old:1 -->\n<!-- work-fingerprint: new:2 -->'),
     'new:2'
   );
+});
+
+// (#2658) checkFingerprint/recordFingerprint — the mechanical replacement
+// for record-creation.md's prose-only "re-check the fingerprint map before
+// each create" idempotency instruction.
+test('checkFingerprint: returns the existing number for a fingerprint already in the map', () => {
+  assert.strictEqual(checkFingerprint({ 'doc:parent': 42 }, 'doc:parent'), 42);
+});
+
+test('checkFingerprint: returns null for a fingerprint not in the map (genuinely new, simulating a fresh fingerprint)', () => {
+  assert.strictEqual(checkFingerprint({ 'doc:parent': 42 }, 'doc:unit-a'), null);
+});
+
+test('checkFingerprint: returns null (never throws) on a missing/empty/non-object map or a malformed fingerprint', () => {
+  assert.strictEqual(checkFingerprint(null, 'doc:parent'), null);
+  assert.strictEqual(checkFingerprint(undefined, 'doc:parent'), null);
+  assert.strictEqual(checkFingerprint({}, 'doc:parent'), null);
+  assert.strictEqual(checkFingerprint({ 'doc:parent': 42 }, ''), null);
+  assert.strictEqual(checkFingerprint({ 'doc:parent': 42 }, undefined), null);
+});
+
+test('checkFingerprint: does not false-positive on Object.prototype properties (hasOwnProperty guard)', () => {
+  assert.strictEqual(checkFingerprint({ 'doc:parent': 42 }, 'toString'), null);
+  assert.strictEqual(checkFingerprint({ 'doc:parent': 42 }, 'constructor'), null);
+});
+
+test('recordFingerprint: mutates the map in place, so a caller re-checking the SAME map object sees the update immediately (same-run collision detection, simulating a resumed run)', () => {
+  const map = { 'doc:parent': 1 };
+  recordFingerprint(map, 'doc:unit-a', 2);
+  assert.deepStrictEqual(map, { 'doc:parent': 1, 'doc:unit-a': 2 });
+  // Simulating a resumed decomposition run against this same map: a second
+  // lookup of the just-recorded fingerprint now resolves without a create.
+  assert.strictEqual(checkFingerprint(map, 'doc:unit-a'), 2);
+});
+
+test('recordFingerprint: rejects a malformed map, fingerprint, or number rather than silently writing a corrupt entry', () => {
+  assert.throws(() => recordFingerprint(null, 'doc:parent', 1), TypeError);
+  assert.throws(() => recordFingerprint({}, '', 1), TypeError);
+  assert.throws(() => recordFingerprint({}, 'doc:parent', 0), TypeError);
+  assert.throws(() => recordFingerprint({}, 'doc:parent', -1), TypeError);
+  assert.throws(() => recordFingerprint({}, 'doc:parent', 'not-a-number'), TypeError);
+  assert.throws(() => recordFingerprint({}, 'doc:parent', 1.5), TypeError);
 });
 
 test('extractFingerprint reads the legacy harness-health-fingerprint marker', () => {
