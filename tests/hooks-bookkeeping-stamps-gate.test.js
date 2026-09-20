@@ -152,6 +152,115 @@ test('bookkeeping-stamps gate: materialize commit landed AND worktree stamp pres
   assert.deepStrictEqual(out, {});
 });
 
+// #2526: the claim-stamp branch — mirrors the PR-stamp branch's own test
+// shape immediately above/below. Runs strictly before the worktree-stamp
+// check in source order, so every fixture below leaves `worktree` unset to
+// isolate the claim branch's own verdict from the worktree branch's.
+function writeGithubIssuesClaudeMd(wt) {
+  fs.writeFileSync(path.join(wt, 'CLAUDE.md'), '# Fixture\n\nwork-backend: github-issues\nwork-types: labels\n');
+}
+
+test('bookkeeping-stamps gate (#2526): claim logged -> falls through past the claim branch to the next check (worktree deny), not a claim deny', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  fs.writeFileSync(path.join(run, 'decisions.md'), '# Auto-Decision Log\n\n## /flow\n- AUTO 00:00:00 — Step 2.8: claimed #991 (bin/claim-targets.js, transport: git).\n');
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected the NEXT check (worktree stamp, still unsatisfied) to deny');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
+});
+
+test('bookkeeping-stamps gate (#2526): claim missing after materialize -> deny, naming the missing record', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  const spec = out.json.hookSpecificOutput;
+  assert.strictEqual(spec.permissionDecision, 'deny');
+  assert.match(spec.permissionDecisionReason, /Step 2\.8/);
+  assert.match(spec.permissionDecisionReason, /#991/);
+  assert.match(spec.permissionDecisionReason, /IL-131/);
+  assert.ok(readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'));
+});
+
+test('bookkeeping-stamps gate (#2526): decisions.md exists but names a DIFFERENT record\'s claim -> still deny (no cross-record false-satisfy)', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  fs.writeFileSync(path.join(run, 'decisions.md'), '- AUTO 00:00:00 — Step 2.8: claimed #700 (bin/claim-targets.js, transport: git).\n');
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /#991/);
+});
+
+test('bookkeeping-stamps gate (#2526): work-backend: local-files -> exempt unconditionally (falls through to the worktree deny, never a claim deny)', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  fs.writeFileSync(path.join(wt, 'CLAUDE.md'), '# Fixture\n\nwork-backend: local-files\n');
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
+  assert.ok(!readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'), 'local-files must never trip the claim-log deny');
+});
+
+test('bookkeeping-stamps gate (#2526): no CLAUDE.md at all (unconfigured work-backend) -> exempt unconditionally, same as local-files', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
+});
+
+test('bookkeeping-stamps gate (#2526): a provably foreign-owned run warns instead of denying on the claim branch', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, 'owner-session');
+  const out = pre.run({
+    input: { ...editInput(path.join(wt, 'src', 'x.js')), session_id: 'caller-session' },
+    runDir: run,
+    runState: { status: 'active', sessionId: 'owner-session' },
+    cwd: wt,
+  });
+  assert.ok(!out.json || !out.json.hookSpecificOutput, 'a foreign-owned run must not be denied at the claim branch');
+  assert.match(out.json.systemMessage, /different session/);
+  assert.ok(readEvents(run).some((e) => e.type === 'wd-foreign-session' && e.stamp === 'claim-log'));
+});
+
+test('bookkeeping-stamps gate (#2526): a multi-record run — every record needs its own claim line, one missing still denies naming only that one', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('spec-991-995', 'work', '991-spec.md'));
+  // Materialize the second record's spec file directly (no separate commit
+  // needed — hasMaterializeCommit only needs ONE committed work/ file to arm;
+  // getMaterializedRecordNumbers reads the live tree, uncommitted is fine).
+  const dir995 = path.join(wt, '.claude-tweaks', 'pipelines', RUN_ID, 'spec-991-995', 'work');
+  fs.mkdirSync(dir995, { recursive: true });
+  fs.writeFileSync(path.join(dir995, '995-spec.md'), '---\nrecord: 995\n---\nbody\n');
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  fs.writeFileSync(path.join(run, 'decisions.md'), '- AUTO 00:00:00 — Step 2.8: claimed #991 (bin/claim-targets.js, transport: git).\n');
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  const reason = out.json.hookSpecificOutput.permissionDecisionReason;
+  assert.match(reason, /#995/, 'must name the still-missing record');
+  assert.doesNotMatch(reason, /#991/, 'must not name the already-claimed record');
+});
+
 test('bookkeeping-stamps gate: main checkout (not a linked worktree) -> allow regardless of stamps', () => {
   const main = gitRepo();
   commitMaterializedSpec(main, path.join('work', '991-spec.md'));
