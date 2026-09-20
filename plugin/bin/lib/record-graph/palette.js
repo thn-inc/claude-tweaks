@@ -19,9 +19,13 @@ const ORIGIN_COLORS = {
   human: '#7f8c8d',
 };
 
+// Keys are the bare bot-state names, except `bot-parked`: both renderers print
+// these keys verbatim as legend labels, and a bare `parked` there would read as
+// the `parked` stage COLUMN_ORDER already labels "Parked" — keep the prefix.
 const BORDER_COLORS = {
   blocked: '#c0392b',
   'in-progress': '#2980b9',
+  'bot-parked': '#f39c12',
   default: '#95a5a6',
 };
 

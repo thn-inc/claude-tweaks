@@ -124,6 +124,20 @@ git log --merges {base}..{branch} --oneline                                     
 
 Not to be confused with "Reusing a Prior Whole-Branch Review" below — that handles a *later spec's* review citing an *earlier spec's already-completed* whole-branch review in a multi-spec batch; this check handles what's *in the diff at all* for a single review, independent of whether any prior review exists.
 
+### Cherry-Pick Provenance Check
+
+The Merge-Provenance Check above fires only on `git log --merges`. A cherry-pick, a manual port, or any other whole-hunk reuse of *another record's* branch leaves no merge commit at all, so that gate is a no-op and the reused content is reviewed as this branch's own work. On record (#1821): a build cherry-picked `1893db5b7` from `origin/worktree-record-1224`, whose still-open PR #1852 already carried a byte-identical, already-review-passed fix — two open PRs, one implementation. Step 3's lenses (3a-3f) all passed; none of them asks whether this work is already in flight elsewhere, so the duplication surfaced only through an off-lens manual cross-reference.
+
+Run alongside the merge detect above, unconditionally:
+
+```bash
+git log {base}..{branch} --no-merges --format='%H %s'                            # this branch's own commits
+gh pr list --state open --json number,url,headRefName,title                      # live open PRs
+```
+
+- **A commit carries a `(cherry picked from commit ...)` trailer, or its `git patch-id` matches a commit reachable from an open PR's head** — report it before Step 3's lens dispatch: `#{sha} duplicates open PR #{pr} ({url}) — the same fix already exists unmerged elsewhere.` This is a **merge-coordination finding, not a code defect**: the diff can be entirely correct and still need a human to decide which PR survives, so route it to the ledger as needs-human rather than to a lens.
+- **No match, or the `gh` lookup fails** — no-op, fail open, the same posture as the merge check's common case above and as `dispatch/cross-pr-overlap-report.md`'s own AC2 fallback.
+
 Analyze the diff's **shape** — scoped to the own-work file set above when merge commits were detected — to understand the scope. Read `--stat` and `--name-only`, **not** the full diff:
 
 ```bash

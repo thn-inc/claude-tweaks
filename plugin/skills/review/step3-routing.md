@@ -118,10 +118,10 @@ If any findings are "Fix now", make the changes, re-verify per `_shared/deferral
 >
 > ```markdown
 > OUTPUT FORMAT (required):
-> First line: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED
-> Then per change made:
+> Per change made:
 > - {path}:{line} — {change description}
 > If no changes made: return literal text 'No changes.'
+> Status line (required): the last non-empty line of your reply must read exactly `STATUS: DONE` (or DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED).
 > ```
 >
 > **Post-dispatch diff audit (mandatory).** After all fix agents return and before re-running `/claude-tweaks:test`, run `git diff --stat` (plus `git status --porcelain` for untracked additions) and verify every file each agent claimed to change actually appears with real hunks. A detailed, specific fix narrative with zero corresponding diff is an observed failure mode — never accept an agent's bullets as evidence of the edit. An agent whose claimed changes are absent from the diff is treated as failed: its findings stay `open`, and the fix is re-applied inline in the main thread (never by re-trusting a second narrative). Only after the audit passes does the dispatcher inspect the bullets for cross-file conflicts and re-run `/claude-tweaks:test`. This audit's sibling runs earlier in the same review — the post-fan-out untracked-file sweep (`step3-lens-dispatch.md`) checks the same class of leftover after the lens/refutation/gap-sweep fan-out, before this routing step ever loads; both apply one rule (report untracked leftovers, never silently trust them) at the two points in the pipeline where dispatched agents write files.

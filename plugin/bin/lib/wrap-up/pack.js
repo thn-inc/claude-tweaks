@@ -16,6 +16,7 @@ const { promisify } = require('util');
 const { resolvePolicyConfig } = require('../policy-schema');
 const { parseManifestYaml } = require('../flow/manifest');
 const { parseDependencies } = require('../issues/record');
+const { runWithConcurrency } = require('../reconcile/gh-pool');
 const { parseRepo, repoSlug } = require('../repo-resolve');
 
 const PROBE_NAMES = ['residue', 'state', 'blastRadius', 'pr', 'recordLabels', 'claim', 'ledger', 'unblocked'];
@@ -322,19 +323,33 @@ function withTimeout(fn, ms) {
   });
 }
 
+// _shared/ledger-format.md's closed status enum: `open` (blocking) plus five
+// terminal values. A row whose Status cell holds none of these six values
+// (a typo, a synonym, a retired word like `staged`/`resolved`) is neither —
+// #2080: it must count as `unrecognized`, distinguishable from both `open`
+// and the legitimately-resolved terminal case, never silently folded into
+// "terminal" the way it was before this fix.
+const LEDGER_TERMINAL_STATUSES = new Set(['fixed', 'deferred', 'accepted', 'acknowledged', 'observation']);
+
 function parseLedger(text) {
   const rows = text.split('\n').filter((l) => /^\|\s*\d+\s*\|/.test(l));
   const byPhase = {};
   let open = 0;
+  let unrecognized = 0;
+  const unrecognizedValues = new Set();
   for (const row of rows) {
     const cells = row.split('|').slice(1, -1).map((c) => c.trim());
     const phase = cells[1] || 'unknown';
     const status = (cells[3] || '').toLowerCase();
-    byPhase[phase] = byPhase[phase] || { open: 0, total: 0 };
+    byPhase[phase] = byPhase[phase] || { open: 0, total: 0, unrecognized: 0 };
     byPhase[phase].total += 1;
-    if (status === 'open') { open += 1; byPhase[phase].open += 1; }
+    if (status === 'open') {
+      open += 1; byPhase[phase].open += 1;
+    } else if (!LEDGER_TERMINAL_STATUSES.has(status)) {
+      unrecognized += 1; byPhase[phase].unrecognized += 1; unrecognizedValues.add(cells[3] || '');
+    }
   }
-  return { open, total: rows.length, byPhase };
+  return { open, total: rows.length, byPhase, unrecognized, unrecognizedValues: [...unrecognizedValues] };
 }
 
 // A ledger filename names record {n} only at a `-{n}-` or `-{n}.` boundary. A
@@ -348,19 +363,25 @@ function namesRecord(file, n) {
 function ledgerProbe(inputs, deps) {
   const dir = path.join(inputs.worktree, 'docs', 'plans');
   const files = deps.readdir(dir).filter((f) => f.endsWith('-ledger.md') && inputs.records.some((n) => namesRecord(f, n)));
-  const totals = { open: 0, total: 0, byPhase: {}, files: files.map((f) => path.posix.join('docs', 'plans', f)) };
+  const totals = {
+    open: 0, total: 0, byPhase: {}, files: files.map((f) => path.posix.join('docs', 'plans', f)),
+    unrecognized: 0, unrecognizedValues: [],
+  };
+  const unrecognizedValuesSet = new Set();
   for (const f of files) {
     // Read-and-catch, like headerRecords: a ledger archived between the
     // readdir snapshot and this read is skipped, not a whole-probe failure.
     const text = readText(deps, path.join(dir, f));
     if (text === null) continue;
     const one = parseLedger(text);
-    totals.open += one.open; totals.total += one.total;
+    totals.open += one.open; totals.total += one.total; totals.unrecognized += one.unrecognized;
+    for (const v of one.unrecognizedValues) unrecognizedValuesSet.add(v);
     for (const [phase, c] of Object.entries(one.byPhase)) {
-      totals.byPhase[phase] = totals.byPhase[phase] || { open: 0, total: 0 };
-      totals.byPhase[phase].open += c.open; totals.byPhase[phase].total += c.total;
+      totals.byPhase[phase] = totals.byPhase[phase] || { open: 0, total: 0, unrecognized: 0 };
+      totals.byPhase[phase].open += c.open; totals.byPhase[phase].total += c.total; totals.byPhase[phase].unrecognized += c.unrecognized;
     }
   }
+  totals.unrecognizedValues = [...unrecognizedValuesSet];
   return totals;
 }
 
@@ -454,13 +475,28 @@ function buildProbes(inputs, deps) {
       const { stdout } = await gh(['pr', 'view', String(inputs.pr), '--json', 'state,isDraft,mergeStateStatus,headRefOid,statusCheckRollup,reviewDecision']);
       return JSON.parse(stdout);
     },
+    // Concurrency-capped (gh-pool.js's DEFAULT_CONCURRENCY) rather than a
+    // raw unbounded Promise.all fan-out, so a large multi-spec record list
+    // never fires more than a handful of simultaneous `gh issue view` calls
+    // at once (`gh`'s own rate limiting). Failure propagation is otherwise
+    // unchanged from the old Promise.all: this probe is an audit-only
+    // snapshot (`auto-merge-short-circuit.md`/`review-console.md` both
+    // render it beside a live label read and never substitute it), so a
+    // mid-list `gh` failure aborting the WHOLE field to `ok:false` is the
+    // deliberate, correct behavior — the console already treats an
+    // `ok:false` recordLabels field as "omit the snapshot line entirely"
+    // rather than showing a partial, possibly-misleading label set.
     recordLabels: async () => {
       backendOrThrow(); forgeOrThrow(); recordsOrThrow();
-      const out = {};
-      await Promise.all(inputs.records.map(async (n) => {
+      const results = await runWithConcurrency(inputs.records, async (n) => {
         const { stdout } = await gh(['issue', 'view', String(n), '--json', 'labels']);
-        out[n] = JSON.parse(stdout).labels.map((l) => l.name);
-      }));
+        return { n, labels: JSON.parse(stdout).labels.map((l) => l.name) };
+      });
+      const out = {};
+      for (const r of results) {
+        if (r instanceof Error) throw r;
+        out[r.n] = r.labels;
+      }
       return out;
     },
     claim: async () => {
@@ -481,20 +517,21 @@ function buildProbes(inputs, deps) {
       backendOrThrow();
       if (inputs.policy.workBackend === 'local-files') return unblockedLocal(inputs, deps, closed);
       forgeOrThrow();
-      const { stdout } = await gh(['issue', 'list', '--state', 'open', '--json', 'number,title,body', '--limit', '200']);
+      // #2425/#2538: derive `--repo {host/}owner/repo` ONCE, before any of
+      // this probe's three gh invocations (both direct `gh issue list`
+      // calls below, and the resolve-blockers.js child spawn) — a GitHub
+      // Enterprise remote can't otherwise be inferred by a plain `gh` call
+      // the way #2425 already fixed for the child spawn alone. `repoSlug`
+      // resolves to bare `owner/repo` on github.com, a true no-op there.
+      let repoArgs = [];
+      try {
+        const repoSpec = parseRepo(git(['remote', 'get-url', 'origin']));
+        if (repoSpec) repoArgs = ['--repo', repoSlug(repoSpec)];
+      } catch { /* no origin remote — every gh call below falls back to its own cwd-derived default, unchanged */ }
+      const { stdout } = await gh(['issue', 'list', '--state', 'open', '--json', 'number,title,body', '--limit', '200', ...repoArgs]);
       const records = JSON.parse(stdout);
       if (inputs.policy.workLinks === 'native') {
         if (!records.length) return [];
-        // #2425: resolve-blockers.js can't infer owner/repo on a GitHub
-        // Enterprise remote the way plain `gh` calls do — pass it explicitly,
-        // resolved from the same `origin` it would otherwise fall back to
-        // reading itself, so this is additive rather than a behavior change
-        // on a plain github.com project.
-        let repoArgs = [];
-        try {
-          const repoSpec = parseRepo(git(['remote', 'get-url', 'origin']));
-          if (repoSpec) repoArgs = ['--repo', repoSlug(repoSpec)];
-        } catch { /* no origin remote — resolve-blockers.js's own fallback applies unchanged */ }
         const res = await deps.execFile('node', [path.join(BIN, 'resolve-blockers.js'), records.map((r) => r.number).join(','), ...repoArgs], { cwd: inputs.worktree, ...EXEC_OPTS });
         const byNumber = JSON.parse(res.stdout.trim());
         return records.filter((r) => byNumber[r.number] && byNumber[r.number].blockedBy.includes(closed) && !byNumber[r.number].openBlocker).map(toSummary);
@@ -507,7 +544,7 @@ function buildProbes(inputs, deps) {
         .map((r) => ({ number: r.number, title: r.title, blockedBy: parseDependencies(r.body || '') }))
         .filter((r) => r.blockedBy.includes(closed));
       if (!dependents.length) return [];
-      const states = await gh(['issue', 'list', '--state', 'all', '--json', 'number,state', '--limit', '200']);
+      const states = await gh(['issue', 'list', '--state', 'all', '--json', 'number,state', '--limit', '200', ...repoArgs]);
       const stateOf = new Map(JSON.parse(states.stdout).map((i) => [i.number, i.state]));
       return dependents
         .filter((d) => d.blockedBy.every((b) => b === closed || stateOf.get(b) === 'CLOSED'))

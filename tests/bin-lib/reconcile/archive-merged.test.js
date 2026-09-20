@@ -1544,6 +1544,74 @@ test('archiveMerged: two dirs crossing the structurally-stuck threshold in one c
   assert.ok(failures.find((f) => f.path === dirB && f.escalated === true));
 });
 
+// #1235 AC1 — an archiveMerged() pass processing N stuck dirs performs
+// exactly one read and one write of reconcile-cache.json, not one per dir.
+// Two backdated (thus structurally-stuck-eligible), unescalated dirs each
+// trigger trackStuckSkip once via the main loop's onSkip hook —
+// fs.{read,write}FileSync are spied at the cache file's own path so
+// unrelated reads/writes in the same pass (config.yml, run-state.json,
+// events.jsonl) never pollute the count.
+test('archiveMerged: a pass processing 2 structurally-stuck dirs reads and writes reconcile-cache.json exactly once each, not once per dir', () => {
+  const root = fs.realpathSync(makeRepo());
+  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+
+  function seedStuckDir(id, gonePath) {
+    const dir = path.join(root, '.claude-tweaks', 'pipelines', id);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'config.yml'), 'x: 1\n');
+    fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({
+      status: 'active', worktree: gonePath, sessionId: 'sess-1',
+    }));
+    const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+    fs.utimesSync(dir, backdated, backdated);
+    return dir;
+  }
+
+  const dirA = seedStuckDir('2026-01-01T000000-stuck-a-1235', path.join(root, 'long-gone-a'));
+  const dirB = seedStuckDir('2026-01-01T010000-stuck-b-1235', path.join(root, 'long-gone-b'));
+
+  const wrapper = installGhWrapper([]);
+  const cachePath = path.join(root, '.claude-tweaks', 'reconcile-cache.json');
+  const realReadFileSync = fs.readFileSync;
+  const realWriteFileSync = fs.writeFileSync;
+  let reads = 0;
+  let writes = 0;
+  fs.readFileSync = (p, ...rest) => {
+    if (p === cachePath) reads += 1;
+    return realReadFileSync(p, ...rest);
+  };
+  fs.writeFileSync = (p, ...rest) => {
+    if (p === cachePath) writes += 1;
+    return realWriteFileSync(p, ...rest);
+  };
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    fs.readFileSync = realReadFileSync;
+    fs.writeFileSync = realWriteFileSync;
+    wrapper.restore();
+  }
+
+  assert.ok(result.skipped.some((s) => s.runDir === dirA), `expected dirA skipped, got: ${JSON.stringify(result)}`);
+  assert.ok(result.skipped.some((s) => s.runDir === dirB), `expected dirB skipped, got: ${JSON.stringify(result)}`);
+  // 2, not 1 — `pruneResidueFailures` (called once per PASS, never per item,
+  // so it was never in this record's batching scope) does its own separate
+  // readCache after the batch flushes. What batching eliminates is the
+  // per-ITEM multiplier: pre-fix this would be 3 reads (one per stuck dir,
+  // plus prune's own) for 2 dirs; a 3rd dir would have made it 4, not 3 —
+  // post-fix it stays exactly 2 (batch + prune) regardless of dir count.
+  assert.equal(reads, 2, `expected exactly 2 reads of reconcile-cache.json (1 batch + 1 prune) for a 2-dir pass, got ${reads}`);
+  // 1, not 2 — the batch's one write carries BOTH dirs' updates; prune
+  // itself never writes here since neither dir's path was actually pruned
+  // (both still exist on disk).
+  assert.equal(writes, 1, `expected exactly one write of reconcile-cache.json for a 2-dir pass, got ${writes}`);
+
+  const failures = listResidueFailures(root);
+  assert.ok(failures.find((f) => f.path === dirA && f.count === 1), `expected dirA tracked once, got: ${JSON.stringify(failures)}`);
+  assert.ok(failures.find((f) => f.path === dirB && f.count === 1), `expected dirB tracked once, got: ${JSON.stringify(failures)}`);
+});
+
 // --- #1733: archiveMergedRun's onSkip asymmetry — the one behavioral
 // difference the loop-dedup extraction had to preserve rather than "fix":
 // only the main loop's decideArchive skip feeds trackStuckSkip; the #1544

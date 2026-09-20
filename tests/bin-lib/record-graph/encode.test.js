@@ -25,6 +25,16 @@ test('encodeRecord: bot:blocked wins over bot:inProgress when (hypothetically) b
   assert.strictEqual(encodeRecord(both).borderStyle, 'blocked');
 });
 
+test('encodeRecord: bot:parked (merge-verification gate) gets its own distinct border style', () => {
+  const parked = { ...FIXTURE_RECORDS[0], facets: { ...FIXTURE_RECORDS[0].facets, bot: { inProgress: false, blocked: false, parked: true } } };
+  assert.strictEqual(encodeRecord(parked).borderStyle, 'bot-parked');
+});
+
+test('encodeRecord: bot:blocked wins over bot:parked when (hypothetically) both are true', () => {
+  const both = { ...FIXTURE_RECORDS[0], facets: { ...FIXTURE_RECORDS[0].facets, bot: { inProgress: false, blocked: true, parked: true } } };
+  assert.strictEqual(encodeRecord(both).borderStyle, 'blocked');
+});
+
 test('encodeRecord: fully-badged parked record — type via type:* label fallback, both grants, acceptance', () => {
   const encoded = encodeRecord(FIXTURE_RECORDS[2]);
   assert.strictEqual(encoded.fillKey, 'human');
