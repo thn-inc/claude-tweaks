@@ -1,7 +1,9 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { run, parseArgs, shellQuote, extractSection, firstSentence } = require('../../plugin/bin/lib/compose-subject.js');
+const {
+  run, parseArgs, shellQuote, extractSection, firstSentence, isUnknownIssueTypeField, fetchIssueTypeGraphQL,
+} = require('../../plugin/bin/lib/compose-subject.js');
 const { ComposeSubjectError } = require('../../plugin/bin/lib/release/subject.js');
 
 const RECORDS = {
@@ -285,4 +287,140 @@ test('Type vocabulary has one source of truth: TYPE_PREFIX and record.TYPES name
   const { TYPE_PREFIX } = require('../../plugin/bin/lib/release/subject.js');
   const { TYPES } = require('../../plugin/bin/lib/issues/record.js');
   assert.deepEqual(Object.keys(TYPE_PREFIX).sort(), TYPES.slice().sort());
+});
+
+// (#2561) GHES/older-gh REST `issueType` field rejection — retry + fallback.
+test('isUnknownIssueTypeField: matches the exact gh rejection text on .message or .stderr, not other failures', () => {
+  assert.equal(isUnknownIssueTypeField({ message: 'gh: Unknown JSON field: "issueType"' }), true);
+  assert.equal(isUnknownIssueTypeField({ stderr: 'error: Unknown JSON field: "issueType"' }), true);
+  assert.equal(isUnknownIssueTypeField({ message: 'HTTP 404: Not Found' }), false);
+  assert.equal(isUnknownIssueTypeField({ message: 'network timeout' }), false);
+  assert.equal(isUnknownIssueTypeField(new Error('gh auth login required')), false);
+});
+
+test('fetchIssueTypeGraphQL: parses a native type from the GraphQL response, adds --hostname only off github.com', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    return JSON.stringify({ data: { repository: { issue: { issueType: { name: 'Bug' } } } } });
+  };
+  const result = fetchIssueTypeGraphQL(runner, { host: 'github.com', owner: 'acme', repo: 'repo' }, 42);
+  assert.deepEqual(result, { name: 'Bug' });
+  assert.ok(!calls[0].includes('--hostname'), calls[0].join(' '));
+
+  const ghesRunner = (args) => { calls.push(args); return JSON.stringify({ data: { repository: { issue: { issueType: { name: 'Task' } } } } }); };
+  fetchIssueTypeGraphQL(ghesRunner, { host: 'ghes.acme.internal', owner: 'acme', repo: 'repo' }, 42);
+  assert.ok(calls[1].includes('--hostname') && calls[1].includes('ghes.acme.internal'), calls[1].join(' '));
+});
+
+test('fetchIssueTypeGraphQL: degrades to null on a runner failure, malformed JSON, or a response carrying no issueType (never throws)', () => {
+  assert.equal(fetchIssueTypeGraphQL(() => { throw new Error('boom'); }, { owner: 'a', repo: 'b' }, 1), null);
+  assert.equal(fetchIssueTypeGraphQL(() => 'not json', { owner: 'a', repo: 'b' }, 1), null);
+  assert.equal(fetchIssueTypeGraphQL(() => JSON.stringify({ data: { repository: { issue: { issueType: null } } } }), { owner: 'a', repo: 'b' }, 1), null);
+});
+
+test('run(): REST issueType rejection retries without the field, then still resolves type from an existing type:* label (label-first, no GraphQL call)', () => {
+  const out = { stdout: '', stderr: '', calls: [] };
+  let attempt = 0;
+  const deps = {
+    ghAvailable: () => true,
+    remoteUrl: () => 'git@github.com:acme/repo.git',
+    runner: (args) => {
+      out.calls.push(args);
+      if (args[0] === 'issue' && args[1] === 'view') {
+        attempt++;
+        if (attempt === 1) {
+          const e = new Error('gh: Unknown JSON field: "issueType"');
+          throw e;
+        }
+        assert.ok(!args.includes('number,title,body,labels,issueType'), 'retry must drop the rejected field');
+        return JSON.stringify({ ...RECORDS[2251], issueType: undefined });
+      }
+      throw new Error('unexpected call: ' + args.join(' '));
+    },
+    fetchIssueType: () => { throw new Error('must not call GraphQL fallback when a type:* label already resolves the type'); },
+    stdout: (s) => { out.stdout += s; },
+    stderr: (s) => { out.stderr += s; },
+  };
+  const code = run(['2251'], deps);
+  assert.equal(code, 0, out.stderr);
+  assert.equal(attempt, 2);
+  const parsed = JSON.parse(out.stdout);
+  assert.equal(parsed.title, 'feat: Merge-time conventional subject (#2251)');
+});
+
+test('run(): REST issueType rejection + no type:* label falls back to the GraphQL native type', () => {
+  const out = { stdout: '', stderr: '' };
+  let viewAttempt = 0;
+  const deps = {
+    ghAvailable: () => true,
+    remoteUrl: () => 'git@github.com:acme/repo.git',
+    runner: (args) => {
+      if (args[0] === 'issue' && args[1] === 'view') {
+        viewAttempt++;
+        if (viewAttempt === 1) throw new Error('Unknown JSON field: "issueType"');
+        return JSON.stringify(RECORDS[2263]); // no type:* label
+      }
+      throw new Error('unexpected call: ' + args.join(' '));
+    },
+    fetchIssueType: (runner, repoSpec, n) => {
+      assert.equal(n, 2263);
+      assert.equal(repoSpec.owner, 'acme');
+      return { name: 'Bug' };
+    },
+    stdout: (s) => { out.stdout += s; },
+    stderr: (s) => { out.stderr += s; },
+  };
+  const code = run(['2263'], deps);
+  assert.equal(code, 0, out.stderr);
+  const parsed = JSON.parse(out.stdout);
+  assert.equal(parsed.title, 'fix: No type (#2263)');
+});
+
+test('run(): REST issueType rejection + no label + GraphQL fallback also finds nothing — composeSubject\'s pre-existing type requirement still applies (exit 1, unchanged from the REST-works case)', () => {
+  const out = { stdout: '', stderr: '' };
+  let viewAttempt = 0;
+  const deps = {
+    ghAvailable: () => true,
+    remoteUrl: () => 'git@github.com:acme/repo.git',
+    runner: (args) => {
+      if (args[0] === 'issue' && args[1] === 'view') {
+        viewAttempt++;
+        if (viewAttempt === 1) throw new Error('Unknown JSON field: "issueType"');
+        return JSON.stringify(RECORDS[2263]);
+      }
+      throw new Error('unexpected call: ' + args.join(' '));
+    },
+    fetchIssueType: () => null,
+    stdout: (s) => { out.stdout += s; },
+    stderr: (s) => { out.stderr += s; },
+  };
+  const code = run(['2263'], deps);
+  assert.equal(code, 1);
+  assert.match(out.stderr, /type must be one of/);
+});
+
+test('run(): a genuine gh failure (not the issueType rejection) on the first view call is still fatal, with no retry attempted', () => {
+  const out = { stdout: '', stderr: '' };
+  let calls = 0;
+  const deps = {
+    ghAvailable: () => true,
+    remoteUrl: () => 'git@github.com:acme/repo.git',
+    runner: () => { calls++; throw new Error('HTTP 404: Not Found'); },
+    fetchIssueType: () => { throw new Error('must not be called'); },
+    stdout: (s) => { out.stdout += s; },
+    stderr: (s) => { out.stderr += s; },
+  };
+  const code = run(['2251'], deps);
+  assert.equal(code, 3);
+  assert.equal(calls, 1);
+  assert.match(out.stderr, /HTTP 404/);
+});
+
+test('run(): unaffected hosts (REST issueType field works) are unchanged — still one gh issue view call, no fetchIssueType call', () => {
+  const { deps, out } = fakeDeps();
+  deps.fetchIssueType = () => { throw new Error('must not be called when the REST field succeeds'); };
+  const code = run(['2261'], deps); // 2261 carries a native issueType in the fixture already
+  assert.equal(code, 0, out.stderr);
+  assert.equal(out.calls.length, 1);
 });
