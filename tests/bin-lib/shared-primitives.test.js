@@ -330,3 +330,36 @@ test('GH_TIMEOUT_MS: an out-of-range policy value falls back to the 5000 default
     }
   });
 });
+
+// Review finding (#2567): the env override originally had no upper bound at
+// all — a positive integer of any size was accepted outright, unlike the
+// policy key, which the schema already caps at 60000. An operator typo (an
+// extra zero on CLAUDE_TWEAKS_GH_TIMEOUT_MS) would have silently hung every
+// `gh` call for minutes instead of falling back to a sane value. Fixed to
+// share the same [min, max] the policy key already enforces.
+test('GH_TIMEOUT_MS: an out-of-range env override falls through to the policy key, not applied unbounded', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'gh-timeout-ms: 8000\n');
+    const prior = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+    process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = '999999'; // over the schema's 60000 max
+    try {
+      assert.strictEqual(freshGhTimeoutMs(), 8000);
+    } finally {
+      if (prior === undefined) delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+      else process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = prior;
+    }
+  });
+});
+
+test('GH_TIMEOUT_MS: an out-of-range env override with no policy set falls through to the 5000 default', () => {
+  withTempCwd(() => {
+    const prior = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+    process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = '500'; // under the schema's 1000 min
+    try {
+      assert.strictEqual(freshGhTimeoutMs(), 5000);
+    } finally {
+      if (prior === undefined) delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+      else process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = prior;
+    }
+  });
+});

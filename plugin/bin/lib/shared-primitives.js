@@ -92,14 +92,28 @@ const LARGE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 let resolvedGhTimeoutMs;
 
 // A positive-integer env var wins outright; anything else (unset, blank,
-// non-numeric, zero, negative) falls through to the policy/default path
-// below rather than throwing — a malformed override must not crash the
-// caller that only wanted a timeout value.
+// non-numeric, zero, negative, or outside the `gh-timeout-ms` policy key's
+// own [min, max] — read from POLICY_KEYS rather than a second hard-coded
+// 1000/60000 pair, so the two bounds can never drift apart) falls through to
+// the policy/default path below rather than throwing or applying an
+// unbounded value — a malformed override must not crash the caller that
+// only wanted a timeout value, and an operator's typo (an extra zero) must
+// not silently hang every `gh` call for minutes.
 function ghTimeoutFromEnv() {
   const raw = process.env[GH_TIMEOUT_ENV_VAR];
   if (raw === undefined || raw === '') return undefined;
   const parsed = Number(raw);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+  if (!Number.isInteger(parsed) || parsed <= 0) return undefined;
+  try {
+    // eslint-disable-next-line global-require
+    const { POLICY_KEYS } = require('./policy-schema');
+    const entry = POLICY_KEYS.find((k) => k.key === 'gh-timeout-ms');
+    if (entry && (parsed < entry.min || parsed > entry.max)) return undefined;
+  } catch {
+    // policy-schema unresolvable — fall through with the parsed value
+    // un-clamped rather than losing an otherwise-legitimate override.
+  }
+  return parsed;
 }
 
 // Policy read is required lazily, inside the function body — never hoisted
