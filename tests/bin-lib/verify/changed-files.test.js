@@ -84,6 +84,65 @@ test('resolveBase falls back to the integration-branch merge-base when the stamp
   assert.strictEqual(resolveBase({ stamp: null, integrationBranch: 'main', execImpl: bareLocal }), MB);
 });
 
+test('resolveBase with requireNonDegenerate skips a stamp anchor that equals current HEAD and falls through to the integration branch (#2486)', () => {
+  const exec = fakeExec({
+    [`merge-base --is-ancestor --end-of-options ${FULL} HEAD`]: '',
+    [`rev-parse --verify --end-of-options ${FULL}^{commit}`]: `${FULL}\n`,
+    'rev-parse --verify HEAD': `${FULL}\n`,
+    'rev-parse --verify --quiet refs/remotes/origin/main': 'abc\n',
+    'merge-base --end-of-options origin/main HEAD': `${MB}\n`,
+  });
+  const result = resolveBase({
+    stamp: { sha: 'x', fullSha: FULL },
+    integrationBranch: 'main',
+    requireNonDegenerate: true,
+    execImpl: exec,
+  });
+  assert.strictEqual(result, MB);
+});
+
+test('resolveBase without requireNonDegenerate keeps returning the HEAD-equal stamp anchor unchanged (--scope semantics untouched, #2486)', () => {
+  const exec = fakeExec({
+    [`merge-base --is-ancestor --end-of-options ${FULL} HEAD`]: '',
+    [`rev-parse --verify --end-of-options ${FULL}^{commit}`]: `${FULL}\n`,
+  });
+  const result = resolveBase({
+    stamp: { sha: 'x', fullSha: FULL },
+    integrationBranch: 'main',
+    execImpl: exec,
+  });
+  assert.strictEqual(result, FULL);
+  assert.ok(!exec.calls.some((c) => c[0] === 'git' && c[1] === 'rev-parse' && c[2] === '--verify' && c[3] === 'HEAD'));
+});
+
+test('resolveBase with requireNonDegenerate but no integrationBranch still returns the HEAD-equal anchor (nothing to fall through to)', () => {
+  const exec = fakeExec({
+    [`merge-base --is-ancestor --end-of-options ${FULL} HEAD`]: '',
+    [`rev-parse --verify --end-of-options ${FULL}^{commit}`]: `${FULL}\n`,
+  });
+  const result = resolveBase({
+    stamp: { sha: 'x', fullSha: FULL },
+    requireNonDegenerate: true,
+    execImpl: exec,
+  });
+  assert.strictEqual(result, FULL);
+});
+
+test('resolveBase with requireNonDegenerate does not skip a stamp anchor that differs from HEAD (genuine incremental case unaffected)', () => {
+  const exec = fakeExec({
+    [`merge-base --is-ancestor --end-of-options ${FULL} HEAD`]: '',
+    [`rev-parse --verify --end-of-options ${FULL}^{commit}`]: `${CANON}\n`,
+    'rev-parse --verify HEAD': `${MB}\n`,
+  });
+  const result = resolveBase({
+    stamp: { sha: 'x', fullSha: FULL },
+    integrationBranch: 'main',
+    requireNonDegenerate: true,
+    execImpl: exec,
+  });
+  assert.strictEqual(result, CANON);
+});
+
 test('resolveBase throws when no explicit base, no usable stamp anchor, and no --integration-branch is given — no inline default-branch resolver (finding 9)', () => {
   const exec = fakeExec({});
   assert.throws(() => resolveBase({ stamp: null, execImpl: exec }), ChangedFilesError);

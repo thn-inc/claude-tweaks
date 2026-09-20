@@ -94,6 +94,56 @@ test('bookkeeping-stamps gate: multi-record materialize commit (spec-{slug}/work
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
 });
 
+// #2571: a multi-spec /flow run's per-spec skill invocations receive
+// `$PIPELINE_RUN_DIR` = `{parent}/spec-{N}/` (flow/multi-spec.md's env-var
+// table), NOT the parent directory — so `ctx.runDir` passed into this gate is
+// the CHILD subdirectory, not the RUN_ID-shaped parent the two tests above
+// exercise. Before the fix, `path.basename(childRunDir)` was `spec-991` (no
+// ISO-timestamp prefix, never a real run id), so the pathspec built from it
+// never matched the real committed path `{parent}/spec-991/work/991-spec.md`
+// and the gate stayed permanently disarmed for every multi-spec run.
+test('bookkeeping-stamps gate (#2571): a multi-spec per-spec runDir ({parent}/spec-{N}/) still recognizes this spec\'s own materialize commit -> deny reachable', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('spec-991', 'work', '991-spec.md'));
+  const { run: parentRun } = mkRunDir(projectDir(), null, undefined);
+  const childRunDir = path.join(parentRun, 'spec-991');
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: childRunDir, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'a per-spec $PIPELINE_RUN_DIR must still recognize its own committed spec-{N}/work/{n}-spec.md as the materialize sentinel');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+test('bookkeeping-stamps gate (#2571): a multi-spec per-spec runDir does NOT match a SIBLING spec\'s materialize commit', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  // Only spec-995 has materialized so far; this call is on behalf of spec-991.
+  commitMaterializedSpec(wt, path.join('spec-995', 'work', '995-spec.md'));
+  const { run: parentRun } = mkRunDir(projectDir(), null, undefined);
+  const childRunDir = path.join(parentRun, 'spec-991');
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: childRunDir, runState: { status: 'active' }, cwd: wt });
+  assert.deepStrictEqual(out, {}, 'spec-991\'s own gate must not arm off a sibling spec\'s materialize commit');
+});
+
+test('bookkeeping-stamps gate (#2571 unit): hasMaterializeCommit resolves a per-spec runDir against its parent\'s run id', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('spec-991', 'work', '991-spec.md'));
+  const { run: parentRun } = mkRunDir(projectDir(), null, undefined);
+  assert.strictEqual(pre.hasMaterializeCommit(wt, path.join(parentRun, 'spec-991')), true);
+  assert.strictEqual(pre.hasMaterializeCommit(wt, path.join(parentRun, 'spec-995')), false);
+});
+
+test('bookkeeping-stamps gate (#2571 unit): a spec-{N}-shaped runDir with no run-id-shaped parent falls through unchanged (not misdetected as a multi-spec child)', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  // Parent of ".../orphan/spec-991" is "orphan" — not RUN_ID_RE-shaped — so
+  // the per-spec branch must not fire; falls through to the ordinary
+  // single-record pathspec rooted at "spec-991" itself, which finds nothing
+  // (no materialize commit landed anywhere in this fixture).
+  const orphanParent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-orphan-'));
+  assert.strictEqual(pre.hasMaterializeCommit(wt, path.join(orphanParent, 'spec-991')), false);
+});
+
 test('bookkeeping-stamps gate: materialize commit landed, run resolved, no worktree stamp -> deny', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
@@ -150,6 +200,115 @@ test('bookkeeping-stamps gate: materialize commit landed AND worktree stamp pres
   // PR-stamp branch (Task 3) never denies here even with runState.pr unset.
   const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt });
   assert.deepStrictEqual(out, {});
+});
+
+// #2526: the claim-stamp branch — mirrors the PR-stamp branch's own test
+// shape immediately above/below. Runs strictly before the worktree-stamp
+// check in source order, so every fixture below leaves `worktree` unset to
+// isolate the claim branch's own verdict from the worktree branch's.
+function writeGithubIssuesClaudeMd(wt) {
+  fs.writeFileSync(path.join(wt, 'CLAUDE.md'), '# Fixture\n\nwork-backend: github-issues\nwork-types: labels\n');
+}
+
+test('bookkeeping-stamps gate (#2526): claim logged -> falls through past the claim branch to the next check (worktree deny), not a claim deny', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  fs.writeFileSync(path.join(run, 'decisions.md'), '# Auto-Decision Log\n\n## /flow\n- AUTO 00:00:00 — Step 2.8: claimed #991 (bin/claim-targets.js, transport: git).\n');
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected the NEXT check (worktree stamp, still unsatisfied) to deny');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
+});
+
+test('bookkeeping-stamps gate (#2526): claim missing after materialize -> deny, naming the missing record', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  const spec = out.json.hookSpecificOutput;
+  assert.strictEqual(spec.permissionDecision, 'deny');
+  assert.match(spec.permissionDecisionReason, /Step 2\.8/);
+  assert.match(spec.permissionDecisionReason, /#991/);
+  assert.match(spec.permissionDecisionReason, /IL-131/);
+  assert.ok(readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'));
+});
+
+test('bookkeeping-stamps gate (#2526): decisions.md exists but names a DIFFERENT record\'s claim -> still deny (no cross-record false-satisfy)', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  fs.writeFileSync(path.join(run, 'decisions.md'), '- AUTO 00:00:00 — Step 2.8: claimed #700 (bin/claim-targets.js, transport: git).\n');
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /#991/);
+});
+
+test('bookkeeping-stamps gate (#2526): work-backend: local-files -> exempt unconditionally (falls through to the worktree deny, never a claim deny)', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  fs.writeFileSync(path.join(wt, 'CLAUDE.md'), '# Fixture\n\nwork-backend: local-files\n');
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
+  assert.ok(!readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'), 'local-files must never trip the claim-log deny');
+});
+
+test('bookkeeping-stamps gate (#2526): no CLAUDE.md at all (unconfigured work-backend) -> exempt unconditionally, same as local-files', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
+});
+
+test('bookkeeping-stamps gate (#2526): a provably foreign-owned run warns instead of denying on the claim branch', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, 'owner-session');
+  const out = pre.run({
+    input: { ...editInput(path.join(wt, 'src', 'x.js')), session_id: 'caller-session' },
+    runDir: run,
+    runState: { status: 'active', sessionId: 'owner-session' },
+    cwd: wt,
+  });
+  assert.ok(!out.json || !out.json.hookSpecificOutput, 'a foreign-owned run must not be denied at the claim branch');
+  assert.match(out.json.systemMessage, /different session/);
+  assert.ok(readEvents(run).some((e) => e.type === 'wd-foreign-session' && e.stamp === 'claim-log'));
+});
+
+test('bookkeeping-stamps gate (#2526): a multi-record run — every record needs its own claim line, one missing still denies naming only that one', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('spec-991-995', 'work', '991-spec.md'));
+  // Materialize the second record's spec file directly (no separate commit
+  // needed — hasMaterializeCommit only needs ONE committed work/ file to arm;
+  // getMaterializedRecordNumbers reads the live tree, uncommitted is fine).
+  const dir995 = path.join(wt, '.claude-tweaks', 'pipelines', RUN_ID, 'spec-991-995', 'work');
+  fs.mkdirSync(dir995, { recursive: true });
+  fs.writeFileSync(path.join(dir995, '995-spec.md'), '---\nrecord: 995\n---\nbody\n');
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  fs.writeFileSync(path.join(run, 'decisions.md'), '- AUTO 00:00:00 — Step 2.8: claimed #991 (bin/claim-targets.js, transport: git).\n');
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  const reason = out.json.hookSpecificOutput.permissionDecisionReason;
+  assert.match(reason, /#995/, 'must name the still-missing record');
+  assert.doesNotMatch(reason, /#991/, 'must not name the already-claimed record');
 });
 
 test('bookkeeping-stamps gate: main checkout (not a linked worktree) -> allow regardless of stamps', () => {
@@ -546,6 +705,114 @@ test('bookkeeping-stamps gate (#1259): a distinct ownedRun does NOT loosen the P
   assert.ok(out.json, 'expected a deny — the PR-stamp branch must not consult ownedRun');
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-pr|PR-early/);
+});
+
+// --- #1798 Task 0: empirical premise check — does isForeignSessionCall's
+// owner-vs-caller comparison genuinely fail to distinguish "the owning
+// session, whose sessionId just never got recorded (env-var-propagation
+// failure)" from "a foreign session" on the record-pr branch specifically?
+//
+// FINDING (recorded here per this record's own Task 0 convention, and in
+// steps-and-gates... no, in pre-tool-use.js's own header — see that file):
+// CONFIRMED at the code/fixture level — with runState.sessionId unset,
+// isForeignSessionCall(ctx) returns false (not foreign) regardless of
+// ctx.input.session_id's value, for BOTH a genuinely-owning caller AND a
+// wholly foreign one; stampCheckOutcome's non-foreign branch always denies.
+// This ambiguity is real. It does NOT, however, call for either of the
+// record's own conditional-deliverable options:
+//   (a) folding hasDistinctOwnedRun into the record-pr branch — refuted by
+//       the pre-existing #1259 pin two tests above ("a distinct ownedRun
+//       does NOT loosen the PR-stamp branch — that guard is unchanged",
+//       deliberate, not an oversight) AND because in the true incident
+//       shape ownedRun.dir already EQUALS ctx.runDir for a genuine owner
+//       (the session resolves its own run to the very run being checked),
+//       so hasDistinctOwnedRun stays false regardless — it would not have
+//       changed this incident's outcome even if folded in.
+//   (b) backfilling runState.sessionId mid-flight — even a safe version
+//       (re-reading process.env.CLAUDE_CODE_SESSION_ID, never trusting an
+//       unverified caller-claimed identity) does not change THIS call's own
+//       outcome: if the backfilled owner now equals the caller, `owner !==
+//       caller` is still false (not foreign), so stampCheckOutcome still
+//       denies — the ambiguity was never actually the thing standing between
+//       this call and an allow. The deny for an owning session that has not
+//       yet completed Step 6 (opened the PR) is IL-131's own intended
+//       behavior, not a bug: the gate exists specifically so this step
+//       cannot be judged "already done" and skipped.
+// The reporter's own three observed denials, followed by the stamp
+// "eventually landing," are equally well explained by "the gate correctly
+// held until Step 6 completed" as by "a false positive" — and the original
+// events.jsonl excerpt (bare stamp + worktree, no session-id fields) cannot
+// distinguish the two. That is exactly what Deliverable 2 below fixes: the
+// next occurrence of this shape will show ownerSessionId:null on the denied
+// event, immediately legible as "ambiguous-unset-owner," not requiring a
+// fresh investigation. No behavior-changing conditional fix ships in this
+// build — see this file's own bookkeeping-stamp-deny diagnostic fields
+// instead (added by this same record).
+
+test('#1798 Task 0: runState.sessionId unset + a covered call whose caller session_id matches this run\'s OWN resolved ownedRun (the genuine-owner shape) is still denied — isForeignSessionCall cannot rescue it', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const { run } = mkRunDir(project, wt, undefined); // worktree stamped, sessionId genuinely never recorded
+  const out = pre.run(
+    {
+      input: { ...editInput(path.join(wt, 'src', 'x.js')), session_id: 'genuine-owner-session' },
+      runDir: run,
+      runState: { status: 'active', worktree: wt },
+      ownedRun: { dir: run, attribution: 'session' }, // this IS the caller's own run — the true incident shape
+      cwd: wt,
+    },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  assert.ok(out.json, 'expected a deny — an unset owner cannot be proven to be this specific caller, and IL-131 denies until record-pr lands regardless');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+// --- #1798 Deliverable 2: bookkeeping-stamp-deny carries both compared
+// session-id values, unconditional on Task 0's finding — this is what
+// actually answers the reporter's own request: "log the reason so an
+// owner-session false positive is diagnosable from events.jsonl" without
+// needing a fresh investigation each time.
+
+test('#1798: a bookkeeping-stamp-deny event on the record-pr branch carries ownerSessionId (null when never recorded) and callerSessionId', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const { run } = mkRunDir(project, wt, undefined);
+  pre.run(
+    {
+      input: { ...editInput(path.join(wt, 'src', 'x.js')), session_id: 'caller-session-1' },
+      runDir: run,
+      runState: { status: 'active', worktree: wt },
+      cwd: wt,
+    },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  const denyEvent = readEvents(run).find((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'record-pr');
+  assert.ok(denyEvent, 'expected a bookkeeping-stamp-deny event for record-pr');
+  assert.strictEqual(denyEvent.ownerSessionId, null, 'never-recorded sessionId must read null, not undefined or missing');
+  assert.strictEqual(denyEvent.callerSessionId, 'caller-session-1');
+});
+
+test('#1798: a bookkeeping-stamp-deny event on the record-worktree branch also carries both session-id fields', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const { run } = mkRunDir(project, null, 'owner-session-42'); // no worktree stamped -> record-worktree branch
+  pre.run({
+    input: { ...editInput(path.join(wt, 'src', 'x.js')), session_id: 'owner-session-42' },
+    runDir: run,
+    runState: { status: 'active', sessionId: 'owner-session-42' },
+    ownedRun: { dir: run, attribution: 'session' },
+    cwd: wt,
+  });
+  const denyEvent = readEvents(run).find((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'record-worktree');
+  assert.ok(denyEvent, 'expected a bookkeeping-stamp-deny event for record-worktree');
+  assert.strictEqual(denyEvent.ownerSessionId, 'owner-session-42');
+  assert.strictEqual(denyEvent.callerSessionId, 'owner-session-42');
 });
 
 // --- #1520: end-to-end reproduction of #815's build-phase gap ---
@@ -1048,4 +1315,108 @@ test('bookkeeping-stamps gate (#1258): a caught model-resolution exception never
     persisted.prExempt, undefined,
     'a caught resolution exception must never persist prExempt — a later call might resolve pr-first and need to enforce',
   );
+});
+
+// --- #1460: an unrelated dangling run must not deny a fresh scratch worktree ---
+//
+// _shared/scratch-worktree.md's throwaway checkouts (used by /tidy, /wrap-up's
+// residue sweep, /init) never call materialize or record-worktree for
+// themselves — they have no run-state.json of their own. When such a worktree's
+// first Edit/Write resolves ctx.runDir to some OTHER, unrelated non-terminal run
+// (bin/hooks.js's resolveRunDir has no session-id filtering and picks the newest
+// non-terminal run repo-wide), a dangling run whose materialize commit landed
+// elsewhere but was never followed by record-worktree must not have its
+// missing-worktree-stamp deny fire against this unrelated scratch worktree.
+//
+// A fixture where the victim commit sits on a branch that never merges anywhere
+// (e.g. an unmerged PR) can't actually exercise this: that commit is simply
+// unreachable from any other worktree's HEAD regardless of hasMaterializeCommit's
+// range bound, so a naive version of this test would pass identically whether
+// or not #1674's fix exists — proving nothing (confirmed empirically: forcing
+// hasMaterializeCommit's `integration` bound to null and re-running such a
+// fixture left the assertion green). #1460's own cited reproduction — run
+// 2026-08-23T204821-record-361, PR #1339 — did not stay unmerged: `gh pr view
+// 1339` shows `state: MERGED` (2026-08-25) into `main`, even though that run's
+// own run-state.json was left `status: interrupted` with no worktree ever
+// recorded. So this fixture merges the victim's materialize commit into `main`
+// before branching the scratch worktree — the one topology that actually puts
+// the commit in a later worktree's inherited history, which is exactly the
+// precondition hasMaterializeCommit's #1674 range-bound (`{integration}..HEAD`,
+// this worktree's own unique commits only) exists to exclude. Verified by
+// reverting that bound locally (forcing the unbounded pre-#1674 walk) against
+// this exact fixture: the gate arms (hasMaterializeCommit returns true) — so
+// this fixture, unlike the disconnected-branch version, genuinely regresses if
+// the bound is ever removed.
+test('bookkeeping-stamps gate (#1460): an unrelated dangling run (materialize commit merged into main via an already-closed PR, no worktree recorded) does not deny a fresh scratch worktree', () => {
+  const main = gitRepo();
+
+  // The dangling run's OWN worktree — a genuine prior /build attempt whose
+  // materialize commit landed here.
+  const victimWt = linkedWorktreeOf(main);
+  const runId = '2026-08-23T204821-record-361';
+  commitMaterializedSpec(victimWt, path.join('work', '361-spec.md'), runId);
+
+  // Merge that commit into `main`, simulating PR #1339's real, confirmed merge
+  // — this is what puts it into every LATER worktree's inherited history.
+  const victimBranch = execFileSync('git', ['-C', victimWt, 'branch', '--show-current'], { encoding: 'utf8' }).trim();
+  execFileSync('git', ['-C', main, 'merge', '--no-ff', victimBranch, '-m', 'Merge PR #1339', '-q']);
+
+  // The dangling run dir: materialize commit landed and merged (per victimWt
+  // above), but record-worktree never ran — no `worktree`/`sessionId` field at
+  // all, the exact "interrupted, no worktree ever recorded" shape #1460
+  // describes, matching run-361's real state despite PR #1339 having merged.
+  const project = projectDir();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'interrupted' }));
+
+  // A separate scratch worktree, freshly branched from main's CURRENT
+  // (post-merge) tip — has made zero commits of its own, but its HEAD now
+  // contains victimWt's materialize commit via ordinary ancestry, the same as
+  // any real worktree created after that PR merged.
+  const scratchWt = linkedWorktreeOf(main);
+
+  const out = pre.run({
+    input: editInput(path.join(scratchWt, 'src', 'x.js')),
+    runDir: run,
+    runState: { status: 'interrupted' },
+    cwd: scratchWt,
+  });
+  assert.deepStrictEqual(
+    out, {},
+    'a scratch worktree with no commits of its own must not be denied on account of an unrelated dangling run\'s inherited materialize commit',
+  );
+});
+
+// Control for the test above: the SAME dangling-run shape (materialize landed,
+// no worktree recorded) still denies when the calling worktree IS the one the
+// materialize commit actually landed in — proving the allow above comes from
+// "this worktree never touched that run," not from a broken fixture or a
+// gate that stopped enforcing the record-worktree stamp altogether. This is
+// the AC2 case (genuine /build worktree missing its own stamp must still be
+// denied) exercised with THIS test's own fixture shape rather than reusing the
+// file's line-97 test's fixture — the record-worktree deny AC2 already asks
+// for is already covered there, but this control keeps the #1460 scenario's
+// own fixtures self-verifying, the same pairing the file's existing I2.1 test
+// (line 615) uses.
+test('bookkeeping-stamps gate (#1460 control): the same dangling-run shape still denies when the calling worktree IS the one that materialized it', () => {
+  const main = gitRepo();
+  const ownWt = linkedWorktreeOf(main);
+  const runId = '2026-08-23T204821-record-361';
+  commitMaterializedSpec(ownWt, path.join('work', '361-spec.md'), runId);
+
+  const project = projectDir();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'interrupted' }));
+
+  const out = pre.run({
+    input: editInput(path.join(ownWt, 'src', 'x.js')),
+    runDir: run,
+    runState: { status: 'interrupted' },
+    cwd: ownWt,
+  });
+  assert.ok(out.json && out.json.hookSpecificOutput, 'control: the worktree that actually materialized this run must still be denied for its missing worktree stamp');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/);
 });

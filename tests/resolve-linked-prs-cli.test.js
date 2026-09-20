@@ -165,7 +165,7 @@ test('success: owner/repo parsed from the origin remote when --repo is absent', 
 
 test('success: no linked PR reports openPR null', () => {
   const deps = fakeDeps({
-    runner: (args) => JSON.stringify({
+    runner: () => JSON.stringify({
       data: { repository: { i1224: { number: 1224, closedByPullRequestsReferences: { nodes: [] } } } },
     }),
   });
@@ -176,7 +176,7 @@ test('success: no linked PR reports openPR null', () => {
 
 test('success: a merged (not open) linked PR reports openPR null', () => {
   const deps = fakeDeps({
-    runner: (args) => JSON.stringify({
+    runner: () => JSON.stringify({
       data: { repository: { i1224: { number: 1224, closedByPullRequestsReferences: { nodes: [{ number: 900, state: 'MERGED' }] } } } },
     }),
   });

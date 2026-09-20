@@ -19,7 +19,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const preflight = require('./lib/preflight-records/preflight-records');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
-const { parseRepo } = require('./lib/repo-resolve');
+const { parseRepo, repoResolutionNote } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--help]\n';
 
@@ -92,7 +92,25 @@ function run(argv, deps = realDeps) {
     return 2;
   }
 
-  const { ok: issues, failed } = preflight.fetchIssues({ numbers, runner: deps.runner });
+  // #2538: derive repo/host ONCE, before any gh call — both fetchIssues
+  // (unconditional, every mode) and the native-mode dependency check below
+  // need it. Resolution failure is non-fatal here (body-text mode's bare
+  // `gh issue view` calls already work fine with no --repo on the ordinary
+  // github.com case) — only work-links: native hard-requires a resolved
+  // repo, at its own existing gate below, unchanged.
+  let remote = null;
+  if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
+  const repoSpec = parseRepo(opts.repo ? (opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : remote);
+  const repoNote = repoResolutionNote(repoSpec);
+  if (repoNote) deps.stderr(`preflight-records.js: ${repoNote}\n`);
+
+  const { ok: issues, failed } = preflight.fetchIssues({
+    numbers,
+    owner: repoSpec && repoSpec.owner,
+    repo: repoSpec && repoSpec.repo,
+    host: repoSpec && repoSpec.host,
+    runner: deps.runner,
+  });
   if (failed.length > 0) {
     const names = failed.map((f) => `#${f.number} (${f.error})`).join(', ');
     deps.stderr(`preflight-records.js: record fetch failed for ${names}\n`);
@@ -110,9 +128,6 @@ function run(argv, deps = realDeps) {
 
   let dependencies = null;
   if (workLinks === 'native') {
-    let remote = null;
-    if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-    const repoSpec = parseRepo(opts.repo ? `github.com/${opts.repo}` : remote);
     if (!repoSpec) { deps.stderr('preflight-records.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
     try {
       dependencies = preflight.fetchNativeDependencies({

@@ -1,6 +1,6 @@
 # Ledger Format — Shared Contract
 
-Canonical definition of the pipeline ledger's file format, status lifecycle, phase taxonomy, and resolve-gate procedure. Read by `/claude-tweaks:build`, `/claude-tweaks:test`, `/claude-tweaks:review`, `/claude-tweaks:wrap-up`, and `/claude-tweaks:flow` as a knowledge dependency — none of them invoke `/claude-tweaks:ledger` through the Skill tool; they read this file to learn the format, then read/write `docs/plans/YYYY-MM-DD-{feature}-ledger.md` directly using file operations. `skills/ledger/SKILL.md` is the thin skill for the two standalone human commands (`/claude-tweaks:ledger`, `/claude-tweaks:ledger resolve`) and cites this file rather than restating the contract.
+Canonical definition of the pipeline ledger's file format, status lifecycle, phase taxonomy, and resolve-gate procedure. Read by `/claude-tweaks:build`, `/claude-tweaks:test`, `/claude-tweaks:review`, `/claude-tweaks:wrap-up`, and `/claude-tweaks:flow` as a knowledge dependency — none of them invoke `/claude-tweaks:ledger` through the Skill tool; they read this file to learn the format, then read/write the ledger file at the location this file's Location section resolves, directly using file operations. `skills/ledger/SKILL.md` is the thin skill for the two standalone human commands (`/claude-tweaks:ledger`, `/claude-tweaks:ledger resolve`) and cites this file rather than restating the contract.
 
 ## Ledger File Format
 
@@ -11,6 +11,14 @@ docs/plans/YYYY-MM-DD-{feature}-ledger.md
 ```
 
 The `{feature}` name matches the execution plan or spec topic. One ledger per pipeline run.
+
+**No-worktree run exception.** A run with no worktree at all — `run-state.json` carries no `worktree` field, or no `run-state.json` exists yet — AND this project has `worktree-always: true` set (resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values worktree-always`) has nowhere to commit a `docs/plans/` write: the mechanical PreToolUse gate denies any tracked-path write from the main checkout, worktree or not. This is exactly the shape `wrap-up/residue-sweep.md`'s preamble runs in (a single-spec or final-spec wrap-up finding nothing left to build, so no build/test/review step ever created a worktree for this run). Without `worktree-always: true`, a no-worktree run can simply write `docs/plans/...` directly from the main checkout — nothing blocks it — so the alternate location below is never needed there. For the gated case only, create the ledger at:
+
+```
+{run-dir}/ledger.md
+```
+
+— inside this run's own pipeline directory (`.claude-tweaks/pipelines/{run-id}/`), which is already gitignored and commit-exempt (`_shared/auto-mode-contract.md`'s "Pipeline run directory" section) and already this run's own audit-trail home. Never committed, never a `docs/plans/*-ledger.md` glob match. **Resolution rule for a caller reading "the active ledger for this run":** when a run dir resolves (`$PIPELINE_RUN_DIR` or the most-recent-matching run), check `{run-dir}/ledger.md` for existence first — if it exists, that's the active ledger; if not, fall back to the `docs/plans/*-ledger.md` glob. A caller with no run dir at all (no `$PIPELINE_RUN_DIR` resolves, and no run dir can be inferred) always uses `docs/plans/` only, since there is no run-dir-scoped alternative to check.
 
 ### Format
 
@@ -46,7 +54,7 @@ observation          (informational, non-blocking — e.g., QA caveats)
 
 **Non-terminal status:** `open` — these items block pipeline completion.
 
-**The status enum is closed.** Those five terminal values plus `open` are the only values a Status cell may hold — there is no `resolved`, `staged`, `done`, or `closed` status. "Resolved" in this file's own prose describes the *condition* of a terminal item, never a value to write into the column; an item that is settled takes the terminal status that says *how* (`fixed`, `deferred`, `accepted`, `acknowledged`), and a staged proposal is `deferred` with the staging path in its Resolution text. Writing an out-of-enum value does not fail loudly — `parseLedger` (`bin/lib/wrap-up/pack.js`) counts only `open` as blocking, so anything it does not recognize is silently treated as terminal.
+**The status enum is closed.** Those five terminal values plus `open` are the only values a Status cell may hold — there is no `resolved`, `staged`, `done`, or `closed` status. "Resolved" in this file's own prose describes the *condition* of a terminal item, never a value to write into the column; an item that is settled takes the terminal status that says *how* (`fixed`, `deferred`, `accepted`, `acknowledged`), and a staged proposal is `deferred` with the staging path in its Resolution text. Writing an out-of-enum value is counted separately (#2080) — `parseLedger` (`bin/lib/wrap-up/pack.js`) tracks it as `unrecognized`, distinct from `open` (blocking) and from a recognized terminal status, and `wrap-up/SKILL.md`'s nothing-left-behind gate surfaces a non-blocking warning naming the count and the distinct values found.
 
 **Resolution-text requirements.** `open` moves only to a terminal status, and only with resolution text (`observation` excepted). Terminal statuses are final — a wrong fix gets a new item, never a reopen. Per status: `fixed` includes the commit hash or file reference; `deferred` includes origin, affected files, and the trigger for when to revisit; `accepted` includes the stated reason why this is acceptable.
 

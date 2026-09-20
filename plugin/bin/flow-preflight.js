@@ -7,6 +7,9 @@
 // verdict is data the skill acts on, never an exit code), 2 on a malformed
 // invocation, 3 when --run (or --json's parent) does not resolve under the
 // main checkout ([IL-127]/[IL-150] — the decision is made on the real path).
+// An undecided crash — a throw that reaches the top level rather than a
+// decided outcome — is exit 1, as in both sibling packs: the 0/2/3
+// vocabulary governs outcomes this CLI decided.
 'use strict';
 
 const path = require('path');

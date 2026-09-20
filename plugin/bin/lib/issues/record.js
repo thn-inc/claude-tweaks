@@ -659,7 +659,11 @@ function parseDependencyAssumptions(body) {
 // shape validation beyond single-line (a bad command degrades to premise: null with a
 // stderr note at materialize time, per that CLI's fail-open posture — never a filing-time
 // gate). The filing site is the only place that knows its own command; materialize.js
-// never invents one.
+// never invents one. Security note: this is body text, so nothing here stops an
+// untrusted issue body from also carrying this line — materialize.js gates actually
+// running it on the issue author's GitHub-attested author_association (trusted only at
+// OWNER/MEMBER/COLLABORATOR), never on this string alone. See flow/materialize.md's
+// "Author-association gate" paragraph.
 function specShapedBody({
   header, currentState, deliverables, acceptanceCriteria, openQuestion, filedBy, provenance, footer, verifiedAsOf, premiseCheck,
 } = {}) {

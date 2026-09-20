@@ -116,6 +116,21 @@ once (to rule out a spurious one-off) and, on a second failure, degrades rather 
 again in a loop — see `review/step3-lens-dispatch.md`'s reproduction-pair section for the
 degrade procedure this classification feeds.
 
+**A subagent whose *parent* session was terminated leaves a 0-byte output file — not a readable
+failure.** The case above assumes the dispatched agent itself died; when instead the *dispatching*
+session is the one cut off (an API session limit hitting the coordinator mid-fan-out, not any one
+subagent's own error), every in-flight subagent's own output file is empty. There is no trailing
+`<error>` block to retrieve, and `tail -n 50` on the output file returns nothing — "read its
+transcript tail" is not a recovery path here, because there is no transcript to read. The only
+surviving record of such an agent's result is a relay a *coordinating* session may have captured
+before the termination reached it. Treat an empty output file as **"no result — re-dispatch,"
+never "no findings"**: observed live on a design-review fan-out (2026-09-04, plugin 6.114.1) — the
+dispatching session hit a session limit while three critique agents were in flight, all three
+output files were 0 bytes, and one agent's findings survived only via a coordinating session's
+relay; re-dispatching the other two against identical input produced a different critique score on
+the retry (30/40 → 25/40) — non-determinism an empty file makes indistinguishable from a genuine
+re-run without that relay.
+
 ## How to integrate at a dispatch site
 
 **Fan-out dispatch shape.** Emit all N `Agent`/`Task` calls of a fan-out as tool_use blocks in a single assistant message; a call per message is a serialized dispatch even when the prose says parallel — the harness only runs tool calls concurrently when they arrive as multiple `tool_use` blocks in one message. When a fan-out spans multiple independent units of work (e.g. several records, each needing its own persona set), batch by unit: one message per record's persona set, never one message per individual agent.

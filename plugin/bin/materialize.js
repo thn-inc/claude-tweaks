@@ -39,8 +39,11 @@ const {
   parseRecordFacets, extractFingerprint, extractVerifiedAsOf, extractPremiseCheck, parseDependencies,
 } = require('./lib/issues/record');
 const { shapeGate, liftMetadata, composeHeader, composeFile } = require('./lib/issues/materialize-format');
+const { findSiblingPremiseDisproof } = require('./lib/issues/sibling-premise');
 const wtDetect = require('./lib/hooks/worktree-detect');
-const { parseRepo, ghAvailable, repoSlug } = require('./lib/repo-resolve');
+const {
+  parseRepo, ghAvailable, repoSlug, repoResolutionNote,
+} = require('./lib/repo-resolve');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
 const { resolveTarget: resolveStageTarget, writeStagedItem } = require('./lib/stage-item/write');
 
@@ -86,6 +89,26 @@ function computeDrift(sha, deps) {
 // GH_TIMEOUT_MS) — bound so a hostile or hung Premise-check: command can
 // never stall materialize.
 const PREMISE_CHECK_TIMEOUT_MS = 5000;
+
+// Security fix (whole-branch pre-release review, base b9c8bbd86): a
+// `Premise-check:` line is body text — anyone who can create or edit the
+// record's issue can write one, regardless of whether it was actually
+// composed by specShapedBody's premiseCheck param (record.js's own comment
+// states that as a convention, never an enforced gate). Trust it only when
+// GitHub itself attests the issue author has a real relationship to this
+// repo (author_association, from the REST API — not body content, which is
+// exactly the attacker-controlled surface). This is the same mitigation
+// class GitHub Actions guidance uses for privileged automation triggered by
+// issue/PR content. An untrusted or unresolvable association degrades to
+// "no premise check" — never a hard stop, matching this feature's existing
+// fail-open posture (computePremise's own degrade-to-null on a throwing
+// runner).
+const TRUSTED_AUTHOR_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+const AUTHOR_ASSOCIATION_TIMEOUT_MS = 5000;
+// #2590: bounds the sibling-PR search below — execFileSync has no default
+// timeout, so an unbounded remote call can hang materialize.js indefinitely
+// on a black-holed network (see .claude/skills/gh-api-module-pattern).
+const SIBLING_PREMISE_SEARCH_TIMEOUT_MS = 5000;
 
 // command -> exit code, run from the checkout root. Distinguishes "the
 // command ran and exited non-zero" (a normal outcome — execFileSync throws
@@ -154,6 +177,26 @@ function parseArgs(argv) {
 
 const realDeps = {
   ghView: (owner, repo, n, host) => execFileSync('gh', ['issue', 'view', String(n), '--repo', repoSlug({ host, owner, repo }), '--json', 'number,title,body,labels,url'], { encoding: 'utf8' }),
+  // #2590: closed PRs referencing this issue, searched by body text — used
+  // to detect a sibling attempt that already reached this record's own
+  // "premise disproved" conclusion. Read-only; no author-association gate
+  // needed (unlike ghAuthorAssociation/runPremiseCheck, nothing here
+  // executes body content — it only searches and pattern-matches it).
+  ghSearchClosedPRs: (owner, repo, n, host) => execFileSync('gh', ['pr', 'list', '--repo', repoSlug({ host, owner, repo }), '--state', 'closed', '--search', `#${n} in:body`, '--json', 'number,url,body'], { encoding: 'utf8', timeout: SIBLING_PREMISE_SEARCH_TIMEOUT_MS }),
+  // Security fix (see TRUSTED_AUTHOR_ASSOCIATIONS above): GitHub's REST API
+  // computes author_association from the issue author's *current* repo
+  // relationship — not body content, so it can't be spoofed by editing the
+  // issue. `gh issue view --json` has no such field to request; the REST
+  // endpoint does. Only called when a Premise-check: line is actually
+  // present (the uncommon case) — every other record pays no extra call.
+  ghAuthorAssociation: (owner, repo, n, host) => String(
+    execFileSync(
+      'gh',
+      ['api', `repos/${owner}/${repo}/issues/${n}`, '--jq', '.author_association']
+        .concat(host && host !== 'github.com' ? ['--hostname', host] : []),
+      { encoding: 'utf8', timeout: AUTHOR_ASSOCIATION_TIMEOUT_MS },
+    ),
+  ).trim(),
   ghAvailable,
   remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }),
   // #117: commit distance from a record's Verified-as-of: stamp to current
@@ -273,6 +316,9 @@ function run(argv, deps = realDeps) {
   if (opts.ceremony && opts.ceremony !== 'fast-lane' && opts.ceremony !== 'standard') { deps.stderr('--ceremony must be fast-lane or standard\n' + USAGE); return 2; }
 
   let record;
+  // Populated only on the gh-backed path below — carries owner/repo/host for
+  // the author-association lookup the premise-check gate needs further down.
+  let repoSpec = null;
   if (opts.recordJson) {
     // #1459: the gh-absent path — deps.ghAvailable()/deps.ghView() are never
     // consulted here, and no owner/repo resolution is needed since nothing
@@ -291,9 +337,12 @@ function run(argv, deps = realDeps) {
 
     let remote = null;
     if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-    const repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
+    repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
     if (!repoSpec) { deps.stderr('materialize.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
     const { host, owner, repo } = repoSpec;
+    // #2538 Deliverable 3 — visible only for a resolved non-github.com host.
+    const repoNote = repoResolutionNote(repoSpec);
+    if (repoNote) deps.stderr(`materialize.js: ${repoNote}\n`);
 
     try {
       record = JSON.parse(deps.ghView(owner, repo, opts.n, host));
@@ -332,7 +381,34 @@ function run(argv, deps = realDeps) {
   // holds. Never a hard stop — an unattended run stages a close proposal for
   // the Review Console instead (auto-mode-contract.md's staging discipline).
   const premiseCommand = extractPremiseCheck(record.body);
-  const premise = computePremise(premiseCommand, deps);
+  let premise = null;
+  if (premiseCommand) {
+    // Security gate (see TRUSTED_AUTHOR_ASSOCIATIONS above): only run the
+    // command when GitHub itself attests the issue author is trusted.
+    // gh-backed path -> a live REST lookup; --record-json path -> the
+    // caller's own optional authorAssociation field, since there is no gh
+    // call to make there (deps.ghView/ghAvailable are never consulted on
+    // that path either, per the #1459 comment above) — an absent field
+    // degrades to untrusted, matching the fail-open-to-skip posture below.
+    let association = null;
+    if (repoSpec) {
+      try {
+        association = deps.ghAuthorAssociation(repoSpec.owner, repoSpec.repo, opts.n, repoSpec.host);
+      } catch {
+        association = null;
+      }
+    } else if (typeof record.authorAssociation === 'string') {
+      association = record.authorAssociation;
+    }
+    if (association && TRUSTED_AUTHOR_ASSOCIATIONS.has(association)) {
+      premise = computePremise(premiseCommand, deps);
+    } else {
+      deps.stderr(
+        `materialize.js: Record #${opts.n} has a Premise-check: line but its author's repo `
+        + `association (${association || 'unresolvable'}) is not trusted — skipping the check.\n`,
+      );
+    }
+  }
   if (premise && premise.satisfiedAtBase) {
     deps.stderr(
       `materialize.js: Record #${opts.n}'s premise already satisfied at base: `
@@ -377,6 +453,60 @@ function run(argv, deps = realDeps) {
     }
   }
 
+  // #2590: sibling-PR premise-disproof scan — before planning a fresh
+  // investigation, check whether a closed PR already reached the same
+  // "premise disproved" conclusion for this record. gh-backed path only
+  // (repoSpec is null on --record-json); best-effort, never blocks.
+  let siblingPremiseDisproof = null;
+  if (repoSpec && typeof deps.ghSearchClosedPRs === 'function') {
+    try {
+      const prs = JSON.parse(deps.ghSearchClosedPRs(repoSpec.owner, repoSpec.repo, opts.n, repoSpec.host));
+      siblingPremiseDisproof = findSiblingPremiseDisproof(prs);
+    } catch {
+      siblingPremiseDisproof = null;
+    }
+    if (opts.runDir) {
+      try {
+        deps.mkdirp(opts.runDir);
+        const mainRoot = deps.mainRoot(deps.cwd());
+        const decisionTarget = resolveDecisionTarget({ runDir: opts.runDir, cwd: deps.cwd(), mainRoot });
+        if (decisionTarget.ok) {
+          const outcome = siblingPremiseDisproof
+            ? `found closed PR #${siblingPremiseDisproof.number} already stating "${siblingPremiseDisproof.matchedPhrase}"`
+            : 'no closed PR found stating the premise was already disproved';
+          const entry = formatEntry({
+            status: 'SCANNED',
+            now: Date.now(),
+            step: 'materialize',
+            text: `Sibling-PR premise scan for #${opts.n}: searched closed PRs referencing #${opts.n} — ${outcome}.`,
+            reversibility: 'n/a',
+          });
+          appendEntry({ runDir: opts.runDir, section: undefined, entry });
+        }
+        if (siblingPremiseDisproof) {
+          const stageTarget = resolveStageTarget({ runDir: opts.runDir, cwd: deps.cwd(), mainRoot });
+          if (stageTarget.ok) {
+            const note = `# Staged: closed sibling PR already disproved #${opts.n}'s premise\n\n`
+              + `PR #${siblingPremiseDisproof.number} (${siblingPremiseDisproof.url}) was closed without merging, but its body `
+              + `already states "${siblingPremiseDisproof.matchedPhrase}" — a prior attempt already reached this record's `
+              + `conclusion. Proposed action: review that PR before re-running a fresh full-suite investigation for #${opts.n}.\n`;
+            writeStagedItem({
+              runDir: stageTarget.dir, id: `sibling-premise-disproof-${opts.n}`, sourcePath: 'note.md', content: note,
+            });
+          }
+        }
+      } catch (err) {
+        deps.stderr(`materialize.js: could not log/stage the sibling-premise scan (${err && err.message ? err.message : String(err)})\n`);
+      }
+    }
+    if (siblingPremiseDisproof) {
+      deps.stderr(
+        `materialize.js: Record #${opts.n} — closed PR #${siblingPremiseDisproof.number} already states the premise `
+        + `is disproved ("${siblingPremiseDisproof.matchedPhrase}") — review it before re-running the investigation.\n`,
+      );
+    }
+  }
+
   const facets = parseRecordFacets(record.labels);
   const labelNames = (record.labels || []).map((l) => (typeof l === 'string' ? l : l && l.name)).filter(Boolean);
   const ceremony = facets.ceremony || opts.ceremony;
@@ -410,7 +540,7 @@ function run(argv, deps = realDeps) {
   deps.writeFile(outFile, fileContent);
 
   deps.stdout(JSON.stringify({
-    record: opts.n, file: outFile, ceremonySource: facets.ceremony ? 'label' : 'override', surface: meta.surface || null, uiStack: meta.uiStack || null, drift, premise,
+    record: opts.n, file: outFile, ceremonySource: facets.ceremony ? 'label' : 'override', surface: meta.surface || null, uiStack: meta.uiStack || null, drift, premise, siblingPremiseDisproof,
   }, null, 2) + '\n');
   return 0;
 }

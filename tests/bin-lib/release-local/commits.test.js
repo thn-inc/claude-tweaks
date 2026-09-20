@@ -5,7 +5,34 @@ const { parseCommit, readCommits, lastTag, conventionalHistory } = require('../.
 
 test('parseCommit: type, scope, description', () => {
   const c = parseCommit({ sha: 'a'.repeat(40), subject: 'fix(deps): bump x', body: '' });
-  assert.deepStrictEqual(c, { sha: 'a'.repeat(40), subject: 'fix(deps): bump x', type: 'fix', scope: 'deps', breaking: false, breakingNote: null, description: 'bump x', unconventional: false });
+  assert.deepStrictEqual(c, { sha: 'a'.repeat(40), subject: 'fix(deps): bump x', type: 'fix', scope: 'deps', breaking: false, breakingNote: null, description: 'bump x', unconventional: false, releaseNote: null });
+});
+
+test('parseCommit: Release-Note footer (conventional path) is captured as releaseNote', () => {
+  const c = parseCommit({ sha: 'f'.repeat(40), subject: 'fix: y', body: 'body\n\nRelease-Note: Fixed the thing.' });
+  assert.strictEqual(c.releaseNote, 'Fixed the thing.');
+});
+
+test('parseCommit: Release-Note footer is captured in the unconventional early-return branch too', () => {
+  const c = parseCommit({ sha: 'g'.repeat(40), subject: 'Merge branch x', body: 'Release-Note: Merged the branch.' });
+  assert.strictEqual(c.unconventional, true);
+  assert.strictEqual(c.releaseNote, 'Merged the branch.');
+});
+
+test('parseCommit: a multi-line Release-Note section is truncated to its first line', () => {
+  const c = parseCommit({ sha: 'h'.repeat(40), subject: 'feat: z', body: 'Release-Note: First line.\nSecond line that should not appear.' });
+  assert.strictEqual(c.releaseNote, 'First line.');
+});
+
+test('parseCommit: no Release-Note footer at all returns releaseNote: null', () => {
+  const c = parseCommit({ sha: 'i'.repeat(40), subject: 'chore: w', body: 'just a body, no footers' });
+  assert.strictEqual(c.releaseNote, null);
+});
+
+test('parseCommit: BREAKING CHANGE and Release-Note footers in the same body are each extracted independently, no cross-match', () => {
+  const c = parseCommit({ sha: 'j'.repeat(40), subject: 'fix!: v', body: 'BREAKING CHANGE: config key renamed\n\nRelease-Note: Renamed the config key.' });
+  assert.strictEqual(c.breakingNote, 'config key renamed');
+  assert.strictEqual(c.releaseNote, 'Renamed the config key.');
 });
 
 test('parseCommit: ! marker is breaking with the description as its note', () => {

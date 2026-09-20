@@ -19,7 +19,7 @@ more here, as literals**, before composing either call:
    reference `${CLAUDE_PLUGIN_ROOT}` — never left as `${CLAUDE_PLUGIN_ROOT}` for the dispatched
    agent's shell to expand.
 2. **`{minted-run-dir}`** — unchanged from before this section existed (Step 4's mint).
-3. **Resolved policy values** — one call, before either dispatch: `node "{plugin-root}/bin/resolve-policy.js" --values autonomy,integration-model,merge-verification,risk-floor,size-floor`. The four values this call's own Settle/Auto-merge procedures need downstream.
+3. **Resolved policy values** — one call, before either dispatch: `node "{plugin-root}/bin/resolve-policy.js" --values autonomy,integration-model,merge-verification,risk-floor,size-floor`. The five values this call's own Settle/Auto-merge procedures need downstream. **Scope note (#2413):** these are read-only facts for Settle/Auto-merge only — they never substitute for `/flow`'s own Step 3 Manifesto, which independently computes and writes the full 13-lever `config.yml` (including its own `merge-verification` entry) on the first call regardless of what is handed here. A lever already resolved above is never grounds for that call to skip the Manifesto's `config.yml` write.
 4. **Canonical CLI invocation table** — the argument shapes and enums a dispatched call has
    historically had to rediscover by trial and error:
 
@@ -33,6 +33,8 @@ more here, as literals**, before composing either call:
 5. **Composed bundles** — `{minted-run-dir}/context/claims.md` and
    `{minted-run-dir}/context/merge.md`, composed by the dispatching session before either call;
    every citation of them in the templates below carries its own fallback to the source file.
+
+6. **Worktree shell constraint** — the Claude Code harness enforces limits on Bash commands in a single call, independent of filesystem effect (see `_shared/scratch-worktree.md` §7 ("Shell constraint") for the full boundary description, if that bundle is absent, read `_shared/scratch-worktree.md` directly). Avoid these shapes: quoted JSON containing `git`; a `for`/`while` loop variable; a glob argument; a `gh api` call inside an `if RAW=$(...)`; `sed -i` on a variable path; `cat "$P/…"` or `sed -n 'a,bp' "$P/…"` where `$P` is a runtime-computed path variable. Use `Write`/`Edit`/`Read` tools instead of equivalent shell commands, separate commands instead of loops or compound constructs, and literal file paths instead of variables. One plain command per Bash call is the general pattern.
 
 Substitute this whole block, filled in with this firing's actual resolved values, as
 `{context-pack}` immediately after each call's opening `Task scope:` paragraph below. This is
@@ -138,6 +140,17 @@ DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
 steps select their own models as usual. Resolve via `node "{plugin-root}/bin/resolve-profile.js" standard`
 (contract § Model Selection).
 ```
+
+The Foreground execution clause above is backed by a mechanical check, not prose alone (#2429):
+`sequential-execution.md`'s "The loop" section verifies this call's `STATUS:` line against the
+required pattern the moment the call returns, and treats a missing or malformed one as evidence
+of backgrounded/yielded execution — never trust to this clause's own wording without also keeping
+that check current.
+
+This call's own `decisions.md` writes (`log-decision.js`, called throughout `/flow`'s steps) are
+also what `sequential-execution.md`'s Heartbeat section (#2427) points a "still waiting?" user at
+for a long-running call like this one — a passive read of this group's run directory, never a
+reason to relax the Foreground execution clause above or have this call check in mid-turn.
 
 ## Second call — review,polish,wrap-up (gated on the first call)
 
@@ -289,5 +302,12 @@ how long the PR has already existed.
 pipeline's own steps select their own models as usual. Resolve via
 `node "{plugin-root}/bin/resolve-profile.js" standard` (contract § Model Selection).
 ```
+
+Same mechanical status-line check applies to this call. The Auto-merge gate's `merge-check`
+clause this call runs (`settle-and-merge.md`'s Content judgment step) is backed by its own
+mechanical check too (#2429): a verdict is logged to `decisions.md` whether it passes or falls
+back, and the merge action that follows re-reads that log rather than proceeding on having just
+run the loop — see that step's own "Mechanically verify every member's entry" paragraph. Keep
+both current if either clause's wording changes.
 
 None of Templates A/B/C (A in `_shared/subagent-dispatch-core.md`; B/C in `_shared/subagent-output-contract.md`) fit an agent that executes pipeline stages rather than returning findings/locations/a yes-no, so these are their own minimal templates, inlined verbatim at every dispatch site. The universal parts of the contract still apply: the four-value status line, minimal input, and literal (not referenced) output format.

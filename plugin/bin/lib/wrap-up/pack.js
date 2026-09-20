@@ -16,6 +16,8 @@ const { promisify } = require('util');
 const { resolvePolicyConfig } = require('../policy-schema');
 const { parseManifestYaml } = require('../flow/manifest');
 const { parseDependencies } = require('../issues/record');
+const { runWithConcurrency } = require('../reconcile/gh-pool');
+const { parseRepo, repoSlug } = require('../repo-resolve');
 
 const PROBE_NAMES = ['residue', 'state', 'blastRadius', 'pr', 'recordLabels', 'claim', 'ledger', 'unblocked'];
 const BIN = path.join(__dirname, '..', '..');
@@ -47,11 +49,21 @@ const POLICY_KEYS = ['integration-branch', 'work-links'];
 // bin/lib, so this three-line one stays local.
 const WORK_BACKEND_RE = /^work-backend:\s*(\S+)\s*$/m;
 
-// stderr is piped rather than inherited or ignored: a failing git call cannot
+// stderr is piped rather than inherited or ignored: a failing call cannot
 // spray the CLI's own stderr, and its diagnostic still survives on
 // `err.stderr` for any consumer module that classifies a failure by message.
-function defaultGit(args, { cwd } = {}) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+function execSync(bin, args, { cwd } = {}) {
+  return execFileSync(bin, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+function defaultGit(args, opts) {
+  return execSync('git', args, opts);
+}
+
+// Synchronous sibling of defaultGit, for the one ladder rank (#2385) that
+// needs `gh` before resolveInputs has anything async to await.
+function defaultGhSync(args, opts) {
+  return execSync('gh', args, opts);
 }
 
 // In-process replacement for `node resolve-policy.js --values <key>` (#1930
@@ -78,6 +90,7 @@ function defaultDeps(cwd) {
   return {
     now: () => Date.now(),
     git: defaultGit,
+    ghSync: defaultGhSync,
     execFile: promisify(execFileCb),
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
@@ -150,10 +163,33 @@ function worktreeMirror(runDir, worktree) {
   return path.join(worktree, ...parts.slice(i));
 }
 
+// Rung (c)'s read: a parent multi-spec run's manifest.yml ids plus any
+// spec-*/work/ headers, both anchored at `dir`. Factored out so the
+// worktree-mirror fallback (#2391) can re-run the exact same read against the
+// mirrored path instead of a second hand-copy of this scan.
+function manifestRecords(deps, dir) {
+  const nums = [];
+  const manifest = parseManifestYaml(readText(deps, path.join(dir, 'manifest.yml')));
+  const specs = manifest && manifest.multispec && Array.isArray(manifest.multispec.specs) ? manifest.multispec.specs : [];
+  for (const spec of specs) {
+    const n = Number(spec && spec.id);
+    if (Number.isInteger(n)) nums.push(n);
+  }
+  for (const name of deps.readdir(dir)) {
+    if (!/^spec-/.test(name)) continue;
+    nums.push(...headerRecords(deps, path.join(dir, name, 'work')));
+  }
+  return sortedUnique(nums);
+}
+
 // The record-resolution ladder, in order, reporting which rung won:
 // (a) the run dir's own materialized headers; (b) the worktree's mirror of the
 // same run dir; (c) a parent multi-spec run's manifest.yml ids plus any
-// spec-*/work/ headers; else none.
+// spec-*/work/ headers, then that same rung's own worktree mirror (#2391 —
+// materialize.md commits spec-{n}/work/{n}-spec.md on the feature branch, so
+// on a real pr-first dispatch group it exists only in the worktree, never in
+// the main-checkout run dir --run anchors to, same reason rung (b) mirrors
+// rung (a)); else none.
 function resolveRecords(deps, runDir, worktree) {
   const own = headerRecords(deps, path.join(runDir, 'work'));
   if (own.length) return { records: own, source: 'headers' };
@@ -164,18 +200,13 @@ function resolveRecords(deps, runDir, worktree) {
     if (mirrored.length) return { records: mirrored, source: 'worktree-headers' };
   }
 
-  const nums = [];
-  const manifest = parseManifestYaml(readText(deps, path.join(runDir, 'manifest.yml')));
-  const specs = manifest && manifest.multispec && Array.isArray(manifest.multispec.specs) ? manifest.multispec.specs : [];
-  for (const spec of specs) {
-    const n = Number(spec && spec.id);
-    if (Number.isInteger(n)) nums.push(n);
+  const own2 = manifestRecords(deps, runDir);
+  if (own2.length) return { records: own2, source: 'manifest' };
+
+  if (mirror && path.resolve(mirror) !== path.resolve(runDir)) {
+    const mirrored2 = manifestRecords(deps, mirror);
+    if (mirrored2.length) return { records: mirrored2, source: 'worktree-manifest' };
   }
-  for (const name of deps.readdir(runDir)) {
-    if (!/^spec-/.test(name)) continue;
-    nums.push(...headerRecords(deps, path.join(runDir, name, 'work')));
-  }
-  if (nums.length) return { records: sortedUnique(nums), source: 'manifest' };
 
   return { records: [], source: 'unavailable' };
 }
@@ -199,6 +230,30 @@ function resolveState(deps, runDir) {
   if (typeof merged.worktree !== 'string' && typeof parent.worktree === 'string') merged.worktree = parent.worktree;
   if (!hasPrNumber(merged) && hasPrNumber(parent)) merged.pr = parent.pr;
   return { state: merged, source: 'parent' };
+}
+
+// `_shared/integration-branch.md`'s canonical ladder, minus the two ranks
+// with no meaning inside this CLI (an explicit argument, a routine template)
+// and rank 4 (a branching model stated in CLAUDE.md prose — no mechanical
+// reader for that exists anywhere in bin/lib; `worktree-reap.js`'s
+// resolveIntegrationBranch and run-integrity.js's deriveBranch skip the same
+// rank for the same reason, per that file's own per-consumer table). Policy
+// wins outright (rank 3); else the offline git pointer at origin/HEAD (rank
+// 5's git half); else `gh repo view`'s default branch (rank 5's gh half);
+// else the pre-existing 'main' literal, so a repo with no remote at all sees
+// no behavior change (#2385).
+function resolveIntegrationBranch(deps, worktree, policyValue) {
+  if (policyValue) return { branch: policyValue, source: 'policy' };
+  try {
+    const out = deps.git(['rev-parse', '--symbolic-full-name', 'refs/remotes/origin/HEAD'], { cwd: worktree }).trim();
+    const name = out.replace(/^refs\/remotes\/origin\//, '');
+    if (name) return { branch: name, source: 'git-default' };
+  } catch { /* fall through to gh */ }
+  try {
+    const out = deps.ghSync(['repo', 'view', '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name'], { cwd: worktree }).trim();
+    if (out) return { branch: out, source: 'gh-default' };
+  } catch { /* fall through to the final fallback */ }
+  return { branch: 'main', source: 'default' };
 }
 
 function mergeBase(deps, cwd, integrationBranch) {
@@ -234,8 +289,9 @@ function resolveInputs({ runDir, cwd, deps }) {
     workBackend: backend.value,
     workLinks: values['work-links'] || '',
   };
-  const integrationBranch = policy.integrationBranch || 'main';
-  sources.integrationBranch = policy.integrationBranch ? 'policy' : 'default';
+  const branchResolution = resolveIntegrationBranch(deps, worktree, policy.integrationBranch);
+  const integrationBranch = branchResolution.branch;
+  sources.integrationBranch = branchResolution.source;
   const mb = mergeBase(deps, worktree, integrationBranch);
   sources.base = mb.base ? 'merge-base' : 'unavailable';
   // One record is a record; several are a parent multi-spec run, whose
@@ -267,19 +323,33 @@ function withTimeout(fn, ms) {
   });
 }
 
+// _shared/ledger-format.md's closed status enum: `open` (blocking) plus five
+// terminal values. A row whose Status cell holds none of these six values
+// (a typo, a synonym, a retired word like `staged`/`resolved`) is neither —
+// #2080: it must count as `unrecognized`, distinguishable from both `open`
+// and the legitimately-resolved terminal case, never silently folded into
+// "terminal" the way it was before this fix.
+const LEDGER_TERMINAL_STATUSES = new Set(['fixed', 'deferred', 'accepted', 'acknowledged', 'observation']);
+
 function parseLedger(text) {
   const rows = text.split('\n').filter((l) => /^\|\s*\d+\s*\|/.test(l));
   const byPhase = {};
   let open = 0;
+  let unrecognized = 0;
+  const unrecognizedValues = new Set();
   for (const row of rows) {
     const cells = row.split('|').slice(1, -1).map((c) => c.trim());
     const phase = cells[1] || 'unknown';
     const status = (cells[3] || '').toLowerCase();
-    byPhase[phase] = byPhase[phase] || { open: 0, total: 0 };
+    byPhase[phase] = byPhase[phase] || { open: 0, total: 0, unrecognized: 0 };
     byPhase[phase].total += 1;
-    if (status === 'open') { open += 1; byPhase[phase].open += 1; }
+    if (status === 'open') {
+      open += 1; byPhase[phase].open += 1;
+    } else if (!LEDGER_TERMINAL_STATUSES.has(status)) {
+      unrecognized += 1; byPhase[phase].unrecognized += 1; unrecognizedValues.add(cells[3] || '');
+    }
   }
-  return { open, total: rows.length, byPhase };
+  return { open, total: rows.length, byPhase, unrecognized, unrecognizedValues: [...unrecognizedValues] };
 }
 
 // A ledger filename names record {n} only at a `-{n}-` or `-{n}.` boundary. A
@@ -293,19 +363,25 @@ function namesRecord(file, n) {
 function ledgerProbe(inputs, deps) {
   const dir = path.join(inputs.worktree, 'docs', 'plans');
   const files = deps.readdir(dir).filter((f) => f.endsWith('-ledger.md') && inputs.records.some((n) => namesRecord(f, n)));
-  const totals = { open: 0, total: 0, byPhase: {}, files: files.map((f) => path.posix.join('docs', 'plans', f)) };
+  const totals = {
+    open: 0, total: 0, byPhase: {}, files: files.map((f) => path.posix.join('docs', 'plans', f)),
+    unrecognized: 0, unrecognizedValues: [],
+  };
+  const unrecognizedValuesSet = new Set();
   for (const f of files) {
     // Read-and-catch, like headerRecords: a ledger archived between the
     // readdir snapshot and this read is skipped, not a whole-probe failure.
     const text = readText(deps, path.join(dir, f));
     if (text === null) continue;
     const one = parseLedger(text);
-    totals.open += one.open; totals.total += one.total;
+    totals.open += one.open; totals.total += one.total; totals.unrecognized += one.unrecognized;
+    for (const v of one.unrecognizedValues) unrecognizedValuesSet.add(v);
     for (const [phase, c] of Object.entries(one.byPhase)) {
-      totals.byPhase[phase] = totals.byPhase[phase] || { open: 0, total: 0 };
-      totals.byPhase[phase].open += c.open; totals.byPhase[phase].total += c.total;
+      totals.byPhase[phase] = totals.byPhase[phase] || { open: 0, total: 0, unrecognized: 0 };
+      totals.byPhase[phase].open += c.open; totals.byPhase[phase].total += c.total; totals.byPhase[phase].unrecognized += c.unrecognized;
     }
   }
+  totals.unrecognizedValues = [...unrecognizedValuesSet];
   return totals;
 }
 
@@ -399,13 +475,28 @@ function buildProbes(inputs, deps) {
       const { stdout } = await gh(['pr', 'view', String(inputs.pr), '--json', 'state,isDraft,mergeStateStatus,headRefOid,statusCheckRollup,reviewDecision']);
       return JSON.parse(stdout);
     },
+    // Concurrency-capped (gh-pool.js's DEFAULT_CONCURRENCY) rather than a
+    // raw unbounded Promise.all fan-out, so a large multi-spec record list
+    // never fires more than a handful of simultaneous `gh issue view` calls
+    // at once (`gh`'s own rate limiting). Failure propagation is otherwise
+    // unchanged from the old Promise.all: this probe is an audit-only
+    // snapshot (`auto-merge-short-circuit.md`/`review-console.md` both
+    // render it beside a live label read and never substitute it), so a
+    // mid-list `gh` failure aborting the WHOLE field to `ok:false` is the
+    // deliberate, correct behavior — the console already treats an
+    // `ok:false` recordLabels field as "omit the snapshot line entirely"
+    // rather than showing a partial, possibly-misleading label set.
     recordLabels: async () => {
       backendOrThrow(); forgeOrThrow(); recordsOrThrow();
-      const out = {};
-      await Promise.all(inputs.records.map(async (n) => {
+      const results = await runWithConcurrency(inputs.records, async (n) => {
         const { stdout } = await gh(['issue', 'view', String(n), '--json', 'labels']);
-        out[n] = JSON.parse(stdout).labels.map((l) => l.name);
-      }));
+        return { n, labels: JSON.parse(stdout).labels.map((l) => l.name) };
+      });
+      const out = {};
+      for (const r of results) {
+        if (r instanceof Error) throw r;
+        out[r.n] = r.labels;
+      }
       return out;
     },
     claim: async () => {
@@ -426,11 +517,22 @@ function buildProbes(inputs, deps) {
       backendOrThrow();
       if (inputs.policy.workBackend === 'local-files') return unblockedLocal(inputs, deps, closed);
       forgeOrThrow();
-      const { stdout } = await gh(['issue', 'list', '--state', 'open', '--json', 'number,title,body', '--limit', '200']);
+      // #2425/#2538: derive `--repo {host/}owner/repo` ONCE, before any of
+      // this probe's three gh invocations (both direct `gh issue list`
+      // calls below, and the resolve-blockers.js child spawn) — a GitHub
+      // Enterprise remote can't otherwise be inferred by a plain `gh` call
+      // the way #2425 already fixed for the child spawn alone. `repoSlug`
+      // resolves to bare `owner/repo` on github.com, a true no-op there.
+      let repoArgs = [];
+      try {
+        const repoSpec = parseRepo(git(['remote', 'get-url', 'origin']));
+        if (repoSpec) repoArgs = ['--repo', repoSlug(repoSpec)];
+      } catch { /* no origin remote — every gh call below falls back to its own cwd-derived default, unchanged */ }
+      const { stdout } = await gh(['issue', 'list', '--state', 'open', '--json', 'number,title,body', '--limit', '200', ...repoArgs]);
       const records = JSON.parse(stdout);
       if (inputs.policy.workLinks === 'native') {
         if (!records.length) return [];
-        const res = await deps.execFile('node', [path.join(BIN, 'resolve-blockers.js'), records.map((r) => r.number).join(',')], { cwd: inputs.worktree, ...EXEC_OPTS });
+        const res = await deps.execFile('node', [path.join(BIN, 'resolve-blockers.js'), records.map((r) => r.number).join(','), ...repoArgs], { cwd: inputs.worktree, ...EXEC_OPTS });
         const byNumber = JSON.parse(res.stdout.trim());
         return records.filter((r) => byNumber[r.number] && byNumber[r.number].blockedBy.includes(closed) && !byNumber[r.number].openBlocker).map(toSummary);
       }
@@ -442,7 +544,7 @@ function buildProbes(inputs, deps) {
         .map((r) => ({ number: r.number, title: r.title, blockedBy: parseDependencies(r.body || '') }))
         .filter((r) => r.blockedBy.includes(closed));
       if (!dependents.length) return [];
-      const states = await gh(['issue', 'list', '--state', 'all', '--json', 'number,state', '--limit', '200']);
+      const states = await gh(['issue', 'list', '--state', 'all', '--json', 'number,state', '--limit', '200', ...repoArgs]);
       const stateOf = new Map(JSON.parse(states.stdout).map((i) => [i.number, i.state]));
       return dependents
         .filter((d) => d.blockedBy.every((b) => b === closed || stateOf.get(b) === 'CLOSED'))

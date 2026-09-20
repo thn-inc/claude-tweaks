@@ -44,6 +44,9 @@ test('step-21-release.md carries the gate, the three verdicts, the CLI, the defe
   assert.ok(STEP.includes('release: skipped — integration-model unresolved'));
   assert.ok(STEP.includes('release: conflict — {tool}'));
   assert.ok(STEP.includes('bin/release-bootstrap.js'));
+  assert.ok(STEP.includes('--release-type <type> --extra-file <path>'), 'the override paragraph names both flags');
+  assert.ok(STEP.includes('given together or not at all'), 'the override paragraph states the pairing rule');
+  assert.ok(STEP.includes("this table's types plus `simple`"), 'the override paragraph describes the release-type vocabulary');
   assert.ok(STEP.includes('_shared/integration-model.md'));
   assert.ok(STEP.includes('_shared/integration-branch.md'));
   assert.ok(STEP.includes('worktree-policy-finalization.md'));

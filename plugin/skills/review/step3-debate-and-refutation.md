@@ -24,9 +24,9 @@ After per-lens reproduction completes, scan for contradictions across lenses bef
 >
 >    ```
 >    Two lenses disagreed on this region. Review the conflicting findings below and return:
->    First line: one of DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED. Then:
 >    1. Verdict: agree / disagree / partial
 >    2. One paragraph of reasoning.
+>    Produce your response first; the last non-empty line of your reply must then read exactly one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, labeled `STATUS: {WORD}`.
 >
 >    Contested region: {path}:{line}
 >    Finding A (lens: {lensA}): {finding text}
@@ -84,9 +84,9 @@ This pass is the only place in the skill where an unbounded fan-out would meet t
 >    content at {path}:{line} (do not trust the cached evidence text below) and determine
 >    whether the claimed issue is real and reachable.
 >
->    First line: one of DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED. Then:
 >    1. Verdict: refuted / not-refuted
 >    2. One paragraph of reasoning, citing what you actually found in the current file.
+>    Produce your response first; the last non-empty line of your reply must then read exactly one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, labeled `STATUS: {WORD}`.
 >
 >    Candidate finding: {path}:{line}
 >    Severity: {severity}  Category: {category}

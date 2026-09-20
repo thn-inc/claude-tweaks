@@ -9,6 +9,8 @@
 // compare URL need a repo URL, so both appear only when `origin` parses as a
 // GitHub remote (ruling 1 in the plan).
 
+const { renderReleaseNotes } = require('../release-notes');
+
 // release-please's default changelog-sections: order is render order; hidden
 // types render only when the commit is breaking (ruling 2).
 const SECTIONS = [
@@ -55,7 +57,13 @@ function renderSection({ version, previousTag, date, commits, repo }) {
     if (list.length) groups.push(`### ${section.title}\n\n${list.map((c) => bullet(c, repo)).join('')}`);
   }
   const notes = breaking.length ? `### ⚠ BREAKING CHANGES\n\n${breaking.map(note).join('')}\n` : '';
-  return `${heading}\n\n\n${notes}${groups.join('\n\n')}`;
+  // Positioned after BREAKING CHANGES and before the type-grouped sections —
+  // first when there's no breaking block to follow (#2581 AC9/AC10). null
+  // (no commit carries a non-empty releaseNote) omits the block entirely,
+  // never an empty ### Highlights heading with no content (AC11).
+  const highlights = renderReleaseNotes(commits);
+  const highlightsSection = highlights !== null ? `### Highlights\n\n${highlights}\n\n` : '';
+  return `${heading}\n\n\n${notes}${highlightsSection}${groups.join('\n\n')}`;
 }
 
 // Insert before the first version heading (release-please's `## [x](…)`,

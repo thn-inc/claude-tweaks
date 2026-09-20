@@ -18,6 +18,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const readline = require('readline');
+const { isPathContained } = require('../shared-primitives');
 
 const TRANSCRIPT_SLUG_RULE = 'replace every character not in [A-Za-z0-9-] with "-" (observed: "/", " ", and "." all become "-")';
 
@@ -61,7 +62,7 @@ function locateTranscripts({ cwd, sessionId, homeDir = os.homedir(), fsImpl = fs
     } catch {
       return; // missing file or dangling symlink — unprovable, skip (fail closed)
     }
-    if (!real.startsWith(projectsRealResolved + path.sep)) return;
+    if (!isPathContained(real, projectsRealResolved)) return;
     const st = statOrNull(fsImpl, real);
     if (st && st.isFile()) out.push({ path: real, mtimeMs: st.mtimeMs });
   };

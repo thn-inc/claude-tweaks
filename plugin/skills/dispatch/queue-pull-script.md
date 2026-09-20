@@ -286,16 +286,15 @@ DISPATCH_GROUP_NUMS=$(node -e "
   console.log(groups.flat().map((i) => i.number).join(','))
 " "$DISPATCH_GROUPS")
 echo '{}' > "$DISPATCH_LINKED_PRS"
+echo '[]' > "$DISPATCH_OPEN_PR_EXCLUDED"
 if [ -n "$DISPATCH_GROUP_NUMS" ]; then
-  if node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-linked-prs.js" "$DISPATCH_GROUP_NUMS" \
+  if ! node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-linked-prs.js" "$DISPATCH_GROUP_NUMS" \
     > "$DISPATCH_LINKED_PRS" 2>"$DISPATCH_LINKED_PRS_ERR"; then
-    :
-  else
     echo "Warning: linked-PR query failed — falling back to no open-PR exclusion this run: $(cat "$DISPATCH_LINKED_PRS_ERR")" >&2
     echo '{}' > "$DISPATCH_LINKED_PRS"
   fi
 fi
-node -e "
+if node -e "
   const fs = require('fs');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const groups = require(process.argv[1]);
@@ -311,7 +310,12 @@ node -e "
     }))
     .filter((g) => g.length > 0);
   console.log(JSON.stringify(finalGroups));
-" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" > "${DISPATCH_GROUPS}.tmp" && mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
+" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" > "${DISPATCH_GROUPS}.tmp" 2>"$DISPATCH_LINKED_PRS_ERR"; then
+  mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
+else
+  echo "Warning: open-linked-PR filtering failed — dispatch-groups.json left unfiltered for this exclusion this run: $(cat "$DISPATCH_LINKED_PRS_ERR")" >&2
+  rm -f "${DISPATCH_GROUPS}.tmp"
+fi
 
 # #1983: named-target existence exclusion. Runs unconditionally, right after
 # the open-linked-PR exclusion above and before the (read-only) cross-PR

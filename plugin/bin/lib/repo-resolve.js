@@ -52,6 +52,20 @@ function repoSlug({ host, owner, repo }) {
   return host && host !== 'github.com' ? `${host}/${owner}/${repo}` : `${owner}/${repo}`;
 }
 
+// #2538 Deliverable 3: "print the derived repo so a mismatch is visible to
+// the operator" — but only when there's something an operator would
+// actually need to double-check. On plain github.com (the overwhelming
+// common case, and every existing CLI's own "success path writes nothing to
+// stderr" test fixture) this returns null and callers print nothing,
+// preserving that established silence-on-success convention; a resolved
+// GitHub Enterprise Server host is the one case worth a visible note, since
+// it's also the one case a caller's own gh call could silently resolve
+// against the wrong repo/host if the derivation guessed wrong.
+function repoResolutionNote(repoSpec) {
+  if (!repoSpec || !repoSpec.host || repoSpec.host === 'github.com') return null;
+  return `resolved repo ${repoSlug(repoSpec)} (host: ${repoSpec.host})`;
+}
+
 module.exports = {
-  parseRepo, ghAvailable, remoteUrl, repoSlug,
+  parseRepo, ghAvailable, remoteUrl, repoSlug, repoResolutionNote,
 };

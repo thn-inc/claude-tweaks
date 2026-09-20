@@ -32,7 +32,9 @@
 'use strict';
 
 const { execFileSync } = require('child_process');
-const { parseRepo, ghAvailable, remoteUrl } = require('./repo-resolve');
+const {
+  parseRepo, ghAvailable, remoteUrl, repoResolutionNote,
+} = require('./repo-resolve');
 const { LARGE_MAX_BUFFER_BYTES } = require('./shared-primitives');
 
 const isPos = (n) => Number.isInteger(n) && n > 0;
@@ -86,9 +88,21 @@ function makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote, runn
 
     let remote = null;
     if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-    const repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
+    // A caller-supplied --repo is either a bare `owner/repo` (github.com
+    // implied — the historical shape) or a host-qualified `host/owner/repo`
+    // slug (repoSlug()'s GHE output). Only the bare form needs the
+    // `github.com/` prefix to satisfy parseRepo's 3-segment regex; prefixing
+    // an already host-qualified value would produce a 4-segment string that
+    // fails to parse at all.
+    const repoSpec = opts.repo
+      ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`)
+      : parseRepo(remote);
     if (!repoSpec) { deps.stderr(`${name}: could not resolve owner/repo — pass --repo owner/name\n`); return 2; }
     const { owner, repo, host } = repoSpec;
+    // #2538 Deliverable 3 — visible only for a resolved non-github.com host;
+    // see repoResolutionNote's own comment for why the common case stays silent.
+    const note = repoResolutionNote(repoSpec);
+    if (note) deps.stderr(`${name}: ${note}\n`);
 
     let fetched;
     try {

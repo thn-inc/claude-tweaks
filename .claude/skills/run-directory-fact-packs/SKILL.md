@@ -12,8 +12,9 @@ judgment. Three are shipped — `plugin/bin/lib/wrap-up/pack.js` + `plugin/bin/w
 (wrap-up Phases 3-4, eight probes), `plugin/bin/lib/flow/preflight.js` +
 `plugin/bin/flow-preflight.js` (`/flow`'s second call) and
 `plugin/bin/lib/release-preflight/pack.js` + `plugin/bin/release-preflight.js`
-(release preflight, eight probes) — and they agree on every rule below
-except selective-probe filtering (see the `--only` bullet).
+(release preflight, eight probes) — and they agree on every rule below except
+selective-probe filtering (see the `--only` bullet) and the preamble-failure
+envelope (see its own bullet), which exactly one of the three implements.
 Read them before writing a fourth.
 
 ## The shape
@@ -26,11 +27,21 @@ Read them before writing a fourth.
   error}`. A probe that fails degrades its own field and nothing else; the pack is still produced.
   This is why the CLI exits 0 "whenever the pack was produced" — a BLOCKED freshness verdict or an
   unavailable `gh` is *data the skill acts on*, never an exit code.
-- **Exit vocabulary: 0 / 2 / 3, no 1.** 0 the pack was produced, 2 malformed invocation, 3 the
-  `--run` directory (or `--json`'s parent) does not resolve under the main checkout. Both CLIs get
-  the anchoring predicate by importing `lib/stage-item/write.js`'s `resolveTarget` rather than
-  re-deriving it, and both decide on the *real* path ([IL-127], [IL-150]). This is the
-  sanctioned-writer vocabulary, and a fourth pack must not invent a 1.
+- **The preamble is inside the envelope too — but only one pack implements it today.** A gather's
+  setup stage (policy, root, branch, tip ref) runs before any probe, so a throw there has no field
+  of its own to degrade and the per-field rule above does not reach it. `release-preflight/pack.js`
+  catches it and substitutes a `preamble failed: …` thrower for *every* selected probe, so the pack
+  is still written at exit 0 with `branch`/`tipRef` null (its "Ruling 13" comment); #2422's fix
+  added a real `throw` to `prepare()` and is safe only because of it. `wrap-up/pack.js`'s
+  `resolveInputs` call is uncaught — a preamble throw there exits 1. A fourth pack copies the former.
+- **Exit vocabulary: 0 / 2 / 3 for decided outcomes, no 1 among them.** 0 the pack was produced, 2
+  malformed invocation, 3 the `--run` directory (or `--json`'s parent) does not resolve under the
+  main checkout. Both CLIs get the anchoring predicate by importing `lib/stage-item/write.js`'s
+  `resolveTarget` rather than re-deriving it, and both decide on the *real* path ([IL-127],
+  [IL-150]). This is the sanctioned-writer vocabulary, and a fourth pack must not invent a
+  decided-outcome 1. An **undecided crash** — a throw that reaches the top level instead of one of
+  those three decided outcomes — is exit 1 on all three packs; a fourth pack's top-level handler
+  should follow the same convention rather than inventing its own.
 - **Read-only apart from the pack file**, and say so in the header. Nothing in a pack releases a
   claim, archives, posts, or edits a record — a pack is re-runnable at any point in the phase.
 - **Write atomically** (`lib/atomic-write.js`), because a consumer may be reading the previous
@@ -39,7 +50,10 @@ Read them before writing a fourth.
   `wrap-up-pack.js`/`pack.js` and `release-preflight.js` only; `flow-preflight.js` has no `--only` flag, and
   `flow/preflight.js`'s `gatherPreflight` computes every probe unconditionally regardless of
   `--steps` (its own parse-error text calls `--steps` "metadata — every field is computed
-  regardless"), since `/flow`'s second call always needs the full set.
+  regardless"), since `/flow`'s second call always needs the full set. An empty list after
+  filtering (`--only ,`) is a usage error (exit 2) on both CLIs that accept the flag — it asks for
+  zero probes, and gathering every probe instead would silently answer a different question than
+  the one asked.
 - **A pack proposes; it never decides.** Any field an engine or a forge will later own — a version,
   a merge state, a PR number — is labelled a *proposal* in the consumer's prose, is re-read from
   that engine after the engine acts, and the reconciliation is written **once**, at the consumer,

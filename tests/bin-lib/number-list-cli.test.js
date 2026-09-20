@@ -156,3 +156,31 @@ test('#2240: a plain github.com remote passes host: "github.com" to fetch', () =
   assert.equal(code, 0);
   assert.equal(seen.host, 'github.com');
 });
+
+// #2425 review fix: a caller-supplied --repo can be a host-qualified
+// `host/owner/repo` slug (repoSlug()'s GHE output, e.g.
+// plugin/bin/lib/wrap-up/pack.js's unblocked probe) — not just the bare
+// `owner/repo` form. Regression coverage for the bug where this path always
+// prefixed `github.com/` onto whatever --repo held, silently discarding a
+// caller-resolved GHE host (or, once caught, failing to parse it at all).
+test('#2425 review fix: a host-qualified --repo slug parses to its own host, not github.com', () => {
+  let seen = null;
+  const { run } = buildCli({ fetch: (args) => { seen = args; return new Map([[720, 'x']]); } });
+  const deps = fakeDeps({ remoteUrl: () => { throw new Error('should not be called — --repo was given'); } });
+  const code = run(['720', '--repo', 'ghe.example.com/acme/widgets'], deps);
+  assert.equal(code, 0);
+  assert.equal(seen.host, 'ghe.example.com');
+  assert.equal(seen.owner, 'acme');
+  assert.equal(seen.repo, 'widgets');
+});
+
+test('#2425 review fix: a bare --repo owner/repo still resolves to host: "github.com" (unchanged)', () => {
+  let seen = null;
+  const { run } = buildCli({ fetch: (args) => { seen = args; return new Map([[720, 'x']]); } });
+  const deps = fakeDeps({ remoteUrl: () => { throw new Error('should not be called — --repo was given'); } });
+  const code = run(['720', '--repo', 'someone/else'], deps);
+  assert.equal(code, 0);
+  assert.equal(seen.host, 'github.com');
+  assert.equal(seen.owner, 'someone');
+  assert.equal(seen.repo, 'else');
+});

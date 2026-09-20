@@ -13,7 +13,7 @@ const { promisify } = require('util');
 const { conventionalHistory } = require('../release-local/commits.js');
 const { bumpPart } = require('../release-local/bump.js');
 const { nextVersion } = require('../release/compose.js');
-const { readConfig, resolveTargets, versionAtRef, MANIFEST_FILE } = require('../release-local/manifest.js');
+const { readConfig, readBumpFlags, resolveTargets, versionAtRef, MANIFEST_FILE } = require('../release-local/manifest.js');
 const { compareVersions } = require('../changelog.js');
 const { resolvePolicyConfig } = require('../policy-schema.js');
 const { wrapProbe, withTimeout } = require('../wrap-up/pack.js');
@@ -135,6 +135,37 @@ function policyString(entry) {
   return typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
 }
 
+// _shared/integration-branch.md's rank 5 (git-inference), for this consumer's
+// fallback when rank 3 (the `integration-branch` policy key) is unset: the
+// remote-tracking symbolic ref set up by an ordinary clone, then `git remote
+// show origin`'s "HEAD branch:" line as a second try when the symbolic ref
+// was never set locally. Never a literal `'main'` (#2422) — an unresolved
+// result here is a real preamble failure, not a guess.
+function resolveDefaultBranch(deps) {
+  try {
+    const ref = deps.git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).trim();
+    const name = ref.replace(/^origin\//, '');
+    if (name) return name;
+  } catch { /* not set locally — try the next source */ }
+  try {
+    const out = deps.git(['remote', 'show', 'origin']);
+    const m = /HEAD branch:\s*(\S+)/.exec(out);
+    if (m && m[1] && m[1] !== '(unknown)') return m[1];
+  } catch { /* no remote, or offline — try the last resort below */ }
+  // Last resort only, never tried ahead of the two origin-derived reads above:
+  // integration-branch.md's own anti-pattern warning against trusting "the
+  // branch the main checkout currently has checked out" (a concurrent session
+  // can switch it underfoot) applies with full force here, so this is reached
+  // only when there is no `origin` at all to read instead — a repo with no
+  // remote has no other signal, and the rank-5 ladder's own rule for that case
+  // ("only one resolves → use it") sanctions falling through to it.
+  try {
+    const name = deps.git(['branch', '--show-current']).trim();
+    if (name) return name;
+  } catch { /* not even a branch to fall back to */ }
+  return null;
+}
+
 function memo(fn) {
   let p;
   return () => { if (p === undefined) p = Promise.resolve().then(fn); return p; };
@@ -156,7 +187,8 @@ function prepare({ deps, rootArg, runDir }) {
     ? (args) => (args.join(' ') === 'rev-parse --show-toplevel' ? `${rootArg}\n` : deps.git(args))
     : deps.git;
   const { root, result: policy } = resolvePolicyConfig({ git: gitForPolicy, readFile: deps.readFile, runDir, keys: ['integration-model', 'integration-branch', 'release-hook'] });
-  const branch = policyString(policy['integration-branch']) || 'main';
+  const branch = policyString(policy['integration-branch']) || resolveDefaultBranch(deps);
+  if (!branch) throw new Error('integration branch unresolved: no integration-branch policy key, and origin/HEAD could not be determined');
   let tipRef = `refs/heads/${branch}`;
   try { deps.git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`]); tipRef = `origin/${branch}`; } catch { /* no remote-tracking ref: read the local branch */ }
 
@@ -173,11 +205,22 @@ function prepare({ deps, rootArg, runDir }) {
   // the reader, so the base describes the ref the pack reports on, not the
   // working tree. A path that is absent at that ref reads as "no version"; any
   // other git error (a bad ref) propagates and degrades the field.
+  // Memoized per path: readConfig (via manifestVersion, inside versionBase)
+  // and readBumpFlags both read CONFIG_FILE at the same tipRef moments apart
+  // — cache the `git show` result rather than spawning it twice. Only a
+  // resolved result (including the path-absent `null`) is cached; a
+  // propagating error re-spawns on the next call, same as before.
+  const showAtTipCache = new Map();
   const showAtTip = (p) => {
-    try { return deps.git(['show', `${tipRef}:${p}`]); } catch (err) {
-      if (PATH_ABSENT_RE.test(String(err.message || err))) return null;
-      throw err;
+    if (showAtTipCache.has(p)) return showAtTipCache.get(p);
+    let result;
+    try {
+      result = deps.git(['show', `${tipRef}:${p}`]);
+    } catch (err) {
+      if (PATH_ABSENT_RE.test(String(err.message || err))) { result = null; } else { throw err; }
     }
+    showAtTipCache.set(p, result);
+    return result;
   };
   const manifestVersion = () => {
     const config = readConfig(showAtTip);
@@ -246,10 +289,19 @@ function prepare({ deps, rootArg, runDir }) {
     },
     proposedVersion: async () => {
       const { lastTag, commits } = await historyOf();
-      const part = bumpPart(commits);
-      if (part === 'none') throw new Error(`nothing to release: ${commits.length} commit(s) since ${lastTag || 'the first commit'}, none feat/fix/breaking`);
+      // The none/not-none question never depends on the pre-major bump flags
+      // below (breaking/feat/fix presence alone decides it) — check it first,
+      // bare, so a malformed release-please-config.json never shadows a
+      // correct "nothing to release" with a manifest-read error instead.
+      if (bumpPart(commits) === 'none') throw new Error(`nothing to release: ${commits.length} commit(s) since ${lastTag || 'the first commit'}, none feat/fix/breaking`);
       const { base, baseSource } = versionBase(lastTag);
-      return { version: nextVersion(base, part), part, base, baseSource, tipRef };
+      // #2327: preMajor + the config's own bump-minor-pre-major/
+      // bump-patch-for-minor-pre-major flags soften the precedence while the
+      // base is still 0.x — see bin/lib/release-local/bump.js's own comment.
+      const preMajor = /^0\./.test(base);
+      const { bumpMinorPreMajor, bumpPatchForMinorPreMajor } = readBumpFlags(showAtTip);
+      const part = bumpPart(commits, { preMajor, bumpMinorPreMajor, bumpPatchForMinorPreMajor });
+      return { version: nextVersion(base, part), part, base, baseSource, preMajor, tipRef };
     },
     releasePr,
     // Ruling 11: GitHub is asked for the BRANCH by name, so it resolves its own
