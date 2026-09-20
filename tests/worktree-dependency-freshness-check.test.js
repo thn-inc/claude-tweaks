@@ -19,16 +19,17 @@ const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
 
 const SHARED_WORKTREE_SETUP = read('plugin', 'skills', '_shared', 'worktree-setup.md');
 const BUILD_WORKTREE_SETUP = read('plugin', 'skills', 'build', 'worktree-setup.md');
+// Extracted to its own file to keep the build/SKILL.md Common Step 1 compose
+// bundle under the composed-bytes ceiling (context-cost.test.js) — the
+// structural content pins below read the extracted file directly; the
+// shared file itself now carries only a one-paragraph pointer to it.
+const ADOPT_FRESHNESS = read('plugin', 'skills', '_shared', 'worktree-adopt-freshness.md');
 
 function dependencyFreshnessRegion() {
-  const start = SHARED_WORKTREE_SETUP.indexOf('**Dependency freshness check (adopt path only).**');
-  assert.notStrictEqual(start, -1, '"Dependency freshness check (adopt path only)" heading missing from _shared/worktree-setup.md');
-  const end = SHARED_WORKTREE_SETUP.indexOf('**Not isolated:**', start);
-  assert.notStrictEqual(end, -1, '"Not isolated:" boundary missing — this test has lost its anchor');
-  return SHARED_WORKTREE_SETUP.slice(start, end);
+  return ADOPT_FRESHNESS;
 }
 
-test('_shared/worktree-setup.md: Dependency freshness check is positioned inside Adopt-or-create, before "Not isolated"', () => {
+test('_shared/worktree-setup.md: Dependency freshness check pointer is positioned inside Adopt-or-create, before "Not isolated"', () => {
   const adoptIdx = SHARED_WORKTREE_SETUP.indexOf('## Adopt-or-create');
   const freshnessIdx = SHARED_WORKTREE_SETUP.indexOf('**Dependency freshness check (adopt path only).**');
   const notIsolatedIdx = SHARED_WORKTREE_SETUP.indexOf('**Not isolated:**');
@@ -38,6 +39,11 @@ test('_shared/worktree-setup.md: Dependency freshness check is positioned inside
   assert.notStrictEqual(notIsolatedIdx, -1, 'Not isolated boundary missing');
   assert.ok(adoptIdx < freshnessIdx, 'Dependency freshness check must be inside Adopt-or-create');
   assert.ok(freshnessIdx < notIsolatedIdx, 'Dependency freshness check must run before the Not isolated branch');
+  assert.match(
+    SHARED_WORKTREE_SETUP.slice(freshnessIdx, notIsolatedIdx),
+    /_shared\/worktree-adopt-freshness\.md/,
+    'the shared file must point to the extracted sub-file, not restate it inline',
+  );
 });
 
 test('_shared/worktree-setup.md: Dependency freshness check states all four numbered steps', () => {
