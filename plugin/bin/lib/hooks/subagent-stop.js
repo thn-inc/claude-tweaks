@@ -40,6 +40,27 @@
 //    subagent's final reply missing its status line. A genuine subagent stop
 //    always carries its OWN distinct transcript file, so this equality check
 //    can never suppress a real violation — only this known-unreliable shape.
+// 4. (fixed, #2041) #2036 only covers the TOP-level dispatcher narrating
+//    about its own direct dispatch. A DISPATCHED agent that is itself a
+//    nested dispatcher (e.g. a review-phase orchestrator fanning out several
+//    lens-review agents) has its own distinct agent_transcript_path, so
+//    #2036's equality check never fires — yet the same async-wait convention
+//    applies one level down: the orchestrator ends a turn with plain status
+//    narration ("Still waiting on the N lens-review agents…") while awaiting
+//    ITS OWN children's completions, across possibly several such waits in
+//    sequence. Ground-truth transcript capture (this session's own
+//    subagents/agent-*.jsonl + its dispatcher's own transcript, read per
+//    transcript-payload-verification) confirms the exact structural signal:
+//    an Agent-tool dispatch's tool_result always returns promptly with a
+//    launch acknowledgment carrying `toolUseResult.isAsync: true` — never the
+//    dispatched agent's real output — and each later notification that a
+//    sibling dispatch has reported in arrives as its own transcript entry
+//    with `origin.kind: 'task-notification'`, also never a tool_result. A
+//    text-only final turn immediately preceded by either shape is therefore
+//    reacting to "a background dispatch just launched or reported in", not to
+//    genuine content it could reply to — logged as a violation, this misfires
+//    the same way #2036 does, just one dispatch level deeper. See
+//    isAsyncWaitSignal below.
 'use strict';
 const fs = require('fs');
 const ctxLib = require('./context');
@@ -111,9 +132,32 @@ function isExemptAgentType(agentType) {
   return agentType.slice(0, idx) !== OWN_PLUGIN_NAMESPACE;
 }
 
+// #2041: does `entry` (one already-JSON.parsed transcript line) signal a
+// background-dispatch checkpoint rather than real content the model could
+// reply to — either an Agent-tool dispatch's own launch acknowledgment
+// (`toolUseResult.isAsync: true`, present on the tool_result line the SDK
+// writes back immediately, well before the dispatched agent itself finishes)
+// or an out-of-band task-notification (`origin.kind: 'task-notification'`,
+// the same wrapper the harness uses for every queued async notification, a
+// sibling dispatch's completion included)? Both shapes were confirmed against
+// this session's own live transcript (transcript-payload-verification),
+// never inferred from a fixture. Defensive on shape — an unexpected/missing
+// field reads as "not a signal", never throws.
+function isAsyncWaitSignal(entry) {
+  if (!entry || typeof entry !== 'object') return false;
+  if (entry.toolUseResult && entry.toolUseResult.isAsync === true) return true;
+  if (entry.origin && entry.origin.kind === 'task-notification') return true;
+  return false;
+}
+
+// -> { text: string|null, asyncWaitCheckpoint: boolean }. `asyncWaitCheckpoint`
+// is true only when `text` is non-null AND the nearest earlier parseable
+// transcript line is an isAsyncWaitSignal hit — i.e. this reply is reacting
+// to "a background dispatch just launched or reported in", not to genuine
+// content (#2041).
 function lastAssistantText(transcriptPath) {
   let raw;
-  try { raw = fs.readFileSync(transcriptPath, 'utf8'); } catch { return null; }
+  try { raw = fs.readFileSync(transcriptPath, 'utf8'); } catch { return { text: null, asyncWaitCheckpoint: false }; }
   const lines = raw.split('\n');
   // Scan from the tail and stop at the first assistant message found — the
   // last assistant message is almost always near the end of a long-running
@@ -141,11 +185,24 @@ function lastAssistantText(transcriptPath) {
     // result comes back, so this narration precedes the eventual final
     // reply rather than being it. Grading it here is the same category of
     // misfire as the tool-call-only case above: nothing to grade yet (#1329).
-    if (msg.content.some((c) => c && c.type === 'tool_use')) return null;
+    if (msg.content.some((c) => c && c.type === 'tool_use')) return { text: null, asyncWaitCheckpoint: false };
     const texts = msg.content.filter((c) => c && c.type === 'text' && typeof c.text === 'string');
-    return texts.length ? texts[texts.length - 1].text : null;
+    if (!texts.length) return { text: null, asyncWaitCheckpoint: false };
+    // Look at the nearest earlier parseable line — what this reply is
+    // actually reacting to. Blank/unparseable lines are skipped, same
+    // tolerance the outer scan already applies.
+    let asyncWaitCheckpoint = false;
+    for (let j = i - 1; j >= 0; j--) {
+      const priorLine = lines[j];
+      if (!priorLine.trim()) continue;
+      let priorEntry;
+      try { priorEntry = JSON.parse(priorLine); } catch { break; }
+      asyncWaitCheckpoint = isAsyncWaitSignal(priorEntry);
+      break;
+    }
+    return { text: texts[texts.length - 1].text, asyncWaitCheckpoint };
   }
-  return null;
+  return { text: null, asyncWaitCheckpoint: false };
 }
 
 function run(ctx) {
@@ -172,7 +229,7 @@ function run(ctx) {
   // transcriptPath is already a confirmed non-empty string (checked above),
   // so a straight equality test already implies mainTranscriptPath is one too.
   if (ctx.input.transcript_path === transcriptPath) return {};
-  const text = lastAssistantText(transcriptPath);
+  const { text, asyncWaitCheckpoint } = lastAssistantText(transcriptPath);
   if (typeof text !== 'string') return {}; // unreadable -> best-effort no-op
   const trimmedText = text.trim();
   const firstLine = trimmedText.split('\n')[0].slice(0, 120);
@@ -187,8 +244,14 @@ function run(ctx) {
     }
     return {};
   }
+  // #2041: a nested dispatcher's own async-wait narration — reacting to its
+  // own dispatch's launch ack or a sibling's task-notification, never to
+  // content it could have replied to — is not this agent's final reply.
+  // Best-effort no-op, matching this file's own posture (#2036 is the
+  // one-level-shallower sibling of this same filter).
+  if (asyncWaitCheckpoint) return {};
   ctxLib.appendEvent(ownedRun.dir, 'contract-violation', { firstLine }, ownedRun.attribution);
   return { json: { systemMessage: 'claude-tweaks: a subagent reply is missing the Subagent Contract status line (STATUS: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, as the last non-empty line). Logged to events.jsonl.' } };
 }
 
-module.exports = { run, isExemptAgentType };
+module.exports = { run, isExemptAgentType, isAsyncWaitSignal };
