@@ -20,7 +20,7 @@ The full Playwright CLI operation vocabulary lives in `skills/browse/playwright-
 ## Variables
 
 - **SCREENSHOTS_DIR:** base directory for this story's screenshots, passed via the prompt's `**SCREENSHOT_PATH**` field. Each step writes `00_<step-name>.png`, `01_<step-name>.png`, etc.
-- **TRACES_BASE:** base directory for failure traces (default `.claude-tweaks/artifacts/traces/`), must be an absolute path — resolve it to absolute before use if it arrives relative. Tracing is record-then-stop: recording starts right after `open` (Setup Step c), and on any step failure the recording is stopped via `tracing-stop` BEFORE closing the session. Unlike `agent-browser`'s `trace stop <path>`, Playwright CLI's `tracing-stop` takes no output-path argument — it auto-writes the trace to `.playwright-cli/traces/` (see Section 6 Step 1), so the agent relocates it to an absolute path under `{TRACES_BASE}/<story-id>/` immediately afterward. A trace cannot be captured retroactively — if recording never started, there is nothing to save.
+- **TRACES_BASE:** base directory for failure traces (default `.claude-tweaks/artifacts/traces/`), must be an absolute path — resolve it to absolute before use if it arrives relative. Tracing is record-then-stop: recording starts right after `open` (Setup Step c), and on any step failure the recording is stopped via `tracing-stop` BEFORE closing the session. Playwright CLI's `tracing-stop` takes no output-path argument — it auto-writes the trace to `.playwright-cli/traces/` (see Section 6 Step 1), so the agent relocates it to an absolute path under `{TRACES_BASE}/<story-id>/` immediately afterward. A trace cannot be captured retroactively — if recording never started, there is nothing to save.
 
 ## Test Isolation
 
@@ -73,16 +73,13 @@ playwright-cli -s=<story-id> resize <width> <height>
 ```
 
 e. **Apply auth** before any interactive step:
-- **Auth (vault) present** — preferred path. The vault stores credentials encrypted, locally; the LLM never sees the password.
-  <!-- playwright-cli: `auth login`/`auth save` have no row in playwright-cli-reference.md's Operation vocabulary table (no vault/auth concept exists in Playwright CLI at all — only raw storage-state save/load) — out of scope for #2645 (see its Non-Goals), left untranslated -->
+- **Auth (vault) present** — preferred path. A previously captured session-state file supplies cookies/localStorage; the LLM never sees a password.
   ```
-  agent-browser --session <story-id> auth login <vault-name>
+  playwright-cli -s=<story-id> state-load .claude-tweaks/auth-state/<vault-name>.json
+  playwright-cli -s=<story-id> goto <url>
   ```
-  `auth login` navigates to the vault's saved login URL, waits for the form fields, and submits. The user must have saved the vault once before running the story:
-  ```
-  agent-browser auth save <vault-name> --url <login-url> --username <username> --password <password>
-  ```
-  If the vault is missing, the orchestrator's Phase 2.5 pre-flight will have caught it — abort with a clear message rather than improvising: capture a trace immediately, BEFORE Teardown or Close run (see Section 6 Step 1 — Failure Handling), then proceed to Teardown (Section 5) and Close (Section 6 Step 3) before reporting FAIL.
+  `state-load` restores the session's storage state into the already-open browser context (Setup Step c's `open` already created it), but does not retroactively apply to the page already loaded there — the `goto <url>` re-navigation to the story's own URL is required immediately after `state-load` for the authenticated state to take effect (confirmed empirically: `state-load` alone, with no follow-up navigation, leaves the already-loaded page unauthenticated; re-navigating via a second `open` instead of `goto` relaunches an entirely new browser process and silently discards the just-loaded state — always use `goto` here, never `open`). The user must have captured the session-state file once before running the story, per `skills/stories/auth-resolution.md`'s capture procedure.
+  If the session-state file is missing, the orchestrator's Phase 2.5 pre-flight will have caught it — abort with a clear message rather than improvising: capture a trace immediately, BEFORE Teardown or Close run (see Section 6 Step 1 — Failure Handling), then proceed to Teardown (Section 5) and Close (Section 6 Step 3) before reporting FAIL.
 - **Auth (legacy) present** — fallback for projects that have not yet migrated. Navigate to the legacy auth `url`, fill the resolved username/password into the form, and submit.
 - **Neither present** — proceed without auth.
 
@@ -100,7 +97,7 @@ For each step in the steps array:
 
 **Action steps** (have an `action` field):
 
-1. **Take a snapshot to resolve the target element's ref.** Playwright CLI's `find` is read-only and text-only — unlike `agent-browser`'s locator-flexible, action-performing `find`, it cannot click or fill an element, regardless of locator type. Every action step therefore starts with a snapshot to obtain an `eN` ref, then acts on that ref in a separate command (Step 2):
+1. **Take a snapshot to resolve the target element's ref.** Playwright CLI's `find` is read-only and text-only — it cannot click or fill an element, regardless of locator type. Every action step therefore starts with a snapshot to obtain an `eN` ref, then acts on that ref in a separate command (Step 2):
    ```
    playwright-cli -s=<story-id> snapshot
    ```
@@ -117,8 +114,7 @@ For each step in the steps array:
    - `screenshot` → `playwright-cli -s=<story-id> screenshot --filename={SCREENSHOT_PATH}/<NN>_<step-name>-raw.png` (`{SCREENSHOT_PATH}` must be an absolute path; unannotated here — Playwright CLI's `screenshot` has no annotation overlay, see the note under Step 5 below — step 5 takes the equivalent plain screenshot at `<NN>_<step-name>.png`)
    - `assert_visible` → take a fresh `snapshot` and check the tree for an element matching the locator (role + accessible name, testid, text). Element present = PASS, absent = FAIL. Never phrase this as an action-less `find` — Playwright CLI's `find` is read-only, but it is also text-only, so it cannot check role/testid/placeholder locators either; use `snapshot` for every locator type here.
    - `navigate` (rare; only inside step blocks) → `playwright-cli -s=<story-id> goto <url>` (mid-story navigation — Setup Step c's `open` already performed the story's *first* navigation; use `goto`, not `open`, for every navigation after that)
-   <!-- playwright-cli: `press` has no row in playwright-cli-reference.md's Operation vocabulary table — out of scope for #2645 (see its Non-Goals), left untranslated -->
-   - `press` (no locator — acts at whatever currently has focus) → `agent-browser --session <story-id> press "<value>"` (the story's `value` field supplies the key/combo, e.g. `Enter`, `Control+a`, `Alt+ArrowLeft`; escape per the rule below)
+   - `press` (no locator — acts at whatever currently has focus) → `playwright-cli -s=<story-id> press "<value>"` (the story's `value` field supplies the key/combo, e.g. `Enter`, `Control+a`, `Alt+ArrowLeft`; escape per the rule below — resolved translation per `playwright-cli-reference.md`'s Operation vocabulary table, #2670)
 
    **Escaping story-supplied strings:** every `<name>`/`<text>`/`<label>`/`<placeholder>` above (and the `<value>`/`<text>` arguments used by `fill`) is a story-authored string spliced into a double-quoted Bash argument. Before splicing any such string into a command, backslash-escape it for double-quoted-shell-argument safety, in this order: `\` → `\\`, then `"` → `\"`, `` ` `` → `` \` ``, and `$` → `\$` (escape backslashes first so the newly-inserted escape characters are not themselves re-escaped). Never interpolate a story-supplied string into a shell command unescaped.
 
@@ -127,7 +123,7 @@ For each step in the steps array:
    - `fill` → `playwright-cli -s=<story-id> fill <eN> "<text>"` (the story's `value` field supplies the text, escaped per Step 1)
    - `check` → `playwright-cli -s=<story-id> check <eN>`
    - `hover` → `playwright-cli -s=<story-id> hover <eN>`
-   `find`'s action argument only resolved to `click`/`fill`/`check`/`hover` under `agent-browser`; that same set carries over here — a story action outside it has no ref-based translation.
+   The ref-based action set is limited to `click`/`fill`/`check`/`hover` — a story action outside it has no ref-based translation.
 
 3. **Locator failure recovery:** If Step 1's snapshot has no unambiguous match, or Step 2's act call errors against the resolved ref, take a fresh snapshot:
    ```
@@ -141,7 +137,7 @@ For each step in the steps array:
    ```
    playwright-cli -s=<story-id> screenshot --filename={SCREENSHOT_PATH}/<NN>_<step-name>.png
    ```
-   `{SCREENSHOT_PATH}` must be an absolute path. Playwright CLI's `screenshot --filename=<path>` has no equivalent to `agent-browser`'s `screenshot --annotate <path>` — there is no annotation overlay (no bounding box or highlight on the acted-on element); this is a plain screenshot of the page as it stands after the action. The report's screenshot column (see "Report" below) no longer visually marks which element a step acted on.
+   `{SCREENSHOT_PATH}` must be an absolute path. Playwright CLI's `screenshot --filename=<path>` has no annotation overlay (no bounding box or highlight on the acted-on element); this is a plain screenshot of the page as it stands after the action. The report's screenshot column (see "Report" below) no longer visually marks which element a step acted on.
 
 6. Mark PASS or FAIL.
 
@@ -212,7 +208,7 @@ Teardown runs at the end of every path through Setup and the step loop — wheth
    ```
    playwright-cli -s=<story-id> tracing-stop
    ```
-   This stops the recording started in Setup (Section 2 Step c). Unlike `agent-browser`'s `trace stop <path>`, Playwright CLI's `tracing-stop` takes no output-path argument — it auto-writes `trace-<tool-timestamp>.trace` (plus a sibling `.network` file and a `resources/` directory) under `.playwright-cli/traces/`, relative to the working directory. Immediately after `tracing-stop` returns, via the Bash tool, move the trace file it just wrote (the most recently modified `trace-*.trace` file in `.playwright-cli/traces/`) to an absolute path under `{TRACES_BASE}/<story-id>/`, named with a UTC ISO-8601 timestamp with colons replaced by `-` for filesystem safety (e.g., `{TRACES_BASE}/<story-id>/2026-05-01T14-30-22Z.trace`). The `{TRACES_BASE}/<story-id>` directory was already created in Setup (Section 2 Step b). The saved file is a Playwright CLI trace — a human opens it with `npx playwright show-trace <path>`. (`.playwright-cli/traces/` is not session-scoped: if two parallel qa-agent instances stop traces at nearly the same instant, match by exact modification time, not just recency, to avoid picking up a sibling agent's trace.)
+   This stops the recording started in Setup (Section 2 Step c). Playwright CLI's `tracing-stop` takes no output-path argument — it auto-writes `trace-<tool-timestamp>.trace` (plus a sibling `.network` file and a `resources/` directory) under `.playwright-cli/traces/`, relative to the working directory. Immediately after `tracing-stop` returns, via the Bash tool, move the trace file it just wrote (the most recently modified `trace-*.trace` file in `.playwright-cli/traces/`) to an absolute path under `{TRACES_BASE}/<story-id>/`, named with a UTC ISO-8601 timestamp with colons replaced by `-` for filesystem safety (e.g., `{TRACES_BASE}/<story-id>/2026-05-01T14-30-22Z.trace`). The `{TRACES_BASE}/<story-id>` directory was already created in Setup (Section 2 Step b). The saved file is a Playwright CLI trace — a human opens it with `npx playwright show-trace <path>`. (`.playwright-cli/traces/` is not session-scoped: if two parallel qa-agent instances stop traces at nearly the same instant, match by exact modification time, not just recency, to avoid picking up a sibling agent's trace.)
 
 2. Record the trace path in the failure record. Include it in the REPORT_JSON's failure entry and emit a `TRACE: <path>` line in the report so the orchestrator can surface it.
 
@@ -237,7 +233,7 @@ Return the structured report as detailed in the "Report" section below. If `reco
 1. **Parse** the user story into discrete, sequential steps (support all legacy formats in the Examples section). Also parse `**Auth (vault):**` and `**Auth (legacy):**` if present.
 2. **Setup:** create the screenshot directory and the trace directory (`{TRACES_BASE}/<story-id>`, both absolute); open the session at the story URL and start trace recording (`tracing-start`) immediately after `open`; apply viewport via `set viewport` (the story's value if set, else the `1440x1600` default); apply auth (vault preferred, legacy fallback) — see Structured Format Step 2.
 3. **Execute each step sequentially** (maintain a `caveats` array, initially empty):
-   a. Take a `snapshot` and resolve the target's `eN` ref using a semantic locator inferred from the free-text step — `find` under Playwright CLI is read-only and text-only, so it cannot resolve-and-act the way `agent-browser`'s `find` did; see Structured Format Section 4 Steps 1-3 for the full snapshot+ref pattern (including locator-failure recovery).
+   a. Take a `snapshot` and resolve the target's `eN` ref using a semantic locator inferred from the free-text step — `find` under Playwright CLI is read-only and text-only, so it cannot resolve-and-act; see Structured Format Section 4 Steps 1-3 for the full snapshot+ref pattern (including locator-failure recovery).
    b. Execute the action via the appropriate `playwright-cli` command against that ref (`click <eN>`, `fill <eN> "<text>"`, `check <eN>`, `hover <eN>`). Free-text-derived values (the story's narrative/checklist/BDD text) are spliced into double-quoted Bash arguments the same way structured-format `<value>`/`<text>` fields are — apply the escaping rule from "Escaping story-supplied strings" (Structured Format, Section 4 Step 1) before splicing any such string into a command.
    c. Take a screenshot (`screenshot --filename=<absolute path>` — no annotation overlay; see Structured Format Section 4 Step 5).
    d. Evaluate PASS or FAIL.

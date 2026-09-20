@@ -73,6 +73,37 @@ When running inside a `/claude-tweaks:flow` pipeline, `/test` reads context from
 - No `VERIFICATION_PASSED` (and no `skip-qa`) + runner stamp verifying `HEAD` (`verify.js --stamp-status` → `verifiedHead: true`, per `verification.md`'s Skip-if-recent artifact branch) → skip verification, report "runner stamp {sha} ({scope}) verifies HEAD", run QA if stories exist (selected per bullet 2's rule), set `TEST_PASSED=true`
 - No `VERIFICATION_PASSED` (default) → run full suite (and QA if stories exist when mode is `all`)
 
+## Step 0: PR-Bookkeeping Precondition Check
+
+Runs unconditionally, before any scope resolution, regardless of `$ARGUMENTS` — this is a
+defense-in-depth safety net (#2472) layered on top of `pre-tool-use.js`'s
+`checkBookkeepingStampsGate` (per-tool-call enforcement during build, keyed off an ambiguously
+resolved run dir) and `build/SKILL.md` Common Step 7's own bookkeeping assertion (both of which
+should already have caught this — this step exists for the case where either one didn't fire).
+
+**Skip when `$PIPELINE_RUN_DIR` is unset** — a standalone `/claude-tweaks:test` invocation with no
+pipeline run has nothing to check.
+
+Otherwise:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/check-pr-bookkeeping.js" --run "$PIPELINE_RUN_DIR"
+```
+
+- **Exit 0** — compliant (or nothing to check yet, e.g. no materialize commit landed). Continue to
+  Step 1.
+- **Exit 4** — a genuine bookkeeping-precondition violation: this pr-first run's materialize
+  commit landed without a recorded worktree assignment, or (under `integration-model: pr-first`)
+  without a recorded PR, a durable exemption, or a logged degrade line. **Stop the pipeline** and
+  render the command's stderr verbatim as a HARD-GATE failure card — do not attempt to silently
+  remediate on the test skill's own initiative; the remediation command is already named in the
+  stderr message, aimed at whoever runs `/claude-tweaks:build` (or a human) to fix forward.
+- **Exit 2 or 3** — a tooling/usage problem with the check itself (should not occur when
+  `$PIPELINE_RUN_DIR` resolved correctly), not a bookkeeping finding. Fail open: log a `SKIP`
+  entry per `_shared/auto-decision-log.md`'s degrade-trace rule (`condition: check-pr-bookkeeping.js
+  exited {code} → fallback: precondition not verified this run`) and continue to Step 1 — this
+  check is additive, never a reason to block on its own malfunction.
+
 ## Step 1: Resolve Scope and Execute
 
 ### Standard suite (no arguments)

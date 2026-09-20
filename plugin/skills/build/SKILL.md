@@ -115,6 +115,8 @@ Context to provide to `/superpowers:writing-plans`:
 - The full spec content (including Current State, Gotchas, and acceptance criteria)
 - Any existing progress identified in Spec Step 2
 
+**Verify `ASSUMPTION — verify at build:` markers first (#1769).** Before invoking `/superpowers:writing-plans`, probe every `## Gotchas` bullet carrying that literal prefix (`_shared/premise-verification.md`) against this worktree — the same claim decomposition/shaping could not settle at spec time now has a real checkout to check. Log each outcome as one `decisions.md` line per `_shared/auto-decision-log.md` (`confirmed` or `reversed`, naming the probe). A reversed assumption is folded into the context handed to `/superpowers:writing-plans` as the corrected fact — never silently dropped, and never left for the plan to build on the original, now-disproven claim.
+
 The plan will be written to `docs/superpowers/plans/YYYY-MM-DD-{feature}.md`.
 
 **Plan header artifact:** Every plan written by `/superpowers:writing-plans` starts with a "For agentic workers" block that advertises `subagent-driven-development` (recommended) or `executing-plans` as the next step. **Ignore it.** `/build` controls execution strategy — the header is boilerplate from writing-plans's general-purpose handoff. Do not treat it as guidance for this build. (Same rule applies in Design Step 3 below.)

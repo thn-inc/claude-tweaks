@@ -90,7 +90,7 @@ Each `kind: artifact` finding is aged QA-artifact residue (an aged dir under `.c
 
 Each `kind: pipeline-run` finding is an un-archived clean run directory (`run-state.json` status `clean`, not yet moved under `.claude-tweaks/pipelines/archive/`) — collect as `[git] {subject} — {evidence} — Archive` (`remedy` is always `auto` for this kind — the archival move documented in `wrap-up/cleanup-procedures.md` Section B).
 
-Each `kind: release` finding is a gap in this repo's release triple at `HEAD` — the shipped `plugin.json` version's `CHANGELOG.md` heading (`## v{version} — {summary}`) or its `docs/shipped-versions.tsv` line (`{version}\t{date}\trelease`) is missing — collect as `[git] {subject} — {evidence} — Backfill` (`remedy` is always `auto`: add the missing heading/line by hand, matching the format the finding's `evidence` field names, then re-run `node --test tests/changelog-coverage.test.js` before committing — the same "backfill" remedy `docs/releasing.md` already documents for a shipped version missing its CHANGELOG entry). This probe (`bin/lib/residue/probes/release.js`) fires only when `manifest.name === 'claude-tweaks'` — a generic claude-tweaks-installed project always sees `ran: false` here; this is a claude-tweaks-repo-specific check, not a general-project convention.
+Each `kind: release` finding is a tag/CHANGELOG mismatch at or after the project's release-please bootstrap version (`bin/lib/residue/probes/release.js`, #2257) — a `v{version}` tag with no matching `## v{version} — {summary}` heading, or vice versa — collect as `[git] {subject} — {evidence} — Backfill` (`remedy` is always `auto`: add the missing heading/tag by hand, matching the format the finding's `evidence` field names, then re-run `node --test tests/changelog-coverage.test.js` before committing). This probe runs on any project whose repo ever bootstrapped `.release-please-manifest.json` — `ran: false` only when it never did, not gated on this repo's own identity.
 
 This step's per-kind coverage above is not a fixed list — treat `bin/residue.js`'s probe directory (`bin/lib/residue/probes/`) as the authoritative kind set under `--scope repo`, and give any probe added there a paragraph here (or an explicit exclusion note) before relying on the assertion in `step-6-auto.md` that every Step 4.5 pass reads it. `kind: pr` is the one deliberate exception: Step 4.8 below fetches PRs directly instead of reading it from this CLI — see that step's own "Not re-pointed at `bin/residue.js`" paragraph for why.
 
@@ -198,7 +198,10 @@ Read that file as one composed bundle rather than opening it directly: `node "${
 all claims"), then read and classify each entry via that same file's "The lock" steps 1-2
 (the corrected 404→`__ABSENT__` branch and the `.content` extraction — do not hand-roll a
 raw decode pipe here; a bare form drops the absent-file branch and hands the classifier the
-wrapper object instead of its `.content` field):
+wrapper object instead of its `.content` field).
+
+**Never sample this listing (#2613)** — a large registry is a signal to use the batched
+reader (`issue-claims-backstops.md`'s Batched read section), never to check only some blobs:
 
 ```bash
 gh api "repos/{owner}/{repo}/contents/claims?ref=claims-registry" -q '.[].name'

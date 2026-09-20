@@ -49,7 +49,9 @@ const SECTION_MAP = [
   [/\.patch$/, SECTIONS.PENDING],
   [/^(polish-suggestion|visual-review|design-decision|build-deviation|simplify|deepen)-/, SECTIONS.PENDING],
   [/^wrap-up-skill(-|\b)/, SECTIONS.SKILL],
-  [/^(wrap-up-doc|release-backfill|tidy-doc)-/, SECTIONS.DOC],
+  // release-backfill- retired #2257 (git describe --contains replaced the
+  // staged-backfill mechanism entirely — nothing stages that prefix anymore).
+  [/^(wrap-up-doc|tidy-doc)-/, SECTIONS.DOC],
   [/^(wrap-up-journey|journeys)(-|\b)/, SECTIONS.JOURNEY],
   [/^(reflect|digest-promotion|leftover|ledger-record|upstream-unfiled|red-team|specify-overlap|specify-redteam|flaky-allowlist|tidy|plan-retention|feedback-drafts)(-|\b)/, SECTIONS.QUEUE],
   [/^wrap-up-memory-/, SECTIONS.MEMORY],
