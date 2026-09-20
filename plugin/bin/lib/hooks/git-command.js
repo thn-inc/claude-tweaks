@@ -406,17 +406,41 @@ function resolveGitCommand(t, effCwd) {
 // Extend evidence-driven, on a real incident, not speculatively.
 const PLUMBING_WRITE_SUBCOMMANDS = new Set(['mv', 'rm', 'update-ref', 'apply']);
 
-function gitTargets(command, cwd) {
-  const targets = [];
+// #2065: one shared traversal for every consumer that needs "every git
+// invocation in this command, resolved" — checkGitStashWarn and gitTargets
+// used to each run their own forEachCommandSegment + resolveGitCommand walk
+// over the identical command/cwd, a second full quote-aware parse on the hot
+// path (every Bash tool call, every session). This is the one walk; classification
+// over its result (gitTargetsFrom below) is what tells "commit"/"push"/plumbing
+// apart from "stash" apart from everything else — the traversal itself stays
+// ignorant of which subcommand pre-tool-use.js's callers each care about.
+function resolvedGitSegments(command, cwd) {
+  const segments = [];
   forEachCommandSegment(command, cwd, (t, effCwd) => {
     const resolved = resolveGitCommand(t, effCwd);
     if (!resolved) return;
-    const sub = t[resolved.index];
-    if (sub === 'commit' || sub === 'push' || PLUMBING_WRITE_SUBCOMMANDS.has(sub)) {
-      targets.push({ action: sub, dir: resolved.dir });
-    }
+    segments.push({ tokens: t, index: resolved.index, dir: resolved.dir });
   });
+  return segments;
+}
+
+// Pure classification over an already-resolved segment list — no traversal of
+// its own. `gitTargets` below is the convenience wrapper kept for every
+// existing caller (post-tool-use.js, tests) that still wants "parse and
+// classify" in one call.
+function gitTargetsFrom(segments) {
+  const targets = [];
+  for (const { tokens: t, index, dir } of segments) {
+    const sub = t[index];
+    if (sub === 'commit' || sub === 'push' || PLUMBING_WRITE_SUBCOMMANDS.has(sub)) {
+      targets.push({ action: sub, dir });
+    }
+  }
   return targets;
+}
+
+function gitTargets(command, cwd) {
+  return gitTargetsFrom(resolvedGitSegments(command, cwd));
 }
 
 // Best-effort detection of non-git, non-Edit/Write direct file-write shapes in
@@ -680,5 +704,5 @@ function mkdirTargets(command, cwd) {
 }
 
 module.exports = {
-  gitTargets, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, WRITE_SHAPES,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, WRITE_SHAPES,
 };

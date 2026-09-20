@@ -10,6 +10,7 @@ const { spawn } = require('child_process');
 const {
   POOL_BASE, BLOCK_SIZE, registryPath, allocate, release, status,
 } = require('../../../plugin/bin/lib/ports/registry');
+const { BEGIN_MARKER } = require('../../../plugin/bin/lib/ports/env-file');
 
 function tmpHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ports-registry-'));
@@ -182,4 +183,15 @@ test('status: prunes dead leases as a side effect and returns the pruned view', 
   assert.equal(Object.keys(view.leases).length, 0);
   const raw = JSON.parse(fs.readFileSync(registryPath({ home }), 'utf8'));
   assert.equal(Object.keys(raw.leases).length, 0, 'the prune was persisted');
+});
+
+// #1927: the registry's env write carries the lease line first.
+test('allocate: the written managed region starts with CLAUDE_TWEAKS_LEASE={base} and vars carries the pair first', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ports-registry-lease-'));
+  const checkout = path.join(home, 'co'); fs.mkdirSync(checkout, { recursive: true });
+  const result = await allocate(checkout, { services: ['web', 'api'], home, probe: async () => true });
+  assert.deepEqual(result.vars[0], ['CLAUDE_TWEAKS_LEASE', String(result.base)]);
+  assert.deepEqual(result.vars[1], ['PORT', String(result.base)]);
+  const text = fs.readFileSync(path.join(checkout, '.env.local'), 'utf8');
+  assert.match(text, new RegExp(`${BEGIN_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\nCLAUDE_TWEAKS_LEASE=${result.base}\\nPORT=${result.base}\\n`));
 });

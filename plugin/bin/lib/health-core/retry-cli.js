@@ -26,14 +26,14 @@ function makeRetryQueueCommands({ readDurableState, writeDurableState }) {
     const resultsPath = args._[1];
     if (!resultsPath) {
       process.stderr.write('usage: <cli>.js retry-queue update <results.json> [--root <dir>]\n');
-      process.exit(2);
+      return 2;
     }
     let results;
     try {
       results = JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
     } catch (err) {
       process.stderr.write(`retry-queue update: could not read or parse ${resultsPath}: ${err.message}\n`);
-      process.exit(1);
+      return 1;
     }
     // Declared here but reset to [] on every mutator invocation below: the
     // mutator is re-invoked fresh by writeDurableState's own CAS-retry loop

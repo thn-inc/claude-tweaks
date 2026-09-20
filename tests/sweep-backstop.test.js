@@ -22,6 +22,7 @@ const TIDY_STEP75_WORKTREE = read('plugin', 'skills', 'tidy', 'step-7-5-worktree
 const ACTIONS_GH = read('plugin', 'skills', 'tidy', 'actions-github-issues.md');
 const POLICY_SCHEMA_MD = read('plugin', 'skills', '_shared', 'policy-schema.md');
 const { POLICY_KEYS } = require('../plugin/bin/lib/policy-schema');
+const { composedBytesReport, overComposedCeiling } = require('../plugin/bin/lib/skill-audit/context-cost.js');
 
 // --- Extract and syntax-check every `node -e "..."` script in the two new items ---
 
@@ -375,17 +376,31 @@ test('every new/edited file mentioning integration-model cites the shared fragme
   }
 });
 
-// --- 40 KB ceiling on every touched file ---
-
-test('every file touched by this spec stays under the 40 KB sub-file ceiling', () => {
-  const CEILING_BYTES = 40 * 1024;
-  const files = {
-    'github-pr-scan.md': SCAN,
-    'step-6-auto.md': STEP6,
-    'tidy/SKILL.md': TIDY_SKILL,
-    'actions-github-issues.md': ACTIONS_GH,
-  };
-  for (const [name, text] of Object.entries(files)) {
-    assert.ok(Buffer.byteLength(text, 'utf8') <= CEILING_BYTES, `${name} exceeds the 40 KB ceiling`);
-  }
+// --- Composed-bytes gate on the one touched file that is a compose source ---
+//
+// step-6-auto.md, tidy/SKILL.md, and actions-github-issues.md carried a raw
+// 40 KB per-file assertion here, but none of the three is a compose call
+// site's source — since #1990 the per-file 40 KB ceiling is a warning tier,
+// not a hard gate, and these three have no composed gate to retarget to.
+// Per-file 40 KB pins on these files retired by #1997 — the per-file tier is
+// a warning since #1990 and these files have no compose call site; removal
+// condition in docs/incident-log.md [IL-153].
+//
+// github-pr-scan.md IS a compose source (scan-procedures.md's `pr-scan` step,
+// #1992), so it keeps a hard gate here — retargeted to the composed
+// bundle at that call site rather than the raw file, since the `pr-scan`
+// composed gate (#1992) is what actually guards this file's reader-facing
+// cost now.
+test('github-pr-scan.md stays under the pr-scan composed-bytes ceiling', () => {
+  const PLUGIN_ROOT = path.join(ROOT, 'plugin');
+  // Guard against a vacuous pass (#1997): if the `pr-scan` call site is ever
+  // removed or renamed, the filter below yields [] regardless of whether
+  // github-pr-scan.md is actually over budget anywhere — retarget this test
+  // or restore the raw per-file pin instead of leaving it silently vacuous.
+  assert.ok(
+    composedBytesReport(PLUGIN_ROOT).some((r) => r.step === 'pr-scan' && !r.unparsed),
+    'the pr-scan call site is gone — retarget or restore the raw pin',
+  );
+  const overRows = overComposedCeiling(composedBytesReport(PLUGIN_ROOT)).filter((r) => r.step === 'pr-scan');
+  assert.deepStrictEqual(overRows, [], `pr-scan composed bundle over ceiling: ${JSON.stringify(overRows)}`);
 });

@@ -12,7 +12,7 @@ Light mode is a narrowed subset of full mode — see `full-mode.md` for the Near
 | **2. Fresh start** | "If we started fresh?" — Would we choose the same approach? What would v2 look like? | Architectural alternatives; route via _shared/learning-routing.md |
 | **3. Friction** | "Did the pipeline itself get in the way?" — Was every hook denial and AskUserQuestion stop this run actually necessary? | Upstream feedback (D5) via `_shared/learning-routing.md` |
 
-Surprises and Approach are skipped — light mode exists specifically to trim ceremony for a `fast-lane`-profiled record. If this run's escape hatch fires mid-pass (see below), the *next* wrap-up steps run at standard depth — this pass itself is not retroactively widened.
+Surprises and Approach are skipped — light mode exists specifically to trim ceremony for a `fast-lane`-profiled record (roster tag `reflect-light-mode`, `_shared/ceremony-profile.md`). If this run's escape hatch fires mid-pass (see below), the *next* wrap-up steps run at standard depth — this pass itself is not retroactively widened.
 
 ### Finding Shape (Evidence + Cost)
 

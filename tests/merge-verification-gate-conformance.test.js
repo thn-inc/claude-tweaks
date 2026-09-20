@@ -68,7 +68,7 @@ test('the gate reads state before any merge attempt and names the red-path piece
   const section = gate.slice(step25, step3);
   // Every park/report reason the gate defines is pinned, not just the timeout one — a future edit
   // that drops one silently changes an outcome vocabulary other files cite.
-  for (const needle of ['statusCheckRollup', 'mergeStateStatus', 'bot:blocked', 'checks-pending-timeout', 'checks-read-failed', 'state-read-failed', 'pr-not-open', 'moving-target', 'AUTO ', '15 minutes', 'never merge', '--auto', '--body-file']) {
+  for (const needle of ['statusCheckRollup', 'mergeStateStatus', 'bot:parked', 'checks-pending-timeout', 'checks-read-failed', 'state-read-failed', 'pr-not-open', 'moving-target', 'AUTO ', '15 minutes', 'never merge', '--auto', '--body-file']) {
     assert.ok(section.includes(needle), `gate section missing "${needle}"`);
   }
   assert.ok(!/AskUserQuestion/.test(section), 'the gate is park-and-surface — no mid-pipeline prompt');
@@ -79,12 +79,14 @@ test('every pr-first merge site and the resume confirmation cite the gate', () =
   // this citation) out of SKILL.md into its own sub-file to stay under the
   // 40 KB ceiling — the resume confirmation's own citation of the gate now
   // lives there instead.
-  for (const rel of ['dispatch/settle-and-merge.md', 'dispatch/resume-confirmation.md', 'flow/worktree-merge.md']) {
+  for (const rel of ['dispatch/settle-and-merge.md', 'dispatch/resume-confirmation.md', 'flow/worktree-merge.md', 'release/execute.md']) {
     assert.ok(read(...rel.split('/')).includes('Merge-verification gate'), `${rel} does not cite the gate`);
   }
 });
 
-test('pr-early-run-lifecycle.md carries the gh-absent-at-merge degrade row (proceed as off, warn tier)', () => {
-  const t = read('_shared', 'pr-early-run-lifecycle.md');
+test('pr-checklist-refresh.md carries the gh-absent-at-merge degrade row (proceed as off, warn tier)', () => {
+  // #2002 moved this row out of pr-early-run-lifecycle.md — it's merge-time-only content, so it
+  // now lives with the other merge-time content the `merge` compose bundle actually needs.
+  const t = read('_shared', 'pr-checklist-refresh.md');
   assert.ok(/gh.*absent at merge time/i.test(t) && /proceed as `off`/.test(t) && /\*\*warn\*\*/.test(t));
 });

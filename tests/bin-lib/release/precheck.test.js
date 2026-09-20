@@ -199,3 +199,54 @@ test('any other branch-manifest read failure aborts naming the branch — never 
   ]);
   assert.throws(() => precheck(deps, 'minor'), /wt-feature/);
 });
+
+// AC 8: the same module serves release.js ('tsv') and release-local.js ('tags')
+// without either caller's collision detection changing under the other.
+function tagDeps({ tags, local = '1.2.0', origin = '1.2.0', hasOrigin = true, worktrees = 'worktree /repo\nbranch refs/heads/main\n', wtVersion = '1.2.0' } = {}) {
+  const versions = { main: local, 'origin/main': origin, 'wt-feature': wtVersion };
+  const git = fakeGit([
+    ['fetch origin main', () => ''],
+    ['worktree list --porcelain', () => worktrees],
+    ['tag -l v*', () => tags],
+  ]);
+  return { git, listPlanFiles: () => [], readFile: () => '', versionAtRef: (ref) => versions[ref] };
+}
+
+test('keySource tags: the highest v* tag raises the base past a stale manifest; no tsv read', () => {
+  const deps = tagDeps({ tags: 'v1.0.0\nv1.2.0\nv1.2.1\nv2.0.0-rc.1\n', local: '1.2.0', origin: '1.2.0' });
+  const { candidate, claims, result } = precheck(deps, 'minor', { keySource: 'tags', versionAtRef: deps.versionAtRef });
+  assert.strictEqual(claims.tagTip, '1.2.1');
+  assert.strictEqual(claims.tsvTip, null);
+  assert.strictEqual(candidate, '1.3.0');
+  assert.strictEqual(result.ok, true);
+  assert.ok(!deps.git.calls.some((c) => c.includes('shipped-versions.tsv')));
+});
+
+test('keySource tags without an origin: no fetch, no origin read, base from the tag', () => {
+  const deps = tagDeps({ tags: 'v1.2.0\n' });
+  const { candidate } = precheck(deps, 'major', { keySource: 'tags', hasOrigin: false, versionAtRef: (ref) => (ref === 'main' ? '1.2.0' : assert.fail(`unexpected ref ${ref}`)) });
+  assert.strictEqual(candidate, '2.0.0');
+  assert.ok(!deps.git.calls.some((c) => c.startsWith('fetch')));
+});
+
+test('keySource tags: a sibling worktree bump still collides; the renumber follows the requested part', () => {
+  const deps = tagDeps({ tags: 'v1.2.0\n', worktrees: SIBLING_WORKTREES, wtVersion: '1.3.0' });
+  const { result } = precheck(deps, 'minor', { keySource: 'tags', versionAtRef: deps.versionAtRef });
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.conflicts[0].source, 'worktree-branch');
+  assert.strictEqual(result.suggested, '1.4.0');
+});
+
+test('keySource tags: a stack with no manifest at all (go) bases on the tag alone', () => {
+  const deps = tagDeps({ tags: 'v0.4.0\n' });
+  const { candidate } = precheck(deps, 'patch', { keySource: 'tags', versionAtRef: () => null });
+  assert.strictEqual(candidate, '0.4.1');
+});
+
+test('keySource tsv is byte-for-byte the pre-#2254 path (default when opts are omitted)', () => {
+  const a = precheck(baseDeps({ tsv: '6.70.1\t2026-08-09\trelease\n6.71.0\t2026-08-09\twip-never-shipped\n' }), 'minor');
+  const b = precheck(baseDeps({ tsv: '6.70.1\t2026-08-09\trelease\n6.71.0\t2026-08-09\twip-never-shipped\n' }), 'minor', { keySource: 'tsv' });
+  assert.deepStrictEqual(a, b);
+  assert.strictEqual(a.claims.tagTip, null);
+  assert.throws(() => precheck(baseDeps(), 'minor', { keySource: 'labels' }), /keySource/);
+});

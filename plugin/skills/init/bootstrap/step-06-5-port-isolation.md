@@ -8,7 +8,7 @@ the statusline/reaper wiring — this step is the one place that ever turns it o
 
 Scan the same inputs `_shared/dev-url-detection.md` Step 2 already reads live (CLAUDE.md Commands,
 `package.json` scripts, `vite.config.*`, `next.config.*`, `angular.json`, `vue.config.*`,
-`.env`/`.env.local` `PORT=`), plus three more this step owns:
+`.env`/`.env.local` `PORT=`) — and, while reading those two env files, also `vitest.config.*` for a literal test-database name, which §3 reports — plus three more this step owns:
 
 - `docker-compose.yml` / `compose.yml` — a service's host-side `ports:` mapping (`"5432:5432"`)
 - a JS/TS server entry file — `app.listen(<int>)` / `.listen(<int>, ...)`
@@ -40,8 +40,13 @@ never guessed at:
   variable at this key; always reported, never rewritten.
 - **README/Makefile Python commands** (`runserver 8000`, `uvicorn --port 8000`) — prose/build-file
   commands, not a config file this step edits; always reported, never rewritten.
+- **A literal test-database name** (`test_db`, `testdb`, `test.db`) as a value in `.env`/`.env.local`
+  or `vitest.config.*` — report it with the suggestion `test_${CLAUDE_TWEAKS_LEASE}` (the managed
+  region's lease token, #1927); never rewritten, since a wrong rewrite points tests at a database
+  that does not exist. False negatives for an unlisted literal are accepted — this row is
+  report-only.
 - **Catch-all:** a detected literal port matching none of the six rewrite rows above and none of
-  these three named hard cases defaults to report-only. Never offer a guessed rewrite for a shape
+  the named hard cases above defaults to report-only. Never offer a guessed rewrite for a shape
   this table doesn't name.
 
 ## 4. Syntax-check every proposed rewrite before showing it

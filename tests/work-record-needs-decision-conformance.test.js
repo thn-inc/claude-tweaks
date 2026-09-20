@@ -54,9 +54,9 @@ test('label-bootstrap.md carries needs:decision in the canonical LABELS_JSON lis
   assert.ok(LABEL_BOOTSTRAP_FLAT.includes('a headless unit proposed an action it may not take alone — see the newest decision comment'), 'needs:decision description text missing or altered');
 });
 
-test('label-bootstrap.md bumps LABEL_BOOTSTRAP_VERSION from 5 to 6', () => {
-  assert.ok(LABEL_BOOTSTRAP_FLAT.includes('current value: `6`'), 'LABEL_BOOTSTRAP_VERSION must read current value: 6');
-  assert.ok(!LABEL_BOOTSTRAP_FLAT.includes('current value: `5`'), 'stale current value: 5 must be gone');
+test('label-bootstrap.md bumps LABEL_BOOTSTRAP_VERSION from 6 to 7 (#605 adds bot:parked)', () => {
+  assert.ok(LABEL_BOOTSTRAP_FLAT.includes('current value: `7`'), 'LABEL_BOOTSTRAP_VERSION must read current value: 7');
+  assert.ok(!LABEL_BOOTSTRAP_FLAT.includes('current value: `6`'), 'stale current value: 6 must be gone');
 });
 
 test('needs:decision description fits GitHub\'s 100-char label description cap', () => {

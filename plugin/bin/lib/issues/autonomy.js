@@ -7,12 +7,12 @@
 // Was docs/superpowers/specs/2026-08-07-earned-autonomy-tier-design.md, Phase
 // 3 — deleted (bdb2f4f6): all 4 phases shipped, v6.50.0-6.59.0.
 //
-// Expand-contract (refs #647): permittedGrants' flat top-level
-// `bornReady`/`bornAuthorized`/`reason` keys are a transitional twin of the
-// per-grant `grants.{bornReady,bornAuthorized}.{granted,reason}` shape — the
-// flat single `reason` could pair a granted bornReady with the other grant's
-// denial text, which is the bug the per-grant shape fixes. Removal condition:
-// delete the flat keys at the first release on or after 2026-11-16 (ship date + 3 months, policy-deprecations.md's dated-backstop shape), re-running `grep -rn "permittedGrants" plugin/skills/ plugin/bin/` first to confirm every consumer still reads `grants.*`.
+// #647 shipped the per-grant `grants.{bornReady,bornAuthorized}.{granted,reason}`
+// shape to fix a bug in the old flat `bornReady`/`bornAuthorized`/`reason` keys:
+// a flat single `reason` could pair a granted bornReady with the other grant's
+// denial text. #666 removed the flat keys once every consumer (capture/SKILL.md,
+// backlog/trust-signal.md — renamed from refine-mode.md since #647) read only
+// `grants.*`.
 
 // record.js requires only ./facet-shape; this import is one-directional by
 // contract (autonomy -> record, never record -> autonomy) so the two never cycle.
@@ -68,10 +68,13 @@ function atLeast(ceiling, minimum) {
   return CEILINGS.indexOf(ceiling) >= CEILINGS.indexOf(minimum);
 }
 
+// Both grants share one `reason` here deliberately, not as a residue of the
+// flat-key pairing bug #647/#666 fixed: every DENY() call site denies both
+// grants for the identical cause (no trust row, unclassifiable kind, ceiling
+// supervised, verdict not clean, class human-filed), so the shared text is
+// accurate for both, unlike the old bug where a *granted* bornReady could
+// inherit the *other* grant's denial text.
 const DENY = (reason) => ({
-  bornReady: false,
-  bornAuthorized: false,
-  reason,
   grants: {
     bornReady: { granted: false, reason },
     bornAuthorized: { granted: false, reason },
@@ -81,9 +84,6 @@ const DENY = (reason) => ({
 // Shared shape for the two `bornAuthorized`-denied-but-`bornReady`-may-still-be-
 // granted outcomes below: only the reason text differs between them.
 const DENY_AUTHORIZED = (bornReady, reason) => ({
-  bornReady,
-  bornAuthorized: false,
-  reason,
   grants: {
     bornReady: { granted: bornReady, reason: '' },
     bornAuthorized: { granted: false, reason },
@@ -140,13 +140,16 @@ function permittedGrants(input) {
   if (grantOriginationEnabled !== true) {
     return DENY_AUTHORIZED(bornReady, 'ceiling is unattended, but machine-originated grants need their own explicit opt-in');
   }
+  // Positive rationale populated into both per-grant `reason` fields, not
+  // dropped: the old flat `reason` carried this text and nothing else would
+  // reproduce it once removed (#666's own conflation-residue decision —
+  // `granted: true` alone doesn't explain *why*, and a future reader tracing
+  // a grant back should not have to reconstruct it from the conditions above).
+  const rationale = 'class is clean, ceiling is unattended, grant origination opted in';
   return {
-    bornReady,
-    bornAuthorized: true,
-    reason: 'class is clean, ceiling is unattended, grant origination opted in',
     grants: {
-      bornReady: { granted: bornReady, reason: '' },
-      bornAuthorized: { granted: true, reason: '' },
+      bornReady: { granted: bornReady, reason: rationale },
+      bornAuthorized: { granted: true, reason: rationale },
     },
   };
 }

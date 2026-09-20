@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // bin/build-review-context.js — mint a collision-free review scratch dir and build the shared
 // context bundle /claude-tweaks:review Step 3's lens agents read (step3-lens-dispatch.md).
-//   node bin/build-review-context.js mint [--run <run-dir>]
+//   node bin/build-review-context.js mint [--run <run-dir>] [--print-dir]
 //   node bin/build-review-context.js build --base <ref> --branch <ref> [--dir <dir>|--run <run-dir>] [--files-from <path>]
 // Prints a one-line JSON result on stdout ({dir} for mint; {dir, contextPath, bytes, files,
-// emptySections} for build). Exit 0 ok; 2 malformed invocation; 1 git/filesystem failure.
+// emptySections} for build) by default. `mint --print-dir` instead prints the bare directory
+// path followed by a newline and nothing else — a shell-substitution convenience; `--print-dir`
+// is mint-only and rejected on build. Exit 0 ok; 2 malformed invocation; 1 git/filesystem failure.
 // Single plain command by design — the compound-shell recipe it replaces is refused by the
 // harness worktree guard (refs #887).
 'use strict';
@@ -12,11 +14,11 @@
 const { resolveDir, buildContext } = require('./lib/review-context/build');
 
 const USAGE =
-  'usage: build-review-context.js mint [--run <run-dir>]\n' +
+  'usage: build-review-context.js mint [--run <run-dir>] [--print-dir]\n' +
   '       build-review-context.js build --base <ref> --branch <ref> [--dir <dir>|--run <run-dir>] [--files-from <path>]\n';
 
 function parseArgs(argv) {
-  const o = { command: null, base: null, branch: null, dir: null, run: null, filesFrom: null, help: false };
+  const o = { command: null, base: null, branch: null, dir: null, run: null, filesFrom: null, printDir: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => argv[++i] ?? null;
@@ -26,6 +28,7 @@ function parseArgs(argv) {
     else if (a === '--dir') o.dir = next();
     else if (a === '--run') o.run = next();
     else if (a === '--files-from') o.filesFrom = next();
+    else if (a === '--print-dir') o.printDir = true;
     else if (!a.startsWith('--') && o.command === null) o.command = a;
     else return { error: `unknown argument: ${a}` };
   }
@@ -51,10 +54,18 @@ function run(argv, deps = realDeps) {
   }
   if (o.command === 'mint') {
     const dir = deps.resolveDir({ run: o.run });
-    deps.stdout(JSON.stringify({ dir }) + '\n');
+    if (o.printDir) {
+      deps.stdout(dir + '\n');
+    } else {
+      deps.stdout(JSON.stringify({ dir }) + '\n');
+    }
     return 0;
   }
   if (o.command === 'build') {
+    if (o.printDir) {
+      deps.stderr('build-review-context.js: --print-dir is mint-only\n' + USAGE);
+      return 2;
+    }
     if (!o.base || !o.branch) {
       deps.stderr('build-review-context.js: build requires --base and --branch\n' + USAGE);
       return 2;

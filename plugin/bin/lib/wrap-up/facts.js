@@ -141,9 +141,14 @@ function resolveBudgets(cwd) {
 // A static filesystem snapshot at HEAD, not a diff signal — unlike
 // claudeMdCommandRenamed/headingRenamed/renamedOrDeleted, this has no isRepo
 // dependency and must not be nested inside gatherFacts()'s `if (isRepo)`
-// block. Checks CLAUDE.md and every rule file independently against its own
-// tier's budget (never a summed total) — one over-budget target is enough.
-function computeClaudeMdOverBudget(cwd) {
+// block. Measures CLAUDE.md and every rule file independently against its
+// own tier's budget (never a summed total) -> [{path, lines, budget}] for
+// every in-scope target, one pass. #1829: the sibling boolean
+// (claudeMdOverBudget, unchanged name/semantics — engine-plan.js and
+// registry.js's gate still read it) is derived from this same list rather
+// than computed separately, so the two can never disagree about which
+// target tripped it.
+function computeClaudeMdBudgetTargets(cwd) {
   const { scopedRuleBudget, alwaysLoadedBudget } = resolveBudgets(cwd);
   const targets = [
     ...listClaudeMd(cwd).map((t) => ({ path: t.path, budget: alwaysLoadedBudget })),
@@ -152,7 +157,7 @@ function computeClaudeMdOverBudget(cwd) {
       budget: t.pathGlobs.length > 0 ? scopedRuleBudget : alwaysLoadedBudget,
     })),
   ];
-  return targets.some((t) => lineCount(t.path) > t.budget);
+  return targets.map((t) => ({ path: t.path, lines: lineCount(t.path), budget: t.budget }));
 }
 
 function gatherFacts({ cwd, base } = {}) {
@@ -178,7 +183,8 @@ function gatherFacts({ cwd, base } = {}) {
   const skillsLibraryExists = fs.existsSync(path.join(cwd, '.claude', 'skills'));
   const docsTreeNonEmpty = dirNonEmpty(path.join(cwd, 'docs'));
   const journeyFiles = listMarkdownFiles(path.join(cwd, 'docs', 'journeys'), 'docs/journeys');
-  const claudeMdOverBudget = computeClaudeMdOverBudget(cwd);
+  const claudeMdBudgetTargets = computeClaudeMdBudgetTargets(cwd);
+  const claudeMdOverBudget = claudeMdBudgetTargets.some((t) => t.lines > t.budget);
 
   return {
     isRepo,
@@ -193,6 +199,7 @@ function gatherFacts({ cwd, base } = {}) {
     renamedOrDeleted: renamedDeleted.length > 0,
     headingRenamed,
     claudeMdOverBudget,
+    claudeMdBudgetTargets,
   };
 }
 

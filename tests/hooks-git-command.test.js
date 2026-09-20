@@ -2,7 +2,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { gitTargets, fileWriteTargets, mkdirTargets } = require('../plugin/bin/lib/hooks/git-command');
+const {
+  gitTargets, gitTargetsFrom, resolvedGitSegments, resolveGitCommand, fileWriteTargets, mkdirTargets,
+} = require('../plugin/bin/lib/hooks/git-command');
 
 test('plain commit resolves to cwd', () => {
   assert.deepStrictEqual(gitTargets('git commit -m "x"', '/repo'), [{ action: 'commit', dir: '/repo' }]);
@@ -442,4 +444,106 @@ test('the ATTACHED-value env -C<dir> form resolves the target like the separate 
 
 test('an attached env -uNAME form is consumed whole — git is still found as lead', () => {
   assert.deepStrictEqual(gitTargets('env -uFOO git commit -m "x"', '/repo'), [{ action: 'commit', dir: '/repo' }]);
+});
+
+// #2065: resolvedGitSegments is now the one shared traversal gitTargets and
+// checkGitStashWarn (pre-tool-use.js) both consume — gitTargetsFrom is a
+// pure classification over its output. Every existing fixture in this file,
+// plus the #976 exclusion set (tests/hooks-gate-coverage.test.js), must
+// still resolve byte-identically through the new two-step path as through
+// the old single-function one.
+const { forEachCommandSegment } = require('../plugin/bin/lib/hooks/git-command');
+
+const RESOLVED_SEGMENTS_FIXTURES = [
+  ['git commit -m "x"', '/repo'],
+  ['git -C /wt/spec-1 commit -m "x"', '/repo'],
+  ['git -C ../other commit -m "x"', '/repo/sub'],
+  ['cd /wt/spec-1 && git add f.js && git commit -m "x"', '/repo'],
+  ['VAR="unrelated"\ncd /wt/spec-1 && git add f.js && git commit -m "x"', '/repo'],
+  ['MKT="/wt/spec-1"\ncd "$MKT" && git commit -m "x"', '/repo'],
+  ['cd "$SOME_VAR" && git commit -m "x"', '/repo'],
+  ['git commit -m "line one\nline two" && git push', '/repo'],
+  ['git push origin main', '/repo'],
+  ['git status && git log --oneline -3', '/repo'],
+  ['git commit -m "a"; git push', '/repo'],
+  ['git -c user.name=x commit -m "y"', '/repo'],
+  ['git --git-dir /g --work-tree /w commit -m "y"', '/repo'],
+  ['git -C "/wt/my spec" commit -m "x"', '/repo'],
+  ['npm test', '/repo'],
+  ['', '/repo'],
+  [undefined, '/repo'],
+  ['git commit -m "text && git -C /malicious push && more text"', '/repo'],
+  ["git commit -m 'text ; git -C /malicious push | more text'", '/repo'],
+  ['cd && git commit -m "x"', '/repo'],
+  ['cd - && git commit -m "x"', '/repo'],
+  ['cd ~ && git commit -m "x"', '/repo'],
+  ['cd "$HOME/x" && git commit -m "x"', '/repo'],
+  ['git -C /a -C b commit -m "x"', '/repo'],
+  ['git -C /a -C /c commit -m "x"', '/repo'],
+  ['git -C "$HOME/x" commit -m "x"', '/repo'],
+  ['git -C ~/x commit -m "x"', '/repo'],
+  ['cd `pwd` && git commit -m "x"', '/repo'],
+  ['cd && git -C sub commit -m "x"', '/repo'],
+  ['git commit -m "abc\\" && git -C /evil push "', '/repo'],
+  ['git commit -m "abc\\" && git push "', '/repo'],
+  ['git commit -m "a\\\\" && git push', '/repo'],
+  ['cd "pa\\"th" && git commit', '/repo'],
+  ['git -C "we\\"ird" commit', '/repo'],
+  ['git commit -m "x" && git push', '/repo'],
+  ['git -C "" commit -m "msg"', '/repo'],
+  ['git -c "" commit -m "msg"', '/repo'],
+  ['git commit -m "wip: refactor" # note && git -C /evil commit --amend', '/repo'],
+  ['git commit -m "a" # comment\ngit push', '/repo'],
+  ['echo hi#comment && git commit -m "x"', '/repo'],
+  ['cd "/tmp/safe/"$SUFFIX && git commit -m "x"', '/repo'],
+  ['cd -P /abs/other-repo && git commit -m "x"', '/repo'],
+  ['FOO=1 git commit -m "x"', '/repo'],
+  ['/usr/bin/git commit -m "x"', '/repo'],
+  ['env git commit -m "x"', '/repo'],
+  ['env -i git commit -m "x"', '/repo'],
+  ['env FOO=1 git commit -m "x"', '/repo'],
+  ['FOO=1 git push origin main', '/repo'],
+  ['/usr/bin/mygit commit -m "x"', '/repo'],
+  ['FOO=bar npm test', '/repo'],
+  ['FOO=1 cd /var && git commit -m "x"', '/repo'],
+  ['env cd /var; git commit -m "x"', '/repo'],
+  ['env -C /main-checkout git commit -m "x"', '/repo'],
+  ['env --chdir=/main-checkout git push', '/repo'],
+  ['env -C sub git commit -m "x"', '/repo'],
+  ['env -C "$DIR" git commit -m "x"', '/repo'],
+  ['env -u GIT_DIR git commit -m "x"', '/repo'],
+  ['env -uFOO git commit -m "x"', '/repo'],
+  // #976 exclusion set — stash/reset/checkout/merge resolve no gitTargets
+  // classification, but DO resolve as git segments (stash is the sole
+  // one checkGitStashWarn's own classification reads).
+  ['git stash list', '/repo'],
+  ['git reset', '/repo'],
+  ['git checkout main', '/repo'],
+  ['git merge origin/main', '/repo'],
+];
+
+test('#2065: gitTargetsFrom(resolvedGitSegments(cmd, cwd)) deep-equals gitTargets(cmd, cwd) for every fixture', () => {
+  for (const [cmd, cwd] of RESOLVED_SEGMENTS_FIXTURES) {
+    assert.deepStrictEqual(
+      gitTargetsFrom(resolvedGitSegments(cmd, cwd)),
+      gitTargets(cmd, cwd),
+      `mismatch for ${JSON.stringify(cmd)} in ${cwd}`,
+    );
+  }
+});
+
+test('#2065: resolvedGitSegments reports the same index/dir per segment that resolveGitCommand resolves directly', () => {
+  for (const [cmd, cwd] of RESOLVED_SEGMENTS_FIXTURES) {
+    const expected = [];
+    forEachCommandSegment(cmd, cwd, (t, effCwd) => {
+      const resolved = resolveGitCommand(t, effCwd);
+      if (!resolved) return;
+      expected.push({ tokens: t, index: resolved.index, dir: resolved.dir });
+    });
+    assert.deepStrictEqual(
+      resolvedGitSegments(cmd, cwd),
+      expected,
+      `mismatch for ${JSON.stringify(cmd)} in ${cwd}`,
+    );
+  }
 });

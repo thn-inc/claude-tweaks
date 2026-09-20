@@ -161,7 +161,7 @@ test('checkTrackedFreshness spawns exactly one git subprocess for multiple track
   fs.writeFileSync(countFile, '');
   const fakeGitPath = path.join(fakeDir, 'git');
   fs.writeFileSync(fakeGitPath, `#!/bin/sh\necho x >> "${countFile}"\nexec "${realGit}" "$@"\n`);
-  fs.chmodSync(fakeGitPath, 0o755);
+  fs.chmodSync(fakeGitPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
 
   const content = '---\nfiles:\n  - src/a.ts\n  - src/b.ts\n  - src/c.ts\n---\n\n# Doc\n';
   const originalPath = process.env.PATH;

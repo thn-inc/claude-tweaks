@@ -6,12 +6,14 @@
 // signals at once: a MERGED PR — screened in one bulk call across the whole
 // in-scope branch set (resolvePrStatesBulk, #1082), then reconfirmed
 // per-branch (resolvePrState) for any branch the screen didn't already
-// skip — AND cherry-equivalence of
-// the remote ref against the integration branch (`git cherry` — the same
-// merged-in-substance evidence archive-branches.js documents; ancestry
-// alone is explicitly not trusted). Anything weaker — no PR, a closed
-// unmerged PR, cherry-only — skips, keeping today's staged-in-tidy path
-// for the ambiguous cases. Scope is the plugin-owned namespaces (the
+// skip — AND one of two merged-in-substance proofs of the remote ref
+// against the integration branch: cherry-equivalence (`git cherry`, the
+// same evidence archive-branches.js documents; ancestry alone is
+// explicitly not trusted) or, when cherry says no, squash provenance
+// (squash-provenance.js, #2252: the confirmed PR's own mergeCommit oid on
+// the bounded first-parent history — what `gh pr merge --squash` leaves).
+// Anything weaker — no PR, a closed unmerged PR, a proof without a merged
+// PR — skips, keeping today's staged-in-tidy path for the ambiguous cases. Scope is the plugin-owned namespaces (the
 // scope patterns behind `inScope`, reused from archive-branches.js), and a
 // branch attached to a live worktree is silently out of scope (same
 // inScope guard).
@@ -36,6 +38,7 @@ const { runGit, DEFAULT_TIMEOUT_MS } = require('../hooks/git-exec');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { inScope, isCherryEquivalent } = require('./archive-branches');
 const { resolvePrState, resolvePrStatesBulk } = require('./pr-state');
+const { isSquashMerged } = require('./squash-provenance');
 
 // -> true (ref exists), false (provably gone — `ls-remote --exit-code`
 // exits 2), or null (indeterminate: network/timeout/any other failure).
@@ -58,20 +61,22 @@ function defaultRefExists(root, branch, timeoutMs) {
 
 // One remote branch's evidence -> what to do. Pure — no I/O.
 //   { action: 'delete' | 'skip', reason }
-function decideRemotePrune({ branch, cherryEquivalent, prState }) {
+// squashMerged (#2252) is the second proof, consulted only where
+// cherryEquivalent is false; the screen's provisional call omits it.
+function decideRemotePrune({ branch, cherryEquivalent, squashMerged = false, prState }) {
   if (prState === 'gh-absent' || prState === 'network-failure') {
     return { action: 'skip', reason: prState }; // evidence unknown — fail closed
   }
   if (prState && prState.state === 'OPEN') {
     return { action: 'skip', reason: 'pr-open' }; // work may still be landing
   }
-  if (!cherryEquivalent) {
-    return { action: 'skip', reason: 'not-cherry-equivalent' }; // content not proven merged
+  if (!cherryEquivalent && !squashMerged) {
+    return { action: 'skip', reason: 'not-proven-merged' }; // neither proof — content not proven merged
   }
   if (!prState || prState.state !== 'MERGED') {
-    return { action: 'skip', reason: 'no-merged-pr' }; // cherry alone is not enough for a pushed delete
+    return { action: 'skip', reason: 'no-merged-pr' }; // a proof alone is not enough for a pushed delete
   }
-  return { action: 'delete', reason: 'merged-pr-cherry-equivalent' };
+  return { action: 'delete', reason: cherryEquivalent ? 'merged-pr-cherry-equivalent' : 'merged-pr-squash-merged' };
 }
 
 function pruneRemote({ cwd, integration, dryRun, resolvePr, resolvePrBulk, skipFetch, refExists } = {}) {
@@ -139,7 +144,10 @@ function pruneRemote({ cwd, integration, dryRun, resolvePr, resolvePrBulk, skipF
     }
     // Confirm runs under dryRun too — reported reasons are confirmed reasons.
     const prState = resolve(root, branch, { preferOpen: true });
-    const decision = decideRemotePrune({ branch, cherryEquivalent, prState });
+    // Second proof (#2252), only when cherry could not prove it: the confirm
+    // is what carries mergeCommit, so it must precede this call.
+    const squashMerged = cherryEquivalent ? false : isSquashMerged(root, integration, `origin/${branch}`, prState);
+    const decision = decideRemotePrune({ branch, cherryEquivalent, squashMerged, prState });
     if (decision.action === 'skip' || dryRun) {
       entries.push({ name: branch, kind: 'remote-branch', action: decision.action, reason: decision.reason });
       continue;

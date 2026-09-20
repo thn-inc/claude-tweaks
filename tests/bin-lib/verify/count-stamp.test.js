@@ -5,6 +5,7 @@ const path = require('path');
 
 const {
   readStamp, detectRegression, caveatLine,
+  nextFlakyHits, flakyEscalations, escalationCaveatLine, FLAKY_ESCALATION_HITS,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'count-stamp.js'));
 
 function fakeFs(files) {
@@ -71,4 +72,36 @@ test('caveatLine names the drop, the delta, and cites IL-84', () => {
   assert.match(line, /85/);
   assert.match(line, /15/);
   assert.match(line, /IL-84/);
+});
+
+test('nextFlakyHits increments each retried file, keeps other allowlisted counts, and prunes files no longer allowlisted (#1925)', () => {
+  const previous = { tests: 10, sha: 'a', recordedAt: 't', flakyHits: { 'tests/a.test.js': 2, 'tests/gone.test.js': 7, 'tests/b.test.js': 1 } };
+  assert.deepStrictEqual(
+    nextFlakyHits(previous, ['tests/a.test.js', 'tests/new.test.js'], ['tests/a.test.js', 'tests/b.test.js', 'tests/new.test.js']),
+    { 'tests/a.test.js': 3, 'tests/b.test.js': 1, 'tests/new.test.js': 1 },
+  );
+});
+
+test('nextFlakyHits treats a null allowlist (no declaration read) as unknown and carries every prior count forward untouched (#1925)', () => {
+  const previous = { tests: 1, flakyHits: { 'tests/a.test.js': 3, 'tests/b.test.js': 1 } };
+  assert.deepStrictEqual(nextFlakyHits(previous, [], null), { 'tests/a.test.js': 3, 'tests/b.test.js': 1 });
+  // A retry under an unknown allowlist still counts, alongside the carried-forward map (review 3f, #1925).
+  assert.deepStrictEqual(nextFlakyHits(previous, ['tests/a.test.js', 'tests/new.test.js'], null), { 'tests/a.test.js': 4, 'tests/b.test.js': 1, 'tests/new.test.js': 1 });
+});
+
+test('nextFlakyHits tolerates a missing or malformed flakyHits map and a null previous stamp (bootstrap)', () => {
+  assert.deepStrictEqual(nextFlakyHits(null, ['tests/a.test.js'], ['tests/a.test.js']), { 'tests/a.test.js': 1 });
+  assert.deepStrictEqual(nextFlakyHits({ tests: 1, flakyHits: 'nope' }, [], ['tests/a.test.js']), {});
+  assert.deepStrictEqual(nextFlakyHits({ tests: 1, flakyHits: { 'tests/a.test.js': 'x' } }, [], ['tests/a.test.js']), {});
+});
+
+test('flakyEscalations lists allowlisted files at or above the threshold, sorted by file, and the caveat names the count (#1925 AC5 shape)', () => {
+  assert.strictEqual(FLAKY_ESCALATION_HITS, 5);
+  assert.deepStrictEqual(flakyEscalations({ 'tests/z.test.js': 6, 'tests/a.test.js': 5, 'tests/b.test.js': 4 }), [
+    { file: 'tests/a.test.js', hits: 5 }, { file: 'tests/z.test.js', hits: 6 },
+  ]);
+  assert.strictEqual(
+    escalationCaveatLine({ file: 'tests/a.test.js', hits: 5 }),
+    'CAVEAT: flaky-allowlist: tests/a.test.js retried 5 times — file a fix or remove it from the allowlist',
+  );
 });

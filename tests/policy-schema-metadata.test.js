@@ -12,8 +12,6 @@ const { POLICY_KEYS, POLICY_CATEGORIES } = require('../plugin/bin/lib/policy-sch
 
 const MD_PATH = path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema.md');
 const md = fs.readFileSync(MD_PATH, 'utf8');
-const COVERAGE_MD_PATH = path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-coverage.md');
-const coverageMd = fs.readFileSync(COVERAGE_MD_PATH, 'utf8');
 
 test('every POLICY_KEYS row carries summary, category, and tier', () => {
   for (const row of POLICY_KEYS) {
@@ -52,13 +50,31 @@ test('no summary string is duplicated verbatim into policy-schema.md', () => {
 });
 
 // --- 40 KB ceiling — policy-schema.md and its coverage sibling (#635) ---
-// Same registration pattern as the github-pr-scan.md (#204) and
-// review-console.md (#552) splits: every file this repo's ceiling gate
-// touches gets a byte-length assertion at the point it was split.
-test('policy-schema.md and its policy-schema-coverage.md sibling stay under the 40 KB sub-file ceiling', () => {
-  const CEILING_BYTES = 40 * 1024;
-  const files = { 'policy-schema.md': md, 'policy-schema-coverage.md': coverageMd };
-  for (const [name, text] of Object.entries(files)) {
-    assert.ok(Buffer.byteLength(text, 'utf8') <= CEILING_BYTES, `${name} exceeds the 40 KB ceiling`);
+// Per-file 40 KB pins on policy-schema.md and policy-schema-coverage.md
+// retired by #1997 — the per-file tier is a warning since #1990 and these
+// files have no compose call site; removal condition in
+// docs/incident-log.md [IL-153].
+
+// #2253 (unit 3 of #2250): release-hook / release-train are schema
+// scaffolding — consumed by the local engine (unit 4) and /claude-tweaks:release
+// (unit 6). Both non-core by design; AC 4's check is RELATIVE to the schema's
+// existing core set, never a hardcoded absolute count.
+test('release-hook and release-train are registered as non-core scaffolding keys with the spec shape', () => {
+  const byKey = new Map(POLICY_KEYS.map((row) => [row.key, row]));
+  const hook = byKey.get('release-hook');
+  const train = byKey.get('release-train');
+  assert.ok(hook, 'release-hook missing from POLICY_KEYS');
+  assert.ok(train, 'release-train missing from POLICY_KEYS');
+  assert.strictEqual(hook.type, 'string');
+  assert.strictEqual(hook.default, undefined);
+  assert.strictEqual(train.type, 'boolean');
+  assert.strictEqual(train.default, false);
+  for (const row of [hook, train]) {
+    assert.strictEqual(row.tier, 'advanced', `${row.key} must be non-core`);
+    assert.strictEqual(row.category, 'housekeeping');
+    assert.ok(row.summary.trim().length > 0, `${row.key}: summary empty`);
   }
+  const core = POLICY_KEYS.filter((row) => row.tier === 'core').map((row) => row.key);
+  const coreWithoutRelease = core.filter((key) => key !== 'release-hook' && key !== 'release-train');
+  assert.deepStrictEqual(core, coreWithoutRelease, 'this unit adds no core-tier key');
 });

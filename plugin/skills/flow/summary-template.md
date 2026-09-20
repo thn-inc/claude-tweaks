@@ -17,13 +17,25 @@ On successful completion of all steps (`wrap-up` in the step list):
 | stories | {Generated N stories | Skipped — no UI changes | Skipped — no-stories} |
 | test | {Passed (types + lint + tests) | Passed (QA: N stories) | Passed (verification skipped — passed in build, QA: N stories)} |
 | review | Verdict: PASS {(code + visual) | (code only — no browser)} |
-| polish | {Invoked N commands ({list}); re-verify passed | Skipped — non-frontend | Skipped — no-polish | Skipped — Impeccable not installed | No changes to apply | re-verify failed (see failure card)} |
+| polish | {Invoked N commands ({list}); re-verify passed | Skipped — non-frontend | Skipped — no-polish | Skipped — fast-lane | Skipped — Impeccable not installed | No changes to apply | re-verify failed (see failure card)} |
 | wrap-up | Learnings captured, artifacts cleaned, ledger resolved |
 
 **Release status:** {the one-line human form from `_shared/pr-first-merge-post-merge.md` Step 4.1, verbatim — `not yet in a release — bump pending` | `already carried by vX.Y.Z — CHANGELOG backfill needed: #A, #B` | `already carried by vX.Y.Z — CHANGELOG has no vX.Y.Z entry; backfill needed: #A, #B` | `already carried by vX.Y.Z — every record named in CHANGELOG` | `n/a — no plugin manifest at {ref}` | `release status unavailable — {reason}` | `n/a — not merged in this run (outcome: {armed | pending-review})`}
 {On either backfill form, one more line: **Backfill:** staged at `staged/release-backfill-vX.Y.Z.md` (archived with the run); posted as PR #{n}'s `release-status` comment — drop the PR clause under local-merge.}
 
 **Reconcile:** {one line from `node "{pluginRoot}/bin/hooks.js" reconcile-summary`, run once here and printed verbatim — `reconcile: {archived} archived, {stuck} stuck (oldest {age}), mirror ff {ok | declined — {reason} | anomaly — {state} | skipped — {reason} | failed — {reason} | n/a}`}
+
+### Timing
+
+Rendered verbatim from `node "${CLAUDE_PLUGIN_ROOT}/bin/phase-timing.js" --run "$PIPELINE_RUN_DIR" --markdown --auto-transcript` (#1928) — never composed by hand; a phase with no event reads `unattributed`. `{Minutes}` is the phase's span, with `(own N)` when nested phases are excluded. An `unattributed` table row (below `total`'s neighbor rows, above `total` itself) appears only when transcript usage rows fall outside every phase's span (#1929). When wrap-up's cleanup item 8 has already archived the run directory (`cleanup-procedures.md`), pass `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` as `--run` instead — the events and manifest travel with the archive. When the CLI prints a `tokens: transcript not found (...)` line, render it verbatim above the table — blank token columns are a fact about the run, not a formatting error (#1929). `Tokens (in/out)` sums the transcript's raw `input_tokens`/`output_tokens` only — cache reads and cache creation are separate fields in `timing.json`'s `tokens`, and on a cache-heavy session dwarf `in`.
+
+| Phase | Minutes | Verify | Tokens (in/out) | Proc. KB | Tool RTs |
+|---|---|---|---|---|---|
+| {phase} | {minutes} | {mode ×n | — | unattributed} | {in/out | —} | {kb | —} | {n | —} |
+| unattributed | — | — | {in/out} | {kb} | {n} |
+| total | {totals.minutes} | {verifyRuns} run(s) ({modes}) | {in/out} | {kb} | {n} |
+
+Guard denials: {n} gate · {n} wd-ambiguous · {n} wd-deny
 
 ### Key Outputs
 - {summary of what was built}

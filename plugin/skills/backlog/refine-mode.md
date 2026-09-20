@@ -2,6 +2,11 @@
 
 The comprehensive "ensure every issue has the right labels" sweep: `priority:*`/`**Related:**` suggestions plus `auto:build`/`auto:merge` grants, presented together and confirmed once.
 
+**`#N[,#M...]` filter (#1887).** When `SKILL.md`'s Input resolved a named record list, every
+population computed below (Resolve, the priority/Related/grant fetches, `.blocked`) narrows to
+just those numbers before Step 4 renders — one procedure, never a second mode. Bare `refine`
+leaves every population at its full whole-queue scope.
+
 ## Step 1: Fetch
 
 *(Narration allowance: no "running"/"passed" line for this step — only the run's one opening line and any failure/degradation line, per `overview-mode.md`'s convention this file shares.)*
@@ -107,6 +112,15 @@ When `--origin <name>` was passed (see `SKILL.md`'s Input), export `BACKLOG_ORIG
 
 **These are two separate fetches, not one.** The priority/Related fetch is unfiltered (needs the whole backlog); the grant fetch is server-side filtered to `--label ready` (preserves today's exact starvation-avoidance guarantee — an unfiltered pull risks pushing older `ready`-labeled issues out of a shared result window on a large backlog). Both route through the same `backlog-fetch-limit` config key and truncation-warning pattern, just as two independent invocations of it.
 
+**Resolve fetch (`work-backend: github-issues` only — a third population, #1887).** Over the same
+open-issue set the priority/Related fetch already holds (narrowed to the `#N` filter above, when
+present), run `refine-record.md`'s Step 1 fetch-and-classify — an unresolved `<!-- needs-decision:
+… -->` comment from any producer (backlog-refine, specify, tidy), the `backlog-refine-human-only`
+compatibility shim, or `bot:blocked` — over every record in that set instead of a named list. A
+record with a live proposal AND `bot:blocked` yields two independent lane rows (below), never
+merged. Population lives in `session-scoped backlog-refine-resolve.json`; read there, not
+re-fetched, by Step 4.
+
 ## Step 2: Priority/Related synthesis (bounded)
 
 *(Narration allowance: no "running"/"passed" line for this step — only the run's one opening line and any failure/degradation line.)*
@@ -176,10 +190,15 @@ typically small and its re-authorization recommendation needs no `grant-check` c
 `grant-check` and recommend **`re-authorize (bot:blocked)`** directly, regardless of content — a
 prior failure means the human's renewed judgment is the point, not a mechanical (or
 judgment-driven) replay: applying this row grants `auto:build` only, never bundling `auto:merge`
-automatically. Restoring `auto:merge` too requires an explicit override. A `bot:blocked` record
-whose grants are still intact was parked by the merge-verification gate (checks red or timed out on
-its PR — `_shared/pr-first-merge.md`'s Step 2.5), not failed; re-triage there means checking the
-PR's checks, not re-authorizing a build.
+automatically. Restoring `auto:merge` too requires an explicit override. `blocked` is retry-ceiling
+records only — `bot:blocked` is applied **only** at the retry ceiling (`auto:*` grants always
+stripped alongside it), so a record here is never simultaneously grant-intact. A record the
+merge-verification gate parked (checks red or timed out on its PR — `_shared/pr-first-merge.md`'s
+Step 2.5) carries `bot:parked` instead, a distinct label that leaves `auto:*` grants intact — it
+therefore never enters `refineWorklist`'s own `worklist` at all (`bin/lib/issues/backlog.js`'s
+grant-absence filter excludes any record still carrying a grant) and is out of scope for this
+grant-check pass; re-triage there means checking the PR's checks, not re-authorizing a build, and
+is surfaced instead by `/claude-tweaks:tidy`'s Shape 5.6 (`tidy/step-1-records.md`).
 
 If `.grantSlice.remaining > 0`, state it plainly in the report: "`{remaining}`
 more ready records awaiting grant-check exist beyond this run's `--budget {N}` — re-run to
@@ -257,13 +276,19 @@ born-`ready` by this path and this step does nothing.
 
 *(Narration allowance: no "running"/"passed" line for this step — only the run's one opening line and any failure/degradation line.)*
 
-One lane per record, precedence: Re-authorize → Grant → Flag-back → Needs-decision → Priority →
-Dependency repair → Needs you.
+One lane per record, precedence: Resolve → Re-authorize → Grant → Flag-back → Needs-decision →
+Priority → Dependency repair → Needs you. Resolve and Re-authorize are the one stated exception to
+"renders exactly once, in the earliest lane reached" below — independent axes (resolving a
+proposal never resolves a co-occurring `bot:blocked`, and vice versa), so a record carrying both
+renders once in each (#1887).
 
 Read `refine-lanes.md` in this skill's directory for the full rendering procedure — the lane tables
 and paste-block templates, the consequence-line trust and `solution:unjustified` annotation templates, the
 count-summary line, the Needs-you lane, the ceiling/skip-case footers, the closing `Next:` line
-rule, and the confirm gate (`<!-- refine-confirm-gate -->`).
+rule, and the confirm gate (`<!-- refine-confirm-gate -->`). For the Resolve lane specifically,
+`refine-lanes.md` points at `refine-record.md`'s own batch-table render and Step 4's per-choice
+write mechanics rather than restating them — read that file for the choices, evidence column, and
+apply mechanics; only the *population* (whole-queue or `#N`-filtered, above) is new here.
 
 ## Step 5: Apply
 

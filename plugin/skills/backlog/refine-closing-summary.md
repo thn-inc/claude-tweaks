@@ -11,7 +11,7 @@ inline (#1512; #1488's own Task 7 already split the `RECOMMEND_BUILD: false` bra
 Check each write's own result before logging it — a non-zero exit from any `gh`/`writeRecord` call
 above is a failure, not a success, regardless of which lane produced it (a reverify fetch above
 is not itself a write; it follows its own skip rule instead). Log every action to this
-run's `decisions.md` (standalone-auto run dir per `_shared/pipeline-run-dir.md`) via the matching
+run's `decisions.md` (standalone-auto run dir per `_shared/run-dir-resolution.md`) via the matching
 template below, success, failure, or skipped-before-write:
 
 ```
@@ -66,7 +66,21 @@ second bookkeeping channel:
    #123 — skipped: premise changed since confirmation (lost ready label)
    ```
 
-4. **The run-directory path, absolute** — never relative (a bare relative
+4. **Filter/posture exclusion lines (#1887)** — never silent, one line each, naming what was
+   excluded and the exact command that covers it:
+
+   - **`#N` filter excluded rows.** When this run resolved a named-record filter (`refine
+     #N[,#M...]`) and any lane's whole-queue population held rows outside that filter, name the
+     count and the bare command that would cover them: `{n} record(s) outside this run's #N
+     filter also have refine work pending — run /claude-tweaks:backlog refine to sweep the whole
+     queue.` Omit when the filter excluded nothing (every lane's whole-queue population equaled
+     the filtered population — the common case on a small backlog).
+   - **Posture skipped the Resolve lane.** Under the headless posture, this line is
+     `refine-headless.md`'s own Resolve-skip line (Step 5 there) — do not duplicate it here; a
+     human-present run never skips Resolve, so this case never applies to this file's own closing
+     summary.
+
+5. **The run-directory path, absolute** — never relative (a bare relative
    `.claude-tweaks/pipelines/` path silently shadows the main-checkout copy when run from a
    worktree):
 

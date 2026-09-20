@@ -13,7 +13,7 @@ connection). Non-empty: render one line alongside the Blocked-exclusion line, sa
 Same drain+zero-eligible silence exception as the Blocked-exclusion report (`SKILL.md` Step 3);
 omit when empty. This exclusion is computed once, unconditionally, inside `queue-pull-script.md`'s
 own run — by the time any selection form (bare, `next`, `#N`, `#N,#M,...`) reads
-`dispatch-groups.json`, an excluded candidate is already absent from it, so `#N`/`#N,#M,...`'s own
-re-verification against Step 2's live queue (the same re-check they already apply to
-`auto:build`/`bot:*`) picks this up for free — there is no separate re-check to add for this
-exclusion reason.
+`dispatch-groups.json`, an excluded candidate is already absent from it. `#N`/`#N,#M,...`'s own
+re-verification against Step 2's live queue catches the absence, then reads this same
+`dispatch-open-pr-excluded.json` to report the specific reason (`SKILL.md`'s `#N` / `#N,#M,...`
+bullets, refs #1973) instead of a generic not-found.

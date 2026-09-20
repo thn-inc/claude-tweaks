@@ -14,14 +14,17 @@ a reported-ready console, whether it got there via the reconciler, `/claude-twea
 check (pr-first only, alongside `mirror`/`release`/`archive`; `local-merge` never has a
 `console.json` to find). For each non-terminal run: read `console.json`; skip if absent, if
 `resolved: true`, or if `executingAt` names a live (non-stale) claim (see below). Otherwise fetch
-the primary comment (`gh pr view --json comments`, gh-CLI-only — same constraint every other
+the primary comment (`gh pr view --json comments,body`, gh-CLI-only — same constraint every other
 reconcile check states, no MCP fallback in Node; a gh-absent environment reports that reason, same
 as `mirror`/`release`/`archive`), parse the Resolve checkbox and every `<!-- console-item: {id} -->`
-row's tick state, and report `{ action: 'ready', runDir, prNumber, commentIds, items }` only when
-Resolve is ticked — an unresolved console (Resolve unticked) is reported as `skip: not-resolved-yet`,
-not surfaced as work. The returned `items` carry each item's `approved` boolean (its parsed tick),
-its declared `kind`, and its `stagedHash` from `console.json` — everything the executing session
-needs without re-reading the comment itself.
+row's tick state, and report `{ action: 'ready', runDir, prNumber, commentIds, items, mergeCheckVerdict, mergeGrantGap }`
+only when Resolve is ticked — an unresolved console (Resolve unticked) is reported as
+`skip: not-resolved-yet`, not surfaced as work. The returned `items` carry each item's `approved`
+boolean (its parsed tick), its declared `kind`, its `stagedHash` from `console.json`, and (for the
+one `isMergeRow: true` item, when present) that flag itself — everything the executing session
+needs without re-reading the comment itself. `mergeGrantGap` (#1802, below) is this same
+detection's own mechanized re-fetch of every named record's live grant, not something the
+executing session derives itself.
 
 ## Pre-execution claim
 
@@ -150,6 +153,18 @@ Auto-merge gate Layer 1 falls through before Layer 2's `merge-check` ever runs o
 bundle, so `mergeCheckVerdict` is omitted from `console.json` entirely — a withheld grant is
 itself a human decision and must never silently resolve to merge for want of a verdict that was
 never computed.
+
+**Mechanized, not re-derived per session (#1966).** The two paragraphs above describe the check's
+logic, but `bin/lib/reconcile/console-execute.js`'s `decideConsoleExecute` now performs it in
+code — a foreign executing session no longer re-derives any of this by hand. It parses the
+`Fixes #{n}` lines itself, fetches each named record's live labels via
+`gh issue view --json labels,comments`, and evaluates maturity with the same `evaluateMaturation`
+helper `bin/lib/console/resolve.js`'s live-session path already uses. "Group" here includes a
+solo, non-bundle record — a singleton run's PR carries exactly one `Fixes #{n}` line, still a
+one-member group the check applies to, not an exemption. The executing session reads the ready
+result's own `mergeGrantGap` field instead: `null` means every member is granted (the row is
+floor-clearing on this axis); `{ member, reason }` names the first ungranted (or
+unreadable/unresolvable) member and withholds.
 
 **Auto-resolution performs real comment edits.** It ticks the floor-clearing boxes on the PR
 comment (via `_shared/console-on-pr.md`'s post-or-update procedure) *before* executing — the same

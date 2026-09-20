@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { classifyDiffFiles, blastRadiusSummary } = require('../../../plugin/bin/lib/issues/blast-radius');
+const { classifyDiffFiles, blastRadiusSummary, globToRegExp } = require('../../../plugin/bin/lib/issues/blast-radius');
 
 test('classifyDiffFiles marks files under a tests/ directory as isTest', () => {
   const files = [{ path: 'bin/lib/issues/tests/grouping.test.js', additions: 38, deletions: 1 }];
@@ -140,6 +140,8 @@ test('blastRadiusSummary sums impl and test lines separately, #18-shaped fixture
     testLines: 39,
     implFiles: 1,
     testFiles: 1,
+    pipelineArtifactLines: 0,
+    pipelineArtifactFiles: 0,
     sensitiveFilesTouched: [],
   });
 });
@@ -158,6 +160,8 @@ test('blastRadiusSummary returns all-zero summary for an empty file list', () =>
     testLines: 0,
     implFiles: 0,
     testFiles: 0,
+    pipelineArtifactLines: 0,
+    pipelineArtifactFiles: 0,
     sensitiveFilesTouched: [],
   });
 });
@@ -201,4 +205,80 @@ test('the merge-sensitive-paths shape "src/auth/**" trips on a nested file while
 test('single "*" still does not cross a path segment', () => {
   const result = classifyDiffFiles([{ path: 'skills/backlog/overview-mode.md', additions: 1, deletions: 0 }], ['skills/*']);
   assert.strictEqual(result[0].isSensitive, false);
+});
+
+// --- #1906: pipeline-artifact paths (materialized spec + writing-plans doc)
+// excluded from impl counting ---
+
+test('classifyDiffFiles marks a materialized spec path (single-record shape) as isPipelineArtifact', () => {
+  const files = [{ path: '.claude-tweaks/pipelines/2026-09-08T041856-record-1906/work/1906-spec.md', additions: 39, deletions: 0 }];
+  const result = classifyDiffFiles(files, []);
+  assert.strictEqual(result[0].isPipelineArtifact, true);
+});
+
+test('classifyDiffFiles marks a materialized spec path (multi-record shape) as isPipelineArtifact', () => {
+  const files = [{ path: '.claude-tweaks/pipelines/2026-09-08T041856-spec-1-2/spec-1/work/1-spec.md', additions: 20, deletions: 0 }];
+  const result = classifyDiffFiles(files, []);
+  assert.strictEqual(result[0].isPipelineArtifact, true);
+});
+
+test('classifyDiffFiles marks a writing-plans doc path as isPipelineArtifact', () => {
+  const files = [{ path: 'docs/superpowers/plans/2026-09-08-some-feature.md', additions: 111, deletions: 0 }];
+  const result = classifyDiffFiles(files, []);
+  assert.strictEqual(result[0].isPipelineArtifact, true);
+});
+
+test('classifyDiffFiles marks an ordinary docs file outside plans/ as not isPipelineArtifact', () => {
+  const files = [{ path: 'docs/README.md', additions: 5, deletions: 0 }];
+  const result = classifyDiffFiles(files, []);
+  assert.strictEqual(result[0].isPipelineArtifact, false);
+});
+
+test('classifyDiffFiles marks an ordinary implementation file as not isPipelineArtifact', () => {
+  const files = [{ path: 'bin/lib/issues/grouping.js', additions: 28, deletions: 5 }];
+  const result = classifyDiffFiles(files, []);
+  assert.strictEqual(result[0].isPipelineArtifact, false);
+});
+
+test('blastRadiusSummary routes pipeline-artifact files into pipelineArtifactLines/pipelineArtifactFiles, not impl (#1906 AC-1: spec + plan doc only, no real code)', () => {
+  const classified = classifyDiffFiles(
+    [
+      { path: '.claude-tweaks/pipelines/2026-09-08T041856-record-1906/work/1906-spec.md', additions: 39, deletions: 0 },
+      { path: 'docs/superpowers/plans/2026-09-08-blast-radius-pipeline-artifact-exclusion.md', additions: 111, deletions: 0 },
+    ],
+    [],
+  );
+  assert.deepStrictEqual(blastRadiusSummary(classified), {
+    implLines: 0,
+    testLines: 0,
+    implFiles: 0,
+    testFiles: 0,
+    pipelineArtifactLines: 150,
+    pipelineArtifactFiles: 2,
+    sensitiveFilesTouched: [],
+  });
+});
+
+test('blastRadiusSummary separates a mixed diff: one pipeline-artifact path plus one ordinary impl file', () => {
+  const classified = classifyDiffFiles(
+    [
+      { path: '.claude-tweaks/pipelines/2026-09-08T041856-record-1906/work/1906-spec.md', additions: 39, deletions: 0 },
+      { path: 'plugin/bin/lib/issues/blast-radius.js', additions: 20, deletions: 3 },
+    ],
+    [],
+  );
+  const summary = blastRadiusSummary(classified);
+  assert.strictEqual(summary.implLines, 23);
+  assert.strictEqual(summary.implFiles, 1);
+  assert.strictEqual(summary.pipelineArtifactLines, 39);
+  assert.strictEqual(summary.pipelineArtifactFiles, 1);
+});
+
+test('globToRegExp is exported so the verify scope engine can reuse the one matcher (#1922)', () => {
+  assert.strictEqual(typeof globToRegExp, 'function');
+  assert.ok(globToRegExp('docs/**/*.md').test('docs/a/b/c.md'));
+  assert.ok(!globToRegExp('docs/**/*.md').test('src/a.md'));
+  assert.ok(globToRegExp('apps/api/**').test('apps/api'));
+  assert.ok(globToRegExp('apps/api/**').test('apps/api/src/a.ts'));
+  assert.ok(!globToRegExp('apps/*/x.ts').test('apps/a/b/x.ts'));
 });

@@ -6,3 +6,5 @@ autonomy: unattended
 grant-origination-enabled: true
 fleet-daily-grant-cap: 3
 integration-model: pr-first
+housekeeping-auto-merge: true
+project-maturity: established

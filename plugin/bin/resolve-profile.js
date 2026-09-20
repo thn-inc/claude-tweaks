@@ -4,7 +4,7 @@
 // CLI wrapper around bin/lib/model-profiles — owns ALL I/O (policy read,
 // frontier tally read/append, session-scoped model-failure blacklist
 // read/write). resolve() itself stays pure. Contract cited by dispatch
-// sites: skills/_shared/subagent-output-contract.md §Model Selection.
+// sites: skills/_shared/subagent-dispatch-core.md §Model Selection.
 //
 // Session-failure blacklist (#763): every normal `<profile>` resolution
 // reads the CLAUDE_CODE_SESSION_ID-keyed blacklist
@@ -66,7 +66,7 @@ function main(argv) {
   const args = argv.slice(2);
   const profile = args.shift();
   if (!profile) {
-    fail('usage: resolve-profile.js <profile>|record-failure <model>|clear-failures [--stance <s>] [--unattended] [--run-dir <path>]');
+    fail('usage: resolve-profile.js <profile>|record-failure <model>|clear-failures [--stance <s>] [--unattended] [--run-dir <path>] [--diff-facts <json>]');
     return;
   }
 
@@ -96,12 +96,28 @@ function main(argv) {
   let stance;
   let unattended = false;
   let runDir;
+  let diffFactsRaw;
   while (args.length) {
     const a = args.shift();
     if (a === '--stance') { stance = requireValue(args, '--stance'); if (process.exitCode) return; }
     else if (a === '--unattended') unattended = true;
     else if (a === '--run-dir') { runDir = requireValue(args, '--run-dir'); if (process.exitCode) return; }
+    else if (a === '--diff-facts') { diffFactsRaw = requireValue(args, '--diff-facts'); if (process.exitCode) return; }
     else { fail(`unknown argument "${a}"`); return; }
+  }
+
+  // #1912: `--diff-facts` carries `computeDiffFacts`'s own JSON shape
+  // (`bin/lib/dispatch/ceremony-derive.js`) — malformed JSON fails loud
+  // rather than silently resolving as if the flag were absent, since a
+  // caller passing garbage almost certainly meant to bound the tier.
+  let diffFacts;
+  if (diffFactsRaw !== undefined) {
+    try {
+      diffFacts = JSON.parse(diffFactsRaw);
+    } catch (e) {
+      fail(`--diff-facts is not valid JSON: ${e.message}`);
+      return;
+    }
   }
 
   // #1065: anchored-or-outside guard — reject a worktree-shadow run dir
@@ -136,7 +152,7 @@ function main(argv) {
 
   let result;
   try {
-    result = resolve(profile, { policy, stance, unattended, frontierUsed, failedModels });
+    result = resolve(profile, { policy, stance, unattended, frontierUsed, failedModels, diffFacts });
   } catch (e) {
     fail(e.message);
     return;

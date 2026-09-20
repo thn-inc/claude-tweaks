@@ -20,7 +20,6 @@ Older body.
 test('nextVersion bumps minor and patch', () => {
   assert.strictEqual(nextVersion('6.70.1', 'minor'), '6.71.0');
   assert.strictEqual(nextVersion('6.70.1', 'patch'), '6.70.2');
-  assert.throws(() => nextVersion('6.70.1', 'major'), /part/);
   assert.throws(() => nextVersion('not-semver', 'patch'), /Invalid semver/);
 });
 
@@ -52,4 +51,9 @@ test('stubChangelogEntry refuses duplicates and empty summaries', () => {
 
 test('RELEASE_FILES names exactly the same-commit trio', () => {
   assert.deepStrictEqual(RELEASE_FILES, ['plugin/.claude-plugin/plugin.json', 'CHANGELOG.md', 'docs/shipped-versions.tsv']);
+});
+
+test('nextVersion: major resets minor and patch', () => {
+  assert.strictEqual(nextVersion('6.70.1', 'major'), '7.0.0');
+  assert.throws(() => nextVersion('6.70.1', 'huge'), /part must be/);
 });

@@ -8,7 +8,7 @@ Stages split by cost. Stages 1, 4.5, 4.6, 4.7, and 4.8 each do real `gh` work ov
 
 > **Parallel execution:** Dispatch Stages 1, 4.5, 4.6, 4.7, and 4.8 as parallel Task agents — each stage scans an independent data source and returns counts, flags, and recommendations. The orchestrator assembles the dashboard after all agents complete.
 >
-> **Contract:** Each agent follows `_shared/subagent-output-contract.md` — minimal input (scope + path + literal output template, no conversation), status line first (`DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED`), then Template A for Stages 1/4.5/4.6/4.7; Stage 4.8 defines its own format (below) per that contract's "Not every consumer uses A/B/C" clause. Dispatch shape: single-assistant-message rule (`_shared/subagent-output-contract.md`'s fan-out section) applies.
+> **Contract:** Each agent follows `_shared/subagent-output-contract.md` — minimal input (scope + path + literal output template, no conversation), status line first (`DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED`), then `_shared/subagent-dispatch-core.md`'s Template A for Stages 1/4.5/4.6/4.7; Stage 4.8 defines its own format (below) per the contract's "Not every consumer uses A/B/C" clause. Dispatch shape: single-assistant-message rule (`_shared/subagent-dispatch-core.md`'s fan-out section) applies.
 >
 > **Model profile:** [Use: Fast] — each stage scan is a mechanical `gh`/facet-parse over a single data source (the open work-record queue, current PR via gh, the trust-table fetch). No synthesis at the per-stage level; the orchestrator assembles the dashboard. Resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" fast` (contract § Model Selection).
 >

@@ -37,7 +37,7 @@ test('env: leased path prints exactly the managed lines, no markers', async () =
   });
   const code = await run(['env', '--path', '/repo'], deps);
   assert.equal(code, 0);
-  assert.deepEqual(out, ['PORT=20010\n', 'API_PORT=20011\n']);
+  assert.deepEqual(out, ['CLAUDE_TWEAKS_LEASE=20010\n', 'PORT=20010\n', 'API_PORT=20011\n']);
 });
 
 // AC12

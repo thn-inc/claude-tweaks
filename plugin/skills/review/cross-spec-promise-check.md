@@ -1,6 +1,6 @@
 # Cross-Spec Promise Check — /claude-tweaks:review Step 1.6
 
-Skip entirely under `ceremony-profile: fast-lane` (see "Ceremony-Aware Step Selection" above).
+Skip entirely under `ceremony-profile: fast-lane` (roster tag `review-step-1.6`, `_shared/ceremony-profile.md`).
 Otherwise, skip silently when this record has no resolvable parent, or its parent has no
 `## Cross-Spec Promises` section (`_shared/work-record.md`) — most records. This step never blocks
 the review; it only updates the parent record and, when relevant, notes something in the Step 7
@@ -33,6 +33,13 @@ step entirely.
    a seeding comment, and — when the assumption concerns a still-open sibling — add the
    corresponding `Blocked by #N: {assumption}` line to this record's own body (a normal body edit,
    same as any other review-driven change to the record under review).
+   - **Exception — the sibling that owns the assumption is downstream of this record.** When that
+     sibling is itself already blocked by the record under review, adding the `Blocked by` line
+     closes a mutual pair, and `plugin/bin/resolve-blockers.js` carries no cycle detection: both
+     records then read as permanently blocked and neither is ever dispatchable. Write the parent
+     row and the seeding comment only, withhold the `Blocked by` line, and say in the row why it
+     was withheld. Observed on #1922, whose forward assumption's owner (#1923) was already blocked
+     by #1922.
 
 Both writes are additive to the parent's body/comments only — never touch a sibling sub-issue's body
 from this step, and never block the review's own PASS/BLOCKED verdict on anything found here — the

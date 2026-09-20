@@ -25,6 +25,17 @@ function serviceVars(services, base) {
   });
 }
 
+// #1927: the leased block's base, exported as a stable per-checkout token a
+// project can key non-port resources on (a test database name, a schema) —
+// always the FIRST managed line, before PORT. Unique per checkout by the
+// registry's construction; the plugin creates no databases, it hands the
+// project the token.
+const LEASE_KEY = 'CLAUDE_TWEAKS_LEASE';
+
+function leaseVars(base) {
+  return [[LEASE_KEY, String(base)]];
+}
+
 function detectEOL(text) {
   return text.includes('\r\n') ? '\r\n' : '\n';
 }
@@ -106,5 +117,5 @@ function writeEnvFiles(checkoutPath, vars) {
 }
 
 module.exports = {
-  BEGIN_MARKER, END_MARKER, serviceVars, mergeManagedRegion, readManagedRegion, hasComposeFile, writeEnvFiles,
+  BEGIN_MARKER, END_MARKER, serviceVars, leaseVars, LEASE_KEY, mergeManagedRegion, readManagedRegion, hasComposeFile, writeEnvFiles,
 };

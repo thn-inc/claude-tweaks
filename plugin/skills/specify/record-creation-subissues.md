@@ -119,9 +119,39 @@ Add a `facets.solutionUnjustified: true` key to the object above only when this 
 
 Capture `$SUB_ISSUE_NUM` / `$SUB_ISSUE_ID` for every sub-issue (created or resumed via the Idempotency map) — Step 4's linking pass consumes them.
 
+**Accumulate this unit for the cross-reference pass below.** Append `{title, num_or_id, body}` (`$SUB_ISSUE_TITLE`, `$SUB_ISSUE_NUM`/`$SUB_ISSUE_ID`, `"$SPECIFY_SUB_ISSUE_BODY"`'s contents) to a session-scoped JSON array file, read-existing-then-append (this loop's compose-then-write-once temp files are overwritten each iteration, so this is the only place the whole batch's bodies survive past their own iteration):
+
+```bash
+SPECIFY_DECOMP_MANIFEST=$(node -e "
+  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
+  console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-decomp-manifest.json') || require('path').join(require('os').tmpdir(), 'specify-decomp-manifest.json'))
+")
+node -e "const fs=require('fs');
+  const path=process.argv[1];
+  const entry={title:process.argv[2], num:process.argv[3], body:fs.readFileSync(process.argv[4],'utf8')};
+  const list=fs.existsSync(path)?JSON.parse(fs.readFileSync(path,'utf8')):[];
+  list.push(entry);
+  fs.writeFileSync(path, JSON.stringify(list))" "$SPECIFY_DECOMP_MANIFEST" "$SUB_ISSUE_TITLE" "${SUB_ISSUE_NUM:-$SUB_ISSUE_ID}" "$SPECIFY_SUB_ISSUE_BODY"
+```
+
 **Write-path resilience.** A `gh` create failure for one sub-issue (any kept parent already exists on GitHub by this point) falls back to `local-store.js` for that sub-issue only — write it locally with `unsynced: true` (fingerprint preserved, so a later sync still dedups correctly) and continue with the rest of the batch rather than aborting the whole decomposition over one failure. `/tidy`'s Sync finding reconciles it onto GitHub on a later pass. The same rule applies to Step 4's linking edits below — a failed link is noted and the pass continues; nothing already created rolls back.
 
 **Body size ceiling.** A sub-issue body past roughly 50KB (GitHub's hard cap is 65,536 characters) is a decomposition smell, not a formatting problem — split the unit further.
+
+**Cross-reference forward/backward Key Files (record #490).** Once every sub-issue in the batch has been accumulated above, scan for a genuine cross-sub-issue forward/backward reference — a Gotchas or Prerequisites sentence naming a sibling sub-issue *and* a specific facet/property/function that sibling must touch (the #473/#475 pattern: "soon `facets.solutionUnjustified`, per the companion rename sub-issue") — and resolve the named identifier into the file(s) it actually lives in via a repo-wide grep, adding them to that sibling's own Key Files list. `bin/lib/issues/decomposition-crossref.js`'s `crossReferenceKeyFiles(units, grep)` is the mechanical half of this (identifier → file resolution via grep, dedup against the sibling's existing Key Files, test-file exclusion) — deciding *which* sentences are genuine forward-references, versus a casual mention, is judgment this step still applies itself before calling it, exactly as it already judges Ceremony/Framing verdicts per sub-issue:
+
+```bash
+node -e "const {crossReferenceKeyFiles}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/decomposition-crossref.js');
+  const { execFileSync } = require('child_process');
+  const units = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
+  const grep = (ident) => {
+    try { return execFileSync('git', ['grep', '-l', '-F', ident], { encoding: 'utf8' }).trim().split('\n').filter(Boolean); }
+    catch { return []; }
+  };
+  console.log(JSON.stringify(crossReferenceKeyFiles(units, grep)))" "$SPECIFY_DECOMP_MANIFEST"
+```
+
+For each returned `{title, addedFiles}` entry, append `addedFiles` (`- \`{path}\` — {note}`, `spec-template.md`'s Key Files item format) to that sub-issue's own `### Key Files` list and write the updated body back — `gh issue edit {num} --body-file` (`work-backend: github-issues`) or `local-store.js`'s `updateRecord` (`work-backend: local-files`) — per **Write-path resilience** above: a failed edit is noted and the pass continues, nothing already created rolls back. No returned entries (the common case — no genuine cross-reference in this batch) is a silent no-op, not an error.
 
 **Snapshot invalidation.** Once every `gh issue create` call in this step's batch (every
 sub-issue, plus a kept parent) has run, invalidate the session-scoped record snapshot once — the

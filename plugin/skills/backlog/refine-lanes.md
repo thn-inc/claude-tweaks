@@ -1,34 +1,39 @@
 # Backlog Refine — Step 4: Decision Lanes
 
 Loaded by `refine-mode.md`'s Step 4 at render time — this file is the full rendering procedure the
-stub there points to. Holds the one-lane-per-record precedence rule, the seven lane table/paste-block
-templates, the consequence-line trust and `solution:unjustified` annotation templates, the count-summary
+stub there points to. Holds the one-lane-per-record precedence rule (and its Resolve/Re-authorize
+exception, #1887), the eight lane table/paste-block templates (Resolve's own render lives in
+`refine-record.md`, pointed at rather than restated here), the consequence-line trust and
+`solution:unjustified` annotation templates, the count-summary
 line, the Needs-you lane, the ceiling/skip-case footers, the closing `Next:` line rule, and the
 confirm gate.
 
-One lane per record, precedence: Re-authorize → Grant → Flag-back (populated during the run by
-Step 3.5 downgrades) → Needs-decision (populated by `grant-lane-decision.md`'s scored-but-refused
-branch) → Priority (annotation-line when the record is already laned above) →
+One lane per record, precedence: Resolve → Re-authorize → Grant → Flag-back (populated during the
+run by Step 3.5 downgrades) → Needs-decision (populated by `grant-lane-decision.md`'s
+scored-but-refused branch) → Priority (annotation-line when the record is already laned above) →
 Dependency repair (annotation-line when the record is already laned) → Needs you (residual:
 `needs:definition` records, then judgment-required rows; interactive launchers, no paste block). A
 record that would otherwise qualify for more than one lane renders exactly once, in the earliest
 lane on this list it reaches — Flag-back rows are already flag-back before this step ever reads the
 worklist (Step 3's `flag back (needs scoring)` recommendation, Step 3's missing-verdict outcome
 (`flag back (no verdict rendered)`), Step 3.5's body-shape auto-downgrade),
-so they never also compete as Grant candidates. A record already laned above (Re-authorize/Grant/
-Flag-back) keeps its priority/Related suggestion as an annotation line under its existing row rather
-than a full Priority-lane row — a suggestion is never silently dropped; see the Priority lane
-section below for the exact template. The lanes themselves now do the job the retired `Type` column
-did — keeping grant/priority/related/dependency-repair rows visually distinguishable within one
-report — without a dedicated column.
+so they never also compete as Grant candidates. **Resolve and Re-authorize are the one stated
+exception to this rule (#1887):** resolving a decision proposal never resolves a co-occurring
+`bot:blocked`, and vice versa (independent axes), so a record carrying both renders once in
+*each* lane rather than being swallowed by whichever comes first. A record already laned above
+(Re-authorize/Grant/Flag-back) keeps its priority/Related suggestion as an annotation line under
+its existing row rather than a full Priority-lane row — a suggestion is never silently dropped;
+see the Priority lane section below for the exact template. The lanes themselves now do the job
+the retired `Type` column did — keeping grant/priority/related/dependency-repair rows visually
+distinguishable within one report — without a dedicated column.
 
 Empty lanes render nothing this run: no heading, no table, no paste block. Lead with a one-line
 count summary naming only the lanes that do render (adapting the old 10+-rows count-summary rule
 to always fire, since the lane split needs the overview up front regardless of count), e.g.:
 
-`24` suggestions across `7` lanes: `2` re-authorize, `7` grant, `3` flag-back, `1` needs-decision,
-`8` priority, `1` dependency-repair, `2` needs-you — counts are lane array lengths, computed fresh
-every run. A
+`24` suggestions across `8` lanes: `3` resolve, `2` re-authorize, `7` grant, `3` flag-back,
+`1` needs-decision, `8` priority, `1` dependency-repair, `2` needs-you — counts are lane array
+lengths, computed fresh every run. A
 record carrying only a Priority or Dependency-repair *annotation* (below) is counted under its
 primary lane, never double-counted under Priority or Dependency-repair too.
 
@@ -37,6 +42,20 @@ Resolve this run's session-scoped actions-file paths once, up front (`_shared/se
 ```bash
 eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" ST_BACKLOG_REFINE_ACTIONS_REAUTHORIZE=backlog-refine-actions-reauthorize.json ST_BACKLOG_REFINE_ACTIONS_GRANT=backlog-refine-actions-grant.json ST_BACKLOG_REFINE_ACTIONS_FLAGBACK=backlog-refine-actions-flagback.json ST_BACKLOG_REFINE_ACTIONS_NEEDSDECISION=backlog-refine-actions-needsdecision.json ST_BACKLOG_REFINE_ACTIONS_PRIORITY=backlog-refine-actions-priority.json)"
 ```
+
+## Resolve
+
+Population: `refine-mode.md` Step 1's Resolve fetch — every record (whole-queue, or `#N[,#M...]`-
+filtered) carrying an unresolved `<!-- needs-decision: … -->` comment from any producer
+(backlog-refine, specify, tidy), the `backlog-refine-human-only` compatibility shim, or
+`bot:blocked`. Unlike every other lane here, this one's row shape isn't a fixed
+Current→Recommended action: each row's proposal is pre-filled from the record's own
+`**Proposed:** {text}` line (or the shim's rationale sentence), offering the human a choice among
+grant anyway / build it myself / keep / park / close / re-authorize — never a single computed
+recommendation the way Grant or Priority render one. Read `refine-record.md` in this skill's
+directory for the row shape, the Evidence column, the confirm gate's fixed defaults (**keep** /
+**re-authorize**, since there is no machine-recommended pick here), and Step 4's per-choice apply
+mechanics — this heading is a pointer, not a restatement.
 
 ## Re-authorize
 

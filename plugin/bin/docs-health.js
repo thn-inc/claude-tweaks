@@ -331,14 +331,18 @@ function main(argv) {
   const cmd = args._[0];
   if (cmd === 'next-target') return cmdNextTarget(args);
   if (cmd === 'validate-findings') return cmdValidateFindings(args);
-  if (cmd === 'churn-report') return cmdChurnReport(args);
-  if (cmd === 'mark') return cmdMark(args);
+  if (cmd === 'churn-report') { const code = cmdChurnReport(args); if (code) process.exitCode = code; return; }
+  if (cmd === 'mark') { const code = cmdMark(args); if (code) process.exitCode = code; return; }
   if (cmd === 'status') return cmdStatus(args);
   if (cmd === 'word-count') return cmdWordCount(args);
   if (cmd === 'find-refs') return cmdFindRefs(args);
   if (cmd === 'check-freshness') return cmdCheckFreshness(args);
   if (cmd === 'retry-queue' && args._[1] === 'drain') return retryQueueCommands.drain(args);
-  if (cmd === 'retry-queue' && args._[1] === 'update') return retryQueueCommands.update({ ...args, _: args._.slice(1) });
+  if (cmd === 'retry-queue' && args._[1] === 'update') {
+    const code = retryQueueCommands.update({ ...args, _: args._.slice(1) });
+    if (code) process.exitCode = code;
+    return;
+  }
   process.stderr.write(
     'usage: docs-health.js <command> [options]\n' +
     'commands: next-target [--target <id>] [--dir <path>] [--budget <n>], ' +

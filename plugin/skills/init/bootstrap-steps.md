@@ -31,6 +31,7 @@ step.
 | 18 | `step-18-autonomy-level.md` | Degree-of-autonomy question and the `autonomy` policy.yml value. |
 | 19 | `step-19-emil-skills.md` | Emil design-engineering skills install offer (frontend-gated; presence-based, no flag). |
 | 20 | `step-20-integration-model.md` | `integration-model: pr-first` policy.yml pin offer (`_shared/integration-model.md`; remote-gated). |
+| 21 | `step-21-release.md` | Release-process detection (`fresh`/`already-bootstrapped`/`conflict`), the release-please config/manifest/workflow writes, and the two commented `release-*` policy rows (depends on Step 20's `integration-model`). |
 
 ## Core Bootstrap Steps (1-8.5)
 

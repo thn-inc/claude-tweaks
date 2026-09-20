@@ -28,7 +28,7 @@ const fs = require('fs');
 const os = require('os');
 const { execFileSync } = require('child_process');
 const feedback = require('./lib/feedback/file-feedback');
-const { parseRepo } = require('./lib/repo-resolve');
+const { parseRepo, ghAvailable, repoSlug } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: file-feedback.js --drafts <path.json> [--repo owner/name] [--dry-run] [--help]\n';
 
@@ -76,7 +76,7 @@ const realDeps = {
   // branch below (a read-only dedup search, no create call) wraps this
   // runner locally instead, since it never calls fileOne.
   runner: feedback.defaultRunner,
-  ghAvailable: () => { try { execFileSync('gh', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } },
+  ghAvailable,
   remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }),
   readDraftsFile: (p) => JSON.parse(fs.readFileSync(p, 'utf8')),
   tmpFile: () => os.tmpdir() + '/feedback-body-' + Date.now() + Math.random() + '.md',
@@ -109,9 +109,12 @@ function run(argv, deps = realDeps) {
 
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
+  const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
   if (!repoSpec) { deps.stderr('file-feedback.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
-  const repo = `${repoSpec.owner}/${repoSpec.repo}`;
+  // #2240: repoSlug host-qualifies a non-github.com host (`{host}/{owner}/{repo}`) for
+  // gh's `-R/--repo` flag, which accepts that form directly — a bare `owner/repo` here
+  // silently discarded repoSpec.host and every gh call below resolved against github.com.
+  const repo = repoSlug(repoSpec);
 
   const lines = [];
   let anyFailure = false;

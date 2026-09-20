@@ -72,8 +72,8 @@ Where a row below reads or writes `specs/NN-*.md`, that means a work record mate
 | `/simplify` | Changed files (from parent or git diff) | Simplified code (in-place) | — |
 | `/deepen` | Changed files / spec scope, module call sites | Depth refactors (in-place) or staged candidates (`decisions.md` + `{run-dir}/staged/deepen-{n}.md`, plus `staged/deepen-collapse-{n}.patch` for narrow collapses per `_shared/staged-patch.md` — never the ledger) | — |
 | `/reflect` | Changed files, review summary (in full mode), ledger | Ledger items (phase depends on invoker: `review/hindsight`, `wrap-up`, or `reflect`) | — |
-| `/test` | CLAUDE.md (for commands), `stories/*.yaml` (in qa/all mode) | `TEST_PASSED=true`, QA report (when stories exist), `docs/plans/*-ledger.md` (QA findings and observations) | — |
-| `/test` (qa mode) | `stories/*.yaml` | `.claude-tweaks/artifacts/screenshots/qa/[YYYYMMDD]_[HHMMSS]_[hex]/` (`report.json` + `report.md`, per-run — see `test/qa-procedures.md`'s `RUN_DIR`), `TEST_PASSED=true`, `docs/plans/*-ledger.md` (QA findings and observations) | — |
+| `/test` | CLAUDE.md (for commands), `stories/*.yaml` (in qa/all mode) | `TEST_PASSED=true`, QA report (when stories exist), `docs/plans/*-ledger.md` (QA findings and observations; see `_shared/ledger-format.md`) | — |
+| `/test` (qa mode) | `stories/*.yaml` | `.claude-tweaks/artifacts/screenshots/qa/[YYYYMMDD]_[HHMMSS]_[hex]/` (`report.json` + `report.md`, per-run — see `test/qa-procedures.md`'s `RUN_DIR`), `TEST_PASSED=true`, `docs/plans/*-ledger.md` (QA findings and observations; see `_shared/ledger-format.md`) | — |
 | `/browse` | — | `.claude-tweaks/artifacts/screenshots/browse/` | — |
 | `/research` | Web sources (built-in `/deep-research` or `WebSearch`/`WebFetch`) | `.claude-tweaks/research/[YYYY-MM-DD]-[slug]/` (`report.md` + `sources.json`) | — |
 | `/visualize` | `DESIGN.md` tokens (when present) | `docs/journeys/{name}-{type}.html`, `docs/plans/{spec}-{type}.html`, or `docs/diagrams/{slug}.html` (context-free fallback) | — |
@@ -83,17 +83,19 @@ Where a row below reads or writes `specs/NN-*.md`, that means a work record mate
 | `/review` | Code (via git diff), `specs/NN-*.md`, `docs/journeys/*.md`, `stories/*.yaml` (for journey-story coverage), `TEST_PASSED` from /test, ledger (including QA entries with phase `test/qa`), QA screenshots + page inventories (for UX analysis lens) | Review summary, ledger items. Invokes `/reflect` (hindsight mode), `/simplify`, and `/visual-review`. | — |
 | `/visual-review` | Running app (via browser), `docs/journeys/*.md` (journey mode), QA data (optional enrichment), source files (for reconnaissance) | Visual review report, journey file updates, `.claude-tweaks/artifacts/screenshots/` | — |
 | `/wrap-up` | `specs/NN-*.md`, review output, plan files, ledger, `.claude/skills/*.md` (relevant skills from ledger entries) | CLAUDE.md updates, skill updates, a new backlog or `parked` work record (GitHub issue or local file, per `work-backend`) for leftover work, `docs/decisions/*.md` (ADRs, from the Decision records curation row). Invokes `/reflect` (full mode). | Plan files, ledger. The build's materialized spec file stays committed as audit trail. |
+| `/release` | `release-preflight.json`, `decisions.md` (review verdict), the integration branch's first-parent history | A merged release PR or a `chore(release)` commit + tag, `Shipped in v{version}` comments/closes (`shipped:` lines for local records), `staged/release-held.md` under `--train` | — |
 | `/demo` | This session's own unrecorded work, or a specific `#N` record | A human verdict (approve / request changes); a follow-up backlog record on changes-requested | — |
-| `/ledger` | `docs/plans/YYYY-MM-DD-{feature}-ledger.md` | Ledger entries (create/append/resolve operations) | The ledger file itself, once every item is resolved |
+| `/ledger` | `docs/plans/YYYY-MM-DD-{feature}-ledger.md` (or its run-dir-scoped alternate, `_shared/ledger-format.md`'s Location section) | Ledger entries (create/append/resolve operations) | The ledger file itself, once every item is resolved |
 | `/tidy` | All artifacts | Cleanup actions | Stale artifacts |
 | `/help` | All pipeline artifacts (specs, ledger, PRs, backlog state), `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` (installed version) — read-only status scan | — | — |
 | `/feedback` | A described defect or gap in a claude-tweaks skill | A GitHub issue against `thomasholknielsen/claude-tweaks` (human-invoked, after explicit scrub + confirmation) | — |
 | `/routine-kickoff` | Plugin cache listing, target SKILL.md (fallback path) | — (reconcile side effects belong to bin/lib/reconcile) | — |
 | `/sweep` | Open work-record queue (via its component steps' own fetches — no separate fetch of its own) | One shared run dir's `decisions.md`/`staged/`, plus whatever `/tidy`, `/specify`, and `/claude-tweaks:backlog refine` each write to records under `--source sweep`. Invokes those three in sequence; hands off to `/claude-tweaks:dispatch` as a recommendation only, never a call | — |
+| `/pipeline-smoke-test` | Live `git`/`gh` state (issue labels, claim comments, worktree list) via genuinely separate `claude` processes it spawns | One throwaway, `[pipeline-smoke-test]`-prefixed test issue and its claim state (both closed/released at cleanup); a pass/fail report | The test issue's claim, verified released; no worktree or branch is ever created (stops before `/build`) |
 
 ## Open Items Ledger
 
-The open items ledger (`docs/plans/YYYY-MM-DD-{feature}-ledger.md`) is a transaction log that tracks findings and operational tasks across pipeline phases. Created by `/flow` at pipeline start (or by `/build` when running standalone), it persists across all phases until `/wrap-up` resolves every item and deletes the file.
+The open items ledger (`docs/plans/YYYY-MM-DD-{feature}-ledger.md`, or its run-dir-scoped alternate, `_shared/ledger-format.md`'s Location section) is a transaction log that tracks findings and operational tasks across pipeline phases. Created by `/flow` at pipeline start (or by `/build` when running standalone), it persists across all phases until `/wrap-up` resolves every item and deletes the file.
 
 Unlike conversation context, the ledger survives context window compression — it's a file, not a message. This prevents findings from one phase being lost before a later phase can act on them.
 

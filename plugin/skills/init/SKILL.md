@@ -3,8 +3,6 @@ name: init
 description: Use when initializing the workflow system for a project — bootstraps structure, analyzes the codebase, generates CLAUDE.md with adaptive philosophy, skills, and rules. Re-run to find drift, gaps, and stale configuration.
 argument-hint: "[<path>|<github-url>|<description>|--update|update|--full|--core-only|bootstrap|config|skills|journeys|docs|github-remote|issue-form|design-integration|diagram-suggestions|shadcn-integration|cloud-parity|routines|branch-tracking|work-backend|autonomy|emil-skills|integration-model]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
-
 
 # Init — Project Bootstrap + Intelligent Configuration
 
@@ -46,7 +44,7 @@ Otherwise, `$ARGUMENTS` splits on whitespace into tokens. Each token classifies 
 - `journeys` — run Phases 0 + 8 (bootstrap + journey discovery)
 - `docs` — run Phases 0 + 2 + 3 + 8.5 (bootstrap + doc registry)
 
-**Enhancement filter tokens** — one per Optional Enhancement step: `github-remote`, `issue-form`, `design-integration`, `diagram-suggestions`, `shadcn-integration`, `cloud-parity`, `routines`, `branch-tracking`, `work-backend`, `autonomy`, `emil-skills`, `integration-model`. Each narrows Phase 0's Optional Enhancements (Steps 9 onward) to *only* the named step(s), whether or not a Phase scope is also present; with none given, Phase 0 offers every one of them (or none, under `--core-only`). Several silently run Step 9 (or Step 14) first. For the token → step table with dependency notes and worked examples, read `input-grammar.md` in this skill's directory.
+**Enhancement filter tokens** — one per Optional Enhancement step: `github-remote`, `issue-form`, `design-integration`, `diagram-suggestions`, `shadcn-integration`, `cloud-parity`, `routines`, `branch-tracking`, `work-backend`, `autonomy`, `emil-skills`, `integration-model`, `release`. Each narrows Phase 0's Optional Enhancements (Steps 9 onward) to *only* the named step(s), whether or not a Phase scope is also present; with none given, Phase 0 offers every one of them (or none, under `--core-only`). Several silently run Step 9 (or Step 14) first. For the token → step table with dependency notes and worked examples, read `input-grammar.md` in this skill's directory.
 
 A description of the project context (e.g., "Ruby on Rails monolith, team of 5") is still accepted as free text — see "Unrecognized and conflicting tokens" for how this is distinguished from an attempted-but-unmatched keyword.
 
@@ -116,7 +114,11 @@ Ensure `.worktrees/` exists in the project root for the git-fallback path; leave
 
 ### Step 6.5: Port Isolation
 
-Detects literal dev-server ports across the project's config, offers a reviewable rewrite to env reads (never applied without the gate below, even in `auto`), and queues a `port-services` policy decision through the same deferred-write mechanism `worktree-always` uses (see "Finalizing the worktree-always Decision"). Read `bootstrap/step-06-5-port-isolation.md` for the full procedure.
+Detects literal dev-server ports and offers a reviewable rewrite to env reads (never applied without the gate, even in `auto`); queues the `port-services` policy decision through the same deferred write as `worktree-always` (see "Finalizing the worktree-always Decision"). Read `bootstrap/step-06-5-port-isolation.md`.
+
+### Step 6.6: Verify-Scope Starter
+
+Proposes a starter `.claude-tweaks/verify-scope.json` from the detected workspace (suites per tested package, shared packages → every suite, pipeline bookkeeping → none) and offers to write it — create-if-absent only. Read `bootstrap/step-06-6-verify-scope.md`.
 
 ### Step 7: Browser Integration
 
@@ -158,7 +160,7 @@ Always offered when a GitHub-flavored remote is reachable (same GHE-safe two-tie
 
 ### Step 15: Routine Installation (Optional Companion)
 
-Always offered (not gated) — detect which claude-tweaks skills ship a `routine-template.yml` without an existing instantiated record for this project, present them via one multiSelect `AskUserQuestion` call (grouped into ≤4-option questions when there are more than 4 candidates) with their default schedules, and invoke `/claude-tweaks:routine create <skill> --defaults --environment=<id> --source init` for each selected candidate — no per-candidate interactive walkthrough. Also issues (or skips, when none selected) the dedicated-environment offer deferred from Step 14. Idempotent: candidates with an existing record are never re-offered — but Update Mode does audit existing records for drift, relevance, and environment dedication; see `update-mode.md`'s Routine Drift/Relevance/Environment Dedication entries. Read `bootstrap/step-15-routine-installation.md` for the full procedure.
+Always offered (not gated) — detect which claude-tweaks skills ship `routine-template.yml` without an instantiated record for this project, present via one multiSelect `AskUserQuestion` (≤4-option groups past 4 candidates) with default schedules, and invoke `/claude-tweaks:routine create <skill> --defaults --environment=<id> --source init` per selected candidate — no per-candidate walkthrough. Issues (or skips, when none selected) Step 14's deferred dedicated-environment offer. Idempotent: existing-record candidates aren't re-offered — Update Mode audits records for drift, relevance, environment dedication; see `update-mode.md`'s Routine Drift/Relevance/Environment Dedication entries. Read `bootstrap/step-15-routine-installation.md`.
 
 ### Step 16: Non-Default-Branch Issue Tracking (Optional Companion)
 
@@ -179,6 +181,10 @@ When frontend signals are detected (same detection as Step 11), offer `npx skill
 ### Step 20: Integration Model (Optional)
 
 On a GitHub-reachable project, offers pinning `integration-model: pr-first` to policy.yml (`_shared/integration-model.md`) so it resolves the same across environments instead of via per-session forge detection. Read `bootstrap/step-20-integration-model.md` for the full procedure.
+
+### Step 21: Release Bootstrap (Optional)
+
+Detects existing release automation (`fresh` / `already-bootstrapped` / `conflict`) and, on a fresh repo, writes the release-please config, manifest, and — `pr-first` only, per Step 20's `integration-model` (`_shared/integration-model.md`) — the workflow, plus the two commented-out `release-*` policy rows; refuses on a conflicting tool. Read `bootstrap/step-21-release.md` for the full procedure.
 
 ---
 

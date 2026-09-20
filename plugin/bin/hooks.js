@@ -63,9 +63,9 @@ function pluginRoot() {
 // #1143: usage strings for every documented `hooks.js` subcommand (the
 // dispatch table's own record-worktree/close-run/teardown-run/archive-run/
 // resolve-run-dir/record-pr/spec-status/check-resume-freshness/check-staged-
-// inventory/check-sibling-sessions/sweep-shadow/reconcile/reconcile-
-// background/reconcile-summary set — see docs/plugin-structure.md's hooks.js
-// line). Doubles as the membership table for the `--help`/`-h` intercept
+// inventory/check-sibling-sessions/sweep-shadow/adopt-run-dir/reconcile/
+// reconcile-background/reconcile-summary set — see docs/plugin-structure.md's
+// hooks.js line). Doubles as the membership table for the `--help`/`-h` intercept
 // below: a verb absent from this map gets no guard, by design — the six
 // EVENTS names are invoked by the harness via stdin JSON, never probed with
 // a `--help` flag, and never fell through to the implicit-run-dir-guess
@@ -76,6 +76,7 @@ const USAGE = {
   'record-worktree': 'record-worktree --run <dir> <worktree-path>',
   'resolve-run-dir': 'resolve-run-dir [--spec-slug <slug>] [--mode <mode>] [--standalone <value>] [--create] [--root-only]',
   'sweep-shadow': 'sweep-shadow [--run <dir>] [--worktree <path>]',
+  'adopt-run-dir': 'adopt-run-dir --run <main-checkout-run-dir> --worktree <worktree-path>',
   'record-pr': 'record-pr [--run <dir>] <number> <url>',
   'spec-status': 'spec-status --run <parent-dir> --spec <n> --status <pending|running|complete|failed|not-run> --phase <phase>',
   'close-run': 'close-run [--run <dir>]',
@@ -252,7 +253,7 @@ function pipelinesRunIdShape(root, resolved) {
 // case 2 adopts it with no config.yml yet, worktree-setup.md Step 4.5's
 // record-worktree call performs the actual first write) — it opts in.
 // archive-run also opts in: its own downstream logic gives a specific,
-// more useful diagnostic (archiveOrphanedMint) for a stale, never-claimed
+// more useful diagnostic (the orphaned-mint sweep) for a stale, never-claimed
 // mint than a generic rejection here would. Every other of the 8 shared
 // callers always targets an already-initialized run dir in real use.
 // #1012: unambiguous-only implicit resolution for the five mutating verbs
@@ -523,6 +524,42 @@ function reportWorktreeLocalFallback(runDir, worktreeLocalFallback) {
   process.stdout.write(`claude-tweaks: --run ${runDir} resolved via the worktree-local fallback (#280) — no anchored copy exists under the main checkout; this run's state lives only in this worktree until merge.\n`);
 }
 
+// #2409: copies exactly `decisions.md`, `report.md` (each if present), and
+// `staged/` (recursively, if present and non-empty) from `runDir` into
+// `destDir` — nothing else, and never fabricated: whatever is on disk at
+// `runDir` is copied byte-for-byte. Returns the list of names actually
+// copied, in this fixed order, for adopt-run-dir's one-line-per-file
+// confirmation. `destDir` is only ever created (mkdirSync recursive) when
+// there is at least one file to place in it — an empty destination tree is
+// never created pointlessly (mirrors bin/stage-item.js's own "nothing to
+// do" posture).
+function copyRunDirAuditFiles(runDir, destDir) {
+  const copied = [];
+  let destReady = false;
+  const ensureDest = () => {
+    if (!destReady) { fs.mkdirSync(destDir, { recursive: true }); destReady = true; }
+  };
+  const decisionsSrc = path.join(runDir, 'decisions.md');
+  if (fs.existsSync(decisionsSrc)) {
+    ensureDest();
+    fs.copyFileSync(decisionsSrc, path.join(destDir, 'decisions.md'));
+    copied.push('decisions.md');
+  }
+  const reportSrc = path.join(runDir, 'report.md');
+  if (fs.existsSync(reportSrc)) {
+    ensureDest();
+    fs.copyFileSync(reportSrc, path.join(destDir, 'report.md'));
+    copied.push('report.md');
+  }
+  const stagedSrc = path.join(runDir, 'staged');
+  if (fs.existsSync(stagedSrc) && fs.readdirSync(stagedSrc).length > 0) {
+    ensureDest();
+    fs.cpSync(stagedSrc, path.join(destDir, 'staged'), { recursive: true });
+    copied.push('staged/');
+  }
+  return copied;
+}
+
 async function main(argv) {
   const cmd = argv[2];
   // #1143: dumb, verb-agnostic --help/-h intercept — ahead of every branch
@@ -674,6 +711,88 @@ async function main(argv) {
     });
     for (const line of result.lines) process.stdout.write(line + '\n');
     return result.diagnostic ? 1 : 0;
+  }
+  if (cmd === 'adopt-run-dir') {
+    // #2409: copies a run dir's decisions.md/report.md/staged/** from the
+    // main checkout into a worktree's own copy of that path — the
+    // sanctioned procedure tidy/step-7-5-worktree-always.md's
+    // copy-then-commit paragraph documents (mirroring work/{n}-spec.md's
+    // exception, _shared/pipeline-run-dir.md's Anchoring section). Exists
+    // because checkPipelineShadowGuard (the PreToolUse guard refusing to
+    // CREATE a new top-level pipeline run dir inside a linked worktree)
+    // pattern-matches literal mkdir/cp/redirect shell syntax in a Bash
+    // command's text — a plain Node CLI whose own invocation carries none
+    // of those tokens sidesteps that guard the same way bin/log-decision.js/
+    // bin/stage-item.js/bin/set-config.js already do, without special-
+    // casing this procedure inside the guard itself. Unlike those three
+    // (anchored --run only), this verb also validates --worktree is a real
+    // linked worktree of THIS repo (worktree-detect.js's repoInfo(),
+    // _shared/worktree-setup.md's "Adopt-or-create" section), which is why
+    // it lives here as a hooks.js subcommand rather than a fourth
+    // standalone sibling CLI (docs/hooks.md's "state genuinely coupled to
+    // hook enforcement itself" carve-out).
+    //
+    // Exit codes mirror bin/log-decision.js's scheme (2 malformed
+    // invocation, 3 run dir/worktree invalid), not the six EVENTS' own
+    // always-exit-0 invariant: like resolve-run-dir above, this verb is
+    // invoked directly from skill prose, never as a harness-dispatched hook
+    // event, so a real, meaningful non-zero exit is safe here.
+    const args = argv.slice(3);
+    const runArg = flagVal(args, '--run');
+    const worktreeArg = flagVal(args, '--worktree');
+    if (!runArg || !worktreeArg) {
+      process.stderr.write(`claude-tweaks: usage: ${USAGE['adopt-run-dir']}\n`);
+      return 2;
+    }
+    let target;
+    try {
+      // mainRoot: null deliberately bypasses resolveTarget's own cwd-derived
+      // domain match (it would otherwise anchor against process.cwd()'s repo,
+      // which is not necessarily either side of the --worktree/--run pairing
+      // this verb actually compares) while still enforcing its structural
+      // check: a `.git` FILE ancestor (a linked worktree/submodule) is always
+      // refused, never adopted as if it were the main checkout.
+      target = require('./lib/log-decision/append').resolveTarget({ runDir: runArg, cwd: process.cwd(), mainRoot: null });
+    } catch (err) {
+      process.stderr.write(`claude-tweaks: adopt-run-dir: ${err && err.message}\n`);
+      return 3;
+    }
+    if (!target.ok) {
+      if (target.reason === 'missing') {
+        process.stderr.write(`claude-tweaks: adopt-run-dir: run dir does not exist: ${runArg}\n`);
+      } else {
+        process.stderr.write(`claude-tweaks: adopt-run-dir: run dir is not anchored under the main checkout (a worktree-local shadow): ${runArg} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+      }
+      return 3;
+    }
+    const runDir = path.dirname(target.file);
+    // Derived from the run dir itself, not process.cwd(): "this repo" for the
+    // --worktree domain-match below must be the run dir's own repo, so a
+    // caller invoked from an unrelated cwd (or from a foreign worktree) still
+    // gets a correct verdict rather than one that accidentally reflects cwd's
+    // repo instead. Guaranteed non-null: target.ok above already proved the
+    // nearest .git ancestor of runDir is a DIRECTORY (not a worktree/submodule
+    // file pointer), and mainCheckoutRoot's walk-up hits that exact same
+    // directory first.
+    const mainRoot = wtDetect.mainCheckoutRoot(runDir);
+    const resolvedWorktree = path.resolve(process.cwd(), worktreeArg);
+    if (!isDirectory(resolvedWorktree)) {
+      process.stderr.write(`claude-tweaks: adopt-run-dir: --worktree does not exist or is not a directory: ${worktreeArg}\n`);
+      return 3;
+    }
+    const info = wtDetect.repoInfo(resolvedWorktree);
+    if (info.indeterminate || !info.isLinkedWorktree || wtDetect.mainCheckoutRoot(resolvedWorktree) !== mainRoot) {
+      process.stderr.write(`claude-tweaks: adopt-run-dir: --worktree ${worktreeArg} is not a linked git worktree of this repo\n`);
+      return 3;
+    }
+    const destDir = path.join(resolvedWorktree, '.claude-tweaks', 'pipelines', path.basename(runDir));
+    const copied = copyRunDirAuditFiles(runDir, destDir);
+    if (copied.length === 0) {
+      process.stdout.write(`claude-tweaks: adopt-run-dir: nothing to copy for ${path.basename(runDir)} (no decisions.md, report.md, or staged/ present)\n`);
+      return 0;
+    }
+    for (const name of copied) process.stdout.write(`copied: ${name}\n`);
+    return 0;
   }
   if (cmd === 'record-pr') {
     // Mirrors record-worktree's shape: --run <path> pins the target run dir
@@ -871,7 +990,7 @@ async function main(argv) {
     if (!state) {
       process.stdout.write(
         `claude-tweaks: ${path.basename(runDir)} has no readable run-state.json — not archived; ` +
-        'a state-less dir is reconcile\'s archiveOrphanedMint\'s job, not this verb\'s\n',
+        'a state-less dir is reconcile\'s orphaned-mint sweep\'s job (archiveOrphanedMint, or archiveRunDir when it still holds tracked content — #2227), not this verb\'s\n',
       );
       return 0;
     }

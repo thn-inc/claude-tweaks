@@ -249,7 +249,7 @@ test('releaseMerged: Phase 1.5 resolves prState via the pool and reaches a merge
     wrapperPath,
     '#!/bin/sh\ncat <<\'EOF\'\n[{"number":42,"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"}]\nEOF\n',
   );
-  fs.chmodSync(wrapperPath, 0o755);
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   const originalPath = process.env.PATH;
   process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
 
@@ -308,7 +308,7 @@ test('releaseMerged: a merged: release strips every GRANT_LABELS entry and logs 
     wrapperPath,
     '#!/bin/sh\ncat <<\'EOF\'\n[{"number":55,"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"}]\nEOF\n',
   );
-  fs.chmodSync(wrapperPath, 0o755);
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   const originalPath = process.env.PATH;
   process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
 
@@ -370,7 +370,7 @@ test('releaseMerged: an issue-closed release does not touch grant labels', async
   const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-issueclosed-ghwrap-'));
   const wrapperPath = path.join(wrapperDir, 'gh');
   fs.writeFileSync(wrapperPath, '#!/bin/sh\necho \'{}\'\n');
-  fs.chmodSync(wrapperPath, 0o755);
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   const originalPath = process.env.PATH;
   process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
 

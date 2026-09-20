@@ -119,6 +119,6 @@ test('transcript-judge.md states the consumer\'s full-reset override and its own
 
 // --- 7. Byte ceiling ---
 
-test('transcript-judge.md stays under the 40KB sub-file ceiling', () => {
-  assert.ok(Buffer.byteLength(SHARED, 'utf8') < 40960, `got ${Buffer.byteLength(SHARED, 'utf8')} bytes`);
-});
+// Per-file 40 KB pin on transcript-judge.md retired by #1997 — the per-file
+// tier is a warning since #1990 and this file has no compose call site;
+// removal condition in docs/incident-log.md [IL-153].

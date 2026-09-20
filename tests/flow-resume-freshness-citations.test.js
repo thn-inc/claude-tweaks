@@ -12,7 +12,11 @@ const FRAGMENT = '_shared/run-resume-freshness.md';
 // citation site is a plan change, never an incidental grep hit, so this list
 // is exhaustive by construction rather than discovered by a repo-wide scan.
 const CALL_SITES = [
-  path.join(SKILLS_DIR, 'wrap-up', 'SKILL.md'),
+  // #2006 extracted wrap-up's "Resuming a halted Review Console" procedure
+  // (including this citation) out of SKILL.md into its own sub-file to stay
+  // under the 38 KB ceiling — the resume path's freshness-probe citation now
+  // lives there instead.
+  path.join(SKILLS_DIR, 'wrap-up', 'resume-halted-run.md'),
   // #852 extracted dispatch's "Confirm before resuming" procedure (including
   // this citation) out of SKILL.md into its own sub-file to stay under the
   // 40 KB ceiling — the resume path's freshness-probe citation now lives

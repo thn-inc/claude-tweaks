@@ -131,6 +131,84 @@ function partitionGroupsBySizeGuard(groups, options = {}) {
   return { withinGuard, oversized, threshold };
 }
 
+// Fast-lane bundling (#1910): merges up to `bundleCap` singleton file-overlap
+// groups into one multi-spec group when every member carries
+// `ceremony:fast-lane`, so a dispatch firing shares one preflight/wrap-up
+// tail across several small records instead of paying it once per record
+// (the #1535 evidence: ~24min preflight + ~27min wrap-up on a size:low
+// single-module fix). Disjoint Key Files is already guaranteed by
+// construction — two groups only exist as separate entries because
+// groupByFileOverlap found no shared, non-hub file between them, so nothing
+// here re-checks that. What this function adds on top of "is a fast-lane
+// singleton": never crossing a `priority:*` band, and only bundling records
+// that agree on `auto:merge` presence — a merge-authorization grant a bundle
+// must not silently mix across.
+//
+// `groups`: groupByFileOverlap(...)'s output mapped to full issue objects
+// (each carrying `.number`, `.labels`, `.createdAt` — the shape
+// queue-pull-script.md already builds before calling this). A group that
+// already has two or more members is never touched — only singletons are
+// candidates for merging, so "never merge a group that already has two or
+// more members" holds by construction, not by an extra check.
+//
+// `options.bundleCap` caps how many singletons merge into one bundle
+// (default 3). A cap of 1 or less disables bundling entirely and returns the
+// input unchanged, byte-for-byte (AC3's `dispatch-fastlane-bundle-cap: 0`
+// case; 1 is equally a no-op since there is nothing to merge a lone record
+// with).
+//
+// Returns `{ groups, bundles }` — `groups` is the full output list, every
+// input group appearing exactly once, either untouched or folded into a
+// bundle; `bundles` lists only the groups this pass actually created,
+// `{ records: number[] }[]`, oldest-first within each, for a caller
+// (queue-pull-script.md) that wants to report which groups are fast-lane
+// bundles versus ordinary file-overlap groups.
+const FASTLANE_BUNDLE_CAP_DEFAULT = 3;
+
+function bundleFastLaneSingletons(groups, options = {}) {
+  const bundleCap = options.bundleCap ?? FASTLANE_BUNDLE_CAP_DEFAULT;
+  if (!(bundleCap > 1)) return { groups, bundles: [] };
+
+  const passthrough = [];
+  const eligible = [];
+  for (const group of groups) {
+    if (group.length !== 1) { passthrough.push(group); continue; }
+    const issue = group[0];
+    if (!normalizeLabelNames(issue.labels).includes('ceremony:fast-lane')) {
+      passthrough.push(group);
+      continue;
+    }
+    eligible.push(issue);
+  }
+
+  // Bucket by (auto:merge presence, priority band) — never merge across
+  // either axis.
+  const buckets = new Map();
+  for (const issue of eligible) {
+    const names = normalizeLabelNames(issue.labels);
+    const autoMerge = names.includes('auto:merge');
+    const priority = names.find((n) => n.startsWith('priority:')) || 'none';
+    const key = `${autoMerge}|${priority}`;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(issue);
+  }
+
+  const bundles = [];
+  for (const bucket of buckets.values()) {
+    const sorted = bucket.slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    for (let i = 0; i < sorted.length; i += bundleCap) {
+      const chunk = sorted.slice(i, i + bundleCap);
+      if (chunk.length > 1) bundles.push(chunk);
+      else passthrough.push(chunk);
+    }
+  }
+
+  return {
+    groups: [...passthrough, ...bundles],
+    bundles: bundles.map((chunk) => ({ records: chunk.map((issue) => issue.number) })),
+  };
+}
+
 // A path touched by this large a fraction of the *open-PR pool* is generic
 // churn (a re-edited SKILL.md, docs/donts.md, a shared test fixture) rather
 // than evidence two records fix the same root cause — the same rationale as
@@ -192,7 +270,19 @@ function detectCrossPRFileOverlap(candidates, openPRs, options = {}) {
     for (const pr of pool) {
       if ((pr.closingIssueNumbers || []).includes(candidate.number)) continue;
       const shared = (pr.files || []).filter((file) => keyFiles.has(file));
-      if (shared.length > 0) overlaps.push({ candidate: candidate.number, pr: pr.number, files: shared });
+      if (shared.length > 0) {
+        const overlap = { candidate: candidate.number, pr: pr.number, files: shared };
+        // Additive attribution (#1985): a caller that tags its pool entries
+        // with `source` (e.g. 'drain' for a PR this same firing opened,
+        // distinct from the pre-drain snapshot) gets that source carried
+        // onto the matching overlap entry, so a re-check against a UNION of
+        // pre-drain + in-flight-drain PRs can tell which pool a hit came
+        // from without re-deriving it. Omitted entirely (not even `source:
+        // undefined`) when the caller's pool entries carry no `source` at
+        // all, so every existing caller's output stays byte-identical.
+        if (pr.source !== undefined) overlap.source = pr.source;
+        overlaps.push(overlap);
+      }
     }
   }
   return overlaps;
@@ -401,4 +491,4 @@ function selectGroupsForExplicitList(requestedNumbers, groups) {
   return { selectedGroups, notFound };
 }
 
-module.exports = { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, extractKeyFiles, extractKeyFilesSection, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, hasOrigin, detectCrossPRFileOverlap, CROSS_PR_HUB_MIN_COUNT, CROSS_PR_HUB_FRACTION };
+module.exports = { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, hasOrigin, detectCrossPRFileOverlap, CROSS_PR_HUB_MIN_COUNT, CROSS_PR_HUB_FRACTION };

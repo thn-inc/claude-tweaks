@@ -48,18 +48,27 @@ the same `needsBackstop` call. It emits the identical `[acceptance-gap]` row at 
 severity and recommends the identical `/claude-tweaks:demo` invocation, so no consumer
 distinguishes the two.
 
-Record set: closed records from the last 30 days. The `date` fallback covers both platforms this
-plugin runs on — BSD `date` (macOS, this project's development platform) uses `-v-30d`; GNU `date`
-(Linux, cloud Routine sandboxes) uses `-d '30 days ago'`.
+Record set: closed records from the last 30 days, computed as `Date.now() - 30 days` in the
+`node` step below — cross-platform, no shell `date` variant needed.
 
-Resolve session-scoped paths first (`_shared/session-tmp-root.md`, cited throughout this file rather than restated):
+Resolve session-scoped paths first (`_shared/session-tmp-root.md`, cited throughout this file rather than restated), then resolve `backlog-fetch-limit` and substitute it into the fetch below (per this file's "Fetch limit" section):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" CLOSED=tidy-closed-records.json)"
-gh issue list --state closed --limit 200 \
+eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" RAW=tidy-closed-records-raw.json CLOSED=tidy-closed-records.json)"
+LIMIT="{resolved-limit}"
+gh issue list --state closed --limit "$LIMIT" \
   --json number,title,state,labels,closedAt \
-  --jq '[.[] | select(.closedAt > "'"$(date -u -v-30d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)"'")]' \
-  > "$CLOSED"
+  > "$RAW"
+node -e "
+  const fs = require('fs');
+  const raw = require('$RAW');
+  const LIMIT = $LIMIT;
+  if (raw.length === LIMIT) {
+    console.error('WARNING: the closed-record fetch returned exactly ' + LIMIT + ' records (the configured backlog-fetch-limit) — closed records older than the newest ' + LIMIT + ' are invisible to this scope, even within the 30-day window. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before treating this scope as complete.');
+  }
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  fs.writeFileSync('$CLOSED', JSON.stringify(raw.filter((r) => r.closedAt > cutoff)));
+"
 ```
 
 A closed record whose acceptance lives on a `/claude-tweaks:specify` decomposition parent must
@@ -94,8 +103,8 @@ exact flood `hasParent` exists to stop, with no error anywhere to say so.
 
 ### Fetch limit
 
-Both branches below bound their parent fetches with `{resolved-limit}` rather than a
-hardcoded cap. Resolve `backlog-fetch-limit` with
+This scope's own closed-record fetch above and both parent-fetch branches below bound their
+fetches with `{resolved-limit}` rather than a hardcoded cap. Resolve `backlog-fetch-limit` with
 `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values backlog-fetch-limit`
 (`_shared/work-record-config.md`'s key table; the resolver applies the schema default when the
 key is absent) and substitute the literal number into **every**
@@ -104,12 +113,14 @@ block and never carry it across blocks in a shell variable — shell environment
 between Bash calls and never reaches a subagent, so a cross-block `export` silently resolves
 empty (the same discipline `_shared/trust-table.md` states for its own identical fetches).
 
-This scope's own closed-record fetch above keeps its hardcoded `--limit 200`: its record set is
-bounded to the last 30 days, so 200 is in practice never reached. The parent fetches are
-not — they are `--state all` over the repo's entire history, and `gh issue list` returns
-newest-first, so a fixed cap drops the **oldest** parents first. Those are precisely the parents
-whose sub-issues have already closed, so truncation silently re-floods this scope with exactly the
-rows the filter exists to remove.
+A 30-day window does not bound the closed-record fetch the way it might seem to: a busy repo can
+close far more than any reasonable hardcoded cap within 30 days (971 closed issues in 30 days was
+observed on this repo alone), so a fixed limit silently drops the **oldest** closed records first —
+exactly the quiet-failure a backstop scope must never have. The parent fetches share the same
+exposure for a different reason — they are `--state all` over the repo's entire history, and
+`gh issue list` returns newest-first, so a fixed cap drops the **oldest** parents first. Those are
+precisely the parents whose sub-issues have already closed, so truncation silently re-floods this
+scope with exactly the rows the filter exists to remove.
 
 **`work-links: body-text`** — every parent's task list comes back in the same fetch:
 

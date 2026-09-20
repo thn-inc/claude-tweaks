@@ -62,8 +62,12 @@ function fetchIssues({ numbers, runner = defaultRunner } = {}) {
 // `defaultRunner` (execFileSync('gh', ...)) the same way `fetchIssues` above
 // does; native-dependencies.js itself takes no default so its behavior stays
 // fully injectable for every caller.
-function fetchNativeDependencies({ numbers, owner, repo, runner = defaultRunner } = {}) {
-  return sharedFetchNativeDependencies({ numbers, owner, repo, runner });
+function fetchNativeDependencies({
+  numbers, owner, repo, host, runner = defaultRunner,
+} = {}) {
+  return sharedFetchNativeDependencies({
+    numbers, owner, repo, host, runner,
+  });
 }
 
 // issues: Map<number, issue>, dependencies: Map<number, {blockedBy, openBlocker}> | null

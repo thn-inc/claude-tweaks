@@ -3,8 +3,6 @@ name: flow
 description: Use when you want to run an automated build → test → review → polish → wrap-up pipeline on a work record without stopping between steps. Accepts record references (#N) only — design docs must be decomposed via /claude-tweaks:specify first.
 argument-hint: "#N[,#M...] [worktree|current-branch] [no-stories] [no-polish] [no-deepen] [no-creative] [auto|interactive|hybrid|confirm] [keep-going] [cleanup-only] [step1,step2,step3]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
-
 
 # Flow — Automated Pipeline
 
@@ -13,7 +11,7 @@ Run multiple lifecycle steps in sequence without stopping between them. Each ste
 ```
 /claude-tweaks:capture → /superpowers:brainstorming → /claude-tweaks:specify → /claude-tweaks:build → /claude-tweaks:test → /claude-tweaks:review → /claude-tweaks:design-wrapper polish → /claude-tweaks:wrap-up
                                                                                      ╰────────────────────────────────────── [ /claude-tweaks:flow ] automates this stretch ──────────────────────────────╯
-                                                                                     ^^^^ YOU ARE HERE ^^^^   (polish + re-verify run only when frontend)
+                                                                                     ^^^^ YOU ARE HERE ^^^^   (polish + re-verify: frontend and not fast-lane)
 ```
 
 ## When to Use
@@ -123,6 +121,8 @@ When a gate fails, the pipeline stops immediately and renders a failure card. Tw
    2. Otherwise `GIT_STRATEGY=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values git-strategy)` — the policy setting, else the resolver's schema default `worktree` (see `/claude-tweaks:build` default resolution)
 
    Do NOT prompt for git strategy — resolve it silently from the above. This is passed through to `/claude-tweaks:build` and controls isolation. Flow always uses `subagent` execution — never prompted. Pass `subagent` as an explicit argument in the `/claude-tweaks:build` invocation (Step 4) rather than relying on `/build`'s own default-resolution chain — keeping flow's execution-strategy guarantee independent of `/build`'s own policy resolution.
+
+   **Already inside an isolated worktree session.** This resolution order has no automatic check for the case where the invoking session is itself already running inside a linked worktree (e.g. a longer-running sweep/tidy session that later invokes `/flow` on a record it decided to build). The `worktree` default would create a second, sibling worktree for that build — technically correct, but often unnecessary ceremony when the outer session is already isolated. An explicit `current-branch` argument is the documented escape hatch for that case; nothing here resolves it automatically, so weigh it as a judgment call rather than assuming the default is always right.
 4. Validate step list is in lifecycle order and apply the auto-inserts and override rules from `steps-and-gates.md` ("Step Arguments" section): auto-insert `test` before `review`, treat literal `re-verify` as a no-op, and drop `polish` when `no-polish` is set.
 5. Resolve and shape-gate every target record now, via `materialize.md`'s Resolution + Materialization hard gate in this skill's directory — this subsumes the design-doc rejection (2.7); an unshaped record stops the run here with a pointer to `/claude-tweaks:specify #{n}`, before Step 2's other checks or the Config Manifesto run.
 6. If a path was given in the argument: it is rejected as a design doc (Step 2.7 enforces). If a topic name was given: resolve to a record; if only a design doc exists for that topic, stop and present the routing message.
@@ -148,7 +148,7 @@ Any hard fail, rejection, or claim contest stops the pipeline before the Config 
 
 ### Step 3: Pipeline Config Manifesto (front-loaded policy)
 
-**Adopt-if-set, before creating:** a `PIPELINE_RUN_DIR` set on entry, naming an existing anchored directory that already carries `config.yml`, is adopted as-is (nothing created or re-initialized, levers read from that file). A set, existing, anchored directory that is still **empty** (no `config.yml` — a run dir `/claude-tweaks:dispatch` Step 4 minted before claiming) is adopted by identity and initialized in place, exactly as a from-scratch run would be. Set-but-missing, unanchored, or unset creates fresh as below. Branch: `steps-and-gates.md`'s **Adopting an inherited run directory**.
+**Adopt-if-set, before creating:** a `PIPELINE_RUN_DIR` set on entry, naming an existing anchored directory that already carries `config.yml`, is adopted as-is (nothing created or re-initialized, levers read from `flow-preflight.js`'s pack). A set, existing, anchored directory that is **empty** (no `config.yml` — a run dir `/claude-tweaks:dispatch` Step 4 minted before claiming) is adopted by identity and initialized in place, as a from-scratch run does. Set-but-missing, unanchored, or unset creates fresh as below. Branch: `steps-and-gates.md`'s **Adopting an inherited run directory**.
 
 This is the bookend "begin stop" that locks in policy for the rest of the pipeline. Runs after pre-flight passes so policy levers are not collected if the pipeline would not have started. In every mode except `interactive`, it computes the levers (scope-creep, overlap, design-intent, leftover-default, auto-fix-threshold, review-auto-apply-ceiling, tidy-aggressiveness, ceremony-profile, model-stance, merge-verification, design-critique, merge-authorization) from the precedence chain and writes `config.yml` + initializes `decisions.md` in `$RUN_ROOT/.claude-tweaks/pipelines/{ISO-timestamp}-{spec-slug}/`. What differs by mode is whether it **stops** — `auto` (default) is a read-only FYI, `confirm`/`hybrid` gate on approval, `interactive` skips the Manifesto entirely; the full per-mode Manifesto-behavior table lives in `mode-table.md` in this skill's directory.
 
@@ -156,7 +156,7 @@ This is the bookend "begin stop" that locks in policy for the rest of the pipeli
 
 Export that directory — created or adopted — as `PIPELINE_RUN_DIR` so every downstream skill resolves this same run per `_shared/pipeline-run-dir.md`; a multi-spec run exports the per-spec `spec-{N}/` subdirectory instead of the parent (see `multi-spec.md`).
 
-For the complete Manifesto content (presentation template, recommendation defaults, source values, FYI vs approval-gate flow, path conventions), read `manifesto.md` in this skill's directory. Read `manifesto.md` only after Step 2.8 passes — a run stopped at pre-flight never consumes it (#724). `manifesto.md` is everything an `auto`-mode run needs; only under `confirm`/`hybrid` does it also point at `manifesto-confirm.md` (the `AskUserQuestion` call, Rendering rules, and On-override/On-cancel branches) — never open that companion file for an `auto` run (#657).
+For the complete Manifesto content (presentation template, recommendation defaults, source values, FYI vs approval-gate flow, path conventions), read `manifesto.md` in this skill's directory. Read `manifesto.md` only after Step 2.8 passes — a run stopped at pre-flight never consumes it (#724). Whenever the run dir already carries `config.yml` (an adopted run, or any re-read after the Manifesto's one-call batch write), read it as one composed bundle rather than opening the file directly: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step manifesto "${CLAUDE_PLUGIN_ROOT}/skills/flow/manifesto.md"`, then read `$PIPELINE_RUN_DIR/context/manifesto.md`; on a fresh run `config.yml` does not exist yet — the Manifesto's batch write is the one call that creates it — so read `manifesto.md` directly and never pre-write `mode` alone; if the compose command is unavailable or exits non-zero, read the named source files directly. `manifesto.md` is everything an `auto`-mode run needs; only under `confirm`/`hybrid` does it also point at `manifesto-confirm.md` (the `AskUserQuestion` call, Rendering rules, and On-override/On-cancel branches) — never open that companion file for an `auto` run (#657).
 
 ### Step 4: Run Pipeline
 
@@ -170,12 +170,12 @@ For each step in order:
    - `build` → check output for UI file changes and, if applicable, run `stories` — see "Automatic story generation" above for the full detection/dev-URL/invocation rule (not restated here).
    - `stories` → `test` receives the stories directory
    - `build` → `test` receives `VERIFICATION_PASSED=true` and `VERIFICATION_SHA={sha}` (so test skips redundant types/lint/tests when the tree hasn't changed since — see `verification.md` in the `/claude-tweaks:test` skill). Test still runs QA if stories exist.
-   - `test` → `review` receives `TEST_PASSED=true` and QA results. Flow invokes `/claude-tweaks:review` in **full** mode (code + visual review) by default. The review skill delegates visual review to `/claude-tweaks:visual-review`, which handles its own browser **and** dev-server resolution:
+   - `test` → `review` receives `TEST_PASSED=true` and QA results. Flow invokes `/claude-tweaks:review` with no explicit mode token — `review/SKILL.md`'s own Input resolution "Flow-context default" note detects `$PIPELINE_RUN_DIR` being set and resolves to **full** mode (code + visual review) on its own; flow need not pass `full` — passing it explicitly is harmless and resolves identically. The review skill delegates visual review to `/claude-tweaks:visual-review`, which handles its own browser **and** dev-server resolution:
      - **Browser + reachable app:** `/visual-review` runs the full visual review. Dev URL resolution (`dev-url-detection.md`) applies worktree awareness (a port serving the *main* checkout is rejected) and, in auto + worktree (flow's default), **auto-starts an ephemeral dev server on a free port** so the browser reviews *this* worktree's code. QA data is consumed when available.
      - **No browser backend (`agent-browser` not installed):** `/visual-review` reports the detection failure with install instructions. Review falls back to code mode. Flow notes: "Visual review skipped — no browser backend available."
      - **No reachable app and no dev command to start one:** `/visual-review` logs the gap and falls back to code mode. Flow notes: "Visual review skipped — no dev server and no start command."
      - The ephemeral server (if started) stays up for the rest of the run and is torn down by `/wrap-up` cleanup (Section D) — or, in multi-spec runs, once at the end by `/flow`.
-   - `review` → `polish` (when `no-polish` not set) — invoke `/claude-tweaks:design-wrapper polish <spec>` via the Skill tool. See "Polish phase execution" below for the dispatch logic.
+   - `review` → `polish` (when `no-polish` not set and `ceremony-profile` is not `fast-lane` — roster tag `polish`, `_shared/ceremony-profile.md`) — invoke `/claude-tweaks:design-wrapper polish <spec>` via the Skill tool. See "Polish phase execution" below for the dispatch logic.
    - `polish` → `re-verify` (only when polish modified code) — invoke `/claude-tweaks:test skip-qa`. See "Re-verify execution" below.
    - `polish` (or `re-verify`) → `wrap-up` receives the review summary, polish results, and verdict. Skill observations (`build/skill` and `review/skill` ledger entries) carry forward via the ledger file for wrap-up's Skills curation row.
 5. **Ledger carries forward** — each step reads and appends to the open items ledger (see `/claude-tweaks:ledger` for all operations). Unlike conversation context (which may be compressed), the ledger is a file — it survives context window limits.
@@ -248,7 +248,7 @@ Next Actions in `/claude-tweaks:flow` are outcome-conditional and rendered as pa
 | Creating a work record bypassing the Review Console's gate | Follows `_shared/auto-mode-contract.md`'s tiered stance (Approve-all / `consoleAutoResolve`) — pipeline phases never file directly outside it |
 | Skipping test in the pipeline | Review depends on `TEST_PASSED` — skipping it reviews potentially broken code |
 | Retrying polish after re-verify failure within the same flow run | The one-cycle cap prevents oscillation — surface the failure and require a fresh `/flow {spec} polish` to retry |
-| Treating polish skip as a flow failure | Skips are normal (non-frontend spec, no Impeccable, `no-polish` flag, no audit findings + no refinement-set changes); the pipeline continues to wrap-up |
+| Treating polish skip as a flow failure | Skips are normal (non-frontend spec, no Impeccable, `no-polish` flag, `ceremony-profile: fast-lane`, no audit findings + no refinement-set changes); the pipeline continues to wrap-up |
 | Running re-verify without `skip-qa` | Browser QA is irrelevant after stylistic-only polish — `/test skip-qa` keeps the cycle fast; the Design CLI gate still runs |
 | Using `no-polish` on a frontend spec by reflex | Polish is the value-add for frontend specs — set `no-polish` only when iterating fast or after a manual Impeccable polish |
 | Auto-running creative commands surfaced in the Creative Opportunities block | Recommendations only — flow never executes Impeccable creative commands from survey output; the user invokes them |

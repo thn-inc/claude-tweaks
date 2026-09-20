@@ -1,0 +1,143 @@
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawnSync } = require('child_process');
+
+const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'release-bootstrap.js');
+function run(args) { return spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' }); }
+
+test('CLI: fresh local-merge root prints the JSON envelope and exits 0', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  fs.writeFileSync(path.join(root, 'package.json'), '{"name":"x"}');
+  const r = run(['--root', root, '--integration-model', 'local-merge', '--branch', 'main']);
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.verdict, 'fresh');
+  assert.equal(out.releaseType, 'node');
+  assert.deepEqual(out.written, ['release-please-config.json', '.release-please-manifest.json']);
+  assert.equal(out.policyRows.length, 2);
+});
+
+test('CLI: conflict is an outcome (exit 0, verdict in JSON), missing --integration-model is usage (exit 2)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  fs.mkdirSync(path.join(root, '.changeset'));
+  const r = run(['--root', root, '--integration-model', 'pr-first']);
+  assert.equal(r.status, 0);
+  assert.equal(JSON.parse(r.stdout).verdict, 'conflict');
+  const u = run(['--root', root]);
+  assert.equal(u.status, 2);
+  assert.match(u.stderr, /--integration-model/);
+  const unk = run(['--root', root, '--integration-model', 'pr-first', '--bogus']);
+  assert.equal(unk.status, 2);
+});
+
+test('CLI: --dry-run reports the plan without writing', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  fs.writeFileSync(path.join(root, 'go.mod'), 'module x\n');
+  const r = run(['--root', root, '--integration-model', 'pr-first', '--dry-run']);
+  assert.equal(r.status, 0);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.releaseType, 'go');
+  assert.equal(out.written.length, 3);
+  assert.equal(fs.existsSync(path.join(root, 'release-please-config.json')), false);
+});
+
+test('CLI: a mistyped --root fails loud rather than springing into existence (F2)', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  const missing = path.join(parent, 'nope');
+  const r = run(['--root', missing, '--integration-model', 'pr-first']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /root is not a directory: .*nope/);
+  assert.equal(fs.existsSync(missing), false);
+});
+
+test('CLI: a value-expecting flag with a missing or flag-shaped next token is a usage error naming the flag (F2)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  const r1 = run(['--root', '--integration-model', 'pr-first']);
+  assert.equal(r1.status, 2);
+  assert.match(r1.stderr, /--root/);
+  const r2 = run(['--root', root, '--integration-model', 'pr-first', '--branch']);
+  assert.equal(r2.status, 2);
+  assert.match(r2.stderr, /--branch/);
+});
+
+test('CLI: --integration-model only accepts pr-first, local-merge, or unresolved (F2)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  const bogus = run(['--root', root, '--integration-model', 'bogus']);
+  assert.equal(bogus.status, 2);
+  assert.match(bogus.stderr, /--integration-model/);
+  const unresolved = run(['--root', root, '--integration-model', 'unresolved']);
+  assert.equal(unresolved.status, 0);
+  assert.equal(JSON.parse(unresolved.stdout).verdict, 'skipped');
+});
+
+test('CLI: --branch must be a valid git branch name — usage exit 2 naming the flag; the default main is unaffected (ledger row 34)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  const r = run(['--root', root, '--integration-model', 'pr-first', '--branch', 'a b']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--branch/);
+});
+
+test('CLI: --release-type simple --extra-file <path> overrides detection and seeds the manifest from that file (AC1)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  fs.writeFileSync(path.join(root, 'package.json'), '{"version":"1.0.0"}');
+  fs.mkdirSync(path.join(root, 'plugin', '.claude-plugin'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'plugin', '.claude-plugin', 'plugin.json'), '{"version":"6.121.0"}');
+  const r = run(['--root', root, '--integration-model', 'local-merge', '--release-type', 'simple', '--extra-file', 'plugin/.claude-plugin/plugin.json']);
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.releaseType, 'simple');
+  assert.equal(out.version, '6.121.0');
+});
+
+test('CLI: an unrecognized --release-type is a usage error naming the flag (pairing satisfied, so the vocabulary check itself fires)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  const r = run(['--root', root, '--integration-model', 'local-merge', '--release-type', 'bogus', '--extra-file', 'x.json']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /invalid --release-type: bogus/);
+});
+
+test('CLI: --extra-file without --release-type is a usage error naming both flags', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  fs.writeFileSync(path.join(root, 'package.json'), '{"version":"1.0.0"}');
+  fs.writeFileSync(path.join(root, 'custom.json'), '{"version":"9.9.9"}');
+  const r = run(['--root', root, '--integration-model', 'local-merge', '--extra-file', 'custom.json']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--release-type and --extra-file must be given together/);
+});
+
+test('CLI: --release-type without --extra-file is a usage error naming both flags', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  fs.writeFileSync(path.join(root, 'package.json'), '{"version":"1.0.0"}');
+  const r = run(['--root', root, '--integration-model', 'local-merge', '--release-type', 'simple']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--release-type and --extra-file must be given together/);
+});
+
+test('CLI: --extra-file pointing to nonexistent file causes exit 1 naming it as missing', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  fs.writeFileSync(path.join(root, 'package.json'), '{"version":"1.0.0"}');
+  const r = run(['--root', root, '--integration-model', 'local-merge', '--release-type', 'simple', '--extra-file', 'missing.json']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /--extra-file does not exist: missing\.json/);
+});
+
+test('CLI: --extra-file pointing to JSON without version causes exit 1 naming the missing field', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  fs.writeFileSync(path.join(root, 'package.json'), '{"version":"1.0.0"}');
+  fs.writeFileSync(path.join(root, 'noversion.json'), '{"name":"x"}');
+  const r = run(['--root', root, '--integration-model', 'local-merge', '--release-type', 'simple', '--extra-file', 'noversion.json']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /--extra-file has no "version" field: noversion\.json/);
+});
+
+test('CLI: --extra-file escaping the repo root causes exit 1 with a containment error', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  fs.writeFileSync(path.join(root, 'package.json'), '{"version":"1.0.0"}');
+  const r = run(['--root', root, '--integration-model', 'local-merge', '--release-type', 'simple', '--extra-file', '../outside.json']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /--extra-file must resolve inside the repo root/);
+});

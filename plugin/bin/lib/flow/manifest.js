@@ -1,5 +1,5 @@
 // bin/lib/flow/manifest.js — reads/writes a multi-spec run's manifest.yml
-// (schema documented in skills/flow/multi-spec.md's "Run directory layout")
+// (schema documented in skills/flow/multispec-run-dir-layout.md)
 // and couples every status write to the `## Flow: Running ...` progress
 // banner (#690). This is a targeted parser/serializer for that one fixed
 // shape — `{ multispec: { parent, baseSha?, specs: [{id, status, subdir,
@@ -48,6 +48,21 @@ function parseManifestYaml(text) {
       multispec.specs.push(current);
       continue;
     }
+    const phasesHeader = raw.match(/^ {6}phases:\s*$/);
+    if (phasesHeader && current) {
+      current.phases = [];
+      continue;
+    }
+    const phaseItem = raw.match(/^ {8}- phase: (.+)$/);
+    if (phaseItem && current && Array.isArray(current.phases)) {
+      current.phases.push({ phase: phaseItem[1].trim() });
+      continue;
+    }
+    const phaseField = raw.match(/^ {10}(\w+): (.*)$/);
+    if (phaseField && current && Array.isArray(current.phases) && current.phases.length) {
+      current.phases[current.phases.length - 1][phaseField[1]] = phaseField[2].trim();
+      continue;
+    }
     const fieldMatch = raw.match(/^ {6}(\w+): (.*)$/);
     if (fieldMatch && current) {
       current[fieldMatch[1]] = fieldMatch[2].trim();
@@ -73,6 +88,15 @@ function serializeManifestYaml(manifest) {
     lines.push(`      status: ${spec.status}`);
     if (spec.subdir) lines.push(`      subdir: ${spec.subdir}`);
     if (spec.startedAt) lines.push(`      startedAt: ${spec.startedAt}`);
+    if (spec.phase) lines.push(`      phase: ${spec.phase}`);
+    if (Array.isArray(spec.phases) && spec.phases.length) {
+      lines.push('      phases:');
+      for (const p of spec.phases) {
+        lines.push(`        - phase: ${p.phase}`);
+        lines.push(`          status: ${p.status}`);
+        lines.push(`          at: ${p.at}`);
+      }
+    }
   }
   return lines.join('\n') + '\n';
 }
@@ -124,6 +148,8 @@ function formatElapsedMs(ms) {
 // { runDir, specId, status, phase, now? } ->
 //   { ok:true, banner, summaryLine, position, total, manifest } |
 //   { ok:false, reason: 'invalid-status'|'missing-phase'|'no-manifest'|'unknown-spec'|'write-failed' }
+// `phase` is persisted as spec.phase (latest) and appended to spec.phases[]
+// (append-only transition log) on every successful call.
 //
 // `now` is an injectable clock (Date or ISO string) — defaults to the real
 // clock; tests pin it to compute a deterministic elapsed value.
@@ -142,6 +168,13 @@ function transitionSpec({ runDir, specId, status, phase, now = new Date() }) {
   const nowIso = nowDate.toISOString();
   if (status === 'running' && !spec.startedAt) spec.startedAt = nowIso;
   spec.status = status;
+
+  // #1928: persist the phase and log the transition — the timing derivation
+  // (bin/lib/timing/derive.js) reads phases[] as the manifest-side boundary
+  // source. Append-only: a re-entered phase adds another entry.
+  spec.phase = phase;
+  if (!Array.isArray(spec.phases)) spec.phases = [];
+  spec.phases.push({ phase, status, at: nowIso });
 
   const total = manifest.multispec.specs.length;
   const position = index + 1;
@@ -164,6 +197,27 @@ function transitionSpec({ runDir, specId, status, phase, now = new Date() }) {
   return { ok: true, banner, summaryLine, position, total, manifest };
 }
 
+// specs (manifest.multispec.specs) -> string[] of one line per spec, in
+// manifest order: 'Fixes #{id}' for status:'complete', 'Refs #{id} — not
+// run/failed: {reason}' for any other status. #2015: a bundle PR's `Fixes`
+// block is composed once at run start (pr-early-run-lifecycle.md's Step 3),
+// before any spec has run, so it always lists every spec as if it would
+// complete — this is what the pre-merge refresh (that file's "Pre-merge
+// title/description refresh" section) calls to correct the block against
+// actual outcomes before the PR is marked ready, so a `not-run`/`failed`
+// spec's issue is never closed by the merge commit.
+function composeFixesBlock(specs) {
+  return (specs || []).map((spec) => {
+    if (spec.status === 'complete') return `Fixes #${spec.id}`;
+    const reason = spec.status === 'not-run'
+      ? 'not run'
+      : spec.status === 'failed'
+        ? (spec.phase ? `failed at ${spec.phase}` : 'failed')
+        : spec.status; // pending/running — defensive; the refresh runs post-gate
+    return `Refs #${spec.id} — not run/failed: ${reason}`;
+  });
+}
+
 module.exports = {
   VALID_STATUSES,
   parseManifestYaml,
@@ -172,4 +226,5 @@ module.exports = {
   writeManifest,
   formatElapsedMs,
   transitionSpec,
+  composeFixesBlock,
 };

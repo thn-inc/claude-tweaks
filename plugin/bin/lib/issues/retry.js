@@ -3,8 +3,16 @@
 // /claude-tweaks:assess-agent-autonomy's failure-check and /claude-tweaks:tidy.
 // Each failed build attempt posts a human-readable comment (never a hidden
 // marker) so a maintainer can see exactly what happened on every attempt.
-// This module generates that comment body and counts prior attempts from
-// an issue's existing comments.
+// This module generates that comment body and counts prior attempts.
+//
+// #1963: the full comment always posts to the record's issue now (never
+// only to a linked PR), but a record whose attempts predate this fix, or
+// whose PR closed between runs, can still have earlier "Attempt N failed"
+// comments scattered across the issue and one or more closed PRs.
+// countFailedAttempts is source-agnostic by design — it counts whatever
+// comment array it's given — so settle-and-merge.md's caller merges the
+// issue's comments with every PR ever linked to the record (open or
+// closed) before counting, rather than trusting one source alone.
 'use strict';
 
 const ATTEMPT_RE = /^Attempt (\d+) failed: /;
@@ -31,17 +39,6 @@ function attemptFailedCommentBody({ attemptNumber, reason, ceilingHit, classific
     return `${base}\n\n<!-- trust-negative-evidence: attempt=${attemptNumber} classification=${classification} -->`;
   }
   return base;
-}
-
-// Extracts just the marker line from a comment body, or null when absent.
-// #410: under `integration-model: pr-first`, the full failure comment posts
-// to the PR (settle-and-merge.md Step 6 step 5) but trust.js reads only the
-// record ISSUE's comments — this is what lets the marker still reach the
-// issue as its own one-line comment without posting the whole attempt
-// narrative there twice.
-function extractNegativeEvidenceMarker(body) {
-  const m = NEGATIVE_EVIDENCE_RE.exec(body || '');
-  return m ? m[0] : null;
 }
 
 // comments -> boolean. Read by trust.js's grading; also usable standalone by
@@ -72,5 +69,4 @@ function hasHitRetryCeiling(comments, ceiling = 3) {
 
 module.exports = {
   attemptFailedCommentBody, countFailedAttempts, hasHitRetryCeiling, hasNegativeEvidenceMarker,
-  extractNegativeEvidenceMarker,
 };

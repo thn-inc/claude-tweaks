@@ -34,14 +34,84 @@ const { fingerprintFromBasis, normalizeText } = require('../health-core/fingerpr
 // diverges deliberately (no readBack/verify round trip, `--body` inline
 // rather than `--body-file`) — that's a real behavioral difference, not
 // duplication, and stays local to this module.
-const { defaultRunner, errorText, findDuplicate } = require('../feedback/file-feedback');
+const { defaultRunner, errorText } = require('../feedback/file-feedback');
+// #1892: file-feedback.js's own findDuplicate requests only
+// `number,title,body,createdAt` (pinned by that module's own test, and
+// adequate for its plain dedup-then-file need) — this module additionally
+// needs to tell an OPEN hit from a CLOSED one (dedup-hit vs. reopen), so it
+// keeps its own copy of the list-then-findByMarker idiom with `state` added,
+// rather than widening the shared function's JSON fields for every other
+// caller.
+const { findByMarker } = require('../issues/dedup-lookup');
 
+// #1811 Deliverable 4: `structurally-stuck` escalates as ONE shared record
+// per sweep pass covering every stuck path, not one per directory — the
+// symptom that produced seven near-identical records (#1811-#1817) for what
+// was one underlying defect. Its fingerprint basis omits the path so every
+// stuck dir's `trackResidue` call (cache.js's own per-path counter is
+// unchanged — only the filing side consolidates) converges on the same
+// marker; every other reason keeps the path in its basis, unchanged.
 function residueFingerprint(reason, targetPath) {
-  return fingerprintFromBasis('reconcile-residue', [reason, normalizeText(targetPath)]);
+  const basis = reason === 'structurally-stuck' ? [reason] : [reason, normalizeText(targetPath)];
+  return fingerprintFromBasis('reconcile-residue', basis);
+}
+
+function markerFor(reason, targetPath) {
+  return `<!-- fingerprint: ${residueFingerprint(reason, targetPath)} -->`;
+}
+
+function structurallyStuckMarker() {
+  return markerFor('structurally-stuck', '');
+}
+
+// The consolidated record's body carries its own paths list between two
+// sentinel HTML comments — parsed back out so a later escalate/resolve call
+// can add/remove exactly one path without disturbing the rest, and edited
+// in place (via `gh issue edit --body`) rather than only ever appended to as
+// a comment, so "the body names all N paths" stays literally true for
+// anyone reading the record, not just its comment thread.
+const STUCK_PATHS_RE = /<!-- stuck-paths -->([\s\S]*?)<!-- \/stuck-paths -->/;
+
+function parseStuckPaths(body) {
+  const m = STUCK_PATHS_RE.exec(body || '');
+  if (!m) return [];
+  return m[1].split('\n')
+    .map((line) => /^- `(.*)`$/.exec(line.trim()))
+    .filter(Boolean)
+    .map((mm) => mm[1]);
+}
+
+function renderStuckPathsBlock(paths) {
+  return ['<!-- stuck-paths -->', ...paths.map((p) => `- \`${p}\``), '<!-- /stuck-paths -->'].join('\n');
+}
+
+function structurallyStuckBody(paths) {
+  return [
+    'Reconcile has one or more run directories stuck at `structurally-stuck` (no-worktree/no-branch/no-pr) past the escalation threshold.',
+    '',
+    renderStuckPathsBlock(paths),
+    '',
+    'Filed automatically by `bin/lib/reconcile` — see #644/#1811.',
+    '',
+    structurallyStuckMarker(),
+  ].join('\n');
+}
+
+// { repo, marker, runner } -> matching issue { number, title, body,
+// createdAt, state } or null. Same plain list-then-filter idiom as
+// file-feedback.js's findDuplicate (never `gh issue list --search` — rides
+// GitHub's eventually-consistent Search API, root cause of #1016/#1079/
+// #1089) — `--state all` so a closed duplicate is still found (Deliverable 4:
+// dedup must consider open AND closed records).
+function findResidueDuplicate({ repo, marker, runner = defaultRunner }) {
+  const out = runner(['issue', 'list', '--repo', repo, '--state', 'all', '--json', 'number,title,body,createdAt,state', '--limit', '10000']);
+  const issues = JSON.parse(out);
+  const result = findByMarker(Array.isArray(issues) ? issues : [], marker);
+  return result ? result.canonical : null;
 }
 
 function residueBody({ reason, targetPath, count, firstFailedAt, lastError }) {
-  const marker = `<!-- fingerprint: ${residueFingerprint(reason, targetPath)} -->`;
+  const marker = markerFor(reason, targetPath);
   const lines = [
     `Reconcile has failed \`${reason}\` on this path for ${count} consecutive passes` +
       (firstFailedAt ? ` (first observed ${new Date(firstFailedAt).toISOString()})` : '') + '.',
@@ -57,30 +127,213 @@ function residueBody({ reason, targetPath, count, firstFailedAt, lastError }) {
   return { body: lines.join('\n'), marker };
 }
 
+// Shared find-hit skeleton for the two escalate* functions below: resolve
+// the no-repo guard and the findResidueDuplicate try/catch once, then either
+// create a fresh issue (no hit) or hand the found hit to the caller's onHit
+// for the reason-specific accept/append/reopen logic. That per-hit logic is
+// deliberately NOT folded in here — escalateResidue's hit branch is a plain
+// 2-way dedup-hit/reopen split, escalateStructurallyStuck's is a 3-way
+// dedup-hit/append/reopen split over a multi-path body it has to parse and
+// re-render first (see that function's own header comment) — forcing those
+// two shapes through one callback would trade real duplication (this
+// skeleton) for fake unification (a callback with reason-specific branches
+// inside it, no clearer than leaving the two functions separate).
+function findOrCreateIssue({
+  repo, marker, runner, createArgs, onHit,
+}) {
+  if (!repo) return { status: 'escalation-failed', reason: 'no-repo-slug' };
+  let hit;
+  try {
+    hit = findResidueDuplicate({ repo, marker, runner });
+  } catch (err) {
+    return { status: 'escalation-failed', reason: errorText(err) };
+  }
+  if (!hit) {
+    try {
+      const out = runner(['issue', 'create', '--repo', repo, ...createArgs]);
+      const m = /\/issues\/(\d+)/.exec(String(out));
+      return { status: 'filed', number: m ? Number(m[1]) : null };
+    } catch (err) {
+      return { status: 'escalation-failed', reason: errorText(err) };
+    }
+  }
+  return onHit(hit);
+}
+
+// Shared find-hit skeleton for the two resolve* functions below — same
+// rationale as findOrCreateIssue above, minus the create branch (resolve
+// never files a new issue) and with the resolution-failed/not-found status
+// vocabulary instead of escalation-failed/filed.
+function findHitForResolve({
+  repo, marker, runner, onHit,
+}) {
+  if (!repo) return { status: 'resolution-failed', reason: 'no-repo-slug' };
+  let hit;
+  try {
+    hit = findResidueDuplicate({ repo, marker, runner });
+  } catch (err) {
+    return { status: 'resolution-failed', reason: errorText(err) };
+  }
+  if (!hit) return { status: 'not-found' };
+  return onHit(hit);
+}
+
 // { repo, reason, targetPath, count, firstFailedAt, lastError, runner } ->
-// { status: 'filed'|'dedup-hit', number } | { status: 'escalation-failed', reason }
+// { status: 'filed'|'dedup-hit'|'reopened', number } | { status: 'escalation-failed', reason }
 // Never throws — every branch below is try/caught, mirroring every other
 // best-effort write in this module family (logReapEvent in reap-merged.js,
 // writeCache here).
-function escalateResidue({ repo, reason, targetPath, count, firstFailedAt, lastError, runner = defaultRunner }) {
-  if (!repo) return { status: 'escalation-failed', reason: 'no-repo-slug' };
-  const { body, marker } = residueBody({ reason, targetPath, count, firstFailedAt, lastError });
-  const title = `reconcile: ${reason} stuck on ${targetPath}`;
+//
+// #1892 Deliverable 4: a marker match that is already CLOSED means this same
+// path escalated before, got resolved, and is now failing again. Reopen the
+// existing record instead of filing a fresh duplicate — a deliberate choice
+// to keep one issue per path across its whole open/closed/reopened lifetime,
+// not one per escalation streak. (`--state all` above mirrors the shared
+// `findDuplicate`'s own already-`--state all` behavior, not a widening from
+// an open-only search bug — see #2334.)
+// #1811 Deliverable 4: the consolidated escalation path for
+// `structurally-stuck` alone — every OTHER reason keeps escalateResidue's
+// ordinary one-record-per-path behavior below unchanged. Dedups by the same
+// (path-less) fingerprint marker: no hit files a new record naming just this
+// one path; a hit already naming this path is a plain dedup-hit (or reopen,
+// if closed); a hit that does NOT yet name this path gets it appended —
+// edited into the body (so "the body names all N paths" stays literally
+// true) and also left as a comment, satisfying both this file's own
+// dedup-marker convention and the Technical Approach's "append... as a
+// comment" phrasing.
+// -> { status: 'filed'|'dedup-hit'|'appended'|'reopened', number } |
+//    { status: 'escalation-failed', reason, number? }
+function escalateStructurallyStuck({ repo, targetPath, runner = defaultRunner }) {
+  const marker = structurallyStuckMarker();
+  return findOrCreateIssue({
+    repo,
+    marker,
+    runner,
+    createArgs: ['--title', 'reconcile: structurally-stuck run directories', '--body', structurallyStuckBody([targetPath]), '--label', 'bug'],
+    onHit: (hit) => {
+      const existingPaths = parseStuckPaths(hit.body);
+      const alreadyNamed = existingPaths.includes(targetPath);
+      const isClosed = hit.state === 'CLOSED';
+      if (!isClosed && alreadyNamed) return { status: 'dedup-hit', number: hit.number };
+      const updatedPaths = alreadyNamed ? existingPaths : [...existingPaths, targetPath];
+      const comment = isClosed
+        ? `Reconcile is seeing \`${targetPath}\` stuck at structurally-stuck again — reopening rather than filing a duplicate.`
+        : `Also stuck: \`${targetPath}\``;
 
-  try {
-    const hit = findDuplicate({ repo, marker, runner });
-    if (hit) return { status: 'dedup-hit', number: hit.number };
-  } catch (err) {
-    return { status: 'escalation-failed', reason: errorText(err) };
-  }
-
-  try {
-    const out = runner(['issue', 'create', '--repo', repo, '--title', title, '--body', body, '--label', 'bug']);
-    const m = /\/issues\/(\d+)/.exec(String(out));
-    return { status: 'filed', number: m ? Number(m[1]) : null };
-  } catch (err) {
-    return { status: 'escalation-failed', reason: errorText(err) };
-  }
+      try {
+        runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', structurallyStuckBody(updatedPaths)]);
+        runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body', comment]);
+        if (isClosed) {
+          runner(['issue', 'reopen', String(hit.number), '--repo', repo]);
+          return { status: 'reopened', number: hit.number };
+        }
+        return { status: 'appended', number: hit.number };
+      } catch (err) {
+        return { status: 'escalation-failed', reason: errorText(err), number: hit.number };
+      }
+    },
+  });
 }
 
-module.exports = { escalateResidue, residueFingerprint, residueBody, defaultRunner, errorText };
+function escalateResidue({
+  repo, reason, targetPath, count, firstFailedAt, lastError, runner = defaultRunner,
+}) {
+  if (reason === 'structurally-stuck') return escalateStructurallyStuck({ repo, targetPath, runner });
+  if (!repo) return { status: 'escalation-failed', reason: 'no-repo-slug' };
+  const { body, marker } = residueBody({
+    reason, targetPath, count, firstFailedAt, lastError,
+  });
+  const title = `reconcile: ${reason} stuck on ${targetPath}`;
+
+  return findOrCreateIssue({
+    repo,
+    marker,
+    runner,
+    createArgs: ['--title', title, '--body', body, '--label', 'bug'],
+    onHit: (hit) => {
+      if (hit.state !== 'CLOSED') return { status: 'dedup-hit', number: hit.number };
+      try {
+        runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body',
+          `Reconcile is seeing this path fail \`${reason}\` again (${count} consecutive passes since it was `
+          + 'last resolved) — reopening rather than filing a duplicate.']);
+        runner(['issue', 'reopen', String(hit.number), '--repo', repo]);
+        return { status: 'reopened', number: hit.number };
+      } catch (err) {
+        return { status: 'escalation-failed', reason: errorText(err), number: hit.number };
+      }
+    },
+  });
+}
+
+// #1892 Deliverable 3: the cache-pruning half of the same marker-lookup
+// idiom — a residueFailures entry whose live path is gone (archived, reaped,
+// or resolved by some other means entirely) and was already escalated has an
+// open backlog record naming a path that no longer needs it. Comment (why)
+// then close — best-effort, mirrors escalateResidue's own never-throw
+// posture; cache.js drops the cache entry regardless of whether this
+// resolution succeeds (the path itself is gone either way, so it can never
+// fail or succeed again — see that call site's own comment).
+// #1811 Deliverable 4: the consolidated record names N paths, so resolving
+// ONE of them must never close the record out from under the OTHER,
+// still-genuinely-stuck paths it names. Removes just `targetPath` from the
+// body's stuck-paths list; only closes once the list empties.
+// -> { status: 'closed'|'path-removed'|'already-closed'|'not-found', number? } |
+//    { status: 'resolution-failed', reason, number? }
+function resolveStructurallyStuck({ repo, targetPath, runner = defaultRunner }) {
+  const marker = structurallyStuckMarker();
+  return findHitForResolve({
+    repo,
+    marker,
+    runner,
+    onHit: (hit) => {
+      const existingPaths = parseStuckPaths(hit.body);
+      if (!existingPaths.includes(targetPath)) return { status: 'not-found' };
+      if (hit.state === 'CLOSED') return { status: 'already-closed', number: hit.number };
+      const remaining = existingPaths.filter((p) => p !== targetPath);
+      try {
+        runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', structurallyStuckBody(remaining)]);
+        if (remaining.length === 0) {
+          runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body',
+            `\`${targetPath}\` no longer exists on disk — the last remaining stuck path. Closing.`]);
+          runner(['issue', 'close', String(hit.number), '--repo', repo]);
+          return { status: 'closed', number: hit.number };
+        }
+        runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body',
+          `\`${targetPath}\` no longer exists on disk — resolved by other means, removed from the stuck-paths list `
+          + `(${remaining.length} path(s) still stuck).`]);
+        return { status: 'path-removed', number: hit.number };
+      } catch (err) {
+        return { status: 'resolution-failed', reason: errorText(err), number: hit.number };
+      }
+    },
+  });
+}
+
+// -> { status: 'closed'|'already-closed'|'not-found', number? } |
+//    { status: 'resolution-failed', reason, number? }
+function resolveResidue({
+  repo, reason, targetPath, runner = defaultRunner,
+}) {
+  if (reason === 'structurally-stuck') return resolveStructurallyStuck({ repo, targetPath, runner });
+  const marker = markerFor(reason, targetPath);
+  return findHitForResolve({
+    repo,
+    marker,
+    runner,
+    onHit: (hit) => {
+      if (hit.state === 'CLOSED') return { status: 'already-closed', number: hit.number };
+      try {
+        runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body', 'This path no longer exists on disk — resolved by other means. Closing.']);
+        runner(['issue', 'close', String(hit.number), '--repo', repo]);
+        return { status: 'closed', number: hit.number };
+      } catch (err) {
+        return { status: 'resolution-failed', reason: errorText(err), number: hit.number };
+      }
+    },
+  });
+}
+
+module.exports = {
+  escalateResidue, resolveResidue, residueFingerprint, residueBody, findResidueDuplicate, defaultRunner, errorText,
+  parseStuckPaths, renderStuckPathsBlock, structurallyStuckBody, structurallyStuckMarker,
+};

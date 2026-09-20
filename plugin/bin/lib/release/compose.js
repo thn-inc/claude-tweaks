@@ -10,9 +10,10 @@ function nextVersion(current, part) {
   const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(current).trim());
   if (!m) throw new Error(`Invalid semver version: "${current}"`);
   const [major, minor, patch] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (part === 'major') return `${major + 1}.0.0`;
   if (part === 'minor') return `${major}.${minor + 1}.0`;
   if (part === 'patch') return `${major}.${minor}.${patch + 1}`;
-  throw new Error(`part must be "minor" or "patch", got "${part}"`);
+  throw new Error(`part must be "major", "minor" or "patch", got "${part}"`);
 }
 
 function bumpManifest(manifestText, version) {

@@ -42,11 +42,9 @@ test('the documented rule generalizes past the worktree\\/PR\\/merge example (sp
   assert.match(section, /irreversible external API call/i);
 });
 
-test('_shared/auto-mode-contract.md stays within the context-cost ceiling', () => {
-  const CEILING_BYTES = 40 * 1024;
-  const bytes = Buffer.byteLength(CONTRACT, 'utf8');
-  assert.ok(bytes <= CEILING_BYTES, `auto-mode-contract.md is ${bytes} bytes, over the ${CEILING_BYTES} ceiling`);
-});
+// Per-file 40 KB pin on _shared/auto-mode-contract.md retired by #1997 — the
+// per-file tier is a warning since #1990 and this file has no compose call
+// site; removal condition in docs/incident-log.md [IL-153].
 
 test('ledger-format.md defines the live-verification reason-not-auto qualifier', () => {
   const section = requiredForOpsSection();

@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { computeDiffFacts, deriveCeremonyProfile } = require('../../../plugin/bin/lib/dispatch/ceremony-derive');
+const { computeDiffFacts, deriveCeremonyProfile, shouldDerive } = require('../../../plugin/bin/lib/dispatch/ceremony-derive');
 
 // #1545 evidence shape: a +75/-2 test file plus its own materialized
 // work/{n}-spec.md doc — a mix of test + docs files, zero production files.
@@ -65,4 +65,13 @@ test('deriveCeremonyProfile: an already-fast-lane current value is never touched
 test('deriveCeremonyProfile: an empty diff leaves the current value unchanged', () => {
   assert.equal(deriveCeremonyProfile([], 'standard'), 'standard');
   assert.equal(deriveCeremonyProfile([], 'fast-lane'), 'fast-lane');
+});
+
+test('shouldDerive: only an auto-mode run whose profile is still standard derives (#1932 AC1)', () => {
+  assert.strictEqual(shouldDerive({ mode: 'auto', ceremonyProfile: 'standard' }), true);
+  for (const mode of ['confirm', 'hybrid', 'interactive', undefined, null, '']) {
+    assert.strictEqual(shouldDerive({ mode, ceremonyProfile: 'standard' }), false, `mode ${mode} never derives`);
+  }
+  assert.strictEqual(shouldDerive({ mode: 'auto', ceremonyProfile: 'fast-lane' }), false, 'already fast-lane: nothing to narrow');
+  assert.strictEqual(shouldDerive({}), false, 'no config at all (standalone wrap-up) never derives');
 });

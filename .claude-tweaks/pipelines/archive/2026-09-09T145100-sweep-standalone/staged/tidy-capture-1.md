@@ -1,0 +1,20 @@
+# Staged: Capture — acceptance-gap scope's closed-record fetch truncates silently on this repo
+
+Origin: /claude-tweaks:tidy Step 4.8 (sweep run 2026-09-09T145100-sweep-standalone)
+Defer-reason: tangential
+
+## Current State
+
+`plugin/skills/_shared/github-pr-scan-acceptance.md`'s `acceptance-gap` scope fetches closed records with a hardcoded `gh issue list --state closed --limit 200` and states "its record set is bounded to the last 30 days, so 200 is in practice never reached." On this repo a direct count returns 971 issues closed in the last 30 days; the scope therefore scans only the newest 200 and silently drops the older 771 — the quiet-direction failure the file's own parent-gate section says a backstop must never have. The 17 `[acceptance-gap]` rows this sweep reported are the gaps within the newest 200 closed records only.
+
+## Deliverables
+
+- Bound the closed-record fetch by `backlog-fetch-limit` (the same `{resolved-limit}` substitution the parent fetches already use) instead of the hardcoded 200, and drop the "never reached in practice" claim.
+- Emit the same exact-cap truncation warning the parent fetches emit when the closed fetch returns exactly the limit, reported verbatim beside the scope's rows.
+- Update the dispatcher-facing note in `tidy/scan-procedures.md` Step 4.8 if it restates the 200 figure.
+
+## Acceptance Criteria
+
+- Running the `acceptance-gap` scope against a repo with more than `backlog-fetch-limit` closed records in 30 days emits a truncation warning naming the cap.
+- With `backlog-fetch-limit: 1000`, this repo's scope scans every issue closed in the last 30 days (971 at 2026-09-09) rather than 200.
+- `tests/` conformance for `github-pr-scan-acceptance.md` (if any pins the fetch line) is updated in the same change.

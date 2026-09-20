@@ -1,7 +1,7 @@
 // bin/lib/ports/ensure.js — turns Unit 1's registry on for a project (#1792).
 // Called from SessionStart when the `port-services` policy resolves
 // non-empty: allocates (idempotently) a block for this checkout, then
-// decides whether that block is still trustworthy — see isRegionCurrent's
+// decides whether that block is still trustworthy — see regionIsCurrent's
 // header comment for the "stale region vs bound port" rule this exists to
 // implement.
 'use strict';
@@ -12,7 +12,7 @@ const path = require('path');
 
 const registry = require('./registry');
 const { blockFree } = require('./probe');
-const { readManagedRegion } = require('./env-file');
+const { readManagedRegion, LEASE_KEY, writeEnvFiles } = require('./env-file');
 const { runGit } = require('../hooks/git-exec');
 
 function defaultResolveRoot(cwd) {
@@ -31,6 +31,16 @@ function sameServices(a, b) {
 // list) is STALE — see #1792's Technical Approach for why: a changed
 // `port-services` list moves URLs the same way a foreign-takeover
 // reallocation does, so it gets the same loud treatment, not a silent skip.
+// Same comparison isRegionCurrent has always made, split out so ensure()
+// can pass an already-parsed region instead of forcing a second read+parse
+// of .env.local on the hot existing-lease-not-free path (#2031).
+function regionIsCurrent(region, base, leaseServices, policyServices) {
+  if (!region) return false;
+  const portEntry = region.find(([k]) => k === 'PORT');
+  if (!portEntry || Number(portEntry[1]) !== base) return false;
+  return sameServices(leaseServices, policyServices);
+}
+
 function isRegionCurrent(checkoutRoot, base, leaseServices, policyServices) {
   let text;
   try {
@@ -38,15 +48,11 @@ function isRegionCurrent(checkoutRoot, base, leaseServices, policyServices) {
   } catch {
     return false;
   }
-  const region = readManagedRegion(text);
-  if (!region) return false;
-  const portEntry = region.find(([k]) => k === 'PORT');
-  if (!portEntry || Number(portEntry[1]) !== base) return false;
-  return sameServices(leaseServices, policyServices);
+  return regionIsCurrent(readManagedRegion(text), base, leaseServices, policyServices);
 }
 
 // (cwd, { home, policyServices, probe, resolveRoot }) ->
-//   Promise<{ active: false } | { active: true, base, ports, vars, reallocated: {from,to}|null, envWriteError }>
+//   Promise<{ active: false } | { active: true, base, ports, vars, reallocated: {from,to}|null, envWriteError, leaseLineAdded }>
 async function ensure(cwd, {
   home = os.homedir(),
   policyServices = [],
@@ -68,6 +74,14 @@ async function ensure(cwd, {
   const existing = registry.status({ home });
   const existingEntry = Object.entries(existing.leases).find(([, lease]) => lease.path === realPath);
 
+  // #1927: read the managed region BEFORE the registry touches the file, so
+  // "did a pre-existing region lack the lease line" is judged on the same
+  // untouched evidence as staleness. registry.allocate's own env write
+  // (idempotent, skips byte-identical content) is what puts the line in.
+  let regionBefore = null;
+  try { regionBefore = readManagedRegion(fs.readFileSync(path.join(checkoutRoot, '.env.local'), 'utf8')); } catch { regionBefore = null; }
+  const hadLeaseLine = Array.isArray(regionBefore) && regionBefore.some(([k]) => k === LEASE_KEY);
+
   let reallocated = null;
   let result;
 
@@ -79,7 +93,7 @@ async function ensure(cwd, {
     const stillFree = await probe(base, { size: registry.BLOCK_SIZE });
     if (stillFree) {
       result = await registry.allocate(checkoutRoot, { services: policyServices, home, probe });
-    } else if (isRegionCurrent(checkoutRoot, base, lease.services, policyServices)) {
+    } else if (regionIsCurrent(regionBefore, base, lease.services, policyServices)) {
       // Bound, but the region is current — assume it's this checkout's own
       // already-running dev server, not a foreign takeover. Keep the lease.
       result = await registry.allocate(checkoutRoot, { services: policyServices, home, probe });
@@ -89,13 +103,41 @@ async function ensure(cwd, {
     }
   }
 
+  // Completeness (#1927): a region that existed before this call, lacked the
+  // lease line, and kept its base (no reallocation, and the registry handed
+  // back the same base the region already carried) has just been completed
+  // in place by the registry's write — report it. Belt and braces: if the
+  // line is still absent (an env write error left the old region), write the
+  // same-base vars once more; never the reallocation path. A failed fallback
+  // write reports `false` (the line is not there) and its message in
+  // `envWriteError`, the same field the registry's own write failure uses.
+  const portBefore = Array.isArray(regionBefore) ? (regionBefore.find(([k]) => k === 'PORT') || [])[1] : undefined;
+  let leaseLineAdded = false;
+  let envWriteError = result.envWriteError;
+  if (regionBefore !== null && !hadLeaseLine && reallocated === null && portBefore !== undefined && Number(portBefore) === result.base) {
+    let regionAfter = null;
+    try { regionAfter = readManagedRegion(fs.readFileSync(path.join(checkoutRoot, '.env.local'), 'utf8')); } catch { regionAfter = null; }
+    if (Array.isArray(regionAfter) && regionAfter.some(([k]) => k === LEASE_KEY)) {
+      leaseLineAdded = true;
+    } else {
+      try {
+        writeEnvFiles(checkoutRoot, result.vars);
+        leaseLineAdded = true;
+      } catch (err) {
+        leaseLineAdded = false;
+        envWriteError = err && err.message ? err.message : String(err);
+      }
+    }
+  }
+
   return {
     active: true,
     base: result.base,
     ports: result.ports,
     vars: result.vars,
     reallocated,
-    envWriteError: result.envWriteError,
+    envWriteError,
+    leaseLineAdded,
   };
 }
 

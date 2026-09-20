@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const { readRunState } = require('../plugin/bin/lib/hooks/context');
 const { linkedWorktreeOf } = require('./helpers/git-fixtures');
+const { skipUnderRoot } = require('./helpers/root');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -319,7 +320,7 @@ test('record-worktree --run with no following value fails loudly instead of fall
     '--run with a missing value must not silently fall back to a different run dir');
 });
 
-test('record-worktree reports a distinct failure when the run-state write itself fails', () => {
+test('record-worktree reports a distinct failure when the run-state write itself fails', skipUnderRoot('root ignores directory permissions'), () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.chmodSync(run, 0o500); // read+execute only — fs.writeFileSync inside it must throw
@@ -874,12 +875,16 @@ test('#1270: a gate-denial event never lands in an ambient PIPELINE_RUN_DIR the 
   assert.strictEqual(events[0].type, 'gate-denial');
 });
 
-test('a deny with no resolved run dir writes nothing and still denies', () => {
+test('a deny with no resolved run dir and no session_id writes nothing and still denies', () => {
   const project = gitRepo();
   writeWorktreeAlwaysPolicy(project);
   // Deliberately no .claude-tweaks/pipelines/ run dir at all, so
-  // ctxLib.resolveRun finds nothing and ownedRun.dir is null — the
-  // documented, accepted gap: ad-hoc work with no run dir records nothing.
+  // ctxLib.resolveRun finds nothing and ownedRun.dir is null. Also
+  // deliberately no session_id in the payload below — #2351's
+  // stampAdHocRunDirForDenial requires one to stamp ownership against
+  // (context.js), so this specific shape still records nothing; see
+  // "#2351: a main-checkout gate denial with no owned run dir gets an
+  // ad-hoc run dir stamped" below for the shape that now DOES stamp one.
   const target = path.join(project, 'a.txt');
   const result = runHook(['pre-tool-use'], {
     input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: target } }),
@@ -888,10 +893,60 @@ test('a deny with no resolved run dir writes nothing and still denies', () => {
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /"permissionDecision":"deny"/);
   assert.strictEqual(fs.existsSync(path.join(project, '.claude-tweaks', 'pipelines')), false,
-    'no run dir existed before the call, so appending a breadcrumb must not create one');
+    'no run dir existed before the call and no session_id was given, so appending a breadcrumb must not create one');
 });
 
-test('a gate denial with an unwritable run dir still denies and exits 0', () => {
+// #2351: previously, a gate denial with no owned run dir recorded nothing —
+// appendEvent's own null-runDir no-op silently dropped it, which meant a
+// standalone /claude-tweaks:wrap-up doing cleanup directly in the main
+// checkout (no worktree, no formal run dir yet) lost every gate-denial event
+// it hit. context.js's stampAdHocRunDirForDenial now mints an ad-hoc run dir
+// the moment a real denial needs one, keyed on whatever `git worktree list`
+// resolves cwd to (main checkout included) — as long as the payload carries
+// a session_id to stamp ownership against.
+test('#2351: a main-checkout gate denial with no owned run dir gets an ad-hoc run dir stamped', () => {
+  const project = gitRepo();
+  writeWorktreeAlwaysPolicy(project);
+  const target = path.join(project, 'a.txt');
+  const result = runHook(['pre-tool-use'], {
+    input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: target }, session_id: 'main-checkout-session' }),
+    cwd: project,
+  });
+  assert.strictEqual(result.code, 0);
+  assert.match(result.stdout, /"permissionDecision":"deny"/);
+  const pipelinesDir = path.join(project, '.claude-tweaks', 'pipelines');
+  assert.strictEqual(fs.existsSync(pipelinesDir), true, 'an ad-hoc run dir must now be minted for this denial');
+  const runDirs = fs.readdirSync(pipelinesDir);
+  assert.strictEqual(runDirs.length, 1, 'exactly one ad-hoc run dir should be minted');
+  const stampedRun = path.join(pipelinesDir, runDirs[0]);
+  const events = fs.readFileSync(path.join(stampedRun, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.strictEqual(events.length, 1, 'expected exactly one event appended to the newly stamped run dir');
+  assert.strictEqual(events[0].type, 'gate-denial');
+  assert.strictEqual(events[0].tool, 'Write');
+  assert.strictEqual(events[0].path, target);
+  const state = JSON.parse(fs.readFileSync(path.join(stampedRun, 'run-state.json'), 'utf8'));
+  assert.strictEqual(state.worktree, project, 'the stamped run must be keyed on the main checkout itself, not excluded as "main"');
+});
+
+// #2351 companion: the new trigger must stay keyed on an actual denial, never
+// on ordinary main-checkout activity — an allowed (non-denied) call must not
+// mint anything, or every ad hoc `git status`/read in the main checkout would
+// start minting run dirs.
+test('#2351: an ordinary allowed call in the main checkout does not stamp an ad-hoc run dir', () => {
+  const project = gitRepo();
+  // No worktree-always policy at all -> nothing is denied.
+  const target = path.join(project, 'a.txt');
+  const result = runHook(['pre-tool-use'], {
+    input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: target }, session_id: 'main-checkout-session' }),
+    cwd: project,
+  });
+  assert.strictEqual(result.code, 0);
+  assert.doesNotMatch(result.stdout, /"permissionDecision":"deny"/);
+  assert.strictEqual(fs.existsSync(path.join(project, '.claude-tweaks', 'pipelines')), false,
+    'an allowed call must never mint an ad-hoc run dir — only an actual denial does');
+});
+
+test('a gate denial with an unwritable run dir still denies and exits 0', skipUnderRoot('root ignores directory permissions'), () => {
   const { project, run } = policyRepoWithRun();
   fs.chmodSync(run, 0o500); // read+execute only — fs.appendFileSync inside it must throw
   try {

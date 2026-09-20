@@ -7,6 +7,7 @@ const {
   MergeSizeProbeError,
   CEILING_ELIGIBLE,
 } = require(path.join(__dirname, '..', '..', 'plugin', 'bin', 'lib', 'merge-size-probe.js'));
+const { CEILING_BYTES } = require(path.join(__dirname, '..', '..', 'plugin', 'bin', 'lib', 'skill-audit', 'context-cost.js'));
 
 const TREE = 'a'.repeat(40);
 
@@ -54,7 +55,7 @@ test('happy path: measures every eligible touched file at the merged tree, no ov
 });
 
 test('a file measured over the 40 KB ceiling at the merged tree lands in overflow with its excess', () => {
-  const over = 'x'.repeat(40960 + 250);
+  const over = 'x'.repeat(CEILING_BYTES + 250);
   const git = fakeGit({
     diff: () => 'plugin/skills/_shared/big.md\n',
     'merge-tree': () => `${TREE}\n`,
@@ -63,12 +64,12 @@ test('a file measured over the 40 KB ceiling at the merged tree lands in overflo
   const out = computeMergeSizeOverflow({ integrationBranch: 'main' }, { git });
   assert.strictEqual(out.overflow.length, 1);
   assert.strictEqual(out.overflow[0].path, 'plugin/skills/_shared/big.md');
-  assert.strictEqual(out.overflow[0].bytes, 40960 + 250);
+  assert.strictEqual(out.overflow[0].bytes, CEILING_BYTES + 250);
   assert.strictEqual(out.overflow[0].over, 250);
 });
 
 test('a file exactly at the ceiling is not overflow (boundary agrees with context-cost.js)', () => {
-  const atCeiling = 'x'.repeat(40960);
+  const atCeiling = 'x'.repeat(CEILING_BYTES);
   const git = fakeGit({
     diff: () => 'SKILL.md\n',
     'merge-tree': () => `${TREE}\n`,

@@ -6,12 +6,9 @@ Loaded by `SKILL.md` in `code` and `full` mode only — `visual`/`journey`/`disc
 
 When a pipeline run directory exists, read `config.yml`'s `ceremony-profile`. Under `fast-lane`,
 Steps 1 (Spec Compliance Check), 1.6 (Cross-Spec Promise Check), and 4 (Implementation Hindsight)
-are skipped — each is exact per-record overhead independent of diff size, the same shape of
-fixed-cost wrapper `ceremony-profile: fast-lane` already trims in `/claude-tweaks:build` and
-`/claude-tweaks:wrap-up`. Steps 2, 3 (the actual code-quality read of the diff), and 5 run
-unchanged regardless of tier — Step 3 is the safety-relevant judgment this whole scheme protects,
-and Step 5 already scopes to `git diff --name-only` only, with no "look beyond the diff" behavior
-to cap. Standalone review (no pipeline run directory) always runs every step, matching
+are skipped. The roster of every profile's skips — and of what no profile may skip — is
+`_shared/ceremony-profile.md`; this section keeps only the three step numbers. Standalone review
+(no pipeline run directory) always runs every step, matching
 `/claude-tweaks:reflect`/`/claude-tweaks:wrap-up`'s own standalone-defaults-to-full rule. A Review
 finding at any severity still triggers the existing ceremony escape hatch
 (`/claude-tweaks:wrap-up`'s Phase 1 ceremony escape hatch downgrades `ceremony-profile` to
@@ -21,8 +18,10 @@ the runnable invocation lives in that hatch, refs #1376) — unchanged. Full rat
 
 ## Step 1: Spec Compliance Check (spec-based only)
 
-Skip this step entirely under `ceremony-profile: fast-lane` (see "Ceremony-Aware Step Selection"
-above) — proceed directly to Step 1.5.
+Skip this step entirely under `ceremony-profile: fast-lane` (roster tag `review-step-1`,
+`_shared/ceremony-profile.md`) — proceed directly to Step 1.5.
+
+Skip it too on a `base:{ref}` scope (Input rule 9): no spec exists to verify — proceed to Step 1.5 with "no spec — base-ref scope" in Step 7's summary.
 
 If a spec number was provided, read the spec file and verify the implementation meets it:
 
@@ -59,26 +58,28 @@ If blocked, skip the rest of the review. Present the gap analysis so the user kn
 
 Verify that `/claude-tweaks:test` has passed before proceeding to analytical review. Reviewing code quality on code that doesn't work is wasted effort.
 
+**Under a `base:{ref}` scope the tree this gate verifies must be `origin/{integration-branch}`** — the gate runs from a checkout already standing at that tip (the caller asserts it before invoking), never from a feature-branch worktree's HEAD, whose stamp would verify a tree the reviewed range does not contain.
+
 `PASS_WITH_CAVEATS` counts as passed — caveats are informational observations (e.g., minor UX roughness, non-blocking warnings) and do not block review. QA caveats are included in the findings table (Step 3 Routing) for visibility but have status `observation`, not `open`.
 
 ### In `/claude-tweaks:flow` pipeline:
 
-Check for `TEST_PASSED=true` in pipeline context. If present, proceed to Step 2.
+Check for `TEST_PASSED=true` in pipeline context. If present, add one belt-and-braces read of the runner's own artifact (#1921) — `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status` (one plain command; prints `{present, sha, head, dirty, scope, fullSha, match, verifiedHead, reportPath, legacy}`, exit 0 always). `verifiedHead: true` (a clean HEAD covered by a full pass, or by a passing scoped run anchored on a still-valid `fullSha` — `match` alone would re-trigger a scoped run forever, #1923) → proceed to Step 2. `verifiedHead: false` with `TEST_PASSED=true` is reported, never silently accepted: "TEST_PASSED set but the runner stamp does not verify HEAD ({stamp-sha}, {scope} vs {head}) — re-running `/claude-tweaks:test`", then re-trigger `/claude-tweaks:test` once and re-check.
 
 ### Standalone (outside `/claude-tweaks:flow`):
 
-Check the verification pass stamp (`test/verification.md`'s "Verification pass stamp" step) — one comparison, replacing the commit-archaeology this check used to require:
+Check the verification pass stamp (`test/verification.md`'s "Verification pass stamp" step) — one read of the runner-written stamp (#1921), replacing the commit-archaeology this check used to require:
 
 ```bash
-cat "$(git rev-parse --git-dir)/claude-tweaks-verify-pass"
+node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status
 ```
 
-- **Stamp matches `git rev-parse HEAD`**, and the working tree carries no uncommitted modifications to files in the review scope → a recent pass; proceed to Step 2. The stamp asserts verification only (types + lint + tests) — when QA stories exist, the QA Ledger Check below still runs as usual.
-- **Stamp missing, unreadable, or mismatched — or review-scope files modified since** → no recent pass (fail-open; a stale stamp is never trusted): auto-trigger `/claude-tweaks:test`. If QA stories exist (`stories/*.yaml`), trigger `/claude-tweaks:test all` (full suite + QA). Otherwise trigger `/claude-tweaks:test` (standard suite only).
+- **`verifiedHead: true`** (a clean HEAD covered by a full pass, or by a passing scoped run anchored on a still-valid `fullSha`) → a recent pass; proceed to Step 2. The stamp asserts verification only (types + lint + tests) — when QA stories exist, the QA Ledger Check below still runs as usual.
+- **`present: false`, `verifiedHead: false`, or `dirty: true`** → no recent pass (fail-open; a stale stamp is never trusted): auto-trigger `/claude-tweaks:test --source review` (the explicit parent signal — scoped when a declaration exists, per `test/verification.md`'s table). If QA stories exist (`stories/*.yaml`), trigger `/claude-tweaks:test all --source review` (full suite + QA). Otherwise trigger `/claude-tweaks:test --source review` (standard suite only).
 
 ### QA Ledger Check
 
-After confirming `TEST_PASSED`, read the open items ledger (`docs/plans/*-ledger.md`) and filter for entries with phase `test/qa`:
+After confirming `TEST_PASSED`, read the open items ledger (`docs/plans/*-ledger.md`, or the run-dir-scoped alternate per `_shared/ledger-format.md`'s Location section) and filter for entries with phase `test/qa`:
 
 - If any QA ledger entries have status `open` (failures that were not resolved), include them in the test gate report alongside the `TEST_PASSED` status. These represent QA failures that `/claude-tweaks:test` surfaced and that still need resolution.
 - If all QA entries have status `observation` or `fixed`, note: "QA observations present — see findings table in Step 3 Routing."
@@ -87,8 +88,9 @@ After confirming `TEST_PASSED`, read the open items ledger (`docs/plans/*-ledger
 
 | Result | Action |
 |--------|--------|
-| `TEST_PASSED=true` (pipeline) | Proceed to Step 2 |
-| Verification pass stamp matches `HEAD` (standalone) | Proceed to Step 2 |
+| `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: true` | Proceed to Step 2 |
+| `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: false` | Report it (stamp sha/scope vs HEAD), re-trigger `/claude-tweaks:test`, re-check |
+| Runner stamp `verifiedHead: true` (standalone) | Proceed to Step 2 |
 | `/claude-tweaks:test` triggered and passes | Proceed to Step 2 |
 | `/claude-tweaks:test` triggered and fails | **STOP** — present test failures. Fix before continuing. Run `/claude-tweaks:test` to re-verify. |
 
@@ -96,7 +98,7 @@ After confirming `TEST_PASSED`, read the open items ledger (`docs/plans/*-ledger
 
 ## Step 1.6: Cross-Spec Promise Check (parent-linked records only)
 
-**Skip entirely** under `ceremony-profile: fast-lane`, or silently when this record has no
+**Skip entirely** under `ceremony-profile: fast-lane` (roster tag `review-step-1.6`, `_shared/ceremony-profile.md`), or silently when this record has no
 resolvable parent or its parent has no `## Cross-Spec Promises` section — most records. This step
 never blocks the review.
 
@@ -106,6 +108,8 @@ read `cross-spec-promise-check.md` in this skill's directory.
 ## Step 2: Identify What Changed
 
 **Resolving `{base}`:** never trust a bare local branch name for `{base}` — a long-lived worktree's local tracking branch (commonly `main`) routinely drifts behind its remote. Resolve it via `git fetch origin {base}` then use `origin/{base}` in every command below, or otherwise confirm `git log -1 {base}` matches `git log -1 origin/{base}` before trusting the diff scope.
+
+On a `base:{ref}` scope, `{base}` is the given ref and `{branch}` is `origin/{integration-branch}`. **This paragraph overrides the `origin/{base}` rule above it**: a `base:{ref}` ref is a tag (`v6.48.0`) or a sha, neither of which has an `origin/` form, so it is used exactly as given — after `git fetch --tags origin`, so the tag resolves locally. Only `{branch}` takes the `origin/` prefix on this scope. The change set is `git log --first-parent {base}..{branch}` / `git diff {base}..{branch}` — the first-parent line of the integration branch, so each squash-merged PR is one commit and a `--no-ff` merge counts once.
 
 ### Merge-Provenance Check
 
@@ -241,14 +245,14 @@ After Step 3.5, every finding has a final bucket — `confirmed`, `unconfirmed`,
 
 ### Step 3 Routing — Code Review Findings
 
-Routing logic lives entirely in `step3-routing.md` in this skill's directory: severity-based auto routing (with the contract floors), the interactive batch table, recommendation rules, the deferral gate, the parallel-fix dispatch contract (3+ independent fixes via `/superpowers:dispatching-parallel-agents`, with its mandatory post-dispatch diff audit), and the auto-advance-on-zero-findings rule. `unconfirmed` and `contested` findings bypass Step 3 Routing — they route directly to the Wrap-Up Console (Low-confidence and Contested subsections, respectively).
+Routing logic lives entirely in `step3-routing.md` in this skill's directory: severity-based auto routing (with the contract floors), the interactive batch table, recommendation rules, the deferral gate, the parallel-fix dispatch contract (3+ independent fixes via `/superpowers:dispatching-parallel-agents`, with its mandatory post-dispatch diff audit), and the auto-advance-on-zero-findings rule. `unconfirmed` and `contested` findings bypass Step 3 Routing — they route directly to the Wrap-Up Console (Low-confidence and Contested subsections, respectively). The fix-now re-verify runs scoped per `test/verification.md`'s "Re-verify scoping" table (review-fix row).
 
 ---
 
 ## Step 4: Implementation Hindsight (Decision Point)
 
-Skip this step entirely under `ceremony-profile: fast-lane` (see "Ceremony-Aware Step Selection"
-above) — proceed directly to Step 5.
+Skip this step entirely under `ceremony-profile: fast-lane` (roster tag `review-step-4`,
+`_shared/ceremony-profile.md`) — proceed directly to Step 5.
 
 Run `/claude-tweaks:reflect` in **hindsight** mode. Pass:
 - **Scope** — the changes analyzed in Steps 2-3
@@ -345,7 +349,7 @@ At the end of the summary, include a `### Key Learnings` section with 1-3 insigh
 
 If no notable learnings emerged, state: "No key learnings — straightforward review."
 
-**Phase exit (`worktree` mode, `integration-model: pr-first` — `_shared/integration-model.md`):** push the branch and flip this phase's PR checklist row — `_shared/git-discipline.md`'s Phase-exit push section and `_shared/pr-early-run-lifecycle.md`'s Phase-checklist update section. A no-op under `local-merge` or `current-branch` mode.
+**Phase exit (`worktree` mode, `integration-model: pr-first` — `_shared/integration-model.md`):** push the branch and flip this phase's PR checklist row — `_shared/git-discipline.md`'s Phase-exit push section and `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. A no-op under `local-merge` or `current-branch` mode.
 
 ## Important Notes
 

@@ -13,14 +13,22 @@
 // there rather than re-deriving it, since a foreign session has no other way
 // to learn a `needs-human` verdict computed by an earlier session's
 // `assess-agent-autonomy merge-check` call.
+// #1802: also mechanizes the "ungranted group member" exception — a live
+// re-fetch of every `Fixes #{n}` record named on the PR body, checked against
+// `evaluateMaturation` — that `_shared/console-execution.md` previously left
+// to an executing session's own unmechanized, untested prose re-derivation
+// (#1966). `mergeGrantGap` on a `ready` result names the withholding member
+// the same way `mergeCheckVerdict` names a withheld needs-human verdict.
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { iterRunDirsWithState } = require('../hooks/context');
 const { runWithConcurrency } = require('./gh-pool');
+const { evaluateMaturation, extractPendingGrantedAt } = require('../issues/grant-maturation');
+const { resolvePolicyConfig } = require('../policy-schema');
 
 const execFileAsync = promisify(execFile);
 
@@ -81,12 +89,12 @@ function parseItemTicks(body) {
 // fetches can genuinely run concurrently through gh-pool's
 // runWithConcurrency below, unlike the old execFileSync, which blocks the
 // event loop regardless of how the calling code is structured (#820, D5).
-async function fetchPrComments(repoRoot, prNumber) {
+async function fetchPrData(repoRoot, prNumber) {
   let stdout;
   try {
     ({ stdout } = await execFileAsync(
       'gh',
-      ['pr', 'view', String(prNumber), '--json', 'comments'],
+      ['pr', 'view', String(prNumber), '--json', 'comments,body'],
       { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true },
     ));
   } catch (e) {
@@ -100,7 +108,70 @@ async function fetchPrComments(repoRoot, prNumber) {
     return { ok: false, reason: 'network-failure' };
   }
   const comments = Array.isArray(parsed && parsed.comments) ? parsed.comments : [];
-  return { ok: true, comments };
+  const body = typeof (parsed && parsed.body) === 'string' ? parsed.body : '';
+  return { ok: true, comments, body };
+}
+
+// One `Fixes #{n}` line per record (`_shared/pr-early-run-lifecycle.md`'s
+// Step 3 template) -> the deduplicated, ordered list of member issue numbers
+// named on the PR body. Pure string parsing, no I/O — mirrors isResolveTicked/
+// parseItemTicks above.
+function parseFixesMembers(body) {
+  if (typeof body !== 'string') return [];
+  const out = [];
+  const seen = new Set();
+  const re = /^Fixes #(\d+)\s*$/gm;
+  let match;
+  while ((match = re.exec(body)) !== null) {
+    const n = Number(match[1]);
+    if (!seen.has(n)) { seen.add(n); out.push(n); }
+  }
+  return out;
+}
+
+// gh issue view {n} --json labels,comments -> {labels, pendingSince} the same
+// shape console-resolve.js's own ghReadGrants builds, for evaluateMaturation.
+async function fetchIssueGrant(repoRoot, issueNumber) {
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync(
+      'gh',
+      ['issue', 'view', String(issueNumber), '--json', 'labels,comments'],
+      { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true },
+    ));
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { ok: false, reason: 'gh-absent' };
+    return { ok: false, reason: 'network-failure' };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return { ok: false, reason: 'network-failure' };
+  }
+  const labels = (parsed.labels || []).map((l) => (typeof l === 'string' ? l : l.name));
+  const bodies = (parsed.comments || []).map((c) => (typeof c === 'string' ? c : c.body || ''));
+  return { ok: true, labels, pendingSince: extractPendingGrantedAt(bodies) };
+}
+
+// The `grant-veto-window-hours` policy value for this run dir, resolved
+// synchronously (a cheap local git+file read, unlike every gh call above) —
+// only ever invoked when an isMergeRow item is actually present, mirroring
+// console-resolve.js's own readPolicy. Fails open to `undefined`
+// (evaluateMaturation's own DEFAULT_VETO_WINDOW_HOURS fallback) on any error,
+// same posture as every other best-effort read in this file.
+function resolveVetoWindowHours(runDir, repoRoot) {
+  try {
+    const git = (args) => execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8' });
+    const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
+    const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['grant-veto-window-hours'] });
+    const entry = result['grant-veto-window-hours'];
+    const raw = entry && entry.error === undefined ? entry.value : null;
+    const veto = raw === null || raw === undefined ? NaN : Number(raw);
+    return Number.isFinite(veto) ? veto : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // Pure: consoleJson + now -> the pre-fetch skip reason, or null when
@@ -133,10 +204,14 @@ function preFetchSkipReason(consoleJson, now) {
   return null;
 }
 
-// Pure: consoleJson + fetched comments + now -> a detection verdict. No I/O,
-// so the race/claim/idempotence logic is unit-testable without gh.
+// Pure: consoleJson + fetched comments + now (+ optional ctx for the #1802
+// merge-grant check below) -> a detection verdict. No I/O, so the
+// race/claim/idempotence logic is unit-testable without gh.
 //   { action: 'ready', prNumber, commentIds, items } | { action: 'skip', reason }
-function decideConsoleExecute(consoleJson, comments, now) {
+// ctx: { prBody?, memberGrants?: {[issueNumber]: {labels, pendingSince}}, vetoWindowHours?, now? }
+// — all optional; omitted entirely (the pre-#1802 call shape) always yields
+// mergeGrantGap: null, unchanged from before.
+function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
   const skipReason = preFetchSkipReason(consoleJson, now);
   if (skipReason) return { action: 'skip', reason: skipReason };
 
@@ -163,7 +238,9 @@ function decideConsoleExecute(consoleJson, comments, now) {
   const resolvedItems = items.map((item) => {
     const commentId = item.commentId && commentIds.includes(item.commentId) ? item.commentId : commentIds[0];
     const ticks = ticksByComment.get(commentId) || {};
-    return { id: item.id, kind: item.kind, summary: item.summary, stagedHash: item.stagedHash, approved: ticks[item.id] === true };
+    return {
+      id: item.id, kind: item.kind, summary: item.summary, stagedHash: item.stagedHash, approved: ticks[item.id] === true, ...(item.isMergeRow === true ? { isMergeRow: true } : {}),
+    };
   });
 
   // #1294: pass the persisted merge-check verdict through untouched — it comes from
@@ -173,18 +250,54 @@ function decideConsoleExecute(consoleJson, comments, now) {
   // play that session) — absence means "unknown", not "cleared for auto-merge".
   const mergeCheckVerdict = consoleJson.mergeCheckVerdict === 'needs-human' ? 'needs-human' : null;
 
+  // #1802: the second, narrower exception — withheld independent of
+  // mergeCheckVerdict, since it reads directly observable current label
+  // state rather than a persisted, once-computed LLM judgment. Only
+  // evaluated when an isMergeRow item is actually present AND the caller
+  // supplied both a PR body and pre-fetched member grants (consoleExecuteDetect
+  // does; a direct unit-test call omitting ctx gets mergeGrantGap: null,
+  // preserving every pre-#1802 test's expectations unchanged).
+  let mergeGrantGap = null;
+  const hasMergeRow = items.some((item) => item.isMergeRow === true);
+  if (hasMergeRow && typeof ctx.prBody === 'string' && ctx.memberGrants && typeof ctx.memberGrants === 'object') {
+    const members = parseFixesMembers(ctx.prBody);
+    if (!members.length) {
+      // A merge row exists but no `Fixes #{n}` line could be parsed — the
+      // same fail-closed posture as resolve.js's own 'members-unresolved':
+      // a withheld grant is a human decision, never silently assumed clear
+      // for want of a membership list this session could not determine.
+      mergeGrantGap = { member: null, reason: 'members-unresolved' };
+    } else {
+      for (const n of members) {
+        const grant = ctx.memberGrants[n];
+        if (!grant) { mergeGrantGap = { member: n, reason: 'grant-unreadable' }; break; }
+        const mat = evaluateMaturation({
+          hasMergeLabel: (grant.labels || []).includes('auto:merge'),
+          hasPendingLabel: (grant.labels || []).includes('auto:merge-pending'),
+          pendingSince: grant.pendingSince || null,
+          vetoWindowHours: ctx.vetoWindowHours,
+          now: ctx.now !== undefined ? ctx.now : now,
+        });
+        if (!mat.mature) { mergeGrantGap = { member: n, reason: mat.reason }; break; }
+      }
+    }
+  }
+
   return {
-    action: 'ready', prNumber: consoleJson.prNumber, commentIds, items: resolvedItems, mergeCheckVerdict,
+    action: 'ready', prNumber: consoleJson.prNumber, commentIds, items: resolvedItems, mergeCheckVerdict, mergeGrantGap,
   };
 }
 
-// opts: { cwd? } -> { ready: [{ runDir, prNumber, commentIds, items, mergeCheckVerdict }], skipped: [{ runDir, reason }] }
+// opts: { cwd? } -> { ready: [{ runDir, prNumber, commentIds, items, mergeCheckVerdict, mergeGrantGap }], skipped: [{ runDir, reason }] }
 // Runs in two phases (#820, D5): a synchronous scan collecting every run dir
 // that needs a `gh pr view` fetch (fast fs reads + pure pre-checks), then
 // one gh-pool `runWithConcurrency` batch resolving all of those fetches at
 // once, then a final synchronous pass deciding each — since each fetch
 // result feeds its own `decideConsoleExecute` call, decide happens after,
-// not inside, the parallel batch.
+// not inside, the parallel batch. A third phase (#1802), gated on an
+// isMergeRow item actually being present in a candidate's own console.json,
+// batch-fetches every `Fixes #{n}` member's live grant before deciding that
+// candidate — see decideConsoleExecute's ctx.memberGrants.
 async function consoleExecuteDetect(opts = {}) {
   const ready = [];
   const skipped = [];
@@ -201,15 +314,47 @@ async function consoleExecuteDetect(opts = {}) {
     candidates.push({ dir, consoleJson });
   }
 
-  const fetches = await runWithConcurrency(candidates, (c) => fetchPrComments(root, c.consoleJson.prNumber));
+  const fetches = await runWithConcurrency(candidates, (c) => fetchPrData(root, c.consoleJson.prNumber));
+
+  // #1802: collect every (candidate, member) pair that needs a live grant
+  // re-fetch — only candidates whose console.json carries an isMergeRow item
+  // AND whose PR-body fetch succeeded ever reach here, so an unattended run
+  // with no merge row pending (the common case) pays zero extra gh calls.
+  // Every such candidate's memberGrants entry is seeded to {} BEFORE any
+  // fetch resolves (not only on a successful one) — decideConsoleExecute
+  // treats a member missing from memberGrants as 'grant-unreadable' and
+  // withholds, so a candidate whose fetches all fail still fails closed
+  // instead of silently falling back to ctx: {} (which would read as "no
+  // merge row to check" and let the row through unchecked).
+  const grantJobs = [];
+  const mergeRowCandidateIndices = new Set();
+  candidates.forEach((c, i) => {
+    const fetch = fetches[i];
+    if (!(fetch && fetch.ok)) return;
+    const items = Array.isArray(c.consoleJson.items) ? c.consoleJson.items : [];
+    if (!items.some((item) => item.isMergeRow === true)) return;
+    mergeRowCandidateIndices.add(i);
+    for (const n of parseFixesMembers(fetch.body)) grantJobs.push({ candidateIndex: i, member: n });
+  });
+  const memberGrantsByCandidate = new Map();
+  for (const i of mergeRowCandidateIndices) memberGrantsByCandidate.set(i, {});
+  const grantResults = await runWithConcurrency(grantJobs, (job) => fetchIssueGrant(root, job.member));
+  grantJobs.forEach((job, i) => {
+    const g = grantResults[i] instanceof Error ? { ok: false } : grantResults[i];
+    if (!g.ok) return;
+    memberGrantsByCandidate.get(job.candidateIndex)[job.member] = { labels: g.labels, pendingSince: g.pendingSince };
+  });
 
   candidates.forEach((c, i) => {
     const fetch = fetches[i] instanceof Error ? { ok: false, reason: 'network-failure' } : fetches[i];
     if (!fetch.ok) { skipped.push({ runDir: c.dir, reason: fetch.reason }); return; }
-    const decision = decideConsoleExecute(c.consoleJson, fetch.comments, now);
+    const ctx = memberGrantsByCandidate.has(i)
+      ? { prBody: fetch.body, memberGrants: memberGrantsByCandidate.get(i), vetoWindowHours: resolveVetoWindowHours(c.dir, root), now }
+      : {};
+    const decision = decideConsoleExecute(c.consoleJson, fetch.comments, now, ctx);
     if (decision.action === 'skip') { skipped.push({ runDir: c.dir, reason: decision.reason }); return; }
     ready.push({
-      runDir: c.dir, prNumber: decision.prNumber, commentIds: decision.commentIds, items: decision.items, mergeCheckVerdict: decision.mergeCheckVerdict,
+      runDir: c.dir, prNumber: decision.prNumber, commentIds: decision.commentIds, items: decision.items, mergeCheckVerdict: decision.mergeCheckVerdict, mergeGrantGap: decision.mergeGrantGap,
     });
   });
 
@@ -223,5 +368,6 @@ module.exports = {
   parseItemTicks,
   isClaimReclaimable,
   readConsoleJson,
+  parseFixesMembers,
   RECLAIM_STALE_MS,
 };

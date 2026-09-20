@@ -1,4 +1,4 @@
-# PR-Early Run Lifecycle — draft PR at run start, phase-checklist updates
+# PR-Early Run Lifecycle — draft PR at run start, root cause, resume
 
 Canonical procedure for making a `pr-first` (`_shared/integration-model.md`) pipeline run
 **born public**: a draft PR opens immediately after the worktree exists and the materialize
@@ -9,8 +9,10 @@ procedure this generalizes and replaces). Every later phase exit pushes
 the PR always reflects live progress rather than only the state as of run start or only the state
 as of `pending-review`.
 
+<!-- when: integration-model=local-merge -->
 `local-merge` runs (`_shared/integration-model.md`) skip this file entirely — today's no-PR
 lifecycle, unchanged.
+<!-- /when -->
 
 ## Root cause: MCP PR-body sanitization strips HTML comments on read, not write (#929)
 
@@ -42,6 +44,7 @@ deliberate, reasonable defense) — it's to also carry a plain-text companion fo
 looks like an HTML tag to the sanitizer in the first place, so it survives the MCP read path
 unchanged. See "Dual-marker scheme" in Step 3 below.
 
+<!-- when: transport=mcp -->
 **Scope extends to issue reads, not just PR reads (#1700).** The same `bluemonday.StrictPolicy()`
 strips `<!-- ... -->` spans from `mcp__github__list_issues` and `mcp__github__issue_read` results
 too — confirmed live (2026-08-30): fetching a batch of `by:docs-health` issues via both
@@ -52,27 +55,31 @@ appends that marker as the body's literal last line) showed it intact — the sa
 method used above for PR bodies. `_shared/health-issue-index.md` documents the consequence for
 health-sweep dedup and the fix (`bin/lib/issues/record.js`'s plain-text `work-fingerprint:`
 companion line, mirroring this file's own dual-marker scheme) rather than restating it here.
+<!-- /when -->
 
 ## Callers
 
 | Caller | Invokes from |
 |---|---|
 | `build/worktree-setup.md` Step 6 | Once per run, immediately after `build/SKILL.md` Spec Step 1's materialize commit, before Spec Step 2 |
-| Each phase's skill file (build, test, review, polish, wrap-up) | At its own phase exit — see "Phase-checklist update" below |
+
+Phase-checklist updates and the pre-merge title/description refresh moved to
+`_shared/pr-checklist-refresh.md` (#2002) — its own Callers table lists that file's callers
+(every phase's own skill file, and `_shared/pr-first-merge.md`'s Step 2/Step 2.5).
 
 ## Run start: push, then open (or reuse) the draft PR
 
 ### Step 1: Resolve identity and check for an existing PR
 
-Resolve `{owner}/{repo}` once: `gh repo view --json nameWithOwner -q .nameWithOwner`. Then check
-`run-state.json`'s own `pr` field first (a resumed run already recorded one) — if present, skip
+Resolve `{host}/{owner}/{repo}` once: `gh repo view --json nameWithOwner,url`. Then check
+`run-state.json`'s `pr` field first (a resumed run already recorded one) — if present, skip
 straight to "Resume: reconcile a recorded PR" below instead of re-deriving from scratch.
 
 No recorded `pr` field: check GitHub directly before creating anything, so a resumed or retried
 run against the same branch never duplicates:
 
 ```bash
-gh pr list --repo {owner}/{repo} --head {branch} --state all --json number,url,state,isDraft
+gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json number,url,state,isDraft
 ```
 
 - **A match with `state: OPEN`** (draft or not): reuse it. Record via `record-pr` (below) and
@@ -84,7 +91,7 @@ gh pr list --repo {owner}/{repo} --head {branch} --state all --json number,url,s
   comments land in the same thread as the prior failure(s):
 
   ```bash
-  gh pr reopen {number} --repo {owner}/{repo}
+  gh pr reopen {number} --repo {host}/{owner}/{repo}
   ```
 
   **Reopen succeeds:** record via `record-pr` and skip creation, same as the OPEN branch above.
@@ -184,7 +191,11 @@ claude-tweaks-run: {run-id}
 
 `PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow "{target}" {next-step}`
 
+<!-- fixes-start -->
+[claude-tweaks-fixes-start]
 Fixes #{n}
+[claude-tweaks-fixes-end]
+<!-- fixes-end -->
 ```
 
 The `<!-- claude-tweaks-run: {run-id} -->` marker is the **first line**, unconditionally,
@@ -210,6 +221,8 @@ writing both costs nothing and there is no transport-detection to get wrong at w
 | Run-id marker | `<!-- claude-tweaks-run: {run-id} -->` | `claude-tweaks-run: {run-id}` |
 | Phase-checklist start | `<!-- phases-start -->` | `[claude-tweaks-phases-start]` |
 | Phase-checklist end | `<!-- phases-end -->` | `[claude-tweaks-phases-end]` |
+| Fixes start | `<!-- fixes-start -->` | `[claude-tweaks-fixes-start]` |
+| Fixes end | `<!-- fixes-end -->` | `[claude-tweaks-fixes-end]` |
 
 **Which form a *reader* uses depends on transport, per Root cause above:** a `gh`-present
 read (`gh pr view`, `gh api`, or any REST/GraphQL read) sees the real stored body and can key
@@ -221,39 +234,60 @@ instead. Neither form is ever removed once written, so a run that starts `gh`-ab
 later gains `gh` (or vice versa) never loses recognition.
 
 **Phase checklist rows are delimited by `<!-- phases-start -->`/`<!-- phases-end -->` HTML
-comments** so the phase-checklist update procedure below can re-compose reliably (read body,
+comments** so `_shared/pr-checklist-refresh.md`'s phase-checklist update procedure can re-compose reliably (read body,
 replace only the content between the markers, write back) instead of parsing prose. Both
 delimiter pairs bracket the same checklist rows — the HTML-comment pair outermost, the
 plain-text pair immediately inside it (see the template above) — so either reader finds an
 unambiguous, non-overlapping span to replace. Start every row unchecked — `- [ ] {phase}` —
 even for steps this run's step-list argument will skip (e.g. `no-polish`); a skipped phase's
 row is removed at that phase's own would-be exit rather than predicted at creation, since Step
-1's own step-list resolution can still change before then in `interactive`/`hybrid` mode.
+1's own step-list resolution can still change before then in `interactive`/`hybrid` mode. This
+would-be-exit removal is immediate in a **single-record** run, unchanged from before. In a
+**multi-spec** run (dispatch bundle or `/flow` multi-spec — multiple records share one PR, see
+"Multi-spec runs share one PR" below), a spec's would-be polish exit never removes the row on its
+own: the row stays `- [ ] polish` until either some spec in the run reaches a real polish exit
+and flips it to `- [x] polish`, or `_shared/pr-checklist-refresh.md`'s Pre-merge title/description
+refresh removes it once it's confirmed no spec in the run ever ran polish (see
+`flow/multispec-pr-checklist.md` for the full rationale).
 
-Omit a `polish` row when the record's `surface:` is `backend` (polish never runs) — the same
-frontend/backend split `flow/steps-and-gates.md`'s own polish decision tree already makes; don't
-duplicate that logic, just skip the row when it will never happen.
+Omit a `polish` row only when **every** record in the run has `surface: backend` (polish never
+runs for any of them) — the same frontend/backend split `flow/steps-and-gates.md`'s own polish
+decision tree already makes; don't duplicate that logic, just skip the row when it will never
+happen for any record. A single-record run checks that one record's `surface:`, unchanged from
+before. A multi-spec run (dispatch bundle or `/flow` multi-spec — see "Multi-spec runs share one
+PR" below) reads every record's `surface:` facet from the parent `manifest.yml`'s `specs[]` list
+— the same list this step already walks to emit one `Fixes #{m}` line per record (see "One
+`Fixes #{n}` line per record" below) — and omits the row only when every entry is `backend`. An
+absent `surface:` facet counts as "can run polish" (only an explicit `backend` omits); the real
+polish decision is made at runtime by `flow/steps-and-gates.md`'s decision tree and detection
+layer 2, and creation must never pre-empt it toward omission.
 
 **One `Fixes #{n}` line per record.** A single-record run gets one line. A dispatch bundle
 (`dispatch/SKILL.md`'s file-overlap grouping) enumerates every record from the parent
-`manifest.yml`'s `specs[].id` list and lists one `Fixes #{m}` line per record. Unlike the retired
+`manifest.yml`'s `specs[].id` list and lists one `Fixes #{m}` line per record — provisional
+(#2015). Unlike the retired
 dispatch-only durability procedure this file replaced (`docs/incident-log.md`'s `[IL-128]`),
 whose PR opened only when a run already reached `pending-review` (i.e. after `review`'s gate
 already passed) and used `Refs`, this PR opens **before any gate has run**, and it stays in
 draft the whole time gates are still pending — GitHub blocks merging a draft by default, so
 `Fixes` sitting inert in a draft body is safe. It only becomes live once the merge-path sub-issue
-marks the PR ready after gates pass. A human force-merging a draft mid-run is accepting ungated
-work; that risk is stated once here, not re-litigated at every call site.
+marks the PR ready after gates pass.
 
 `{target}` and `{next-step}` in the Resume line: `{target}` is the same record reference(s) this
 run was invoked with (`#{n}` or the bundle's comma-joined list). `{next-step}` is the step this
 run is *about* to execute — `build` at run start, since this procedure runs before any phase.
 
-Write the body to `/tmp/pr-early-body-{n}.md`, then:
+Write the body to `/tmp/pr-early-body-{run-id}-{n}.md` — scoped by this run's own `{run-id}`
+(the run-dir basename), not just the issue number, so a retried run's fresh write can never
+land on a stale file a prior attempt left at a fixed `{n}`-only path (worse on Windows, where
+`Write` and `Bash` can resolve `/tmp` differently). Before invoking `gh pr create`, re-read the
+file's first line back and confirm it is `<!-- claude-tweaks-run: {run-id} -->` for *this run's*
+`{run-id}` — second line of defense; hard-stop this step on a mismatch rather than push a wrong
+body.
 
 ```bash
-gh pr create --repo {owner}/{repo} --draft --base {integration-branch} --head {branch} \
-  --title "{record title} (#{n})" --body-file /tmp/pr-early-body-{n}.md
+gh pr create --repo {host}/{owner}/{repo} --draft --base {integration-branch} --head {branch} \
+  --title "{record title} (#{n})" --body-file /tmp/pr-early-body-{run-id}-{n}.md
 ```
 
 `{record title}` — the lowest-numbered record's title for a bundle; `{n}` likewise the
@@ -299,7 +333,7 @@ before trusting the recorded value — the PR could have been closed or the bran
 out from under it since:
 
 ```bash
-gh pr view {recorded-number} --repo {owner}/{repo} --json state,isDraft,url
+gh pr view {recorded-number} --repo {host}/{owner}/{repo} --json state,isDraft,url
 ```
 
 - **Still open**: nothing to do — proceed to whichever phase this resume targets.
@@ -309,96 +343,15 @@ gh pr view {recorded-number} --repo {owner}/{repo} --json state,isDraft,url
 
   `AUTO {time} — PR-early run lifecycle: recorded PR #{old} no longer open; {reused #{new} | created #{new}}. Reversibility: high.`
 
-## Phase-checklist update (every phase exit)
+## Phase-checklist update and pre-merge title/description refresh — moved
 
-At each phase's own exit (build, test, review, polish, wrap-up — after that phase's own
-phase-exit push, `_shared/git-discipline.md`), check `run-state.json`'s `pr` field:
-
-- **Not set, `local-merge` run**: skip entirely — no PR to update.
-- **Not set, `pr-first` run (a degraded run)**: before skipping, check whether recovery is safe —
-  `git rev-parse --abbrev-ref --symbolic-full-name @{u}` against the worktree branch. **Fails**
-  (no upstream configured — the branch never actually reached `origin`, regardless of which phase
-  degraded it): retry "Run start: push, then open (or reuse) the draft PR" Steps 2-4 now, from this
-  phase's own worktree — the `#989` one-shot push exemption is guaranteed to apply cleanly on this
-  attempt, since it keys on exactly this precondition. **Succeeds** (upstream is set but no PR —
-  a rarer case, e.g. an interrupted `gh pr create`): skip this phase's checklist update as before;
-  do not attempt recovery blind against a branch state this section cannot fully diagnose.
-- **Set**: read the current body — `gh pr view {number} --json body` when `gh` is present,
-  `mcp__github__pull_request_read` (`get` method) when it is absent
-  (`_shared/github-write-transport.md`'s Detection rule). Locate the checklist span using
-  whichever delimiter pair this read actually returned: the `<!-- phases-start -->`/
-  `<!-- phases-end -->` pair on a `gh`-present read (the real body, unsanitized); the
-  `[claude-tweaks-phases-start]`/`[claude-tweaks-phases-end]` pair on a `gh`-absent MCP read
-  (the HTML-comment pair is invisibly stripped from what this read returns, per Root cause
-  above, even though it still exists in the stored body). Flip that phase's checklist row from
-  `- [ ] {phase}` to `- [x] {phase}` inside whichever span was found, leaving everything else —
-  including the *other* delimiter pair, which this read may not even show — untouched, then
-  write back through the same transport that did the read:
-
-  ```bash
-  gh pr edit {number} --repo {owner}/{repo} --body-file /tmp/pr-checklist-{n}.md
-  ```
-
-  `gh`-absent: `mcp__github__update_pull_request` with the same composed body — this write is
-  unsanitized (Root cause above), so it carries both delimiter pairs through untouched
-  regardless of which one was used to locate the span.
-
-  Compose-then-write-once — read, patch the checklist section in memory, write the whole body
-  back in one call. Never a partial/streaming edit.
-
-**Best-effort, like the phase-exit push it follows.** A failed `gh pr edit` logs a warning to
-`decisions.md` and the phase continues — the next phase's own checklist update naturally
-re-flips every row still unchecked from prior phases, since it reads the live body fresh each
-time rather than tracking a local diff.
-
-**Multi-spec runs share one PR.** A dispatch bundle or a `/flow` multi-spec run has multiple
-records built on the same branch behind the same draft PR, so this procedure's checklist rows
-are **cumulative across every spec in the run, never reset per spec** — see
-`flow/multispec-pr-checklist.md` for the full rationale and the per-spec status source
-(`manifest.yml`'s `specs[].status`) a maintainer should read instead when they need spec-level,
-not run-level, granularity.
-
-## Pre-merge title/description refresh
-
-Unconditional `AUTO` step, never a stop (`_shared/auto-mode-contract.md`'s "What auto silences" —
-refreshing PR metadata is not a user decision). Runs once, immediately before
-`_shared/pr-first-merge.md` Step 2 undrafts the PR — by then the PR may be stale: its title/body
-were composed at run start (Step 3 above) and the phase checklist reflects whichever phases had
-exited as of each best-effort `gh pr edit` (Phase-checklist update above), not necessarily every
-phase this run actually completed.
-
-1. **Merge-size probe (#641).** First `git fetch origin {integration-branch}` — unlike `gh pr
-   merge --auto` below (server-side, no local checkout needed), this probe's `git merge-tree`
-   resolves a local ref, and a worktree can sit hours behind `origin/{integration-branch}`
-   without this fetch; skipping it would let the probe silently predict against a stale base,
-   compounding the race this step already discloses below. Then run `node
-   "${CLAUDE_PLUGIN_ROOT}/bin/merge-size-probe.js" --integration-branch origin/{integration-branch}` against this
-   run's branch. It predicts, via `git merge-tree --write-tree`, the post-merge size
-   of every branch-touched `skills/_shared/*.md`/`SKILL.md` file — a branch that is green alone
-   (`tests/bin-lib/skill-audit/context-cost.test.js` only sees the working tree) can still tip a
-   shared file over the 40 KB ceiling once merged with a concurrent sibling's own additions, a
-   failure that today only surfaces inside the merge sequence itself. A non-empty `overflow` never
-   blocks this merge — this section invents no new pipeline stop
-   (`_shared/auto-mode-contract.md`'s strict rule) — it discloses at **warn** tier in the run
-   summary (a visible line, not a silent log entry), one per file: `merge-size-probe: {path}
-   predicted at {bytes} B, {over} B over the 40 KB ceiling once merged with {integration-branch}`,
-   and logs `AUTO {time} — PR-early run lifecycle: merge-size probe predicted {n} file(s) over
-   ceiling post-merge; disclosed in run summary. Reversibility: n/a (prediction only).` This is a
-   prediction against freshly-fetched `origin/{integration-branch}` as of probe time, not a
-   guarantee — a sibling that merges after the probe but before this branch does can still produce
-   a fresh overflow the probe never saw. A probe failure (unresolvable ref, a real merge conflict)
-   degrades like any other best-effort step here: log a warning and continue — the merge sequence
-   surfaces a real conflict on its own.
-2. Re-run the Phase-checklist update procedure above once more, unconditionally — idempotent
-   (a phase whose own update already landed re-flips the same rows to the same values); this is
-   the final catch-all for any phase whose own best-effort update silently failed.
-3. Read the record's current title (`gh issue view {n} --json title -q .title` for the
-   lowest-numbered record). If it no longer matches the PR's own title (the record was retitled
-   after PR creation), refresh it: `gh pr edit {pr-number} --repo {owner}/{repo} --title "{current record title} (#{n})"`.
-4. Log: `AUTO {time} — PR-early run lifecycle: refreshed PR #{number} title/checklist before merge. Reversibility: high (gh pr edit).`
-
-Best-effort, like the phase-checklist update it extends — a failed `gh pr edit` here logs a
-warning and the merge proceeds; a stale title/checklist is cosmetic, never a merge blocker.
+Both moved to `_shared/pr-checklist-refresh.md` (#2002), which now carries the "Phase-checklist
+update (every phase exit)" and "Pre-merge title/description refresh" sections in full — read
+there. They moved out of this file so the two merge-time compose call sites
+(`wrap-up/auto-merge-short-circuit.md`, `wrap-up/review-console.md`) no longer need to compose
+this file's run-start-only Steps 1-4, Root cause, and Resume sections (below and above) just to
+reach that content — this file alone was 30+ KB of the ~57-60 KB the `merge` composed bundle
+measured, most of it never read again after run start.
 
 ## Skip / degrade behavior
 
@@ -409,13 +362,18 @@ warning and the merge proceeds; a stale title/checklist is cosmetic, never a mer
 | Push or `gh pr create` fails with a transient-looking (5xx/timeout) signature | One 15-second-backoff retry (Step 2/Step 3 above) before falling through to the corresponding row's degrade — a 503-class outage self-heals fast enough that most retries succeed without ever reaching a logged degrade. |
 | `gh pr create` fails twice | Local-only run (branch already pushed), logged warning, continue. |
 | `gh` absent | No longer a degrade (#929) — `mcp__github__create_pull_request`/`update_pull_request` is the documented fallback (`_shared/github-write-transport.md`'s Pull Request create/update exception), using the same dual-marker template as the `gh`-present path. Only a genuine MCP write failure degrades, logged the same as any other Step 2/Step 3 failure above (`reason: gh-absent — mcp__github__create_pull_request failed: {error}`). |
-| `gh` absent at merge time (`_shared/pr-first-merge.md` Step 2.5) | The `merge-verification` lever is unenforceable without `gh` — proceed as `off` and disclose it at **warn** tier in the run summary (a visible line, not a silent log entry): `merge-verification: {resolved} unenforceable — gh absent; proceeded as off`. Same no-MCP-fallback reason as the row above. |
 | Offline / no `origin` remote | Same degrade path as any push failure — `_shared/forge-detection.md` would already have resolved `local-merge` for a no-remote project, so this case is specifically "remote configured but unreachable right now." |
+
+The merge-time `gh` absent row (`_shared/pr-first-merge.md` Step 2.5) moved to
+`_shared/pr-checklist-refresh.md`'s "Merge-time gh-absent degrade" section (#2002) — that
+procedure runs at merge time, never at run start, so it belongs with the other merge-time-only
+content that moved there.
 
 None of these ever block the pipeline — a pr-first project whose GitHub connectivity is degraded
 for one run behaves exactly like a `local-merge` run for that run, with the degradation logged
 rather than silent.
 
+<!-- when: integration-model=local-merge -->
 **`local-merge` row specifically (`build/SKILL.md` Spec Step 1's documented conditional action):**
 this is the one row above with no existing log line of its own — every connectivity-degrade row
 already writes its own `AUTO … FAILED` line (see the citations above) and keeps doing so unchanged.
@@ -428,3 +386,4 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sta
 ```
 
 Standalone `/build` (no run dir): list the skip in the Step 7 handoff instead (`build/handoff-template.md`'s inline-skip listing).
+<!-- /when -->

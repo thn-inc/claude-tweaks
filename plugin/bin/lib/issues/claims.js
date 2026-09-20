@@ -37,16 +37,26 @@ function claimPayload({ issueNumber, runId, sessionId, ttlHours = DEFAULT_TTL_HO
   };
 }
 
-// opts: { issueNumber, runId, reason, link?, owner?, repo?, now }
+// opts: { issueNumber, runId, reason, link?, sweptFrom?, owner?, repo?, now }
 // Returns { owner, repo, claimPath, tombstoneContent, commentBody }.
 // Both transports overwrite the blob at `claimPath` with `tombstoneContent`
 // (conditional-update, `sha` = the target file's current blob sha from a
 // fresh read) rather than deleting it. A sha mismatch here means someone
 // else already broke/re-claimed — treat as a release race, not this run's
 // problem (mirrors the "release fails -> log, TTL is the backstop" posture).
-function releasePayload({ issueNumber, runId, reason, link, owner = '{owner}', repo = '{repo}', now }) {
+// `sweptFrom` (#2090) is the original holder's `runId` when this release is a
+// `/tidy` sweep of a claim this run does not own — the tombstone's own
+// `runId` stays this (sweep) run's id, exactly as an ordinary release's does;
+// `sweptFrom` is the only thing that distinguishes "I released my own claim"
+// from "I swept someone else's". Omitted (undefined) for every non-sweep
+// release, so an ordinary tombstone's shape is byte-for-byte unchanged.
+function releasePayload({
+  issueNumber, runId, reason, link, sweptFrom, owner = '{owner}', repo = '{repo}', now,
+}) {
   const releasedAt = new Date(now).toISOString();
-  const marker = link ? { runId, reason, releasedAt, link } : { runId, reason, releasedAt };
+  const marker = { runId, reason, releasedAt };
+  if (link) marker.link = link;
+  if (sweptFrom) marker.sweptFrom = sweptFrom;
   const human = `Released by run ${runId}: ${reason}.` + (link ? ` See ${link}.` : '');
   return {
     owner,

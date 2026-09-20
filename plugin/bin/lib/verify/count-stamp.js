@@ -11,6 +11,9 @@
 // would poison this module's comparison): a missing, unreadable, or
 // malformed stamp reads as "no baseline yet" — bootstrap, never a false
 // regression.
+//
+// Also home to the flaky-allowlist hit counter (#1925): `flakyHits` rides in
+// the same stamp.
 'use strict';
 
 const fs = require('fs');
@@ -53,4 +56,46 @@ function caveatLine(regression) {
     + 'treating this run as a clean pass.';
 }
 
-module.exports = { readStamp, detectRegression, caveatLine };
+// Flaky-allowlist hit counter (#1925). Persisted in this stamp (the one
+// per-checkout file the runner already rewrites) as `flakyHits: {file: n}`;
+// a key is dropped the moment its file leaves the allowlist, so the map can
+// never outlive the declaration. The threshold is a stated literal, not a
+// policy lever: an allowlisted file retried this often needs a fix or its
+// entry removed, and the caveat keeps saying so on every run until one of
+// those happens — an allowlist with no pressure to shrink becomes permanent.
+const FLAKY_ESCALATION_HITS = 5;
+
+// allowlist is the declaration's flaky.files array, or null when no
+// declaration was read at all (no --scope, or --scope with a missing file) —
+// a run without a declaration says nothing about which files are still
+// allowlisted, so it must not be read as "the allowlist is empty" (parse-
+// signal discipline). null carries every finite positive prior count forward
+// untouched before applying this run's increments; only a real array prunes
+// entries whose file has left the allowlist.
+function nextFlakyHits(previous, retriedFiles, allowlist) {
+  const prior = previous && previous.flakyHits && typeof previous.flakyHits === 'object' && !Array.isArray(previous.flakyHits)
+    ? previous.flakyHits : {};
+  const next = {};
+  for (const file of allowlist === null ? Object.keys(prior) : allowlist) {
+    const n = prior[file];
+    if (typeof n === 'number' && Number.isFinite(n) && n > 0) next[file] = n;
+  }
+  for (const file of retriedFiles) next[file] = (next[file] || 0) + 1;
+  return next;
+}
+
+function flakyEscalations(hits) {
+  return Object.entries(hits)
+    .filter(([, n]) => n >= FLAKY_ESCALATION_HITS)
+    .map(([file, n]) => ({ file, hits: n }))
+    .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+}
+
+function escalationCaveatLine({ file, hits }) {
+  return `CAVEAT: flaky-allowlist: ${file} retried ${hits} times — file a fix or remove it from the allowlist`;
+}
+
+module.exports = {
+  readStamp, detectRegression, caveatLine,
+  nextFlakyHits, flakyEscalations, escalationCaveatLine, FLAKY_ESCALATION_HITS,
+};

@@ -1,12 +1,13 @@
 ---
 files:
-  - skills/flow/manifesto.md
-  - skills/flow/manifesto-overrides.md
-  - skills/wrap-up/manifesto-authorized-merge.md
-  - skills/wrap-up/review-console.md
-  - skills/flow/summary-template.md
-  - skills/_shared/pr-first-merge.md
-  - bin/lib/policy-schema.js
+  - plugin/skills/flow/manifesto.md
+  - plugin/skills/flow/manifesto-overrides.md
+  - plugin/skills/wrap-up/manifesto-authorized-merge.md
+  - plugin/skills/wrap-up/review-console.md
+  - plugin/skills/flow/summary-template.md
+  - plugin/skills/_shared/pr-first-merge.md
+  - plugin/bin/compose-subject.js
+  - plugin/bin/lib/policy-schema.js
 ---
 
 # Pre-Authorize a Flow Run's Merge, or Recover if It Doesn't Merge
@@ -27,10 +28,10 @@ files:
 
 ### 2a. The run merges itself — terminal, no interaction
 - **URL:** none — this happens inside `/claude-tweaks:wrap-up`'s Review Console step, unattended
-- **Action:** Once the last HARD-GATE clears and the full suite has just passed, the Auto-merge short-circuit (`wrap-up/review-console.md`, `wrap-up/manifesto-authorized-merge.md`) fires the same merge call the terminal one-click path uses (`_shared/pr-first-merge.md` Step 3, tagged `manifesto-authorized`), and logs the decision.
+- **Action:** Once the last HARD-GATE clears and the full suite has just passed, the Auto-merge short-circuit (`wrap-up/review-console.md`, `wrap-up/manifesto-authorized-merge.md`) fires the same merge call the terminal one-click path uses (`_shared/pr-first-merge.md` Step 3: `bin/compose-subject.js … --tag manifesto-authorized --shell`, then `gh pr merge --squash -t "$SUBJECT_TITLE" -b "$SUBJECT_BODY"`), and logs the decision.
 - **Should feel:** Invisible — the maintainer notices only that the PR is already merged when they check back.
-- **Should understand:** The content-judgment safety net (`assess-agent-autonomy merge-check`) still runs — the lever authorizes the merge decision, it doesn't skip the judgment that decides whether merging is safe.
-- **Red flags:** A merge commit tagged `manifesto-authorized` with no corresponding `decisions.md` entry naming the lever.
+- **Should understand:** The content-judgment safety net (`assess-agent-autonomy merge-check`) still runs — the lever authorizes the merge decision, it doesn't skip the judgment that decides whether merging is safe. The squash commit's subject is Conventional-Commits shaped (`feat|fix|chore[!]: {title} (#N)`, #2251); the `manifesto-authorized` tag now rides as a `[manifesto-authorized]` body paragraph rather than a subject prefix, which is still what `/help`'s auto-merged metric matches.
+- **Red flags:** A merge commit tagged `manifesto-authorized` with no corresponding `decisions.md` entry naming the lever; a pr-first merge that produced a merge commit instead of a single squash commit.
 
 ### 2b. Decline or leave it unanswered — terminal Review Console
 - **URL:** the Wrap-Up Review Console's one-click Recommended `AskUserQuestion` merge option

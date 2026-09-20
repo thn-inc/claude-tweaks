@@ -284,6 +284,16 @@ omitted when its own condition doesn't hold; the ranked table follows:
 | #{n} | bot:blocked | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} to re-authorize after the failure |
 | #{n} | needs:definition + solution:unjustified | {createdAt, relative} | run /claude-tweaks:specify #{n} to route through brainstorming; run /claude-tweaks:challenge #{n} for the evidence-or-accept-risk verdict on the flag |
 
+### Batch launchers
+
+{command} ({k})
+   #{N}  #{M} …
+   {batch command covering every row above}
+{command} ({k})
+   #{N}  #{M} …
+   {single command for #{N}}
+   {single command for #{M}}
+
 Pick up next: #{n} "{title}" — {oldest/highest-priority reason}.
 ```
 
@@ -300,21 +310,55 @@ replaces the generic clause with `run /claude-tweaks:backlog refine #{n} — pro
 line, verbatim}"` (the record's captured `proposed` text from Step 2, quoted exactly);
 `shaped:headless (no grant)` keeps its existing no-human-reviewed clause, `run
 /claude-tweaks:backlog refine to grant via the sweep's Grant lane (spec was headlessly shaped —
-no human has reviewed it)` — bare `refine`'s Grant lane (the sweep), never `refine #{n}` (the
-per-record resolver has no grant path for a `shaped:headless`-only row: `refine-record.md`'s own
-fetch reads only decision comments and `bot:blocked`, so pointing this row at `refine #{n}` would
-route the human to a command that finds nothing to grant); `bot:blocked` says `run
+no human has reviewed it)` — bare `refine`'s Grant lane (the sweep), rather than `refine #{n}`.
+Since #1887, `refine #{n}` *would* also grant it — `#N` now filters `refine-mode.md`'s whole
+sweep, Grant lane included, so a `#{n}`-filtered run reaches the same Grant-lane check restricted
+to that one record — this row still recommends the bare form because it covers every ungranted
+`shaped:headless` record in one batch-confirm rather than one command per record; `bot:blocked` says `run
 /claude-tweaks:backlog refine #{n} to re-authorize after the failure`. This `refine #{n}` catch-all is the **permanent default** for any future `needs:*`
 marker — a new marker earns a dedicated launcher only by a later record's own explicit decision,
 never by default. The trailing "Pick up next" line names the single oldest/highest-priority
 record across all types — the same shape `overview` mode's own "what to build next" recommendation
 uses; it is derived from the ranked table only, never from the two non-record rows above it.
 
+### Batch launchers
+
+Between the table and the "Pick up next" line, group the ranked table's rows by the command
+their Recommended-action column runs, and render one batch/ref-less/paste-block command per
+group — the identical grouping rule `tidy/step-6-auto.md`'s "Yours grouping (by the command the
+human runs)" section already defines for tidy's own report (group key derivation, fixed group
+order, and the batch-vs-ref-less-vs-paste-block split, read there — not restated here). Two
+facts specific to attention's row types, on top of that shared rule:
+
+- **The Grant lane is ref-less.** `shaped:headless (no grant)` rows key on the *whole-queue*
+  `/claude-tweaks:backlog refine` form (its Recommended-action text above), never `refine #{n}` —
+  same reason the per-row text already states (bare `refine` covers every ungranted
+  `shaped:headless` record in one batch-confirm; `refine #{n}` would now also grant a filtered
+  record since #1887, but one command per record is strictly more clicks than the bare form for
+  this row type). This renders as its own group, distinct from the batchable
+  `backlog refine` group below even though both cite the same skill+mode: a ref-less command is
+  identical for every row and closes with one line, `/claude-tweaks:backlog refine`; it is never
+  folded into a batch line naming specific record numbers.
+- **`needs:definition` and `solution:unjustified` are never batched.** `needs:definition` rows
+  key on `/claude-tweaks:specify #{n}`, whose batch form rejects a `needs:definition` element by
+  design (`specify/SKILL.md`'s batch branch) — this group always closes with a paste block, one
+  `/claude-tweaks:specify #{n}` line per record, never a comma-joined batch line.
+  `solution:unjustified` rows key on `/claude-tweaks:challenge #{n}`, single-ref only by its
+  `argument-hint` — same paste-block treatment. Every other type (`needs:decision`, `bot:blocked`,
+  and any other `needs:*` catch-all) keys on the targeted `/claude-tweaks:backlog refine` form,
+  whose `argument-hint` accepts a comma list — that group closes with one batch line,
+  `/claude-tweaks:backlog refine #{a},#{b},…`, naming every matched record.
+
+A row carrying more than one type (Step 2's merge) contributes one line to *each* matching
+group — a `needs:definition + solution:unjustified` row's number appears in both the `specify`
+paste block and the `challenge` paste block, never elided into one. Omit the whole block when the
+ranked table is empty (see below); a group with zero rows this render never appears.
+
 When the merged list is empty, render `Nothing needs attention — no open record carries a
 needs:* marker, solution:unjustified, an ungranted shaped:headless spec, or bot:blocked.` instead
-of an empty table, and omit the "Pick up next" line. The breaker banner and tidy row still render
-independently above this message when their own conditions hold — an empty table is not an empty
-mode output.
+of an empty table, and omit both the Batch launchers block and the "Pick up next" line. The
+breaker banner and tidy row still render independently above this message when their own
+conditions hold — an empty table is not an empty mode output.
 
 ## Anti-Patterns
 

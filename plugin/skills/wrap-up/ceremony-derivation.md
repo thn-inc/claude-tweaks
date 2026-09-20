@@ -1,9 +1,9 @@
-# Diff-derived ceremony default (headless firings only, #1545)
+# Diff-derived ceremony default (auto-mode firings, #1545)
 
 **Already `fast-lane`? Skip this file.** If `config.yml`'s `ceremony-profile` already reads
-`fast-lane` (a header-set value, not a headless derivation), there is nothing left for this
+`fast-lane` (a header-set value, not a diff-derived one), there is nothing left for this
 file's derivation logic to do — go straight to `_shared/fast-lane-digest.md`'s wrap-up section.
-This file matters only for a headless firing whose header default is still `standard`.
+This file matters only for an `auto`-mode run whose header default is still `standard`. What each profile skips is rostered in `_shared/ceremony-profile.md`; this file only decides which profile an `auto`-mode run gets.
 
 Cited from `SKILL.md`'s Phase 1, right before the Reflect step reads `config.yml`'s
 `ceremony-profile`. flow's Manifesto computes that value by folding every record's own
@@ -14,14 +14,17 @@ so a headless firing whose actual diff turns out small and low-surface still ran
 complete registry pass, and a residue sweep, ~8 of the firing's 43 minutes on ceremony nothing
 acted on.
 
-Skip entirely when `DISPATCH_HEADLESS=1` was not set on this run's invocation
-(`dispatch/task-prompt.md`'s marker — a human-present firing already saw and could adjust the
-Manifesto's `ceremony-profile` lever, so this derivation only ever applies where nobody was there
-to catch a mismatch) or when no `config.yml` exists (standalone wrap-up). Otherwise, and only when
-`config.yml`'s `ceremony-profile` currently reads `standard` — this lever's value is always
-exactly the header-fold default in a headless (`auto`-mode, no Manifesto stop) firing, never a
-human override (`flow/manifesto.md`'s Ceremony profile computation), so there is nothing here to
-clobber:
+Skip entirely when `config.yml`'s `mode` is not `auto` — under `confirm`, `hybrid`, or `interactive`
+the Manifesto presented `ceremony-profile` as a real question and its value may be a human's answer,
+never to be clobbered — or when no `config.yml` exists (standalone wrap-up). In `auto` mode the
+Manifesto is a read-only FYI table (`flow/manifesto.md`'s auto-mode variant never calls
+`AskUserQuestion`), so nobody could have adjusted the lever whether or not a person was watching
+the run (#1932; the earlier headless-only gate left a human-present `auto` run paying the
+full `standard` ceremony for a `size:low` single-module fix — 12 minutes of full-mode reflect on
+#1535). The gate is `shouldDerive({mode, ceremonyProfile})` in
+`bin/lib/dispatch/ceremony-derive.js` — true only when `mode` is `auto` and `ceremony-profile`
+currently reads `standard`, the header-fold default (`flow/manifesto.md`'s Ceremony profile
+computation), so there is nothing here to clobber:
 
 1. Compute this run's diff facts via `node "${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/ceremony-derive.js"`'s
    `computeDiffFacts` over `git diff --numstat` against the run's own merge-base (the same facts

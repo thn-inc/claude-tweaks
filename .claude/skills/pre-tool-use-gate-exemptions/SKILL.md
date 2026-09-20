@@ -17,7 +17,11 @@ description: Use when adding or reviewing a scoping exemption in `plugin/bin/lib
 
 - **A Bash-shaped exemption matches the ENTIRE command string against a grammar** — no extra flag, no shell operator, no env-var prefix slipping past a substring match. Prove the staged set with `git diff --name-status`, never `--name-only` — a rename into the target collapses to one `--name-only` line and hides that a second file also changed.
 
+- **A containment check calls `shared-primitives.js`'s `isPathContained(candidate, root, { orEqual })` — never a retyped `startsWith(root + path.sep)`.** Both of this file's containment-shaped exemptions route through it: `isPipelineBookkeeping` (strict) and `checkTeardownGate`'s own-cwd refusal (`orEqual: true`). #2324's review found the idiom independently retyped in six places — `reconcile/reap-merged.js`, `hooks/worktree-reap.js`, `timing/transcript.js`, and this file's two sites — each copy free to drop the `+ path.sep` (making `/repo/.claude-tweaks-evil` match inside `/repo/.claude-tweaks`) or the equals branch. Pass already-resolved paths in: it is a pure string comparison, never a filesystem call, so it does not substitute for the symlink resolution the `realTarget()` bullet above requires.
+
 - **Every new exemption needs a regression test proven to go red on revert.** Write the test, revert only the code fix (`git checkout -- {file}` on that one file, not `git stash`), confirm the new test — and only the new test — fails, then restore the fix. A green suite alone is not evidence the test discriminates.
+
+- **Not every exemption is decidable from the command grammar alone — some need a live query.** Every exemption above this line is a pure string match: the command text alone proves the exemption holds. `isIntegrationBranchFastForwardPush` (#2542) is the first exemption of a second shape — a fast-forward is a fact about ref state, not something the command text can prove, so the grammar match (`git push <remote> <branch>`, nothing else) is only step one; the exemption still requires a live `git merge-base --is-ancestor` query against the resolved integration branch before it can return true. Keep the two steps in that order and don't let the grammar match alone stand in for the live check — a syntactically-clean fast-forward-shaped command is not evidence of an actual fast-forward.
 
 ## Existing coverage, checked
 
@@ -31,4 +35,5 @@ description: Use when adding or reviewing a scoping exemption in `plugin/bin/lib
 | Nesting a conclusive exemption's `return {}` inside a check on an unrelated value | A transient failure of the unrelated check denies a target already proven out of scope — `[IL-149]` |
 | Treating `mainCheckoutRoot() === null` as "different repo" | `null` also means "the answer is unknown" (EACCES/ELOOP/EIO, unreadable `.git`) — only a resolved-AND-different root exempts |
 | Proving a Bash exemption's staged set with `git diff --name-only` | A rename into the target collapses to one line and hides a second changed file — use `--name-status` |
+| Retyping `candidate.startsWith(root + path.sep)` instead of calling `isPathContained` | Six independent copies existed before #2324; a copy silently drops the separator (a prefix sibling then matches) or the `orEqual` branch |
 | Shipping a new exemption with no regression test proven to fail on revert | A green suite alone proves nothing about whether the new test actually discriminates |

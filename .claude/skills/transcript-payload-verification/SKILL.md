@@ -52,6 +52,50 @@ standard step in implementing the handler.
    `plugin/bin/lib/hooks/post-tool-use.js`'s `extractToolResponseText` for the pattern this project
    already uses for exactly this reason.
 
+## A hook's *input* payload is not in the transcript at all
+
+The procedure above reaches a tool's `tool_use`/`tool_result` pair — which is where a
+`PostToolUse` handler's `tool_response` lives, the shape the Origin case below turned on. It does
+**not** reach the **hook input envelope**: the object the harness hands the hook process on stdin
+(`hook_event_name`, `agent_type`, `agent_id`, `permission_mode`, `agent_transcript_path`). Those
+fields are never written to a session transcript — check it live rather than trusting a count
+here: `grep -l hook_event_name "$CLAUDE_CONFIG_DIR"/projects/*/*.jsonl` finds nothing on this
+machine's store, while the same grep for `tool_use` matches most files in it. Nothing under
+`plugin/bin/lib/hooks/` persists the raw `ctx.input` either, so a run directory's `events.jsonl`
+is not a substitute — it carries typed events, never the payload that produced them.
+
+So for a hook-input field, "no relevant transcript exists — proceed defensively" (see *When not to
+use*) is the wrong exit: there is never going to be one, and the field is capturable in minutes.
+The route this repo has already proven is a **throwaway hook** — point `claude -p` at a scratch
+settings file registering the event you care about, have it append its stdin to a capture file,
+run each scenario you need to distinguish, then read the raw lines:
+
+```bash
+mkdir -p /tmp/cap && cat > /tmp/cap/hook-settings.json <<'JSON'
+{"hooks":{"SubagentStop":[{"hooks":[{"type":"command","command":"cat >> /tmp/cap/capture.jsonl"}]}]}}
+JSON
+cd /tmp/cap && claude -p --settings /tmp/cap/hook-settings.json "<scenario prompt>"
+```
+
+Record #371 ran exactly this against `PostToolUse`/`Skill` and pinned five separate answers off
+it, including two the reference docs did not state:
+`.claude-tweaks/pipelines/archive/2026-08-13T201329-spec-371-372-373/spec-371/work/task0-findings.md`
+holds the verbatim payload lines, and `plugin/bin/lib/hooks/skill-invocation.js`'s header comment
+carries the distilled `(a)`-`(e)` results. Run one scenario per branch your code will take — that
+capture is still the only *observed* `agent_type` value in this repo (`"general-purpose"`, a bare
+built-in with no namespace), so the namespaced `plugin:agent-name` form that
+`plugin/bin/lib/hooks/subagent-stop.js`'s `isExemptAgentType` branches on (#1596) rests on the
+hooks reference doc alone, with no captured instance behind it.
+
+**A second branch on the same footing (#2036).** That same file now also no-ops a `SubagentStop`
+whose `agent_transcript_path` equals the same event's own `transcript_path`. The shape was
+inferred from the *symptom* — `events.jsonl` `contract-violation` entries whose `firstLine` was
+plainly the dispatcher's own async-wait narration — and pinned by hand-built fixtures in
+`tests/hooks-log-modules.test.js`, never read off a captured hook-input envelope. Two branches in
+one file now rest on inference, and the throwaway-hook recipe above settles both in a single
+capture session: run it the next time `subagent-stop.js` is opened, with one scenario per branch
+(a real dispatched subagent, and a dispatcher ending its turn on an async wait).
+
 ## A fixture is a claim, not ground truth
 
 The same gap one level over: a fixture's literal values are an assertion about the real shape,

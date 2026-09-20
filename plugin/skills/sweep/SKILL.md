@@ -3,7 +3,6 @@ name: sweep
 description: Hands-off hygiene sweep: tidy, specify drain, backlog refine headless, then attention. Keywords - sweep, hygiene, orchestrator
 argument-hint: "[--budget <n|all>] [--scope <name>[,<name>...]]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
 
 # Sweep — Hands-Off Queue Hygiene Orchestrator
 
@@ -29,7 +28,7 @@ Anything else in `$ARGUMENTS` is an error — report it and stop; sweep delibera
 
 ## Step 0: Resolve the run directory
 
-Resolve one standalone run directory per `_shared/pipeline-run-dir.md`'s standalone-auto fallback (sweep is on that file's allowlist):
+Resolve one standalone run directory per `_shared/run-dir-resolution.md`'s standalone-auto fallback (sweep is on that file's allowlist):
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --mode auto --standalone sweep --create
@@ -76,18 +75,19 @@ An unhandled error in a step halts the sequence before the next step — sweep n
 ## Step 4: Close-out
 
 1. Repeat Step 1.5's invalidation command once more, so the close-out reads the run's final record state.
-2. Invoke `/claude-tweaks:backlog attention`'s render — execute `backlog/attention-mode.md`'s existing Steps 1-4 directly as the first block of sweep's own output. Do not restate its fetch/merge/rank/render logic here: any future change to attention's row types or ranking must need no edit in this file.
-3. Render sweep's `## Next Actions` (below), then log one summary line to `decisions.md` with the three steps' counts.
+2. Invoke `/claude-tweaks:backlog attention`'s render — execute `backlog/attention-mode.md`'s existing Steps 1-4 directly as the first block of sweep's own output. Do not restate its fetch/merge/rank/render logic here: any future change to attention's row types or ranking must need no edit in this file. This includes its `### Batch launchers` block (`attention-mode.md` Step 4): `## Next Actions` below takes those lines verbatim from this render, never re-derives them.
+3. **Staged for approval.** When `{run-dir}/staged/` is non-empty, render a `## Staged for approval` block: `{run-dir}/report-condensed.md`'s Approve section, verbatim (tidy's three-line-per-item shape with its command) — falling back to `report.md`'s Approve section when the condensed file is absent. Before sending, run `node "${CLAUDE_PLUGIN_ROOT}/bin/tidy-report-lint.js" --surface=condensed` over the block and fix any findings, the same pre-send scan `tidy/step-6-auto.md` mandates for its own chat render. When `staged/` is empty, render nothing — this block is display only; `/claude-tweaks:tidy --approve` remains the single write path. Attention's own Tidy row (Step 2 above) stays the one-line cross-run count; this block is the run's own click surface, so the items render once, not twice.
+4. Render sweep's `## Next Actions` (below), then log one summary line to `decisions.md` with the three steps' counts.
 
 ## Next Actions
 
 When Step 1's tidy pass staged anything this run (a non-zero `staged` count in the counts it
 reported back), `/claude-tweaks:tidy --approve` leads the block, bolded and recommended —
 clearing an already-vetted, zero-judgment batch is cheaper than either heavier pick below it,
-so it takes the top slot ahead of both `/claude-tweaks:dispatch` and the needs-you launcher
-that would otherwise fill it. The dispatch/needs-you line still renders, one slot down,
-unbolded. When nothing was staged this run, the original order applies unchanged, needs-you
-precedence rule included.
+so it takes the top slot ahead of both `/claude-tweaks:dispatch` and the needs-you slot that
+would otherwise fill it. The dispatch/needs-you lines still render, one slot down, unbolded.
+When nothing was staged this run, the original order applies unchanged, needs-you precedence
+rule included.
 
 **Tidy staged something this run:**
 **`/claude-tweaks:tidy --approve`** — apply this run's staged tidy items (recommended)
@@ -100,9 +100,15 @@ precedence rule included.
 `/claude-tweaks:backlog attention` — re-check after acting
 
 Precedence (nothing-staged case only — the staged case's top slot is always `tidy --approve`):
-when attention's render above names a "needs you" item (its Pick up next line or a `needs:*`
-row), that item's launcher leads this block instead of `/claude-tweaks:dispatch`, bolded, with
-`(recommended)` — mirroring `backlog/SKILL.md`'s own needs-you-first precedence.
+when attention's render above renders a non-empty `### Batch launchers` block, its lines — one
+per group, in that block's own order — replace `/claude-tweaks:dispatch` in this slot entirely,
+not just its top pick: every group's closing batch/ref-less/paste-block line renders, one per
+line, with the same bold/`(recommended)` treatment applied to the first line only (mirroring
+`backlog/SKILL.md`'s own needs-you-first precedence) and every line after it unbolded. This
+applies under both orderings above — the nothing-staged case's top slot, and the tidy-staged
+case's second slot — since either way it is `/claude-tweaks:dispatch`'s slot the batch launchers
+occupy, never a slot of their own. When attention's Batch launchers block is empty (the ranked
+table itself is empty), `/claude-tweaks:dispatch` renders in that slot as shown above, unchanged.
 
 ## Component-Skill Contract
 

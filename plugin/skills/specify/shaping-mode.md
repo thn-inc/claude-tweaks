@@ -74,6 +74,48 @@ One authoring constraint on the composed prose itself: never write the literal p
 
 When a human-filed defect report names a specific affected file, function, or exact error string, do a cheap sanity check before shaping: grep the named artifact against the codebase. A miss doesn't necessarily mean the report is wrong (the code may be newer, or the artifact may genuinely live elsewhere) — but it's a fact-check worth doing at shaping time rather than discovering it mid-build, after a worktree and (under `pr-first`) a draft PR already exist (`#174`).
 
+**Near-duplicate candidate check (#1944), also before composition.** Run `findNearDuplicates`
+(`bin/lib/issues/near-duplicate.js`) with this record as subject against every other open record
+in this session's already-fetched snapshot (`_shared/record-queue-fetch.md` — invalidate first,
+per that file's staleness rule, when this is not the first record shaped in the current
+session/batch). This is a screen, not a verdict (memory: similarity scores are
+normalization-sensitive) — the finder never blocks shaping on its own signal alone.
+
+When it returns no candidates, proceed straight to composition below. When it returns one or
+more, render a three-column table in the shaping output before proceeding —
+
+| Record | Score | Signals |
+|--------|-------|---------|
+| #{n} | {score} | {signals, comma-joined} |
+
+— and append every candidate as `#{n}` to the composed body's `**Related:**` line (creating the
+line if the record doesn't already carry one). A candidate surfaced here is worth a human's
+attention even when shaping proceeds normally.
+
+Then check each candidate's own current state. When any candidate is **both** `ready` **and**
+either carries `bot:in-progress` or has an open linked PR (the same `closedByPullRequestsReferences`
+connection dispatch's own open-PR exclusion reads — `record.js`'s `buildLinkedPRQuery` /
+`partitionByOpenLinkedPR`), **stop shaping this record here** — do not compose, stamp, or write
+`ready` for it. Instead, add the `needs:decision` label (bootstrap per
+`_shared/label-bootstrap.md` if this repo has never stamped it before) and post
+`_shared/work-record.md`'s canonical decision-comment, `{unit}` = `specify`:
+
+```
+<!-- needs-decision: specify -->
+## Decision needed
+**Proposed:** Absorb into #{candidate} — close this record as a duplicate rather than shaping it
+**Why:** near-duplicate finder found {signals} against #{candidate}, which is `ready` with an
+in-flight build (open PR / `bot:in-progress`)
+**Command:** `gh issue close {n} --comment "Absorbed into #{candidate}"`
+```
+
+Report this record's Actions Performed row as `refused — proposed Absorb into #{candidate}`
+rather than `shaped` — the same per-record failure-isolation posture a write/read-back failure
+already uses on a batch (below): the rest of the batch keeps shaping. This is the one automatic
+refusal the finder's signal authorizes on its own; every other candidate (no `ready` +
+in-flight-build match) is surfaced via the table and `**Related:**` append only, mirroring the
+refusal grounds an earlier sweep applied by hand for the same reason (#1944).
+
 ### Dependency-narration check
 
 After composing `## Current State`/`## Deliverables` above, run `_shared/dependency-narration-check.md`'s check against that text — it catches a body that narrates another record's not-yet-merged follow-up as settled fact and, on a hit, auto-populates a `blocked-by:` edge onto this record before the compose-then-write-once call in `shaping-mode-stamping.md`. This record's own number is already known (it's the target being shaped), so the `work-links: native` branch runs its `bin/link-records.js` call immediately rather than waiting on a post-create step; the `body-text` branch's `Blocked by #{n}` line lands in the metadata block `shaping-mode-stamping.md`'s Metadata block subsection composes, the same placement `Parent: #N` already uses.

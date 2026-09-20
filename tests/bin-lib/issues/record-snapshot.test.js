@@ -13,6 +13,7 @@ const {
   readSnapshot,
   writeSnapshot,
   invalidateSnapshot,
+  mergeOpenIntoUnion,
 } = require('../../../plugin/bin/lib/issues/record-snapshot');
 
 test('UNION_FIELDS carries the field set every consumer needs', () => {
@@ -109,4 +110,53 @@ test('invalidateSnapshot tolerates an already-absent snapshot (no throw)', () =>
 
 test('invalidateSnapshot no-ops safely for an absent session id', () => {
   assert.doesNotThrow(() => invalidateSnapshot(undefined));
+});
+
+test('mergeOpenIntoUnion: capped union (1000 rows, 150 open) completed by 160 open-only rows yields 1010 records with all 160 open numbers present', () => {
+  // Union is the newest-first --state all pull, capped at 1000: numbers
+  // 100..1099, with the 150 newest (950..1099) still open. The seven (here,
+  // ten, for a rounder fixture) oldest open records — numbered 1..10 — are
+  // old enough that newer closed records fill every remaining union slot, so
+  // they never appear in the union at all.
+  const union = [];
+  for (let n = 100; n <= 1099; n++) {
+    union.push({ number: n, title: `union-${n}`, state: n >= 950 ? 'OPEN' : 'CLOSED' });
+  }
+  const open = [];
+  for (let n = 1; n <= 10; n++) {
+    open.push({ number: n, title: `open-${n}`, state: 'OPEN' });
+  }
+  for (let n = 950; n <= 1099; n++) {
+    open.push({ number: n, title: `open-${n}`, state: 'OPEN' });
+  }
+  assert.strictEqual(open.length, 160);
+
+  const merged = mergeOpenIntoUnion(union, open);
+
+  assert.strictEqual(merged.length, 1010);
+  const openNumbers = new Set(
+    merged.filter((r) => r.state === 'OPEN').map((r) => r.number),
+  );
+  assert.strictEqual(openNumbers.size, 160);
+  for (let n = 1; n <= 10; n++) {
+    assert.ok(openNumbers.has(n), `expected open number ${n} to be present`);
+  }
+  for (let n = 950; n <= 1099; n++) {
+    assert.ok(openNumbers.has(n), `expected open number ${n} to be present`);
+  }
+});
+
+test('mergeOpenIntoUnion: below-cap union returned unchanged when open is empty', () => {
+  const union = [{ number: 1, state: 'OPEN' }, { number: 2, state: 'CLOSED' }];
+  const merged = mergeOpenIntoUnion(union, []);
+  assert.deepStrictEqual(merged, union);
+});
+
+test('mergeOpenIntoUnion: dedups by number, preserving the union row (its full field set) over the open-only duplicate', () => {
+  const union = [{ number: 1, title: 'union-1', state: 'OPEN', extra: 'union-field' }];
+  const open = [{ number: 1, title: 'open-1', state: 'OPEN' }, { number: 2, title: 'open-2', state: 'OPEN' }];
+  const merged = mergeOpenIntoUnion(union, open);
+  assert.strictEqual(merged.length, 2);
+  assert.deepStrictEqual(merged[0], { number: 1, title: 'union-1', state: 'OPEN', extra: 'union-field' });
+  assert.deepStrictEqual(merged[1], { number: 2, title: 'open-2', state: 'OPEN' });
 });

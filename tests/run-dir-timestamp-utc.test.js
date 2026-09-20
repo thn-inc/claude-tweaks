@@ -9,6 +9,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { composedBytesReport, overComposedCeiling } = require('../plugin/bin/lib/skill-audit/context-cost.js');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(REPO_ROOT, p), 'utf8');
@@ -36,8 +37,10 @@ test('every run-dir timestamp snippet under skills/ uses date -u (#721)', () => 
   assert.deepStrictEqual(offenders, []);
 });
 
-test('pipeline-run-dir.md states the UTC ISO-timestamp rule once (#721)', () => {
-  const content = read('plugin/skills/_shared/pipeline-run-dir.md');
+test('run-dir-resolution.md states the UTC ISO-timestamp rule once (#721)', () => {
+  // Moved from pipeline-run-dir.md to run-dir-resolution.md at #2019, alongside the
+  // Resolution order and Bash snippet it's adjacent to.
+  const content = read('plugin/skills/_shared/run-dir-resolution.md');
   assert.match(content, /ISO-timestamp rule/);
   assert.match(content, /UTC/);
   assert.match(content, /date -u \+%Y-%m-%dT%H%M%S/);
@@ -58,12 +61,13 @@ test('claim-targets contest path removes a self-minted empty dir immediately (#7
   assert.doesNotMatch(content, /isOrphanedMint` sweep reclaims after 24h if it was freshly minted here/);
 });
 
-test('claim-targets spec-slug rule cites pipeline-run-dir.md, not manifesto.md (#724)', () => {
+test('claim-targets spec-slug rule cites run-dir-resolution.md, not manifesto.md (#724)', () => {
+  // SPEC_SLUG conventions moved from pipeline-run-dir.md to run-dir-resolution.md at #2019.
   const content = read('plugin/skills/flow/claim-targets.md');
   const slugLines = content.split('\n').filter((l) => l.includes('{spec-slug}') && l.includes('follows'));
   assert.ok(slugLines.length > 0, 'the mint step must still state where the spec-slug rule lives');
   for (const l of slugLines) {
-    assert.match(l, /pipeline-run-dir\.md/);
+    assert.match(l, /run-dir-resolution\.md/);
     assert.doesNotMatch(l, /manifesto\.md/);
   }
 });
@@ -72,17 +76,48 @@ test('flow SKILL.md defers the manifesto.md read until Step 2.8 passes (#724)', 
   assert.match(read('plugin/skills/flow/SKILL.md'), /read `manifesto\.md`[^.]*after Step 2\.8 passes|after Step 2\.8 passes[^.]*read `manifesto\.md`/i);
 });
 
-test('manifesto.md and multi-spec.md each fit the ~20KB read budget (#724)', () => {
-  // manifesto.md's ceiling was bumped 20480 -> 21504 in #715: a 13th Manifesto
-  // lever (merge-authorization) costs ~600 irreducible structural bytes (table
-  // row, suppression row, Recommendation defaults row, canonical numbering
-  // entry) even at parity terseness with sibling levers 11/12 — there was no
-  // slack left to absorb it under the 12-lever budget.
-  const BUDGETS = { 'plugin/skills/flow/manifesto.md': 21504, 'plugin/skills/flow/multi-spec.md': 20480 };
+test('multi-spec.md and manifesto.md fit their single-read budgets (#724, #1997)', () => {
+  // multi-spec.md is a lazy sub-file's single-read budget (the multi-spec
+  // branch only), not a 40 KB compose-source pin — #1997 leaves it as-is.
+  //
+  // manifesto.md's composed-bundle gate (below, `manifesto.md has no
+  // over-ceiling composed-bytes row (#1997)`) covers the *adopted*-run read
+  // (config.yml already exists, so flow/SKILL.md Step 3 reads the composed
+  // bundle via compose-context.js). It does not cover the *fresh*-run read:
+  // on a fresh run config.yml doesn't exist yet, so Step 3 reads
+  // manifesto.md directly, and the compose command's own fallback (source
+  // files read directly when compose-context.js is unavailable/non-zero)
+  // hits the same raw file. #724's ~21760-byte raw budget still binds on
+  // both of those direct-read paths, so it's restored here alongside
+  // multi-spec.md's — #1997 keeps both, as #1991's "final, considered form".
+  const BUDGETS = {
+    'plugin/skills/flow/multi-spec.md': 20480,
+    'plugin/skills/flow/manifesto.md': 21760,
+  };
   for (const [p, budget] of Object.entries(BUDGETS)) {
     const bytes = fs.statSync(path.join(REPO_ROOT, p)).size;
     assert.ok(bytes < budget, `${p} is ${bytes} bytes — must stay under ${budget}`);
   }
+});
+
+// manifesto.md is also a compose source (`flow/SKILL.md`'s `manifesto` step,
+// #1991), so on the adopted-run path the hard gate is the composed bundle at
+// that call site, not the raw file (#1997) — the raw budget above still
+// binds on the fresh-run direct read. `context-cost.test.js` measures the
+// `manifesto` bundle under every mode; this test only confirms it carries
+// no over-ceiling row.
+test('manifesto.md has no over-ceiling composed-bytes row (#1997)', () => {
+  const PLUGIN_ROOT = path.join(REPO_ROOT, 'plugin');
+  // Guard against a vacuous pass (#1997): if the `manifesto` call site is
+  // ever removed or renamed, the filter below yields [] regardless of
+  // whether manifesto.md is actually over budget anywhere — retarget this
+  // test or restore the raw per-file pin instead of leaving it vacuous.
+  assert.ok(
+    composedBytesReport(PLUGIN_ROOT).some((r) => r.step === 'manifesto' && !r.unparsed),
+    'the manifesto call site is gone — retarget or restore the raw pin',
+  );
+  const manifestoRows = overComposedCeiling(composedBytesReport(PLUGIN_ROOT)).filter((r) => r.step === 'manifesto');
+  assert.deepStrictEqual(manifestoRows, [], `manifesto composed bundle over ceiling: ${JSON.stringify(manifestoRows)}`);
 });
 
 test('extracted override table and summary template live in their sub-files (#724)', () => {

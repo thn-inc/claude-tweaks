@@ -10,6 +10,8 @@ WORK_LINKS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values work-li
 gh issue list --state open --json number,title,body --limit 200 > "$WRAPUP_OPEN_RECORDS"
 ```
 
+Read `pack.unblocked` from `{run-dir}/wrap-up-pack.json` first (#1930) — its `value` is the `[{number, title}]` list both branches below compute; write it to `$WRAPUP_UNBLOCKED` and skip the queries. Run the branches only when the pack file is absent; an `ok: false` field (`gh-absent`, a failed query) is this step's existing "skip the newly-unblocked check this run" warning, never an empty list read as "nothing unblocked".
+
 `work-links: body-text` — dependents are found via literal `Blocked by #N` body-text lines. Re-resolve this fence's session-scoped paths (`_shared/session-tmp-root.md`; a fresh bash invocation does not inherit the prior fence's shell variable):
 
 ```bash
@@ -66,7 +68,7 @@ node -e "
 
 `byNumber[r.number].openBlocker` reflects LIVE blocker state at query time, run after this session already closed `${CLOSED_NUM}` — so a `false` here means every one of the record's blockers, `${CLOSED_NUM}` included, is now resolved, without needing to special-case `closedNum` out of the check. On any error this fails safe — skip the check for this run (an empty `wrapup-unblocked.json`) rather than blocking wrap-up, matching this section's own "must never gate, block, or delay the wrap-up" rule above and dispatch's identical native-mode fallback.
 
-**`work-backend: local-files`:** resolve this run's session-scoped path first (`_shared/session-tmp-root.md`):
+**`work-backend: local-files`:** read `pack.unblocked` from `{run-dir}/wrap-up-pack.json` first (#1930) — on this backend its `value` is the same `[{number, title}]` list the snippet below computes, `number` being the record id; write it to `$WRAPUP_UNBLOCKED` and skip the snippet. Run the snippet only when the pack file is absent; an `ok: false` field is this file's opening "on any error, log and continue" path — skip the newly-unblocked check this run, never an empty list read as "nothing unblocked". Otherwise resolve this run's session-scoped path first (`_shared/session-tmp-root.md`):
 
 ```bash
 eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" WRAPUP_UNBLOCKED=wrapup-unblocked.json)"

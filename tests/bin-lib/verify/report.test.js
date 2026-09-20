@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 
-const { gitInfo, composeReport, writeReportAtomic } = require(path.join(
+const { gitInfo, gitDir, composeReport, writeReportAtomic } = require(path.join(
   __dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'report.js'));
 
 const PASSING = {
@@ -121,4 +121,61 @@ test('writeReportAtomic: two different-pid writers no longer collide on the tmp 
   assert.notStrictEqual(writePaths[0], writePaths[1], 'two different-pid writers use two different tmp paths');
   assert.ok(writePaths[0].endsWith('.tmp-111'));
   assert.ok(writePaths[1].endsWith('.tmp-222'));
+});
+
+test('gitDir resolves a relative rev-parse answer against cwd and returns an absolute path (#1921)', () => {
+  const exec = (cmd, args) => {
+    assert.strictEqual(cmd, 'git');
+    assert.deepStrictEqual(args, ['rev-parse', '--git-dir']);
+    return '.git\n';
+  };
+  assert.strictEqual(gitDir(exec, '/repo'), path.join('/repo', '.git'));
+});
+
+test('gitDir passes an already-absolute worktree git dir through unchanged (#1921)', () => {
+  const exec = () => '/repo/.git/worktrees/wt\n';
+  assert.strictEqual(gitDir(exec, '/elsewhere'), '/repo/.git/worktrees/wt');
+});
+
+test('gitDir returns null when git fails (outside a checkout) (#1921)', () => {
+  const exec = () => { throw new Error('fatal: not a git repository'); };
+  assert.strictEqual(gitDir(exec, '/tmp'), null);
+});
+
+test('composeReport carries a scope object when given one and omits it otherwise (#1922)', () => {
+  const git = { sha: 'abc', dirty: false };
+  const checks = [{ name: 'tests', command: 'x', exitCode: 0, durationMs: 1, logPath: '/l' }];
+  const without = composeReport({ checks, startedAt: 't', durationMs: 1, git });
+  assert.ok(!('scope' in without));
+  const scope = { mode: 'scoped', suites: ['api'], static: true, base: 'fff', unmatched: [], changedFiles: ['apps/api/a.ts'] };
+  const withScope = composeReport({ checks, startedAt: 't', durationMs: 1, git, scope });
+  assert.deepStrictEqual(withScope.scope, scope);
+});
+
+test('composeReport carries flakyRetried/retryFailed/retryAttempts/retryDecision on a check entry and flakyEscalation at top level only when non-empty (#1925)', () => {
+  const retried = {
+    name: 'tests', command: 'x', exitCode: 0, durationMs: 1, logPath: '/l/tests.log',
+    flakyRetried: ['tests/a.test.js'],
+    retryAttempts: [
+      { file: 'tests/a.test.js', attempt: 1, exitCode: 0, logPath: '/l/r1.log', durationMs: 1 },
+      { file: 'tests/b.test.js', attempt: 1, exitCode: null, logPath: '/l/r2.log', durationMs: 1, spawnError: 'ENOENT' },
+    ],
+    retryDecision: { retry: true, files: ['tests/a.test.js'] },
+  };
+  const plain = { name: 'lint', command: 'y', exitCode: 0, durationMs: 1, logPath: '/l/lint.log' };
+  const git = { sha: 'abc', dirty: false };
+  const report = composeReport({ checks: [retried, plain], startedAt: 't', durationMs: 2, git, flakyEscalation: [{ file: 'tests/a.test.js', hits: 5 }] });
+  assert.deepStrictEqual(report.checks.tests.flakyRetried, ['tests/a.test.js']);
+  assert.deepStrictEqual(report.checks.tests.retryAttempts, [
+    { file: 'tests/a.test.js', attempt: 1, exitCode: 0, logPath: '/l/r1.log' },
+    { file: 'tests/b.test.js', attempt: 1, exitCode: null, logPath: '/l/r2.log', spawnError: 'ENOENT' },
+  ]);
+  assert.deepStrictEqual(report.checks.tests.retryDecision, { retry: true, files: ['tests/a.test.js'] });
+  assert.strictEqual('flakyRetried' in report.checks.lint, false);
+  assert.deepStrictEqual(report.flakyEscalation, [{ file: 'tests/a.test.js', hits: 5 }]);
+  const none = composeReport({ checks: [plain], startedAt: 't', durationMs: 2, git, flakyEscalation: [] });
+  assert.strictEqual('flakyEscalation' in none, false);
+  const failed = composeReport({ checks: [{ ...plain, name: 'tests', exitCode: 1, retryFailed: ['tests/a.test.js'], flakyRetried: [] }], startedAt: 't', durationMs: 2, git });
+  assert.deepStrictEqual(failed.checks.tests.retryFailed, ['tests/a.test.js']);
+  assert.strictEqual('flakyRetried' in failed.checks.tests, false);
 });
