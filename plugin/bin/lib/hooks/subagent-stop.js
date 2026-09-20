@@ -316,22 +316,23 @@ function run(ctx) {
   // construction, the exact population the Subagent Contract targets — a
   // dispatched agent's terminal reply) whose transcript carries zero tool-use
   // blocks anywhere is a failed dispatch, never evidence — regardless of
-  // whether its status line is otherwise well-formed. Logged independently of
-  // the contract-violation check below; a `null` count (unreadable transcript,
-  // which can't actually happen here since lastAssistantText already read it
-  // successfully) never logs.
+  // whether its status line is otherwise well-formed. Independent of
+  // compliance (checked in both branches below); a `null` count (unreadable
+  // transcript, which can't actually happen here since lastAssistantText
+  // already read it successfully) never logs.
   const toolUseCount = countToolUseBlocks(transcriptPath);
-  if (toolUseCount === 0) {
-    ctxLib.appendEvent(ownedRun.dir, 'zero-tool-use-verdict', { firstLine }, ownedRun.attribution);
-  }
   const detection = detectStatus(trimmedText);
   if (detection.compliant) {
     // Lenient (off-position/bare-word) compliance is still logged — an
     // informational variant, never a dispatcher-facing warning — so a
     // dispatch site still using the old shape stays visible without being
-    // treated as a violation (#2265).
+    // treated as a violation (#2265). Compliance is decided before the
+    // async-wait filter below is ever consulted.
     if (detection.variant === 'lenient') {
       ctxLib.appendEvent(ownedRun.dir, 'contract-violation', { firstLine, variant: 'lenient' }, ownedRun.attribution);
+    }
+    if (toolUseCount === 0) {
+      ctxLib.appendEvent(ownedRun.dir, 'zero-tool-use-verdict', { firstLine }, ownedRun.attribution);
     }
     return {};
   }
@@ -339,8 +340,13 @@ function run(ctx) {
   // own dispatch's launch ack or a sibling's task-notification, never to
   // content it could have replied to — is not this agent's final reply.
   // Best-effort no-op, matching this file's own posture (#2036 is the
-  // one-level-shallower sibling of this same filter).
+  // one-level-shallower sibling of this same filter). Must run before the
+  // #2345 zero-tool-use-verdict check below: an async-wait checkpoint is not
+  // graded at all, so it must log nothing, not even that independent signal.
   if (asyncWaitCheckpoint) return {};
+  if (toolUseCount === 0) {
+    ctxLib.appendEvent(ownedRun.dir, 'zero-tool-use-verdict', { firstLine }, ownedRun.attribution);
+  }
   // Genuine violation (tier 3). One forced in-run retry per (session_id,
   // agent_id) — confirmed live (#1936 Task 0) that SubagentStop's JSON
   // output supports `{ decision: 'block', reason }`, which keeps the
