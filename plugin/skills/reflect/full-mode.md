@@ -37,18 +37,33 @@ during this run, not the code that got built.
 rather than reading `events.jsonl` directly — it returns this run's own events UNIONED with any
 other non-terminal run dir recorded against the same worktree (a JSON array on stdout; `[]` when
 none exist), filtered to: `wd-deny`, `gate-denial` and `bookkeeping-stamp-deny` (logged by
-`bin/lib/hooks/pre-tool-use.js`), `contract-violation` (logged by
+`bin/lib/hooks/pre-tool-use.js`), `contract-violation` and `zero-tool-use-verdict` (logged by
 `bin/lib/hooks/subagent-stop.js`), and `ask-user-question` (logged by
 `bin/lib/hooks/post-tool-use.js`). `contract-violation` specifically can under-report — the
 SubagentStop hook it depends on fires unreliably for Task dispatches
 (`_shared/subagent-output-contract.md`, claude-code#27755) — so the lens should not treat its
-*absence* as proof of a clean run. It also **over**-reports in the other direction, though
-less than it used to: since #1596 the detector filters a third-party agent exempt from the Subagent
-Contract out via the hook's `agent_type` field, so the one remaining non-violating case is a
-dispatch declaring its own first-line contract (same file's "A logged `contract-violation` is
-evidence to read" note). Under the Membership rule below, that is not friction this run's operator
-experienced — attribute each entry to its dispatch before reporting it, and drop the ones that
-were never violations.
+*absence* as proof of a clean run.
+
+**The genuine `contract-violation` count (#2344).** `subagent-stop.js` tags every logged
+`contract-violation` event with a `variant`: `'lenient'` (an old-shape but still-compliant reply,
+#2265), `'foreign-contract'` (the reply's first line is exactly a verdict word from ANOTHER
+dispatch site's own declared contract — e.g. a review-lens/fix-verification dispatch replying
+`APPROVED`/`NEEDS_FIXES`/`ADDRESSED`/`VERIFIED` — never a real breach of THIS contract), or
+`'violation'` (a genuine breach; legacy events with no `variant` field at all are also genuine).
+`friction-events.js`'s own read boundary already drops `'lenient'` and `'foreign-contract'`
+variants before this lens ever sees them (the identical precedent #2350 established for
+`'lenient'`) — **judge this lens's aggregate `contract-violation` volume as the genuine count**,
+not a mix of three unrelated populations. One population `friction-events.js` cannot filter:
+mid-turn/non-final narration graded as if it were the dispatch's terminal reply
+(claude-code#27755's unreliable firing) — that population's own fix is #2041's scope, not this
+lens's; until it lands, treat a surprisingly high genuine count as a prompt to sample a few
+entries' `firstLine` before concluding the run was actually non-compliant that often.
+
+**`zero-tool-use-verdict` (#2345).** A dispatched agent's verdict/findings/pass-fail reply whose
+transcript carries zero tool-use blocks anywhere — it read nothing, so its content is a failed
+dispatch, never evidence, independent of whether its status line was otherwise well-formed. This
+is real friction the operator (or a downstream reviewer trusting the reply) would have hit had it
+gone unnoticed — count it at face value, no variant filtering.
 
 **Ad-hoc-session fallback (#500, widened #1333).** An ad-hoc worktree dev session — implementing
 a change directly at the user's request, outside any `/claude-tweaks:build`/`/claude-tweaks:flow`
@@ -100,6 +115,7 @@ swept by this path, no matter its age, preserving this section's own invariant.*
 - `bookkeeping-stamp-deny`: `bin/lib/hooks/pre-tool-use.js`
 - `contract-violation`: `bin/lib/hooks/subagent-stop.js`
 - `ask-user-question`: `bin/lib/hooks/post-tool-use.js`
+- `zero-tool-use-verdict`: `bin/lib/hooks/subagent-stop.js`
 <!-- friction-lens-vocab:end -->
 
 **Membership rule:** an event qualifies only when it describes friction experienced by the run's

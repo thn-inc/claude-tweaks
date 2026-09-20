@@ -342,6 +342,61 @@ test('gatherPack: every probe ok → eight envelopes with ok:true, plus inputs/g
   assert.ok(!('mergeSize' in pack), 'the mergeSize probe was removed (#1930 fix round 4)');
 });
 
+// #2332: recordLabels' Promise.all fan-out is deliberately all-or-nothing —
+// this probe is an audit-only snapshot (auto-merge-short-circuit.md /
+// review-console.md never substitute it for a live label read, and both
+// treat `ok:false` as "omit the snapshot line entirely"), so a mid-list `gh`
+// failure degrading the WHOLE field rather than silently returning a partial
+// label set is the intended, documented behavior — not a bug to paper over.
+test('recordLabels: a mid-list gh failure fails the whole probe field, not just that record (#2332)', async () => {
+  const records = [100, 200, 300, 400, 500];
+  const seen = [];
+  const deps = okDeps({
+    execFile: async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') {
+        const n = Number(args[2]);
+        seen.push(n);
+        if (n === 300) throw new Error('gh issue view 300 failed: rate limited');
+        return { stdout: JSON.stringify({ labels: [{ name: `label-${n}` }] }), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir({ records }), cwd: '/w/tree', only: ['recordLabels'], deps });
+  assert.strictEqual(pack.recordLabels.ok, false, 'a single failing record fails the whole field');
+  assert.match(pack.recordLabels.error, /rate limited/, 'the underlying gh failure surfaces, not a swallowed/generic message');
+  assert.ok(seen.includes(300), 'the failing record was actually attempted');
+  // Every other record was still attempted (in-flight calls are not aborted
+  // just because one rejected) — proves this is Promise.all-style
+  // all-or-nothing propagation, not a swallow of the whole batch.
+  for (const n of records) assert.ok(seen.includes(n), `record ${n} should still have been attempted`);
+});
+
+// #2332: an unbounded Promise.all fan-out fires every record's `gh issue
+// view` simultaneously — a large multi-spec record list risks gh's own rate
+// limiting. Assert peak concurrency is capped rather than unbounded.
+test('recordLabels: gh issue view calls are concurrency-capped, not fired all at once (#2332)', async () => {
+  const records = Array.from({ length: 12 }, (_, i) => 1000 + i);
+  let inFlight = 0;
+  let peak = 0;
+  const deps = okDeps({
+    execFile: async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 10));
+        inFlight -= 1;
+        return { stdout: JSON.stringify({ labels: [] }), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir({ records }), cwd: '/w/tree', only: ['recordLabels'], deps });
+  assert.strictEqual(pack.recordLabels.ok, true);
+  assert.ok(peak < records.length, `peak concurrency (${peak}) should be bounded below the full record count (${records.length})`);
+  assert.ok(peak > 0, 'sanity: calls actually happened');
+});
+
 test('#2425: unblocked (work-links: native) passes --repo, resolved from `origin`, to resolve-blockers.js — including on a GitHub Enterprise remote', async () => {
   const calls = [];
   const deps = okDeps({
@@ -472,7 +527,58 @@ test('gatherPack: the ledger probe counts rows by status and phase from the work
   state.worktree = tree;
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(state));
   const pack = await gatherPack({ runDir, cwd: tree, only: ['ledger'], deps: okDeps() });
-  assert.deepStrictEqual(pack.ledger.value, { open: 1, total: 3, byPhase: { review: { open: 1, total: 2 }, build: { open: 0, total: 1 } }, files: ['docs/plans/2026-09-05-spec-1535-ledger.md'] });
+  assert.deepStrictEqual(pack.ledger.value, {
+    open: 1,
+    total: 3,
+    byPhase: { review: { open: 1, total: 2, unrecognized: 0 }, build: { open: 0, total: 1, unrecognized: 0 } },
+    files: ['docs/plans/2026-09-05-spec-1535-ledger.md'],
+    unrecognized: 0,
+    unrecognizedValues: [],
+  });
+});
+
+// #2080: an out-of-enum Status cell (a typo, a retired synonym like `staged`/
+// `resolved`) must be counted as `unrecognized` — distinguishable from both
+// `open` (blocking) and a legitimate terminal status — never silently folded
+// into "terminal" the way it was before this fix.
+test('gatherPack: the ledger probe counts an out-of-enum status as unrecognized, not silently terminal (#2080)', async () => {
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
+  fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-spec-1535-ledger.md'), [
+    '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
+    '| 1 | review | a | open | — |',
+    '| 2 | review | b | fixed | x |',
+    '| 3 | build | c | staged | parent staged/x.md |',
+    '| 4 | build | d | resolved | n/a |',
+  ].join('\n'));
+  const runDir = fixtureRunDir();
+  const state = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+  state.worktree = tree;
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(state));
+  const pack = await gatherPack({ runDir, cwd: tree, only: ['ledger'], deps: okDeps() });
+  assert.strictEqual(pack.ledger.value.unrecognized, 2);
+  assert.deepStrictEqual(pack.ledger.value.unrecognizedValues.sort(), ['resolved', 'staged']);
+  assert.strictEqual(pack.ledger.value.byPhase.build.unrecognized, 2);
+  assert.strictEqual(pack.ledger.value.byPhase.review.unrecognized, 0);
+  // Unrecognized rows were never `open` and must not become blocking now.
+  assert.strictEqual(pack.ledger.value.open, 1);
+  assert.strictEqual(pack.ledger.value.total, 4);
+});
+
+test('gatherPack: the ledger probe reports zero unrecognized rows when every status is in the closed enum (#2080)', async () => {
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
+  fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-spec-1535-ledger.md'), [
+    '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
+    '| 1 | review | a | open | — |', '| 2 | review | b | fixed | x |',
+  ].join('\n'));
+  const runDir = fixtureRunDir();
+  const state = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+  state.worktree = tree;
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(state));
+  const pack = await gatherPack({ runDir, cwd: tree, only: ['ledger'], deps: okDeps() });
+  assert.strictEqual(pack.ledger.value.unrecognized, 0);
+  assert.deepStrictEqual(pack.ledger.value.unrecognizedValues, []);
 });
 
 test('gatherPack: a ledger whose DATE prefix contains the record number is not this record\'s ledger (#1930 review M5)', async () => {
