@@ -1375,7 +1375,18 @@ function stampCheckOutcome(ctx, stamp, wtRoot, warnings, warnText, denyText, isF
     warnings.push(warnText);
     return {};
   }
-  ctxLib.appendEvent(ctx.runDir, 'bookkeeping-stamp-deny', { stamp, worktree: wtRoot });
+  // #1798: the two session-id values isForeignSessionCall itself compares —
+  // an unset ownerSessionId (never recorded, e.g. an env-var-propagation gap
+  // in the original record-worktree call) is indistinguishable, by that
+  // function alone, from a genuinely-owning session whose stamp just hasn't
+  // landed yet. Recording both here turns a future occurrence of this shape
+  // into a one-events.jsonl-read diagnosis (ownerSessionId: null means
+  // "ambiguous, not necessarily foreign") instead of a fresh investigation —
+  // the reporter's own original ask. `null`, never `undefined`, so the field
+  // is always present in the written JSON.
+  const ownerSessionId = (ctx.runState && typeof ctx.runState.sessionId === 'string' && ctx.runState.sessionId) || null;
+  const callerSessionId = (ctx.input && typeof ctx.input.session_id === 'string' && ctx.input.session_id) || null;
+  ctxLib.appendEvent(ctx.runDir, 'bookkeeping-stamp-deny', { stamp, worktree: wtRoot, ownerSessionId, callerSessionId });
   return denyResult(denyText);
 }
 
