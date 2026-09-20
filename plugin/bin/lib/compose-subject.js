@@ -164,7 +164,17 @@ function fetchIssueTypeGraphQL(runner, repoSpec, n) {
   try {
     const args = ['api', 'graphql'];
     if (repoSpec.host && repoSpec.host !== 'github.com') args.push('--hostname', repoSpec.host);
-    args.push('-f', `query=query { repository(owner: "${repoSpec.owner}", name: "${repoSpec.repo}") { issue(number: ${n}) { issueType { name } } } }`);
+    // owner/repo are bound as GraphQL variables (-f, never string-interpolated
+    // into the query text) per gh-api-module-pattern's established shape —
+    // see bin/lib/issues/native-dependencies.js's fetchNativeDependencies.
+    // `n` is embedded directly: it's already validated as a positive number
+    // by parseArgs' isPos check before reaching here, matching
+    // buildNativeParentQuery's own numeric-alias convention.
+    args.push(
+      '-f', `query=query($owner:String!,$repo:String!){ repository(owner:$owner,name:$repo){ issue(number: ${n}) { issueType { name } } } }`,
+      '-f', `owner=${repoSpec.owner}`,
+      '-f', `repo=${repoSpec.repo}`,
+    );
     const raw = runner(args);
     const parsed = JSON.parse(raw);
     const name = parsed && parsed.data && parsed.data.repository && parsed.data.repository.issue

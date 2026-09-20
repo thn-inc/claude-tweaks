@@ -307,6 +307,13 @@ test('fetchIssueTypeGraphQL: parses a native type from the GraphQL response, add
   const result = fetchIssueTypeGraphQL(runner, { host: 'github.com', owner: 'acme', repo: 'repo' }, 42);
   assert.deepEqual(result, { name: 'Bug' });
   assert.ok(!calls[0].includes('--hostname'), calls[0].join(' '));
+  // owner/repo are bound GraphQL variables (-f owner=…/-f repo=…), never
+  // string-interpolated into the query text — gh-api-module-pattern.
+  assert.ok(calls[0].includes('owner=acme'), calls[0].join(' '));
+  assert.ok(calls[0].includes('repo=repo'), calls[0].join(' '));
+  const queryArg = calls[0].find((a) => a.startsWith('query='));
+  assert.ok(queryArg.includes('$owner:String!') && queryArg.includes('$repo:String!'), queryArg);
+  assert.ok(!queryArg.includes('"acme"') && !queryArg.includes('"repo"'), queryArg);
 
   const ghesRunner = (args) => { calls.push(args); return JSON.stringify({ data: { repository: { issue: { issueType: { name: 'Task' } } } } }); };
   fetchIssueTypeGraphQL(ghesRunner, { host: 'ghes.acme.internal', owner: 'acme', repo: 'repo' }, 42);
