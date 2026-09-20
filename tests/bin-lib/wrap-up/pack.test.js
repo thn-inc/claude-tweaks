@@ -386,6 +386,60 @@ test('#2425 AC 2: on a plain github.com remote, --repo is still passed (additive
   assert.strictEqual(calls[0][repoIdx + 1], 'acme/widgets');
 });
 
+// #2538: before this fix, ONLY the resolve-blockers.js child spawn got
+// --repo — this probe's own two direct `gh issue list` calls (open-state,
+// and body-text mode's second all-state pass) never did, so a GitHub
+// Enterprise remote's issue-list fetch had no repo context threaded at all.
+test('#2538: unblocked (work-links: native) also passes --repo to its own direct `gh issue list` call, not just the resolve-blockers.js spawn', async () => {
+  const listCalls = [];
+  const deps = okDeps({
+    git: (args) => (args[0] === 'remote' ? 'git@ghe.example.com:acme/widgets.git\n' : okDeps().git(args)),
+    execFile: async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list') {
+        listCalls.push(args);
+        return { stdout: JSON.stringify([{ number: 1600, title: 'Dependent', body: '' }]), stderr: '' };
+      }
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) {
+        return { stdout: JSON.stringify({ 1600: { blockedBy: [1535], openBlocker: false } }), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.strictEqual(listCalls.length, 1);
+  const repoIdx = listCalls[0].indexOf('--repo');
+  assert.notStrictEqual(repoIdx, -1, `gh issue list must be called with --repo on a GHE remote: ${JSON.stringify(listCalls[0])}`);
+  assert.strictEqual(listCalls[0][repoIdx + 1], 'ghe.example.com/acme/widgets');
+});
+
+test('#2538: unblocked (work-links: body-text) passes --repo to BOTH of its direct `gh issue list` calls on a GitHub Enterprise remote', async () => {
+  const listCalls = [];
+  const deps = okDeps({
+    git: (args) => (args[0] === 'remote' ? 'git@ghe.example.com:acme/widgets.git\n' : okDeps().git(args)),
+    resolvePolicy: policyFake({ 'integration-branch': 'main', 'work-links': 'body-text' }),
+    execFile: async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list' && args.includes('open')) {
+        listCalls.push(args);
+        return { stdout: JSON.stringify([{ number: 1600, title: 'Dependent', body: 'Blocked by #1535\n' }]), stderr: '' };
+      }
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list' && args.includes('all')) {
+        listCalls.push(args);
+        return { stdout: JSON.stringify([{ number: 1535, state: 'CLOSED' }]), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.strictEqual(listCalls.length, 2, `expected both the open-state and all-state gh issue list calls: ${JSON.stringify(listCalls)}`);
+  for (const call of listCalls) {
+    const repoIdx = call.indexOf('--repo');
+    assert.notStrictEqual(repoIdx, -1, `every gh issue list call must carry --repo on a GHE remote: ${JSON.stringify(call)}`);
+    assert.strictEqual(call[repoIdx + 1], 'ghe.example.com/acme/widgets');
+  }
+});
+
 test('#2425: no resolvable `origin` remote falls back to calling resolve-blockers.js without --repo (additive, never a hard failure)', async () => {
   const calls = [];
   const deps = okDeps({

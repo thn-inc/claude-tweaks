@@ -481,20 +481,21 @@ function buildProbes(inputs, deps) {
       backendOrThrow();
       if (inputs.policy.workBackend === 'local-files') return unblockedLocal(inputs, deps, closed);
       forgeOrThrow();
-      const { stdout } = await gh(['issue', 'list', '--state', 'open', '--json', 'number,title,body', '--limit', '200']);
+      // #2425/#2538: derive `--repo {host/}owner/repo` ONCE, before any of
+      // this probe's three gh invocations (both direct `gh issue list`
+      // calls below, and the resolve-blockers.js child spawn) — a GitHub
+      // Enterprise remote can't otherwise be inferred by a plain `gh` call
+      // the way #2425 already fixed for the child spawn alone. `repoSlug`
+      // resolves to bare `owner/repo` on github.com, a true no-op there.
+      let repoArgs = [];
+      try {
+        const repoSpec = parseRepo(git(['remote', 'get-url', 'origin']));
+        if (repoSpec) repoArgs = ['--repo', repoSlug(repoSpec)];
+      } catch { /* no origin remote — every gh call below falls back to its own cwd-derived default, unchanged */ }
+      const { stdout } = await gh(['issue', 'list', '--state', 'open', '--json', 'number,title,body', '--limit', '200', ...repoArgs]);
       const records = JSON.parse(stdout);
       if (inputs.policy.workLinks === 'native') {
         if (!records.length) return [];
-        // #2425: resolve-blockers.js can't infer owner/repo on a GitHub
-        // Enterprise remote the way plain `gh` calls do — pass it explicitly,
-        // resolved from the same `origin` it would otherwise fall back to
-        // reading itself, so this is additive rather than a behavior change
-        // on a plain github.com project.
-        let repoArgs = [];
-        try {
-          const repoSpec = parseRepo(git(['remote', 'get-url', 'origin']));
-          if (repoSpec) repoArgs = ['--repo', repoSlug(repoSpec)];
-        } catch { /* no origin remote — resolve-blockers.js's own fallback applies unchanged */ }
         const res = await deps.execFile('node', [path.join(BIN, 'resolve-blockers.js'), records.map((r) => r.number).join(','), ...repoArgs], { cwd: inputs.worktree, ...EXEC_OPTS });
         const byNumber = JSON.parse(res.stdout.trim());
         return records.filter((r) => byNumber[r.number] && byNumber[r.number].blockedBy.includes(closed) && !byNumber[r.number].openBlocker).map(toSummary);
@@ -507,7 +508,7 @@ function buildProbes(inputs, deps) {
         .map((r) => ({ number: r.number, title: r.title, blockedBy: parseDependencies(r.body || '') }))
         .filter((r) => r.blockedBy.includes(closed));
       if (!dependents.length) return [];
-      const states = await gh(['issue', 'list', '--state', 'all', '--json', 'number,state', '--limit', '200']);
+      const states = await gh(['issue', 'list', '--state', 'all', '--json', 'number,state', '--limit', '200', ...repoArgs]);
       const stateOf = new Map(JSON.parse(states.stdout).map((i) => [i.number, i.state]));
       return dependents
         .filter((d) => d.blockedBy.every((b) => b === closed || stateOf.get(b) === 'CLOSED'))
