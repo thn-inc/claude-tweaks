@@ -210,7 +210,7 @@ const realDeps = {
   ghAvailable,
   remoteUrl,
   runner: (args) => execFileSync('gh', args, { encoding: 'utf8', timeout: GH_TIMEOUT_MS }),
-  fetchIssueType: (runner, repoSpec, n) => fetchIssueTypeGraphQL(runner, repoSpec, n),
+  fetchIssueType: fetchIssueTypeGraphQL,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -230,10 +230,11 @@ function run(argv, deps = realDeps) {
 
   const records = [];
   for (const n of opts.numbers) {
+    const viewArgs = (fields) => ['issue', 'view', String(n), '--repo', slug, '--json', fields];
     let raw;
     let issueTypeFieldRejected = false;
     try {
-      raw = deps.runner(['issue', 'view', String(n), '--repo', slug, '--json', 'number,title,body,labels,issueType']);
+      raw = deps.runner(viewArgs('number,title,body,labels,issueType'));
     } catch (err) {
       if (!isUnknownIssueTypeField(err)) {
         deps.stderr(`compose-subject.js: gh issue view ${n} failed: ${errMessage(err)}\n`);
@@ -244,7 +245,7 @@ function run(argv, deps = realDeps) {
       // auth/not-found/network failure on THIS retry is still fatal.
       issueTypeFieldRejected = true;
       try {
-        raw = deps.runner(['issue', 'view', String(n), '--repo', slug, '--json', 'number,title,body,labels']);
+        raw = deps.runner(viewArgs('number,title,body,labels'));
       } catch (err2) {
         deps.stderr(`compose-subject.js: gh issue view ${n} failed: ${errMessage(err2)}\n`);
         return 3;
@@ -259,9 +260,12 @@ function run(argv, deps = realDeps) {
     // only when no `type:*` label already answers it (label-based first, no
     // extra request); a GraphQL fetch when one is still wanted. Best-effort:
     // `fetchIssueType`'s own failure degrades to "no native type" (Deliverable 4).
+    // `typeOf` answers the label question here rather than a restated label
+    // scan: on this path the record carries no `issueType` field at all, so
+    // `typeOf` falls straight through to its own `type:*` label lookup.
     if (issueTypeFieldRejected) {
-      const hasTypeLabel = RECOGNIZED_TYPES.some((t) => normalizeLabelNames(record.labels).includes(`type:${t}`));
-      record.issueType = hasTypeLabel ? null : deps.fetchIssueType(deps.runner, repoSpec, n);
+      const labelType = typeOf(record);
+      record.issueType = labelType ? null : deps.fetchIssueType(deps.runner, repoSpec, n);
     }
     records.push(record);
   }

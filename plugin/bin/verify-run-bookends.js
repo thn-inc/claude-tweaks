@@ -116,12 +116,15 @@ function run(argv, deps) {
     }
     const content = read.absent ? null : read.content;
     const classified = classifyClaimBlob(content, deps.now());
+    // A blob only carries an identity worth reading when it is still held —
+    // `identity` stays null for every other state, which is itself the
+    // "unconfirmed" answer below.
+    const held = classified.state === 'live' || classified.state === 'stale';
     let identity = null;
-    if (classified.state === 'live' || classified.state === 'stale') {
+    if (held) {
       try { identity = JSON.parse(content); } catch { identity = null; }
     }
-    const confirmed = identity && identity.runId === runId
-      && (classified.state === 'live' || classified.state === 'stale');
+    const confirmed = Boolean(identity && identity.runId === runId);
     if (!confirmed) {
       const identityNote = identity ? ` runId=${identity.runId}` : '';
       missing.push({ bookend: 'claim', issue, reason: `state=${classified.state}${identityNote}` });
