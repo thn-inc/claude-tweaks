@@ -206,5 +206,9 @@
   "plugin/bin/lib/release-local": {
     "lastSweptMs": 1789787525466,
     "lastHash": "69ca7d51e89429e1f9e8688c0d514965c91d1a2c"
+  },
+  "plugin/bin/lib/release-preflight": {
+    "lastSweptMs": 1789874162812,
+    "lastHash": "addfcbe1d29743bf4fcdddd263c323f4e4874660"
   }
 }
