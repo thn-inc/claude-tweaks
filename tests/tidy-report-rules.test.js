@@ -134,13 +134,16 @@ test('step-6-interactive.md: template mirrors the fenced shape and still cites s
 
 const TIDY_SKILL = read('plugin', 'skills', 'tidy', 'SKILL.md');
 
-test('tidy/SKILL.md: Next Actions derives one option per Yours group and stays under the 40 KB ceiling', () => {
+// The ceiling assertion this test used to carry alongside these four content
+// assertions is retired by #1997 — the per-file tier is a warning since
+// #1990 and tidy/SKILL.md has no compose call site; removal condition in
+// docs/incident-log.md [IL-153].
+test('tidy/SKILL.md: Next Actions derives one option per Yours group', () => {
   const na = section(TIDY_SKILL, '## Next Actions', '## Component-Skill Contract');
   assert.match(na, /Then take Yours \*\*groups\*\* \(`step-6-auto\.md`'s Yours grouping\)/);
   assert.match(na, /the group's batch command verbatim, or a paste-block group's first line verbatim/);
   assert.match(na, /\{Yours group's batch command, first paste line, or ref-less line\}/);
   assert.doesNotMatch(na, /one per Yours item/);
-  assert.ok(Buffer.byteLength(TIDY_SKILL, 'utf8') <= 40 * 1024, `tidy/SKILL.md is ${Buffer.byteLength(TIDY_SKILL, 'utf8')} bytes — over the 40 KB ceiling`);
 });
 
 // --- Task 5: journey doc pins the new shape ---
@@ -208,6 +211,26 @@ test('step-6-auto.md: every Yours row carries a command or a stated review-only 
     grp,
     /No runnable command.*keys under a fixed final group, `review \(\{k\}\)`.*the group closes with no command line — the conformance scan's "Every Yours row covered" row exempts `review`/s,
     'the review group must be the one documented, explicit exemption from the command requirement'
+  );
+});
+
+// --- #1883: --source sweep persists the click surface to the run dir ---
+
+test('step-6-auto.md: Report rules state the --source sweep persistence rule (report-condensed.md, unconditional report.md, the lint call, and the footer)', () => {
+  const rules = section(STEP6, '### Report rules', '#### Conformance scan');
+  assert.match(rules, /`--source sweep` persistence/);
+  assert.match(rules, /suppresses only the chat send and `## Next Actions`/);
+  assert.match(rules, /Write `\{run-dir\}\/report\.md` unconditionally under `--source sweep`/);
+  assert.match(rules, /write `\{run-dir\}\/report-condensed\.md`/);
+  assert.match(rules, /the full report verbatim when it did not/);
+  assert.match(rules, /--surface=condensed` before this step is done/);
+  assert.match(rules, /\/claude-tweaks:sweep`'s Step 4 reads `report-condensed\.md`/);
+});
+
+test('tidy/SKILL.md Component-Skill Contract: the report is persisted for the parent, not suppressed', () => {
+  assert.match(
+    TIDY_SKILL,
+    /The report itself is not suppressed, only its chat send: it writes it to the run dir \(`\{run-dir\}\/report-condensed\.md`, alongside `report\.md`\) for the parent to inline/,
   );
 });
 

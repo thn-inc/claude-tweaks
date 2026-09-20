@@ -87,11 +87,13 @@ non-gate-routed adopter of this floor uses the same value.
 
 ### Digest URL and count surfacing
 
-When a run's routing sends one or more findings to the digest, the routing skill's own summary
-output states the run's digest comment URL and the number of findings routed this run — the
-digest activity must be visible in the caller's own output, not only in the digest issue itself.
-Adopters cite this paragraph rather than restating it; `review/step3-routing.md` is the reference
-implementation. The four health sweeps additionally fold their own count into the existing
+Every routing skill's own summary output states the number of findings routed to the digest
+this run — the digest activity must be visible in the caller's own output, not only in the
+digest issue itself. A run that routes one or more findings states the digest comment URL
+alongside the count; a run that routes none still states the count, as `0`, rather than
+omitting the line — an omitted line is indistinguishable from a caller that forgot to check,
+so silence is never the zero-case signal. Adopters cite this paragraph rather than restating
+it; `review/step3-routing.md` is the reference implementation. The four health sweeps additionally fold their own count into the existing
 drain-rate-cap throttle line (`_shared/health-filing-digest.md`'s SUMMARIZE step) as a distinct
 `materiality: K` field, never combined with that line's own `digested: M` (cap-digest) count —
 the two mechanisms answer different questions and a reader diagnosing either needs its own

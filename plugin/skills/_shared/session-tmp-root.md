@@ -51,7 +51,7 @@ The degrade fallback resolves the OS temp dir programmatically (`os.tmpdir()`) r
 **Several paths in one fence** — `bin/session-tmp-resolve.js`, a thin CLI wrapper, is the
 byte-cheaper form once a script needs three or more (each inline `node -e` block above costs
 roughly 350 bytes; this form costs roughly 90 bytes total, which matters for a skill file already
-close to the 40 KB ceiling):
+close to the 45 KB ceiling):
 
 ```bash
 eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" VAR1=file1.json VAR2=file2.md)"
@@ -121,5 +121,5 @@ record-suffixed-caller case above), `skills/journey-health/SKILL.md`,
 `skills/wrap-up/docs-health-integration.md`, `skills/wrap-up/leftover-routing.md`,
 `skills/wrap-up/verification-brief-parent-gate.md`, `skills/_shared/label-bootstrap.md`,
 `skills/_shared/github-pr-scan.md`, `skills/_shared/github-pr-scan-acceptance.md` (re-measured
-with `wc -c` after every edit to stay under its 40 KB per-invocation ceiling — see that file's own
+with `wc -c` after every edit to stay under its 45 KB per-invocation ceiling — see that file's own
 header note), and `skills/_shared/harness-health-analysis.md`.

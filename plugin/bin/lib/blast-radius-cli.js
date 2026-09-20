@@ -141,4 +141,6 @@ function computeBlastRadius(opts = {}, deps = {}) {
   return { mergeBase, config, summary };
 }
 
-module.exports = { computeBlastRadius, parseNumstat, BlastRadiusError };
+module.exports = {
+  computeBlastRadius, parseNumstat, BlastRadiusError, preferOriginRef,
+};

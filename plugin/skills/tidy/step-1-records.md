@@ -120,7 +120,7 @@ The prose-only row's live-evidence guard exists because a trigger can state its 
 
 ### Shape 5 — `bot:blocked` needing re-triage
 
-`isBotBlocked(record)` (`bin/lib/issues/record-buckets.js`; `work-backend: github-issues` only — the local driver's `facets.bot.blocked` is always `false`, per `facet-shape.js`'s shared defaults, so this predicate never fires there). The record hit its retry ceiling (`_shared/issue-claims.md`, `dispatch/SKILL.md`'s Settle step) — or `_shared/pr-first-merge.md`'s Step 2.5 (Merge-verification gate) parked it on a red or timed-out check on its PR, the label's second writer, which parks without revoking any grant — and needs a human's renewed judgment at `/claude-tweaks:backlog refine` before it can re-enter the autonomous queue.
+`isBotBlocked(record)` (`bin/lib/issues/record-buckets.js`; `work-backend: github-issues` only — the local driver's `facets.bot.blocked` is always `false`, per `facet-shape.js`'s shared defaults, so this predicate never fires there). The record hit its retry ceiling (`_shared/issue-claims.md`, `dispatch/SKILL.md`'s Settle step) and needs a human's renewed judgment at `/claude-tweaks:backlog refine` before it can re-enter the autonomous queue.
 
 → Collect each as: `[blocked] {title} — hit its retry ceiling — re-authorize at /claude-tweaks:backlog refine`
 
@@ -156,6 +156,14 @@ user's call, since `gh label edit` re-labels every issue carrying it repo-wide i
 outward-facing API write. It is therefore not one of the Action
 Vocabulary's atomic actions (`SKILL.md`), and routes as an always-surfaced no-op at every
 aggressiveness tier (`step-6-auto.md`'s **Legacy taxonomy** row), exactly like Shapes 4 and 5.
+
+### Shape 5.6 — `bot:parked` needing re-triage
+
+**`work-backend: github-issues` only** — same local-driver caveat as Shape 5 (`facets.bot.parked` is always `false` on the local driver). Numbered 5.6 rather than appended, for the same reason as Shape 5.5 — Shapes 6, 7, and 8 keep the numbers other files already cite.
+
+`isBotParked(record)` (`bin/lib/issues/record-buckets.js`). `_shared/pr-first-merge.md`'s Step 2.5 (Merge-verification gate) parked it on a red or timed-out check on its PR — a distinct label from Shape 5's `bot:blocked`, since this path parks **without** revoking any grant (a CI park is not a build failure, so there is no Settle classification and no retry increment behind it). Re-triage here means checking the PR's checks, not re-authorizing a build.
+
+→ Collect each as: `[bot-parked] {title} — merge-verification parked it on a red/timed-out PR check — check the PR, then resume via /claude-tweaks:dispatch`
 
 ### Shape 6 — flagged code demonstrably gone
 

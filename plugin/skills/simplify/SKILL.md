@@ -3,8 +3,6 @@ name: simplify
 description: Use when you want to simplify recently changed code — catches unnecessary complexity from iterative development, verbose debugging patterns, and cross-file inconsistencies. Works standalone or as a step within /claude-tweaks:build and /claude-tweaks:review.
 argument-hint: "[<file-or-dir>...|#N|<spec-number>]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
-
 
 # Simplify — Code Simplification
 
@@ -64,7 +62,7 @@ If no files are in scope, state: "No changed files to simplify." and stop.
 
 ## Step 2: Run Code Simplifier
 
-Invoke the `code-simplifier:code-simplifier` subagent on the scoped files. Follow the **Subagent Contract** (`_shared/subagent-output-contract.md`) — minimal input (file paths + the output template, no conversation history), `[Use: Standard]` (resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard`, contract § Model Selection), and the literal output template below inlined verbatim in the dispatch prompt (the subagent cannot read sibling files):
+Invoke the `code-simplifier:code-simplifier` subagent on the scoped files. Follow the **Subagent Contract** (`_shared/subagent-output-contract.md`) — minimal input (file paths + the output template, no conversation history), `[Use: Standard]` (resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard`, `_shared/subagent-dispatch-core.md` § Model Selection), and the literal output template below inlined verbatim in the dispatch prompt (the subagent cannot read sibling files):
 
 ```
 SCOPE (required):
@@ -94,7 +92,7 @@ If the simplifier made changes, run the shared verification procedure from `veri
 
 ### Working Directory Discipline
 
-Apply the Working Directory Discipline rule from `_shared/subagent-output-contract.md` before any verification command. On mismatch, return **BLOCKED** to the caller; never verify from the wrong directory.
+Apply the Working Directory Discipline rule from `_shared/subagent-dispatch-core.md` before any verification command. On mismatch, return **BLOCKED** to the caller; never verify from the wrong directory.
 
 ### If verification fails
 

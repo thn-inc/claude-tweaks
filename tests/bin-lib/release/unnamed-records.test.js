@@ -148,3 +148,20 @@ test('unnamedRecordsGate: never calls gh and never reads commit subjects [AC4]',
   unnamedRecordsGate(deps, { summary: '#700' });
   assert.ok(!deps.git.calls.some((c) => c.includes('log --format=%s') || c.includes('gh ')), deps.git.calls.join(' | '));
 });
+
+// #2363: unnamedRecordsGate only ever needs the NEWEST bump (`sinceSha` for the
+// materialized-records diff) — draining iterBumpCommits' generator fully used to
+// walk every commit that ever touched the manifest, all the way to the repo root,
+// paying an expected-to-fail probe per pre-move commit along the way (~490 lines
+// of git stderr noise on a real repo). Two bumps here, older ("root1") reachable
+// only past the newer one ("bump2") — asserting root1's manifest is never read
+// proves the walk stops at the first (newest) bump instead of draining to the end.
+test('unnamedRecordsGate: stops the bump walk at the newest bump — never reads an older bump\'s manifest [#2363]', () => {
+  const deps = baseDeps({ diffOutput: ADDED_700, bumps: [{ sha: 'bump2', version: '6.71.0' }, { sha: 'root1', version: '6.70.0' }] });
+  const gate = unnamedRecordsGate(deps, { summary: '' });
+  assert.strictEqual(gate.lastBump.sha, 'bump2');
+  assert.ok(
+    !deps.git.calls.some((c) => c.includes('root1')),
+    `must never read root1's manifest once bump2 (the newest bump) is found: ${deps.git.calls.join(' | ')}`,
+  );
+});

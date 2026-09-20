@@ -72,6 +72,20 @@ test('--json emits a parseable object carrying state, ops, since and sinceDate',
   assert.ok(typeof o.sinceDate === 'string' && o.sinceDate.length > 0);
 });
 
+// #1930 review I7: --json used to carry only the block's raw ingredients, so a
+// consumer reading it (the wrap-up fact pack) had no choice but to COMPOSE the
+// State block from them — exactly what summary-template.md's "Render VERBATIM
+// from the helper" rule forbids. `rendered` is that block, byte for byte.
+test('--json carries a `rendered` field byte-identical to the non-JSON block', () => {
+  const plain = run(['--since', 'HEAD~1']);
+  const json = run(['--since', 'HEAD~1', '--json']);
+  assert.strictEqual(plain.status, 0);
+  assert.strictEqual(json.status, 0);
+  const o = JSON.parse(json.stdout);
+  assert.strictEqual(typeof o.rendered, 'string');
+  assert.strictEqual(`${o.rendered}\n`, plain.stdout);
+});
+
 test('an unresolvable --since inside a repository exits 2 and names the bad value', () => {
   const r = run(['--since', 'not-a-real-ref']);
   assert.strictEqual(r.status, 2);

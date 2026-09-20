@@ -56,5 +56,8 @@ test('multispec-review-console.md short-circuit ends with a decisions.md/staged 
 });
 
 test('wrap-up/review-console.md short-circuit ends with a decisions.md/staged pointer', () => {
-  assert.match(WRAP_UP_REVIEW_CONSOLE, /absolute path to `decisions\.md`[\s\S]{0,60}`staged\/\*\.md`/, 'must point the operator at decisions.md and staged/*.md');
+  // #1932: console-resolve.js also writes console.json, so the pointer sentence now
+  // enumerates decisions.md, console.json, and staged/* (broadened from staged/*.md
+  // since a staged patch need not be markdown) — widened from the pre-#1932 pin.
+  assert.match(WRAP_UP_REVIEW_CONSOLE, /absolute path to `decisions\.md`[\s\S]{0,80}`staged\/\*`/, 'must point the operator at decisions.md and staged/*');
 });

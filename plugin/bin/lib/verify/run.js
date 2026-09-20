@@ -11,7 +11,9 @@ const path = require('path');
 
 const STAGE1 = ['types', 'lint'];
 
-function runOne({ name, command, logDir, spawnImpl, now }) {
+function runOne({
+  name, command, logDir, spawnImpl, now, cwd,
+}) {
   const logPath = path.join(logDir, `${name}.log`);
   const stream = fs.createWriteStream(logPath);
   const started = now();
@@ -38,7 +40,7 @@ function runOne({ name, command, logDir, spawnImpl, now }) {
     };
     stream.on('error', finishError);
     try {
-      child = spawnImpl(command, { shell: true });
+      child = spawnImpl(command, cwd ? { shell: true, cwd } : { shell: true });
     } catch (err) {
       finishError(err);
       return;
@@ -57,18 +59,28 @@ function failed(result) {
 }
 
 // Runs c unless skip is true, in which case it records a fail-fast skip
-// without spawning. `anyFailed || failed(r)` short-circuits on a skip result
-// (anyFailed is already true whenever skip is true), so anyFailed stays
-// accurate either way.
+// without spawning. A failed result is offered to `retry` (verify.js's
+// flaky hook, #1925) BEFORE the fail-fast decision, so a suite retried to
+// a pass never leaves the checks behind it skipped. `anyFailed ||
+// failed(r)` short-circuits on a skip result (anyFailed is already true
+// whenever skip is true), so anyFailed stays accurate either way.
 async function runOrSkip(c, ctx, skip) {
   if (skip) return { name: c.name, command: c.command, skipped: 'fail-fast' };
-  return runOne({ ...c, ...ctx });
+  const r = await runOne({ ...c, ...ctx });
+  return failed(r) ? ctx.retry(r, ctx) : r;
 }
 
 // cmds: [{name, command}] in argv order. Returns results in stage order:
 // stage 1 (types/lint, argv order), tests, then unknown names in argv order.
-async function runChecks({ cmds, logDir, spawnImpl = require('child_process').spawn, now = Date.now }) {
-  const ctx = { logDir, spawnImpl, now };
+// `retry(result, ctx)` is awaited for every failed tests/unknown result
+// (never types/lint — deterministic, never retried) and may return a
+// replacement result; the default keeps the failure as is.
+async function runChecks({
+  cmds, logDir, spawnImpl = require('child_process').spawn, now = Date.now, retry = async (r) => r, cwd = null,
+}) {
+  const ctx = {
+    logDir, spawnImpl, now, retry, cwd,
+  };
   const results = [];
   const stage1 = cmds.filter((c) => STAGE1.includes(c.name));
   const testsCmd = cmds.find((c) => c.name === 'tests') || null;
@@ -93,4 +105,4 @@ async function runChecks({ cmds, logDir, spawnImpl = require('child_process').sp
   return results;
 }
 
-module.exports = { runChecks };
+module.exports = { runChecks, runOne };

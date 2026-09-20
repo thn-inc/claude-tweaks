@@ -403,6 +403,12 @@ already covers — most commonly a re-added `server.port: 3000` after a merge or
 |---|---|---|
 | A file previously rewritten by Step 6.5 now contains a literal port again, at a location that rewrite table covers | Re-run the same detection list against the six rewrite-row locations only (not the hard-case ones, which were never rewritten) | "Port literal drift" finding naming the file and line, pointing back at Step 6.5 to re-offer the rewrite |
 
+### Verify-Scope Drift
+
+| Signal | Detection | Surfacing |
+|---|---|---|
+| `.claude-tweaks/verify-scope.json`'s suites disagree with the workspace | `node "${CLAUDE_PLUGIN_ROOT}/bin/init-verify-scope.js" --root . --drift --json` — one JSON line `{declared, missingSuites, extraSuites, skipped}` (the verb reads the FILE through `readDeclaration` and detects the workspace itself; never feed the CLI's proposal to `diffAgainstWorkspace`); `declared: false` → no declaration, nothing to report; exit 1 → the declaration itself is invalid (its `readDeclaration` errors are on stderr, stdout is empty) — surface `verify-scope: declaration invalid — {stderr}` as its own finding, never as "no drift" | Report-only: "verify-scope: suites `{extraSuites}` not in workspace; packages `{missingSuites}` have no suite" plus one line per `skipped` entry (`warning: skipped {glob|path} — {reason}`) — never rewritten |
+
 ### Routine Relevance
 
 Skip entirely when the Routine Drift check above found no routines (same gate — reuse its
@@ -582,7 +588,7 @@ After Phase 1u (inventory) and Phase 1u.5 (contract drift) complete, evaluate th
 
    Only include lines for checks that ran; omit any the inventory pass did not compute.
 
-2. Log to the active pipeline's `decisions.md` using the resolution order in `_shared/pipeline-run-dir.md`. `/init` is on the standalone-auto allowlist — if `PIPELINE_RUN_DIR` is unset and no recent run matches, create a standalone run dir at `.claude-tweaks/pipelines/{ISO-timestamp}-init-standalone/` and append the entry there. Never suppress the audit-log write.
+2. Log to the active pipeline's `decisions.md` using the resolution order in `_shared/run-dir-resolution.md`. `/init` is on the standalone-auto allowlist — if `PIPELINE_RUN_DIR` is unset and no recent run matches, create a standalone run dir at `.claude-tweaks/pipelines/{ISO-timestamp}-init-standalone/` and append the entry there. Never suppress the audit-log write.
    ```
    AUTO {ISO-time} — Phase 1u.6: early-exit (drift=0, gaps<3). Reason: Update Mode fast path per the Phase 1u.6 early-exit gate. Reversibility: high.
    ```

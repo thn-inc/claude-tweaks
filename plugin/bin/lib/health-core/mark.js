@@ -33,7 +33,7 @@ function makeCmdMark({ readCache, writeCache, updateCache, readDurableState, wri
     const status = args._[2];
     if (!fp || !MARK_STATUSES.has(status)) {
       process.stderr.write(`usage: ${toolName}.js mark <fingerprint> <${[...MARK_STATUSES].join('|')}> [--root <dir>]\n`);
-      process.exit(2);
+      return 2;
     }
     const entry = { status, lastSeenMs: Date.now() };
     let cache;

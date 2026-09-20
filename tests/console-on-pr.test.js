@@ -12,7 +12,6 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
 const CONSOLE_ON_PR = read('plugin', 'skills', '_shared', 'console-on-pr.md');
-const REVIEW_CONSOLE = read('plugin', 'skills', 'wrap-up', 'review-console.md');
 const REVIEW_CONSOLE_INTERACTIVE = read('plugin', 'skills', 'wrap-up', 'review-console-interactive.md');
 const MULTISPEC_CONSOLE = read('plugin', 'skills', 'flow', 'multispec-review-console.md');
 
@@ -160,11 +159,7 @@ test('both review-console.md and multispec-review-console.md cite the shared int
   assert.match(mcSection, /_shared\/integration-model\.md/);
 });
 
-// The 40 KB per-lazy-loaded-sub-file ceiling — tests/bin-lib/skill-audit/context-cost.test.js
-// already enforces this repo-wide, but pin it here too since this spec's own
-// edits are exactly what pushed both files toward it.
-test('review-console.md and multispec-review-console.md stay under the 40 KB sub-file ceiling', () => {
-  const CEILING_BYTES = 40 * 1024;
-  assert.ok(Buffer.byteLength(REVIEW_CONSOLE, 'utf8') <= CEILING_BYTES, 'review-console.md exceeds the 40 KB ceiling');
-  assert.ok(Buffer.byteLength(MULTISPEC_CONSOLE, 'utf8') <= CEILING_BYTES, 'multispec-review-console.md exceeds the 40 KB ceiling');
-});
+// Per-file 40 KB pins on review-console.md and multispec-review-console.md
+// retired by #1997 — the per-file tier is a warning since #1990 and these
+// files have no compose call site; removal condition in
+// docs/incident-log.md [IL-153].

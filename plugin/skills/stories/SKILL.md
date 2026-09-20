@@ -1,10 +1,8 @@
 ---
 name: stories
-description: Use for generating or updating user-story YAML for UI testing — browses with agent-browser and creates semantic-locator (schema v2) stories, with diff-aware updates. Keywords - stories, generate, create, user journey, persona, QA, testing, semantic-locators.
+description: Use for generating or updating user-story YAML for UI testing — browses with playwright-cli and creates semantic-locator (schema v2) stories, with diff-aware updates. Keywords - stories, generate, create, user journey, persona, QA, testing, semantic-locators.
 argument-hint: "[<url>] [persona=<name>] [dir=<path>] [focus=<area>] [pages=<n>] [refine=false] [negative=false] [journey=<name>]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
-
 
 # Stories — Generate, refine, and update user-story YAML (semantic locators, journey + source aware)
 
@@ -55,7 +53,7 @@ stories:
         locator: { text: "Order confirmed", exact: true }
 ```
 
-Locators are always semantic (one of: ARIA role, `data-testid`, visible text, form label, input placeholder) — never CSS, XPath, or `@eN` snapshot refs. At runtime, a locator and its step's action execute as **one** command — `agent-browser --session <name> find <locator> <value> <action> [text]` (the action argument is mandatory: a bare `find` with no action defaults to clicking, so `find` is never used as an existence probe) — with `snapshot`-derived `@eN` refs as the fallback path; refs are NEVER stored in the YAML — they regenerate each snapshot. See `agent-browser-reference.md` in the `/claude-tweaks:browse` skill directory for the full operation vocabulary.
+Locators are always semantic (one of: ARIA role, `data-testid`, visible text, form label, input placeholder) — never CSS, XPath, or `@eN`/ref values stored directly. At runtime, a locator and its step's action execute as a **two-step** sequence: `snapshot` first to resolve the locator to an `eN` ref, then a separate `click <eN>`/`fill <eN> "<text>"` (Playwright CLI's `find` is read-only and text-only, so it cannot resolve role/testid/css locators or perform an action in one call — it is never used as an existence probe or an action). Refs are NEVER stored in the YAML — they regenerate each snapshot. See `playwright-cli-reference.md` in the `/claude-tweaks:browse` skill directory for the full operation vocabulary.
 
 See locator types and preference order in `story-examples.md`.
 
@@ -63,23 +61,25 @@ A file may also carry file-level blocks alongside `stories`: `setup` (viewport, 
 
 ## Auth Vault
 
-Stories that require login reference an Auth Vault entry via the story-level `auth: { vault: "<name>" }` field. The vault stores credentials encrypted, locally. The LLM never sees passwords.
+Stories that require login reference a captured session-state file via the story-level `auth: { vault: "<name>" }` field. The file holds raw browser storage state (cookies, localStorage) captured by hand. The LLM never sees passwords.
 
 **Setup (user runs once):**
 
 ```
-agent-browser auth save <vault-name> --url <login-page-url> --username <username> --password <password>
+playwright-cli open <login-page-url>
+# log in directly in the browser, then:
+playwright-cli state-save .claude-tweaks/auth-state/<vault-name>.json
+playwright-cli close
 ```
-
-(`--password-stdin` instead of `--password` keeps the password out of shell history.)
 
 **In the story runtime, after `open` and before the first action:**
 
 ```
-agent-browser --session <story-id> auth login <vault-name>
+playwright-cli -s=<story-id> state-load .claude-tweaks/auth-state/<vault-name>.json
+playwright-cli -s=<story-id> goto <url>
 ```
 
-`auth login` navigates to the vault's saved login URL, waits for the form fields, and submits. This replaces the cookie-injection path used in earlier versions: credentials live in the encrypted Auth Vault, never in a file under `{OUTPUT_DIR}`.
+`state-load` restores the captured storage state into the session's browser context, but the already-open page does not pick it up until re-navigated — the `goto <url>` immediately after is required (use `goto`, never a second `open`, or the browser context is relaunched and the loaded state is discarded). This replaces the cookie-injection path used in earlier versions: the captured state lives in a local file under `.claude-tweaks/auth-state/`, never in a file under `{OUTPUT_DIR}`.
 
 ## Step 1: Ingest
 
@@ -117,17 +117,18 @@ Use the Glob tool to check whether any `docs/journeys/*.md` files exist.
 
 Identify and read component source files to extract behavioral contracts that are not visible from the rendered DOM alone — input constraints, validation schemas, state transitions, conditional rendering, error handling, and API patterns. Produces a per-page SourceContract that feeds into Step 3 design.
 
-For the full procedure (component-file identification, journey-seeded source files, behavioral-signal extraction, graceful degradation), read `source-aware-design.md` in this skill's directory. For framework-specific extraction patterns (Zod/yup/Joi schemas, JSX heuristics, React introspection) and the SourceContract schema, read `source-analysis.md` in this skill's directory.
+For the full procedure (component-file identification, journey-seeded source files, behavioral-signal extraction, graceful degradation), read `source-aware-design.md` in this skill's directory. For framework-specific extraction patterns (Zod/yup/Joi schemas, JSX heuristics) and the SourceContract schema, read `source-analysis.md` in this skill's directory.
 
 ## Step 2: Explore
 
-> **Parallel execution:** Use parallel tool calls aggressively — all independent agent-browser session operations in Step 2's exploration are independent and should run concurrently, one session per page (`agent-browser --session <name> batch ...`), each in its own process (not a Task agent). Use a single batch per session to bundle `open + snapshot + screenshot`. Pages that share state (login → dashboard → settings) must run sequentially within a single session instead.
+> **Parallel execution:** Use parallel tool calls aggressively — all independent `playwright-cli` session operations in Step 2's exploration are independent and should run concurrently, one session per page, each in its own process (not a Task agent).
+> Bundling `open + snapshot + screenshot` into one invocation has no Playwright CLI equivalent — run them as three separate sequential commands per session instead. Pages that share state (login → dashboard → settings) must run sequentially within a single session instead.
 
 ### Availability Check
 
-Before browsing, check `agent-browser` availability per `_shared/browser-detection.md`'s Detect procedure. If available, proceed with the numbered steps below.
+Before browsing, check `playwright-cli` availability per `_shared/browser-detection.md`'s Detect procedure. If available, proceed with the numbered steps below.
 
-If unavailable, follow `_shared/browser-detection.md`'s Install branch (interactive mode: offer install; auto mode: stage the recommendation to the auto-decision log and continue without installing). If the user skips install (or auto mode stages it), degrade gracefully: skip browse-exploration (the rest of this Step) and Step 5 Refine entirely, generate stories from JOURNEY_MAP (Step 1.1) and SourceContract (Step 1.5) data only, and note "agent-browser unavailable — generated from journey/source data only" in the Step 6 report.
+If unavailable, follow `_shared/browser-detection.md`'s Install branch (interactive mode: offer install; auto mode: stage the recommendation to the auto-decision log and continue without installing). If the user skips install (or auto mode stages it), degrade gracefully: skip browse-exploration (the rest of this Step) and Step 5 Refine entirely, generate stories from JOURNEY_MAP (Step 1.1) and SourceContract (Step 1.5) data only, and note "playwright-cli unavailable — generated from journey/source data only" in the Step 6 report.
 
 ### Target Environment Guard
 
@@ -144,9 +145,10 @@ Record the outcome in every written story file as a file-level block — `/test 
 target_env: { host: "app.example.com", classification: remote, negatives_acknowledged: false }
 ```
 
-1. Create the output directory if it doesn't exist (use `mkdir -p` via the Bash tool — `-p` creates parent directories and silently no-ops if the directory already exists; plain `mkdir` does NOT create parents on macOS/Linux). Then run `agent-browser close --all` once — an idempotent residue sweep so sessions leaked by an interrupted earlier run cannot accumulate (a no-op when nothing is open).
-2. Use the `/claude-tweaks:browse` skill to open the site. The concrete command is `agent-browser --session <session-name> open <url>`. Choose `<session-name>` per the kebab-case convention (e.g., `stories-explore`, `stories-checkout`). Use `agent-browser batch --session <name>` to bundle open + initial snapshot + reconnaissance screenshot in one process invocation.
-3. Capture an accessibility-tree snapshot via `agent-browser --session <name> snapshot -i -c` to understand the page structure. The snapshot returns elements with role, accessible name, text, label, placeholder, and `data-testid` — these are the only attributes used to build v2 locators.
+1. Create the output directory if it doesn't exist (use `mkdir -p` via the Bash tool — `-p` creates parent directories and silently no-ops if the directory already exists; plain `mkdir` does NOT create parents on macOS/Linux). Then run `playwright-cli close-all` once — an idempotent residue sweep so sessions leaked by an interrupted earlier run cannot accumulate (a no-op when nothing is open).
+2. Use the `/claude-tweaks:browse` skill to open the site. The concrete command is `playwright-cli -s=<session-name> open <url>`. Choose `<session-name>` per the kebab-case convention (e.g., `stories-explore`, `stories-checkout`).
+   Bundling open + initial snapshot + reconnaissance screenshot into one process invocation has no Playwright CLI equivalent — run `open`, `snapshot`, and `screenshot` as three separate sequential commands in the same session instead.
+3. Capture an accessibility-tree snapshot via `playwright-cli -s=<name> snapshot` to understand the page structure. The snapshot returns elements with role, accessible name, text, label, placeholder, and `data-testid` — these are the only attributes used to build v2 locators.
 4. Identify the main navigation, key pages, and interactive elements from the snapshot.
 5. Follow links to discover major sections (limit to PAGES pages if `pages=<n>` was set, otherwise 5-8, to stay efficient). When FOCUS is set, prioritize discovery toward pages/sections whose URL path, nav label, or page content matches the focus area — pages outside that area are still noted for navigation context but are not prioritized within the discovery budget.
 
@@ -215,7 +217,7 @@ When JOURNEY_MAP is non-empty (Step 1.1 found journeys), read `journey-aware-des
 
 2. Compare discovered pages against EXISTING_STORIES to classify each as **NEW**, **EXISTING** (unchanged → skip), or **STALE** (locators unresolvable, source files modified, or behavioral contracts changed → regenerate). Log the diff summary and emit STALE_LOCATORS / STALE_SOURCE_FILES warnings.
 
-For the full staleness procedure (locator-resolution checks via `agent-browser find`, `git diff` source-file checks, behavioral-contract comparison against re-extracted SourceContract) and the warning templates, read `source-aware-design.md` in this skill's directory.
+For the full staleness procedure (locator-resolution checks via a `playwright-cli` snapshot lookup, `git diff` source-file checks, behavioral-contract comparison against re-extracted SourceContract) and the warning templates, read `source-aware-design.md` in this skill's directory.
 
 ### Negative Story Generation (when NEGATIVE=true)
 
@@ -319,7 +321,7 @@ Otherwise read `refine.md` in this skill's directory for the full Refine procedu
     **Refine additions:**
     - Stories validated in the refinement pass, stated as a sample: "validated {N} of {M} total stories (sample: all high-priority + up to 3 medium)" — never a bare "all stories validated", which overclaims whole-suite health from a capped sample
     - Number corrected; number of stale `needs-review`/`needs-auth-vault` tags cleared by self-heal
-    - Number with persistent failures (tagged `needs-review`) and their trace paths — traces are Chrome DevTools traces, opened via Chrome DevTools → Performance → Load profile
+    - Number with persistent failures (tagged `needs-review`) and their trace paths — traces are Playwright CLI traces, opened via `npx playwright show-trace <path>`
 
     **Target environment (when the guard classified a remote target):**
     - The recorded `target_env` line, and whether negative-story generation was downgraded for this run
@@ -372,8 +374,8 @@ This skill is a **component skill** — invoked by `/claude-tweaks:flow` (auto-t
 |---------|-------------|
 | Generating stories without browsing the site first | Must be grounded in actual page structure and the live accessibility-tree snapshot |
 | Using CSS selectors, XPath, IDs, or class names in v2 schema | Semantic-only schema; CSS is brittle and forbidden — locator types in `story-examples.md` |
-| Storing `@eN` snapshot refs in story YAML | Refs are session-scoped and regenerate every snapshot — store the semantic locator, execute at runtime via `find <locator> <value> <action>` |
-| Running an action-less `find` as an existence probe | A bare `find` with no action defaults to CLICKING the element — assertions and staleness checks go through `snapshot`, never `find` |
+| Storing `@eN`/ref values in story YAML | Refs are session-scoped and regenerate every snapshot — store the semantic locator, execute at runtime via a `snapshot`-then-`click`/`fill` ref pair |
+| Treating `find` as an action-performing call | Playwright CLI's `find` is read-only and text-only — it cannot click or fill. Locator resolution, assertions, and staleness checks all go through `snapshot`, never `find` |
 | Generating negative stories against a non-local target without acknowledgment | Injection payloads and failure-path walks hit whatever is listening — the Target Environment Guard (Step 2) downgrades or confirms first |
 | Skipping the v1 detection prompt and silently parsing legacy files | v1 CSS selectors are forbidden in v2, so silent parsing breaks stories — run the v1 detection / regeneration UX whenever `schema_version: 2` is missing |
 | Inlining credentials in story YAML | Risks accidental commits — use `auth: { vault: "<name>" }` so the LLM never sees passwords |
@@ -382,7 +384,7 @@ This skill is a **component skill** — invoked by `/claude-tweaks:flow` (auto-t
 | Including "Navigate to URL" as a first step | The `url` field already handles initial navigation |
 | Skipping form-page negative coverage when NEGATIVE=true | Forms with user input always get validation-failure stories — they catch real security and UX bugs. (`negative=false` is an explicit opt-out.) |
 | Running more than one refinement correction round | Diminishing returns and high token cost — cap at one round |
-| Closing a session on step failure without saving the trace first | Failure records without a trace path aren't actionable — `trace stop <path>` before `close`, with recording started via `trace start` at session open (no retroactive capture) |
+| Closing a session on step failure without saving the trace first | Failure records without a trace path aren't actionable — `tracing-stop` (then relocate the auto-written file to an absolute path) before `close`, with recording started via `tracing-start` at session open (no retroactive capture) |
 | Blocking story generation when source analysis fails | Source analysis is never a hard gate — degrade gracefully to DOM-only |
 | Following imports beyond 3 levels of depth | Signal-to-noise drops, analysis time grows — use what you have at the limit |
 | Generating source-aware stories for non-user-triggerable conditionals | Server-config and feature-flag branches cannot be exercised through the browser |

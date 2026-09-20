@@ -272,10 +272,8 @@ test('spec-template.md\'s canonical `Parent:` field reference is conditional on 
 
 // --- byte ceiling ---
 
-test('every touched specify file remains within the context-cost ceiling', () => {
-  const CEILING_BYTES = 40960;
-  for (const rel of [DECOMPOSITION_MODE, DECOMPOSITION_CLOSEOUT, COLLAPSE_DECISION, RECORD_CREATION, RECORD_CREATION_SUBISSUES, RECORD_CREATION_LINKING, SKILL]) {
-    const bytes = fs.statSync(path.join(REPO_ROOT, rel)).size;
-    assert.ok(bytes <= CEILING_BYTES, `${rel} is ${bytes} bytes, over the ${CEILING_BYTES} ceiling`);
-  }
-});
+// Per-file 40 KB pin on the seven specify files (DECOMPOSITION_MODE,
+// DECOMPOSITION_CLOSEOUT, COLLAPSE_DECISION, RECORD_CREATION,
+// RECORD_CREATION_SUBISSUES, RECORD_CREATION_LINKING, SKILL) retired by
+// #1997 — the per-file tier is a warning since #1990 and these files have no
+// compose call site; removal condition in docs/incident-log.md [IL-153].

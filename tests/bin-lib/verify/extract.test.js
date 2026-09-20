@@ -5,7 +5,7 @@ const path = require('path');
 
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
-  MAX_REGION_LINES, GENERIC_TAIL_LINES,
+  MAX_REGION_LINES, GENERIC_TAIL_LINES, stripAnsi, extractFailingFiles,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'extract.js'));
 
 const TAP_FIXTURE = [
@@ -141,4 +141,91 @@ test('summaryLine is one bounded line', () => {
   assert.ok(line.length <= 200);
   const long = summaryLine('x'.repeat(5000), 'generic');
   assert.ok(long.length <= 200);
+});
+
+test('extractFailingFiles: a node --test log with one failing frame yields that test file (AC1)', () => {
+  const text = [
+    'not ok 1 - a fails',
+    '  ---',
+    '  stack: |-',
+    '    at TestContext.<anonymous> (tests/a.test.js:12:5)',
+    '    at Test.runInAsyncScope (node:async_hooks:206:9)',
+    '  ...',
+    '# tests 1', '# pass 0', '# fail 1',
+  ].join('\n');
+  assert.deepStrictEqual(extractFailingFiles(text, 'tap'), ['tests/a.test.js']);
+});
+
+test('extractFailingFiles: node frames name only test files — source files under test and node internals are never returned', () => {
+  const text = [
+    'not ok 1 - x',
+    '  stack: |-',
+    '    at readStamp (plugin/bin/lib/verify/stamp.js:75:3)',
+    '    at TestContext.<anonymous> (tests/bin-lib/verify/stamp.test.js:40:5)',
+    '    at node:internal/test_runner/test:1:1',
+    '  ...',
+  ].join('\n');
+  assert.deepStrictEqual(extractFailingFiles(text, 'tap'), ['tests/bin-lib/verify/stamp.test.js']);
+});
+
+test('extractFailingFiles: absolute paths under cwd are relativized; the `location:` diagnostic counts too; order is log order and deduped', () => {
+  const text = [
+    'not ok 1 - first',
+    "  location: '/repo/tests/z.test.js:3:1'",
+    'not ok 2 - second',
+    '    at TestContext.<anonymous> (/repo/tests/a.test.js:12:5)',
+    'not ok 3 - third (same file again)',
+    '    at TestContext.<anonymous> (/repo/tests/z.test.js:30:5)',
+  ].join('\n');
+  assert.deepStrictEqual(extractFailingFiles(text, 'tap', { cwd: '/repo' }), ['tests/z.test.js', 'tests/a.test.js']);
+});
+
+test('extractFailingFiles: frames outside failure blocks are ignored (a passing test that printed a stack is not a failing file)', () => {
+  const text = [
+    'ok 1 - logs a stack on purpose',
+    '    at TestContext.<anonymous> (tests/noisy.test.js:5:5)',
+    'not ok 2 - really fails',
+    '    at TestContext.<anonymous> (tests/bad.test.js:5:5)',
+    '# tests 2', '# pass 1', '# fail 1',
+  ].join('\n');
+  assert.deepStrictEqual(extractFailingFiles(text, 'tap'), ['tests/bad.test.js']);
+});
+
+test('extractFailingFiles: vitest FAIL line wrapped in ANSI colour yields the file (AC1, the #1837 lesson)', () => {
+  const text = '\x1b[31m FAIL \x1b[0m src/x.test.ts > suite > case\n\x1b[31mAssertionError\x1b[0m\n';
+  assert.deepStrictEqual(extractFailingFiles(text, 'summary'), ['src/x.test.ts']);
+});
+
+test('extractFailingFiles: vitest ❯ file lines and jest FAIL lines both parse', () => {
+  const text = ['❯ src/y.test.ts (3 tests | 1 failed)', 'FAIL src/b.test.js', '  ● b > explodes', 'Tests:       2 failed, 4 passed, 6 total'].join('\n');
+  assert.deepStrictEqual(extractFailingFiles(text, 'summary'), ['src/y.test.ts', 'src/b.test.js']);
+});
+
+test('extractFailingFiles: pytest FAILED path::name yields the path', () => {
+  assert.deepStrictEqual(extractFailingFiles(PYTEST_FIXTURE, 'summary'), ['tests/test_b.py']);
+});
+
+// Review finding (pre-v6.119.0 whole-branch review): node --test's Windows
+// stack frames use a drive-letter colon and backslash separators — the old
+// PATH class excluded both, so a Windows failing frame never matched and the
+// #1925 flaky-retry allowlist silently never engaged on this repo's own
+// (Windows) CI-less local runs.
+test('extractFailingFiles: a Windows-native node --test frame (drive letter + backslashes) is relativized to a repo-relative posix path', () => {
+  const text = [
+    'not ok 1 - a fails',
+    '  stack: |-',
+    '    at TestContext.<anonymous> (C:\\repo\\tests\\a.test.js:12:5)',
+    '  ...',
+    '# tests 1', '# pass 0', '# fail 1',
+  ].join('\n');
+  assert.deepStrictEqual(extractFailingFiles(text, 'tap', { cwd: 'C:\\repo' }), ['tests/a.test.js']);
+});
+
+test('extractFailingFiles: generic family and a log with nothing parseable yield [] — no parse, no retry (AC1)', () => {
+  assert.deepStrictEqual(extractFailingFiles(GENERIC_FIXTURE, 'generic'), []);
+  assert.deepStrictEqual(extractFailingFiles('not ok 1 - fails with no frame\n# fail 1', 'tap'), []);
+});
+
+test('stripAnsi removes ESC-anchored colour sequences and nothing else', () => {
+  assert.strictEqual(stripAnsi('\x1b[31mred\x1b[0m [1m not a code'), 'red [1m not a code');
 });

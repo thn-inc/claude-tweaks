@@ -5,7 +5,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, BULK_CHUNK } = require('../../../plugin/bin/lib/reconcile/pr-state');
+const {
+  resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, resolveIssueStateByNumber, BULK_CHUNK,
+} = require('../../../plugin/bin/lib/reconcile/pr-state');
 
 // resolvePrState/resolvePrStateAsync both shell to `gh pr list` — neither is
 // injectable (mirrors the module's pre-existing design), so tests intercept
@@ -19,7 +21,7 @@ function installGhWrapper(jsonOrScript) {
     ? jsonOrScript
     : `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(jsonOrScript)}\nEOF\n`;
   fs.writeFileSync(wrapperPath, body);
-  fs.chmodSync(wrapperPath, 0o755);
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   const originalPath = process.env.PATH;
   process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
   return { restore: () => { process.env.PATH = originalPath; } };
@@ -272,6 +274,126 @@ test('resolvePrStatesBulk: hasNextPage:false (the normal case) still resolves th
 test('resolvePrStatesBulk: response missing an alias key classifies network-failure — never a silent null', () => {
   const oneOfTwo = JSON.stringify({ data: { repository: { b0: null } } }); // b1 absent
   assert.equal(resolvePrStatesBulk('/tmp', ['a', 'b'], { runner: () => oneOfTwo, repoSlug: 'o/r' }), 'network-failure');
+});
+
+// #1962: archive-merged.js's sweep falls back to this when a run dir's
+// stamped worktree is gone AND its branch has since been deleted (no branch
+// left for resolvePrState's `--head` query) — `run-state.json`'s `pr.number`
+// still names the PR, so probe it directly.
+test('resolvePrStateByNumber: no number -> null, no gh call', () => {
+  assert.equal(resolvePrStateByNumber('/tmp', null), null);
+  assert.equal(resolvePrStateByNumber('/tmp', undefined), null);
+});
+
+test('resolvePrStateByNumber: resolves the single PR by number (no tie-break needed)', () => {
+  const pr = { number: 42, state: 'CLOSED', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z', mergeCommit: null };
+  const wrapper = installGhWrapper(pr);
+  try {
+    const result = resolvePrStateByNumber('/tmp', 42);
+    assert.equal(result.number, 42);
+    assert.equal(result.state, 'CLOSED');
+  } finally {
+    wrapper.restore();
+  }
+});
+
+test('resolvePrStateByNumber: gh absent -> gh-absent, no throw', () => {
+  const originalPath = process.env.PATH;
+  process.env.PATH = '/nonexistent-path-with-no-gh';
+  try {
+    assert.equal(resolvePrStateByNumber('/tmp', 42), 'gh-absent');
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});
+
+test('resolvePrStateByNumber: malformed gh output -> network-failure, no throw', () => {
+  const wrapper = installGhWrapper('#!/bin/sh\necho "not json"\n');
+  try {
+    assert.equal(resolvePrStateByNumber('/tmp', 42), 'network-failure');
+  } finally {
+    wrapper.restore();
+  }
+});
+
+// #2367: the pending-review staleness check reuses resolvePrStateByNumber
+// rather than adding a third PR-state-reading code path — it needs
+// mergeable/mergeStateStatus on the returned shape.
+test('resolvePrStateByNumber: requests and returns mergeable/mergeStateStatus (#2367)', () => {
+  const pr = {
+    number: 42, state: 'OPEN', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z', mergeCommit: null, mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY',
+  };
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghwrap-argv-'));
+  const wrapperPath = path.join(wrapperDir, 'gh');
+  const argvLog = path.join(wrapperDir, 'argv.log');
+  fs.writeFileSync(wrapperPath, `#!/bin/sh\necho "$@" > "${argvLog}"\ncat <<'EOF'\n${JSON.stringify(pr)}\nEOF\n`);
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  try {
+    const result = resolvePrStateByNumber('/tmp', 42);
+    assert.equal(result.mergeStateStatus, 'DIRTY');
+    assert.equal(result.mergeable, 'CONFLICTING');
+    const argv = fs.readFileSync(argvLog, 'utf8');
+    assert.match(argv, /mergeable/);
+    assert.match(argv, /mergeStateStatus/);
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});
+
+// #1811: resolveIssueStateByNumber — archive-merged.js's no-run-state.json
+// terminal path needs an ISSUE's state by number (not a PR's), a distinct
+// `gh` object with its own subcommand (`issue view`, not `pr view`).
+test('resolveIssueStateByNumber: no number -> null, no gh call', () => {
+  assert.equal(resolveIssueStateByNumber('/tmp', null), null);
+  assert.equal(resolveIssueStateByNumber('/tmp', undefined), null);
+});
+
+test('resolveIssueStateByNumber: resolves the issue state by number', () => {
+  const wrapper = installGhWrapper({ state: 'CLOSED' });
+  try {
+    const result = resolveIssueStateByNumber('/tmp', 1811);
+    assert.equal(result.state, 'CLOSED');
+  } finally {
+    wrapper.restore();
+  }
+});
+
+test('resolveIssueStateByNumber: requests `issue view`, not `pr view`', () => {
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghwrap-issueview-'));
+  const wrapperPath = path.join(wrapperDir, 'gh');
+  const argvLog = path.join(wrapperDir, 'argv.log');
+  fs.writeFileSync(wrapperPath, `#!/bin/sh\necho "$@" > "${argvLog}"\ncat <<'EOF'\n${JSON.stringify({ state: 'OPEN' })}\nEOF\n`);
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  try {
+    resolveIssueStateByNumber('/tmp', 1811);
+    const argv = fs.readFileSync(argvLog, 'utf8');
+    assert.match(argv, /^issue view 1811/);
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});
+
+test('resolveIssueStateByNumber: gh absent -> gh-absent, no throw', () => {
+  const originalPath = process.env.PATH;
+  process.env.PATH = '/nonexistent-path-with-no-gh';
+  try {
+    assert.equal(resolveIssueStateByNumber('/tmp', 1811), 'gh-absent');
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});
+
+test('resolveIssueStateByNumber: malformed gh output -> network-failure, no throw', () => {
+  const wrapper = installGhWrapper('#!/bin/sh\necho "not json"\n');
+  try {
+    assert.equal(resolveIssueStateByNumber('/tmp', 1811), 'network-failure');
+  } finally {
+    wrapper.restore();
+  }
 });
 
 test('resolvePrStatesBulk: unresolvable repo slug classifies network-failure (fail closed, no spawn)', () => {

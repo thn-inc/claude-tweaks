@@ -72,7 +72,49 @@ Absorb the record's existing content into whichever section it belongs in — a 
 
 One authoring constraint on the composed prose itself: never write the literal placeholder tokens `TBD`, `TODO`, or `<!-- ambiguity:` anywhere in a composed body — not even as a *mention* (e.g. "…not as a TODO in the files"). `_shared/work-record.md`'s spec-shaped-body check, re-run by `/claude-tweaks:backlog refine`'s Step 3.5 and the grant gate, greps for these tokens with no context sensitivity, so a prose mention flags the record as carrying an unresolved placeholder and downgrades it back out of `ready`. Paraphrase instead ("a deferred-work comment", "an unresolved marker"). A marker *inherited* inside the preserved `## Original request` copy is different — it is sanctioned: the spec-shaped-body checks exempt that section (#1240), and the verbatim copy must never be hand-edited to remove one.
 
-When a human-filed defect report names a specific affected file, function, or exact error string, do a cheap sanity check before shaping: grep the named artifact against the codebase. A miss doesn't necessarily mean the report is wrong (the code may be newer, or the artifact may genuinely live elsewhere) — but it's a fact-check worth doing at shaping time rather than discovering it mid-build, after a worktree and (under `pr-first`) a draft PR already exist (`#174`).
+Run `_shared/premise-verification.md`'s check against the composed `## Current State`/`### Key Files` before proceeding — this record's own delta on top of that shared rule: when a human-filed defect report names a specific affected file, function, or exact error string, the artifact-grep IS the premise-verification probe for that claim; a miss doesn't necessarily mean the report is wrong (the code may be newer, or the artifact may genuinely live elsewhere), but it's a fact-check worth doing at shaping time rather than discovering it mid-build, after a worktree and (under `pr-first`) a draft PR already exist (`#174`).
+
+**Near-duplicate candidate check (#1944), also before composition.** Run `findNearDuplicates`
+(`bin/lib/issues/near-duplicate.js`) with this record as subject against every other open record
+in this session's already-fetched snapshot (`_shared/record-queue-fetch.md` — invalidate first,
+per that file's staleness rule, when this is not the first record shaped in the current
+session/batch). This is a screen, not a verdict (memory: similarity scores are
+normalization-sensitive) — the finder never blocks shaping on its own signal alone.
+
+When it returns no candidates, proceed straight to composition below. When it returns one or
+more, render a three-column table in the shaping output before proceeding —
+
+| Record | Score | Signals |
+|--------|-------|---------|
+| #{n} | {score} | {signals, comma-joined} |
+
+— and append every candidate as `#{n}` to the composed body's `**Related:**` line (creating the
+line if the record doesn't already carry one). A candidate surfaced here is worth a human's
+attention even when shaping proceeds normally.
+
+Then check each candidate's own current state. When any candidate is **both** `ready` **and**
+either carries `bot:in-progress` or has an open linked PR (the same `closedByPullRequestsReferences`
+connection dispatch's own open-PR exclusion reads — `record.js`'s `buildLinkedPRQuery` /
+`partitionByOpenLinkedPR`), **stop shaping this record here** — do not compose, stamp, or write
+`ready` for it. Instead, add the `needs:decision` label (bootstrap per
+`_shared/label-bootstrap.md` if this repo has never stamped it before) and post
+`_shared/work-record.md`'s canonical decision-comment, `{unit}` = `specify`:
+
+```
+<!-- needs-decision: specify -->
+## Decision needed
+**Proposed:** Absorb into #{candidate} — close this record as a duplicate rather than shaping it
+**Why:** near-duplicate finder found {signals} against #{candidate}, which is `ready` with an
+in-flight build (open PR / `bot:in-progress`)
+**Command:** `gh issue close {n} --comment "Absorbed into #{candidate}"`
+```
+
+Report this record's Actions Performed row as `refused — proposed Absorb into #{candidate}`
+rather than `shaped` — the same per-record failure-isolation posture a write/read-back failure
+already uses on a batch (below): the rest of the batch keeps shaping. This is the one automatic
+refusal the finder's signal authorizes on its own; every other candidate (no `ready` +
+in-flight-build match) is surfaced via the table and `**Related:**` append only, mirroring the
+refusal grounds an earlier sweep applied by hand for the same reason (#1944).
 
 ### Dependency-narration check
 

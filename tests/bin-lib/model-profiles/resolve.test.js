@@ -184,3 +184,47 @@ test('an unknown effort throws from either value source, and never resolves sile
     policy: { 'model-profiles': { standard: { effort: 'hgih' } } }, stance: 'max-rigor',
   }), /hgih/);
 });
+
+// #1912: diff-facts ceiling — downward-only bound on `capable` requests.
+test('diff-facts ceiling caps a capable request to standard on a tiny diff', () => {
+  const r = resolve('capable', { diffFacts: { implFiles: 1, totalLines: 40 } });
+  assert.strictEqual(r.model, 'sonnet');
+  assert.strictEqual(r.effort, 'high');
+  assert.strictEqual(r.source, 'diff-ceiling');
+});
+
+test('diff-facts ceiling is inert on a larger diff (either threshold exceeded)', () => {
+  const overFiles = resolve('capable', { diffFacts: { implFiles: 2, totalLines: 40 } });
+  assert.strictEqual(overFiles.model, 'opus');
+  assert.strictEqual(overFiles.source, 'default');
+  const overLines = resolve('capable', { diffFacts: { implFiles: 1, totalLines: 60 } });
+  assert.strictEqual(overLines.model, 'opus');
+  assert.strictEqual(overLines.source, 'default');
+});
+
+test('diff-facts ceiling is inert when --diff-facts is absent', () => {
+  const r = resolve('capable', {});
+  assert.strictEqual(r.model, 'opus');
+  assert.strictEqual(r.source, 'default');
+});
+
+test('diff-facts ceiling never applies to frontier, even on a tiny diff', () => {
+  const r = resolve('frontier', { diffFacts: { implFiles: 1, totalLines: 10 } });
+  assert.strictEqual(r.model, 'fable');
+  assert.strictEqual(r.source, 'default');
+});
+
+test('diff-facts ceiling never raises a tier already below standard', () => {
+  const r = resolve('fast', { diffFacts: { implFiles: 1, totalLines: 10 } });
+  assert.strictEqual(r.model, 'haiku');
+  assert.strictEqual(r.source, 'default');
+});
+
+test('diff-facts ceiling defers to an explicit cliOverride (cliOverride already resolved before this stage runs, and the ceiling only fires on a resolved tier above standard)', () => {
+  const r = resolve('capable', {
+    diffFacts: { implFiles: 1, totalLines: 10 },
+    cliOverride: { model: 'opus' },
+  });
+  assert.strictEqual(r.model, 'opus');
+  assert.strictEqual(r.source, 'cli');
+});

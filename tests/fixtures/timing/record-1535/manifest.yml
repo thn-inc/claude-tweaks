@@ -1,0 +1,15 @@
+multispec:
+  parent: .claude-tweaks/pipelines/2026-09-05T130000-spec-1535/
+  specs:
+    - id: 1535
+      status: complete
+      subdir: spec-1535/
+      startedAt: 2026-09-05T13:01:00.000Z
+      phase: wrap-up
+      phases:
+        - phase: build
+          status: running
+          at: 2026-09-05T13:01:00.000Z
+        - phase: wrap-up
+          status: complete
+          at: 2026-09-05T14:12:00.000Z

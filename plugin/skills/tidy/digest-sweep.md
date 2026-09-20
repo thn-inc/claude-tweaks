@@ -1,7 +1,7 @@
 # Tidy — Digest Sweep
 
 The digest sweep's procedures, extracted into their own lazy-load unit so `SKILL.md` keeps only a
-short trigger paragraph pointing here (`SKILL.md` sits close enough to its 40,960-byte ceiling
+short trigger paragraph pointing here (`SKILL.md` sits close enough to its 46,080-byte ceiling
 that this sweep's prose does not fit inline — measure with `wc -c` before adding to it).
 
 The dispatcher reads this file **whole** and inlines it into the relevant agent's prompt when this

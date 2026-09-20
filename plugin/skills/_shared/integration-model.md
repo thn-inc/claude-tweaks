@@ -54,6 +54,7 @@ Populated as each pr-first sub-issue lands; a consumer citing this file *and* ro
 | `/claude-tweaks:dispatch` (`settle-and-merge.md`'s Auto-merge gate, `task-prompt.md`'s outcome vocabulary, `two-call-gate.md`, `SKILL.md` Steps 5-6), `/claude-tweaks:wrap-up` (`review-console.md`'s Auto-merge short-circuit), `/claude-tweaks:flow` (`worktree-merge.md`'s Merge Reconciliation) | Routing merge execution to `_shared/pr-first-merge.md` (`gh pr merge`, no checkout) vs. each file's own retained local-checkout merge procedure |
 | `/claude-tweaks:wrap-up` (`review-console-interactive.md`'s Console-on-PR section), `/claude-tweaks:flow` (`multispec-review-console.md`'s Console-on-PR section) | Routing the top-level Review Console gate to `_shared/console-on-pr.md`'s PR-checkbox render (`pr-first`) vs. the unchanged blocking `AskUserQuestion` (`local-merge`) |
 | `plugin/bin/lib/hooks/pre-tool-use.js` (`checkBookkeepingStampsGate`) | Deciding whether the missing-`record-pr` half of the bookkeeping-stamps gate applies at all — only a run resolving `pr-first` is denied for having no recorded PR. Reads the run's own pin via `policy-schema.js`'s `resolvePolicyConfig({ runDir })`, never a fresh detection |
+| `/claude-tweaks:release` (`release/execute.md`) | Routing Step 5 to `gh pr merge` (pr-first) or `bin/release-local.js` (local-merge) |
 
 ## Anti-Patterns
 

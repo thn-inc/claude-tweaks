@@ -3,6 +3,8 @@
 // Family is sniffed from output CONTENT, never from the check's name. Counts
 // fail toward absence: anything ambiguous returns null — a wrong count would
 // poison #881's future drop-detection.
+// `extractFailingFiles` (#1925) names the failing TEST files the same way,
+// ANSI-stripped, for the runner's flaky retry; `[]` when nothing parses.
 'use strict';
 
 const MAX_REGION_LINES = 100;
@@ -104,7 +106,69 @@ function summaryLine(text, family) {
   return lastLine.slice(0, MAX_SUMMARY_CHARS);
 }
 
+// ANSI colour sequences, ESC-anchored (#1837: vitest's coloured summary
+// defeated parseCounts). Stripped before every regex below — never
+// applied to the region/summary paths, whose fixtures are colour-free.
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+function stripAnsi(text) { return text.replace(ANSI_RE, ''); }
+
+// Only test files are retried — a stack frame also names the source files
+// under test, and the retry template runs a test file, never a module.
+const TEST_FILE_RE = /(?:\.(?:test|spec)\.[cm]?[jt]sx?|(?:^|\/)test_[^/]+\.py|_test\.[a-z]+)$/;
+const PATH = '[A-Za-z0-9_./@~-]+';
+// Windows-native node --test frames add a drive-letter colon and backslash
+// separators (`C:\repo\tests\x.test.js:42:10`) — this wider class is for
+// TAP_FRAME_RE only. SUMMARY_FAIL_RE keeps the colon-free PATH: its pytest
+// case (`FAILED path::name`) relies on `:` not being a PATH character so the
+// `(?=\s|::|$)` lookahead stops at `::` instead of the capture swallowing it
+// (review finding, refs #1925).
+const WIN_PATH = '[A-Za-z0-9_./@~:\\\\-]+';
+// node --test: `at fn (path:line:col)` / `at path:line:col`, and the
+// `location: 'path:line:col'` diagnostic newer runners print.
+const TAP_FRAME_RE = new RegExp(`(?:\\(|\\s|')(${WIN_PATH}):\\d+:\\d+\\)?`, 'g');
+// vitest (` FAIL  path > name`, `❯ path (n tests | m failed)`), jest
+// (`FAIL path`), pytest (`FAILED path::name`).
+const SUMMARY_FAIL_RE = new RegExp(`^\\s*(?:FAIL|❯|FAILED)\\s+(${PATH})(?=\\s|::|$)`);
+
+function relativize(file, cwd) {
+  const normalizedFile = file.replace(/\\/g, '/');
+  const prefix = `${cwd.replace(/\\/g, '/').replace(/\/+$/, '')}/`;
+  return normalizedFile.startsWith(prefix) ? normalizedFile.slice(prefix.length) : normalizedFile;
+}
+
+// Deduped, log-order, repo-relative test files named by the failing part of
+// the log. `[]` whenever nothing parses — no parse ⇒ no retry (the caller
+// never guesses). TAP: frames inside `not ok` blocks only, so a passing
+// test that printed a stack never reads as failing.
+function extractFailingFiles(text, family, { cwd = process.cwd() } = {}) {
+  const lines = stripAnsi(text).split('\n');
+  const found = [];
+  const push = (file) => {
+    const rel = relativize(file, cwd);
+    if (TEST_FILE_RE.test(rel) && !rel.startsWith('node:') && !found.includes(rel)) found.push(rel);
+  };
+  if (family === 'tap') {
+    let inFailure = false;
+    for (const line of lines) {
+      if (/^not ok\b/.test(line)) { inFailure = true; continue; }
+      if (/^(ok \d|# )/.test(line)) { inFailure = false; continue; }
+      if (!inFailure) continue;
+      for (const m of line.matchAll(TAP_FRAME_RE)) push(m[1]);
+    }
+    return found;
+  }
+  if (family === 'summary') {
+    for (const line of lines) {
+      const m = line.match(SUMMARY_FAIL_RE);
+      if (m) push(m[1]);
+    }
+    return found;
+  }
+  return found;
+}
+
 module.exports = {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
+  stripAnsi, extractFailingFiles, TEST_FILE_RE,
   MAX_REGION_LINES, GENERIC_TAIL_LINES, MAX_LINE_CHARS,
 };

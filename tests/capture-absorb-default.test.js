@@ -183,28 +183,12 @@ test('capture/routing.md appends under the exact "## Absorbed: {YYYY-MM-DD} — 
 
 // --- byte ceiling ---
 
-test('capture/SKILL.md stays within the context-cost ceiling', () => {
-  const CEILING_BYTES = 40960;
-  const bytes = fs.statSync(path.join(REPO_ROOT, CAPTURE)).size;
-  assert.ok(bytes <= CEILING_BYTES, `${CAPTURE} is ${bytes} bytes, over the ${CEILING_BYTES} ceiling`);
-});
+// Per-file 40 KB pin on capture/SKILL.md (raw ceiling and the 4 KB-margin
+// headroom variant below) retired by #1997 — the per-file tier is a warning
+// since #1990 and this file has no compose call site; removal condition in
+// docs/incident-log.md [IL-153].
 
 // --- #1295: local-files driver mapping (Deliverables 1 + 2) ---
-
-// AC1's "real headroom, not ceiling-grazing" — the byte-ceiling test above
-// only proves SKILL.md is under the hard ceiling; this proves the split
-// actually bought headroom in both resulting files, not just SKILL.md.
-test('#1295: both capture/SKILL.md and capture/routing.md carry real headroom (>=4KB) under the context-cost ceiling', () => {
-  const CEILING_BYTES = 40960;
-  const HEADROOM_TARGET = 4000;
-  for (const rel of [CAPTURE, ROUTING]) {
-    const bytes = fs.statSync(path.join(REPO_ROOT, rel)).size;
-    assert.ok(
-      CEILING_BYTES - bytes >= HEADROOM_TARGET,
-      `${rel} is ${bytes} bytes, only ${CEILING_BYTES - bytes} B under the ceiling (want >= ${HEADROOM_TARGET})`
-    );
-  }
-});
 
 test('#1295: no capture/** file still scopes the recommended-absorb ordering to github-issues only', () => {
   for (const rel of [CAPTURE, ROUTING]) {

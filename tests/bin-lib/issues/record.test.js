@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   recordPayload, TYPE_LABELS, CLASSIFICATION_SCORING, LABELS, DEFER_REASONS,
-  extractFingerprint, extractVerifiedAsOf, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
+  extractFingerprint, extractVerifiedAsOf, extractPremiseCheck, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
   buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, buildNativeSubIssuesQuery,
   buildNativeParentQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
@@ -220,8 +220,8 @@ test('extractFingerprint returns null for null, undefined, and empty-string bodi
 
 test('parseRecordFacets: by:capture + parked', () => {
   assert.deepStrictEqual(parseRecordFacets(['by:capture', 'parked']), {
-    origin: 'capture', risk: null, size: null, ceremony: null, solutionUnjustified: false, needsDefinition: false, priority: null, stage: 'parked',
-    grants: { build: false, merge: false }, bot: { inProgress: false, blocked: false },
+    origin: 'capture', risk: null, size: null, ceremony: null, solutionUnjustified: false, breaking: false, needsDefinition: false, priority: null, stage: 'parked',
+    grants: { build: false, merge: false }, bot: { inProgress: false, blocked: false, parked: false },
     acceptance: null, isParentIssue: false, notPlanned: false, shapedHeadless: false,
   });
 });
@@ -230,7 +230,7 @@ test('parseRecordFacets: ready + auto:build + bot:in-progress', () => {
   const result = parseRecordFacets(['ready', 'auto:build', 'bot:in-progress']);
   assert.strictEqual(result.stage, 'ready');
   assert.deepStrictEqual(result.grants, { build: true, merge: false });
-  assert.deepStrictEqual(result.bot, { inProgress: true, blocked: false });
+  assert.deepStrictEqual(result.bot, { inProgress: true, blocked: false, parked: false });
   assert.strictEqual(result.origin, null);
 });
 
@@ -239,15 +239,20 @@ test('parseRecordFacets: auto:build + auto:merge grants both build and merge', (
   assert.deepStrictEqual(result.grants, { build: true, merge: true });
 });
 
-test('parseRecordFacets: bot:blocked sets bot.blocked without bot.inProgress', () => {
+test('parseRecordFacets: bot:blocked sets bot.blocked without bot.inProgress or bot.parked', () => {
   const result = parseRecordFacets(['bot:blocked']);
-  assert.deepStrictEqual(result.bot, { inProgress: false, blocked: true });
+  assert.deepStrictEqual(result.bot, { inProgress: false, blocked: true, parked: false });
+});
+
+test('parseRecordFacets: bot:parked sets bot.parked without bot.inProgress or bot.blocked', () => {
+  const result = parseRecordFacets(['bot:parked']);
+  assert.deepStrictEqual(result.bot, { inProgress: false, blocked: false, parked: true });
 });
 
 test('parseRecordFacets: empty label list', () => {
   assert.deepStrictEqual(parseRecordFacets([]), {
-    origin: null, risk: null, size: null, ceremony: null, solutionUnjustified: false, needsDefinition: false, priority: null, stage: 'backlog',
-    grants: { build: false, merge: false }, bot: { inProgress: false, blocked: false },
+    origin: null, risk: null, size: null, ceremony: null, solutionUnjustified: false, breaking: false, needsDefinition: false, priority: null, stage: 'backlog',
+    grants: { build: false, merge: false }, bot: { inProgress: false, blocked: false, parked: false },
     acceptance: null, isParentIssue: false, notPlanned: false, shapedHeadless: false,
   });
 });
@@ -549,6 +554,13 @@ test('buildLinkedPRQuery aliases each number and requests closedByPullRequestsRe
   assert.match(q, /closedByPullRequestsReferences\(first:10\)/);
   assert.match(q, /state/);
   assert.match(q, /repository\(owner:\$owner,name:\$repo\)/);
+});
+
+test('buildLinkedPRQuery also requests the cross-reference timeline, same-repo PR sources only (#1984)', () => {
+  const q = buildLinkedPRQuery([1224]);
+  assert.match(q, /timelineItems\(itemTypes:\[CROSS_REFERENCED_EVENT\], first:20\)/);
+  assert.match(q, /\.\.\. on CrossReferencedEvent \{ source \{ \.\.\. on PullRequest/);
+  assert.match(q, /merged mergedAt repository \{ nameWithOwner \}/);
 });
 
 test('buildLinkedPRQuery returns null for an empty array', () => {
@@ -944,4 +956,62 @@ test('extractVerifiedAsOf: null when absent, when body is empty, and for non-str
 test('extractVerifiedAsOf: is line-anchored — prose mentioning a commit elsewhere does not match', () => {
   const body = 'See commit abc1234 for background.\n\n## Current State\nx';
   assert.strictEqual(extractVerifiedAsOf(body), null);
+});
+
+// --- specShapedBody / extractPremiseCheck (#1829) ---
+
+test('specShapedBody: omitting premiseCheck is byte-identical to the pre-change composition', () => {
+  const body = specShapedBody({
+    header: 'H', ...BASE, acceptanceCriteria: 'a', verifiedAsOf: 'abcdef1',
+  });
+  assert.ok(!body.includes('Premise-check:'));
+});
+
+test('specShapedBody: premiseCheck renders right after Verified-as-of, before Origin', () => {
+  const body = specShapedBody({
+    header: 'H', ...BASE, acceptanceCriteria: 'a', verifiedAsOf: 'abcdef1', premiseCheck: 'test $(wc -l < CLAUDE.md) -gt 150', provenance: { origin: 'o' },
+  });
+  assert.ok(body.startsWith('H\n\nVerified-as-of: abcdef1\n\nPremise-check: test $(wc -l < CLAUDE.md) -gt 150\n\nOrigin: o\n\n## Current State'));
+});
+
+test('specShapedBody: premiseCheck alone (no verifiedAsOf) renders with no stray blanks', () => {
+  const body = specShapedBody({ ...BASE, acceptanceCriteria: 'a', premiseCheck: 'test 1 -gt 0' });
+  assert.ok(body.startsWith('Premise-check: test 1 -gt 0\n\n## Current State'));
+});
+
+test('specShapedBody: premiseCheck rejects a multi-line command', () => {
+  assert.throws(
+    () => specShapedBody({
+      ...BASE, acceptanceCriteria: 'a', premiseCheck: 'line one\nline two',
+    }),
+    /premiseCheck must be a single-line command/,
+  );
+});
+
+test('extractPremiseCheck: reads the command back off a composed body', () => {
+  const body = specShapedBody({
+    header: 'H', ...BASE, acceptanceCriteria: 'a', premiseCheck: 'test $(wc -l < CLAUDE.md) -gt 150',
+  });
+  assert.strictEqual(extractPremiseCheck(body), 'test $(wc -l < CLAUDE.md) -gt 150');
+});
+
+test('extractPremiseCheck: null when absent, when body is empty, and for non-string input', () => {
+  assert.strictEqual(extractPremiseCheck('## Current State\nno premise check here'), null);
+  assert.strictEqual(extractPremiseCheck(''), null);
+  assert.strictEqual(extractPremiseCheck(null), null);
+  assert.strictEqual(extractPremiseCheck(undefined), null);
+});
+
+test('parseRecordFacets: breaking label sets facets.breaking to true (presence-only Compatibility axis, #2251)', () => {
+  assert.strictEqual(parseRecordFacets(['breaking']).breaking, true);
+  assert.strictEqual(parseRecordFacets([{ name: 'breaking' }]).breaking, true);
+});
+
+test('parseRecordFacets: facets.breaking defaults to false, never undefined', () => {
+  assert.strictEqual(parseRecordFacets([]).breaking, false);
+  assert.strictEqual(parseRecordFacets(['ready', 'type:feature']).breaking, false);
+});
+
+test('LABELS.BREAKING is exported and matches the canonical bootstrap row', () => {
+  assert.strictEqual(LABELS.BREAKING, 'breaking');
 });

@@ -7,34 +7,28 @@ Requires the shared procedures in `browser-review.md` (prerequisites, mode resol
 data loading, Step 0 reconnaissance) and its **Shared review contract** — this file's Steps
 1, 2, and 6 reach into that contract rather than restating it.
 
-Open the session, navigate to the URL, take a snapshot and an annotated screenshot, capture vitals — then proceed through the structured steps. A typical page-mode warm-up:
+Open the session, navigate to the URL, take a snapshot and a screenshot — then proceed through the structured steps. A typical page-mode warm-up:
 
 ```
-agent-browser --session <session> open <url>
-agent-browser --session <session> trace start
-agent-browser --session <session> snapshot -i -c
-agent-browser --session <session> screenshot --annotate .claude-tweaks/artifacts/screenshots/browse/<session>/01_landing.png
-agent-browser --session <session> vitals
+playwright-cli -s=<session> open <url>
+playwright-cli -s=<session> tracing-start
+playwright-cli -s=<session> snapshot
+playwright-cli -s=<session> screenshot --filename=/absolute/path/to/repo/.claude-tweaks/artifacts/screenshots/browse/<session>/01_landing.png
 ```
 
-Or as a single batch:
+<!-- playwright-cli: no equivalent found for agent-browser vitals — see issue Gotchas -->
+**Vitals capability gap:** Playwright CLI has no `vitals` command or equivalent (`browser-review.md`'s Shared review contract, "Vitals interpretation (Step 1)") — the pre-migration warm-up's `vitals` call after the screenshot has no translation. Performance findings cannot be produced for this page until a replacement capture mechanism is designed.
 
-```
-agent-browser batch --session <session> \
-  "open <url>" \
-  "trace start" \
-  "snapshot -i -c" \
-  "screenshot --annotate .claude-tweaks/artifacts/screenshots/browse/<session>/01_landing.png" \
-  "vitals"
-```
+<!-- playwright-cli: no equivalent found for agent-browser batch — see issue Gotchas -->
+Playwright CLI has no `batch` equivalent (`playwright-cli-reference.md`'s Operation vocabulary table) — the four commands above run as separate sequential invocations against the same `-s=<session>` session; there is no single-invocation form.
 
-(`trace start` begins Chrome DevTools trace recording — tracing is record-then-stop, so a later failure can only be saved if recording started here.)
+(`tracing-start` begins Playwright CLI trace recording — tracing is record-then-stop, so a later failure can only be saved if recording started here.)
 
 **Dispatcher column mapping (page-review use):** When assembling agent output into the Step 6 Report & Route table, map the agent's `| Severity | Path:Line | Finding | Evidence |` columns as follows: Severity = severity/impact (`critical` for broken page or failed health check, `high`/`medium` for major UX or perf issues, `low` for cosmetic, `info` for ideas), Path:Line = the page URL + overlay ref (`/pricing#[3]`, `/checkout#[7]`), Finding = the issue or idea (`Primary CTA at [3] competes visually with [5]` / `LCP 3.1s exceeds 2.5s threshold`), Evidence = the screenshot path + raw measurement (`.claude-tweaks/artifacts/screenshots/browse/pricing-review/02_above-fold.png; LCP 3.1s; persona: distracted mobile`). The dispatcher merges all agents' tables into the Step 6 Report & Route table, filling Source from the lens that produced each finding (Health / Performance / First Impression / Persona / Analyze / Reimagine).
 
-> **Parallel execution (conditional):** When the review covers 3+ independent pages (different URLs with no shared state or navigation dependency), dispatch page reviews as parallel Task agents. Each agent owns its own session, runs its own batch, and returns findings in the `| Severity | Path:Line | Finding | Evidence |` format (see the output template below). The dispatcher maps these rows into the Step 6 Report & Route table using the column mapping documented immediately above. When pages share state (form submission on page A affects page B) or there are fewer than 3 pages, review sequentially.
+> **Parallel execution (conditional):** When the review covers 3+ independent pages (different URLs with no shared state or navigation dependency), dispatch page reviews as parallel Task agents. Each agent owns its own session, runs its own command sequence, and returns findings in the `| Severity | Path:Line | Finding | Evidence |` format (see the output template below). The dispatcher maps these rows into the Step 6 Report & Route table using the column mapping documented immediately above. When pages share state (form submission on page A affects page B) or there are fewer than 3 pages, review sequentially.
 >
-> **Contract:** Each agent follows `_shared/subagent-output-contract.md` — minimal input, status line first, output template inlined verbatim below. Dispatch shape: single-assistant-message rule (`_shared/subagent-output-contract.md`'s fan-out section) applies.
+> **Contract:** Each agent follows `_shared/subagent-output-contract.md` — minimal input, status line first, output template inlined verbatim below. Dispatch shape: single-assistant-message rule (`_shared/subagent-dispatch-core.md`'s fan-out section) applies.
 >
 > **Model profile:** [Use: Standard] — per-page review agents run Steps 1-5 (health, first impressions, persona walk, structured analysis, reimagine) which require integration across snapshot, screenshot, vitals, and source context. Upgrade to Capable only when the page's "reimagine" pass is the primary deliverable and creative synthesis dominates the work. Resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard` (contract § Model Selection).
 >
@@ -85,7 +79,7 @@ Verify the page is functional before investing in a deeper review.
 - Blank or broken page rendering (visible in screenshot)
 - Missing assets (images, fonts, styles)
 
-If the page is broken or blank, save the trace via `trace stop .claude-tweaks/artifacts/traces/<session>/<timestamp>.zip`, then `close`, then report immediately — no point continuing a visual review on a non-functional page.
+If the page is broken or blank, save the trace via `tracing-stop` (then relocate the auto-written file from `.playwright-cli/traces/` to an absolute path, e.g. `/absolute/path/to/repo/.claude-tweaks/artifacts/traces/<session>/<timestamp>.trace` — see `journey-mode.md`'s "When a journey step fails" for the full relocation steps), then `close`, then report immediately — no point continuing a visual review on a non-functional page.
 
 
 For vitals thresholds and how to report them, apply **Vitals interpretation (Step 1)** in
@@ -178,15 +172,15 @@ Reference annotated overlay numbers when calling out specific elements.
 - Are fonts loading correctly?
 
 #### Responsive Behavior (if applicable)
-Set viewport to common breakpoints and re-capture an annotated screenshot at each:
+Resize the viewport to common breakpoints and re-capture a screenshot at each:
 
 ```
-agent-browser --session <session> set viewport 375 667    # Mobile
-agent-browser --session <session> screenshot --annotate .claude-tweaks/artifacts/screenshots/browse/<session>/<NN>_mobile.png
-agent-browser --session <session> set viewport 768 1024   # Tablet
-agent-browser --session <session> screenshot --annotate .claude-tweaks/artifacts/screenshots/browse/<session>/<NN>_tablet.png
-agent-browser --session <session> set viewport 1280 800   # Desktop
-agent-browser --session <session> screenshot --annotate .claude-tweaks/artifacts/screenshots/browse/<session>/<NN>_desktop.png
+playwright-cli -s=<session> resize 375 667    # Mobile
+playwright-cli -s=<session> screenshot --filename=/absolute/path/to/repo/.claude-tweaks/artifacts/screenshots/browse/<session>/<NN>_mobile.png
+playwright-cli -s=<session> resize 768 1024   # Tablet
+playwright-cli -s=<session> screenshot --filename=/absolute/path/to/repo/.claude-tweaks/artifacts/screenshots/browse/<session>/<NN>_tablet.png
+playwright-cli -s=<session> resize 1280 800   # Desktop
+playwright-cli -s=<session> screenshot --filename=/absolute/path/to/repo/.claude-tweaks/artifacts/screenshots/browse/<session>/<NN>_desktop.png
 ```
 
 Check for overflow, cramped layouts, or hidden content at each size. Only test responsive if the project is expected to support it — ask if unsure.

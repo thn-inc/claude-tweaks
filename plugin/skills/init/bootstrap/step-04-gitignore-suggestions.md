@@ -58,6 +58,7 @@ The same structural rule applies one level deeper, inside `.claude-tweaks/pipeli
 | Split entries present with the per-level `pipelines/` pattern, but no `.claude-tweaks/artifacts/` line, and no bare `screenshots/` line to trigger the row above | **Migrate.** Add `.claude-tweaks/artifacts/` — this project split before that line existed. Backup `.gitignore` before write. |
 | Split entries present, but no `.claude-tweaks/wrap-up-outcomes.tsv` line | **Migrate.** Add `.claude-tweaks/wrap-up-outcomes.tsv` — this project split before that line existed; without it, `close-run`/wrap-up telemetry can end up tracked and, under `worktree-always`, permanently uncommittable (#1561). Backup `.gitignore` before write. |
 | Already has the split entries with the per-level `pipelines/` pattern AND `.claude-tweaks/artifacts/` AND `.claude-tweaks/wrap-up-outcomes.tsv` | No-op (already migrated). |
+| A blanket `.claude-tweaks/` line the project keeps (declined the migration above), and Step 6.6 proposes or finds a `verify-scope.json` | A negation under a directory pattern does nothing — git cannot re-include a path whose parent directory is excluded. Suggest replacing the blanket line with `.claude-tweaks/*` followed by `!.claude-tweaks/verify-scope.json` (verified: the file then shows as untracked, ready to add); the declaration is project-owned and must be tracked (#1924). |
 
 If `stories/` exists or will be created, call `AskUserQuestion`:
 

@@ -10,12 +10,13 @@ const fs = require('fs');
 const path = require('path');
 const { PROFILES, effortLine } = require('../../../plugin/bin/lib/model-profiles/profiles');
 
-const CONTRACT = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'subagent-output-contract.md');
+// Model Selection moved from subagent-output-contract.md to subagent-dispatch-core.md at #2019.
+const CONTRACT = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'subagent-dispatch-core.md');
 
 function modelSelectionSection() {
   const text = fs.readFileSync(CONTRACT, 'utf8');
   const start = text.indexOf('## Model Selection');
-  assert.ok(start !== -1, 'contract must contain a ## Model Selection section');
+  assert.ok(start !== -1, 'subagent-dispatch-core.md must contain a ## Model Selection section');
   const end = text.indexOf('\n## ', start + 1);
   return text.slice(start, end === -1 ? undefined : end);
 }

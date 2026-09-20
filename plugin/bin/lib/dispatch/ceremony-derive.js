@@ -1,5 +1,5 @@
 'use strict';
-// #1545: for a headless firing, derive the wrap-up ceremony-profile DEFAULT
+// #1545: for an `auto`-mode run, derive the wrap-up ceremony-profile DEFAULT
 // from the diff actually produced, rather than leaving the header-fold
 // default (`flow/manifesto.md`'s Ceremony profile computation, always
 // `standard` unless every materialized record already carried a
@@ -67,4 +67,15 @@ function deriveCeremonyProfile(files, current) {
   return facts.lowSurface ? 'fast-lane' : current;
 }
 
-module.exports = { computeDiffFacts, deriveCeremonyProfile, isDocsPath };
+// #1932: the gate is the run's MODE, not the presence of a human. In `auto`
+// mode the Manifesto renders as a read-only FYI (`flow/manifesto.md`'s
+// auto-mode variant never calls AskUserQuestion), so nobody could have
+// adjusted `ceremony-profile` and the derivation applies whether or not a
+// person is watching. `confirm`/`hybrid`/`interactive` presented the lever
+// as a real question, so its value may be a human's answer — never touched.
+// A standalone wrap-up has no config.yml and therefore no mode: never derives.
+function shouldDerive({ mode, ceremonyProfile } = {}) {
+  return mode === 'auto' && ceremonyProfile === 'standard';
+}
+
+module.exports = { computeDiffFacts, deriveCeremonyProfile, isDocsPath, shouldDerive };

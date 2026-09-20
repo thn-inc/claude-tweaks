@@ -80,3 +80,71 @@ test('every allowlist entry carries a justification', () => {
     assert.ok(why && why.length > 20, `${rel} needs a real justification, got: ${JSON.stringify(why)}`);
   }
 });
+
+// --- #193: rank-set markers, ratcheted --------------------------------------
+//
+// The citation check above only enforces that a resolver *cites* the shared
+// fragment -- it says nothing about which ranks of the ladder that consumer
+// actually uses. Widening a deliberate narrowing (e.g. routine/record-freshness.md
+// regaining ranks 1-2, the #190 shape) passes that check and the full suite,
+// and only produces a wrong branch on the dev->staging->main repo models that
+// motivated the ladder. Every consumer with a genuine, deliberate rank
+// exclusion carries an `<!-- integration-branch-ranks: excludes=N[,M...] -->`
+// marker beside its narrowing prose; this section pins each one's current
+// value the same way bin/lib/skill-audit/tests/anti-patterns.test.js pins row
+// counts -- a change requires a deliberate edit here, not a silent pass.
+//
+// Scoped to the two consumers that carry the marker today (record #193's
+// premise re-measured at build time, per [IL-71]: the record's original three
+// named files -- flow/validation.md, build/worktree-setup.md,
+// routine/record-freshness.md -- are down to one still-independent resolver;
+// the other two were consolidated into _shared/worktree-setup.md's Pre-flight
+// divergence check by a separate extraction, #193's own Gotchas anticipated
+// this). The SessionStart reaper/run-integrity hooks' rank restriction is
+// documented in integration-branch.md's own Per-consumer fallback table
+// (unmarked, out of this record's Key Files list) rather than duplicated here.
+
+const RANK_MARKER_RE = /<!-- integration-branch-ranks: excludes=([\d,]+) -->/;
+
+const MARKED_CONSUMERS = [
+  { rel: '_shared/worktree-setup.md', expectedExcludes: '5' },
+  { rel: 'routine/record-freshness.md', expectedExcludes: '1,2' },
+];
+
+function readSkill(rel) {
+  return fs.readFileSync(path.join(SKILLS_DIR, rel), 'utf8');
+}
+
+for (const { rel, expectedExcludes } of MARKED_CONSUMERS) {
+  test(`${rel} carries an integration-branch-ranks marker matching its documented narrowing (ratchet)`, () => {
+    const text = readSkill(rel);
+    const match = RANK_MARKER_RE.exec(text);
+    assert.ok(match, `${rel} must carry an <!-- integration-branch-ranks: excludes=N --> marker beside its narrowing`);
+    assert.strictEqual(
+      match[1],
+      expectedExcludes,
+      `${rel}'s declared rank exclusion changed from "${expectedExcludes}" to "${match[1]}" -- ` +
+        'this ratchet only moves on a deliberate edit to this test, confirming the new exclusion set is intentional'
+    );
+  });
+}
+
+// Go-red proof: reproduces the #190-class defect concretely -- a consumer
+// silently widening its excludes set (regaining a rank it deliberately
+// dropped) must fail the ratchet, not pass silently.
+test('go-red proof: a consumer that silently regains an excluded rank fails the ratchet', () => {
+  const widened = 'Some prose.\n<!-- integration-branch-ranks: excludes=2 -->\nMore prose.';
+  const match = RANK_MARKER_RE.exec(widened);
+  assert.ok(match);
+  assert.notStrictEqual(
+    match[1],
+    '1,2',
+    'a widened marker (excludes=2, having silently dropped the "1," from "1,2") must not equal the pinned expectation'
+  );
+});
+
+test('go-red proof: a consumer whose marker is removed entirely is caught, not silently treated as unrestricted', () => {
+  const noMarker = 'Some prose with no marker at all.';
+  const match = RANK_MARKER_RE.exec(noMarker);
+  assert.strictEqual(match, null, 'no marker must parse to null, which the real test above asserts.ok()s against and fails on');
+});

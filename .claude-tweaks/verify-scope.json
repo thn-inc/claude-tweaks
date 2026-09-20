@@ -1,0 +1,13 @@
+{
+  "checks": { "tests": "npm test" },
+  "rules": [
+    { "match": "plugin/skills/**", "suites": "*", "static": true },
+    { "match": "plugin/**", "suites": "*", "static": true },
+    { "match": "tests/**", "suites": "*", "static": true },
+    { "match": "tools/**", "suites": "*", "static": true },
+    { "match": "docs/plans/*-ledger.md", "suites": [], "static": false },
+    { "match": ".claude-tweaks/pipelines/**", "suites": [], "static": false },
+    { "match": "docs/superpowers/plans/**", "suites": [], "static": false },
+    { "match": "docs/superpowers/specs/**", "suites": [], "static": false }
+  ]
+}

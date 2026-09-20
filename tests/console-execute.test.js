@@ -14,6 +14,7 @@ const {
   isClaimReclaimable,
   readConsoleJson,
   consoleExecuteDetect,
+  parseFixesMembers,
   RECLAIM_STALE_MS,
 } = require('../plugin/bin/lib/reconcile/console-execute');
 const { reconcile } = require('../plugin/bin/lib/reconcile');
@@ -235,6 +236,124 @@ test('decideConsoleExecute: an unrecognized mergeCheckVerdict value reads as nul
   const comments = [{ id: 'IC_1', body: '<!-- console-item: resolve -->\n- [x] **Resolve console**' }];
   const result = decideConsoleExecute(consoleJson, comments, Date.now());
   assert.strictEqual(result.mergeCheckVerdict, null);
+});
+
+// --- #1966/#1802: mergeGrantGap — the mechanized ungranted-member exception ---
+
+function mergeRowConsoleJson(overrides = {}) {
+  return {
+    resolved: false,
+    commentIds: ['IC_1'],
+    prNumber: 42,
+    items: [{ id: 'staged-1', kind: 'staged', summary: 'branch-finish', isMergeRow: true }],
+    ...overrides,
+  };
+}
+const RESOLVED_COMMENTS = [{
+  id: 'IC_1',
+  body: '<!-- console-item: staged-1 -->\n- [x] branch-finish\n\n<!-- console-item: resolve -->\n- [x] **Resolve console**',
+}];
+
+test('parseFixesMembers: one Fixes line per record, deduplicated and in order', () => {
+  const body = 'Some text\n\nFixes #12\nFixes #34\nFixes #12\n\nmore text';
+  assert.deepStrictEqual(parseFixesMembers(body), [12, 34]);
+});
+
+test('parseFixesMembers: a solo run\'s single Fixes line is still a one-member group', () => {
+  assert.deepStrictEqual(parseFixesMembers('### Resume\n\nFixes #1966\n'), [1966]);
+});
+
+test('parseFixesMembers: no Fixes line, or a non-string body, returns an empty list', () => {
+  assert.deepStrictEqual(parseFixesMembers('nothing here'), []);
+  assert.deepStrictEqual(parseFixesMembers(undefined), []);
+  assert.deepStrictEqual(parseFixesMembers(null), []);
+});
+
+test('decideConsoleExecute: isMergeRow forwarded onto the resolved item when true, omitted otherwise', () => {
+  const withRow = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now());
+  assert.strictEqual(withRow.items[0].isMergeRow, true);
+  const withoutRow = decideConsoleExecute(
+    { resolved: false, commentIds: ['IC_1'], prNumber: 42, items: [{ id: 'staged-1', kind: 'staged', summary: 'x' }] },
+    RESOLVED_COMMENTS,
+    Date.now(),
+  );
+  assert.strictEqual('isMergeRow' in withoutRow.items[0], false);
+});
+
+test('decideConsoleExecute: no isMergeRow item at all -> mergeGrantGap null regardless of ctx', () => {
+  const consoleJson = { resolved: false, commentIds: ['IC_1'], prNumber: 42, items: [] };
+  const result = decideConsoleExecute(consoleJson, RESOLVED_COMMENTS, Date.now(), {
+    prBody: 'Fixes #1', memberGrants: { 1: { labels: [], pendingSince: null } },
+  });
+  assert.strictEqual(result.mergeGrantGap, null);
+});
+
+test('decideConsoleExecute: isMergeRow present but no ctx supplied (legacy call shape) -> mergeGrantGap null, unchanged', () => {
+  const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now());
+  assert.strictEqual(result.mergeGrantGap, null);
+});
+
+test('decideConsoleExecute: a solo record (one Fixes line) carrying auto:merge -> mergeGrantGap null, merge row floor-clearing', () => {
+  const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
+    prBody: 'Fixes #1966', memberGrants: { 1966: { labels: ['auto:merge'], pendingSince: null } },
+  });
+  assert.strictEqual(result.mergeGrantGap, null);
+});
+
+test('decideConsoleExecute: a solo record with auto:build only, no auto:merge -> mergeGrantGap names it (#1966\'s reported bug)', () => {
+  const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
+    prBody: 'Fixes #1966', memberGrants: { 1966: { labels: ['auto:build'], pendingSince: null } },
+  });
+  assert.deepStrictEqual(result.mergeGrantGap.member, 1966);
+  assert.match(result.mergeGrantGap.reason, /no auto:merge-pending label/);
+});
+
+test('decideConsoleExecute: a matured auto:merge-pending clears the gap', () => {
+  // pendingSince arrives as a Date instance in production — fetchIssueGrant's
+  // extractPendingGrantedAt (bin/lib/issues/grant-maturation.js) returns Date | null,
+  // never a string; evaluateMaturation only accepts `instanceof Date`.
+  const pendingSince = new Date(Date.now() - 30 * 60 * 60 * 1000); // 30h ago
+  const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
+    prBody: 'Fixes #7', memberGrants: { 7: { labels: ['auto:merge-pending'], pendingSince } }, vetoWindowHours: 24,
+  });
+  assert.strictEqual(result.mergeGrantGap, null);
+});
+
+test('decideConsoleExecute: an auto:merge-pending still inside the veto window withholds', () => {
+  const pendingSince = new Date(Date.now() - 1 * 60 * 60 * 1000); // 1h ago
+  const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
+    prBody: 'Fixes #7', memberGrants: { 7: { labels: ['auto:merge-pending'], pendingSince } }, vetoWindowHours: 24,
+  });
+  assert.strictEqual(result.mergeGrantGap.member, 7);
+  assert.match(result.mergeGrantGap.reason, /veto window/);
+});
+
+test('decideConsoleExecute: a bundle with one ungranted member among several granted ones still withholds', () => {
+  const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
+    prBody: 'Fixes #1\nFixes #2\nFixes #3',
+    memberGrants: {
+      1: { labels: ['auto:merge'], pendingSince: null },
+      2: { labels: ['auto:build'], pendingSince: null },
+      3: { labels: ['auto:merge'], pendingSince: null },
+    },
+  });
+  assert.strictEqual(result.mergeGrantGap.member, 2);
+});
+
+test('decideConsoleExecute: isMergeRow present, ctx.prBody has no Fixes line -> members-unresolved, fails closed', () => {
+  const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
+    prBody: 'no fixes line here', memberGrants: {},
+  });
+  assert.strictEqual(result.mergeGrantGap.member, null);
+  assert.strictEqual(result.mergeGrantGap.reason, 'members-unresolved');
+});
+
+test('decideConsoleExecute: isMergeRow present, a named member missing from memberGrants -> grant-unreadable, fails closed', () => {
+  const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
+    prBody: 'Fixes #99', memberGrants: {},
+  });
+  assert.strictEqual(result.mergeGrantGap.member, 99);
+  assert.strictEqual(result.mergeGrantGap.reason, 'grant-unreadable');
 });
 
 test('decideConsoleExecute: overflow comments — an item\'s ticks are read from ITS OWN comment, not the primary\'s', () => {

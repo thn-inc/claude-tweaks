@@ -92,10 +92,9 @@ test('filing.md states the classification -> scoring fold table literally', () =
 });
 
 // The reason the extraction happened at all — guard the regression directly.
-test('SKILL.md stays under CLAUDE.md\'s 40 KB soft ceiling', () => {
-  const size = fs.statSync(SKILL).size;
-  assert.ok(size <= 40960, `SKILL.md is ${size} B, over the 40960 B soft ceiling by ${size - 40960}`);
-});
+// Per-file 40 KB pin on this SKILL.md retired by #1997 — the per-file tier
+// is a warning since #1990 and this file has no compose call site; removal
+// condition in docs/incident-log.md [IL-153].
 
 test('states the born-ready rule explicitly', () => {
   assert.ok(read().includes('born-`ready`'), 'missing an explicit born-ready statement');

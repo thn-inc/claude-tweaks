@@ -68,6 +68,15 @@ function prOpenedTombstoneMarker(runId, link) {
   });
 }
 
+// #2073: the post-write verification read `run()` now performs immediately
+// after every successful claim write — a fixture's `reads[issue]` queue must
+// supply this as the entry AFTER the read that led to the write, or the
+// verification (seeing the queue's last entry repeat) sees the pre-write
+// content again and the claim reports `unverified` instead of `claimed`.
+function confirmRead(runId = 'r1', sha = 'sha-confirm') {
+  return readOk(liveMarker(runId), sha);
+}
+
 // reads/writes: { [issue]: [response, response, ...] } — consumed in call
 // order, last entry repeats once exhausted. Throws on any unhandled argv
 // shape so a wrong endpoint fails loudly rather than silently.
@@ -147,7 +156,7 @@ function baseDeps({ ghApi, gh, hostname = 'host1', sessionId = 'sess1' }) {
 // (a) two absent targets -> both claimed, create-only PUTs (no sha), label+comment calls made
 test('(a) two absent targets: both claimed, create-only writes, label + comment made, exit 0', () => {
   const { ghApi, calls: apiCalls } = makeGhApi({
-    reads: { 720: [readAbsent], 721: [readAbsent] },
+    reads: { 720: [readAbsent, confirmRead()], 721: [readAbsent, confirmRead()] },
     writes: { 720: [writeOk], 721: [writeOk] },
   });
   const { gh, calls: ghCalls } = makeGh({});
@@ -180,7 +189,7 @@ test('(a) two absent targets: both claimed, create-only writes, label + comment 
 // absence on this transport.
 test('(a5) successful contents-API claims report transportByIssue: contents-api', () => {
   const { ghApi } = makeGhApi({
-    reads: { 720: [readAbsent] },
+    reads: { 720: [readAbsent, confirmRead()] },
     writes: { 720: [writeOk] },
   });
   const { gh } = makeGh({});
@@ -210,6 +219,10 @@ test('(a2) absent target with a gitRunner: create-only claim goes through git-CA
     // match by shape, not the literal old 'FETCH_HEAD' name.
     if (args[0] === 'rev-parse' && args[1] !== 'FETCH_HEAD') return `${TIP}\n`;
     if (args[0] === 'update-ref' && args[1] === '-d') return '';
+    // Post-write verification (#2073) reads back the just-pushed commit
+    // ('newcommit') — return the live confirming blob there; the original
+    // pre-write read (against TIP) is still genuinely absent.
+    if (args[0] === 'show' && args[1] === 'newcommit:claims/issue-720.json') return liveMarker('r1');
     if (args[0] === 'show') throw new Error(`fatal: path 'claims/issue-720.json' does not exist in '${TIP}'`);
     if (args[0] === 'hash-object') return 'deadbeef\n';
     if (args[0] === 'read-tree') return '';
@@ -242,6 +255,10 @@ test('(a2b) successful git-CAS claims report transportByIssue: git', () => {
     if (args[0] === 'fetch') return '';
     if (args[0] === 'rev-parse' && args[1] !== 'FETCH_HEAD') return `${TIP}\n`;
     if (args[0] === 'update-ref' && args[1] === '-d') return '';
+    // Post-write verification (#2073) reads back the just-pushed commit
+    // ('newcommit') — return the live confirming blob there; the original
+    // pre-write read (against TIP) is still genuinely absent.
+    if (args[0] === 'show' && args[1] === 'newcommit:claims/issue-720.json') return liveMarker('r1');
     if (args[0] === 'show') throw new Error(`fatal: path 'claims/issue-720.json' does not exist in '${TIP}'`);
     if (args[0] === 'hash-object') return 'deadbeef\n';
     if (args[0] === 'read-tree') return '';
@@ -276,6 +293,12 @@ function makeBatchGitRunner() {
   const readTreeCalls = [];
   const pushCalls = [];
   let commitCounter = 0;
+  // #2073: which issue number each synthetic commit sha actually claimed —
+  // derived from the write's own `-m "Claim issue #<n>"` commit-tree message,
+  // never hardcoded — so `show`'s post-write verification read can return
+  // that issue's own live content while every OTHER issue's read against the
+  // same chained commit (its own pre-write absence check) still sees absent.
+  const commitOwner = {};
   const runner = (args) => {
     if (args[0] === 'fetch') { fetchCalls.push(args); return ''; }
     if (args[0] === 'rev-parse' && args[1] !== 'FETCH_HEAD') { revParseCalls.push(args); return 'tip0\n'; }
@@ -284,13 +307,24 @@ function makeBatchGitRunner() {
       showCalls.push(args);
       const [sha, ...pathParts] = String(args[1]).split(':');
       const targetPath = pathParts.join(':');
+      const pathMatch = /issue-(\d+)\.json$/.exec(targetPath);
+      const issueNum = pathMatch ? Number(pathMatch[1]) : null;
+      if (issueNum !== null && commitOwner[sha] === issueNum) return liveMarker('r1');
       throw new Error(`fatal: path '${targetPath}' does not exist in '${sha}'`);
     }
     if (args[0] === 'hash-object') return 'blobsha\n';
     if (args[0] === 'read-tree') { readTreeCalls.push(args); return ''; }
     if (args[0] === 'update-index') return '';
     if (args[0] === 'write-tree') return 'treesha\n';
-    if (args[0] === 'commit-tree') { commitCounter += 1; return `commit-${commitCounter}\n`; }
+    if (args[0] === 'commit-tree') {
+      commitCounter += 1;
+      const commitSha = `commit-${commitCounter}`;
+      const msgIdx = args.indexOf('-m');
+      const message = msgIdx >= 0 ? args[msgIdx + 1] : '';
+      const claimMatch = /Claim issue #(\d+)/.exec(message);
+      if (claimMatch) commitOwner[commitSha] = Number(claimMatch[1]);
+      return `${commitSha}\n`;
+    }
     if (args[0] === 'push') { pushCalls.push(args); return ''; }
     throw new Error(`unexpected git call: ${args.join(' ')}`);
   };
@@ -317,9 +351,15 @@ test('(a3) #1467: a two-issue no-contention batch performs exactly ONE git fetch
   assert.deepEqual(JSON.parse(io.out[0]).claimed, [720, 721]);
   assert.equal(batch.fetchCalls.length, 1, 'only the FIRST issue fetches — the second must chain off the first write instead of re-fetching');
   assert.equal(batch.revParseCalls.length, 1, 'the scratch-ref rev-parse is paired 1:1 with the fetch it skipped for issue 2');
-  assert.equal(batch.showCalls.length, 2, 'both issues still each get their own read (absence check), just without a fetch');
-  const secondShaQueried = String(batch.showCalls[1][1]).split(':')[0];
-  assert.equal(secondShaQueried, 'commit-1', "issue 721's read must query the commit issue 720's write just produced, not the original fetched tip");
+  // 4, not 2: each issue's own pre-write absence check PLUS its own
+  // post-write verification read (#2073) — still zero extra fetches, since
+  // every one of these reads chains off a `knownTip` already in hand.
+  assert.equal(batch.showCalls.length, 4, 'each issue gets its own absence check AND its own post-write verification read, still without a fetch');
+  // showCalls[0] = 720's own pre-write absence check (against the fetched tip).
+  const thirdShaQueried = String(batch.showCalls[2][1]).split(':')[0];
+  assert.equal(thirdShaQueried, 'commit-1', "issue 721's pre-write read must query the commit issue 720's write just produced, not the original fetched tip");
+  assert.ok(batch.showCalls[1][1].startsWith('commit-1:claims/issue-720.json'), "720's own post-write verification must read back the commit its own write just produced");
+  assert.ok(batch.showCalls[3][1].startsWith('commit-2:claims/issue-721.json'), "721's own post-write verification must read back the commit its own write just produced");
   const secondReadTreeSha = batch.readTreeCalls[1][1];
   assert.equal(secondReadTreeSha, 'commit-1', "issue 721's write must lease against the chained tip, matching what its own read just used");
 });
@@ -356,6 +396,9 @@ test('(a4) #1467: issue A rejected mid-batch discards the tip chain — issue B 
       }
       if (sha === 'tip3' && targetPath === 'claims/issue-721.json') {
         throw new Error(`fatal: path '${targetPath}' does not exist in '${sha}'`); // B, on its OWN fresh tip, is genuinely absent
+      }
+      if (sha === 'commit-x' && targetPath === 'claims/issue-721.json') {
+        return liveMarker('r1'); // #2073: B's own post-write verification, chained off its own write's commit
       }
       throw new Error(`unexpected show ${sha}:${targetPath} — issue B must never be read against A's stale/rejected tip`);
     }
@@ -397,7 +440,7 @@ test('(a4) #1467: issue A rejected mid-batch discards the tip chain — issue B 
 // (b) tombstone target -> conditional PUT with sha
 test('(b) tombstone target: conditional write carries the blob sha', () => {
   const { ghApi, calls } = makeGhApi({
-    reads: { 722: [readOk(tombstoneMarker('otherRun'), 'sha722')] },
+    reads: { 722: [readOk(tombstoneMarker('otherRun'), 'sha722'), confirmRead()] },
     writes: { 722: [writeOk] },
   });
   const { gh } = makeGh({});
@@ -456,7 +499,7 @@ test('(k2) pr-opened tombstone, linked PR OPEN, --keep-going: skipped with in-fl
 
 test('(k3) pr-opened tombstone, linked PR CLOSED/MERGED: falls through to normal reclaim, exit 0', () => {
   const { ghApi, calls } = makeGhApi({
-    reads: { 762: [readOk(prOpenedTombstoneMarker('otherRun', 'https://github.com/acme/w/pull/306'), 'sha762')] },
+    reads: { 762: [readOk(prOpenedTombstoneMarker('otherRun', 'https://github.com/acme/w/pull/306'), 'sha762'), confirmRead()] },
     writes: { 762: [writeOk] },
   });
   const { gh } = makeGh({ prState: 'MERGED' });
@@ -472,7 +515,7 @@ test('(k3) pr-opened tombstone, linked PR CLOSED/MERGED: falls through to normal
 
 test('(k4) pr-opened tombstone whose gh pr view call itself fails: fails open, reclaims as before', () => {
   const { ghApi } = makeGhApi({
-    reads: { 763: [readOk(prOpenedTombstoneMarker('otherRun', 'https://github.com/acme/w/pull/307'), 'sha763')] },
+    reads: { 763: [readOk(prOpenedTombstoneMarker('otherRun', 'https://github.com/acme/w/pull/307'), 'sha763'), confirmRead()] },
     writes: { 763: [writeOk] },
   });
   const { gh } = makeGh({ fail: { prView: true } });
@@ -486,7 +529,7 @@ test('(k4) pr-opened tombstone whose gh pr view call itself fails: fails open, r
 
 test('(k5) pr-opened tombstone whose link points at a DIFFERENT repo: falls through to normal reclaim, exit 0', () => {
   const { ghApi, calls } = makeGhApi({
-    reads: { 764: [readOk(prOpenedTombstoneMarker('otherRun', 'https://github.com/other-owner/other-repo/pull/308'), 'sha764')] },
+    reads: { 764: [readOk(prOpenedTombstoneMarker('otherRun', 'https://github.com/other-owner/other-repo/pull/308'), 'sha764'), confirmRead()] },
     writes: { 764: [writeOk] },
   });
   const { gh, calls: ghCalls } = makeGh({ prState: 'OPEN' });
@@ -533,7 +576,7 @@ test('(k6) two targets sharing the identical in-flight link: only one `gh pr vie
 test('(c) stale target: conditional write re-claims with the blob sha', () => {
   const staleClaimedAt = new Date(NOW - 100 * 3600 * 1000).toISOString(); // 100h ago, ttl 72h
   const { ghApi, calls } = makeGhApi({
-    reads: { 723: [readOk(liveMarker('otherRun', staleClaimedAt), 'sha723')] },
+    reads: { 723: [readOk(liveMarker('otherRun', staleClaimedAt), 'sha723'), confirmRead()] },
     writes: { 723: [writeOk] },
   });
   const { gh } = makeGh({});
@@ -551,7 +594,7 @@ test('(c) stale target: conditional write re-claims with the blob sha', () => {
 test('(d) second target live: first target released with the abort reason, exit 3, holder JSON', () => {
   const { ghApi, calls } = makeGhApi({
     reads: {
-      720: [readAbsent, readOk('irrelevant', 'sha720-release')], // 2nd = release's fresh read
+      720: [readAbsent, confirmRead(), readOk('irrelevant', 'sha720-release')], // 2nd = post-write verification, 3rd = release's fresh read
       721: [readOk(liveMarker('otherRun'), 'sha721')],
     },
     writes: {
@@ -579,7 +622,7 @@ test('(d) second target live: first target released with the abort reason, exit 
 test('(e) --keep-going: contest recorded in skipped, no release, exit 0', () => {
   const { ghApi, calls } = makeGhApi({
     reads: {
-      720: [readAbsent],
+      720: [readAbsent, confirmRead()],
       721: [readOk(liveMarker('otherRun'), 'sha721')],
     },
     writes: { 720: [writeOk] },
@@ -595,15 +638,16 @@ test('(e) --keep-going: contest recorded in skipped, no release, exit 0', () => 
   assert.equal(body.skipped.length, 1);
   assert.equal(body.skipped[0].issue, 721);
   assert.equal(body.skipped[0].reason, 'contested');
-  // Only one read of 720 (the claim) — no release fresh-read.
-  assert.equal(calls.filter((a) => isRead(a, '720')).length, 1);
+  // Two reads of 720: the claim's own read plus its post-write verification
+  // read (#2073) — still no release fresh-read, since 720's claim stands.
+  assert.equal(calls.filter((a) => isRead(a, '720')).length, 2);
 });
 
 // (f) transient ghApi failure on second read -> first released, exit 4, error named (not holder)
 test('(f) transient read failure: first released, exit 4, error named', () => {
   const { ghApi, calls } = makeGhApi({
     reads: {
-      720: [readAbsent, readOk('irrelevant', 'sha720-release')],
+      720: [readAbsent, confirmRead(), readOk('irrelevant', 'sha720-release')],
       721: [readFail('network-failure')],
     },
     writes: { 720: [writeOk, writeOk] },
@@ -703,7 +747,7 @@ test('(i) malformed: --targets 0,abc -> exit 2, no gh call', () => {
 // (j) label add failure -> claim still stands, recorded in labelFailures, exit 0
 test('(j) label add failure: claim stands, recorded in labelFailures, exit 0', () => {
   const { ghApi } = makeGhApi({
-    reads: { 750: [readAbsent] },
+    reads: { 750: [readAbsent, confirmRead()] },
     writes: { 750: [writeOk] },
   });
   const { gh, calls: ghCalls } = makeGh({ fail: { labelAdd: true } });
@@ -720,6 +764,91 @@ test('(j) label add failure: claim stands, recorded in labelFailures, exit 0', (
   assert.ok(ghCalls.some((a) => a[0] === 'issue' && a[1] === 'comment' && a[2] === '750'), 'comment still attempted after label failure');
 });
 
+// ---- #2073: post-write verification -----------------------------------
+// A claim write the store reports `ok: true` on is not yet a confirmed
+// claim — reproduces the #1973 shape (a write that "succeeds" without
+// actually landing) as a runner double: a fake whose write always reports
+// success but whose SUBSEQUENT read never shows the confirming content.
+
+test('(m) #2073: write reports success but the read-back stays absent -> claim-unverified, exit 5', () => {
+  const { ghApi, calls } = makeGhApi({
+    // Only one entry queued for 770 — the read-back after the "successful"
+    // write repeats it (still absent), reproducing a write that reported ok
+    // without actually landing.
+    reads: { 770: [readAbsent] },
+    writes: { 770: [writeOk] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '770'], deps);
+
+  assert.equal(code, 5, 'an unconfirmed write must never report success (exit 0)');
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.unverified, [{ issue: 770 }]);
+  assert.deepEqual(body.claimed, undefined, 'the default abort envelope carries no claimed list');
+  assert.deepEqual(body.released, [], 'nothing else was claimed this run, so nothing to release');
+  assert.equal(calls.filter((a) => isWrite(a, '770')).length, 1, 'the unverified target itself is never tombstoned — a second write would be a release attempt, and it might still be this run\'s own slow-to-replicate claim');
+});
+
+test('(m2) #2073: write reports success and the read-back confirms it -> claimed, exit 0 (the confirmed counterpart to (m))', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 771: [readAbsent, confirmRead()] },
+    writes: { 771: [writeOk] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '771'], deps);
+
+  assert.equal(code, 0);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.claimed, [771]);
+  assert.equal(body.unverified, undefined);
+});
+
+test('(m3) #2073 under --keep-going: unverified target recorded in skipped, not claimed, exit 0', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 772: [readAbsent] }, // read-back repeats the same (still-absent) entry
+    writes: { 772: [writeOk] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '772', '--keep-going'], deps);
+
+  assert.equal(code, 0);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.claimed, []);
+  assert.deepEqual(body.skipped, [{ issue: 772, reason: 'unverified' }]);
+});
+
+test('(m4) #2073: one target unverified, a second already confirmed-claimed -> abort releases only the confirmed one', () => {
+  const { ghApi, calls } = makeGhApi({
+    // 720 claims and verifies cleanly FIRST; 721's write "succeeds" but its
+    // read-back never confirms it, triggering the default all-or-abort.
+    reads: {
+      720: [readAbsent, confirmRead(), readOk('irrelevant', 'sha720-release')], // 2nd = its own verification, 3rd = release's fresh read
+      721: [readAbsent], // read-back repeats the same (still-absent) entry
+    },
+    writes: {
+      720: [writeOk, writeOk], // 1st = claim, 2nd = abort-release tombstone
+      721: [writeOk],
+    },
+  });
+  const { gh, calls: ghCalls } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720,721'], deps);
+
+  assert.equal(code, 5);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.unverified, [{ issue: 721 }]);
+  assert.deepEqual(body.released, [720], '720 was confirmed claimed by this run, so the all-or-abort release covers it');
+  assert.equal(calls.filter((a) => isWrite(a, '721')).length, 1, '721 itself is never tombstoned (no second write) — its write outcome is genuinely unknown, not a confirmed claim to release');
+  assert.ok(ghCalls.some((a) => a[0] === 'issue' && a[1] === 'edit' && a[2] === '720' && a.includes('--remove-label')));
+});
+
 // Write-time rejection (lost race) vs write-time transient failure — the
 // coordinator's ruling: a genuine write-conflict (claim-store.js's
 // `writeClaimBlob` now reports `{ok:false, conflict:true, failure:null}`
@@ -730,7 +859,7 @@ test('(j) label add failure: claim stands, recorded in labelFailures, exit 0', (
 test('write conflict (lost race): contested exit 3, all-or-abort release, holder from a best-effort re-read', () => {
   const { ghApi, calls } = makeGhApi({
     reads: {
-      720: [readAbsent, readOk('irrelevant', 'sha720-release')], // 2nd = abort-release fresh read
+      720: [readAbsent, confirmRead(), readOk('irrelevant', 'sha720-release')], // 2nd = post-write verification, 3rd = abort-release fresh read
       721: [readAbsent, readOk(liveMarker('winnerRun'), 'sha721-after')], // 2nd = holder re-read after the lost race
     },
     writes: {
@@ -762,7 +891,7 @@ test('write conflict (lost race): contested exit 3, all-or-abort release, holder
 test('write conflict (409 sha-mismatch on the conditional write): contested exit 3, same handling as a 422 lost race (#723)', () => {
   const { ghApi, calls } = makeGhApi({
     reads: {
-      720: [readAbsent, readOk('irrelevant', 'sha720-release')], // 2nd = abort-release fresh read
+      720: [readAbsent, confirmRead(), readOk('irrelevant', 'sha720-release')], // 2nd = post-write verification, 3rd = abort-release fresh read
       721: [readOk(liveMarker('otherRun', new Date(NOW - 100 * 3600 * 1000).toISOString()), 'sha721'), // stale -> reclaim attempt
         readOk(liveMarker('winnerRun'), 'sha721-after')], // holder re-read after the lost race
     },
@@ -795,7 +924,7 @@ test('write conflict (409 sha-mismatch on the conditional write): contested exit
 test('write conflict under --keep-going: recorded in skipped with holder, no release, exit 0', () => {
   const { ghApi } = makeGhApi({
     reads: {
-      720: [readAbsent],
+      720: [readAbsent, confirmRead()],
       721: [readAbsent, readOk(liveMarker('winnerRun'), 'sha721-after')],
     },
     writes: {
@@ -883,7 +1012,7 @@ test('write secondary-rate-limit under --keep-going: skipped as transient, exit 
 test('abort-release write failure: target lands in releaseFailed, not released, exit code unchanged (#723)', () => {
   const { ghApi, calls } = makeGhApi({
     reads: {
-      720: [readAbsent, readOk('irrelevant', 'sha720-release')], // 2nd = release's fresh read
+      720: [readAbsent, confirmRead(), readOk('irrelevant', 'sha720-release')], // 2nd = post-write verification, 3rd = release's fresh read
       721: [readOk(liveMarker('otherRun'), 'sha721')],
     },
     writes: {
@@ -913,7 +1042,7 @@ test('abort-release write failure: target lands in releaseFailed, not released, 
 test('claim write threads expectedContent = the content this write decision read, not undefined (#787 residual finding)', (t) => {
   const staleContent = liveMarker('otherRun', new Date(NOW - 100 * 3600 * 1000).toISOString());
   const { ghApi } = makeGhApi({
-    reads: { 760: [readAbsent], 761: [readOk(staleContent, 'sha761')] },
+    reads: { 760: [readAbsent, confirmRead()], 761: [readOk(staleContent, 'sha761'), confirmRead()] },
     writes: { 760: [writeOk], 761: [writeOk] },
   });
   const { gh } = makeGh({});
@@ -938,7 +1067,7 @@ test('claim write threads expectedContent = the content this write decision read
 test('abort-release rollback write threads expectedContent = the fresh content releaseClaimedThisRun re-read (#787 residual finding)', (t) => {
   const { ghApi } = makeGhApi({
     reads: {
-      720: [readAbsent, readOk('irrelevant', 'sha720-release')], // 2nd = rollback's fresh read
+      720: [readAbsent, confirmRead(), readOk('irrelevant', 'sha720-release')], // 2nd = post-write verification, 3rd = rollback's fresh read
       721: [readOk(liveMarker('otherRun'), 'sha721')],
     },
     writes: {

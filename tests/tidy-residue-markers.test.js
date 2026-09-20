@@ -165,10 +165,9 @@ test('step-6-auto.md cites decision-markers.md for the Stage-tier marker write',
   );
 });
 
-test('step-6-auto.md stays within its byte ceiling', () => {
-  const bytes = Buffer.byteLength(read('plugin', 'skills', 'tidy', 'step-6-auto.md'), 'utf8');
-  assert.ok(bytes <= 40960, `step-6-auto.md is ${bytes} bytes, over the 40960 ceiling`);
-});
+// Per-file 40 KB pin on step-6-auto.md retired by #1997 — the per-file tier
+// is a warning since #1990 and this file has no compose call site; removal
+// condition in docs/incident-log.md [IL-153].
 
 // --- Task 4: step-1-records.md's Proposed:-text-aware loop-safety skip ---
 

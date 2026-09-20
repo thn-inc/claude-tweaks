@@ -73,6 +73,25 @@ Call `exceedsOversightFloor({ risk: facets.risk, size: facets.size }, { riskFloo
   outcome, not a `demo:exempt` marker — see the design's Non-Goals). It stays demoable later on
   request: `/claude-tweaks:demo #N`'s existing closing-commit-reconstruction fallback already
   resolves a record carrying no `demo:pending` label, unchanged by this gate.
+
+  Record the exemption (#2383) so `wrap-up-engine.js verify`'s `acceptance-labeling` check knows
+  this record was deliberately skipped, not silently missed: append `N` to
+  `$PIPELINE_RUN_DIR/verify-expectations.json`'s `oversightExempt` array (read-modify-write —
+  the console's own later write, `review-console.md` Step 10, preserves this field rather than
+  clobbering it; create the file with the version-1 defaults first when it doesn't exist yet):
+
+  ```bash
+  node -e "
+  const fs = require('fs');
+  const p = process.argv[1] + '/verify-expectations.json';
+  let data = { version: 1, memory: [], upstream: [] };
+  if (fs.existsSync(p)) { try { data = JSON.parse(fs.readFileSync(p, 'utf8')); } catch {} }
+  const s = new Set(data.oversightExempt || []);
+  s.add(Number(process.argv[2]));
+  data.oversightExempt = [...s].sort((a, b) => a - b);
+  fs.writeFileSync(p, JSON.stringify(data));
+  " "$PIPELINE_RUN_DIR" "{N}"
+  ```
 - **`exceeds: true`** (including `reason: 'unscored'` — a missing or out-of-vocabulary
   `risk`/`size` facet fails closed) — proceed to Step 1 exactly as before this gate existed.
 
@@ -291,6 +310,16 @@ printf '<!-- run-comment: brief -->\n\n' | cat - /tmp/verification-brief-{issue}
 gh issue comment {issue} --body "Verification Brief posted to PR #{pr-number}: {pr-url}"
 gh issue edit {issue} --add-label demo:pending
 ```
+
+Then post the run's Timing table as the `timing` kind, under the same gate (#1928); a `tokens: transcript not found (...)` line, when present, is posted verbatim with the table:
+
+```bash
+printf '<!-- run-comment: timing -->\n\n' > /tmp/pr-timing-{issue}.md
+node "${CLAUDE_PLUGIN_ROOT}/bin/phase-timing.js" --run "$PIPELINE_RUN_DIR" --markdown --auto-transcript >> /tmp/pr-timing-{issue}.md
+# find-or-create per _shared/pr-run-comments.md's post-or-update procedure, kind=timing, against {pr-number}
+```
+
+When wrap-up's cleanup item 8 has already archived the run directory (`cleanup-procedures.md`), pass `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` as `--run` instead — the events and manifest travel with the archive.
 
 Post the comment(s) before adding the label — a reader reacting to the label's appearance should
 never see `demo:pending` without a brief (or its pointer) already attached. Acceptance labeling

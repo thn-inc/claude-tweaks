@@ -4,9 +4,10 @@
 // Exit 0 = all claimed (or, with --keep-going, partial); 2 = malformed
 // invocation or missing dependency; 3 = contested, or a pr-opened tombstone
 // whose linked PR is still open (JSON on stdout — {contested:[...]} or
-// {inFlight:[{issue,link}]}); 4 = transient gh failure. See
-// bin/lib/claim-targets/claim-targets.js for the full contract and
-// skills/_shared/issue-claims.md for the protocol.
+// {inFlight:[{issue,link}]}); 4 = transient gh failure; 5 = a claim write
+// reported success but the post-write read-back did not confirm it
+// ({unverified:[{issue}]}). See bin/lib/claim-targets/claim-targets.js for
+// the full contract and skills/_shared/issue-claims.md for the protocol.
 'use strict';
 
 const os = require('os');

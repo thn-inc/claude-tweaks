@@ -244,9 +244,9 @@ test('wrap-up SKILL.md anti-pattern row cites the Evidence: line as the mechanic
 
 // --- 13. Byte-budget guard (AC3 for #858): wrap-up SKILL.md net addition and ceiling ---
 
-test('wrap-up SKILL.md stays under the 40KB sub-file ceiling', () => {
-  assert.ok(Buffer.byteLength(WRAP_UP, 'utf8') < 40960, `got ${Buffer.byteLength(WRAP_UP, 'utf8')} bytes`);
-});
+// Per-file 40 KB pin on wrap-up/SKILL.md retired by #1997 — the per-file tier is
+// a warning since #1990 and this file has no compose call site; removal
+// condition in docs/incident-log.md [IL-153].
 
 // --- 14. #1033: full-mode.md's Subject scan for a near-miss (agent-judgment fallback when the
 // exact-hash Prior-decline lookup finds nothing — AC2's "wording differs but subject is the same") ---

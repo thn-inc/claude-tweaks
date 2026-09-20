@@ -3,7 +3,6 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   attemptFailedCommentBody, countFailedAttempts, hasHitRetryCeiling, hasNegativeEvidenceMarker,
-  extractNegativeEvidenceMarker,
 } = require('../../../plugin/bin/lib/issues/retry');
 
 test('attemptFailedCommentBody formats the human-readable retry comment', () => {
@@ -140,16 +139,15 @@ test('idempotency: two failed attempts on the same record still read as present 
   assert.strictEqual(hasNegativeEvidenceMarker(comments), true);
 });
 
-// #410: under pr-first the full comment moves to the PR; trust.js still needs
-// just the marker line on the issue, extracted from that same comment body.
-test('extractNegativeEvidenceMarker returns just the marker line for a correctness/ambiguous comment', () => {
-  const body = attemptFailedCommentBody({ attemptNumber: 2, reason: 'test gate failed', classification: 'correctness' });
-  assert.strictEqual(extractNegativeEvidenceMarker(body), '<!-- trust-negative-evidence: attempt=2 classification=correctness -->');
-});
-
-test('extractNegativeEvidenceMarker returns null for a transient comment or unrelated text', () => {
-  const transient = attemptFailedCommentBody({ attemptNumber: 1, reason: 'x', classification: 'transient' });
-  assert.strictEqual(extractNegativeEvidenceMarker(transient), null);
-  assert.strictEqual(extractNegativeEvidenceMarker('unrelated'), null);
-  assert.strictEqual(extractNegativeEvidenceMarker(undefined), null);
+// #1963: countFailedAttempts is source-agnostic — settle-and-merge.md's
+// caller now merges the issue's comments with every PR ever linked to the
+// record (open or closed) before counting, so a record whose attempts
+// were split across a closed PR and the issue (record #1302's failure
+// mode) is still counted correctly once the arrays are merged.
+test('countFailedAttempts counts attempts spread across one issue and two closed PRs once merged', () => {
+  const issueComments = [{ body: 'Attempt 1 failed: build error. Claim released, will retry.' }];
+  const closedPr1Comments = [{ body: 'Attempt 2 failed: test gate failed. Claim released, will retry.' }];
+  const closedPr2Comments = [{ body: 'Attempt 3 failed: blocked dependency. Retry ceiling reached — no further automatic retries.' }];
+  const merged = [...issueComments, ...closedPr1Comments, ...closedPr2Comments];
+  assert.strictEqual(countFailedAttempts(merged), 3);
 });

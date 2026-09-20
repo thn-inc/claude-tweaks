@@ -14,7 +14,7 @@ The skip row uses severity `info` and Path:Line `(github)`.
 
 Individual `gh` command failures mid-scan degrade to a `DONE_WITH_CONCERNS` status line with whatever partial results exist — never `BLOCKED`. Recognize and classify a rate-limit failure per `_shared/github-rate-limit.md`; network and other transient API errors degrade the same way without needing that classification.
 
-`{REPO_ROOT}` resolves via `git rev-parse --show-toplevel` in the dispatcher before the agent fires (see Working Directory Discipline in `_shared/subagent-output-contract.md`).
+`{REPO_ROOT}` resolves via `git rev-parse --show-toplevel` in the dispatcher before the agent fires (see Working Directory Discipline in `_shared/subagent-dispatch-core.md`).
 
 **Check 2 does not gate on its own for a transport-aware consumer.** `gh` present → proceed via the `gh` CLI. `gh` absent → a consumer with a documented MCP fallback (e.g. `/claude-tweaks:dispatch`'s `dispatch/mcp-transport.md`, `/claude-tweaks:backlog`'s `backlog/mcp-transport.md`) proceeds via that path instead of stopping; a consumer with no MCP fallback still stops at check 2. Checks 1 and 3 stay hard gates on either transport — there is no meaningful degraded mode for a skill whose job is reading or writing GitHub state.
 

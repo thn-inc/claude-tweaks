@@ -3,7 +3,6 @@ name: routine
 description: Use to create, update, or check status of a Claude Code cloud Routine for a claude-tweaks skill — instantiates a project-agnostic template into a live, scheduled routine. Keywords - routine, schedule, cron, cloud agent, recurring, automation.
 argument-hint: "<create|update|status|pause|resume|webhook-trigger> <skill>|--all|<fleet on|status|off> [--dry-run] [--defaults] [--branch <name>] [--environment <id>] [--refresh-environment] [--events <e1,e2,...>] [--filter <field>=<op>:<value>[,...]]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
 
 # Routine — Instantiate Versioned Cloud Routines
 
@@ -21,6 +20,7 @@ template + resolved project/account values -> RemoteTrigger create/update -> .cl
 - You want a skill's documented "Routine Configuration" to become a real, live scheduled cloud Routine instead of a manual `/schedule` walkthrough.
 - You want that routine's config captured as a versioned, reproducible project artifact — not something that only exists in claude.ai's UI.
 - You're setting up the same kind of routine (e.g. code-health) in a new project and want it created the same way every time, without re-answering `/schedule`'s interactive questions from scratch.
+- You want the release train — a daily unattended firing of `/claude-tweaks:release --train` that ships minor and patch releases whose pre-bump review came back clean: `/claude-tweaks:routine create release` instantiates `skills/release/routine-template.yml`; it is a refused, nothing-moved `failed` stop until the project sets `release-train: true` and `autonomy: unattended` (`_shared/autonomy-ceiling.md`'s `train (Routine firing)` row).
 
 Supports both recurring and one-off (single-fire, auto-disabling) cadences for a templated routine — the CREATE Customize path's cadence picker (`schedule-resolution.md` 5b-i) offers "One-off" alongside the recurring options. A one-off run does not count against the account's daily routine-run cap, unlike a recurring one. Not for: an ad hoc, exploratory routine you don't want captured as a versioned project artifact at all (use `/schedule` directly for that — a throwaway session, no `.claude-tweaks/routines/*.yml` record). Not a replacement for `/schedule`'s `list`/`run` conveniences or for deleting a routine — deletion has no API and always happens at claude.ai/code/routines.
 

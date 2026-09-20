@@ -36,3 +36,29 @@ fallback above SKILL.md's Step 3.
 
 Same drain+zero-eligible exception as the Blocked-exclusion report (`SKILL.md` Step 3); omit
 when empty.
+
+## Second and third invocation (refs #1985)
+
+This report's own read above only ever sees the **pre-drain** snapshot (`dispatch-open-prs.json`,
+fetched once at Step 2, before this firing has dispatched anything) — it cannot see a PR the same
+drain opens for an earlier group while dispatching a later one in the same firing (the #1480/#1596
+case: two groups dispatched sequentially in one `--budget all` firing each edited the same
+paragraph, and the pre-drain check reported clean for both since neither PR existed yet when it
+ran). Two further invocations of the same `detectCrossPRFileOverlap` primitive close that gap,
+both reading a session-scoped `dispatch-drain-prs.json` that Step 5 appends to as each group
+dispatches (never re-listing all open PRs — cost scales with groups dispatched this firing, not
+with repository size):
+
+- **`dispatch/SKILL.md` Step 4**, immediately before minting each group after the first: a
+  warning-only re-check against the union of the pre-drain snapshot and this firing's own
+  drain-PR list so far, logging a `STAGED … (opened by this drain, group {k})` line on a hit —
+  still never a gate, the group dispatches regardless.
+- **`dispatch/settle-and-merge.md`'s Auto-merge gate**, before `merge-check`: the one place a
+  drain-opened overlap actually matters, since merging two overlapping PRs is the failure this
+  whole record exists to prevent. A hit against a still-open drain PR holds the group back to the
+  normal Review Console instead of proceeding to auto-merge; the hold releases on the next
+  evaluation once that PR merges or closes.
+
+This report's own pre-drain read and `dispatch-crosspr-overlap.json`'s contents are unchanged —
+AC3's byte-identical guarantee holds because neither of the two new invocations touches this
+file or re-runs Step 2's own read.

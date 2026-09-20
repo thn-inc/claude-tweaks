@@ -14,13 +14,15 @@ const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
 // `git worktree remove` would have silently destroyed decisions.md/config.yml
 // /staged/ with no git history to recover ([IL-127]). This test executes the
 // *actual* documented resolution snippet (extracted verbatim from
-// skills/_shared/pipeline-run-dir.md's "Bash snippet (resolution)" section —
-// not a reimplementation, so a future edit that silently drops the anchoring
-// check breaks this test) against a real temp git repo + linked worktree.
+// skills/_shared/run-dir-resolution.md's "Bash snippet (resolution)" section —
+// moved there from pipeline-run-dir.md at #2019, alongside the Resolution
+// order it implements — not a reimplementation, so a future edit that
+// silently drops the anchoring check breaks this test) against a real temp
+// git repo + linked worktree.
 
 const ROOT = path.join(__dirname, '..');
 const SHARED_DOC = fs.readFileSync(
-  path.join(ROOT, 'plugin', 'skills', '_shared', 'pipeline-run-dir.md'),
+  path.join(ROOT, 'plugin', 'skills', '_shared', 'run-dir-resolution.md'),
   'utf8',
 );
 const WRAP_UP_SKILL = fs.readFileSync(
@@ -32,7 +34,7 @@ function extractSnippet() {
   const section = SHARED_DOC.match(
     /## Bash snippet \(resolution\)\n\n```bash\n([\s\S]*?)\n```/,
   );
-  assert.ok(section, 'skills/_shared/pipeline-run-dir.md must have a "## Bash snippet (resolution)" fenced bash block — extraction pattern is out of sync with the doc');
+  assert.ok(section, 'skills/_shared/run-dir-resolution.md must have a "## Bash snippet (resolution)" fenced bash block — extraction pattern is out of sync with the doc');
   return section[1];
 }
 
@@ -75,7 +77,7 @@ function runResolutionWith(snippet, { cwd, runDirEnv, specSlug }) {
 }
 
 const SNIPPETS = [
-  { label: 'shared pipeline-run-dir.md snippet', extract: extractSnippet },
+  { label: 'shared run-dir-resolution.md snippet', extract: extractSnippet },
   { label: "wrap-up/SKILL.md's own copy", extract: extractWrapUpSnippet },
 ];
 

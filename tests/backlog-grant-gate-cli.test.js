@@ -109,6 +109,32 @@ test('--repo ../evil under work-links: native is rejected before any REST call',
   assert.deepStrictEqual(d.calls, []);
 });
 
+// #2444 review fix: a caller-supplied --repo can itself already be a
+// host-qualified `host/owner/repo` slug (repoSlug()'s GHE output) — before
+// this fix, --repo was always prefixed with `github.com/` regardless of
+// shape, producing an unparseable 4-segment string (parseRepo's regex
+// expects exactly host/owner/repo) that failed with "could not resolve
+// owner/repo" even though a valid slug was supplied.
+test('#2444 fix: a host-qualified --repo slug under work-links: native resolves cleanly (not rejected as unparseable)', () => {
+  const d = deps({
+    readPolicyRaw: () => 'autonomy: unattended\ngrant-origination-enabled: true\nwork-links: native\nintegration-branch: main\n',
+  });
+  const code = run(['--repo', 'ghe.example.com/acme/widgets'], d);
+  assert.strictEqual(code, 0);
+  const out = JSON.parse(d.out.join(''));
+  assert.strictEqual(out.shortcut, 'zero-eligible');
+});
+
+test('#2444 fix: a bare --repo owner/repo under work-links: native still resolves to github.com (unchanged)', () => {
+  const d = deps({
+    readPolicyRaw: () => 'autonomy: unattended\ngrant-origination-enabled: true\nwork-links: native\nintegration-branch: main\n',
+  });
+  const code = run(['--repo', 'acme/widgets'], d);
+  assert.strictEqual(code, 0);
+  const out = JSON.parse(d.out.join(''));
+  assert.strictEqual(out.shortcut, 'zero-eligible');
+});
+
 test('a required gh fetch failure exits 1 and names the error', () => {
   const d = deps({
     runner: () => { throw new Error('gh: connection reset'); },

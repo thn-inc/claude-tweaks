@@ -42,6 +42,8 @@ Produce CLAUDE.md from scratch following this template:
 {Key package scripts — what developers actually run daily.
 Verify every command exists in package.json / Makefile / scripts before listing.}
 
+When `.claude-tweaks/verify-scope.json` exists, pipeline re-verifies run scoped against the last full pass (`test/verification.md`'s scoping table); `init --update` reports drift between its suites and the workspace. On a `port-services` checkout, `.env.local`'s managed region also exports `CLAUDE_TWEAKS_LEASE` (the leased block's base) — key a per-checkout test database on it the way ports are keyed: `DATABASE_URL=postgres://localhost:5432/app_test_${CLAUDE_TWEAKS_LEASE}`.
+
 ## Conventions
 
 {Observed naming, patterns, and rules — max 10 bullets}
@@ -75,6 +77,12 @@ How to execute any task here. These apply project-wide unless a more specific ru
 ## Git
 
 {Commit convention, branch strategy, PR process}
+
+## Releasing
+
+{Engine in use — release-please via `.github/workflows/release-please.yml` under `pr-first`, or the local engine under `local-merge`; where the publish/deploy hook lives — the `release: published` workflow (PAT required), or the `release-hook` policy command. The local engine (`bin/release-local.js`) and the `/claude-tweaks:release` skill land with later units of the release family (#2250); until they ship, this section names the files the bootstrap wrote.}
+
+Cut a release: `/claude-tweaks:release`
 
 ## claude-tweaks Pipeline
 

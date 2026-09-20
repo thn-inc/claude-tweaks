@@ -18,9 +18,10 @@
 //     those belong to the skill's own suite.
 //
 // sectionIndex and EMOJI_RE are imported rather than re-implemented: an
-// unanchored body.indexOf('## Next Actions') finds the backticked mention
-// inside the standard interaction-style directive near the top of every
-// SKILL.md, which silently makes any ordering assertion vacuous.
+// unanchored body.indexOf('## Next Actions') can find a backticked mention of
+// the heading inside ordinary prose (Anti-Patterns rows, Component-Skill
+// Contract text) rather than the real heading, which silently makes any
+// ordering assertion vacuous.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -31,17 +32,12 @@ const { sectionIndex, EMOJI_RE } = require('../health-core/skill-md-house-checks
 const ROOT = path.resolve(__dirname, '..', '..', '..');
 const SKILLS_DIR = path.join(ROOT, 'plugin', 'skills');
 
-// docs/skill-authoring.md's "Interaction style directive" section: this exact
-// line, byte for byte, after the frontmatter of every skill. Asserting the
-// whole line (not just the `> **Interaction style:**` prefix) is what makes
-// "identical across all skills" enforceable.
-const INTERACTION_STYLE =
-  '> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option '
-  + 'marked Recommended. Multi-item → batch table with recommendations pre-filled, then '
-  + 'one `AskUserQuestion` for apply-all/override. Never more than one call per decision; '
-  + 'resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready '
-  + 'fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` '
-  + 'there only for a documented machine-consumed decision, named inline.';
+// #1909: docs/skill-authoring.md's "Interaction style directive" section — the
+// directive itself now lives in one place (plugin/bin/lib/hooks/interaction-style.js),
+// injected into every session by session-start.js instead of restated verbatim
+// per SKILL.md. Imported here (not re-typed) so this file can never drift from
+// the one real copy.
+const { INTERACTION_STYLE_DIRECTIVE: INTERACTION_STYLE } = require('../../../plugin/bin/lib/hooks/interaction-style');
 
 // Explicit, justified exceptions. A skill belongs here only when the rule
 // genuinely cannot apply to it — never to quiet a real failure.
@@ -121,10 +117,14 @@ for (const name of skills) {
     );
   });
 
-  test(`${name}: carries the standard interaction-style directive verbatim`, () => {
+  // #1909: retargeted from "carries" to "does not carry" — the directive now
+  // lives only in interaction-style.js + the SessionStart hook injection
+  // (tests/hooks-session-start.test.js pins that side); this guards against a
+  // skill silently reintroducing its own copy.
+  test(`${name}: does not carry its own inline interaction-style directive`, () => {
     assert.ok(
-      readSkill(name).includes(INTERACTION_STYLE),
-      `skills/${name}/SKILL.md does not carry docs/skill-authoring.md's exact interaction-style directive`,
+      !readSkill(name).includes(INTERACTION_STYLE),
+      `skills/${name}/SKILL.md re-embeds the interaction-style directive inline — it should be injected by the SessionStart hook instead`,
     );
   });
 

@@ -338,6 +338,36 @@ test('an unknown installed-probe.type produces a validation error', () => {
   assert.ok(errors.some((e) => e.includes('installed-probe.type')));
 });
 
+// ─── #2277: version-mode (optional; 'exact' | 'floor') ──────────────────
+
+test('a probe-class entry with no version-mode key validates clean (defaults to exact)', () => {
+  const dep = validDependency();
+  const errors = validateManifest({ dependencies: [dep] });
+  assert.deepStrictEqual(errors, []);
+});
+
+test('version-mode: "floor" validates clean', () => {
+  const dep = validDependency();
+  dep['version-mode'] = 'floor';
+  const errors = validateManifest({ dependencies: [dep] });
+  assert.deepStrictEqual(errors, []);
+});
+
+test('an unknown version-mode value produces a validation error naming the bad value', () => {
+  const dep = validDependency();
+  dep['version-mode'] = 'ceiling';
+  const errors = validateManifest({ dependencies: [dep] });
+  assert.ok(errors.some((e) => e.includes("'version-mode'") && e.includes('ceiling')));
+});
+
+test('conformance: the real impeccable-cli entry is version-mode: floor', () => {
+  const realManifestPath = path.join(__dirname, '..', 'manifest.yml');
+  const result = loadManifest(realManifestPath);
+  const cli = result.dependencies.find((d) => d.name === 'impeccable-cli');
+  assert.ok(cli, 'impeccable-cli entry exists');
+  assert.strictEqual(cli['version-mode'], 'floor');
+});
+
 // ─── P1: bare null/Null/NULL/~ and an empty value parse as JS null ─────
 
 test('P1: bare null, Null, NULL, and ~ all parse as JavaScript null, not the string "null"', () => {
@@ -439,9 +469,19 @@ test('a content-pinned entry with an empty consumed list produces a validation e
 });
 
 test('probe-machinery keys on a content-pinned entry each produce a validation error — silently-dead config fails loudly', () => {
-  for (const key of ['installed-probe', 'pinned', 'contract-paths', 'assertions', 'fixtures']) {
+  // A plausible value per key — the error must come from the key being
+  // present on this entry class at all, never from the value being junk.
+  const probeMachineryKeys = {
+    'installed-probe': { type: 'command', run: 'x' },
+    pinned: '1.0.0',
+    'version-mode': 'floor',
+    'contract-paths': [],
+    assertions: [],
+    fixtures: [],
+  };
+  for (const [key, value] of Object.entries(probeMachineryKeys)) {
     const dep = validContentPinnedDependency();
-    dep[key] = key === 'pinned' ? '1.0.0' : key === 'installed-probe' ? { type: 'command', run: 'x' } : [];
+    dep[key] = value;
     const errors = validateManifest({ dependencies: [dep] });
     assert.ok(
       errors.some((e) => e.includes(`'${key}'`) && e.includes('versioning: none')),

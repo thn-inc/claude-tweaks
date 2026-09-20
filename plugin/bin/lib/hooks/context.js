@@ -4,6 +4,9 @@ const fs = require('fs');
 const path = require('path');
 const wtDetect = require('./worktree-detect');
 const { writeFileAtomic } = require('../atomic-write');
+const { runGit } = require('./git-exec');
+const { parseWorktreeList } = require('./worktree-reap');
+const runDirResolve = require('./run-dir-resolve');
 
 function readStdin() {
   try { return fs.readFileSync(0, 'utf8'); } catch { return ''; }
@@ -109,7 +112,7 @@ function findNonCanonicalRunDirs(cwd) {
 // stale-run report) can stop early and never pay for the rest. Callers that
 // genuinely need the whole list (pre-tool-use's other-worktrees scan)
 // exhaust it via listRunDirsWithState below, which is unchanged in output.
-function* iterRunDirsWithState(cwd) {
+function* iterRunDirsWithState(cwd, opts = {}) {
   // Anchored to the MAIN checkout, not raw cwd. A run dir created inside a
   // linked worktree was previously invisible from the main checkout and vice
   // versa, which is why a worktree could hold the only copy of decisions.md /
@@ -137,10 +140,18 @@ function* iterRunDirsWithState(cwd) {
     .map((e) => e.name)
     .sort()
     .reverse();
+  // #1738: an opt-in filter, not a widened yield — the default (`opts.status`
+  // unset) is byte-identical to the exclude-clean behavior every existing
+  // caller relies on. `{ status: 'clean' }` inverts the same test to yield
+  // ONLY clean runs (session-start.js's #1493 AC5 staged-proposals scan,
+  // archive-merged.js's #1544 clean-status sweep), so both shapes still
+  // share the anchor, ordering, archive-twin skip, and `archiving`-claim skip
+  // below this line.
+  const wantClean = opts.status === 'clean';
   for (const name of names) {
     const dir = path.join(base, name);
     const state = readRunState(dir);
-    if (state && state.status === 'clean') continue;
+    if (Boolean(state && state.status === 'clean') !== wantClean) continue;
     // Defense in depth (#593): a stray top-level dir left behind by a
     // filesystem-only (non-git-aware) archival move — pre-fix, or any future
     // regression that reintroduces one — still has no local run-state.json
@@ -185,12 +196,12 @@ function* iterRunDirsWithState(cwd) {
   }
 }
 
-function listRunDirsWithState(cwd) {
-  return [...iterRunDirsWithState(cwd)];
+function listRunDirsWithState(cwd, opts) {
+  return [...iterRunDirsWithState(cwd, opts)];
 }
 
-function listRunDirs(cwd) {
-  return listRunDirsWithState(cwd).map(({ dir }) => dir);
+function listRunDirs(cwd, opts) {
+  return listRunDirsWithState(cwd, opts).map(({ dir }) => dir);
 }
 
 // Which run an event belongs to, and how confidently we know it (#62).
@@ -529,20 +540,87 @@ function writeRunState(runDir, patch) {
   }
 }
 
+// Ad-hoc run-dir stamping for a PreToolUse gate denial with no owned run dir
+// yet (#2351). post-tool-use.js's own stampAdHocRunDir (the #500/#1333
+// mechanism) fires only on an EnterWorktree call or a session's cwd resolving
+// to a NON-main worktree — deliberately excluding the main checkout, since
+// firing on every ordinary main-checkout hook call would be pure noise. A
+// gate denial is a narrower, safer trigger: it only fires when a real deny is
+// about to be logged, so it can cover the main checkout too without that
+// noise risk — a session running /claude-tweaks:wrap-up entirely in the main
+// checkout (no worktree at all) still needs its wd-deny/gate-denial events to
+// land somewhere (friction-events.js's Friction Lens input), or appendEvent's
+// own null-runDir no-op silently drops them, exactly the gap two real
+// denials (a push deny, a teardown-gate deny) hit in run
+// 2026-09-13T101924-dispatch-drain-merge-release-v6123-standalone.
+//
+// Called from pre-tool-use.js's own denial sites, immediately before an
+// appendEvent call whose target dir would otherwise be null. Mirrors
+// stampAdHocRunDir's own minting mechanics (runDirResolve + writeRunState +
+// the same-session collision guard) but keys the `worktree` field on
+// whatever `ctx.cwd` resolves to in `git worktree list`, main checkout
+// included, rather than excluding it — the narrower trigger above is what
+// makes that safe.
+function stampAdHocRunDirForDenial(ctx) {
+  if (ctx.ownedRun && ctx.ownedRun.dir) return ctx.ownedRun.dir;
+  const sessionId = ctx.input && ctx.input.session_id;
+  if (typeof sessionId !== 'string' || !sessionId) return null;
+  const cwd = ctx.cwd;
+  if (typeof cwd !== 'string' || !cwd) return null;
+  try {
+    const { stdout, failure } = runGit(['worktree', 'list', '--porcelain'], cwd);
+    if (failure || stdout === null) return null;
+    const entries = parseWorktreeList(stdout);
+    const idx = entries.findIndex((e) => e.path === cwd);
+    if (idx === -1) return null; // cwd isn't a listed worktree at all — nothing to key the stamp on
+    const worktreePath = entries[idx].path;
+    // Deliberately NOT process.env — a stray PIPELINE_RUN_DIR left over from
+    // an unrelated earlier command in this shell must never redirect this
+    // stamp onto someone else's run dir (same rationale as stampAdHocRunDir).
+    const result = runDirResolve.resolve({ cwd, env: {}, create: true, standalone: 'adhoc' });
+    if (!result.ok) return null;
+    // Never let this stamp clobber a DIFFERENT session's already-written
+    // ownership on a same-second sibling-session collision (mirrors
+    // stampAdHocRunDir's identical guard).
+    const existing = readRunState(result.path);
+    if (existing && typeof existing.sessionId === 'string' && existing.sessionId && existing.sessionId !== sessionId) return null;
+    const written = writeRunState(result.path, { worktree: path.resolve(worktreePath), status: 'active', sessionId });
+    if (!written) { rollbackMint(result.path); return null; }
+    return result.path;
+  } catch { return null; }
+}
+
+// #1737: the raw read-and-parse both events.jsonl consumers in this codebase
+// implement inline — read the file, split lines, skip blanks, JSON.parse each,
+// skip unparseable ones. `null` (absent or unreadable file) and `[]` (readable
+// but empty, or readable with every line unparseable) stay distinguishable —
+// callers that need to tell "we don't know" from "we know there's nothing"
+// (run-integrity.js's checkRunIntegrity via scanWrapupEvents below,
+// archive-merged.js's ownEventRecency) rely on that split.
+function readEventLines(runDir) {
+  let raw;
+  try { raw = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'); } catch { return null; }
+  const out = [];
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let ev;
+    try { ev = JSON.parse(line); } catch { continue; }
+    out.push(ev);
+  }
+  return out;
+}
+
 // events.jsonl scan for skill_invoked / claude-tweaks:wrap-up events; missing
 // file or unreadable -> null (indeterminate). Shared by run-integrity.js's
 // checkRunIntegrity and close-run-state.js's closeRunState — the single
 // reader for the paired appendEvent writer above (#380).
 const WRAP_UP_SKILL = 'claude-tweaks:wrap-up';
 function scanWrapupEvents(runDir) {
-  let raw;
-  try { raw = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'); } catch { return null; }
+  const lines = readEventLines(runDir);
+  if (lines === null) return null;
   let any = false;
   let wrapup = false;
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    let ev;
-    try { ev = JSON.parse(line); } catch { continue; }
+  for (const ev of lines) {
     if (!ev || ev.type !== 'skill_invoked') continue;
     any = true;
     if (ev.skill === WRAP_UP_SKILL) wrapup = true;
@@ -572,6 +650,6 @@ function appendEvent(runDir, type, data, attribution) {
 
 module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
-  readRunState, writeRunState, appendEvent, scanWrapupEvents, findRunByWorktreePath, findRunsByWorktreePath, RUN_ID_RE, findNonCanonicalRunDirs,
-  rollbackMint, isStaleClaim,
+  readRunState, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, RUN_ID_RE, findNonCanonicalRunDirs,
+  rollbackMint, isStaleClaim, stampAdHocRunDirForDenial,
 };

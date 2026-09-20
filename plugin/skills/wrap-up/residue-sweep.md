@@ -19,9 +19,13 @@ run, where "this work" and "the whole run" are the same thing.
 
 ## Running the sweep
 
+Read `pack.residue` from `{run-dir}/wrap-up-pack.json` first (#1930) — its `value` is this command's `--json` output, gathered with `--no-suite` added; run the command below only when the pack file is absent. An `ok: false` field (or a missing key) renders this sweep's existing `unknown` outcome, never a clean sweep. **A pack-fed residue therefore always carries `suite: {ran: false, reason: "skipped via --no-suite"}`** — a fact pack never re-runs the project's test suite. Take this run's suite state from `/claude-tweaks:test`'s verification pass stamp (`{git-dir}/claude-tweaks-verify-pass.json`, written by `bin/verify.js`) and the `report.json` it names (`{git-dir}/claude-tweaks-verify/report.json`, the same file `leftover-routing.md` reads for `flakyEscalation`), never from this probe; the deliberate skip is still logged as an `observation` item by the `unknown` rule at the end of this file, exactly as a hand-passed `--no-suite` already is.
+
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/residue.js" --base {base} --integration-branch {ref} --scope blast-radius
+node "${CLAUDE_PLUGIN_ROOT}/bin/residue.js" --base {base} --integration-branch {ref} --scope blast-radius --own-pr {run-state pr.number}
 ```
+
+`--own-pr` is this run's own recorded PR number (`run-state.json`'s `pr.number`) — omit the flag entirely on a `local-merge` run, which never records one. Passing it excludes that specific PR from `findings` and reports it on the CLI's own `ownPr` result field instead — see "This run's own pr-first PR" below for the disposition.
 
 **`--scope blast-radius`, not `--scope repo`.** This preamble closes out one run's own work, so a finding
 belongs on this run's ledger only if it is this run's own blast radius (a branch this run's worktree left
@@ -57,7 +61,21 @@ operation): `Phase: wrap-up`, `Item`: `{kind} — {subject} — {evidence}`, `St
 ledger's own semantic-duplicate check first (`ledger/SKILL.md`'s Add Item section) — a finding
 matching an existing item's phase and description is a duplicate, not a second row. If no ledger
 file exists yet for this run (the standalone case this preamble exists for), create it now via the
-ledger's own Create operation before adding the first item.
+ledger's own Create operation before adding the first item. Under `worktree-always: true` this
+"standalone case" always means no worktree exists for this run — Create resolves to
+`{run-dir}/ledger.md`, never `docs/plans/`, so this step never hits the write-outside-worktree
+gate.
+
+### This run's own pr-first PR
+
+Under `integration-model: pr-first`, `pack.residue`'s `value.results` carries the forge probe's
+result with an `ownPr` field (`{number, headRefName}`, or `null` when unset or not open) — the
+same field the manual CLI's `--own-pr` above produces. When `ownPr` is non-null, add exactly one
+`Phase: wrap-up` ledger row for it: `Item`: `pr — PR #{ownPr.number} — this run's own pr-first PR;
+disposition is Phase 4's merge decision`, `Status: observation` — never `Status: open`, and never
+routed to a backlog record. The PR is this run's own deliverable, open by design until Phase 4's
+Review Console decides merge/arm/park; that decision, not this preamble, is its disposition. A
+`local-merge` run never sets `--own-pr` and never sees this field, so it takes no branch here.
 
 **There is no second disposition mechanism here.** Phase 3's existing three-phase resolve gate
 (`_shared/ledger-format.md`'s Resolve Gate section) is what assigns each item's eventual disposition, exactly as it already
@@ -146,7 +164,9 @@ item that fails to clear the materiality floor, with a `Defer-reason:` other tha
 its Step 1 option relabeled `"Digest — below floor"` in place of `"Route to a record"` — so the
 human sees the actual destination before choosing it, never silently substituted after approval;
 choosing it appends a digest entry instead of a record, skipping the composition below for that
-item. For an item whose reason the drill itself picks (the "anything else" case above), apply the
+item. This sweep's own end-of-run summary states the digest comment URL and the count routed this
+run, per `_shared/materiality-floor.md`'s "Digest URL and count surfacing" section. For an item
+whose reason the drill itself picks (the "anything else" case above), apply the
 test once that value is chosen, before the record is composed. Otherwise it composes exactly as ledger Phase
 3's branches do (`_shared/ledger-format.md`) — `specShapedBody`, the #621 mapping above supplying
 its `Defer-reason:`, landing born-ready, parked, or `needs:definition` by the same rules.

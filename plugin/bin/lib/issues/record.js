@@ -39,11 +39,15 @@ const LABELS = {
   AUTO_MERGE: 'auto:merge',
   BOT_IN_PROGRESS: 'bot:in-progress',
   BOT_BLOCKED: 'bot:blocked',
+  BOT_PARKED: 'bot:parked',
   WONTFIX: 'wontfix',
   SOLUTION_UNJUSTIFIED: 'solution:unjustified',
   // Read-side legacy fallback — PERMANENT cross-project support (other repos' records keep framing:baked labels, pre-rename); removable only at a major version that drops pre-rename repo support. [IL-85] Never emitted.
   FRAMING_BAKED: 'framing:baked',
   NEEDS_DEFINITION: 'needs:definition',
+  // Compatibility axis (#2251) — presence-only, like SOLUTION_UNJUSTIFIED. Read by
+  // bin/lib/release/subject.js's merge-subject composer (! suffix + BREAKING CHANGE footer).
+  BREAKING: 'breaking',
   DEMO_PENDING: 'demo:pending',
   DEMO_APPROVED: 'demo:approved',
   DEMO_CHANGES_REQUESTED: 'demo:changes-requested',
@@ -85,6 +89,14 @@ const FP_RE_WORK_PLAIN = /^work-fingerprint: (\S+)[ \t]*$/m;
 // (/m) so prose elsewhere in the body mentioning a commit never matches.
 const VERIFIED_AS_OF_RE = /^Verified-as-of: ([0-9a-f]{7,40})[ \t]*$/mi;
 const SHA_SHAPE_RE = /^[0-9a-f]{7,40}$/i;
+
+// #1829: an optional body-metadata line naming a mechanical command whose
+// exit code answers whether the record's stated premise still holds at the
+// checkout being materialized (e.g. `wc -l CLAUDE.md`-shaped budget claims)
+// — same plain-line convention as Verified-as-of/Origin:/Defer-reason:,
+// never YAML frontmatter. The command text is everything after the colon,
+// trimmed; single-line only (materialize.js runs it as-is via the shell).
+const PREMISE_CHECK_RE = /^Premise-check: (.+)$/m;
 
 // Line-anchored 'Blocked by #N' dependency declarations (multiline).
 const DEP_RE = /^Blocked by #(\d+)\b/gm;
@@ -273,6 +285,16 @@ function extractVerifiedAsOf(body) {
   return m ? m[1].toLowerCase() : null;
 }
 
+// body -> the Premise-check: command string, or null when the line is
+// absent — mirrors extractVerifiedAsOf's shape exactly. #1829: materialize.js
+// runs this command from the checkout root to answer "does the record's
+// Current State claim still hold at base" before a build starts.
+function extractPremiseCheck(body) {
+  if (typeof body !== 'string' || !body) return null;
+  const m = PREMISE_CHECK_RE.exec(body);
+  return m ? m[1].trim() : null;
+}
+
 // Accepts either bare label-name strings or {name} objects (gh's own shape).
 function normalizeLabelNames(labels) {
   return (labels || []).map((l) => (typeof l === 'string' ? l : l && l.name)).filter(Boolean);
@@ -328,6 +350,10 @@ function parseRecordFacets(labels) {
       facets.bot.blocked = true;
       continue;
     }
+    if (name === LABELS.BOT_PARKED) {
+      facets.bot.parked = true;
+      continue;
+    }
     if (name === LABELS.WONTFIX) {
       facets.notPlanned = true;
       continue;
@@ -351,6 +377,10 @@ function parseRecordFacets(labels) {
     }
     if (name === LABELS.NEEDS_DEFINITION) {
       facets.needsDefinition = true;
+      continue;
+    }
+    if (name === LABELS.BREAKING) {
+      facets.breaking = true;
       continue;
     }
     if (name === LABELS.PARENT_ISSUE) {
@@ -536,10 +566,21 @@ function partitionByOpenNativeBlockers(candidates, repoData) {
 // tracking policy: it exists purely to stop wasted re-dispatch of a record
 // that already has a build in flight. Same alias/null conventions as
 // buildNativeDependencyQuery above.
+// Also carries each candidate's cross-reference timeline (#1984) — every PR
+// that has ever mentioned the issue, closing keyword or not — beside the
+// closedByPullRequestsReferences connection above. This is the "mentioned
+// but never closed" case buildLinkedPRQuery's own connection can't see: a
+// merged PR whose body says "refs #N" with no closing keyword leaves the
+// record open with a live grant despite the work already having shipped
+// (#1791/#1803, #1484/#1857). `source { ... on PullRequest { ... } }`
+// resolves to null for a cross-reference from another Issue (not a PR),
+// which linked-prs.js's fetchLinkedPRs filters out; `repository{
+// nameWithOwner }` lets it filter to same-repo mentions only (a
+// CrossReferencedEvent's source can live in an unrelated repository).
 function buildLinkedPRQuery(numbers) {
   if (!Array.isArray(numbers) || numbers.length === 0) return null;
   const fields = numbers
-    .map((n) => `i${n}: issue(number:${n}){ number closedByPullRequestsReferences(first:10){ nodes{ number state } } }`)
+    .map((n) => `i${n}: issue(number:${n}){ number closedByPullRequestsReferences(first:10){ nodes{ number state } } timelineItems(itemTypes:[CROSS_REFERENCED_EVENT], first:20){ nodes{ ... on CrossReferencedEvent { source { ... on PullRequest { number title state merged mergedAt repository { nameWithOwner } } } } } } }`)
     .join('\n      ');
   return `query($owner:String!,$repo:String!){\n  repository(owner:$owner,name:$repo){\n      ${fields}\n  }\n}`;
 }
@@ -612,8 +653,19 @@ function parseDependencyAssumptions(body) {
 // resolved earlier than the read that produced currentState/deliverables, or a queued
 // finding filed later stamps a commit it never actually looked at (worse than no stamp —
 // see the Gotchas in issue #117).
+// premiseCheck (#1829, optional): a single-line shell command whose exit code answers
+// whether the record's Current State claim still holds — rendered as `Premise-check:
+// {command}` right after Verified-as-of (extracted by extractPremiseCheck, above). No
+// shape validation beyond single-line (a bad command degrades to premise: null with a
+// stderr note at materialize time, per that CLI's fail-open posture — never a filing-time
+// gate). The filing site is the only place that knows its own command; materialize.js
+// never invents one. Security note: this is body text, so nothing here stops an
+// untrusted issue body from also carrying this line — materialize.js gates actually
+// running it on the issue author's GitHub-attested author_association (trusted only at
+// OWNER/MEMBER/COLLABORATOR), never on this string alone. See flow/materialize.md's
+// "Author-association gate" paragraph.
 function specShapedBody({
-  header, currentState, deliverables, acceptanceCriteria, openQuestion, filedBy, provenance, footer, verifiedAsOf,
+  header, currentState, deliverables, acceptanceCriteria, openQuestion, filedBy, provenance, footer, verifiedAsOf, premiseCheck,
 } = {}) {
   const isEmpty = (value) => value === undefined || value === null || value === ''
     || (Array.isArray(value) && value.length === 0);
@@ -635,12 +687,16 @@ function specShapedBody({
   if (!isEmpty(verifiedAsOf) && !SHA_SHAPE_RE.test(verifiedAsOf)) {
     throw new Error(`specShapedBody: verifiedAsOf must be a git commit sha (got "${verifiedAsOf}")`);
   }
+  if (!isEmpty(premiseCheck) && /\n/.test(premiseCheck)) {
+    throw new Error('specShapedBody: premiseCheck must be a single-line command');
+  }
   const { origin, deferReason } = provenance || {};
   if (deferReason !== undefined) oneOf('deferReason', deferReason, DEFER_REASONS);
   const block = (v) => (Array.isArray(v) ? v.join('\n\n') : v);
   const parts = [];
   if (!isEmpty(header)) parts.push(header);
   if (!isEmpty(verifiedAsOf)) parts.push(`Verified-as-of: ${verifiedAsOf.toLowerCase()}`);
+  if (!isEmpty(premiseCheck)) parts.push(`Premise-check: ${premiseCheck}`);
   if (!isEmpty(origin)) parts.push(`Origin: ${origin}`);
   if (deferReason !== undefined) parts.push(`Defer-reason: ${deferReason}`);
   parts.push('## Current State', block(currentState), '## Deliverables', block(deliverables));
@@ -656,7 +712,7 @@ function specShapedBody({
 
 module.exports = {
   ORIGINS, TYPES, TIERS, PRIORITIES, DEFER_REASONS, LABELS, TYPE_LABELS, recordPayload, specShapedBody,
-  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, extractVerifiedAsOf, normalizeLabelNames, parseRecordFacets,
+  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, extractVerifiedAsOf, extractPremiseCheck, normalizeLabelNames, parseRecordFacets,
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
   hasOpenNativeBlocker, CLASSIFICATION_SCORING, fenceFor, fencedBlock, parseSubIssues,
   buildNativeSubIssuesQuery, buildNativeParentQuery, partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,

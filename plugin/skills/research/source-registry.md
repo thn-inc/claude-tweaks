@@ -142,7 +142,7 @@ file-disjoint their reads look.
 
 Model profile: [Use: Fast] for `codebase`, `repo-prose`, `tests`, and `history` — these are grep-and-read
 lookups against a named target. [Use: Standard] for `runtime`, `telemetry`, `deps`, and `web`, where the
-agent has to judge whether what it found actually settles the claim. Resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" {fast|standard}` (contract § Model Selection).
+agent has to judge whether what it found actually settles the claim. Resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" {fast|standard}` (`_shared/subagent-dispatch-core.md` § Model Selection).
 
 Inline this block verbatim in every dispatch prompt. It is a define-in-prompt format rather than
 Template A, per `skills/_shared/subagent-output-contract.md`'s "Not every consumer uses A/B/C" — a

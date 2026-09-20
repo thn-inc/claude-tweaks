@@ -107,9 +107,73 @@ function extractStep2Verification(taskBody) {
   return { command, expected: expectedMatch[1].trim() };
 }
 
+// Broader than the strict heading matched by extractStep2Verification above
+// (which requires bold "**Step 2:...**" text) — detects any checkbox-style
+// Step 2 line regardless of wording or bold formatting, so a task can be
+// classified as "Step 2 present" even when the strict extractor can't parse
+// it. Used to distinguish "no Step 2 at all" (nothing to report; a non-code
+// task, per plan-audit.md's Check C) from "Step 2 present but unparseable"
+// (#1594's signal).
+const STEP2_CHECKBOX_RE = /^[-*]\s*\[[ xX]?\]\s*.*\bStep\s+2\b.*$/m;
+
+// Within one task body whose STEP2_CHECKBOX_RE already matched, returns a
+// short raw excerpt (up to 5 non-blank lines, from the checkbox line to the
+// next step heading or end of body) for diagnostic display when the strict
+// Run:/Expected: extraction can't parse a verification pair from it. Returns
+// null if no checkbox line is found (callers only invoke this after
+// confirming one exists, but stays defensive rather than assuming).
+function extractStep2RawExcerpt(taskBody) {
+  const heading = STEP2_CHECKBOX_RE.exec(taskBody);
+  if (!heading) return null;
+  const afterHeading = taskBody.slice(heading.index + heading[0].length);
+  const nextStep = afterHeading.match(/\n[-*]\s*\[[ xX]?\]\s*.*\bStep\s+\d+\b/);
+  const window = heading[0] + (nextStep ? afterHeading.slice(0, nextStep.index) : afterHeading);
+  return window.trim().split('\n').filter((line) => line.trim() !== '').slice(0, 5).join('\n');
+}
+
+// Convenience: every task whose Step 2 is present (a checkbox line matching
+// STEP2_CHECKBOX_RE) but unparseable (extractStep2Verification finds no
+// Run:/Expected: pair under it). A task with no Step 2 at all is never
+// reported — that's a non-code task, per plan-audit.md's Check C.
+// plan-audit.js's Check C reports these as warnings (never a hard finding) so
+// a human can judge whether the plan needs updating to the canonical template
+// or the parser needs to learn a legitimately new shape (#1594).
+function extractUnparseableStep2s(text) {
+  return extractTaskBlocks(text)
+    .filter((task) => STEP2_CHECKBOX_RE.test(task.body) && extractStep2Verification(task.body) === null)
+    .map((task) => ({
+      taskNumber: task.taskNumber,
+      title: task.title,
+      raw: extractStep2RawExcerpt(task.body),
+    }));
+}
+
+// Within one task body, extracts the Step 1 text (heading through the next
+// Step heading or end of body) — #1999's Check C append-shape exception
+// needs Step 1's own prose to look for a named path, alongside Step 2's
+// Run:/Expected: pair. Returns null when the task carries no Step 1 heading.
+function extractStep1Text(taskBody) {
+  const stepRe = /\*\*Step\s+1:[^*\n]*\*\*/;
+  const stepMatch = stepRe.exec(taskBody);
+  if (!stepMatch) return null;
+  const rest = taskBody.slice(stepMatch.index + stepMatch[0].length);
+  const nextStep = rest.match(/\n[-*]\s*\[[ xX]?\]\s*\*\*Step\s+\d+:/);
+  const window = stepMatch[0] + (nextStep ? rest.slice(0, nextStep.index) : rest);
+  return window.trim();
+}
+
+// "Expected: FAIL after Step 1 ..." — the author-side escape hatch for
+// Check C's append-shape heuristic (#1999): declares the shape explicitly,
+// no path-matching needed. Still starts with "FAIL" so the existing
+// extractVerificationChecks scope filter below keeps selecting the task.
+const APPEND_MARKER_RE = /^FAIL\s+after\s+Step\s*1\b/i;
+
 // Convenience: every task's Step 2 verification pair, only for tasks that
 // have one and whose Expected text starts with FAIL (Check C's own scope —
-// see plan-audit.md's "Finding" section).
+// see plan-audit.md's "Finding" section). Each entry also carries #1999's
+// append-shape inputs: step1Text (that task's own Step 1 prose, or null),
+// taskFileEntries (that task's own Files: bullets — Check C's caller filters
+// to Modify:/Test:), and appendMarker (the explicit marker above).
 function extractVerificationChecks(text) {
   return extractTaskBlocks(text)
     .map((task) => ({ task, verification: extractStep2Verification(task.body) }))
@@ -119,13 +183,45 @@ function extractVerificationChecks(text) {
       title: task.title,
       command: verification.command,
       expected: verification.expected,
+      step1Text: extractStep1Text(task.body),
+      taskFileEntries: extractFileEntries(task.body),
+      appendMarker: APPEND_MARKER_RE.test(verification.expected.trim()),
     }));
+}
+
+// Strips fenced code blocks (```...```) from text before it is tested for a
+// prose marker — a plan header that quotes another plan's `**Execution:**
+// batched` line inside a fenced example must not itself read as batched.
+function stripFencedCodeBlocks(text) {
+  // Backtick and tilde fences alike (both are CommonMark fences); an
+  // unclosed fence strips nothing — the lazy quantifier needs its closer.
+  return text.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, '');
+}
+
+// Task count for /build's single-task fast-lane condition (#1926): the plan
+// file is the authority, never the diff or SDD's own narration. `batched`
+// is true only for the two markers this record defines — the header line
+// `**Execution:** batched` (text before the first "### Task" heading) or a
+// task title carrying `[batch]` — because a batched dispatch bundles work
+// items reviewed together, which the single-task equivalence never covers.
+// The header check strips fenced code blocks first (task titles are single
+// lines and need no such stripping).
+function countTasks(text) {
+  const blocks = extractTaskBlocks(text);
+  const firstHeading = text.search(/^###\s+Task\s+\d+:/m);
+  const header = firstHeading === -1 ? text : text.slice(0, firstHeading);
+  const batched = /^\*\*Execution:\*\*\s*batched\s*$/m.test(stripFencedCodeBlocks(header))
+    || blocks.some((b) => /\[batch\]/i.test(b.title));
+  return { tasks: blocks.length, batched };
 }
 
 module.exports = {
   extractFileEntries,
   extractScopeKeywords,
   extractTaskBlocks,
+  extractStep1Text,
   extractStep2Verification,
   extractVerificationChecks,
+  extractUnparseableStep2s,
+  countTasks,
 };

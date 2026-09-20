@@ -126,6 +126,24 @@ test('--repo owner/name overrides the git remote', () => {
   assert.match(q, /-f owner=someone -f repo=else/);
 });
 
+// #2240: a GitHub Enterprise Server origin remote threads --hostname onto
+// the one gh call this CLI makes (the --repo flag always resolves against
+// github.com by this codebase's existing convention — only the auto-detected
+// remote can carry a non-github.com host).
+test('#2240: a GitHub Enterprise Server origin remote passes --hostname on the graphql call', () => {
+  const deps = fakeDeps({ remoteUrl: () => 'https://ghe.example.com/acme/widgets.git' });
+  const code = run(['1224'], deps);
+  assert.equal(code, 0);
+  assert.deepEqual(deps.calls.runner[0].slice(-2), ['--hostname', 'ghe.example.com']);
+});
+
+test('#2240: a plain github.com remote omits --hostname', () => {
+  const deps = fakeDeps();
+  const code = run(['1224'], deps);
+  assert.equal(code, 0);
+  assert.doesNotMatch(deps.calls.runner[0].join(' '), /--hostname/);
+});
+
 // --- success / output shape ----------------------------------------------
 
 test('success: one runner call, a number-keyed JSON line on stdout, exit 0', () => {
@@ -135,7 +153,7 @@ test('success: one runner call, a number-keyed JSON line on stdout, exit 0', () 
   assert.equal(deps.calls.runner.length, 1, 'exactly one gh api graphql call');
   assert.equal(deps.calls.stderr.length, 0, 'success path writes nothing to stderr');
   assert.equal(deps.calls.stdout.length, 1, 'exactly one stdout write');
-  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: 1572 } });
+  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: 1572, mentions: [] } });
 });
 
 test('success: owner/repo parsed from the origin remote when --repo is absent', () => {
@@ -147,24 +165,24 @@ test('success: owner/repo parsed from the origin remote when --repo is absent', 
 
 test('success: no linked PR reports openPR null', () => {
   const deps = fakeDeps({
-    runner: (args) => JSON.stringify({
+    runner: () => JSON.stringify({
       data: { repository: { i1224: { number: 1224, closedByPullRequestsReferences: { nodes: [] } } } },
     }),
   });
   const code = run(['1224'], deps);
   assert.equal(code, 0);
-  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: null } });
+  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: null, mentions: [] } });
 });
 
 test('success: a merged (not open) linked PR reports openPR null', () => {
   const deps = fakeDeps({
-    runner: (args) => JSON.stringify({
+    runner: () => JSON.stringify({
       data: { repository: { i1224: { number: 1224, closedByPullRequestsReferences: { nodes: [{ number: 900, state: 'MERGED' }] } } } },
     }),
   });
   const code = run(['1224'], deps);
   assert.equal(code, 0);
-  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: null } });
+  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: null, mentions: [] } });
 });
 
 test('success: a comma list of numbers resolves in ONE runner call, one key per requested number', () => {
@@ -184,8 +202,8 @@ test('success: a comma list of numbers resolves in ONE runner call, one key per 
   assert.equal(code, 0);
   assert.equal(deps.calls.runner.length, 1, 'one aliased call covers the whole list, never one call per number');
   assert.deepEqual(JSON.parse(deps.calls.stdout[0]), {
-    1224: { openPR: 1572 },
-    257: { openPR: null },
+    1224: { openPR: 1572, mentions: [] },
+    257: { openPR: null, mentions: [] },
   });
 });
 

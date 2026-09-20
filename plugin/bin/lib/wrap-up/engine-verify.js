@@ -24,6 +24,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
+const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve');
+const { fetchNativeParent } = require('../issues/native-dependencies');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
@@ -126,6 +128,21 @@ function readExpectations(runDir) {
 
 function deferredSet(expectations) {
   return expectations.ok ? new Set(expectations.data.deferred || []) : new Set();
+}
+
+// #2383: issue numbers whose Oversight-floor gate (verification-brief.md,
+// #367) resolved `exceeds: false` -- these records legitimately carry no
+// `demo:pending` (Steps 1-4 were correctly skipped), so acceptance-labeling
+// below must render 'skip' for them instead of 'fail'. Written by the gate
+// itself into verify-expectations.json's `oversightExempt` array, the same
+// way `memory`/`upstream` are written by the Review Console. Absent
+// expectations degrades to an empty set here (not 'unknown') -- an unrelated
+// check (memory-updates/upstream-feedback) already surfaces a missing
+// expectations file as 'unknown'; acceptance-labeling itself only consults
+// this set to narrow its failing population, never to gate its own result on
+// the file's presence.
+function oversightExemptSet(expectations) {
+  return expectations.ok ? new Set((expectations.data.oversightExempt || []).map(Number)) : new Set();
 }
 
 function expectationsUnknownDetail(expectations) {
@@ -240,7 +257,7 @@ registerCheck('run-dir-archived', ({ originalRunDir, repoRoot, expectations, dep
 });
 
 // ---- worktree removed ---------------------------------------------------------
-registerCheck('worktree-removed', ({ runDir, expectations, deps }) => {
+registerCheck('worktree-removed', ({ runDir, expectations, deps, cwd }) => {
   const deferred = deferredSet(expectations);
   if (deferred.has('worktree')) return { result: 'skip', detail: 'deferred to parent console' };
   // Worktree paths/branches are named from the spec-slug alone (e.g.
@@ -250,7 +267,7 @@ registerCheck('worktree-removed', ({ runDir, expectations, deps }) => {
   const slug = specSlugFromRunDir(runDir);
   let porcelain;
   try {
-    porcelain = deps.git(['worktree', 'list', '--porcelain'], process.cwd());
+    porcelain = deps.git(['worktree', 'list', '--porcelain'], cwd);
   } catch (err) {
     return { result: 'unknown', detail: `git worktree list failed: ${err.message}` };
   }
@@ -300,7 +317,7 @@ function resolvedIssueNumbers(runDir) {
 // actually resolves for this run (resolvePrNumber); local-merge /
 // current-branch runs have no PR, and the branch-log commit is their only
 // carrier -- missing there stays a genuine `fail`, unchanged from before.
-registerCheck('carrier-commit', ({ runDir, base, deps }) => {
+registerCheck('carrier-commit', ({ runDir, base, deps, cwd }) => {
   const issues = resolvedIssueNumbers(runDir);
   if (!issues.length) return { result: 'skip', detail: 'no resolved issue numbers found (conversation-based work, or no materialized headers and no expectations issues)' };
   const prNumber = resolvePrNumber(runDir);
@@ -310,7 +327,7 @@ registerCheck('carrier-commit', ({ runDir, base, deps }) => {
   for (const n of issues) {
     let out;
     try {
-      out = deps.git(['log', `--grep=Fixes #${n}`, `${base}..HEAD`, '--oneline'], process.cwd());
+      out = deps.git(['log', `--grep=Fixes #${n}`, `${base}..HEAD`, '--oneline'], cwd);
     } catch (err) {
       return { result: 'unknown', detail: `git log failed: ${err.message}` };
     }
@@ -320,7 +337,7 @@ registerCheck('carrier-commit', ({ runDir, base, deps }) => {
     if (!prBodyFetched) {
       prBodyFetched = true;
       try {
-        prBody = JSON.parse(deps.gh(['pr', 'view', String(prNumber), '--json', 'body'], process.cwd())).body || '';
+        prBody = JSON.parse(deps.gh(['pr', 'view', String(prNumber), '--json', 'body'], cwd)).body || '';
       } catch (err) {
         return { result: 'unknown', detail: `gh pr view failed for PR #${prNumber}: ${err.message}` };
       }
@@ -332,7 +349,7 @@ registerCheck('carrier-commit', ({ runDir, base, deps }) => {
 });
 
 // ---- reference-repair commit scoping -------------------------------------------
-registerCheck('reference-repairs', ({ runDir, base, deps }) => {
+registerCheck('reference-repairs', ({ runDir, base, deps, cwd }) => {
   const statePath = path.join(runDir, 'engine-state.json');
   if (!fs.existsSync(statePath)) return { result: 'skip', detail: 'no engine-state.json (curation deferred or not run)' };
   let state;
@@ -346,7 +363,7 @@ registerCheck('reference-repairs', ({ runDir, base, deps }) => {
   if (!applied.length) return { result: 'skip', detail: 'no applied reference-repair findings this run' };
   let commitLog;
   try {
-    commitLog = deps.git(['log', '--grep=Initiative-Fix:', `${base}..HEAD`, '--format=%H'], process.cwd());
+    commitLog = deps.git(['log', '--grep=Initiative-Fix:', `${base}..HEAD`, '--format=%H'], cwd);
   } catch (err) {
     return { result: 'unknown', detail: `git log failed: ${err.message}` };
   }
@@ -356,7 +373,7 @@ registerCheck('reference-repairs', ({ runDir, base, deps }) => {
   for (const sha of commits) {
     let diff;
     try {
-      diff = deps.git(['diff-tree', '--no-commit-id', '--name-only', '-r', sha], process.cwd());
+      diff = deps.git(['diff-tree', '--no-commit-id', '--name-only', '-r', sha], cwd);
     } catch (err) {
       return { result: 'unknown', detail: `git diff-tree failed for ${sha}: ${err.message}` };
     }
@@ -369,13 +386,15 @@ registerCheck('reference-repairs', ({ runDir, base, deps }) => {
 });
 
 // ---- gh availability probe ------------------------------------------------
-function ghAvailable(deps) {
-  try {
-    deps.gh(['--version'], process.cwd());
-    return true;
-  } catch {
-    return false;
-  }
+// Delegates to the shared plugin/bin/lib/repo-resolve.js helper (the
+// six-call-site consolidation, #2017) via a one-call adapter: this module's
+// own deps.gh(args, cwd) seam takes a cwd the shared helper's
+// deps.execFileSync(cmd, args, opts) shape has no slot for, so the adapter
+// closes over cwd and discards the shared helper's own cmd/opts arguments
+// (deps.gh always means "gh", and this module's own makeDefaultRunner
+// already carries the timeout bound).
+function ghAvailable(deps, cwd) {
+  return sharedGhAvailable({ execFileSync: (_cmd, args) => deps.gh(args, cwd) });
 }
 
 // ---- parent resolution + pr-first pointer helpers ---------------------------
@@ -383,23 +402,39 @@ function ghAvailable(deps) {
 // `verification-brief.md`'s Routing section: a resolvable-parent sub-issue
 // never carries its own `demo:pending` -- its parent carries one gate for
 // all of them. Callers must redirect to the parent before checking labels/
-// comments. Returns { ok:false, error } instead of throwing so a gh/JSON
-// failure folds into the check's own `fail` detail line rather than
-// aborting the whole check.
-function resolveParent(n, deps) {
-  let raw;
+// comments. Returns { ok:false, error } instead of throwing so a gather
+// failure can be distinguished from a genuine labeling mismatch by the
+// caller -- the acceptance-labeling check below renders 'unknown', never
+// 'fail', for an { ok: false } result.
+//
+// GraphQL, not `gh issue view --json parent`: that REST field is unknown to
+// gh <2.96 (#1841), while Issue.parent via GraphQL works on every gh version
+// that can run GraphQL at all. A GraphQL variable can't be filled by gh's
+// {owner}/{repo} placeholder substitution (gh-api-module-pattern skill) --
+// the repo slug has to be resolved locally first, via the same `deps.git`
+// seam every other check in this file already uses.
+function resolveParent(n, deps, cwd) {
+  let remote;
   try {
-    raw = deps.gh(['issue', 'view', String(n), '--json', 'parent'], process.cwd());
+    remote = deps.git(['remote', 'get-url', 'origin'], cwd);
   } catch (err) {
-    return { ok: false, error: `gh issue view (parent) failed for #${n} (${err.message})` };
+    return { ok: false, error: `git remote get-url failed for #${n} (${err.message})` };
   }
-  let parsed;
+  const repoSpec = parseRepo(remote);
+  if (!repoSpec) {
+    return { ok: false, error: `could not resolve owner/repo for #${n}` };
+  }
   try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { ok: false, error: `could not parse parent JSON for #${n}` };
+    const parent = fetchNativeParent({
+      number: n,
+      owner: repoSpec.owner,
+      repo: repoSpec.repo,
+      runner: (args) => deps.gh(args, cwd),
+    });
+    return { ok: true, parent };
+  } catch (err) {
+    return { ok: false, error: `gh api graphql (parent) failed for #${n} (${err.message})` };
   }
-  return { ok: true, parent: parsed.parent ? parsed.parent.number : null };
 }
 
 // `verify`'s --run-dir may be the parent pipeline run directory, or (in a
@@ -436,30 +471,50 @@ function resolvePrNumber(runDir) {
 // contains the brief, never only the most recent one. A last-comment-only
 // test would hard-stop a correctly-gated parent.
 //
-// Known, deliberate gaps (not reproduced here -- said honestly rather than
-// implied by omission): the Oversight-floor gate (a non-parent record that
-// doesn't clear the floor legitimately carries no `demo:pending` at all --
-// this check has no way to distinguish that from a genuinely missed
-// labeling step, so it will report a false `fail` for that case) and the
-// `local-files` backend's different acceptance shape (`facets.acceptance`
-// on the record body, no `gh` comments at all) are both out of scope for
-// this check as written; it only reproduces the `github-issues` path.
-registerCheck('acceptance-labeling', ({ runDir, deps }) => {
-  if (!ghAvailable(deps)) return { result: 'unknown', detail: 'gh absent' };
+// Known, deliberate gap (not reproduced here -- said honestly rather than
+// implied by omission): the `local-files` backend's different acceptance
+// shape (`facets.acceptance` on the record body, no `gh` comments at all) is
+// out of scope for this check as written; it only reproduces the
+// `github-issues` path. The Oversight-floor gate's exemption (a non-parent
+// record that doesn't clear the floor legitimately carries no
+// `demo:pending`) IS reproduced here -- see `oversightExemptSet` above.
+registerCheck('acceptance-labeling', ({ runDir, deps, cwd, expectations }) => {
+  if (!ghAvailable(deps, cwd)) return { result: 'unknown', detail: 'gh absent' };
   const issues = resolvedIssueNumbers(runDir);
   if (!issues.length) return { result: 'skip', detail: 'no resolved issue numbers found' };
+
+  // Oversight-floor-exempted records (#2383) never carry `demo:pending` --
+  // narrow the population this check gathers/labels-checks to the issues
+  // that are NOT exempted, before any parent resolution or gh call runs. An
+  // exempted record never has a resolvable parent by construction (the
+  // Oversight-floor gate only runs on the non-parent path), so it is always
+  // its own target -- filtering here is equivalent to, and cheaper than,
+  // filtering the resolved `targets` list below.
+  const exempt = oversightExemptSet(expectations);
+  const checkIssues = issues.filter((n) => !exempt.has(n));
+  if (!checkIssues.length) {
+    return { result: 'skip', detail: `oversight floor not cleared for #${issues.join(', #')}` };
+  }
   const failing = [];
 
   // Resolve each issue's target (its parent, when resolvable; itself
   // otherwise), deduping by target -- two sub-issues sharing one parent
   // must only be checked once, both to avoid redundant gh calls and to
   // avoid redundant identical detail lines.
+  //
+  // A gather failure here (GraphQL error, unresolvable owner/repo, an
+  // unparseable response) is a tooling gap, not evidence of a labeling
+  // mismatch -- it renders the whole check 'unknown', matching this file's
+  // other could-not-gather rows, and returns before any label/comment read
+  // runs (a real labeling mismatch on a successfully resolved record still
+  // reaches the loop below and can still render 'fail').
   const targets = [];
   const seenTargets = new Set();
-  for (const n of issues) {
-    const resolved = resolveParent(n, deps);
+  const gatherFailures = [];
+  for (const n of checkIssues) {
+    const resolved = resolveParent(n, deps, cwd);
     if (!resolved.ok) {
-      failing.push(`#${n}: ${resolved.error}`);
+      gatherFailures.push(`#${n}: ${resolved.error}`);
       continue;
     }
     const target = resolved.parent || n;
@@ -467,42 +522,31 @@ registerCheck('acceptance-labeling', ({ runDir, deps }) => {
     seenTargets.add(target);
     targets.push(target);
   }
+  if (gatherFailures.length) return { result: 'unknown', detail: gatherFailures.join('; ') };
 
   const prNumber = resolvePrNumber(runDir);
 
   for (const target of targets) {
-    let labelsRaw;
+    let issueRaw;
     try {
-      labelsRaw = deps.gh(['issue', 'view', String(target), '--json', 'labels'], process.cwd());
+      issueRaw = deps.gh(['issue', 'view', String(target), '--json', 'labels,comments'], cwd);
     } catch (err) {
       failing.push(`#${target}: gh issue view failed (${err.message})`);
       continue;
     }
-    let labels;
+    let issueData;
     try {
-      labels = JSON.parse(labelsRaw).labels || [];
+      issueData = JSON.parse(issueRaw);
     } catch {
-      failing.push(`#${target}: could not parse labels JSON`);
+      failing.push(`#${target}: could not parse labels/comments JSON`);
       continue;
     }
+    const labels = issueData.labels || [];
     if (!labels.some((l) => l.name === 'demo:pending')) {
       failing.push(`#${target}: missing demo:pending label`);
       continue;
     }
-    let commentsRaw;
-    try {
-      commentsRaw = deps.gh(['issue', 'view', String(target), '--json', 'comments'], process.cwd());
-    } catch (err) {
-      failing.push(`#${target}: gh issue view (comments) failed (${err.message})`);
-      continue;
-    }
-    let comments;
-    try {
-      comments = JSON.parse(commentsRaw).comments || [];
-    } catch {
-      failing.push(`#${target}: could not parse comments JSON`);
-      continue;
-    }
+    const comments = issueData.comments || [];
     const hasFullBrief = comments.some((c) => c.body && c.body.includes('## Verification Brief') && c.body.includes('### Confirmed'));
     if (hasFullBrief) continue;
 
@@ -515,7 +559,7 @@ registerCheck('acceptance-labeling', ({ runDir, deps }) => {
       if (hasPointer) {
         let prCommentsRaw;
         try {
-          prCommentsRaw = deps.gh(['pr', 'view', String(prNumber), '--json', 'comments'], process.cwd());
+          prCommentsRaw = deps.gh(['pr', 'view', String(prNumber), '--json', 'comments'], cwd);
         } catch (err) {
           failing.push(`#${target}: gh pr view failed for PR #${prNumber} (${err.message})`);
           continue;
@@ -570,18 +614,18 @@ registerCheck('memory-updates', ({ expectations }) => {
 });
 
 // ---- upstream feedback ----------------------------------------------------------
-registerCheck('upstream-feedback', ({ expectations, deps }) => {
+registerCheck('upstream-feedback', ({ expectations, deps, cwd }) => {
   if (!expectations.ok) return { result: 'unknown', detail: expectationsUnknownDetail(expectations) };
   const entries = expectations.data.upstream || [];
   if (!entries.length) return { result: 'skip', detail: 'nothing recorded' };
-  if (!ghAvailable(deps)) return { result: 'unknown', detail: 'gh absent' };
+  if (!ghAvailable(deps, cwd)) return { result: 'unknown', detail: 'gh absent' };
   const failing = [];
   for (const { url } of entries) {
     const m = url.match(/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)/);
     if (!m) { failing.push(`could not parse issue URL: ${url}`); continue; }
     const [, owner, repo, number] = m;
     try {
-      deps.gh(['issue', 'view', number, '--repo', `${owner}/${repo}`, '--json', 'number'], process.cwd());
+      deps.gh(['issue', 'view', number, '--repo', `${owner}/${repo}`, '--json', 'number'], cwd);
     } catch (err) {
       failing.push(`${url}: gh issue view failed (${err.message})`);
     }
@@ -653,6 +697,7 @@ function renderVerifyTable(rows) {
 module.exports = {
   runVerify,
   renderVerifyTable,
+  sanitizeCell,
   resolveArchivedRunDir,
   registerCheck,
   defaultGit,

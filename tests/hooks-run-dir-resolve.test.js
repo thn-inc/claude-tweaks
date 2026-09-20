@@ -1,7 +1,7 @@
 // tests/hooks-run-dir-resolve.test.js
 //
 // #692: bin/lib/hooks/run-dir-resolve.js — the pure resolver behind
-// `node bin/hooks.js resolve-run-dir`. Implements _shared/pipeline-run-dir.md's
+// `node bin/hooks.js resolve-run-dir`. Implements _shared/run-dir-resolution.md's
 // resolution order (env var with adoption-time anchoring check -> newest
 // matching dir -> standalone fallback) on top of worktree-detect.js's
 // mainCheckoutRoot(), so a skill step can get the anchored $RUN_ROOT/run
@@ -13,12 +13,16 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const { gitRepo, linkedWorktreeOf, harnessWorktreeOf } = require('./helpers/git-fixtures');
-const { resolve, formatTimestamp } = require('../plugin/bin/lib/hooks/run-dir-resolve');
+const { resolve, formatTimestamp, isDeadRunDir } = require('../plugin/bin/lib/hooks/run-dir-resolve');
 
 function mkRunDir(main, name) {
   const dir = path.join(main, '.claude-tweaks', 'pipelines', name);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function writeRunState(dir, state) {
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify(state));
 }
 
 test('main-checkout cwd, spec-slug matches an existing run: resolves that run\'s absolute path', () => {
@@ -93,6 +97,69 @@ test('newest match wins when multiple directories match the spec-slug', () => {
   const newer = mkRunDir(main, '2026-06-01T000000-spec-3');
   const out = resolve({ cwd: main, env: {}, specSlug: 'spec-3' });
   assert.strictEqual(out.path, newer);
+});
+
+// #1962: a matching run dir left behind by an abandoned prior attempt (its
+// PR closed unmerged, the reconciler's archive sweep skipped it with
+// reason no-branch) must never be silently adopted by step 2's slug match —
+// it would inherit a closed PR number, a stale config.yml, stale staged/
+// items, and a foreign claim runId (this record's own Current State).
+test('#1962: step 2 skips a matching run dir whose run-state.json status is interrupted, falling through to create', () => {
+  const main = gitRepo();
+  const stale = mkRunDir(main, '2026-01-01T000000-record-1302');
+  writeRunState(stale, { status: 'interrupted', worktree: null, pr: { number: 42, branch: 'worktree-record-1302' } });
+  const out = resolve({
+    cwd: main, env: {}, specSlug: 'record-1302', create: true,
+    now: new Date('2026-06-01T12:00:00Z'),
+  });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, true);
+  assert.notStrictEqual(out.path, stale);
+});
+
+test('#1962: step 2 skips a matching run dir whose status is active but the stamped worktree no longer exists on disk', () => {
+  const main = gitRepo();
+  const stale = mkRunDir(main, '2026-01-01T000000-record-733');
+  writeRunState(stale, { status: 'active', worktree: path.join(main, '.claude', 'worktrees', 'gone-record-733') });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'record-733', create: true, now: new Date('2026-06-01T00:00:00Z') });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, true);
+  assert.notStrictEqual(out.path, stale);
+});
+
+test('#1962: step 2 still adopts a matching run dir that is genuinely active with a live worktree', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const live = mkRunDir(main, '2026-01-01T000000-record-1442');
+  writeRunState(live, { status: 'active', worktree: wt });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'record-1442' });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, false);
+  assert.strictEqual(out.path, live);
+});
+
+test('#1962: step 2 falls through to the next-newest match when the newest is dead', () => {
+  const main = gitRepo();
+  const older = mkRunDir(main, '2026-01-01T000000-record-91');
+  const newer = mkRunDir(main, '2026-06-01T000000-record-91');
+  writeRunState(newer, { status: 'interrupted' });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'record-91' });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, false);
+  assert.strictEqual(out.path, older);
+});
+
+test('isDeadRunDir: no run-state.json at all (a bare mkdir-only mint) is never dead', () => {
+  const main = gitRepo();
+  const bare = mkRunDir(main, '2026-01-01T000000-record-1');
+  assert.strictEqual(isDeadRunDir(bare), false);
+});
+
+test('isDeadRunDir: malformed run-state.json fails open (not dead) rather than throwing', () => {
+  const main = gitRepo();
+  const dir = mkRunDir(main, '2026-01-01T000000-record-2');
+  fs.writeFileSync(path.join(dir, 'run-state.json'), '{not json');
+  assert.strictEqual(isDeadRunDir(dir), false);
 });
 
 test('standalone fallback with --create mints a directory with decisions.md and staged/, matching the reference snippet', () => {

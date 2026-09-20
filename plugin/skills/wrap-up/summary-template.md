@@ -25,6 +25,8 @@ landed" from memory.}
 
 Render VERBATIM from the helper — do not compose these facts from memory:
 
+Paste `pack.state.value.rendered` from `{run-dir}/wrap-up-pack.json` (#1930) verbatim — that field is byte-identical to what the command below prints, and it is the ONLY field of `pack.state` this block reads. Never compose the block from the sibling `state`/`ops`/`since` fields: doing so is the from-memory reconstruction the VERBATIM rule above exists to forbid, dressed as a JSON read. Run the command only when the pack file is absent; an `ok: false` field takes the re-derive-`{base}`-and-retry-once path below.
+
     node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-state.js" --since {base}
 
 If the helper exits non-zero, `{base}` was not a resolvable commit-ish —
@@ -53,6 +55,18 @@ Then append, in record mode only:
 
 Record    #{n} — {closes via merge | closed | open}
 Ledger    {n} items, {n} open   |   none
+
+### Timing
+
+Rendered verbatim from `node "${CLAUDE_PLUGIN_ROOT}/bin/phase-timing.js" --run "$PIPELINE_RUN_DIR" --markdown --auto-transcript` (#1928) — never composed by hand; a phase with no event reads `unattributed`. `{Minutes}` is the phase's span, with `(own N)` when nested phases are excluded. An `unattributed` table row (below the phase rows, above `total`) appears only when transcript usage rows fall outside every phase's span (#1929). When the CLI prints a `tokens: transcript not found (...)` line, render it verbatim above the table — blank token columns are a fact about the run, not a formatting error (#1929). `Tokens (in/out)` sums the transcript's raw `input_tokens`/`output_tokens` only — cache reads and cache creation are separate fields in `timing.json`'s `tokens`, and on a cache-heavy session dwarf `in`.
+
+| Phase | Minutes | Verify | Tokens (in/out) | Proc. KB | Tool RTs |
+|---|---|---|---|---|---|
+| {phase} | {minutes} | {mode ×n | — | unattributed} | {in/out | —} | {kb | —} | {n | —} |
+| unattributed | — | — | {in/out} | {kb} | {n} |
+| total | {totals.minutes} | {verifyRuns} run(s) ({modes}) | {in/out} | {kb} | {n} |
+
+Guard denials: {n} gate · {n} wd-ambiguous · {n} wd-deny
 
 ### Phase 1 — Establish
 

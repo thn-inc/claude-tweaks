@@ -14,6 +14,8 @@ applicability check passes (the `merge-authorization` lever, #715), check the tw
 — the single-record version of `skills/dispatch/SKILL.md`'s own group-scoped "Auto-merge gate,"
 whether or not `/claude-tweaks:dispatch` was involved:
 
+The Authorization layer below always reads **live** labels (`gh issue view --json labels`), never the fact pack: a Phase 3 snapshot is minutes old by the time this gate runs, and a grant that was revoked in between must not authorize a merge (#1930). `pack.recordLabels` in `{run-dir}/wrap-up-pack.json` is the console's **audit snapshot** of those same labels — render it beside the live verdict so a mid-run change is visible, and never substitute it for the live read. When the pack file is absent, or its field is `ok: false` (`gh-absent`, `no-forge`, a failed query), omit the snapshot line entirely; the live fetch is unaffected, and a failure of *that* read is still the "Any layer fails" outcome below: proceed to render the console normally, exactly as an `auto:build`-only record would.
+
 1. **Authorization** — one of three ways to clear:
    - `auto:merge` is already present on the live-fetched labels — clears immediately (`already-mature` by construction).
    - `auto:merge-pending` is present (and `auto:merge` is not) — fetch fresh (`gh issue view {n} --json labels,comments`) and evaluate maturation the same way `dispatch/grant-maturation-gate.md`'s Phase 1 does (cited from `dispatch/settle-and-merge.md`'s Auto-merge gate) — this is a single record, so that gate's group-wide phase-1/phase-2 split has nothing to preserve here:
@@ -52,7 +54,7 @@ whether or not `/claude-tweaks:dispatch` was involved:
      This seeds the merge-lane circuit breaker's `watched.json` — the same write `dispatch/grant-maturation-gate.md`'s Phase 2 performs for the group path — since this singleton path has no other write path that ever seeds it; without this step a singleton machine-grant's merge trust is both unreachable and unwatched. Log:
      `AUTO {time} — Auto-merge short-circuit: matured #{n}'s auto:merge-pending to auto:merge ({result.ageHours}h old, past the {result.windowHours}h veto window). Reversibility: high (label re-removable; no merge has happened yet). [lever: grant-veto-window-hours={result.windowHours} (source)]`.
    - `auto:merge` and `auto:merge-pending` are both absent — `manifesto-authorized-merge.md`'s applicability check passed instead (true by construction once this branch is reached under this condition).
-2. **Content judgment** — invoke `/claude-tweaks:assess-agent-autonomy` in `merge-check` mode (`Skill(skill: "claude-tweaks:assess-agent-autonomy", args: "merge-check #{n}")`), which weighs the diff's content, `/review`'s findings, and a test-exclusion-aware blast-radius summary holistically. The verdict must be `auto-merge` to proceed.
+2. **Content judgment** — invoke `/claude-tweaks:assess-agent-autonomy` in `merge-check` mode (`Skill(skill: "claude-tweaks:assess-agent-autonomy", args: "merge-check #{n} --pack {run-dir}/wrap-up-pack.json")`), which weighs the diff's content, `/review`'s findings, and a test-exclusion-aware blast-radius summary holistically. `pack.blastRadius` is merge-check's Step 1 input (#1930); when the pack file is absent, omit `--pack` and merge-check runs `blast-radius.js` itself as before. The verdict must be `auto-merge` to proceed.
 
 **Both layers pass — acceptance labeling runs first, before the merge.** This branch bypasses
 Phase 4's execution step, which is where acceptance labeling normally happens, so this branch must
@@ -151,7 +153,7 @@ Skip the blocking wait and merge directly — bypass the interactive
 **`integration-model: pr-first` (`_shared/integration-model.md`):** run `_shared/pr-first-merge.md`'s
 procedure now — `tag: {tag}` (see `manifesto-authorized-merge.md`'s Tag selection section) (distinct from dispatch's `auto-merge` tag; `/help`'s
 auto-merged-this-week count keys on all three, `_shared/github-pr-scan.md` `triage-queue` item 3),
-`issue-list` this one record, `summary` the record's own title. No checkout is needed — `gh pr
+`issue-list` this one record, `summary` the record's own title. Read that procedure as one composed bundle: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step merge "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-first-merge.md" "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-checklist-refresh.md"`, then read `$PIPELINE_RUN_DIR/context/merge.md`; if the compose command is unavailable or exits non-zero, read the named source files directly. No checkout is needed — `gh pr
 merge` runs directly, which is what retires this section's pre-#411 `git -C "$RUN_DIR"`
 worktree/branch resolution (#299: that resolution anchored against the run dir, not the worktree —
 a defect that simply cannot recur once there is no checkout resolution step to get wrong; see the
@@ -213,9 +215,11 @@ if [ "$CURRENT" != "{integration-branch}" ]; then
   echo "Main checkout is on '$CURRENT', not '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
   exit 1
 fi
-git merge --no-ff {branch} -m "[{tag}] {one-line summary}
+SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag {tag} --shell) || exit 1
+eval "$SUBJECT_EXPORTS"
+git merge --no-ff {branch} -m "$SUBJECT_TITLE
 
-Fixes #{issue}"
+$SUBJECT_BODY"
 ```
 
 **Second call — push, from inside the worktree.** Both placeholders are the
@@ -264,6 +268,7 @@ synchronously.
 
 **Any layer fails:** proceed to render the console normally, exactly as an
 `auto:build`-only record would — no different from any other pipeline run.
+When the failing layer is a `merge-check` verdict of `needs-human`, log it first so the Review Console's own short-circuit (`review-console.md`, `console-resolve.js`) honours the carve-out: `AUTO {time} — Auto-merge short-circuit: #{n} assess-agent-autonomy verdict needs-human — Review Console renders normally. Reversibility: n/a.`
 
 This check does not apply to `MULTISPEC_REVIEW_DEFER=1` runs — an `auto:merge`-granted
 record still gets the normal, fully-blocking consolidated Review Console, same as any other spec

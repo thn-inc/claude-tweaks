@@ -40,22 +40,68 @@ function unescapeDoubleQuoted(s) {
   return s.replace(/\\([\\$`"])/g, '$1');
 }
 
+// Shared by extractNodeEScripts and extractRawDoubleQuotedNodeEBodies below -- one regex,
+// cited by both rather than retyped, per skill-prose-conformance-tests' "import the shipped
+// parser's constants" convention.
+const DOUBLE_QUOTED_NODE_E_RE = /node -e "((?:\\.|[^"\\])*)"/g;
+
+// Shared by the same two functions, for the same reason. `\r?\n` after the fence opener (not
+// a bare `\n`): a checkout with core.autocrlf=true and no .gitattributes (this repo's own
+// Windows dev checkouts) normalizes markdown to CRLF, and a literal `\n` here would silently
+// match zero fences on such a checkout -- the same class of bug this release already hardened
+// elsewhere (extract.js's TAP-frame regex, #2033).
+const BASH_FENCE_RE = /```bash\r?\n([\s\S]*?)```/g;
+
 // Extract every `node -e "..."` / `node -e '...'` invocation from within ```bash fences.
 // Handles both quote styles and both single-line and multi-line forms with one regex
 // per style (character classes match newlines by default, so no /s flag is needed).
 function extractNodeEScripts(markdown) {
   const scripts = [];
-  const fenceRe = /```bash\n([\s\S]*?)```/g;
+  const fenceRe = new RegExp(BASH_FENCE_RE.source, 'g');
   let fence;
   while ((fence = fenceRe.exec(markdown)) !== null) {
     const block = fence[1];
-    const doubleQuoted = /node -e "((?:\\.|[^"\\])*)"/g;
+    const doubleQuoted = new RegExp(DOUBLE_QUOTED_NODE_E_RE.source, 'g');
     let m;
     while ((m = doubleQuoted.exec(block)) !== null) scripts.push(unescapeDoubleQuoted(m[1]));
     const singleQuoted = /node -e '([^']*)'/g;
     while ((m = singleQuoted.exec(block)) !== null) scripts.push(m[1]);
   }
   return scripts;
+}
+
+// Extract every double-quoted node -e body's RAW (pre-unescape) text. Double-quoted only,
+// deliberately: a single-quoted node -e body is already immune to this hazard (bash performs
+// zero substitution inside '...'), so it needs no check here.
+function extractRawDoubleQuotedNodeEBodies(markdown) {
+  const bodies = [];
+  const fenceRe = new RegExp(BASH_FENCE_RE.source, 'g');
+  let fence;
+  while ((fence = fenceRe.exec(markdown)) !== null) {
+    const block = fence[1];
+    const doubleQuoted = new RegExp(DOUBLE_QUOTED_NODE_E_RE.source, 'g');
+    let m;
+    while ((m = doubleQuoted.exec(block)) !== null) bodies.push(m[1]);
+  }
+  return bodies;
+}
+
+// A bare backtick inside a double-quoted node -e body is bash command substitution, not JS
+// syntax (#1964) -- a JS comment like `// ...deprecated `next` alias` reads as ordinary prose
+// to a human, but bash parses the whole node -e "..." string before node ever sees it, so the
+// unescaped backtick pair triggers `next` as a command substitution (observed live as a
+// "next: command not found" stderr line on every run). `node --check` above never catches this
+// -- after unescaping, the JS itself is syntactically valid; only a dedicated shell-level sweep
+// does. Escaped backticks (`\``) are excluded -- bash's own escape rule (unescapeDoubleQuoted
+// above) means those are genuinely inert, literal characters once bash finishes parsing.
+function findBareBackticks(rawBody) {
+  const sites = [];
+  const re = /\\.|`/g;
+  let m;
+  while ((m = re.exec(rawBody)) !== null) {
+    if (m[0] === '`') sites.push(m.index);
+  }
+  return sites;
 }
 
 // A handful of these snippets embed bash-side substitution the surrounding skill's own
@@ -164,6 +210,35 @@ test('substituteShellPlaceholders: never touches a JS template-literal expressio
   assert.strictEqual(result.ok, true);
 });
 
+test('extractRawDoubleQuotedNodeEBodies: extracts the raw (pre-unescape) double-quoted body', () => {
+  const md = [
+    '```bash',
+    'node -e "',
+    '  // deprecated `next` alias',
+    '  console.log(1)',
+    '"',
+    '```',
+  ].join('\n');
+  const bodies = extractRawDoubleQuotedNodeEBodies(md);
+  assert.strictEqual(bodies.length, 1);
+  assert.match(bodies[0], /deprecated `next` alias/);
+});
+
+test('findBareBackticks: flags an unescaped backtick pair (#1964 planted fixture)', () => {
+  const sites = findBareBackticks("  // the drain's deprecated `next` alias\n  console.log(1)");
+  assert.strictEqual(sites.length, 2, 'must flag both backticks around `next`');
+});
+
+test('findBareBackticks: does not flag an escaped backtick', () => {
+  const sites = findBareBackticks('console.log(\\`hi\\`)');
+  assert.deepStrictEqual(sites, []);
+});
+
+test('findBareBackticks: negative control — a body with no backtick at all', () => {
+  const sites = findBareBackticks('console.log(1)');
+  assert.deepStrictEqual(sites, []);
+});
+
 // --- Live-corpus sweep ---
 
 test('every node -e script embedded in a plugin/skills/**/*.md bash fence is syntactically valid', () => {
@@ -186,4 +261,31 @@ test('every node -e script embedded in a plugin/skills/**/*.md bash fence is syn
 
   assert.ok(scriptCount > 0, 'sanity: the skills sweep must find at least one node -e snippet');
   assert.deepStrictEqual(failures, [], `node -e syntax error(s):\n${failures.join('\n')}`);
+});
+
+// #1964: a backtick inside a double-quoted node -e body's JS comment reads as ordinary prose
+// but is command-substituted by bash before node ever runs, printing a spurious
+// "{token}: command not found" line to stderr on every invocation (observed live in
+// dispatch/queue-pull-script.md). node --check can't catch this -- the JS is syntactically
+// valid either way -- so this is a dedicated shell-level sweep, not a syntax check.
+test('no double-quoted node -e body in plugin/skills/**/*.md contains a bare backtick', () => {
+  const files = findMarkdownFiles(SKILLS_DIR);
+  assert.ok(files.length > 0, 'sanity: the skills sweep must find files to check');
+
+  let bodyCount = 0;
+  const failures = [];
+  for (const file of files) {
+    const markdown = fs.readFileSync(file, 'utf8');
+    const bodies = extractRawDoubleQuotedNodeEBodies(markdown);
+    bodyCount += bodies.length;
+    for (const [index, body] of bodies.entries()) {
+      const sites = findBareBackticks(body);
+      if (sites.length > 0) {
+        failures.push(`${path.relative(ROOT, file)} (double-quoted node -e body #${index}): ${sites.length} bare backtick(s)`);
+      }
+    }
+  }
+
+  assert.ok(bodyCount > 0, 'sanity: the skills sweep must find at least one double-quoted node -e body');
+  assert.deepStrictEqual(failures, [], `bare backtick(s) inside a double-quoted node -e body -- bash command-substitutes these before node runs:\n${failures.join('\n')}`);
 });

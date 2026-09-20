@@ -24,7 +24,7 @@ const path = require('path');
 const { withLock } = require('../file-lock');
 const { readJsonFile, writeJsonFile } = require('../json-store');
 const { blockFree } = require('./probe');
-const { serviceVars, writeEnvFiles } = require('./env-file');
+const { serviceVars, leaseVars, writeEnvFiles } = require('./env-file');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 
 const POOL_BASE = 20000;
@@ -127,7 +127,7 @@ async function claimFreeBase(registry, regPath, realPath, services, probe) {
 }
 
 function finishAllocation(realPath, result) {
-  const vars = serviceVars(result.lease.services, result.base);
+  const vars = [...leaseVars(result.base), ...serviceVars(result.lease.services, result.base)];
   let envWriteError = null;
   try {
     writeEnvFiles(realPath, vars);

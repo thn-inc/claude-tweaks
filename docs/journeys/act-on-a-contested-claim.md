@@ -12,7 +12,7 @@ files:
 **Persona:** claude-tweaks user typing `/claude-tweaks:flow #{n}` on a repo where another session — their own second terminal, a teammate's machine, or a scheduled dispatch firing — may already be building the same record.
 **Goal:** When the run stops before it starts because the record is already claimed, learn within one screen whether the holder is actually alive, and take the one next step that fits — rather than guessing between waiting, reclaiming, and re-running.
 **Entry point:** Typing `/claude-tweaks:flow #{n}` (or `/claude-tweaks:flow "#{n},#{m}"`) in a project whose work records live on GitHub.
-**Success state:** The run either claims every named target and proceeds to the Config Manifesto, or stops with a card that names why — a contest card carrying the holder and a live / stale / remote verdict, or an in-flight card carrying the open PR a prior build already produced — and in either case gives exactly one next step, leaving no worktree and no empty run directory behind.
+**Success state:** The run either claims every named target and proceeds to the Config Manifesto, or stops with a card that names why — a contest card carrying the holder and a live / stale / remote verdict, an in-flight card carrying the open PR a prior build already produced, or a claim-unverified card when this run's own write reported success but the post-write read-back didn't confirm it (#2073) — and in either case gives exactly one next step, leaving no worktree and no empty run directory behind.
 
 ## Steps
 
@@ -44,6 +44,13 @@ files:
 - **Should understand:** The record's claim blob is a released `pr-opened:` tombstone, and its linked PR is still open — a prior build finished and is awaiting merge. Reclaiming would start a second build racing that PR, so the run stops instead. Any other tombstone reason, a missing or foreign-repo `link`, or a failed liveness check all fall through to the ordinary reclaim (fail open) — this stop only fires on positive evidence of an open PR for this same repo. The resume-confirmation prompt makes no freshness judgment of its own — its own check tells a genuinely still-running build apart from one that only looks in-flight.
 - **Red flags:** An in-flight card for a PR that is already merged or closed; a `link` pointing at another repository being followed at all; the run reclaiming and rebuilding a record whose PR is still open; the resume routing firing under a headless invocation with nobody present to answer it.
 
+### 3c. Recognize a claim-unverified stop, distinct from a contest — terminal
+- **URL:** the `## Flow: Claim unverified` block, rendered in place of the Config Manifesto
+- **Action:** Read the one line: this run's own claim write reported success, but re-reading it did not confirm a live claim under this run's `runId` — nobody else necessarily holds the target.
+- **Should feel:** Different from a contest, and said so plainly — this is "I can't confirm I actually got it," not "someone else has it."
+- **Should understand:** The claim store's write and its post-write read-back can disagree (a slow-to-replicate git-CAS push, or a genuine loss) — `claim-targets.js` (#2073) never proceeds on an unconfirmed write, and never releases the target itself either, since a write it cannot confirm might still be its own valid claim; tombstoning it on a guess risks breaking a claim that is in fact live. `Next:` re-run the claim step (the common case — a transient replication lag resolves on retry), or use `/claude-tweaks:tidy` to inspect the blob directly and repair it if warranted.
+- **Red flags:** This card rendering with a `holder` line (there is no holder to report — that's the contest card's shape, not this one); the run silently reclaiming or releasing the unverified target on its own; the same target failing verification on every retry with no escalation path offered.
+
 ### 4. Follow the verdict's own next step — terminal, or another session
 - **URL:** the `Next:` clause of whichever verdict rendered
 - **Action:** Live sibling — wait for that session to finish or release. Remote holder — inspect the session on the named host, or wait for the claim to expire. Stale holder — run `/claude-tweaks:tidy` to sweep and reclaim, unless the card pointed at a worktree that still exists, in which case inspect that worktree first.
@@ -62,4 +69,5 @@ files:
 - Created during build of #722 (holder-liveness verdict in the claim-contest card) — the claim stop and its card already existed, but the card's only guidance was "wait for the claim to expire", so there was no decision to document; the live / stale / remote verdict and its per-verdict next step are what this journey covers.
 - Extended during build of #315 (in-flight claim detection) — a `pr-opened:` tombstone with a still-open PR became a fourth claim-time outcome alongside live / stale / remote, with its own card and next step.
 - Extended during build of #958 (in-flight claim routing) — the in-flight card's next step now routes into a resume confirmation when a human is present, instead of always requiring manual PR resolution.
-- Related specs: #720, #721, #722, #723, #315, #958
+- Extended during wrap-up of record #2073 (post-write claim verification in `claim-targets.js`) — added step 3c documenting the new `## Flow: Claim unverified` card, and updated the Success state to name it as a third possible stop alongside the contest and in-flight cards.
+- Related specs: #720, #721, #722, #723, #315, #958, #2073

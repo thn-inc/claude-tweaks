@@ -3,8 +3,6 @@ name: deepen
 description: Use for an architectural-depth pass on recently changed code — finds shallow modules and proposes deepening or collapsing them, ranked by leverage. Standalone, or surfaced by /review and /reflect.
 argument-hint: "[<file-or-dir>...|<spec-number>] [--kind deepen|collapse]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
-
 
 # Deepen — Architectural Depth Pass
 
@@ -139,7 +137,7 @@ When Step 4 approved multiple candidates (a collapse batch, or deepen candidates
 For each approved candidate, in order:
 
 1. Implement the approved interface change within that module's scoped files. Preserve behavior — depth refactors change *structure*, not *behavior*.
-2. Run the shared verification procedure from `verification.md` in the `/claude-tweaks:test` skill's directory (types, lint, tests). Apply the Working Directory Discipline rule from `_shared/subagent-output-contract.md` before any verification command.
+2. Run the shared verification procedure from `verification.md` in the `/claude-tweaks:test` skill's directory (types, lint, tests). Apply the Working Directory Discipline rule from `_shared/subagent-dispatch-core.md` before any verification command.
 3. **If verification fails** — this is a BLOCKED gate. Never silently retry or self-fix. Surface the failing check and return control:
 
 ```

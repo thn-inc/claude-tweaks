@@ -1,9 +1,8 @@
 ---
 name: dispatch
-description: "Use to select and dispatch authorized GitHub records to /flow — the gate-to-executor queue consumer. Bare drain (--budget) or #N direct. Keywords - dispatch, queue, claim, auto:build, auto:merge, bot:in-progress, bot:blocked, autonomous build, routine."
-argument-hint: "[#N[,#M...]] [--budget <n|all>] [--priority high|medium|low]"
+description: "Use to select and dispatch authorized GitHub records to /flow — the gate-to-executor queue consumer. Drain (--budget) or #N direct. Keywords - dispatch, queue, claim, auto:build, auto:merge, bot:in-progress, bot:blocked, bot:parked, autonomous build, routine."
+argument-hint: "[#N[,#M...]] [--budget <n|all>] [--priority high|medium|low] [--settle-parked]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
 
 # Dispatch — the Queue Consumer
 
@@ -44,7 +43,7 @@ Not for: granting authorization (`/claude-tweaks:backlog refine`'s job), derivin
 
 | Argument | Behavior |
 |---|---|
-| *(none)* | Bare — headless drain: repeat the select-and-dispatch procedure (Step 3's ranking + Steps 4-6) over ranked authorized groups until `--budget <n\|all>` groups have been attempted or the ranked set is empty. Each iteration re-fetches the authorized queue fresh (Step 2) — dispatched groups leave it by claim, and a Settle-failed group's records carry `bot:blocked`/claim markers so it is never re-selected, while still counting as one attempted budget unit. No `AskUserQuestion` fires — an interactive (human-present) bare invocation drains immediately, identically to a headless firing. |
+| *(none)* | Bare — headless drain: repeat the select-and-dispatch procedure (Step 3's ranking + Steps 4-6) over ranked authorized groups until `--budget <n\|all>` groups have been attempted or the ranked set is empty. Each iteration re-fetches the authorized queue fresh (Step 2) — dispatched groups leave it by claim, a Settle-failed group's records carry `bot:blocked`/claim markers, and a group parked by the merge-verification gate carries `bot:parked` (grants intact) — either way it is never re-selected, while still counting as one attempted budget unit. **No `AskUserQuestion` fires, full stop — not for a detected repo-wide infra outage** (#2365, see the Repo-wide infra outage stop paragraph below), **and not for queue size, an unusually large `--budget`, or any other reason this table doesn't name** (#2424): a bare invocation drains immediately, identically to a headless firing, whether a human is present or not. If you are about to render one anyway, that is not a judgment call this table left open — stop and re-read this row instead. |
 | `next` (deprecated alias) | Deprecated alias for `--budget 1` — identical effect (one group selected by priority-then-age ranking), one warn-tier notice. Removal condition: `deprecated-aliases.md`. |
 | `#N` | Direct — select + dispatch record `#N`'s whole file-overlap group |
 | `#N,#M,...` | Explicit list — select + dispatch each named record's whole file-overlap group, deduplicated; skips ranking/selection entirely since the set is already named |
@@ -52,6 +51,19 @@ Not for: granting authorization (`/claude-tweaks:backlog refine`'s job), derivin
 | `--batch-size <n>` (deprecated alias) | Deprecated alias for `--budget <n>` — same effect, one warn-tier notice. Removal condition: `deprecated-aliases.md`. The old suffix `#N,#M,...` use is no longer accepted — rejected like `--budget` on an explicit list; explicit-list firings are capped by `dispatch-batch-size` alone. |
 | `--concurrent <n>` (deprecated alias) | Two-hop deprecated alias for `--batch-size <n>` — same effect, one warn-tier notice. Removal condition: `deprecated-aliases.md`. |
 | `--priority <high\|medium\|low>` (modifier) | Suffix bare drain (or its deprecated `next` alias) — restrict the candidate pool's representative-member band before ranking/selection runs (Step 3's ranking definition). Lets multiple differently-scheduled Routines each own a distinct slice of the queue. No effect on `#N`/`#N,#M,...`, which select by explicit name, not ranking. |
+| `--settle-parked` (standalone form) | Batch-review every open `bot:parked` PR in one pass and let a human pick which subset to resume — human-present only, never invoked by a scheduled Routine (same posture as `backlog refine --reset-breaker`). **Mutually exclusive** with a ref (`#N`/`#N,#M,...`) or `--budget` — reject the combination with a one-line notice and perform no fetch. Read `settle-parked.md` in this skill's directory for the full fetch/freshness-probe/batch-confirm/sequential-resume procedure. |
+
+**Repo-wide infra outage stop (#2365).** Bare drain's no-`AskUserQuestion` rule (Input table above) has no carve-out — not for a detected infra-wide emergency, not for anything else, human present or not. It is not defenseless either: `settle-and-merge.md` Step 6 point 3 already classifies each Settle failure as `correctness`/`ambiguous`/`transient` via `assess-agent-autonomy`'s `failure-check` mode, where `transient` means "infrastructure failure, not this record's fault." When **two or more groups in the same drain firing** land a `transient` classification, that repetition — not any single transient failure, which is ordinary and already handled by preserving `auto:merge`/`auto:merge-pending` per that step — is the repo-wide-outage signal: stop the remaining drain immediately (do not attempt further groups against `--budget`), and report the halt in this firing's own end-of-run output naming which groups hit it and each one's `assess-agent-autonomy` rationale. This reuses Settle's existing classification rather than inventing a new detection heuristic, and follows the same "report and stop, never ask" shape the Detection Ladder already uses for a real Preflight failure (`stop for any real failure`, above) — a repo-wide outage is a real failure, just one only visible after two groups have independently hit it.
+
+## Settle Parked
+
+`--settle-parked` skips the rest of this file's Preflight/Workflow (queue
+pull, ranking, group claiming, minting — none of that applies to a batch
+review of already-parked PRs) and instead follows `settle-parked.md` in this
+skill's directory end to end: fetch every open `bot:parked` PR, freshness-
+probe and CI-read each one, render the batch table and multi-select confirm,
+then sequentially resume only the selected PRs. Read that file now if
+`--settle-parked` is the resolved form.
 
 ## Preflight
 
@@ -84,7 +96,9 @@ at this bridge that shipped the gate change before the read path was finished.
 
 ### Step 1: Resolve this firing's run id
 
-Resolve this firing's `$RUN_ID` once, before Step 2, via the standalone-auto run-dir resolution in `_shared/pipeline-run-dir.md` (dispatch is on the allowlist) — `$RUN_ID` is that run directory's basename (e.g. `2026-07-14T140322-dispatch-standalone`). This value scopes only this firing's own `decisions.md` (queue pull, selection, per-group minting log) — it is never a claim's `runId` and never passed to a Task call. Each *group's* claim identity is a separate value, minted per group in Step 4 (`$GROUP_RUN_ID`) and passed to both of that group's Task calls as `PIPELINE_RUN_DIR` (Task agents don't inherit shell variables — per `_shared/subagent-output-contract.md`'s Input Discipline, a dispatched agent is a clean room). Step 6's ownership check (`claim.runId === basename($PIPELINE_RUN_DIR)`) — performed inside whichever of that group's two Task calls handles its terminal outcome (the first call on a `build,test` failure, the second on every path that reaches wrap-up), never in this thread — compares against that group's own minted directory, not this firing's `$RUN_ID`.
+Resolve this firing's `$RUN_ID` once, before Step 2, via the standalone-auto run-dir resolution in `_shared/run-dir-resolution.md` (dispatch is on the allowlist) — `$RUN_ID` is that run directory's basename (e.g. `2026-07-14T140322-dispatch-standalone`). This value scopes only this firing's own `decisions.md` (queue pull, selection, per-group minting log) — it is never a claim's `runId` and never passed to a Task call. Each *group's* claim identity is a separate value, minted per group in Step 4 (`$GROUP_RUN_ID`) and passed to both of that group's Task calls as `PIPELINE_RUN_DIR` (Task agents don't inherit shell variables — per `_shared/subagent-output-contract.md`'s Input Discipline, a dispatched agent is a clean room). Step 6's ownership check (`claim.runId === basename($PIPELINE_RUN_DIR)`) — performed inside whichever of that group's two Task calls handles its terminal outcome (the first call on a `build,test` failure, the second on every path that reaches wrap-up), never in this thread — compares against that group's own minted directory, not this firing's `$RUN_ID`.
+
+**Note which resolution step actually fired (#2430)** — Step 3's drain-termination cleanup below needs it. `run-dir-resolution.md`'s "Most-recent matching directory" step (step 2 of its Resolution order) can land this firing on an already-existing standalone directory — one a still-running sibling session minted and still owns — before ever reaching the "Standalone auto fallback" step (step 4) that actually creates a fresh one. Remember, for the rest of this firing, whether `$RUN_ID` was **minted** (step 4 ran: the directory did not exist before this firing created it) or **adopted** (step 2 ran: the directory already existed). This is a simple fact about which branch of that resolution ran, not a new write — nothing here is persisted to disk beyond what the resolution already does.
 
 ### Step 2: Pull the authorized queue and group by file overlap
 
@@ -92,7 +106,21 @@ First action, before the pool is read: `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js
 
 Common to every selection form — group membership must be computed over the full current pool *before* anything is claimed (per `_shared/issue-claims.md`'s group-claim rule: group membership is computed over **unclaimed** records only, so two racing firings converge on the same winner instead of splitting a group between them).
 
-The queue: **open + `auto:build` + no `bot:*` + no open `Blocked by #N` dependency + no open linked PR (#1224) + unclaimed**. Dispatch never adds `auto:build`, `auto:merge`, or `ready` (the Auto-merge gate's promotion of an already-existing `auto:merge-pending` to `auto:merge` is maturation of a grant already present, not origination — see `settle-and-merge.md`) — see Anti-Patterns.
+The queue: **open + `auto:build` + no `bot:*` + no open `Blocked by #N` dependency + no open linked PR (#1224) + not already shipped by a `strong`-tier merged-PR mention (#1984) + unclaimed**. Dispatch never adds `auto:build`, `auto:merge`, or `ready` (the Auto-merge gate's promotion of an already-existing `auto:merge-pending` to `auto:merge` is maturation of a grant already present, not origination — see `settle-and-merge.md`) — see Anti-Patterns.
+
+**False-positive posture (#1984).** A record whose full deliverable set is already shipped, but
+whose resolving PR never carried a closing keyword, can only be excluded here when a **merged**
+PR both mentions it AND either matches its title (Jaccard token similarity) or touches every path
+in its own `### Key Files` — two independent signals, never one alone. That exclusion costs one
+human approval (the staged Close proposal `queue-pull-script.md` stages, never an autonomous
+close) — it is never silent and it never removes a candidate from `dispatch-groups.json` without
+also naming the reason in this run's session-scoped `dispatch-exclusions.json` (`reason:
+'shipped'`, `bin/lib/dispatch/exclusions.js`). A `weak`-tier mention (the base signal
+alone — merged, no second signal) never blocks: the record stays fully eligible, with the mention
+carried forward as build-time context. The residual false negative — a resolving PR that never
+mentions the record at all, by number or otherwise — is accepted: there is no signal left to
+detect it from, and the status quo (dispatch discovers it at build time) is the existing, already-
+safe fallback this record improves on rather than replaces.
 
 Read `queue-pull-script.md` in this skill's directory and run its script verbatim — it produces this run's session-scoped `dispatch-groups.json` (`_shared/session-tmp-root.md`), which every selection form below reads. That file also carries the MCP-path substitution and the queue-pull-notes pointer.
 
@@ -100,25 +128,55 @@ The `bot:*` filter here is the cheap label-based pre-filter — labels are proje
 
 ### Step 3: Select
 
+**Self-check before any `AskUserQuestion` in this step (#2424).** Every stop this step and Step 2
+render is named explicitly above and below — the exclusion/warning reports (informational, never
+a gate), the Zero eligible groups case, and the Repo-wide infra outage stop. If you are about to
+render an `AskUserQuestion` for anything else — confirming scope on a large queue, asking whether
+to drain fully or start smaller, or any other reason not named in this file — stop: that is not a
+documented case, and for a bare invocation specifically it is forbidden outright (Input table
+above), human present or not. Re-read this file's Input table for the invocation form actually
+given before rendering one.
+
 **Zero eligible groups (all forms).** Step 2's `groups` array can legitimately be empty — the common steady state right after a dispatch drain, or after an `auto:build` queue with nothing new authorized since the last firing. This is not an error: report "nothing eligible this firing" and stop before Step 4 — do not proceed with a `null` pick (the drain's current iteration finding nothing left to rank, or `next`'s ranking script below writing `null` to this run's session-scoped `dispatch-next-pick.json` — `_shared/session-tmp-root.md` — for this case). A headless drain (or `next`) firing with no eligible groups is a cheap no-op, per `routine-template.yml`'s own notes — report nothing and exit cleanly, no self-report, no `PushNotification`.
 
-**Blocked-exclusion report (refs #1101).** Read this run's session-scoped `dispatch-blocked-excluded.json` (`queue-pull-script.md`'s own output, `{number, blockedBy: [ids]}[]`) — every otherwise-`auto:build`-eligible candidate the queue pull dropped for an open blocked-by dependency, whether via a body-text `Blocked by #N` line or (`work-links: native`) a native `blockedBy` link. When non-empty, render one line before the rest of this step's own output: `{n} excluded — blocked by an open dependency: #{a} (blocked by #{x}), #{b} (blocked by #{y}, #{z})`. **Exception — the headless drain steady state above:** when this is drain (or `next`) and the zero-eligible-groups case above applies, render nothing here either, same as that case's rule — a persistently-blocked queue must not turn an intended-silent Routine firing into noise. Every other case (`#N`/`#N,#M,...`, or drain/`next` with at least one eligible group) renders normally. Render nothing at all when the exclusion array is empty, the same no-line-when-clean convention this skill already follows elsewhere. A two-member dependency cycle needs no special detection: each member independently fails the same open-blocker check the other does, so both appear here, each naming the other. This is where the visibility `/claude-tweaks:backlog overview`'s now-retired per-record Dispatch paste block used to carry directly disappeared to — this report is its replacement, at the one place blockers are actually evaluated.
+**Blocked-exclusion report (refs #1101).** See `blocked-exclusion-report.md`, this skill's directory (same convention as the Open-PR exclusion report below; not a gate — the exclusion itself already happened inside `queue-pull-script.md`).
 
 **Open-PR exclusion report (refs #1224).** See `open-pr-exclusion-report.md`, this skill's directory (same convention as the Blocked-exclusion report above; not a gate — the exclusion itself already happened inside `queue-pull-script.md`).
+
+**Shipped-candidate exclusion report (refs #1984).** Read this run's session-scoped
+`dispatch-exclusions.json` (`queue-pull-script.md`'s output, `bin/lib/dispatch/exclusions.js`'s
+`readExclusions`), filtered to `reason: 'shipped'` entries (`records: [number], detail: {pr,
+signals}` each). Non-empty: render one line per entry — `#{number} excluded — already shipped by
+merged PR #{pr} ({signals}); a Close proposal is staged in this firing's run dir for approval.` —
+same non-gating, already-happened-in-`queue-pull-script.md` convention as the two reports above. A
+`weak`-tier mention never appears here — see the False-positive posture paragraph above.
 
 **Oversized-group report (refs #1228).** See `oversized-group-report.md`, this skill's directory (groups over the size guard stay selectable via `#N`/`#N,#M,...`; not a gate).
 
 **Cross-PR root-cause overlap report (refs #1579).** See `cross-pr-overlap-report.md`, this skill's directory (warning only, never a gate).
 
+**Near-duplicate candidate warning (refs #1944).** `queue-pull-script.md`'s final step runs
+`bin/lib/issues/near-duplicate.js`'s `findNearDuplicates` pairwise across every pair of records
+landing in *different* file-overlap groups, logging one `AUTO — dispatch: near-duplicate
+candidates across groups: #A / #B ({signals})` line per firing pair to stderr. Same-group pairs
+are already co-built together by Step 2's grouping and have nothing new to warn about. Warning
+only, never a gate — no selection change; a same-group pair (already covered by
+`groupByFileOverlap`) never re-fires here.
+
 **Bare (drain)** `/dispatch` — headless, no `AskUserQuestion` (skip this and the rest of Step 3 if the zero-groups case above applies). Resolve `{budget}`: `--budget <n|all>` if present (or its deprecated `--batch-size <n>`/`--concurrent <n>` aliases, each with its own notice), else `dispatch-batch-size` (or its deprecated `dispatch-pick-max-concurrent` key, same notice) — CLI arg beats project policy per `_shared/auto-mode-card.md`. `n` = attempt count; `all` drains to empty. `--budget` + `next`/`#N,#M,...`: **rejected with one notice** (bare-drain-only; `next` already means `--budget 1`).
 
-Loop: run the `next` ranking below (`next-ranking.md` verbatim, oversized and this-firing-excluded groups excluded — maintain per `firing-exclusion.md`, this skill's dir) → dispatch the pick through Steps 4-6 → re-run Step 2's queue pull → repeat until `{budget}` attempts or the ranking returns `null`. Report each iteration as it completes, plus a final line naming groups still eligible but undispatched at budget exhaustion.
+Loop: run the `next` ranking below (`next-ranking.md` verbatim, oversized and this-firing-excluded groups excluded via the unified `dispatch-exclusions.json` — maintain per `firing-exclusion.md`, this skill's dir) → dispatch the pick through Steps 4-6 → re-run Step 2's queue pull → repeat until `{budget}` attempts or the ranking returns `null`. Report each iteration as it completes, plus a final line naming groups still eligible but undispatched at budget exhaustion.
+
+**At loop termination (`{budget}` attempts spent, or the ranking returns `null`), close this firing's own bookkeeping (#2430)** — logged, non-interactive, never an `AskUserQuestion` (`CLAUDE.md`'s Auto-Mode Contract):
+
+- **If Step 1 minted `$RUN_ID`** (never if it adopted an existing directory — see Step 1's note): `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_ID"`. An adopted directory is left alone and the skip is reported in this firing's own end-of-run output — `run dir {basename} adopted from a prior run, not closed by this firing` — since closing it would end a sibling session's own run enforcement and event logging mid-flight, exactly the hazard a still-open run directory's SessionStart notice warns about.
+- **Either way**, run `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" reconcile` a second time (the same verb Step 1 already called once, before the queue pull — its archive-merged sweep reaps merged-PR worktrees on any invocation, not only the first): this firing's own dispatched groups may have merged PRs by the time the drain exhausts its budget, and their worktrees should be reaped now rather than left for a future session's SessionStart hook to discover. Log the result to `decisions.md`, same as Step 1's call.
 
 **`next` (deprecated alias for `--budget 1`)** — one warn-tier notice (removal condition: `deprecated-aliases.md`); no human decision. Pick exactly ONE group by this ordering: `priority:high` > `priority:medium` > `priority:low` > unprioritized, oldest-first within each band — **a group's rank is its highest-priority (then oldest) member**, taken as its representative. `--priority <band>` (Input table above), when present, filters to matching-band representatives before ranking, letting differently-scheduled Routines each own a queue slice. Also excludes oversized groups (#1228) outright — a headless firing can't see that report, so this ranking must never auto-select one. Read `next-ranking.md` and run it verbatim; it writes the pick (or `null`) to `dispatch-next-pick.json`. The drain loop reuses this ranking each iteration; a Routine now fires bare `--budget 1` (Routine Configuration below), not `next`.
 
-**`#N`** — direct. Fetch issue `#N`, confirm it currently carries `auto:build` and no `bot:*` label (re-verify against Step 2's live queue, not a cached table); if it doesn't qualify, report why (no grant, already claimed, or blocked) and stop. Otherwise pull its **whole file-overlap group** from Step 2's output — claiming a single member of a group alone is forbidden; every one of that record's overlap partners comes along, whether or not the user named them.
+**`#N`** — direct. Fetch issue `#N`, confirm it currently carries `auto:build` and no `bot:*` label (re-verify against Step 2's live queue, not a cached table); if it doesn't qualify, report why (no grant, already claimed, or blocked) and stop. A record that clears those label checks but is absent from Step 2's `dispatch-groups.json` was dropped by the open-linked-PR exclusion (#1224), which removes candidates from that file before any selection form reads it: read this run's session-scoped `dispatch-exclusions.json`, filtered to `reason: 'open-pr'`, report that reason by name — `#{N} already has an open PR (#{pr}) — not re-dispatch-eligible until that PR merges or closes` — and stop. Otherwise pull its **whole file-overlap group** from Step 2's output — claiming a single member of a group alone is forbidden; every one of that record's overlap partners comes along, whether or not the user named them.
 
-**`#N[,#M,#O...]`** — explicit list (grammar: `_shared/record-batch-input.md`). Parse via `parseExplicitIssueList` (`bin/lib/issues/grouping.js`) → `{ numbers, invalid }` (report `invalid` in one message; proceed with `numbers`, never aborting over one bad element). Call `selectGroupsForExplicitList(numbers, groups)` (same file) against Step 2's already-computed `groups` array. Report every entry in the returned `notFound` list with why it's excluded — no `auto:build` grant, already claimed, or `bot:blocked` (re-check against Step 2's live queue, the same re-verification the singular `#N` form already does) — but do not abort the rest of the named set over one excluded entry. Every group in the returned `selectedGroups` proceeds to Step 4, still bound by `dispatch-batch-size` (extra groups remain unclaimed in the queue for a later firing to select). The selection is already explicit — Step 3's ranking never runs for this form.
+**`#N[,#M,#O...]`** — explicit list (grammar: `_shared/record-batch-input.md`). Parse via `parseExplicitIssueList` (`bin/lib/issues/grouping.js`) → `{ numbers, invalid }` (report `invalid` in one message; proceed with `numbers`, never aborting over one bad element). Call `selectGroupsForExplicitList(numbers, groups)` (same file) against Step 2's already-computed `groups` array. Report every entry in the returned `notFound` list with why it's excluded — no `auto:build` grant, already claimed, `bot:blocked`, `bot:parked` (merge-verification gate parked it; grants stay intact), or already covered by an open linked PR (#1224 — name the PR from this run's session-scoped `dispatch-exclusions.json`, filtered to `reason: 'open-pr'`, the same file the Open-PR exclusion report reads) — but do not abort the rest of the named set over one excluded entry. Every group in the returned `selectedGroups` proceeds to Step 4, still bound by `dispatch-batch-size` (extra groups remain unclaimed in the queue for a later firing to select). The selection is already explicit — Step 3's ranking never runs for this form.
 
 ### Step 4: Mint the selected group's run directory
 
@@ -126,16 +184,21 @@ Loop: run the `next` ranking below (`next-ranking.md` verbatim, oversized and th
 member and branch on its output; read `sibling-session-check.md` in this skill's directory and
 follow it.
 
+**Cross-PR overlap re-check against this drain's own in-flight PRs (refs #1985), for every group
+after the first.** Read `drain-pr-overlap.md`'s "Step 4" section, this skill's directory, and
+follow it before minting below — a warning only, never a gate.
+
 **Mint this group's run directory.** This group's **representative record** is its
 lowest-numbered member (the same rule `_shared/pr-early-run-lifecycle.md` already uses for a
 bundle's PR title). Run `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug
 "record-{representative}" --create` (`_shared/pipeline-run-dir.md`'s Anchoring section — mkdir
 only: no `config.yml`, no `decisions.md`, and no claim written here either). The directory's
-`{ISO-timestamp}` prefix is UTC, per `_shared/pipeline-run-dir.md`'s ISO-timestamp rule
+`{ISO-timestamp}` prefix is UTC, per `_shared/run-dir-resolution.md`'s ISO-timestamp rule
 (`date -u`) — `resolve-run-dir` mints it, this step never composes it by hand. Call the result
 `$GROUP_RUN_DIR`; `$GROUP_RUN_ID` is its basename. Log one line to this firing's own
-`decisions.md` (Step 1's standalone dir, not this new one): `AUTO {time} — Step 4: minted
-{$GROUP_RUN_DIR} for group [{issue list}].` A minted-but-never-claimed directory is reclaimed by
+`decisions.md` (Step 1's standalone dir, not this new one): `AUTO {time} — Step 4: minted {$GROUP_RUN_DIR} for group [{issue list}]{, naming it a fast-lane bundle when this group's member set
+matches an entry in dispatch-fastlane-bundles.json — see reporting.md for the full wording}.`
+A minted-but-never-claimed directory is reclaimed by
 the reconciler's archive sweep (`bin/lib/reconcile/archive-merged.js`'s `isOrphanedMint`
 criterion) once its TTL elapses.
 
@@ -186,38 +249,24 @@ Each group's two `Task()` prompts are defined in `task-prompt.md` in this skill'
 
 **Before either call, resolve `task-prompt.md`'s own "Context pack" section (#1542)** once per group, and substitute it into both templates' `{context-pack}` placeholder — read that section for what it resolves and why.
 
+**Record this group's own PR into the firing's drain-PR list (refs #1985).** Read
+`drain-pr-overlap.md`'s "Step 5" section, this skill's directory, and follow it once either Task
+call returns — this is the list Step 4's own re-check (above) reads for every group dispatched
+after this one.
+
 ### Step 6: Settle — on pipeline failure, and the Auto-merge gate
 
-Two conditional branches that don't run on the common clean pending-review path — a `/flow` HARD-GATE failure (Settle), or a group whose every member carries `auto:merge` or a matured `auto:merge-pending` reaching `/wrap-up`'s Review Console (Auto-merge gate). Read `settle-and-merge.md` in this skill's directory for the full procedure: Settle's ownership check, `assess-agent-autonomy` failure classification, retry-ceiling counting and `bot:blocked` escalation; the Auto-merge gate's two-layer check and acceptance labeling (both run inside the second Task call). Under `integration-model: pr-first` (`_shared/integration-model.md`), the second Task call also performs the merge itself, right there via `_shared/pr-first-merge.md` — `gh pr merge` needs no checkout, so there is no structural reason to split it out. Under `local-merge`, that split still applies: a Task-tool subagent cannot reach the main checkout (Step 5's sequential-execution note: cwd-pinned to its own worktree), so on `OUTCOME: ready-to-merge` this dispatching session runs the Dispatching-session merge execution (local-merge fallback) section itself, right here in Step 6, before entering the next group's worktree.
+Two conditional branches that don't run on the common clean pending-review path — a `/flow` HARD-GATE failure (Settle), or a group whose every member carries `auto:merge` or a matured `auto:merge-pending` reaching `/wrap-up`'s Review Console (Auto-merge gate). Settle's ownership check, `assess-agent-autonomy` failure classification, retry-ceiling counting, `bot:blocked` escalation, and the Auto-merge gate's two-layer check and acceptance labeling all run **inside the second Task call** — that call's own dispatched prompt (`task-prompt.md`) cites `settle-and-merge.md` itself, conditionally, for whichever of those it actually needs; this dispatching session never reads it on their behalf and gains nothing by reading it up front (#2423).
+
+**This dispatching session itself reads `settle-and-merge.md` only for the one piece of Step 6 that runs in its own thread, not the Task call's**: under `local-merge` (`_shared/integration-model.md`), on `OUTCOME: ready-to-merge`, read the **Dispatching-session merge execution (local-merge fallback)** section now and run it, right here in Step 6, before entering the next group's worktree — a Task-tool subagent cannot reach the main checkout (Step 5's sequential-execution note: cwd-pinned to its own worktree), so this split is structural, not optional. Under `integration-model: pr-first`, the second Task call performs the merge itself via `_shared/pr-first-merge.md` (`gh pr merge` needs no checkout), so this dispatching session never reads `settle-and-merge.md` for a `pr-first` group at all — every outcome on that path resolves from the Task call's own report (its status line and `OUTCOME`) alone. On any other `OUTCOME` (clean pending-review, or a failure the Task call already settled itself), this session has nothing left to read `settle-and-merge.md` for — move straight to the next group.
 
 ## Reporting
 
-Per-firing output is one group's outcome (a drain firing with M ≤ `{budget}` groups: one report block per dispatched group) — there is **no consolidated multi-group console**. A prior design's console aggregated a whole batch's outcomes into one table; per-group reporting (Step 5) has nothing to aggregate, so none exists here (see When to Use above).
-
-A headless (Routine-fired) firing's report has nobody live to read it — the durable trace is the label state change, the claim-comment trail, and `decisions.md`, not a rendered console. Over time, a human sees the aggregate picture via `/claude-tweaks:tidy`'s own periodic sweep (`tidy/SKILL.md`) — it scans GitHub state independently on its own cadence and surfaces `bot:blocked` records and stale claims without dispatch having to push anything to it directly.
-
-`pending-review` outcomes park the group's `/flow`-created run dir, not the branch — at `supervised`/`trusted`, an unanswered Review Console `AskUserQuestion` during a headless firing is not an error, it is the expected resting state until a human resumes that session or the branch directly, or the claim's TTL expires and a later firing supersedes it. (At `unattended`, `consoleAutoResolve` completes the console instead of resting on it — see `_shared/autonomy-ceiling.md` and `wrap-up/review-console.md`'s Auto-resolution short-circuit.) Under `integration-model: pr-first`, the branch itself never waited on parking to become public in the first place: `_shared/pr-early-run-lifecycle.md` opened its draft PR at run start, and every phase exit since has kept it current, so a parked run already has a live PR carrying its Verification Brief — the work outlives the container that built it with nothing further to push here.
-
-**Resuming a parked run.** "Resumes that session" above is not literal — the Task-tool subagent that hit the console has already exited by the time anyone reads this report, and there is no way to re-attach to it.
-
-**Confirm before resuming.** Before running the re-invocation below — including when a human triggers the resume conversationally (e.g. replying "merge!" in chat) rather than by typing the command directly — read `resume-confirmation.md` in this skill's directory and follow it: the `AskUserQuestion` shape, the Recommended-derivation rule (shared with `review-console-interactive.md`'s merge confirmation, so the two can never disagree on the same PR state), why this stays a separate stop from the Review Console rather than folding the two together, why it carries no `autonomy`-ceiling carve-out (unconditional at every tier, including `unattended`), how the confirmation's values are sourced live, the resume-freshness probe, and the actual re-adoption mechanism.
-
-`PushNotification` fires only at the retry ceiling and for auto-merge FYIs (Step 6's Settle procedure and Auto-merge gate, both in `settle-and-merge.md`) — never per-firing just because a firing happened, to avoid notification fatigue.
+Read `reporting.md` in this skill's directory for the per-firing output shape, the per-group timing line, headless self-report behavior, `pending-review` parking, resuming a parked run, and `PushNotification` firing rules.
 
 ## Configuration
 
-These rows mirror `_shared/work-record-config.md`'s canonical key table (which every filing/shaping/dispatching skill is meant to cite rather than restate) — kept spelled out here too since this is the skill that actually reads and branches on them; check that file when a default or meaning changes to keep this copy in sync. Read via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" <key> [<key>…]` (`_shared/policy-schema.md`):
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `dispatch-retry-ceiling` | `3` | Consecutive failures before a dispatched record gets `bot:blocked` and stops auto-retrying. |
-| `auto-merge-max-lines` | `40` | Auto-merge blast-radius guideline (lines) — a weighted input to the `merge-check` verdict, not a hard cutoff. |
-| `auto-merge-max-files` | `2` | Auto-merge blast-radius guideline on changed files — same weighted-not-cutoff treatment. |
-| `dispatch-batch-size` | `3` | Default drain budget — maximum groups one bare firing attempts, per Step 3's ranking; remainder stays unclaimed. **Migration (refs #1492):** was the pick-menu cap; now caps unattended dispatch directly — a high value now auto-dispatches with zero confirmation. |
-| `dispatch-group-size-guard` | `10` | Caps a file-overlap group's size before headless `next` excludes it (#1228); bare/`#N` still resolve it — a present human is the required surfacing. |
-| `dispatch-pick-max-concurrent` (deprecated alias) | — | Deprecated alias for `dispatch-batch-size` — same effect, one warn-tier notice. Removal condition: `deprecated-aliases.md`. |
-
-**Per-firing CLI overrides:** `--budget <n|all>` (with `--batch-size`/`--concurrent` as deprecated aliases, Input table above) overrides `dispatch-batch-size` for this invocation only, and `--priority <band>` filters the drain/`next` candidate pool before ranking — neither writes back to `.claude-tweaks/policy.yml`. CLI arg beats project policy, per `_shared/auto-mode-card.md`'s precedence order.
+Read `configuration.md` in this skill's directory for the policy-key table (`dispatch-retry-ceiling`, `auto-merge-max-lines`, `auto-merge-max-files`, `dispatch-batch-size`, `dispatch-group-size-guard`, and the deprecated `dispatch-pick-max-concurrent` alias — mirroring `_shared/work-record-config.md`'s canonical table), how to read them (`resolve-policy.js`), and per-firing CLI override precedence.
 
 ## Routine Configuration
 
@@ -241,7 +290,9 @@ Render only when a human is present to answer — bare / `next` / `#N` / `#N,#M,
 
 `/claude-tweaks:dispatch` is never invoked as a pipeline component by another skill — a human runs one of its forms directly, or a scheduled Routine fires `/claude-tweaks:dispatch --budget 1` headlessly (see Routine Configuration above). See Next Actions above for the render/suppress rule.
 
-`$PIPELINE_RUN_DIR` is not this skill's own state. Dispatch resolves its own standalone-auto run dir (per `_shared/pipeline-run-dir.md`'s allowlist) purely to write its own `decisions.md` — the queue-pull/selection/minting audit trail for this firing, scoped to the firing as a whole (which may dispatch multiple groups in bare mode). That directory is distinct from the per-group run directory Step 4 mints, before `/flow`'s Step 2.8 claims it — the one that *becomes* the dispatched group's own `PIPELINE_RUN_DIR` once its first Task call invokes `/flow` and adopts it (`flow/steps-and-gates.md`'s Adopting-an-inherited-run-directory case 2). Unlike before, there is no separate identity to bridge between the two: the minted directory's basename is the claim's `runId` directly, passed on the Task call's command line, nothing parsed out of a report.
+`--settle-parked` carries the same human-present-only posture as `backlog refine --reset-breaker` — never Routine-fired, and never invoked by another skill.
+
+`$PIPELINE_RUN_DIR` is not this skill's own state. Dispatch resolves its own standalone-auto run dir (per `_shared/run-dir-resolution.md`'s allowlist) purely to write its own `decisions.md` — the queue-pull/selection/minting audit trail for this firing, scoped to the firing as a whole (which may dispatch multiple groups in bare mode). That directory is distinct from the per-group run directory Step 4 mints, before `/flow`'s Step 2.8 claims it — the one that *becomes* the dispatched group's own `PIPELINE_RUN_DIR` once its first Task call invokes `/flow` and adopts it (`flow/steps-and-gates.md`'s Adopting-an-inherited-run-directory case 2). Unlike before, there is no separate identity to bridge between the two: the minted directory's basename is the claim's `runId` directly, passed on the Task call's command line, nothing parsed out of a report.
 
 ## Anti-Patterns
 
@@ -255,4 +306,5 @@ Render only when a human is present to answer — bare / `next` / `#N` / `#N,#M,
 | Building a session that shepherds every authorized group to completion in one run | Context rot — throughput comes from routine cadence × single-group firings, not session breadth |
 | Filing, closing, or granting authorization on records from inside dispatch | Dispatch only *consumes* grants — filing belongs to the health skills/`/claude-tweaks:capture`, granting to `/claude-tweaks:backlog refine` |
 | Deriving a spec per bundle member before invoking `/flow` | A granted record is already spec-shaped (`ready` + spec-shaped body), so `/flow #A,#B` materializes directly — don't reintroduce the deleted per-member `/specify` pre-step |
-| Re-selecting a Settle-failed group within the same drain firing | The per-iteration re-fetch excludes it (`bot:blocked`/claim markers); it counted as one attempted budget unit — move on |
+| Re-selecting a Settle-failed or merge-verification-parked group within the same drain firing | The per-iteration re-fetch excludes it (`bot:blocked`/`bot:parked`/claim markers); it counted as one attempted budget unit — move on |
+| Resuming `--settle-parked`-selected PRs in parallel, or in a headless/Routine-fired context | Sequential-only by design (see `settle-parked.md`'s own Anti-Patterns); human-present-only, same posture as `backlog refine --reset-breaker` |

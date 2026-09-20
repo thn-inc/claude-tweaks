@@ -17,12 +17,13 @@
 // `$PIPELINE_RUN_DIR` to key on. Seven more carry a CSC section
 // that deliberately doesn't mention `$PIPELINE_RUN_DIR` -- two are always a
 // component (no direct-invocation case to disambiguate: assess-agent-
-// autonomy, flow), six are never a component (standalone-only or
+// autonomy, flow), seven are never a component (standalone-only or
 // machine-invoked-only, documented with near-identical "no
 // `PIPELINE_RUN_DIR` signal" phrasing: browse, demo, help, intake,
-// routine-kickoff, tidy -- routine-kickoff's caller is a routine kernel's
-// closing line, not a pipeline skill, so the same absence-of-signal
-// reasoning applies).
+// pipeline-smoke-test, routine-kickoff, tidy -- routine-kickoff's caller is a
+// routine kernel's closing line, not a pipeline skill, so the same
+// absence-of-signal reasoning applies; pipeline-smoke-test is human-invoked
+// only by design (#44), never a pipeline component).
 // PIPELINE_RUN_DIR_EXEMPT re-derives each exemption's
 // justification from the file itself, mirroring house-structure.test.js's
 // NO_NEXT_ACTIONS pattern -- if the justifying phrase disappears, the
@@ -56,6 +57,7 @@ const PIPELINE_RUN_DIR_EXEMPT = {
   demo: /no `PIPELINE_RUN_DIR` signal/,
   help: /no `PIPELINE_RUN_DIR` signal/,
   intake: /no `PIPELINE_RUN_DIR` signal/,
+  'pipeline-smoke-test': /no `PIPELINE_RUN_DIR` signal/,
   'routine-kickoff': /no `PIPELINE_RUN_DIR` signal/,
   tidy: /no `PIPELINE_RUN_DIR` signal/,
 };

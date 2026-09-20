@@ -7,6 +7,7 @@ files:
   - plugin/bin/lib/reconcile/release-merged.js
   - plugin/bin/lib/reconcile/archive-branches.js
   - plugin/bin/lib/reconcile/prune-remote.js
+  - plugin/bin/lib/reconcile/squash-provenance.js
   - plugin/bin/lib/reconcile/reap-merged.js
 ---
 
@@ -20,7 +21,7 @@ files:
 ## Steps
 
 ### 1. Scans run — reconcile converges first
-- **Action:** Tidy's scan procedures run `reconcile()` at their own trigger points. Under `pr-first`, the release check drops claims on merged-PR evidence (`merged: reconciled from PR #{n}`) or issue-closed evidence (`issue-closed: reconciled from #{n}`), the archive-branches check deletes cherry-equivalent plugin-owned branches and tags-then-deletes aged unmerged ones, the remote-prune check deletes remote plugin-owned branches carrying both signals (a MERGED PR and cherry-equivalence) and no open PR — for this one destructive check any OPEN PR governs over a MERGED one (#664), so a branch with both can be prune-skipped remotely in the same pass that archives it locally, where the merged-wins tie-break still stands — after refreshing origin, and the reap check removes merged runs' worktrees — a locked worktree with a live owner is reap's skip, reported with its reason, never broken. Under `local-merge`, only `reap`'s legacy ancestry check runs — everything else keeps staging. Two whole-pass early exits (#820) can skip the entire requested check set before any of the above runs: a GitHub-health preflight (`preflight.js`, ~2s) on an unreachable/degraded GitHub, and an overall wall-clock pass budget (`budget.js`) once exceeded — either means this call converged nothing, not that there was nothing to converge; a failed shared fetch is likewise reported once for whichever of `mirror`/`red-tip`/`remote-prune` were requested together, not per check; and remote-prune carries a third check-level skip of its own: its bulk PR screen is all-or-nothing, so a `gh-absent` or `pr-screen-failed` screen skips the entire remote-prune check with that reason (#1082) — archive-branches deliberately does not, degrading to per-branch skips so its gh-independent archive-tag GC keeps running (#1083).
+- **Action:** Tidy's scan procedures run `reconcile()` at their own trigger points. Under `pr-first`, the release check drops claims on merged-PR evidence (`merged: reconciled from PR #{n}`) or issue-closed evidence (`issue-closed: reconciled from #{n}`), the archive-branches check deletes plugin-owned branches proven merged (cherry-equivalent, or squash-merged via the PR's own merge commit — #2252) and tags-then-deletes aged unmerged ones, the remote-prune check deletes remote plugin-owned branches carrying both signals (a MERGED PR and a merged-in-substance proof — cherry-equivalence or squash provenance) and no open PR — for this one destructive check any OPEN PR governs over a MERGED one (#664), so a branch with both can be prune-skipped remotely in the same pass that archives it locally, where the merged-wins tie-break still stands — after refreshing origin, and the reap check removes merged runs' worktrees — a locked worktree with a live owner is reap's skip, reported with its reason, never broken. Under `local-merge`, only `reap`'s legacy ancestry check runs — everything else keeps staging. Two whole-pass early exits (#820) can skip the entire requested check set before any of the above runs: a GitHub-health preflight (`preflight.js`, ~2s) on an unreachable/degraded GitHub, and an overall wall-clock pass budget (`budget.js`) once exceeded — either means this call converged nothing, not that there was nothing to converge; a failed shared fetch is likewise reported once for whichever of `mirror`/`red-tip`/`remote-prune` were requested together, not per check; and remote-prune carries a third check-level skip of its own: its bulk PR screen is all-or-nothing, so a `gh-absent` or `pr-screen-failed` screen skips the entire remote-prune check with that reason (#1082) — archive-branches deliberately does not, degrading to per-branch skips so its gh-independent archive-tag GC keeps running (#1083).
 - **Expect:** No approval prompt for any of this — these are reconcile's background-convergence writes, outside the skill-side auto-mode contract; tidy only reports the results. A preflight or budget skip is a check-set-wide `unknown`, not a clean pass — a report reading "nothing to converge" after one must not be trusted as "reconcile ran and found nothing" without also checking `decisions.md`/`events.jsonl` for the skip reason.
 
 ### 2. Findings route by the table, not judgment
@@ -38,6 +39,10 @@ files:
 ### 5. A wide sweep condenses instead of flooding the chat
 - **Action:** A full sweep whose report would exceed 40 lines (a dozen-plus Yours records across several groups is enough — every single-ref record costs a row plus a paste line) writes the whole report to `{run-dir}/report.md` and sends a ~20-line condensed report: Approve in full, Yours as group heads with counts (plus batch lines), Applied and Clean collapsed to counts, and a `Full report:` footer.
 - **Expect:** Nothing is lost — every row and every paste block is in `report.md`; the condensed report is what the hard gate checks for, and Next Actions still derives from the groups. At 40 lines or fewer no `report.md` is written and the report arrives whole.
+
+## Origin
+- Created during build of #695 (tidy standalone-auto report shape)
+- Updated during build of #2252 (Reconcile under squash): Step 1 now names the second merged-in-substance proof — squash provenance via the PR's own merge commit — beside cherry-equivalence for both branch checks; `plugin/bin/lib/reconcile/squash-provenance.js` added to `files:`
 
 ## Example render
 
@@ -94,3 +99,4 @@ issue claims       12 checked
 
 Full decision log: .claude-tweaks/pipelines/2026-08-16T203000-tidy-standalone/decisions.md
 ````
+

@@ -4,7 +4,7 @@ Referenced by `skills/dispatch/SKILL.md` Step 5. Each group is dispatched as two
 
 ## 2. The gate
 
-Dispatch the second call only if the first call's status line was `DONE` or `DONE_WITH_CONCERNS` **and** its `OUTCOME` was `build-test-ok`. Anything else — a `NEEDS_CONTEXT`/`BLOCKED` status, an `OUTCOME` of `build-test-failed`/`build-test-blocked`, or no parseable report at all — means the second call is never dispatched for that group this firing; go to section 5. A dispatched agent that fails mid-flight is a different case from one that completes — see `_shared/subagent-output-contract.md`'s "Failed-agent retrieval" section for how to read its result cheaply, without blocking on the full envelope.
+Dispatch the second call only if the first call's status line was `DONE` or `DONE_WITH_CONCERNS` **and** its `OUTCOME` was `build-test-ok`. Anything else — a `NEEDS_CONTEXT`/`BLOCKED` status, an `OUTCOME` of `build-test-failed`/`build-test-blocked`, or no parseable report at all — means the second call is never dispatched for that group this firing; go to section 5. A dispatched agent that fails mid-flight is a different case from one that completes — see `_shared/subagent-dispatch-core.md`'s "Failed-agent retrieval" section for how to read its result cheaply, without blocking on the full envelope.
 
 ## 5. Terminal path when the first call fails
 

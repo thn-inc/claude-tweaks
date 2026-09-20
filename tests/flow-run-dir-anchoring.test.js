@@ -11,7 +11,7 @@ const path = require('path');
 // pipeline state. Root cause: the actual creation-time path templates in flow/manifesto.md,
 // flow/multi-spec.md, and flow/steps-and-gates.md gave a bare relative path with no
 // instruction to resolve $RUN_ROOT first, even though materialize.md's /build standalone
-// fallback and _shared/pipeline-run-dir.md's own bash snippet already did this correctly.
+// fallback and _shared/run-dir-resolution.md's own bash snippet already did this correctly.
 // These guards pin that every run-dir creation site now states the anchoring requirement
 // explicitly, so a future edit can't silently drop it again.
 

@@ -27,7 +27,7 @@ test('init/SKILL.md has a Step 6.5 heading between Step 6 and Step 7, citing the
 });
 
 // AC1
-test('the sub-file contains all six rewrite rows and the three named report-only hard cases', () => {
+test('the sub-file contains all six rewrite rows and the named report-only hard cases', () => {
   const sub = read('plugin/skills/init/bootstrap/step-06-5-port-isolation.md');
   const rewriteRows = [
     'vite.config',

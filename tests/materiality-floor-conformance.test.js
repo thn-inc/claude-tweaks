@@ -155,10 +155,9 @@ test('tidy/SKILL.md cites digest-sweep.md instead of restating its procedures', 
   assert.ok(!TIDY_SKILL.includes('100 comments'));
 });
 
-test('tidy/SKILL.md stays within its context-cost ceiling', () => {
-  const bytes = Buffer.byteLength(TIDY_SKILL, 'utf8');
-  assert.ok(bytes <= 40960, `tidy/SKILL.md is ${bytes} bytes, over the 40960 ceiling`);
-});
+// Per-file 40 KB pin on tidy/SKILL.md retired by #1997 — the per-file tier is
+// a warning since #1990 and this file has no compose call site; removal
+// condition in docs/incident-log.md [IL-153].
 
 const ADOPTERS = [
   'plugin/skills/review/step3-routing.md',
@@ -277,6 +276,42 @@ test('materiality-floor.md documents the digest URL and count surfacing conventi
 test('at least one adopter (review/step3-routing.md) surfaces the digest comment URL in its own summary', () => {
   assert.ok(REVIEW_ROUTING.includes('Digest URL and count surfacing'));
   assert.match(REVIEW_ROUTING, /digest comment URL and the count routed/);
+});
+
+test('materiality-floor.md\'s Digest URL and count surfacing section mandates the zero-routing case', () => {
+  const idx = FLOOR.indexOf('### Digest URL and count surfacing');
+  assert.ok(idx !== -1, 'section must exist');
+  const section = FLOOR.slice(idx, idx + 800);
+  assert.match(section, /routes none still states the count, as `0`/);
+});
+
+// --- #1611: Summary surfacing wired into the remaining adopters ---
+
+const SUMMARY_SURFACING_ADOPTERS = [
+  'plugin/skills/review/step3-routing.md',
+  'plugin/skills/wrap-up/residue-sweep.md',
+  'plugin/skills/wrap-up/leftover-routing.md',
+  'plugin/skills/reflect/full-mode.md',
+  'plugin/skills/visual-review/browser-review.md',
+];
+
+for (const rel of SUMMARY_SURFACING_ADOPTERS) {
+  test(`${rel} states the digest comment URL and count routed in its own summary`, () => {
+    // Hard-wrapped prose files (leftover-routing.md) may break this phrase across a
+    // line — collapse all whitespace before matching so wrap point never matters.
+    const collapsed = read(rel).replace(/\s+/g, ' ');
+    assert.match(
+      collapsed,
+      /digest comment URL and the count routed/,
+      `${rel} should state the digest URL and count in its own summary, per materiality-floor.md's Digest URL and count surfacing section`,
+    );
+  });
+}
+
+test('reflect/hindsight-mode.md inherits digest URL/count surfacing from full-mode.md by explicit reference, not a restatement', () => {
+  const HINDSIGHT = read('plugin/skills/reflect/hindsight-mode.md');
+  assert.match(HINDSIGHT, /digest-comment-URL-and-count summary surfacing/);
+  assert.match(HINDSIGHT, /this mode's own end-of-run summary states the same digest comment URL and count/);
 });
 
 test('the four health sweeps report a materiality-digest count distinct from the cap-digest count in the throttle line', () => {

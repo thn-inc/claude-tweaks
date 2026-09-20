@@ -21,7 +21,7 @@ test('palette has a hex origin color for every recognized origin plus the human 
 });
 
 test('palette has a hex border color for every bot-state value', () => {
-  for (const key of ['blocked', 'in-progress', 'default']) {
+  for (const key of ['blocked', 'in-progress', 'bot-parked', 'default']) {
     assert.match(BORDER_COLORS[key], /^#[0-9a-f]{6}$/);
   }
 });

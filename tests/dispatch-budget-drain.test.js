@@ -45,7 +45,6 @@ test('backlog hand-off and reference card cite --budget, not dispatch next', () 
   assert.match(card, /--budget <n\\\|all>/);
 });
 
-test('dispatch SKILL.md stays under the 40KB ceiling', () => {
-  const bytes = Buffer.byteLength(read('plugin/skills/dispatch/SKILL.md'), 'utf8');
-  assert.ok(bytes <= 40960, `dispatch/SKILL.md is ${bytes} bytes — over the 40960 ceiling`);
-});
+// Per-file 40 KB pin on dispatch/SKILL.md retired by #1997 — the per-file
+// tier is a warning since #1990 and this file has no compose call site;
+// removal condition in docs/incident-log.md [IL-153].

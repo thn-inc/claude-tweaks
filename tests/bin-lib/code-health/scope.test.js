@@ -6,6 +6,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { listSlices, contentHash, selectSlice, listWorkspaceSlices, gitChurn, sliceRecursive, sourceFiles } = require('../../../plugin/bin/lib/code-health/scope');
 const { MAX_STALE_DAYS } = require('../../../plugin/bin/lib/code-health/score');
+const { skipUnderRoot } = require('../../helpers/root');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-scope-')); }
 
@@ -23,8 +24,11 @@ test('sliceRecursive is false only for the "." slice id', () => {
   assert.strictEqual(sliceRecursive('packages/a'), true);
 });
 
-// Bytes of filler that reliably pushes a directory past MAX_SLICE_BYTES (30 KB).
-const BIG = 'x'.repeat(40 * 1024);
+// Bytes of filler that reliably pushes a directory past MAX_SLICE_BYTES (30 KB)
+// in code-health/scope.js — unrelated to the skill-content 40 KB ceiling
+// in context-cost.js, so #1997 re-expresses this literal rather than
+// importing that unrelated module's constant.
+const BIG = 'x'.repeat(31 * 1024);
 
 test('sliceRecursive(id, root) reports false for a split directory\'s own-files slice', () => {
   const root = tmp();
@@ -124,7 +128,7 @@ test('listSlices still includes a dot-directory that holds real SOURCE_EXTS sour
 // error surfaced. isEmptySourceDir now fails SAFE — a scan failure keeps the directory in
 // rotation rather than excluding it — and reports the failure to stderr. Simulated here via a
 // real permission-denied `find` failure (chmod 000 makes it un-listable), not a mock.
-test('listSlices keeps (does not exclude) a dot-directory whose scan genuinely fails, and reports it to stderr', () => {
+test('listSlices keeps (does not exclude) a dot-directory whose scan genuinely fails, and reports it to stderr', skipUnderRoot('root ignores directory permissions'), () => {
   const root = tmp();
   fs.mkdirSync(path.join(root, 'src'));
   fs.writeFileSync(path.join(root, 'src', 'a.js'), 'const x = 1;\n');

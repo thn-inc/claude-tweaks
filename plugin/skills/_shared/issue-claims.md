@@ -65,13 +65,17 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
   not, create it from the repository's default branch, tolerating an "already exists" rejection
   (a concurrent agent may have created it first — the same 422-tolerance the claim write itself
   has).
+<!-- when: transport=gh -->
   - **gh CLI:** `gh api "repos/{owner}/{repo}/git/refs/heads/${CLAIMS_BRANCH}"` to check;
     `DEFAULT_SHA=$(gh api "repos/{owner}/{repo}/commits/$(gh api "repos/{owner}/{repo}" -q .default_branch)" -q .sha)`
     then `gh api "repos/{owner}/{repo}/git/refs" -f "ref=refs/heads/${CLAIMS_BRANCH}" -f "sha=${DEFAULT_SHA}"`
     to create.
+<!-- /when -->
+<!-- when: transport=mcp -->
   - **MCP:** call `create_branch` with name = `CLAIMS_BRANCH` (`claims-registry`,
     `node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js').CLAIMS_BRANCH)"`)
     and source = the repository's default branch.
+<!-- /when -->
 
   Either bootstrap leaves `claims-registry` carrying the default branch's history underneath it
   — harmless, since the branch is a registry nobody merges, but not equivalent to an orphan
@@ -85,6 +89,7 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
      exist) is a normal outcome, not an error — it means "never claimed." Emit the literal
      sentinel `__ABSENT__` on a 404 so step 2 can classify it the same way whether the read
      came from a live claim or a never-claimed issue:
+<!-- when: transport=gh -->
      - **gh CLI:**
        ```bash
        if RAW=$(gh api "repos/{owner}/{repo}/contents/${CLAIM_PATH}?ref=${CLAIMS_BRANCH}" \
@@ -104,14 +109,18 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
        The command's output (when it succeeds) is the **wrapper object**
        `{content: "<decoded blob text>", sha: "<blob sha>"}` — step 2 below needs only the
        `.content` field's *value*, not this wrapper, so extract it before classifying (see step 2).
+<!-- /when -->
+<!-- when: transport=mcp -->
      - **MCP:** the equivalent "get file contents" tool call against `claimPath` on
        `CLAIMS_BRANCH`; a not-found response is the same normal outcome — set
        `CONTENT_PATH_OR_ABSENT_SENTINEL="__ABSENT__"` in that case, otherwise write the tool's
        returned content to a file and use that path.
+<!-- /when -->
   2. **Extract the content before classifying.** When step 1 produced a real file (not the
      `__ABSENT__` sentinel), that file holds the **wrapper object** `{content, sha}` from the
      `gh api` call's `-q` filter — step 2's classifier needs the **`.content` field's value**
      (the decoded claim-blob text itself), never the wrapper object. Extract it first:
+<!-- when: transport=gh -->
      ```bash
      if [ "$CONTENT_PATH_OR_ABSENT_SENTINEL" = "__ABSENT__" ]; then
        CLASSIFY_INPUT="__ABSENT__"
@@ -120,6 +129,11 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
        CLASSIFY_INPUT="/tmp/claim-content-${ISSUE}.txt"
      fi
      ```
+<!-- /when -->
+<!-- when: transport=mcp -->
+     Step 1's MCP bullet already wrote the tool's returned content itself, not a wrapper —
+     nothing to extract: `CLASSIFY_INPUT="$CONTENT_PATH_OR_ABSENT_SENTINEL"` as-is.
+<!-- /when -->
      Then classify:
      ```bash
      node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
@@ -134,12 +148,16 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
      above is what prevents this.
   3. **`state: 'absent'`** — no prior claim. Write **create-only** (no `sha`): the payload's
      `fileContent` at `claimPath` on `CLAIMS_BRANCH`.
+<!-- when: transport=gh -->
      - **gh CLI:** `gh api --method PUT "repos/{owner}/{repo}/contents/${CLAIM_PATH}" -f "message=Claim issue #${ISSUE}" -f "content=$(base64 <<<"$FILE_CONTENT")" -f "branch=${CLAIMS_BRANCH}"`
        — omitting `sha` means create-only; a 422 means someone else's create-only write landed
        first between the read and this write.
+<!-- /when -->
+<!-- when: transport=mcp -->
      - **MCP:** `create_or_update_file` with `path` = `claimPath`, `content` = `fileContent`,
        `branch` = `CLAIMS_BRANCH`, omitting `sha`; a file-already-exists rejection is the same
        race.
+<!-- /when -->
      A rejection on either transport is **contested** — same handling as `'live'` below, not a
      retry.
   4. **`state: 'tombstone'` or `'stale'`** — a legitimate re-claim, not a contest, EXCEPT: first
@@ -154,15 +172,19 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
      `tombstoneInFlightPr` uses), read that PR's state via `mcp__github__pull_request_read`
      (`get` method) — the one documented PR-read exception to `_shared/github-write-transport.md`'s
      "Pull requests are not covered by this mapping" note, already used the same way by
-     `_shared/pr-early-run-lifecycle.md`'s Phase-checklist update section. A still-`OPEN` state
+     `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. A still-`OPEN` state
      means a build for this issue already exists and reclaiming would race it — stop here, do not
      write, and report it the same way `flow/claim-targets.md`'s in-flight card does. Any other
      state (closed, merged) or a failed read falls through to the write below unchanged. Otherwise,
      write **conditionally** (**with** `sha` = the current file's blob sha from step 1):
+<!-- when: transport=gh -->
      - **gh CLI:** the same `PUT contents` call as step 3, adding `-f "sha=${CURRENT_SHA}"`. (This
        transport's in-flight check runs inside `bin/claim-targets.js` itself, not this manual
        step — see "In-flight detection at claim time (#315)" below.)
+<!-- /when -->
+<!-- when: transport=mcp -->
      - **MCP:** the same `create_or_update_file` call as step 3, adding `sha: currentSha`.
+<!-- /when -->
      A rejection here means someone else re-claimed or broke it first — contested.
   5. **`state: 'live'`** — contested. Do not attempt any write.
   6. **`state: 'unreadable'`** — fails closed to *live* (`classifyClaimBlob` reports
@@ -190,10 +212,27 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
   self-resolve the way a live holder's claim eventually expires; do not retry-and-wait on `5` the
   way `4` permits) / `1` failed / `2` malformed or `gh` absent. The MCP path stays the manual
   read-classify-write above.
+
+  **`--sweep` (#2090)** narrows the ownership check above for a caller that is, by construction,
+  never the holder — `/tidy`'s hygiene pass, whose `--run` basename is the tidy run, not the
+  crashed dispatcher's `runId`. With `--sweep`, the CLI resolves the issue's own open/closed state
+  (`gh issue view <n> --json state`) and passes it through: the release proceeds when the blob
+  classifies `'stale'` (unconditionally — a live run can legitimately outlive its TTL, but the
+  sweep runs only after a human has already approved this specific row at Step 6, so the flag makes
+  an approved release executable, never autonomous) or `'live'` **and** the issue reads closed; a
+  `'live'` claim on an OPEN issue still exits `4` (`skipped-not-owner`) regardless of the flag. A
+  failed issue-state read aborts the release rather than assuming closed. `--reason` must start
+  with `swept:`, validated before any `gh` call. The resulting tombstone's own `runId` is still the
+  sweep run (never a fake owner) — `sweptFrom` is the separate field naming the original holder,
+  and both the CLI's JSON envelope and its `decisions.md` line carry it.
 - **List all claims:** list the `claims/` directory on `CLAIMS_BRANCH`.
+<!-- when: transport=gh -->
   - **gh CLI:** `gh api "repos/{owner}/{repo}/contents/claims?ref=${CLAIMS_BRANCH}" -q '.[].name'`
+<!-- /when -->
+<!-- when: transport=mcp -->
   - **MCP:** the equivalent read-tree/list-directory tool call against `claims/` on
     `CLAIMS_BRANCH`.
+<!-- /when -->
 
 ### Repairing an unreadable claim blob
 
@@ -242,6 +281,18 @@ whole group this firing. Group membership is computed over *unclaimed* records o
 racing dispatchers converge: exactly one wins each contested member, and the loser backs off
 group-wide.
 
+**Post-write verification (#2073).** A write the claim store reports `ok: true` on has not yet
+been confirmed to have actually landed — `bin/lib/claim-targets/claim-targets.js` re-reads every
+claimed blob immediately after its own write (chained off the just-written git-CAS tip when
+available, so this costs no extra fetch) and confirms it classifies `'live'` with `runId` equal
+to this run's own. A mismatch or an absent/unreadable read-back is `claim-unverified` — exit `5`
+(JSON `{unverified: [{issue}], ...}`), handled exactly like a contest: all-or-abort by default
+(releasing every other target this invocation did confirm), downgraded to a per-target skip under
+`--keep-going`. The unverified target itself is never included in that release — a write this run
+cannot confirm might still be its own valid, if slow-to-replicate, claim, and blindly tombstoning
+it risks breaking a claim that is in fact live; it is instead surfaced for `/tidy`'s sweep or human
+judgment, the same posture `'unreadable'` already has.
+
 ## The mirror (human visibility only — never identity)
 
 Identity and lock are now **one write** — the blob's own content, per "The lock" above. The
@@ -254,8 +305,16 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
   console.log(c.claimPayload({issueNumber:Number(process.argv[1]),
   runId:process.argv[2],sessionId:process.env.CLAUDE_CODE_SESSION_ID||'',
   host:require('os').hostname(),now:Date.now()}).commentBody)" "$ISSUE" "$RUN_ID" > /tmp/claim-${ISSUE}.md
+```
+<!-- when: transport=gh -->
+```bash
 gh issue comment "$ISSUE" --body-file /tmp/claim-${ISSUE}.md
 ```
+<!-- /when -->
+<!-- when: transport=mcp -->
+`add_issue_comment` with the issue number and `body` = the contents of
+`/tmp/claim-${ISSUE}.md` (`_shared/github-write-transport.md`'s Comment row).
+<!-- /when -->
 
 Marker shapes (emitted by `claimPayload` / `releasePayload` — the same JSON shape the blob
 content itself carries, so the comment is a legible copy of the blob, not a second source):
@@ -263,6 +322,15 @@ content itself carries, so the comment is a legible copy of the blob, not a seco
 ```
 <!-- agent-claim: {"runId":"...","sessionId":"...","claimedAt":"<ISO>","ttlHours":72,"host":"..."} -->
 <!-- agent-claim-release: {"runId":"...","reason":"...","releasedAt":"<ISO>"} -->
+```
+
+A sweep release (`release-claim.js --sweep`, #2090) adds one field to both the blob and the
+comment marker: `sweptFrom` — the original holder's `runId`. `runId` in the marker is still the
+releasing (sweep) run's own identity, never the holder's; `sweptFrom` is what distinguishes "I
+released my own claim" from "I swept someone else's":
+
+```
+<!-- agent-claim-release: {"runId":"<sweep-run>","reason":"swept: stale claim","releasedAt":"<ISO>","sweptFrom":"<original-run>"} -->
 ```
 
 Identity: `runId` is the pipeline run directory id (`{ISO-timestamp}-{spec-slug}`) — for a
@@ -273,7 +341,7 @@ keyed to the group's representative record — see `dispatch/SKILL.md` Step 4) a
 both of that group's Task calls as `PIPELINE_RUN_DIR`. One identity either way: the directory
 the claim was written under is always the same directory the pipeline itself resolves as
 `$PIPELINE_RUN_DIR`, so no separate variable threads the two together. Dispatch's own
-firing-level standalone-auto run dir (`_shared/pipeline-run-dir.md`, e.g.
+firing-level standalone-auto run dir (`_shared/run-dir-resolution.md`, e.g.
 `{ISO-timestamp}-dispatch-standalone`) is a different thing entirely — it holds that firing's
 own `decisions.md` (queue pull, selection, per-group minting log), never a claim's `runId`.
 `sessionId` is `CLAUDE_CODE_SESSION_ID` — the same
@@ -308,7 +376,9 @@ is atomic regardless of whether the label add/remove succeeds.
 This is the single source of truth for whether an issue is claimed, by whom, and whether the
 claim is breakable. As in "The lock" step 2 above, the path passed below is the already-extracted
 claim-blob content (or `__ABSENT__`) — never the raw `{content, sha}` wrapper object a fresh
-`gh api` read produces; run "The lock" step 2's extraction first if reading fresh here.
+`gh api` read produces; run "The lock" step 2's extraction first if reading fresh here on the
+`gh` transport. On MCP, step 1's read already writes this same extracted content directly (no
+wrapper to extract), so the path passed below is that file as-is.
 
 ```bash
 node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
@@ -353,7 +423,7 @@ and let `/tidy`'s sweep surface it for human judgment.
 | Interactive `/flow` run stops at a gate, user chooses not to resume | `/flow` failure card (offered, not automatic) | `failed: {gate}` |
 | Handed-off issue-mode run fails a HARD-GATE (headless `dispatch`, no human present) | `/claude-tweaks:dispatch` settle step (automatic, unconditional) | `failed: {gate}` |
 | Headless bare `specify` drain (or its deprecated `next` alias) shapes the claimed record (success), routes it to `needs:definition` (success), or fails during shaping | `specify/next-mode-shape.md` Release step (#1346's split of `next-mode.md`; automatic, unconditional, always before that path's self-report) | `shaped: #{n}` / `routed: needs:definition #{n}` / `failed: shaping` |
-| Stale or orphaned claim in hygiene pass | `/tidy` Step 4.7 (after batch approval) | `swept: stale claim` / `swept: issue closed` |
+| Stale or orphaned claim in hygiene pass | `/tidy` Step 4.7 (after batch approval), via `release-claim.js --sweep` (#2090) | `swept: stale claim` / `swept: issue closed` |
 | Grant removal (`auto:build`/`auto:merge`) after a `merged:`/`pr-opened:` release | Console dispatch-label step (multi-spec) / `/wrap-up`'s `cleanup-procedures-execution.md` Section E step 6 (single-spec) | — (label edit, not a claim release) |
 | Interrupted session | nobody — TTL ages it out; `/tidy` sweeps it | — |
 

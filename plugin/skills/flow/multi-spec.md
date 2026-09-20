@@ -84,30 +84,7 @@ $RUN_ROOT/.claude-tweaks/pipelines/{ISO-timestamp}-spec-{N1}-{N2}-{N3}/
     └── staged/
 ```
 
-The parent dir uses a single `spec-` prefix at the start of the slug segment so `find -name "*spec-${N}*"` reliably disambiguates record/spec IDs from timestamp digits.
-
-**Each `spec-{N}/` carries its own `config.yml`** — a byte-for-byte copy of the parent's, written immediately before that spec's pipeline starts. Per-spec skills resolve levers via `resolve-policy.js --run "$PIPELINE_RUN_DIR"` where `PIPELINE_RUN_DIR` is the subdirectory — without its own `config.yml` that call resolves `source: default` and silently drops the Manifesto's answers for the whole spec. The step that writes it, its ordering rule, and the `#678`/`#925` history behind it are under "Scaffold the per-spec subdirectory" below.
-
-`manifest.yml` lists the records in execution order plus their status as the run progresses — written exclusively through `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" spec-status` (see "Phase-progress banner and per-spec completion summary" below); nothing else writes this file. When `MULTISPEC_CURATION_DEFER=1` is set, it also carries `baseSha` — the shared worktree's starting commit (the value `worktree-setup.md`'s Step 0 captures as `EXPECTED_BASE` when the worktree is created, i.e. the commit before spec 1's materialize commit) — kept as diagnostic provenance (the batch's true starting commit). `multispec-batch-curation.md`'s registry pass no longer reads it as a diff base: its batch diff derives from `git merge-base` so boundary freshness merges (`multispec-freshness.md`) don't pollute the batch scope:
-
-```yaml
-multispec:
-  parent: .claude-tweaks/pipelines/2026-05-16T143207-spec-157-159-160/
-  baseSha: f9b5ec84d6c462050ed6a40d640ae50b67f6ee36   # omitted when MULTISPEC_CURATION_DEFER is unset
-  specs:
-    - id: 157             # record id
-      status: complete    # pending | running | complete | failed | not-run
-      subdir: spec-157/
-      startedAt: 2026-05-16T14:32:07.000Z   # set once, on this spec's FIRST running transition
-    - id: 159
-      status: complete
-      subdir: spec-159/
-      startedAt: 2026-05-16T14:48:11.000Z
-    - id: 160
-      status: complete
-      subdir: spec-160/
-      startedAt: 2026-05-16T15:05:44.000Z
-```
+The slug convention, the per-spec `config.yml` copy, and `manifest.yml`'s field-by-field description — including the `phase`/`phases[]` transition log `spec-status` writes (#1928) — are in `multispec-run-dir-layout.md` in this skill's directory.
 
 ## Execution
 
@@ -121,7 +98,9 @@ Record any failures as ledger items in the **parent** run directory (not a per-s
 
 This does not replace each spec's own `/test` gate — every spec still runs verification normally. It establishes the baseline so a spec whose `/test` run hits a failure already recorded here cites the existing ledger entry (`Pre-existing — see ledger #{N}, batch pre-flight sweep`) instead of re-diagnosing it, per `test/verification.md`'s "Pre-existing failures (multi-spec batches)" note.
 
-Run each spec's full pipeline in order (spec 42 → spec 45 → spec 48). Each spec completes its pipeline (build → test → review → wrap-up) before the next begins.
+Run each spec's full pipeline in order. Each spec completes its pipeline (build → test → review → wrap-up) before the next begins.
+
+**Spec-N verification is scoped** (`test/verification.md`'s table, #1801): a bookkeeping-only delta (ledger rows, `work/*-spec.md`) resolves to `none`, logging `still-verified: bookkeeping-only delta ({paths})`.
 
 **Boundary freshness check (spec 2 onward)** — before each spec's per-spec scaffold below, read `multispec-freshness.md` in this skill's directory and run its per-boundary check: trivial drift merges automatically with a parent-`decisions.md` entry; a merge conflict, or a clean merge whose incoming diff overlaps run-modified paths or the remaining specs' Key Files, escalates as a run-level HARD-GATE (fires in `auto`; `MULTISPEC_KEEP_GOING` does not bypass it). Spec 1 needs no check — the creation-time catch-up (Shared-worktree Step 1) just ran.
 
@@ -176,7 +155,7 @@ Why shared, not per-record: sequential records in one run are one logical unit o
 
 ## PR phase-checklist convention (shared PR)
 
-A multi-spec run shares one PR (`_shared/pr-early-run-lifecycle.md`); its checklist rows are **cumulative and run-level, never reset per spec**. Read `multispec-pr-checklist.md` in this skill's directory for the rationale and the per-spec status source.
+A multi-spec run shares one PR (`_shared/pr-early-run-lifecycle.md`); its checklist rows are **cumulative and run-level, never reset per spec**. The `polish` row in particular is decided at the run level, not from the first spec alone — present if any record in the run can run polish, checked by whichever spec first runs it for real, removed only if the whole run never ran polish (#1712). Read `multispec-pr-checklist.md` in this skill's directory for the rationale and the per-spec status source.
 
 ## Failure handling (default vs `keep-going`)
 

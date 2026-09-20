@@ -1,6 +1,6 @@
 # Flow — Polish + Re-Verify Execution
 
-Loaded by `/claude-tweaks:flow` Step 4 only when the polish phase actually dispatches — `polish` survived Step 1's step-list resolution (`no-polish` unset) and `steps-and-gates.md`'s polish-phase decision tree selects at least one command. A skipped polish phase (non-frontend spec, `no-polish`, Impeccable not installed, nothing to fit) never needs this file, and neither does a run that never reaches the polish step.
+Loaded by `/claude-tweaks:flow` Step 4 only when the polish phase actually dispatches — `polish` survived Step 1's step-list resolution (`no-polish` unset) and `steps-and-gates.md`'s polish-phase decision tree selects at least one command. A skipped polish phase (non-frontend spec, `no-polish`, `ceremony-profile: fast-lane`, Impeccable not installed, nothing to fit) never needs this file, and neither does a run that never reaches the polish step.
 
 Follow the polish-phase decision tree in `steps-and-gates.md`. Mechanics specific to /flow:
 

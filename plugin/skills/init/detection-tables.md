@@ -99,7 +99,7 @@ Detect:
 - Environment management (how many envs, how secrets are managed)
 - Pre-commit hooks (Husky, lint-staged, lefthook)
 - Package scripts (all scripts in root package.json + key workspace scripts)
-- Release process (semantic-release, changesets, manual tags)
+- Release process (semantic-release, changesets, manual tags) — destination: `bootstrap/step-21-release.md`'s `release` verdict (`fresh` / `already-bootstrapped` / `conflict`), which also writes the engine files; the finding itself is recorded as the `release` entry of this step's findings
 ```
 
 ## 2f: Pain Point Detection

@@ -4,7 +4,9 @@ One condensed lookup, read once instead of opening every sub-file below just to 
 `fast-lane` skips or narrows (#1765). This file restates it, never overrides it — every fact
 below is a literal restatement of what its cited canonical source already states. A drift
 between this file and its cited source is a bug in this file, never authority to change
-behavior on its own.
+behavior on its own. The single roster of every profile's skips — this file's review/wrap-up
+subset included — is `_shared/ceremony-profile.md`; consult it directly for anything not
+covered below.
 
 **When to read this file:** `/claude-tweaks:review` (`code`/`full` mode) or `/claude-tweaks:wrap-up`,
 once a pipeline run directory's `config.yml` reads `ceremony-profile: fast-lane`. Standalone

@@ -41,8 +41,10 @@ own copy. The disposition logic in Step F3 is untouched — only the freshness s
 ## Step F1 — Resolve the comparison branch
 
 Resolve `INTEGRATION_BRANCH` per `skills/_shared/integration-branch.md`'s Resolution ladder.
-Do not restate the ladder here. Two deliberate narrowings, in the same form
-`flow/validation.md`'s 2.5 and `build/worktree-setup.md`'s merge check already use:
+Do not restate the ladder here. Two deliberate narrowings, the same shape
+`_shared/worktree-setup.md`'s Pre-flight divergence check applies for its own, different reason
+(that section excludes rank 5 outright; this one excludes ranks 1-2 and restricts rank 5):
+<!-- integration-branch-ranks: excludes=1,2 -->
 
 - **Ranks 1 and 2 do not apply** — `--branch <name>` and `template.branch` name the branch the
   *routine audits*, which is a different question from where this project commits its records.

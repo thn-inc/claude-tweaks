@@ -1,37 +1,187 @@
-// bin/lib/hooks/subagent-stop.js — E3: Subagent Contract status-line check (warn tier).
+// bin/lib/hooks/subagent-stop.js — E3: Subagent Contract status-line check.
 // Best-effort by design: SubagentStop fires unreliably for Task dispatches
-// (claude-code#27755) and transcript field names may drift. Never blocks.
+// (claude-code#27755) and transcript field names may drift. One forced
+// in-run retry per (session_id, agent_id) on a genuine violation (#1936
+// Task 0 — live-confirmed 2026-09-20 against Claude Code v2.1.258 that
+// SubagentStop's JSON output supports `{ decision: 'block', reason }`,
+// which keeps the subagent running and delivers `reason` as its next
+// instruction, exactly as https://code.claude.com/docs/en/hooks documents:
+// "SubagentStop hooks use the same decision control format as Stop hooks
+// ... Returning decision: 'block' with a reason keeps the subagent running
+// and delivers reason to the subagent as its next instruction."); every
+// other path — a second violation by the same agent, an exempt agent_type,
+// an unreadable/absent transcript — never blocks.
+// Two-tier canonical/lenient detection (#2265 — migrated the canonical
+// status signal from a first-line bare word to a labeled trailing line):
+//   1. Canonical — the reply's LAST non-empty line reads exactly
+//      "STATUS: {WORD}". Fully compliant, nothing logged.
+//   2. Lenient fallback — the bare word, or an off-position "STATUS: {WORD}"
+//      line, appears as the first token of one of the reply's first-or-last
+//      3 non-empty lines (markdown table rows excluded from that window).
+//      Compliant (no dispatcher-facing warning), but an informational
+//      contract-violation event variant is logged so a stale dispatch site
+//      still using the old shape stays visible. This same rule is what
+//      makes the format migration itself safe with no explicit transition
+//      period — an in-flight dispatch given an old-format prompt (status
+//      word first) is still accepted here.
+//   3. Neither — genuine violation. The first such violation for a given
+//      (session_id, agent_id) is blocked once (see above); a second
+//      violation by the same agent (or a failure to write the retry
+//      counter — see contract-retries.js) falls through to the pre-#1936
+//      warn-and-log path, unchanged.
 // Known false-positive sources:
-// 1. A dispatch whose own template specifies a different first-line contract
-//    (e.g. superpowers:subagent-driven-development's task-reviewer, which
-//    begins with a spec-compliance verdict) is logged here even though
-//    nothing was actually violated — STATUS_RE has no way to know a dispatch
-//    declared a different contract.
-// 2. A session running as a background job (dispatched via the Agent tool by
-//    an outer orchestrator, e.g. a /claude-tweaks:dispatch two-call handoff)
-//    has every one of its own turn boundaries checked independently while it
-//    waits on its own parallel Task-tool dispatches — including its
-//    legitimate interim narration turns, which the subagent-output-contract's
-//    status-line requirement never applies to (that requirement is scoped to
-//    a dispatched subagent's own *final* reply). Each such narration turn is
-//    logged as a contract-violation even though the orchestrating session
-//    itself never violated the contract; only its own dispatched subagents'
-//    final replies are subject to that check.
+// 1. (partially addressed, #2344) A dispatch whose own template specifies a
+//    different status contract (e.g. superpowers:subagent-driven-development's
+//    task-reviewer, which begins with a spec-compliance verdict, or this
+//    plugin's own review-lens/fix-verification dispatches which reply
+//    APPROVED/NEEDS_FIXES/ADDRESSED/VERIFIED) used to be logged here even
+//    though nothing was actually violated — the detector has no way to know a
+//    dispatch declared a different contract. #2344's measurement found this
+//    was 26% of one run's contract-violation volume. Addressed by tagging: a
+//    reply whose first line is EXACTLY one of the curated FOREIGN_CONTRACT_WORDS
+//    below still logs an event (never silently skipped — the aggregation
+//    layer, not the detector, is what decides "friction or not"), but tagged
+//    `variant: 'foreign-contract'` instead of the genuine `'violation'` tag,
+//    and bin/friction-events.js drops that variant from its aggregate the
+//    same way it already drops `'lenient'` (#2350). Removal condition for the
+//    word list itself: it is a closed, curated set (not a general heuristic)
+//    — widen it only when a NEW dispatch site's own declared vocabulary is
+//    observed causing the same false-positive shape, never speculatively.
+//    A detection-TIME skip (never logging the event at all, keyed off a
+//    dispatcher's own pre-declared contract) was considered and deferred —
+//    see #2344's own Deliverables for the shape — since the read-time
+//    variant tag already satisfies the same downstream goal (the Friction
+//    lens's aggregate no longer counts this population) with no new
+//    run-dir-state contract for every dispatch site to adopt.
+// 2. (fixed, #1928) The parent session's own transcript used to be graded
+//    whenever agent_transcript_path was absent, so an orchestrator's interim
+//    narration turns were logged as violations. Absent agent_transcript_path
+//    is now a no-op; a harness that stops sending the field silently
+//    disables this check rather than flooding the log.
+// 3. (fixed, #2036) #1928 closed the absent-agent_transcript_path case, but
+//    left one shape open: a SubagentStop firing whose agent_transcript_path
+//    is PRESENT yet identical to the same event's own transcript_path — the
+//    dispatching session's own file, not a distinct subagent session. This
+//    happens while a main session ends its turn per the documented async-wait
+//    convention (agent-tool-async-wait-pattern.md: status message, no tool
+//    call, while awaiting an Agent-tool dispatch's async notification) —
+//    claude-code#27755's unreliable SubagentStop firing attributes that
+//    narration turn to "agent_transcript_path" instead of leaving the field
+//    absent. Graded, it misfires on the orchestrator's own status narration
+//    ("Waiting on the code-simplifier subagent to return…") as if it were a
+//    subagent's final reply missing its status line. A genuine subagent stop
+//    always carries its OWN distinct transcript file, so this equality check
+//    can never suppress a real violation — only this known-unreliable shape.
+// 4. (fixed, #2041) #2036 only covers the TOP-level dispatcher narrating
+//    about its own direct dispatch. A DISPATCHED agent that is itself a
+//    nested dispatcher (e.g. a review-phase orchestrator fanning out several
+//    lens-review agents) has its own distinct agent_transcript_path, so
+//    #2036's equality check never fires — yet the same async-wait convention
+//    applies one level down: the orchestrator ends a turn with plain status
+//    narration ("Still waiting on the N lens-review agents…") while awaiting
+//    ITS OWN children's completions, across possibly several such waits in
+//    sequence. Ground-truth transcript capture (this session's own
+//    subagents/agent-*.jsonl + its dispatcher's own transcript, read per
+//    transcript-payload-verification) confirms the exact structural signal:
+//    an Agent-tool dispatch's tool_result always returns promptly with a
+//    launch acknowledgment carrying `toolUseResult.isAsync: true` — never the
+//    dispatched agent's real output — and each later notification that a
+//    sibling dispatch has reported in arrives as its own transcript entry
+//    with `origin.kind: 'task-notification'`, also never a tool_result. A
+//    text-only final turn immediately preceded by either shape is therefore
+//    reacting to "a background dispatch just launched or reported in", not to
+//    genuine content it could reply to — logged as a violation, this misfires
+//    the same way #2036 does, just one dispatch level deeper. See
+//    isAsyncWaitSignal below.
 'use strict';
 const fs = require('fs');
 const ctxLib = require('./context');
+const contractRetries = require('./contract-retries');
+
+// The reply's last non-empty line must read exactly this — trimmed,
+// case-sensitive, one of the four contract words.
+const CANONICAL_RE = /^STATUS: (DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED)$/;
 
 // #750: superpowers:subagent-driven-development's implementer-prompt.md
 // template asks the dispatched agent to reply with "- **Status:** DONE |
 // DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT" (a bold, colon-space-prefixed
-// bullet) rather than claude-tweaks' own bare-word first line — a real
-// SDD-dispatched agent following its OWN template correctly false-positived
-// on every dispatch. The optional `-\s+` and `\*\*Status:\*\*\s+` prefixes
-// widen the match to that exact literal shape (bullet dash, then the bold
-// "Status:" label, then one of the four contract words) — nothing looser:
-// any other bold label, or the four words appearing later in a sentence,
-// still falls through to the violation path below.
-const STATUS_RE = /^(?:-\s+)?(?:\*\*Status:\*\*\s+)?(DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED)\b/;
+// bullet) rather than claude-tweaks' own bare-word or labeled-line contract —
+// a real SDD-dispatched agent following its OWN template correctly
+// false-positived on every dispatch. The optional `-\s+`, `\*\*Status:\*\*\s+`,
+// and `STATUS:\s+` prefixes widen the match to those exact literal shapes
+// (bullet dash and/or a bold or plain "Status:"/"STATUS:" label, then one of
+// the four contract words) — nothing looser: any other label, or the four
+// words appearing later in a sentence, still falls through to tier 3 below.
+// Same case-sensitive word alternation as CANONICAL_RE, applied off-position
+// (tier 2's "lenient" half) rather than requiring the exact whole-line match
+// tier 1 does.
+const LENIENT_RE = /^(?:-\s+)?(?:\*\*Status:\*\*\s+)?(?:STATUS:\s+)?(DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED)\b/;
+
+// Three-tier canonical/lenient/violation classification (#2265). `text` is
+// the already-trimmed last-assistant-turn text.
+function detectStatus(text) {
+  const nonEmpty = text.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+  if (nonEmpty.length === 0) return { compliant: false, variant: null };
+  const last = nonEmpty[nonEmpty.length - 1];
+  if (CANONICAL_RE.test(last)) return { compliant: true, variant: 'canonical' };
+  // Tier 2: the candidate window is the first-or-last 3 non-empty lines,
+  // checked as a union (a short reply's windows may overlap — harmless,
+  // .some() doesn't care about duplicates). Markdown table rows (a
+  // Template A findings table's own cells) are excluded from the window
+  // entirely so a matching word inside a table cell can never produce a
+  // false lenient-compliant match when the reply's real trailing status
+  // line is missing or malformed (#2265 AC7).
+  const candidates = nonEmpty.filter((l) => !l.startsWith('|'));
+  const window = candidates.slice(0, 3).concat(candidates.slice(-3));
+  if (window.some((l) => LENIENT_RE.test(l))) return { compliant: true, variant: 'lenient' };
+  return { compliant: false, variant: null };
+}
+
+// #2344: verdict words belonging to OTHER dispatch-site contracts (this
+// plugin's own review-lens/fix-verification dispatch templates, whose own
+// prompt declares this vocabulary) — a reply whose first line is EXACTLY one
+// of these is not evidence of a Subagent Contract violation, but the
+// detector has no way to know a dispatch declared a different contract
+// without reading that dispatch's own prompt. Deliberately a closed, curated
+// list (not a general heuristic): an unrelated third vocabulary NOT in this
+// list still grades as a genuine violation (see the header comment's
+// removal-condition note on widening it).
+const FOREIGN_CONTRACT_WORDS = new Set(['APPROVED', 'NEEDS_FIXES', 'ADDRESSED', 'VERIFIED']);
+
+// Classifies a NON-compliant reply's `variant` for the logged event (#2344).
+// `trimmedText` is the same already-trimmed text detectStatus was run
+// against. Only ever called when detectStatus already returned
+// `compliant: false` — i.e. this decides "foreign-contract" vs. the default
+// "violation", never "lenient" (that variant comes from detectStatus itself).
+function classifyViolationVariant(trimmedText) {
+  const firstLine = trimmedText.split('\n')[0].trim();
+  if (FOREIGN_CONTRACT_WORDS.has(firstLine)) return 'foreign-contract';
+  return 'violation';
+}
+
+// #2345: total tool-use content blocks across the ENTIRE graded transcript
+// (every assistant turn, not just the final one — lastAssistantText already
+// guarantees the final graded turn itself never carries a tool_use block
+// alongside its text, per its own #1329 handling, so this necessarily counts
+// only earlier turns). A verdict/findings/pass-fail claim from an agent whose
+// transcript contains zero tool calls read nothing and is a failed dispatch,
+// never evidence (`_shared/subagent-output-contract.md`). Returns `null` when
+// the transcript can't be read (best-effort no-op, matching this file's own
+// posture elsewhere) rather than a count.
+function countToolUseBlocks(transcriptPath) {
+  let raw;
+  try { raw = fs.readFileSync(transcriptPath, 'utf8'); } catch { return null; }
+  let count = 0;
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let entry;
+    try { entry = JSON.parse(line); } catch { continue; }
+    const msg = entry && entry.message;
+    if (!msg || msg.role !== 'assistant' || !Array.isArray(msg.content)) continue;
+    for (const c of msg.content) { if (c && c.type === 'tool_use') count += 1; }
+  }
+  return count;
+}
 
 // This plugin's own name (plugin/.claude-plugin/plugin.json's "name" field) —
 // the same literal already hardcoded in post-tool-use.js's manifest check.
@@ -61,9 +211,32 @@ function isExemptAgentType(agentType) {
   return agentType.slice(0, idx) !== OWN_PLUGIN_NAMESPACE;
 }
 
+// #2041: does `entry` (one already-JSON.parsed transcript line) signal a
+// background-dispatch checkpoint rather than real content the model could
+// reply to — either an Agent-tool dispatch's own launch acknowledgment
+// (`toolUseResult.isAsync: true`, present on the tool_result line the SDK
+// writes back immediately, well before the dispatched agent itself finishes)
+// or an out-of-band task-notification (`origin.kind: 'task-notification'`,
+// the same wrapper the harness uses for every queued async notification, a
+// sibling dispatch's completion included)? Both shapes were confirmed against
+// this session's own live transcript (transcript-payload-verification),
+// never inferred from a fixture. Defensive on shape — an unexpected/missing
+// field reads as "not a signal", never throws.
+function isAsyncWaitSignal(entry) {
+  if (!entry || typeof entry !== 'object') return false;
+  if (entry.toolUseResult && entry.toolUseResult.isAsync === true) return true;
+  if (entry.origin && entry.origin.kind === 'task-notification') return true;
+  return false;
+}
+
+// -> { text: string|null, asyncWaitCheckpoint: boolean }. `asyncWaitCheckpoint`
+// is true only when `text` is non-null AND the nearest earlier parseable
+// transcript line is an isAsyncWaitSignal hit — i.e. this reply is reacting
+// to "a background dispatch just launched or reported in", not to genuine
+// content (#2041).
 function lastAssistantText(transcriptPath) {
   let raw;
-  try { raw = fs.readFileSync(transcriptPath, 'utf8'); } catch { return null; }
+  try { raw = fs.readFileSync(transcriptPath, 'utf8'); } catch { return { text: null, asyncWaitCheckpoint: false }; }
   const lines = raw.split('\n');
   // Scan from the tail and stop at the first assistant message found — the
   // last assistant message is almost always near the end of a long-running
@@ -91,11 +264,24 @@ function lastAssistantText(transcriptPath) {
     // result comes back, so this narration precedes the eventual final
     // reply rather than being it. Grading it here is the same category of
     // misfire as the tool-call-only case above: nothing to grade yet (#1329).
-    if (msg.content.some((c) => c && c.type === 'tool_use')) return null;
+    if (msg.content.some((c) => c && c.type === 'tool_use')) return { text: null, asyncWaitCheckpoint: false };
     const texts = msg.content.filter((c) => c && c.type === 'text' && typeof c.text === 'string');
-    return texts.length ? texts[texts.length - 1].text : null;
+    if (!texts.length) return { text: null, asyncWaitCheckpoint: false };
+    // Look at the nearest earlier parseable line — what this reply is
+    // actually reacting to. Blank/unparseable lines are skipped, same
+    // tolerance the outer scan already applies.
+    let asyncWaitCheckpoint = false;
+    for (let j = i - 1; j >= 0; j--) {
+      const priorLine = lines[j];
+      if (!priorLine.trim()) continue;
+      let priorEntry;
+      try { priorEntry = JSON.parse(priorLine); } catch { break; }
+      asyncWaitCheckpoint = isAsyncWaitSignal(priorEntry);
+      break;
+    }
+    return { text: texts[texts.length - 1].text, asyncWaitCheckpoint };
   }
-  return null;
+  return { text: null, asyncWaitCheckpoint: false };
 }
 
 function run(ctx) {
@@ -109,14 +295,89 @@ function run(ctx) {
   const ownedRun = ctx.ownedRun || {};
   if (!ownedRun.dir) return {};
   if (isExemptAgentType(ctx.input.agent_type)) return {}; // third-party agent — never governed by this contract; checked before the transcript read below so an exempt stop never pays that I/O cost
-  const transcriptPath = ctx.input.agent_transcript_path || ctx.input.transcript_path;
+  // #1928: only a real agent transcript is graded. The former fallback to
+  // the parent session's transcript_path scored the orchestrator's own
+  // narration as a subagent reply — the bulk of the corpus's false fires.
+  const transcriptPath = ctx.input.agent_transcript_path;
   if (typeof transcriptPath !== 'string' || !transcriptPath) return {};
-  const text = lastAssistantText(transcriptPath);
+  // #2036: agent_transcript_path identical to this same event's own
+  // transcript_path means the harness never actually separated a distinct
+  // subagent transcript from the dispatching session's own — see the header
+  // comment's false-positive source 3. Best-effort no-op, matching this
+  // file's own posture.
+  // transcriptPath is already a confirmed non-empty string (checked above),
+  // so a straight equality test already implies mainTranscriptPath is one too.
+  if (ctx.input.transcript_path === transcriptPath) return {};
+  const { text, asyncWaitCheckpoint } = lastAssistantText(transcriptPath);
   if (typeof text !== 'string') return {}; // unreadable -> best-effort no-op
   const trimmedText = text.trim();
-  if (STATUS_RE.test(trimmedText)) return {};
-  ctxLib.appendEvent(ownedRun.dir, 'contract-violation', { firstLine: trimmedText.split('\n')[0].slice(0, 120) }, ownedRun.attribution);
-  return { json: { systemMessage: 'claude-tweaks: a subagent reply is missing the Subagent Contract status line (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED). Logged to events.jsonl.' } };
+  const firstLine = trimmedText.split('\n')[0].slice(0, 120);
+  // #2345: a graded reply (any final text that reached this point IS, by
+  // construction, the exact population the Subagent Contract targets — a
+  // dispatched agent's terminal reply) whose transcript carries zero tool-use
+  // blocks anywhere is a failed dispatch, never evidence — regardless of
+  // whether its status line is otherwise well-formed. Independent of
+  // compliance (checked in both branches below); a `null` count (unreadable
+  // transcript, which can't actually happen here since lastAssistantText
+  // already read it successfully) never logs.
+  const toolUseCount = countToolUseBlocks(transcriptPath);
+  const detection = detectStatus(trimmedText);
+  if (detection.compliant) {
+    // Lenient (off-position/bare-word) compliance is still logged — an
+    // informational variant, never a dispatcher-facing warning — so a
+    // dispatch site still using the old shape stays visible without being
+    // treated as a violation (#2265). Compliance is decided before the
+    // async-wait filter below is ever consulted.
+    if (detection.variant === 'lenient') {
+      ctxLib.appendEvent(ownedRun.dir, 'contract-violation', { firstLine, variant: 'lenient' }, ownedRun.attribution);
+    }
+    if (toolUseCount === 0) {
+      ctxLib.appendEvent(ownedRun.dir, 'zero-tool-use-verdict', { firstLine }, ownedRun.attribution);
+    }
+    return {};
+  }
+  // #2041: a nested dispatcher's own async-wait narration — reacting to its
+  // own dispatch's launch ack or a sibling's task-notification, never to
+  // content it could have replied to — is not this agent's final reply.
+  // Best-effort no-op, matching this file's own posture (#2036 is the
+  // one-level-shallower sibling of this same filter). Must run before the
+  // #2345 zero-tool-use-verdict check below: an async-wait checkpoint is not
+  // graded at all, so it must log nothing, not even that independent signal.
+  if (asyncWaitCheckpoint) return {};
+  if (toolUseCount === 0) {
+    ctxLib.appendEvent(ownedRun.dir, 'zero-tool-use-verdict', { firstLine }, ownedRun.attribution);
+  }
+  // Genuine violation (tier 3). One forced in-run retry per (session_id,
+  // agent_id) — confirmed live (#1936 Task 0) that SubagentStop's JSON
+  // output supports `{ decision: 'block', reason }`, which keeps the
+  // subagent running and delivers `reason` as its next instruction. Never
+  // offered twice for the same agent: a still-violating retry falls straight
+  // through to the warn-and-log path below, unchanged from before this tier
+  // existed. `recordRetry` returning `false` (no agent_id, or the counter
+  // write itself failing — a broken tmp dir) is treated identically to
+  // "already retried" so a write failure can never cause a retry loop.
+  const agentId = ctx.input.agent_id;
+  const alreadyRetried = agentId ? contractRetries.readRetried(ctx.input.session_id).has(agentId) : true;
+  if (!alreadyRetried && contractRetries.recordRetry(ctx.input.session_id, agentId)) {
+    return {
+      json: {
+        decision: 'block',
+        reason: 'claude-tweaks Subagent Contract violation: your reply\'s last non-empty '
+          + 'line must read exactly "STATUS: DONE" (or DONE_WITH_CONCERNS / NEEDS_CONTEXT / '
+          + 'BLOCKED) — a labeled trailing line, never a bare word or opening narration. Your '
+          + `reply's first line was: "${firstLine}". Reply again now, ending with the correct `
+          + 'trailing STATUS: line.',
+      },
+    };
+  }
+  // #2344: a genuine violation vs. a reply belonging to another dispatch
+  // site's own declared verdict contract are logged with distinct `variant`
+  // tags — see FOREIGN_CONTRACT_WORDS' header comment. Both still log (the
+  // aggregation layer, bin/friction-events.js, is what decides "friction or
+  // not" — see #2350's identical precedent for the 'lenient' variant).
+  const variant = classifyViolationVariant(trimmedText);
+  ctxLib.appendEvent(ownedRun.dir, 'contract-violation', { firstLine, variant }, ownedRun.attribution);
+  return { json: { systemMessage: 'claude-tweaks: a subagent reply is missing the Subagent Contract status line (STATUS: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, as the last non-empty line). Logged to events.jsonl.' } };
 }
 
-module.exports = { run, isExemptAgentType };
+module.exports = { run, isExemptAgentType, isAsyncWaitSignal, detectStatus, classifyViolationVariant, countToolUseBlocks };

@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { DEFAULT_DIR, readRecord, writeRecord, allocateId, createRecord, queryRecords, closeRecord, deriveSlug } = require('../../../plugin/bin/lib/issues/local-store');
+const { DEFAULT_DIR, readRecord, writeRecord, allocateId, createRecord, queryRecords, closeRecord, deriveSlug, markShipped } = require('../../../plugin/bin/lib/issues/local-store');
 
 function tmp(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'local-store-'));
@@ -22,9 +22,9 @@ test('writeRecord then readRecord round-trips facets, id, slug, title, and body'
   const dir = tmp(t);
   const filePath = path.join(dir, '14-bar.md');
   const facets = {
-    type: 'feature', origin: 'capture', risk: 'medium', size: 'low', ceremony: 'fast-lane', solutionUnjustified: true, needsDefinition: false, priority: null,
-    stage: 'parked', grants: { build: false, merge: false }, bot: { inProgress: false, blocked: false },
-    parent: 12, isParentIssue: false, notPlanned: false, blockedBy: [12, 7], unsynced: true, acceptance: null, closed: false, closedAt: null,
+    type: 'feature', origin: 'capture', risk: 'medium', size: 'low', ceremony: 'fast-lane', solutionUnjustified: true, breaking: false, needsDefinition: false, priority: null,
+    stage: 'parked', grants: { build: false, merge: false }, bot: { inProgress: false, blocked: false, parked: false },
+    parent: 12, isParentIssue: false, notPlanned: false, blockedBy: [12, 7], unsynced: true, acceptance: null, closed: false, closedAt: null, shipped: null,
   };
 
   writeRecord(filePath, { title: 'Bar', body: 'Current State…', facets });
@@ -46,7 +46,7 @@ test('writeRecord omits default/absent frontmatter keys from the written file', 
     facets: {
       type: 'task', origin: null, risk: null, size: null, ceremony: null, solutionUnjustified: false, needsDefinition: false, priority: null,
       stage: 'backlog', grants: { build: false, merge: false }, bot: { inProgress: false, blocked: false },
-      parent: null, isParentIssue: false, blockedBy: [], unsynced: false, acceptance: null, closed: false, closedAt: null,
+      parent: null, isParentIssue: false, blockedBy: [], unsynced: false, acceptance: null, closed: false, closedAt: null, shipped: null,
     },
   });
   const raw = fs.readFileSync(filePath, 'utf8');
@@ -59,6 +59,7 @@ test('writeRecord omits default/absent frontmatter keys from the written file', 
   assert.ok(!/^origin:/m.test(raw), 'must not write origin when null');
   assert.ok(!/^closed:/m.test(raw), 'must not write closed: false');
   assert.ok(!/^closed-at:/m.test(raw), 'must not write closed-at when null');
+  assert.ok(!/^shipped:/m.test(raw), 'must not write shipped when null');
   assert.ok(!/^solution-unjustified:/m.test(raw), 'must not write solution-unjustified: false');
   assert.ok(/^type: task$/m.test(raw), 'must still write the non-default type key');
 
@@ -69,6 +70,7 @@ test('writeRecord omits default/absent frontmatter keys from the written file', 
   assert.strictEqual(record.facets.unsynced, false);
   assert.strictEqual(record.facets.closed, false);
   assert.strictEqual(record.facets.closedAt, null);
+  assert.strictEqual(record.facets.shipped, null);
   assert.strictEqual(record.facets.isParentIssue, false);
   assert.strictEqual(record.facets.solutionUnjustified, false);
 });
@@ -84,7 +86,7 @@ test('writeRecord then readRecord round-trips needsDefinition: true', (t) => {
     facets: {
       type: 'task', origin: null, risk: null, size: null, ceremony: null, solutionUnjustified: false, needsDefinition: true, priority: null,
       stage: 'backlog', grants: { build: false, merge: false }, bot: { inProgress: false, blocked: false },
-      parent: null, isParentIssue: false, blockedBy: [], unsynced: false, acceptance: null, closed: false, closedAt: null,
+      parent: null, isParentIssue: false, blockedBy: [], unsynced: false, acceptance: null, closed: false, closedAt: null, shipped: null,
     },
   });
   const raw = fs.readFileSync(filePath, 'utf8');
@@ -279,7 +281,7 @@ function baseFacets(overrides) {
   return Object.assign({
     type: 'task', origin: null, risk: null, size: null, ceremony: null, solutionUnjustified: false, priority: null,
     stage: 'backlog', grants: { build: false, merge: false }, bot: { inProgress: false, blocked: false },
-    parent: null, isParentIssue: false, blockedBy: [], unsynced: false, acceptance: null, closed: false, closedAt: null,
+    parent: null, isParentIssue: false, blockedBy: [], unsynced: false, acceptance: null, closed: false, closedAt: null, shipped: null,
   }, overrides);
 }
 
@@ -378,6 +380,22 @@ test('writeRecord writes solution-unjustified: true, readRecord reads it back, a
   assert.strictEqual(readRecord(withoutFlag).facets.solutionUnjustified, false);
 });
 
+// breaking mirrors solutionUnjustified's presence-only convention (#2251): written
+// only when true, read as false when the line is absent.
+test('writeRecord writes breaking: true, readRecord reads it back, and a false value writes no line', (t) => {
+  const dir = tmp(t);
+  const withFlag = path.join(dir, '1-brk.md');
+  writeRecord(withFlag, { title: 'A', body: 'b', facets: baseFacets({ breaking: true }) });
+  const rawWith = fs.readFileSync(withFlag, 'utf8');
+  assert.ok(/^breaking: true$/m.test(rawWith));
+  assert.strictEqual(readRecord(withFlag).facets.breaking, true);
+
+  const withoutFlag = path.join(dir, '2-nobrk.md');
+  writeRecord(withoutFlag, { title: 'B', body: 'b', facets: baseFacets() });
+  assert.ok(!/^breaking:/m.test(fs.readFileSync(withoutFlag, 'utf8')));
+  assert.strictEqual(readRecord(withoutFlag).facets.breaking, false);
+});
+
 test('readRecord: legacy framing: true line reads as solutionUnjustified true (permanent read-side fallback)', (t) => {
   const dir = tmp(t);
   const legacy = path.join(dir, '3-legacy.md');
@@ -437,7 +455,7 @@ test('readRecord on a file with no frontmatter: type null, stage backlog, body i
   assert.strictEqual(record.id, 5);
   assert.strictEqual(record.slug, 'broken');
   assert.deepStrictEqual(record.facets.grants, { build: false, merge: false });
-  assert.deepStrictEqual(record.facets.bot, { inProgress: false, blocked: false });
+  assert.deepStrictEqual(record.facets.bot, { inProgress: false, blocked: false, parked: false });
   assert.deepStrictEqual(record.facets.blockedBy, []);
   assert.strictEqual(record.facets.unsynced, false);
   assert.strictEqual(record.facets.acceptance, null);
@@ -701,4 +719,37 @@ test('deriveSlug falls back to a non-empty slug when the title has no alphanumer
   const slug = deriveSlug('!!! *** ???');
   assert.ok(slug.length > 0, 'must not produce an empty slug');
   assert.strictEqual(slug, 'untitled');
+});
+
+test('shipped facet: absent by default, round-trips as a frontmatter line after closed-at, and closeRecord can set it', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'local-store-shipped-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const filePath = path.join(dir, '21-ship.md');
+  writeRecord(filePath, { title: 'Ship', body: 'b', facets: baseFacets({ type: 'feature' }) });
+  assert.strictEqual(readRecord(filePath).facets.shipped, null);
+  closeRecord(filePath, { shipped: 'v1.3.0' });
+  const text = fs.readFileSync(filePath, 'utf8');
+  assert.match(text, /^closed: true$/m);
+  assert.match(text, /^shipped: v1\.3\.0$/m);
+  assert.ok(text.indexOf('closed-at:') < text.indexOf('shipped:'), 'shipped follows closed-at');
+  const back = readRecord(filePath);
+  assert.strictEqual(back.facets.shipped, 'v1.3.0');
+  assert.strictEqual(back.facets.closed, true);
+  const open = path.join(dir, '22-open.md');
+  writeRecord(open, { title: 'Open', body: 'b', facets: baseFacets({ type: 'bug' }) });
+  markShipped(open, 'v1.3.0');
+  assert.deepStrictEqual([readRecord(open).facets.shipped, readRecord(open).facets.closed], ['v1.3.0', false]);
+});
+
+test('shipped facet: a value carrying whitespace or a control character is rejected and the file is untouched', (t) => {
+  // #2256 defense in depth — the facet serializes as one `shipped: {value}` frontmatter
+  // line, so a newline in the value would write a second line into the fence.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'local-store-shipped-bad-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const filePath = path.join(dir, '23-ship.md');
+  writeRecord(filePath, { title: 'Ship', body: 'b', facets: baseFacets({ type: 'feature' }) });
+  const before = fs.readFileSync(filePath, 'utf8');
+  assert.throws(() => markShipped(filePath, 'v1.3.0\nclosed: true'), { name: 'TypeError', message: /shipped facet/ });
+  assert.throws(() => closeRecord(filePath, { shipped: 'v1.3.0\nclosed: true' }), { name: 'TypeError', message: /shipped facet/ });
+  assert.strictEqual(fs.readFileSync(filePath, 'utf8'), before, 'a rejected value writes nothing');
 });
