@@ -3,7 +3,6 @@ name: sweep
 description: Hands-off hygiene sweep: tidy, specify drain, backlog refine headless, then attention. Keywords - sweep, hygiene, orchestrator
 argument-hint: "[--budget <n|all>] [--scope <name>[,<name>...]]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
 
 # Sweep — Hands-Off Queue Hygiene Orchestrator
 

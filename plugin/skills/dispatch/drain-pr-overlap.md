@@ -70,3 +70,13 @@ persisted hold — so once that PR has merged or closed, the next evaluation of 
 firing, or a retry) finds no live overlap and proceeds normally through Authorization and Content
 judgment. No hit, or a hit only against a PR that has already merged/closed: proceed to
 Authorization immediately, unaffected.
+
+**This log line has a second reader (#2299).** `bin/lib/console/resolve.js`'s `mergeResolution()`
+parses this exact line (`drainOverlapHoldPrs()`) when a group reaches the Wrap-Up Review Console's
+`unattended` auto-resolver (`wrap-up/review-console.md`'s Auto-resolution short-circuit) without
+ever having its merge decision reach this Auto-merge gate at all — the hold above only runs from
+*this* skill's own Auto-merge gate, but the log line it writes outlives that one evaluation. The
+resolver applies the identical self-healing rule this section already states: it re-verifies the
+named PR's live state (`gh pr view`) rather than trusting the historical line as permanent, so a
+console evaluated after the overlapping PR has since merged or closed resolves normally, exactly
+as a fresh Auto-merge gate evaluation would.

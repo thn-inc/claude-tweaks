@@ -4,7 +4,6 @@ description: Use for a proactive, report-only repo sweep that files deduplicated
 argument-hint: "[--area <path>] [focus=<vertical>] [--budget <n>] [--min-risk low|medium|high] [--dry-run] [--root <dir>]"
 allowed-tools: Read, Grep, Glob, Bash, AskUserQuestion
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
 
 # Code-Health — LLM-as-Code-Judge, Proactive Repo Improvement
 

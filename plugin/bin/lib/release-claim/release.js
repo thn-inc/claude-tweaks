@@ -13,6 +13,7 @@
 const { execFileSync } = require('child_process');
 const { classifyClaimBlob, releasePayload } = require('../issues/claims');
 const claimStore = require('../issues/claim-store');
+const { repoSlug } = require('../repo-resolve');
 
 const GRANT_LABELS = ['auto:build', 'auto:merge-pending', 'auto:merge'];
 const IN_PROGRESS_LABEL = 'bot:in-progress';
@@ -40,10 +41,18 @@ function isAlreadyReleasedError(err) { return /HTTP (404|409|422)\b/.test(errorT
 // supplied) instead of this module's own separate gh api call (#787
 // consolidation). `gitRunner` is a new optional parameter — omitted
 // (`undefined`), this behaves exactly as before (contents-API only).
-function readClaimBlob({ owner, repo, issueNumber, runner = defaultRunner, gitRunner }) {
+function readClaimBlob({
+  owner, repo, host, issueNumber, runner = defaultRunner, gitRunner,
+}) {
   const ghApi = (args) => {
     try {
-      const stdout = runner(['api', ...args]);
+      // #2240: --hostname threaded onto the raw `gh api repos/{owner}/{repo}/...`
+      // call — the REST path itself is never host-qualified (only owner/repo),
+      // so a GitHub Enterprise Server host needs the separate flag, unlike the
+      // `-R/--repo` calls below (postReleaseComment/removeLabel) which take a
+      // host-qualified slug directly.
+      const hostArgs = host && host !== 'github.com' ? ['--hostname', host] : [];
+      const stdout = runner(['api', ...args, ...hostArgs]);
       return { stdout, failure: null, status: null };
     } catch (err) {
       if (isNotFoundError(err)) return { stdout: null, failure: null, status: 404 };
@@ -68,10 +77,13 @@ function readClaimBlob({ owner, repo, issueNumber, runner = defaultRunner, gitRu
 // (#787 final-review findings I1/C1). A contents-API-only caller
 // (release-merged.js — no `gitRunner`) never exercises either check, so it
 // stays byte-for-byte the same write it always made.
-function writeTombstone({ owner, repo, issueNumber, sha, tombstoneContent, expectedContent, message, runner = defaultRunner, gitRunner }) {
+function writeTombstone({
+  owner, repo, host, issueNumber, sha, tombstoneContent, expectedContent, message, runner = defaultRunner, gitRunner,
+}) {
   const ghApi = (args) => {
     try {
-      const stdout = runner(['api', ...args]);
+      const hostArgs = host && host !== 'github.com' ? ['--hostname', host] : [];
+      const stdout = runner(['api', ...args, ...hostArgs]);
       return { stdout, failure: null, status: null };
     } catch (err) {
       // Mirror readClaimBlob's ghApi above: claim-store.js's contract says
@@ -100,14 +112,18 @@ function writeTombstone({ owner, repo, issueNumber, sha, tombstoneContent, expec
   return '';
 }
 
-function postReleaseComment({ owner, repo, issueNumber, body, runner = defaultRunner }) {
-  return runner(['issue', 'comment', String(issueNumber), '--repo', `${owner}/${repo}`, '--body', body]);
+function postReleaseComment({
+  owner, repo, host, issueNumber, body, runner = defaultRunner,
+}) {
+  return runner(['issue', 'comment', String(issueNumber), '--repo', repoSlug({ host, owner, repo }), '--body', body]);
 }
 
 // Best-effort — never throws (a failed label edit never blocks a release).
-function removeLabel({ owner, repo, issueNumber, label, runner = defaultRunner }) {
+function removeLabel({
+  owner, repo, host, issueNumber, label, runner = defaultRunner,
+}) {
   try {
-    runner(['issue', 'edit', String(issueNumber), '--repo', `${owner}/${repo}`, '--remove-label', label]);
+    runner(['issue', 'edit', String(issueNumber), '--repo', repoSlug({ host, owner, repo }), '--remove-label', label]);
     return { ok: true };
   } catch (err) {
     return { ok: false, error: errorText(err) };
@@ -139,11 +155,15 @@ function removeLabel({ owner, repo, issueNumber, label, runner = defaultRunner }
 // intentional (the grant is the standing retry request) — see
 // `_shared/issue-claims.md`'s "Grant revocation" section.
 function releaseClaim({
-  owner, repo, issueNumber, runId, reason, link, sweep, removeGrants = false, removeInProgress = true, runner = defaultRunner, gitRunner, now = Date.now(),
+  owner, repo, host, issueNumber, runId, reason, link, sweep, removeGrants = false, removeInProgress = true, runner = defaultRunner, gitRunner, now = Date.now(),
 }) {
   const result = { outcome: 'failed', calls: [], commentPosted: false, labelsRemoved: [], labelsFailed: [], note: null };
   let blob;
-  try { blob = readClaimBlob({ owner, repo, issueNumber, runner, gitRunner }); } catch (err) { result.error = errorText(err); return result; }
+  try {
+    blob = readClaimBlob({
+      owner, repo, host, issueNumber, runner, gitRunner,
+    });
+  } catch (err) { result.error = errorText(err); return result; }
   result.calls.push('read');
   const classified = classifyClaimBlob(blob.content, now);
   if (classified.state === 'unreadable') { result.outcome = 'unreadable'; return result; }
@@ -169,7 +189,7 @@ function releaseClaim({
   if (isHeld) {
     try {
       writeTombstone({
-        owner, repo, issueNumber, sha: blob.sha, tombstoneContent: payload.tombstoneContent, expectedContent: blob.content, message: `Release claim on issue #${issueNumber}`, runner, gitRunner,
+        owner, repo, host, issueNumber, sha: blob.sha, tombstoneContent: payload.tombstoneContent, expectedContent: blob.content, message: `Release claim on issue #${issueNumber}`, runner, gitRunner,
       });
       result.calls.push('put');
       result.outcome = 'released';
@@ -189,7 +209,9 @@ function releaseClaim({
       if (err.conflict) {
         let fresh;
         try {
-          fresh = readClaimBlob({ owner, repo, issueNumber, runner, gitRunner });
+          fresh = readClaimBlob({
+            owner, repo, host, issueNumber, runner, gitRunner,
+          });
         } catch (readErr) {
           // Can't tell spurious contention from a genuine release — fail closed
           // rather than report a success we did not verify.
@@ -230,7 +252,9 @@ function releaseClaim({
     result.outcome = 'already-released';
   }
   try {
-    postReleaseComment({ owner, repo, issueNumber, body: payload.commentBody, runner });
+    postReleaseComment({
+      owner, repo, host, issueNumber, body: payload.commentBody, runner,
+    });
     result.calls.push('comment');
     result.commentPosted = true;
   } catch (err) {
@@ -238,7 +262,9 @@ function releaseClaim({
   }
   const labels = [...(removeGrants ? GRANT_LABELS : []), ...(removeInProgress ? [IN_PROGRESS_LABEL] : [])];
   for (const label of labels) {
-    const r = removeLabel({ owner, repo, issueNumber, label, runner });
+    const r = removeLabel({
+      owner, repo, host, issueNumber, label, runner,
+    });
     result.calls.push(`label:${label}`);
     (r.ok ? result.labelsRemoved : result.labelsFailed).push(label);
   }

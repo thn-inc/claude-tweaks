@@ -144,13 +144,20 @@ function run(argv, deps) {
     remoteBranchExists = hasOrigin && deps.git(['ls-remote', '--heads', 'origin', branch]).trim() !== '';
 
     const history = conventionalHistory(deps.git);
-    const part = bumpPart(history.commits);
+    const targets = manifest.resolveTargets(config);
+    const current = manifest.currentVersion(targets, deps.readFile);
+    // #2327: preMajor comes from the working tree's own current manifest
+    // version — cheap (no network) and sufficient for a major-digit signal;
+    // a line doesn't flip 0.x -> 1.x except via an explicit, already-applied
+    // bump, so a divergence between this and precheck's own claims-derived
+    // base below could only disagree on the major digit in a pathological
+    // case this read has no cheaper way to anticipate.
+    const preMajor = current ? /^0\./.test(current) : false;
+    const part = bumpPart(history.commits, { preMajor, bumpMinorPreMajor: config.bumpMinorPreMajor, bumpPatchForMinorPreMajor: config.bumpPatchForMinorPreMajor });
     if (part === 'none') {
       deps.stdout(`nothing to release: ${history.commits.length} commit(s) since ${history.lastTag || 'the first commit'}, none feat/fix/breaking\n`);
       return 3;
     }
-    const targets = manifest.resolveTargets(config);
-    const current = manifest.currentVersion(targets, deps.readFile);
     const check = precheck(deps, part, {
       keySource: 'tags', branch, hasOrigin: remoteBranchExists,
       versionAtRef: (ref) => manifest.versionAtRef(targets, (p) => deps.git(['show', `${ref}:${p}`])),

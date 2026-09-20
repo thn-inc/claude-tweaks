@@ -74,9 +74,9 @@ function run(argv, deps = realDeps) {
   // instead of an uncaught stack trace colliding with the exit-1 contract.
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
+  const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
   if (!repoSpec) { deps.stderr('link-records.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
-  const { owner, repo } = repoSpec;
+  const { host, owner, repo } = repoSpec;
   // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'
   // (#1153 review finding). link.linkSubIssues/linkBlockedBy build a `repos/${owner}/${repo}/
   // issues/.../sub_issues|dependencies/blocked_by` REST path via direct string interpolation
@@ -90,20 +90,26 @@ function run(argv, deps = realDeps) {
   const numbers = [...(hasSubs ? [opts.parent, ...opts.subs] : []), ...opts.blockedBy.flatMap((e) => [e.dependent, e.blocker])];
   let ids;
   try {
-    ids = link.resolveDatabaseIds({ owner, repo, numbers, runner: deps.runner });
+    ids = link.resolveDatabaseIds({
+      owner, repo, host, numbers, runner: deps.runner,
+    });
   } catch (err) {
     deps.stderr(`link-records.js: ${err.message}\n`);
     return 1;
   }
   const subIssues = hasSubs
-    ? link.linkSubIssues({ owner, repo, parent: opts.parent, subs: opts.subs, ids, runner: deps.runner })
+    ? link.linkSubIssues({
+      owner, repo, host, parent: opts.parent, subs: opts.subs, ids, runner: deps.runner,
+    })
     : { ok: [], failed: [] };
   // A successful sub_issues link write changes the same parent/sub-issue facts
   // _shared/trust-table.md's native branch caches in the session-scoped sub-issues
   // snapshot — invalidate it so the next read re-fetches instead of serving a stale
   // set for the rest of the TTL (#1097).
   if (subIssues.ok.length > 0) deps.invalidateSnapshot(process.env.CLAUDE_CODE_SESSION_ID);
-  const blockedBy = link.linkBlockedBy({ owner, repo, edges: opts.blockedBy, ids, runner: deps.runner });
+  const blockedBy = link.linkBlockedBy({
+    owner, repo, host, edges: opts.blockedBy, ids, runner: deps.runner,
+  });
   const idsObj = {}; for (const [n, id] of ids) idsObj[String(n)] = id;
   deps.stdout(JSON.stringify({ repo: `${owner}/${repo}`, ids: idsObj, subIssues, blockedBy }, null, 2) + '\n');
   return 0;

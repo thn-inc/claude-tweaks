@@ -3,8 +3,6 @@ name: capture
 description: Use when capturing ideas that need specification later — brain dumps, half-formed features, things to not forget
 argument-hint: '<idea text> [--route=brainstorm|keep|absorb:N] [--title="..."] [--type=bug|feature|task] [--needs-definition|--no-needs-definition] [--batch <path>]'
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
-
 
 # Capture — Quickly note an idea for later specification
 
@@ -151,10 +149,7 @@ node -e "
   const row = trustRows(issues, gitLog, Date.now(), policy).find((r) => r.key === 'producer:capture|elevated');
   const ceiling = resolveCeiling({ policy: '{resolved-ceiling}' });
   const permitted = permittedGrants({ ceiling, row });
-  // Fallback to the flat keys: repo-HEAD skill text can run against an older
-  // installed build's autonomy.js (no grants key yet). Remove with #647's
-  // transitional twin (see bin/lib/issues/autonomy.js module header).
-  const g = (permitted.grants || {}).bornReady || { granted: permitted.bornReady, reason: permitted.reason };
+  const g = permitted.grants.bornReady;
   console.log(JSON.stringify({ bornReady: g.granted, reason: g.reason, verdict: row ? row.verdict : 'no-cell' }));
 " -- "{resolved-window}"
 ```

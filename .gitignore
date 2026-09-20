@@ -54,4 +54,7 @@ node_modules/
 .claude-tweaks/reconcile-cache.json
 .claude-tweaks/reconcile-background-status.json
 .claude-tweaks/wrap-up-outcomes.tsv
+# Captured playwright-cli session-state files (cookies/localStorage) for QA story auth —
+# local secrets, never committed. See skills/stories/auth-resolution.md.
+.claude-tweaks/auth-state/
 **/__pycache__/

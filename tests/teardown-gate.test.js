@@ -687,3 +687,61 @@ test('#693: ExitWorktree removing the session\'s own cwd is unaffected by the ow
   const r = runHook(['pre-tool-use'], { input: payload, cwd: wt });
   assert.strictEqual(r.stdout.trim(), '');
 });
+
+// #2282: the own-cwd deny above previously left no friction-event trace at
+// all. `session_id` is required for stampAdHocRunDirForDenial (context.js)
+// to mint a run dir to log into — the AC2/#693 tests above omit it
+// deliberately (appendEvent(null, ...) is then a documented no-op).
+test('#2282: own-cwd `git worktree remove` deny logs a wd-guard-refusal event (reason: own-cwd-removal)', () => {
+  const root = fixtureRoot();
+  const wt = addWorktree(root);
+  const payload = JSON.stringify({
+    tool_name: 'Bash', tool_input: { command: `git worktree remove ${wt}` }, cwd: wt, session_id: 'sess-2282-owncwd',
+  });
+  const r = runHook(['pre-tool-use'], { input: payload, cwd: wt });
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
+  const pipelinesDir = path.join(root, '.claude-tweaks', 'pipelines');
+  const adhocDirs = fs.readdirSync(pipelinesDir).filter((d) => d.endsWith('-adhoc-standalone'));
+  assert.strictEqual(adhocDirs.length, 1, 'expected exactly one stamped ad-hoc run dir');
+  const events = fs.readFileSync(path.join(pipelinesDir, adhocDirs[0], 'events.jsonl'), 'utf8')
+    .trim().split('\n').map((l) => JSON.parse(l));
+  const hit = events.find((e) => e.type === 'wd-guard-refusal');
+  assert.ok(hit, 'expected a wd-guard-refusal event, got: ' + JSON.stringify(events));
+  assert.strictEqual(hit.reason, 'own-cwd-removal');
+});
+
+test('#2282: CT_HOOKS_TEST_MODE tags the own-cwd wd-guard-refusal event, excluded from friction-events.js aggregation', () => {
+  const root = fixtureRoot();
+  const wt = addWorktree(root);
+  const payload = JSON.stringify({
+    tool_name: 'Bash', tool_input: { command: `git worktree remove ${wt}` }, cwd: wt, session_id: 'sess-2282-testmode',
+  });
+  const r = runHook(['pre-tool-use'], { input: payload, cwd: wt, env: { CT_HOOKS_TEST_MODE: '1' } });
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
+  const pipelinesDir = path.join(root, '.claude-tweaks', 'pipelines');
+  const adhocDirs = fs.readdirSync(pipelinesDir).filter((d) => d.endsWith('-adhoc-standalone'));
+  assert.strictEqual(adhocDirs.length, 1);
+  const runDir = path.join(pipelinesDir, adhocDirs[0]);
+  const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const hit = events.find((e) => e.type === 'wd-guard-refusal');
+  assert.ok(hit, 'expected the raw event to still be written (write side is unaffected by the test tag)');
+  assert.strictEqual(hit.test, true);
+
+  const frictionEvents = require('../plugin/bin/friction-events');
+  let captured = '';
+  frictionEvents.run(['--run', runDir], {
+    isDirectory: () => true,
+    cwd: () => wt,
+    readEvents: frictionEvents.readEvents,
+    findRunsByWorktreePath: () => [],
+    stdout: (s) => { captured += s; },
+    stderr: () => {},
+  });
+  const filtered = JSON.parse(captured);
+  assert.strictEqual(
+    filtered.some((e) => e.type === 'wd-guard-refusal'), false,
+    'a test-tagged wd-guard-refusal event must be excluded from friction-events.js aggregation, mirroring gate-denial',
+  );
+});

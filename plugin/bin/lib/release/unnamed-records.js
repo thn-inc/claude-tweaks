@@ -43,8 +43,14 @@ function materializedRecordsSince(deps, sinceSha) {
 // procedure). `allow` is the explicit `--allow-unnamed` override — those records are
 // reported separately in `allowed`, never counted toward `unnamed`.
 function unnamedRecordsGate(deps, { summary = '', allow = [] } = {}) {
-  const bumps = [...iterBumpCommits(deps, 'main')]; // newest first
-  const lastBump = bumps[0] || null;
+  // Only the newest bump is ever used below — draining the whole generator (the
+  // previous `[...iterBumpCommits(...)]`) walked every commit that ever touched the
+  // manifest, all the way to the repo root, paying the expected-to-fail
+  // new-path-then-legacy-path probe (`manifest-path.js`) on every pre-#418 commit
+  // along the way — ~490 lines of `fatal: ... exists on disk, but not in ...` git
+  // stderr noise on a single `release.js --dry-run` (#2363). `.next()` stops the
+  // walk the instant the first (newest) bump is found.
+  const lastBump = iterBumpCommits(deps, 'main').next().value || null;
   const records = materializedRecordsSince(deps, lastBump ? lastBump.sha : null);
 
   const allowSet = new Set(allow);

@@ -89,9 +89,9 @@ function run(argv, deps = realDeps) {
 
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
+  const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
   if (!repoSpec) { deps.stderr('fetch-sub-issues.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
-  const { owner, repo } = repoSpec;
+  const { host, owner, repo } = repoSpec;
   // parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..' — review finding
   // (#1153): the --resolve-retries REST call below interpolates owner/repo directly into a path
   // rather than using gh's bound-variable mechanism (unlike the GraphQL fetch, which already binds
@@ -131,7 +131,9 @@ function run(argv, deps = realDeps) {
     for (const n of retry) {
       let nums;
       try {
-        const out = deps.runner(['api', '--paginate', `repos/${owner}/${repo}/issues/${n}/sub_issues`, '--jq', '.[].number']);
+        const apiArgs = ['api', '--paginate', `repos/${owner}/${repo}/issues/${n}/sub_issues`, '--jq', '.[].number'];
+        if (host !== 'github.com') apiArgs.push('--hostname', host);
+        const out = deps.runner(apiArgs);
         nums = out.trim().split('\n').filter(Boolean).map(Number);
       } catch (err) {
         deps.stderr(`fetch-sub-issues.js: sub-issue REST retry failed for parent #${n}: ${err && err.message ? err.message : String(err)}\n`);

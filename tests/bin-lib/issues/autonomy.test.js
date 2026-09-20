@@ -28,23 +28,23 @@ test('an unrecognized value is ignored, and resolution continues past it', () =>
 
 test('supervised permits nothing, whatever the evidence says', () => {
   const result = permittedGrants({ ceiling: 'supervised', row: cleanRow });
-  assert.equal(result.bornReady, false);
-  assert.equal(result.bornAuthorized, false);
-  assert.ok(result.reason.length > 0);
+  assert.equal(result.grants.bornReady.granted, false);
+  assert.equal(result.grants.bornAuthorized.granted, false);
+  assert.ok(result.grants.bornReady.reason.length > 0);
 });
 
 test('trusted permits born-ready on a clean class, never born-authorized', () => {
   const result = permittedGrants({ ceiling: 'trusted', row: cleanRow });
-  assert.equal(result.bornReady, true);
-  assert.equal(result.bornAuthorized, false);
+  assert.equal(result.grants.bornReady.granted, true);
+  assert.equal(result.grants.bornAuthorized.granted, false);
 });
 
 test('a mixed or ungraded class earns nothing at any ceiling', () => {
   for (const ceiling of CEILINGS) {
     for (const verdict of ['mixed', 'insufficient-evidence']) {
       const result = permittedGrants({ ceiling, row: { ...cleanRow, verdict } });
-      assert.equal(result.bornReady, false, `${ceiling}/${verdict}`);
-      assert.equal(result.bornAuthorized, false, `${ceiling}/${verdict}`);
+      assert.equal(result.grants.bornReady.granted, false, `${ceiling}/${verdict}`);
+      assert.equal(result.grants.bornAuthorized.granted, false, `${ceiling}/${verdict}`);
     }
   }
 });
@@ -54,9 +54,9 @@ test('the unstructured kind is denied at every ceiling, clean verdict or not', (
   // deny it on its own, so a future change to either one cannot open it alone.
   for (const ceiling of CEILINGS) {
     const result = permittedGrants({ ceiling, row: { ...cleanRow, kind: 'unstructured' } });
-    assert.equal(result.bornReady, false, ceiling);
-    assert.equal(result.bornAuthorized, false, ceiling);
-    assert.match(result.reason, /unclassifi/i);
+    assert.equal(result.grants.bornReady.granted, false, ceiling);
+    assert.equal(result.grants.bornAuthorized.granted, false, ceiling);
+    assert.match(result.grants.bornReady.reason, /unclassifi/i);
   }
 });
 
@@ -68,8 +68,8 @@ test('a kind this module does not recognize is denied, not permitted', () => {
   // Both of these granted before the allowlist landed.
   for (const kind of ['some-future-kind', '', 'PRODUCER', undefined, null, 42]) {
     const result = permittedGrants({ ceiling: 'trusted', row: { ...cleanRow, kind } });
-    assert.equal(result.bornReady, false, `kind ${JSON.stringify(kind)} must not grade`);
-    assert.equal(result.bornAuthorized, false, `kind ${JSON.stringify(kind)} must not grade`);
+    assert.equal(result.grants.bornReady.granted, false, `kind ${JSON.stringify(kind)} must not grade`);
+    assert.equal(result.grants.bornAuthorized.granted, false, `kind ${JSON.stringify(kind)} must not grade`);
   }
 });
 
@@ -84,9 +84,9 @@ test('a human-filed class earns nothing, however clean and however high the ceil
   for (const ceiling of ['trusted', 'unattended']) {
     for (const optIn of [undefined, true]) {
       const result = permittedGrants({ ceiling, row: humanRow, grantOriginationEnabled: optIn });
-      assert.equal(result.bornReady, false, `${ceiling}/${optIn}`);
-      assert.equal(result.bornAuthorized, false, `${ceiling}/${optIn}`);
-      assert.match(result.reason, /human-filed/);
+      assert.equal(result.grants.bornReady.granted, false, `${ceiling}/${optIn}`);
+      assert.equal(result.grants.bornAuthorized.granted, false, `${ceiling}/${optIn}`);
+      assert.match(result.grants.bornReady.reason, /human-filed/);
     }
   }
 });
@@ -95,7 +95,7 @@ test('agent-filed classes are exactly producer and side-effect', () => {
   // Control for the test above — the exclusion must not be so wide that it also
   // denies the two kinds the tier exists to serve.
   for (const kind of ['producer', 'side-effect']) {
-    assert.equal(permittedGrants({ ceiling: 'trusted', row: { ...cleanRow, kind } }).bornReady, true, kind);
+    assert.equal(permittedGrants({ ceiling: 'trusted', row: { ...cleanRow, kind } }).grants.bornReady.granted, true, kind);
   }
 });
 
@@ -106,23 +106,23 @@ test('every kind provenance.js emits is classified, and denials are distinguisha
   // grantable, gradable-but-human-filed, and structurally unclassifiable — so a
   // change there this module has not been taught about fails here, not in
   // production.
-  assert.equal(permittedGrants({ ceiling: 'trusted', row: { ...cleanRow, kind: 'producer' } }).bornReady, true);
-  assert.equal(permittedGrants({ ceiling: 'trusted', row: { ...cleanRow, kind: 'side-effect' } }).bornReady, true);
+  assert.equal(permittedGrants({ ceiling: 'trusted', row: { ...cleanRow, kind: 'producer' } }).grants.bornReady.granted, true);
+  assert.equal(permittedGrants({ ceiling: 'trusted', row: { ...cleanRow, kind: 'side-effect' } }).grants.bornReady.granted, true);
 
   const human = permittedGrants({ ceiling: 'trusted', row: { ...cleanRow, kind: 'human' } });
-  assert.equal(human.bornReady, false);
-  assert.match(human.reason, /human-filed/, 'a real class denied for whose filing it is');
+  assert.equal(human.grants.bornReady.granted, false);
+  assert.match(human.grants.bornReady.reason, /human-filed/, 'a real class denied for whose filing it is');
 
   const unstructured = permittedGrants({ ceiling: 'trusted', row: { ...cleanRow, kind: 'unstructured' } });
-  assert.equal(unstructured.bornReady, false);
-  assert.match(unstructured.reason, /unclassifiable/, 'not a class at all — a different denial');
+  assert.equal(unstructured.grants.bornReady.granted, false);
+  assert.match(unstructured.grants.bornReady.reason, /unclassifiable/, 'not a class at all — a different denial');
 });
 
 test('a missing or malformed row is denied, not defaulted', () => {
   for (const row of [undefined, null, {}, { verdict: 'clean' }, { kind: 'human' }]) {
     const result = permittedGrants({ ceiling: 'unattended', row });
-    assert.equal(result.bornReady, false);
-    assert.equal(result.bornAuthorized, false);
+    assert.equal(result.grants.bornReady.granted, false);
+    assert.equal(result.grants.bornAuthorized.granted, false);
   }
 });
 
@@ -132,12 +132,12 @@ test('unattended permits born-authorized only on an explicit second opt-in', () 
   // session"). The tier is defined so the ceiling is complete, but the grant path
   // stays shut behind its own flag until that invariant is deliberately amended.
   const withoutOptIn = permittedGrants({ ceiling: 'unattended', row: cleanRow });
-  assert.equal(withoutOptIn.bornReady, true);
-  assert.equal(withoutOptIn.bornAuthorized, false);
-  assert.match(withoutOptIn.reason, /opt-in/i);
+  assert.equal(withoutOptIn.grants.bornReady.granted, true);
+  assert.equal(withoutOptIn.grants.bornAuthorized.granted, false);
+  assert.match(withoutOptIn.grants.bornAuthorized.reason, /opt-in/i);
 
   const withOptIn = permittedGrants({ ceiling: 'unattended', row: cleanRow, grantOriginationEnabled: true });
-  assert.equal(withOptIn.bornAuthorized, true);
+  assert.equal(withOptIn.grants.bornAuthorized.granted, true);
 });
 
 test('the opt-in is the literal boolean true, and nothing merely truthy', () => {
@@ -149,7 +149,7 @@ test('the opt-in is the literal boolean true, and nothing merely truthy', () => 
   // must not clear this gate by accident.
   for (const value of ['true', 1, {}, [], 'yes', 'on', -1]) {
     const result = permittedGrants({ ceiling: 'unattended', row: cleanRow, grantOriginationEnabled: value });
-    assert.equal(result.bornAuthorized, false, `${JSON.stringify(value)} must not clear the opt-in`);
+    assert.equal(result.grants.bornAuthorized.granted, false, `${JSON.stringify(value)} must not clear the opt-in`);
   }
 });
 
@@ -159,8 +159,8 @@ test('permittedGrants validates its own ceiling rather than relying on indexOf',
   // also leaves the suite green without this.
   for (const ceiling of ['yolo', 'UNATTENDED', ' unattended ', 42, null, ['unattended']]) {
     const result = permittedGrants({ ceiling, row: cleanRow, grantOriginationEnabled: true });
-    assert.equal(result.bornReady, false, `ceiling ${JSON.stringify(ceiling)} must fall back to supervised`);
-    assert.equal(result.bornAuthorized, false, `ceiling ${JSON.stringify(ceiling)} must fall back to supervised`);
+    assert.equal(result.grants.bornReady.granted, false, `ceiling ${JSON.stringify(ceiling)} must fall back to supervised`);
+    assert.equal(result.grants.bornAuthorized.granted, false, `ceiling ${JSON.stringify(ceiling)} must fall back to supervised`);
   }
 });
 
@@ -168,36 +168,45 @@ test('permittedGrants survives a null argument the way resolveCeiling does', () 
   // Default parameters fire only on undefined, so `= {}` left null throwing while
   // the sibling function returned a value. Two functions in one module should not
   // disagree about robustness — a caller sweeping records would crash mid-run.
-  assert.equal(permittedGrants(null).bornReady, false);
-  assert.equal(permittedGrants(undefined).bornReady, false);
-  assert.equal(permittedGrants().bornReady, false);
+  assert.equal(permittedGrants(null).grants.bornReady.granted, false);
+  assert.equal(permittedGrants(undefined).grants.bornReady.granted, false);
+  assert.equal(permittedGrants().grants.bornReady.granted, false);
 });
 
 test('the second opt-in cannot raise a lower ceiling', () => {
   for (const ceiling of ['supervised', 'trusted']) {
     const result = permittedGrants({ ceiling, row: cleanRow, grantOriginationEnabled: true });
-    assert.equal(result.bornAuthorized, false, ceiling);
+    assert.equal(result.grants.bornAuthorized.granted, false, ceiling);
   }
 });
 
-test('per-grant reasons: reason is non-empty exactly when that grant is withheld', () => {
+test('per-grant reasons: a withheld grant always carries a non-empty reason', () => {
+  // A partially-granted result (bornReady granted, bornAuthorized withheld) keeps
+  // bornReady's reason empty -- see the dedicated full-grant test below for the
+  // one case where a *granted* grant carries a non-empty reason too.
   const cases = [
     permittedGrants({ ceiling: 'trusted', row: cleanRow }),
     permittedGrants({ ceiling: 'unattended', row: cleanRow }),
-    permittedGrants({ ceiling: 'unattended', row: cleanRow, grantOriginationEnabled: true }),
     permittedGrants({ ceiling: 'supervised', row: cleanRow }),
     permittedGrants({ ceiling: 'trusted', row: null }),
   ];
   for (const result of cases) {
     for (const name of ['bornReady', 'bornAuthorized']) {
       const g = result.grants[name];
-      if (g.granted) {
-        assert.equal(g.reason, '', `${name} granted must carry an empty reason`);
-      } else {
-        assert.ok(g.reason.length > 0, `${name} withheld must carry a non-empty reason`);
-      }
+      if (!g.granted) assert.ok(g.reason.length > 0, `${name} withheld must carry a non-empty reason`);
     }
   }
+});
+
+test('a full grant (both bornReady and bornAuthorized) populates both reasons with the shared positive rationale', () => {
+  // #666: the old flat `reason` carried this text and nothing else reproduced it
+  // once the flat keys were removed, so the per-grant shape populates it on both
+  // grants instead of leaving `granted: true` unexplained.
+  const result = permittedGrants({ ceiling: 'unattended', row: cleanRow, grantOriginationEnabled: true });
+  assert.equal(result.grants.bornReady.granted, true);
+  assert.equal(result.grants.bornAuthorized.granted, true);
+  assert.ok(result.grants.bornReady.reason.length > 0);
+  assert.equal(result.grants.bornReady.reason, result.grants.bornAuthorized.reason);
 });
 
 test('a granted bornReady never carries the withheld grant\'s opt-in denial', () => {
@@ -206,31 +215,13 @@ test('a granted bornReady never carries the withheld grant\'s opt-in denial', ()
   assert.equal(result.grants.bornReady.reason, '');
   assert.equal(result.grants.bornAuthorized.granted, false);
   assert.match(result.grants.bornAuthorized.reason, /opt-in/i);
-  // The flat compat key keeps its historical single-string behavior unchanged.
-  assert.match(result.reason, /opt-in/i);
-});
-
-test('flat compat keys mirror grants.*.granted across every branch', () => {
-  const cases = [
-    permittedGrants({ ceiling: 'supervised', row: cleanRow }),
-    permittedGrants({ ceiling: 'trusted', row: cleanRow }),
-    permittedGrants({ ceiling: 'unattended', row: cleanRow }),
-    permittedGrants({ ceiling: 'unattended', row: cleanRow, grantOriginationEnabled: true }),
-    permittedGrants({ ceiling: 'trusted', row: { ...cleanRow, kind: 'human' } }),
-    permittedGrants(null),
-  ];
-  for (const result of cases) {
-    assert.equal(result.bornReady, result.grants.bornReady.granted);
-    assert.equal(result.bornAuthorized, result.grants.bornAuthorized.granted);
-  }
 });
 
 test('a denial applies the same reason to both grants', () => {
   const result = permittedGrants({ ceiling: 'supervised', row: cleanRow });
   assert.equal(result.grants.bornReady.granted, false);
   assert.equal(result.grants.bornAuthorized.granted, false);
-  assert.equal(result.grants.bornReady.reason, result.reason);
-  assert.equal(result.grants.bornAuthorized.reason, result.reason);
+  assert.equal(result.grants.bornReady.reason, result.grants.bornAuthorized.reason);
 });
 
 // clearsFloor -- structured Defer-reason: path only (see #696).

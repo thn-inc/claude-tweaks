@@ -14,11 +14,26 @@ const DEBATE_AGENT_COUNT = 2;
 // as "the same substance" — a second signal alongside location, so a
 // same-location pair that is NOT the same underlying issue no longer gets
 // silently merged by categoriseReproduction (see sameSubstance below).
+//
+// #2331: distinct from near-duplicate.js's DEFAULT_TITLE_SIMILARITY_THRESHOLD
+// by design, not oversight — same Jaccard-over-tokens primitive, but tuned
+// against a different input domain (free-text finding descriptions here vs.
+// short imperative record titles there), each threshold calibrated for its
+// own domain's false-positive rate. Consolidating the constants would risk
+// silently shifting one or both call sites' behavior; see this module's
+// tokenizeSubstance vs. near-duplicate.js's tokenizeTitle for the matching
+// preprocessing difference (path:line stripping vs. #N record-ref stripping).
 const SUBSTANCE_SIMILARITY_MIN = 0.4;
 
 // Minimal stop-word list for sameSubstance's tokenizer — just enough to keep
 // common connective words from diluting the Jaccard score; not a general NLP
 // tool, so no attempt at completeness.
+//
+// #2331: kept separate from near-duplicate.js's STOP_WORDS — this list is
+// tuned for free-text finding descriptions, not the short imperative titles
+// that list targets (which needs extra filler words like "should"/"will"/
+// "again" that rarely appear in finding text). Merging the lists risks
+// changing which words get filtered for either caller.
 const SUBSTANCE_STOP_WORDS = new Set([
   'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
   'to', 'of', 'in', 'on', 'at', 'for', 'with', 'and', 'or', 'but', 'not',

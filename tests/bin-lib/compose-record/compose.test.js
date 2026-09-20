@@ -15,6 +15,10 @@ const SHAPED = [
   '## Acceptance Criteria',
   '',
   '1. The thing is done.',
+  '',
+  '## Release Note',
+  '',
+  'Did the thing.',
 ].join('\n');
 
 test('composeBody wraps recordPayload — fingerprint marker appended', () => {
@@ -39,6 +43,13 @@ test('validateShaped: flags a missing section', () => {
   const result = validateShaped(body);
   assert.equal(result.ok, false);
   assert.ok(result.gaps.some((g) => /missing section: ## Acceptance Criteria/.test(g)));
+});
+
+test('validateShaped: flags a missing ## Release Note section (the fourth required section)', () => {
+  const body = SHAPED.replace('\n\n## Release Note\n\nDid the thing.', '');
+  const result = validateShaped(body);
+  assert.equal(result.ok, false);
+  assert.ok(result.gaps.some((g) => /missing section: ## Release Note/.test(g)));
 });
 
 test('validateShaped: flags an empty (whitespace-only) section', () => {

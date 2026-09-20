@@ -31,6 +31,37 @@ function makeCleanRepoRoot() {
   return makeTmpDir('verify-clean-reporoot-');
 }
 
+// resolveParent (#1841) resolves a record's native GraphQL parent instead of
+// the invalid-on-gh<2.96 `gh issue view --json parent` REST call these
+// acceptance-labeling fixtures used to fake by matching `args.includes('parent')`
+// on that call's argv. The new call shape is
+// `['api', 'graphql', '-f', 'query=...', '-f', 'owner=...', '-f', 'repo=...']`;
+// these three helpers replace that old matcher across every fixture below.
+function isGraphqlCall(args) {
+  return args[0] === 'api' && args[1] === 'graphql';
+}
+function parentQueryNumber(args) {
+  const queryArg = args.find((a) => typeof a === 'string' && a.startsWith('query='));
+  const m = queryArg && queryArg.match(/issue\(number:(\d+)\)/);
+  return m ? Number(m[1]) : null;
+}
+function parentGraphqlResponse(n, parentNumber) {
+  return JSON.stringify({
+    data: { repository: { [`i${n}`]: { number: n, parent: parentNumber ? { number: parentNumber, title: '', state: 'OPEN' } : null } } },
+  });
+}
+// resolveParent resolves owner/repo via `deps.git(['remote', 'get-url', 'origin'], cwd)`
+// before ever calling `deps.gh` -- every fixture that exercises acceptance-labeling
+// past the gh-availability probe needs a `deps.git` that answers this call, or
+// parseRepo(remote) fails closed and the check renders 'unknown' for the wrong
+// reason. `extra` still drives that fixture's own git behavior for every other call.
+function fakeOriginGit(extra) {
+  return (args, cwd) => {
+    if (args[0] === 'remote') return 'https://github.com/org/repo.git';
+    return extra ? extra(args, cwd) : '';
+  };
+}
+
 test('renderVerifyTable renders pass/fail bare and skip/unknown with folded detail', () => {
   const md = renderVerifyTable([
     { check: 'plans-ledger', result: 'pass', detail: '' },
@@ -167,6 +198,44 @@ test('AC2: gh absent renders acceptance-labeling unknown, exit code reflects onl
     assert.strictEqual(result.exitCode, 0);
   } finally {
     fs.rmSync(originalPath, { recursive: true, force: true });
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+// #1841: a parent-resolution gather failure (GraphQL error, unresolvable
+// owner/repo, an unparseable response) is a tooling gap, not a labeling
+// mismatch -- it must render 'unknown', matching this file's other
+// could-not-gather rows, and must never trip the overall exit-3 gate on its
+// own (execution-and-verification.md's exit-3 rule only withholds closure on
+// a real 'fail'). Placed here, before the forced-fail probe test below
+// permanently registers a fail-producing check into the shared CHECKS
+// registry, so this is the last point in the file where an exitCode === 0
+// assertion is still meaningful (mirrors the AC2 fixture immediately above).
+test('acceptance-labeling check renders unknown -- not fail -- when a parent-resolution gh call throws', () => {
+  const runDir = makeTmpDir('verify-acceptance-parenterr-');
+  const repoRoot = makeCleanRepoRoot();
+  writeSpecFile(runDir, '900', 900);
+  writeExpectations(runDir, { version: 1, memory: [], upstream: [], deferred: ['run-dir-archival'] });
+  const cleanGit = (args) => {
+    if (args[0] === 'remote') return 'https://github.com/org/repo.git';
+    if (args[0] === 'log' && args.some((a) => typeof a === 'string' && a.includes('Fixes #900'))) return 'abc1234 fix\n';
+    return '';
+  };
+  const fakeGh = (args) => {
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    if (isGraphqlCall(args)) throw new Error('gh: rate limited');
+    return '';
+  };
+  try {
+    const result = runVerify({ runDir, base: 'main', repoRoot, cwd: repoRoot, deps: { git: cleanGit, gh: fakeGh } });
+    const row = result.rows.find((r) => r.check === 'acceptance-labeling');
+    assert.strictEqual(row.result, 'unknown');
+    assert.match(row.detail, /#900.*gh api graphql \(parent\) failed/);
+    const failingRows = result.rows.filter((r) => r.result === 'fail');
+    assert.deepStrictEqual(failingRows, [], `expected no fail rows, got: ${JSON.stringify(failingRows)}`);
+    assert.strictEqual(result.exitCode, 0, 'a gather failure alone must not trip exit code 3');
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
     fs.rmSync(repoRoot, { recursive: true, force: true });
   }
 });
@@ -794,12 +863,13 @@ test('acceptance-labeling check passes when demo:pending label and a brief comme
   writeSpecFile(runDir, '900', 900);
   const fakeGh = (args) => {
     if (args[0] === '--version') return 'gh version 2.0.0';
-    if (args.includes('parent')) return JSON.stringify({ parent: null });
-    if (args.includes('labels')) return JSON.stringify({ labels: [{ name: 'demo:pending' }] });
-    if (args.includes('comments')) return JSON.stringify({ comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+    if (args.includes('labels,comments')) {
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+    }
     return '';
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: () => '', gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'pass');
 });
@@ -809,13 +879,59 @@ test('acceptance-labeling check fails when demo:pending label missing', () => {
   writeSpecFile(runDir, '900', 900);
   const fakeGh = (args) => {
     if (args[0] === '--version') return 'gh version 2.0.0';
-    if (args.includes('parent')) return JSON.stringify({ parent: null });
-    if (args.includes('labels')) return JSON.stringify({ labels: [] });
-    return JSON.stringify({ comments: [] });
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+    if (args.includes('labels,comments')) return JSON.stringify({ labels: [], comments: [] });
+    return '';
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: () => '', gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'fail');
+});
+
+// #2383: verification-brief.md's Oversight-floor gate legitimately skips
+// demo:pending bootstrap for a non-parent record whose risk/size facets
+// don't clear the configured floor -- it records that outcome into
+// verify-expectations.json's `oversightExempt` array, and this check must
+// render 'skip' for that record instead of the false-positive 'fail' it
+// rendered before this fix (record #1841's own wrap-up, cited in #2383).
+test('acceptance-labeling check skips (never fails) an issue listed in verify-expectations.json oversightExempt, even with no demo:pending label', () => {
+  const runDir = makeTmpDir('verify-acceptance-oversightexempt-');
+  writeSpecFile(runDir, '900', 900);
+  writeExpectations(runDir, { version: 1, memory: [], upstream: [], oversightExempt: [900] });
+  const calls = [];
+  const fakeGh = (args) => {
+    calls.push(args);
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    // Any other call -- parent resolution, labels, comments -- is a bug: an
+    // exempted issue must never reach gh at all.
+    throw new Error(`unexpected gh call: ${JSON.stringify(args)}`);
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'acceptance-labeling');
+  assert.strictEqual(row.result, 'skip', row.detail);
+  assert.match(row.detail, /oversight floor/);
+  assert.strictEqual(calls.filter((a) => a[0] !== '--version').length, 0, 'an exempted issue must never call gh beyond the availability probe');
+});
+
+// A mixed run (one exempted record, one that genuinely needs checking) must
+// only narrow the checked population -- the non-exempt issue's own
+// pass/fail verdict is unaffected by its sibling's exemption.
+test('acceptance-labeling check still fails a non-exempt issue when a sibling issue is oversight-exempt', () => {
+  const runDir = makeTmpDir('verify-acceptance-oversightexempt-mixed-');
+  writeSpecFile(runDir, '900', 900);
+  writeSpecFile(runDir, '901', 901);
+  writeExpectations(runDir, { version: 1, memory: [], upstream: [], oversightExempt: [900] });
+  const fakeGh = (args) => {
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+    if (args.includes('labels,comments')) return JSON.stringify({ labels: [], comments: [] });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'acceptance-labeling');
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#901/);
+  assert.doesNotMatch(row.detail, /#900/);
 });
 
 test('acceptance-labeling check skips when no resolved issues found', () => {
@@ -831,12 +947,13 @@ test('acceptance-labeling check resolves issue numbers from verify-expectations.
   writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [900] });
   const fakeGh = (args) => {
     if (args[0] === '--version') return 'gh version 2.0.0';
-    if (args.includes('parent')) return JSON.stringify({});
-    if (args.includes('labels')) return JSON.stringify({ labels: [{ name: 'demo:pending' }] });
-    if (args.includes('comments')) return JSON.stringify({ comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+    if (args.includes('labels,comments')) {
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+    }
     return '';
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: () => '', gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'pass', row.detail);
 });
@@ -848,19 +965,18 @@ test('acceptance-labeling check redirects to a resolvable parent, never checking
   const fakeGh = (args) => {
     calls.push(args);
     if (args[0] === '--version') return 'gh version 2.0.0';
-    if (args.includes('parent')) return JSON.stringify({ parent: { number: 898 } });
-    if (args.includes('labels')) return JSON.stringify({ labels: [{ name: 'demo:pending' }] });
-    if (args.includes('comments')) return JSON.stringify({ comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), 898);
+    if (args.includes('labels,comments')) {
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+    }
     return '';
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: () => '', gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'pass');
-  const labelCalls = calls.filter((a) => a.includes('labels'));
-  assert.strictEqual(labelCalls.length, 1);
-  assert.strictEqual(labelCalls[0][2], '898', 'the labels check must target the parent #898, not the sub-issue #900');
-  const commentCalls = calls.filter((a) => a[0] === 'issue' && a.includes('comments'));
-  assert.strictEqual(commentCalls[0][2], '898', 'the comments check must target the parent #898, not the sub-issue #900');
+  const issueCalls = calls.filter((a) => a[0] === 'issue' && a.includes('labels,comments'));
+  assert.strictEqual(issueCalls.length, 1);
+  assert.strictEqual(issueCalls[0][2], '898', 'the labels/comments check must target the parent #898, not the sub-issue #900');
 });
 
 test('acceptance-labeling check queries a shared parent exactly once for two sub-issues', () => {
@@ -871,18 +987,17 @@ test('acceptance-labeling check queries a shared parent exactly once for two sub
   const fakeGh = (args) => {
     calls.push(args);
     if (args[0] === '--version') return 'gh version 2.0.0';
-    if (args.includes('parent')) return JSON.stringify({ parent: { number: 898 } });
-    if (args.includes('labels')) return JSON.stringify({ labels: [{ name: 'demo:pending' }] });
-    if (args.includes('comments')) return JSON.stringify({ comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), 898);
+    if (args.includes('labels,comments')) {
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+    }
     return '';
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: () => '', gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'pass');
-  const labelCalls = calls.filter((a) => a.includes('labels'));
-  assert.strictEqual(labelCalls.length, 1, 'parent #898 must only be checked once despite two sub-issues resolving to it');
-  const commentCalls = calls.filter((a) => a[0] === 'issue' && a.includes('comments'));
-  assert.strictEqual(commentCalls.length, 1, 'parent #898 comments must only be fetched once');
+  const issueCalls = calls.filter((a) => a[0] === 'issue' && a.includes('labels,comments'));
+  assert.strictEqual(issueCalls.length, 1, 'parent #898 must only be checked once despite two sub-issues resolving to it');
   assert.strictEqual(row.detail, '');
 });
 
@@ -892,17 +1007,19 @@ test('acceptance-labeling check passes via the pr-first pointer+brief form (full
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ pr: { number: 1199 } }));
   const fakeGh = (args) => {
     if (args[0] === '--version') return 'gh version 2.0.0';
-    if (args.includes('parent')) return JSON.stringify({ parent: null });
-    if (args.includes('labels')) return JSON.stringify({ labels: [{ name: 'demo:pending' }] });
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
     if (args[0] === 'pr' && args[1] === 'view') {
       return JSON.stringify({ comments: [{ body: '<!-- run-comment: brief -->\n\n## Verification Brief\n### Confirmed\n' }] });
     }
-    if (args.includes('comments')) {
-      return JSON.stringify({ comments: [{ body: 'Verification Brief posted to PR #1199: https://github.com/org/repo/pull/1199' }] });
+    if (args.includes('labels,comments')) {
+      return JSON.stringify({
+        labels: [{ name: 'demo:pending' }],
+        comments: [{ body: 'Verification Brief posted to PR #1199: https://github.com/org/repo/pull/1199' }],
+      });
     }
     return '';
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: () => '', gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'pass');
 });
@@ -913,32 +1030,34 @@ test('acceptance-labeling check fails when the pr-first pointer is present but t
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ pr: { number: 1199 } }));
   const fakeGh = (args) => {
     if (args[0] === '--version') return 'gh version 2.0.0';
-    if (args.includes('parent')) return JSON.stringify({ parent: null });
-    if (args.includes('labels')) return JSON.stringify({ labels: [{ name: 'demo:pending' }] });
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
     if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ comments: [] });
-    if (args.includes('comments')) {
-      return JSON.stringify({ comments: [{ body: 'Verification Brief posted to PR #1199: https://github.com/org/repo/pull/1199' }] });
+    if (args.includes('labels,comments')) {
+      return JSON.stringify({
+        labels: [{ name: 'demo:pending' }],
+        comments: [{ body: 'Verification Brief posted to PR #1199: https://github.com/org/repo/pull/1199' }],
+      });
     }
     return '';
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: () => '', gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'fail');
   assert.match(row.detail, /PR #1199/);
 });
 
-test('acceptance-labeling check folds a parent-resolution gh failure into a fail detail instead of throwing', () => {
-  const runDir = makeTmpDir('verify-acceptance-parenterr-');
+// A parent gather failure caused by an unresolvable owner/repo (git remote
+// missing/unparseable) is the same tooling-gap class as a GraphQL throw --
+// it must also render 'unknown', never 'fail', since resolveParent never
+// even reaches `deps.gh` on this path.
+test('acceptance-labeling check renders unknown when owner/repo cannot be resolved from the git remote', () => {
+  const runDir = makeTmpDir('verify-acceptance-noremote-');
   writeSpecFile(runDir, '900', 900);
-  const fakeGh = (args) => {
-    if (args[0] === '--version') return 'gh version 2.0.0';
-    if (args.includes('parent')) throw new Error('gh: rate limited');
-    return '';
-  };
+  const fakeGh = (args) => (args[0] === '--version' ? 'gh version 2.0.0' : '');
   const result = runVerify({ runDir, base: 'main', deps: { git: () => '', gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
-  assert.strictEqual(row.result, 'fail');
-  assert.match(row.detail, /#900.*gh issue view \(parent\) failed/);
+  assert.strictEqual(row.result, 'unknown');
+  assert.match(row.detail, /#900.*could not resolve owner\/repo/);
 });
 
 test('resolvePrNumber falls back to run-state.json one level up when absent at runDir itself (multi-spec subdir case)', () => {
@@ -1298,16 +1417,22 @@ test('acceptance-labeling check runs its gh probe, issue view, and comments call
   const cwd = makeCleanRepoRoot();
   writeSpecFile(runDir, '900', 900);
   const calls = [];
+  const gitCalls = [];
+  const fakeGit = (args, callCwd) => {
+    gitCalls.push({ args, cwd: callCwd });
+    return args[0] === 'remote' ? 'https://github.com/org/repo.git' : '';
+  };
   const fakeGh = (args, callCwd) => {
     calls.push({ args, cwd: callCwd });
     if (args[0] === '--version') return 'gh version 2.0.0';
-    if (args.includes('parent')) return JSON.stringify({ parent: null });
-    if (args.includes('labels')) return JSON.stringify({ labels: [{ name: 'demo:pending' }] });
-    if (args.includes('comments')) return JSON.stringify({ comments: [{ body: '## Verification Brief\n### Confirmed' }] });
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+    if (args.includes('labels,comments')) {
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed' }] });
+    }
     return '{}';
   };
   try {
-    const result = runVerify({ runDir, base: 'main', repoRoot, cwd, deps: { git: () => '', gh: fakeGh } });
+    const result = runVerify({ runDir, base: 'main', repoRoot, cwd, deps: { git: fakeGit, gh: fakeGh } });
     const row = result.rows.find((r) => r.check === 'acceptance-labeling');
     assert.strictEqual(row.result, 'pass', row.detail);
     assert.ok(calls.length > 0, 'expected at least one gh call');
@@ -1315,6 +1440,10 @@ test('acceptance-labeling check runs its gh probe, issue view, and comments call
       assert.strictEqual(call.cwd, cwd, `gh ${call.args.join(' ')} must run against the injected cwd`);
       assert.notStrictEqual(call.cwd, repoRoot);
     }
+    const remoteCall = gitCalls.find((c) => c.args[0] === 'remote');
+    assert.ok(remoteCall, 'expected resolveParent to resolve owner/repo via a git remote call');
+    assert.strictEqual(remoteCall.cwd, cwd, 'git remote get-url must run against the injected cwd');
+    assert.notStrictEqual(remoteCall.cwd, repoRoot);
   } finally {
     fs.rmSync(repoRoot, { recursive: true, force: true });
     fs.rmSync(cwd, { recursive: true, force: true });

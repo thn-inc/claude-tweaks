@@ -47,7 +47,7 @@ const { execFileSync } = require('child_process');
 const release = require('./lib/release-claim/release');
 const { formatEntry, appendEntry, resolveTarget } = require('./lib/log-decision/append');
 const { defaultRunner: gitDefaultRunner } = require('./lib/issues/claims-git-cas');
-const { parseRepo, ghAvailable } = require('./lib/repo-resolve');
+const { parseRepo, ghAvailable, repoSlug } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: release-claim.js <issue> --run <run-dir> --reason <reason> [--link <url>] [--remove-grants] [--remove-in-progress] [--keep-in-progress-label] [--repo owner/name] [--sweep] [--section "/<skill>"] [--step <text>] [--help]\n';
 const EXIT = { released: 0, 'already-released': 3, 'skipped-not-owner': 4, unreadable: 5, failed: 1 };
@@ -84,8 +84,8 @@ function parseArgs(argv) {
 // #2090: resolve whether the target issue is currently open or closed, for a
 // sweep's `sweep.issueClosed` decision. Never assumes closed on a failed
 // read — the caller must abort the release rather than guess.
-function resolveIssueState(runner, owner, repo, issue) {
-  const out = runner(['issue', 'view', String(issue), '--repo', `${owner}/${repo}`, '--json', 'state', '-q', '.state']);
+function resolveIssueState(runner, repoSpec, issue) {
+  const out = runner(['issue', 'view', String(issue), '--repo', repoSlug(repoSpec), '--json', 'state', '-q', '.state']);
   return String(out).trim().toUpperCase();
 }
 
@@ -135,7 +135,7 @@ function run(argv, deps = realDeps) {
   }
   let remote = null;
   if (!o.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = o.repo ? parseRepo(`github.com/${o.repo}`) : parseRepo(remote);
+  const repoSpec = o.repo ? parseRepo(o.repo.split('/').length >= 3 ? o.repo : `github.com/${o.repo}`) : parseRepo(remote);
   if (!repoSpec) { deps.stderr('release-claim.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
   // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'
   // (#1153 review finding). release.releaseClaim -> lib/issues/claim-store.js interpolates
@@ -169,14 +169,14 @@ function run(argv, deps = realDeps) {
   let sweep;
   if (o.sweep) {
     let state;
-    try { state = resolveIssueState(deps.runner, repoSpec.owner, repoSpec.repo, issue); } catch (err) {
+    try { state = resolveIssueState(deps.runner, repoSpec, issue); } catch (err) {
       deps.stderr(`release-claim.js: --sweep could not resolve #${issue}'s open/closed state — aborting rather than assuming closed: ${err && err.message}\n`);
       return 1;
     }
     sweep = { issueClosed: state === 'CLOSED' };
   }
   const r = release.releaseClaim({
-    owner: repoSpec.owner, repo: repoSpec.repo, issueNumber: issue, runId, reason, link: o.link || undefined, sweep,
+    owner: repoSpec.owner, repo: repoSpec.repo, host: repoSpec.host, issueNumber: issue, runId, reason, link: o.link || undefined, sweep,
     removeGrants: o.removeGrants, removeInProgress, runner: deps.runner, gitRunner: deps.gitRunner, now: deps.now(),
   });
   for (const label of r.labelsFailed) {

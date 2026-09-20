@@ -42,7 +42,7 @@ Files whose path contains any of these segments are treated as frontend regardle
 A file matches the frontend predicate if **any** of the following is true:
 
 1. Its extension (lowercase) is in the trigger-extension table above.
-2. Its path (forward-slash normalized) contains any segment from the trigger-path table above as a directory boundary (i.e., surrounded by `/` or at start/end with `/`).
+2. Its path (forward-slash normalized) contains any segment from the trigger-path table above as a directory boundary (i.e., surrounded by `/` or at start/end with `/`) — **except** when the path also matches `app/api/` or `pages/api/` as adjacent segments, in which case the `app`/`pages` segment match does not count (#1786). This exclusion only withdraws the segment match; an extension match from clause 1 still wins (an `app/api/x/page.tsx` file still matches, on its extension).
 
 If at least one file in the target list matches, the diff is frontend → proceed. If zero match, return `{skipped: "non-frontend (sniff)"}`.
 
@@ -54,6 +54,7 @@ If at least one file in the target list matches, the diff is frontend → procee
 - `.py`, `.rb`, `.go`, `.rs`, `.java`, etc. — server-side languages
 - `.sql` — database schema/migrations
 - `Dockerfile`, `Makefile`, etc. — infrastructure
+- Next.js API route handlers — `app/api/**/route.{ts,js}`, `pages/api/**` — render nothing; excluded from the `app`/`pages` segment rule even though they sit under those segments (#1786)
 
 A backend project that touches only `.ts`/`.js` files outside `/components/`, `/pages/`, etc. correctly returns the skip — this is the dominant case for false-positive avoidance.
 

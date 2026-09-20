@@ -66,7 +66,8 @@ test('carries the unattended-firing standing constraint, scoped to what the kick
   assert.ok(skill.includes('report it as blocked and stop, not self-resolve'));
   assert.ok(skill.includes('terminal `## Next Actions` block is a required handoff, not a deferred plan'));
   assert.ok(skill.includes('Close with what was done and what was left undone.'));
-  // The Interaction style directive is byte-identical across skills and must not
-  // be edited to reference this constraint (house-structure pin).
-  assert.ok(skill.includes('> **Interaction style:** Single decisions → one `AskUserQuestion` call'));
+  // #1909: the Interaction style directive no longer lives inline in any
+  // SKILL.md (moved to the SessionStart hook injection) — this constraint
+  // text must not have been merged into or confused with it.
+  assert.ok(!skill.includes('> **Interaction style:**'));
 });

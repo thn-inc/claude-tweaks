@@ -3,8 +3,6 @@ name: build
 description: Use when implementing a work record or design doc end-to-end. Accepts a record reference (#N) for full lifecycle tracking, or a design doc path to skip /claude-tweaks:specify and build directly from brainstorming output.
 argument-hint: "[#<n>|<design-doc-path>|<topic>] [subagent|batched] [auto] [worktree|current-branch] [profile=<fast|standard|capable|frontier>] [ops=confirm]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
-
 
 # Build — Implement a spec end-to-end with worktree, plan audit, and lifecycle tracking
 
@@ -71,6 +69,8 @@ Materialize the record into a spec-shaped build file via `skills/flow/materializ
 
 ### Spec Step 2: Check for Existing Plan
 
+**Premise-check routing first (#1829).** Read `premise.satisfiedAtBase` from the materialize envelope (`skills/flow/materialize.md`'s "Premise check" paragraph) before searching for a plan. When `true` — the record's own `Premise-check:` command exited non-zero at this checkout's base, meaning the Current State claim it named no longer holds — do not search for a plan or proceed to Spec Step 3: route directly to the Wrap-Up Review Console's staged-close surface (the `staged/premise-satisfied-{n}.md` proposal materialize.js already wrote) rather than planning a build against a premise that is already gone. When `premise` is `null` (no `Premise-check:` line, or the check itself couldn't run), this paragraph is a no-op — proceed below exactly as before.
+
 Search `docs/superpowers/plans/` for a plan matching this spec (by number, topic, or date) — this is where `/superpowers:writing-plans` actually writes execution plans (see Spec Step 3 below); `docs/plans/` holds claude-tweaks pipeline state (ledger, audit caches), not plans.
 
 #### If a plan exists:
@@ -114,6 +114,8 @@ Invoke the `/superpowers:writing-plans` skill. After it saves the plan file, **s
 Context to provide to `/superpowers:writing-plans`:
 - The full spec content (including Current State, Gotchas, and acceptance criteria)
 - Any existing progress identified in Spec Step 2
+
+**Verify `ASSUMPTION — verify at build:` markers first (#1769).** Before invoking `/superpowers:writing-plans`, probe every `## Gotchas` bullet carrying that literal prefix (`_shared/premise-verification.md`) against this worktree — the same claim decomposition/shaping could not settle at spec time now has a real checkout to check. Log each outcome as one `decisions.md` line per `_shared/auto-decision-log.md` (`confirmed` or `reversed`, naming the probe). A reversed assumption is folded into the context handed to `/superpowers:writing-plans` as the corrected fact — never silently dropped, and never left for the plan to build on the original, now-disproven claim.
 
 The plan will be written to `docs/superpowers/plans/YYYY-MM-DD-{feature}.md`.
 
@@ -165,7 +167,7 @@ Proceed to **Common Step 2**.
 
 If the user specified `worktree`, set up the isolated workspace via `/superpowers:using-git-worktrees` after a pre-flight branch-divergence check and (when in auto mode) pre-authorizing the consent prompt.
 
-For the full procedure (pre-flight branch-divergence check with auto-mode behavior, consent prompt handling, and worktree-creation failure recovery table), read the composed `worktree-setup` bundle rather than the two source files separately whenever `$PIPELINE_RUN_DIR` is already set (a `/claude-tweaks:flow`-parented build exports it before this step): `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step worktree-setup "${CLAUDE_PLUGIN_ROOT}/skills/_shared/worktree-setup.md" "${CLAUDE_PLUGIN_ROOT}/skills/build/worktree-setup.md"`, then read `$PIPELINE_RUN_DIR/context/worktree-setup.md` — the shared staleness-protection procedures (`_shared/worktree-setup.md`) followed by this skill's own entry path (`worktree-setup.md` in this skill's directory). A standalone `/build` (record or design mode) normally reaches this step with no `$PIPELINE_RUN_DIR` — record mode mints its directory later, at Spec Step 1's materialize, and design mode never mints one — so unless one already resolves (`_shared/pipeline-run-dir.md`'s most-recent-matching-directory step, or the inline-export resume form) it reads the two files directly; if the compose command is unavailable or exits non-zero, read the named source files directly.
+For the full procedure (pre-flight branch-divergence check with auto-mode behavior, consent prompt handling, and worktree-creation failure recovery table), read the composed `worktree-setup` bundle rather than the two source files separately whenever `$PIPELINE_RUN_DIR` is already set (a `/claude-tweaks:flow`-parented build exports it before this step): `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step worktree-setup "${CLAUDE_PLUGIN_ROOT}/skills/_shared/worktree-setup.md" "${CLAUDE_PLUGIN_ROOT}/skills/build/worktree-setup.md"`, then read `$PIPELINE_RUN_DIR/context/worktree-setup.md` — the shared staleness-protection procedures (`_shared/worktree-setup.md`) followed by this skill's own entry path (`worktree-setup.md` in this skill's directory). A standalone `/build` (record or design mode) normally reaches this step with no `$PIPELINE_RUN_DIR` — record mode mints its directory later, at Spec Step 1's materialize, and design mode never mints one — so unless one already resolves (`_shared/run-dir-resolution.md`'s step 2 most-recent-matching-directory step, or the inline-export resume form) it reads the two files directly; if the compose command is unavailable or exits non-zero, read the named source files directly.
 
 If the user did not specify `worktree`, skip this step.
 

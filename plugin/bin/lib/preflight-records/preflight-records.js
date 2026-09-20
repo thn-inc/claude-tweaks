@@ -18,6 +18,7 @@ const {
 } = require('../issues/record');
 const { extractKeyFiles, groupByFileOverlap } = require('../issues/grouping');
 const { fetchNativeDependencies: sharedFetchNativeDependencies } = require('../issues/native-dependencies');
+const { repoSlug } = require('../repo-resolve');
 
 function defaultRunner(args) {
   return execFileSync('gh', args, { encoding: 'utf8' });
@@ -36,12 +37,27 @@ function errorText(err) {
 // one failing record never aborts the batch; the caller (the CLI) decides
 // whether any `failed` entries abort the whole run. All-at-once reporting:
 // every record is attempted regardless of earlier failures.
-function fetchIssues({ numbers, runner = defaultRunner } = {}) {
+//
+// #2538: `owner`/`repo`/`host` (optional — a caller with no resolvable repo
+// spec, e.g. body-text mode with no readable origin remote, omits all
+// three) thread `--repo {host/}owner/repo` onto every call, mirroring
+// materialize.js's `ghView`/`fetchNativeDependencies`'s own `--hostname`
+// convention rather than relying on `gh`'s own cwd-derived auto-detection —
+// the same explicit-over-implicit posture #2240/#2425 already established
+// for this codebase's other gh-issue/gh-graphql call sites. `repoSlug`
+// resolves to bare `owner/repo` on github.com (a true no-op there — see
+// this record's own Gotchas) and `host/owner/repo` on a GitHub Enterprise
+// Server host, where a `gh` call cannot otherwise resolve the target
+// repository at all.
+function fetchIssues({
+  numbers, owner, repo, host, runner = defaultRunner,
+} = {}) {
   const ok = new Map();
   const failed = [];
+  const repoArgs = owner && repo ? ['--repo', repoSlug({ host, owner, repo })] : [];
   for (const n of numbers) {
     try {
-      const out = runner(['issue', 'view', String(n), '--json', 'number,title,body,labels']);
+      const out = runner(['issue', 'view', String(n), '--json', 'number,title,body,labels', ...repoArgs]);
       ok.set(n, JSON.parse(out));
     } catch (err) {
       failed.push({ number: n, error: errorText(err) });
@@ -62,8 +78,12 @@ function fetchIssues({ numbers, runner = defaultRunner } = {}) {
 // `defaultRunner` (execFileSync('gh', ...)) the same way `fetchIssues` above
 // does; native-dependencies.js itself takes no default so its behavior stays
 // fully injectable for every caller.
-function fetchNativeDependencies({ numbers, owner, repo, runner = defaultRunner } = {}) {
-  return sharedFetchNativeDependencies({ numbers, owner, repo, runner });
+function fetchNativeDependencies({
+  numbers, owner, repo, host, runner = defaultRunner,
+} = {}) {
+  return sharedFetchNativeDependencies({
+    numbers, owner, repo, host, runner,
+  });
 }
 
 // issues: Map<number, issue>, dependencies: Map<number, {blockedBy, openBlocker}> | null

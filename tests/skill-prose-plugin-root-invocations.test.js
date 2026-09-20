@@ -13,12 +13,13 @@ const path = require('node:path');
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 
 // Documented exemptions — file (relative to plugin/skills/) -> why repo-relative is correct there.
-// release.js is a maintainer command run from a clean main checkout of the claude-tweaks repo
-// itself (CLAUDE.md `## Releasing`, docs/releasing.md use the identical form), never from an
-// installed consumer plugin.
-const EXEMPT = new Map([
-  ['flow/summary-template.md', /node plugin\/bin\/release\.js/],
-]);
+// #2257 removed the last one: flow/summary-template.md's Next Actions release row used to
+// render a literal `node plugin/bin/release.js {minor|patch} "{summary}"` (a maintainer command
+// run from a clean main checkout of this repo itself, CLAUDE.md's `## Releasing` / docs/releasing.md
+// use the identical form) — it now renders `/claude-tweaks:release` instead
+// (`_shared/release-recommendation-gate.md`), a skill reference valid in any installed plugin, so
+// there is no longer a repo-relative invocation there to exempt.
+const EXEMPT = new Map([]);
 
 function* walk(dir) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {

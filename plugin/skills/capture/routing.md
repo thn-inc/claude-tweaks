@@ -16,7 +16,7 @@ Absorb never targets: (1) a closed record, (2) a `parent-issue` carrier, (3) a `
 
 | `--route` value | Action |
 |---|---|
-| `brainstorm` | Open `/superpowers:brainstorming` with the new backlog record as input |
+| `brainstorm` | Open `/superpowers:brainstorming` with the new backlog record as input — composed per `brainstorming-ceremony.md` in the `/claude-tweaks:specify` skill's directory (see Route execution below) |
 | `keep` | Record stays in backlog state — explicitly, no label asserts this; no further routing |
 | `absorb:42` | Absorb the record into record `#42`; close the new record as not-planned |
 
@@ -56,6 +56,8 @@ The call has 3 options only when absorb is visible, in either ordering; otherwis
 | `brainstorm` | Opens the child skill with the record's text as input | Opens the child skill with the issue title + body as input (reference `#{issue-number}`) |
 | `keep` | No further action — the record stays as-is at `specs/{id}-{slug}.md`, no `stage:` frontmatter | No further action — the issue is already open, `by:capture`-labeled, with no stage label. That **is** the backlog state; there is nothing to add. |
 | `absorb:N` | Appends `## Absorbed: {YYYY-MM-DD} — {captured title}` under N's existing sections (never rewriting content above), delete the absorbed record's file | Per the Absorb mechanics below, then comment `Absorbed into #N.`, then `gh issue close {n} --reason "not planned"` |
+
+**Ceremony wiring (#2347):** before invoking `/superpowers:brainstorming` on either driver, follow `brainstorming-ceremony.md`'s Steps 1-3 in the `/claude-tweaks:specify` skill's directory — resolve `design-ceremony` via `resolve-policy.js`, compose the actual `args` via `compose-brainstorm-args.js` over the record's text (local-files) or issue title + body (github-issues), then pass that command's stdout, verbatim, as the Skill tool call's `args`. This is the fourth claude-tweaks-owned `/superpowers:brainstorming` call site honoring `design-ceremony` — the same procedure `/specify`'s cases 1, 4, and 5 already use, so `fast-lane`'s consolidated-design-sections behavior applies here identically to a bare topic or record routed through `/specify`.
 
 **Absorb mechanics:** the append is composed once via `_shared/github-write-transport.md` (`gh issue edit {N} --body-file`); past 55,000 post-append chars (vs 65,536 cap), comment instead. Re-judges `size:` per `_shared/work-record.md` — raise only, never lower; `priority:*` stays unwritten, suggest higher priority in output. Names target + append; invalidates the session snapshot per `_shared/record-queue-fetch.md`. **Applies on both drivers:** the `size:`-raise-only and unwritten-`priority` rules, and the `## Absorbed:` heading naming convention, are driver-agnostic — `local-files` re-judges `size:` by rewriting the target's `size:` frontmatter facet in place via `writeRecord` (raise only, same rule), leaves `priority` unwritten, and appends under the identical `## Absorbed:` heading (the local-files column of the Route execution table above already shows this — nothing further to add there). `local-files` has no session-scoped snapshot to invalidate — every read is fresh off disk — so that step is `github-issues`-only.
 

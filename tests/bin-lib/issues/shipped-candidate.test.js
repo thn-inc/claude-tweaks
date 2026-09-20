@@ -81,6 +81,26 @@ test('no Key Files section and no title match can never classify strong, even wi
   assert.strictEqual(result.tier, 'weak');
 });
 
+// ── missing prFiles entry is not vacuous coverage (#2339) ──────────────────
+
+test('a record with Key Files but no prFiles entry for the mentioning PR cannot classify strong on missing data alone', () => {
+  const record = {
+    number: 5,
+    title: 'Completely unrelated wording here',
+    createdAt: '2026-01-01T00:00:00Z',
+    body: withKeyFiles(['a.js', 'b.js']),
+  };
+  const mentions = [{ number: 6, title: 'Also totally different words entirely', state: 'MERGED', merged: true, mergedAt: '2026-02-01T00:00:00Z' }];
+  // PR 6 has no entry in prFiles at all (files not fetched for it, per
+  // shipped-candidate.js's own comment on the map) — distinct from the test
+  // above, which covers an EMPTY record Key Files list. Here the record DOES
+  // have Key Files; the missing map entry must not be treated the same as
+  // "files cover everything."
+  const prFiles = new Map();
+  const result = classifyShipped(record, mentions, { prFiles });
+  assert.strictEqual(result.tier, 'weak');
+});
+
 // ── merged-before-createdAt is excluded entirely (not even weak) ───────────
 
 test('a PR merged before the record was created is not a shipped-candidate signal at all', () => {

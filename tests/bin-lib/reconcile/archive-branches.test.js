@@ -279,6 +279,26 @@ test('archiveBranches: aged squash-merged branch screened null (deleted-ref blin
   assert.strictEqual(git(dir, 'tag', '--list', 'archive/*').trim(), ''); // no archive tag for a proven merge
 });
 
+// The young counterpart to F2 above: no `now` override, so the branch's
+// natural tip age (seconds, from makeSquashMergedRepo()) stays well under
+// BRANCH_AGE_DAYS. Before this fix, a young screen-null branch's
+// provisional verdict is 'skip' (reason 'too-young') and squashCandidate
+// was false for a null screen, so it never reached the confirm at all —
+// it read too-young forever, regardless of what actually merged. #2322.
+test('archiveBranches: YOUNG squash-merged branch screened null (deleted-ref blind spot) still deletes via squash provenance on the first pass, no tag — #2322', () => {
+  const { dir, squash } = makeSquashMergedRepo();
+  let confirms = 0;
+  const resolvePrBulk = () => new Map([['build/squashed', null]]); // screen blind spot
+  const resolvePr = (...args) => { confirms += 1; return confirmMergedVia(squash)(...args); }; // confirm still carries mergeCommit
+  const r = archiveBranches({ cwd: dir, integration: 'main', dryRun: false, resolvePr, resolvePrBulk });
+  const entry = r.entries.find((e) => e.name === 'build/squashed');
+  assert.strictEqual(entry.action, 'delete');
+  assert.strictEqual(entry.reason, 'squash-merged');
+  assert.strictEqual(confirms, 1); // confirmed exactly once, even though it's young
+  assert.strictEqual(git(dir, 'branch', '--list', 'build/squashed').trim(), ''); // really gone
+  assert.strictEqual(git(dir, 'tag', '--list', 'archive/*').trim(), ''); // no archive tag for a proven merge
+});
+
 test('archiveBranches: unmerged aged branch gets archive tag then delete; young branch skipped', () => {
   const dir = makeRepo();
   const old = new Date(Date.now() - 20 * DAY).toISOString();
@@ -416,7 +436,7 @@ test('archiveBranches: archive/* tag older than 90 days is deleted, younger kept
 const MERGED_PR_1083 = { number: 30, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' };
 const OPEN_PR_1083 = { number: 31, state: 'OPEN', mergedAt: null, updatedAt: '2026-02-01T00:00:00Z' };
 
-test('screen: all-skip pass makes zero per-branch resolver calls, one bulk call, screen-sourced reasons', () => {
+test('screen: all-skip pass makes one per-branch resolver call for the routed screen-null candidate (#2322), zero for the OPEN-screened one, one bulk call', () => {
   const dir = makeRepo();
   // Reuse the squash-merge cherry-equivalent fixture shape from the first
   // archiveBranches test above — its provisional destiny doesn't matter
@@ -430,10 +450,11 @@ test('screen: all-skip pass makes zero per-branch resolver calls, one bulk call,
 
   // A second in-scope branch, screened null (the deleted-ref blind spot),
   // young (~2 days) and NOT cherry-equivalent to main — its provisional
-  // verdict is 'skip' (too-young) off decideArchive's age check alone, via
-  // the normal per-branch cherry path (a git-only op), never a gh call.
-  // Pins that a provisional-skip branch makes no per-branch gh call
-  // regardless of which fast path (OPEN screen vs. too-young age) produced it.
+  // verdict is 'skip' (too-young) off decideArchive's age check alone.
+  // Unlike build/eq (OPEN-screened, short-circuits before cherry), a screen-
+  // null branch is now routed to confirm per-branch after #2322: it will make
+  // one confirm call, but still skip with 'too-young' (age rules apply to
+  // null-screen confirms too). The test documents this routing change.
   const recent = new Date(Date.now() - 2 * DAY).toISOString();
   git(dir, 'checkout', '-b', 'build/young2');
   fs.writeFileSync(path.join(dir, 'y2.txt'), 'y2\n');
@@ -453,7 +474,7 @@ test('screen: all-skip pass makes zero per-branch resolver calls, one bulk call,
   const resolvePr = () => { confirmCalls += 1; return null; };
   const r = archiveBranches({ cwd: dir, integration: 'main', dryRun: false, resolvePr, resolvePrBulk });
   assert.equal(bulkCalls, 1);
-  assert.equal(confirmCalls, 0);
+  assert.equal(confirmCalls, 1); // build/young2 now routes to confirm via #2322 widening
   const entry = r.entries.find((e) => e.name === 'build/eq');
   assert.deepEqual(entry, { name: 'build/eq', kind: 'branch', action: 'skip', reason: 'pr-open' });
   assert.match(git(dir, 'branch', '--list', 'build/eq'), /build\/eq/); // still exists locally

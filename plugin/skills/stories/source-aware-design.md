@@ -9,7 +9,7 @@ Covers four related concerns:
 3. **Source-Aware Story Design** (Step 3) — translate SourceContract signals into stories
 4. **Diff-Aware Design** (Step 3, update mode) — detect stale stories via locator, source-file, and behavioral-contract checks
 
-For framework-specific extraction patterns (Zod / yup / Joi schemas, JSX input props, `useState` heuristics, conditional rendering, the full SourceContract schema, and the React introspection workflow), read `source-analysis.md` in this skill's directory.
+For framework-specific extraction patterns (Zod / yup / Joi schemas, JSX input props, `useState` heuristics, conditional rendering, and the full SourceContract schema), read `source-analysis.md` in this skill's directory.
 
 ## 1. Source Analysis (Step 1.5)
 
@@ -35,7 +35,7 @@ d. Skip non-behavioral files: `*.css`, `*.scss`, `*.module.css`, `*.test.*`, `*.
 
 ### Extract Behavioral Signals
 
-From each read source file (React/TSX only in v1), extract input constraints, validation schemas, user-triggerable state variables, conditional rendering, error paths, API call patterns, and toast/notification triggers. For the framework-specific extraction patterns, the full SourceContract schema, and the React runtime introspection workflow (`agent-browser react tree` + `react inspect`), read `source-analysis.md` in this skill's directory.
+From each read source file (React/TSX only in v1), extract input constraints, validation schemas, user-triggerable state variables, conditional rendering, error paths, API call patterns, and toast/notification triggers. For the framework-specific extraction patterns and the full SourceContract schema, read `source-analysis.md` in this skill's directory. React component-tree inspection was available under `agent-browser` and has no Playwright CLI equivalent as of this migration.
 
 ### Graceful Degradation
 
@@ -84,7 +84,7 @@ When update mode is active, compare discovered pages against EXISTING_STORIES:
    - If a story with this URL already exists in EXISTING_STORIES → mark as **EXISTING**.
    - If no story exists for this URL → mark as **NEW**.
 2. For each EXISTING story, check for staleness via three mechanisms:
-   - **Locator staleness:** For each existing semantic locator (see types in `story-examples.md`), run `agent-browser --session <name> find <type> <args>` against the current snapshot. If find returns 0 matches → mark as **STALE** and add to STALE_LOCATORS list. If find returns >1 matches → mark as **STALE_AMBIGUOUS** (locator needs disambiguation) and add to STALE_LOCATORS as well — an ambiguous locator is unresolvable-as-written and needs regeneration exactly like a zero-match one.
+   - **Locator staleness:** For each existing semantic locator (see types in `story-examples.md`), take a `playwright-cli -s=<name> snapshot` and search its output for an element matching the locator (Playwright CLI's `find` is read-only and text-only, so it cannot resolve role/testid/css locators — locator resolution goes through `snapshot` instead). Zero matches → mark as **STALE** and add to STALE_LOCATORS list. More than one match → mark as **STALE_AMBIGUOUS** (locator needs disambiguation) and add to STALE_LOCATORS as well — an ambiguous locator is unresolvable-as-written and needs regeneration exactly like a zero-match one.
    - **Source file staleness:** If the existing story has a non-empty `source_files` array, run `git diff --name-only` and check whether any of those files appear in the diff. If so → mark as **STALE** and add to STALE_SOURCE_FILES list, even if all locators still resolve.
    - **Behavioral contract staleness:** If the existing story has a non-empty `source_files` array and those files were not flagged by `git diff`, re-run source analysis (Step 1.5) on those files and compare the resulting SourceContract against the behavioral signals embedded in the existing story's steps. If a behavioral constraint has changed — for example, an input's `max` changed from 100 to 200, a validation rule was added or removed, a new error path was introduced, or a conditional rendering condition changed — mark as **STALE** even though the files did not appear in git diff (the diff may have been committed in a previous cycle). Add to STALE_SOURCE_FILES with reason: "behavioral contract changed: {description of change}."
 3. **EXISTING** stories with no stale locators AND no stale source files AND no behavioral contract changes: **SKIP** — do not regenerate.
@@ -97,8 +97,8 @@ Log the diff summary:
 - If STALE_LOCATORS is non-empty, emit a warning:
   ```
   WARNING: The following locators no longer resolve in the live snapshot:
-    - Story '{storyId}', step '{stepDescription}': locator '{locator-spec}' — find returned 0 matches
-    - Story '{storyId}', step '{stepDescription}': locator '{locator-spec}' — find returned {N} matches (ambiguous)
+    - Story '{storyId}', step '{stepDescription}': locator '{locator-spec}' — snapshot returned 0 matches
+    - Story '{storyId}', step '{stepDescription}': locator '{locator-spec}' — snapshot returned {N} matches (ambiguous)
   ```
 - If STALE_SOURCE_FILES is non-empty, emit a warning:
   ```

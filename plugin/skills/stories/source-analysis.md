@@ -215,31 +215,8 @@ notifications.show({ title: "...", message: "..." })
 
 Record: the trigger context (success/error/action), the message pattern.
 
-## React introspection (opt-in)
-
-When source files are `.tsx` or `.jsx`, agent-browser provides runtime react tree
-introspection that complements static source analysis.
-
-After opening the page in a session:
-```
-agent-browser --session <name> react tree
-```
-
-This returns the component hierarchy — useful for distinguishing which form input
-renders which behavior when source analysis is ambiguous (e.g., multiple
-`<Input>` components on the same page).
-
-For a specific element (after `find` resolves it to `@eN`):
-```
-agent-browser --session <name> react inspect @eN
-```
-
-Returns props, state hooks, and component file path for the element. Use this to
-verify behavioral contracts against runtime values (e.g., a validation schema's
-constraints reflected in the live `aria-describedby` text).
-
-Skip silently for non-React apps. Do not attempt this when source files are
-`.vue`, `.svelte`, plain HTML, or server-rendered templates.
+React component-tree inspection was available under `agent-browser` and has no Playwright CLI
+equivalent as of this migration.
 
 ## SourceContract Output Format
 

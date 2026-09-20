@@ -1,8 +1,0 @@
-routine_id: "trig_01K9Gz8HTzevnYSq8kKXUeL5"
-template: tidy
-template_version: 8
-model: "claude-sonnet-5"
-created_at: "2026-08-11T07:28:05Z"
-schedule: "0 4 * * 0"
-console_url: "https://claude.ai/code/routines/trig_01K9Gz8HTzevnYSq8kKXUeL5"
-branch: "main"

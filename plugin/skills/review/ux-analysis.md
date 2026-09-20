@@ -65,14 +65,14 @@ When page inventories from multiple pages are available, compare patterns across
 >
 > ```markdown
 > OUTPUT FORMAT (required):
-> First line: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED
-> Then per observation:
+> Per observation:
 > - [Severity] {path/screenshot.png} — {observation} — Evidence: {what you saw}
 >   Suggested fix: {one line}
 >
 > Severity scale: critical / high / medium / low / info — but the UX lens ceiling is `high`, so use only high / medium / low / info here
 > If no observations: return literal text "No observations."
 > Do not add narration or grouping headers.
+> Status line (required): the last non-empty line of your reply must read exactly `STATUS: DONE` (or DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED).
 > ```
 
 For each screenshot (or the subset reviewed by the Task agent), observe:
