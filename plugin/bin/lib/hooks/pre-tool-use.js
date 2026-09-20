@@ -67,6 +67,12 @@ function pluginRoot() {
 // the exemption did not — do not read the dead justification as evidence this
 // can be removed.
 const PIPELINE_STATE_DIR = path.join('.claude-tweaks', 'pipelines');
+
+// #2526: the claim-stamp branch's own work-backend read — mirrors
+// bin/lib/wrap-up/pack.js's WORK_BACKEND_RE/readWorkBackend exactly (a
+// worktree's CLAUDE.md `work-backend:` line). `local-files` has no claim
+// infrastructure at all, so only `github-issues` arms the check below.
+const WORK_BACKEND_RE = /^work-backend:\s*(\S+)\s*$/m;
 const POLICY_FILE = path.join('.claude-tweaks', 'policy.yml');
 
 // #959: the one documented worktree-local exception (_shared/pipeline-run-dir.md's
@@ -548,6 +554,19 @@ function checkTeardownGate(ctx, teardownWarnings = []) {
     if (source === 'bash') {
       const targetReal = safeReal(target);
       if (targetReal && cwdReal && isPathContained(cwdReal, targetReal, { orEqual: true })) {
+        // #2282: this deny previously left no friction-event trace at all —
+        // unlike the assigned-run deny below (wd-deny), which was already
+        // logged. Same ownedRun/stampAdHocRunDirForDenial rigor as that
+        // sibling deny in this same function, for consistency within it.
+        const ownCwdOwnedRun = ctx.ownedRun || {};
+        const ownCwdTrustedDir = (ownCwdOwnedRun.dir && ownCwdOwnedRun.attribution !== 'fallback') ? ownCwdOwnedRun.dir : null;
+        const ownCwdStamped = ownCwdTrustedDir ? null : ctxLib.stampAdHocRunDirForDenial({ ...ctx, ownedRun: {} });
+        const ownCwdDenialRunDir = ownCwdTrustedDir || ownCwdStamped || ownCwdOwnedRun.dir;
+        const ownCwdAttribution = ownCwdStamped ? undefined : ownCwdOwnedRun.attribution;
+        const ownCwdTestTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
+        ctxLib.appendEvent(
+          ownCwdDenialRunDir, 'wd-guard-refusal', { path: target, reason: 'own-cwd-removal', ...ownCwdTestTag }, ownCwdAttribution,
+        );
         return denyResult(
           `claude-tweaks teardown gate: this \`git worktree remove\` targets ${target}, which is the ` +
           `current session's own working directory (or an ancestor of it). Removing it deletes the ` +
@@ -696,6 +715,17 @@ function checkPipelineShadowGuard(ctx) {
   for (const candidate of candidates) {
     const shadow = shadowPipelineRunDir(candidate);
     if (!shadow) continue;
+    // #2282: previously left no friction-event trace — mirrors
+    // checkWorktreeRequired's own gate-denial breadcrumb below (same
+    // ownedRun-first, stamp-a-new-one-if-absent posture; this guard fires
+    // unconditionally, before any pipeline run necessarily exists for THIS
+    // session, same as that one).
+    const ownedRun = ctx.ownedRun || {};
+    const denialRunDir = ownedRun.dir || ctxLib.stampAdHocRunDirForDenial(ctx);
+    const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
+    ctxLib.appendEvent(
+      denialRunDir, 'wd-guard-refusal', { tool: toolName, path: candidate, reason: 'shadow-run-dir', ...testTag }, ownedRun.attribution,
+    );
     return denyResult(
       `claude-tweaks: refusing to create ${shadow.runDirCandidate} — a NEW pipeline run directory inside a ` +
       `linked worktree (${shadow.worktreeRoot}). Run directories are anchored to the main checkout ` +
@@ -1144,6 +1174,66 @@ function hasLoggedPrDegrade(runDir) {
   }
 }
 
+// #2526: this run's own materialized record numbers, read straight off the
+// live worktree filesystem (work/{n}-spec.md, or its multi-record
+// spec-{slug}/work/{n}-spec.md form — the same two shapes
+// hasMaterializeCommit's own pathspec covers) rather than git history: what
+// the claim-stamp branch below needs is "which numbers must have a claim
+// logged", a question about the current tree, not "did a commit land" (that
+// is hasMaterializeCommit's own, already-passed precondition by the time
+// this runs). Read-only, best-effort — any fs error (unreadable directory, a
+// race with a concurrent write) resolves to an empty array, never a throw;
+// ambiguity never triggers a deny for a record this check couldn't even name.
+function getMaterializedRecordNumbers(worktreeRoot, runDir) {
+  const numbers = new Set();
+  const runId = path.basename(runDir);
+  if (!runId || runId === '.' || runId === '..') return [];
+  const base = path.join(worktreeRoot, PIPELINE_STATE_DIR, runId);
+  const specFileRe = /^(\d+)-spec\.md$/;
+  const collectFrom = (dir) => {
+    let entries;
+    try { entries = fs.readdirSync(dir); } catch { return; }
+    for (const entry of entries) {
+      const m = specFileRe.exec(entry);
+      if (m) numbers.add(Number(m[1]));
+    }
+  };
+  collectFrom(path.join(base, 'work'));
+  let baseEntries;
+  try { baseEntries = fs.readdirSync(base, { withFileTypes: true }); } catch { baseEntries = []; }
+  for (const entry of baseEntries) {
+    if (entry.isDirectory() && entry.name.startsWith('spec-')) collectFrom(path.join(base, entry.name, 'work'));
+  }
+  return [...numbers];
+}
+
+// #2526: mirrors hasLoggedPrDegrade's exact shape above — read-only,
+// best-effort, a missing/unreadable decisions.md resolves to false (not
+// logged), never a throw. The trailing word boundary keeps "#7" from
+// false-matching a longer number sharing the same prefix ("claimed #700").
+function hasLoggedClaim(runDir, n) {
+  try {
+    const body = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+    return new RegExp(`Step 2\\.8: claimed #${n}\\b`).test(body);
+  } catch {
+    return false;
+  }
+}
+
+// #2526: mirrors bin/lib/wrap-up/pack.js's own readWorkBackend, reduced to
+// the bare value this gate needs — an absent file/line (unconfigured) reads
+// as null, same as any other backend the claim-stamp branch below does not
+// recognize as `github-issues`: nothing to enforce a claim against.
+function readWorkBackendValue(worktreeRoot) {
+  try {
+    const text = fs.readFileSync(path.join(worktreeRoot, 'CLAUDE.md'), 'utf8');
+    const m = WORK_BACKEND_RE.exec(text);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
 // Chicken-and-egg escape hatch for the PR-stamp branch below (#989): a push
 // that is establishing `dir`'s current branch on `origin` for the very first
 // time (no upstream tracking ref configured yet) IS pr-early-run-lifecycle.md
@@ -1312,7 +1402,18 @@ function stampCheckOutcome(ctx, stamp, wtRoot, warnings, warnText, denyText, isF
     warnings.push(warnText);
     return {};
   }
-  ctxLib.appendEvent(ctx.runDir, 'bookkeeping-stamp-deny', { stamp, worktree: wtRoot });
+  // #1798: the two session-id values isForeignSessionCall itself compares —
+  // an unset ownerSessionId (never recorded, e.g. an env-var-propagation gap
+  // in the original record-worktree call) is indistinguishable, by that
+  // function alone, from a genuinely-owning session whose stamp just hasn't
+  // landed yet. Recording both here turns a future occurrence of this shape
+  // into a one-events.jsonl-read diagnosis (ownerSessionId: null means
+  // "ambiguous, not necessarily foreign") instead of a fresh investigation —
+  // the reporter's own original ask. `null`, never `undefined`, so the field
+  // is always present in the written JSON.
+  const ownerSessionId = (ctx.runState && typeof ctx.runState.sessionId === 'string' && ctx.runState.sessionId) || null;
+  const callerSessionId = (ctx.input && typeof ctx.input.session_id === 'string' && ctx.input.session_id) || null;
+  ctxLib.appendEvent(ctx.runDir, 'bookkeeping-stamp-deny', { stamp, worktree: wtRoot, ownerSessionId, callerSessionId });
   return denyResult(denyText);
 }
 
@@ -1410,7 +1511,13 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   // covered tool call of the run, including a `local-merge` run's steady
   // state, which never sets `runState.pr` and previously never reached this
   // short-circuit at all. Purely an optimization; it changes no deny/allow
-  // outcome.
+  // outcome. Safe to leave `claimExempt` out of this condition (#2526): the
+  // claim-stamp branch below runs strictly BEFORE the worktree-stamp branch
+  // in source order, so by the time `runState.worktree` is ever set at all,
+  // `claimExempt` must already have been memoized (or the run would have
+  // been denied at the claim branch first, on an earlier covered call,
+  // before worktree stamping could ever happen) — this short-circuit can
+  // never fire while a claim-stamp denial is still pending.
   if (runState.worktree && (runState.pr || runState.prExempt)) return {};
 
   const { repoRoot: wtRoot, isLinkedWorktree, indeterminate } = wtDetect.repoInfo(ctx.cwd || process.cwd());
@@ -1502,6 +1609,42 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   if (isStampsGateExemptTarget(ctx)) return {};
 
   if (!hasMaterializeCommit(wtRoot, ctx.runDir)) return {};
+
+  // #2526: mirrors the PR-stamp branch below exactly, one step earlier in
+  // the pipeline — flow's Step 2.8 claim happens before Step 4's build (and
+  // therefore before this run's materialize commit could ever land), so by
+  // the time hasMaterializeCommit is true, every one of this run's records
+  // should already carry a "Step 2.8: claimed #{n}" decisions.md line
+  // (flow/claim-targets.md). `work-backend: local-files` has no claim
+  // infrastructure at all and is exempted unconditionally, same posture as
+  // this file's other backend-scoped checks.
+  if (!runState.claimExempt) {
+    const workBackend = readWorkBackendValue(wtRoot);
+    if (workBackend === 'github-issues') {
+      const recordNumbers = getMaterializedRecordNumbers(wtRoot, ctx.runDir);
+      const missing = recordNumbers.filter((n) => !hasLoggedClaim(ctx.runDir, n));
+      if (missing.length > 0) {
+        const missingList = missing.map((n) => `#${n}`).join(', ');
+        return stampCheckOutcome(
+          ctx, 'claim-log', wtRoot, warnings,
+          `claude-tweaks: pipeline run ${path.basename(ctx.runDir)} has a landed materialize commit but no recorded ` +
+          `Step 2.8 claim log for ${missingList}; allowing this call because it comes from a different session than ` +
+          `the one that recorded the run. If this IS that pipeline's work, log the claim from the owning session ` +
+          `rather than stamping another session's run state (docs/hooks.md).`,
+          `claude-tweaks: a materialize commit already landed in ${wtRoot} but decisions.md carries no "Step 2.8: ` +
+          `claimed #{n}" line for ${missingList} — flow/claim-targets.md's Step 2.8 claim step is non-skippable, ` +
+          `even when Spec Step 2 judges no further implementation is needed [IL-131]. Claim the missing target(s) via ` +
+          `bin/claim-targets.js and log it: node "${pluginRoot()}/bin/log-decision.js" --run "${ctx.runDir}" ` +
+          `--section "/flow" --step "Step 2.8" --status AUTO --reversibility high --text "claimed #{n} ` +
+          `(bin/claim-targets.js, transport: {git|contents-api|mcp})"`,
+          isForeignSessionCall(ctx),
+        );
+      }
+      ctxLib.writeRunState(ctx.runDir, { claimExempt: true });
+    } else {
+      ctxLib.writeRunState(ctx.runDir, { claimExempt: true });
+    }
+  }
 
   if (!runState.worktree) {
     return stampCheckOutcome(

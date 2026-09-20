@@ -26,6 +26,9 @@ const SHAPED_BODY_NO_STAMP = [
   '',
   '## Acceptance Criteria',
   '1. It works',
+  '',
+  '## Release Note',
+  'Fixed the thing.',
 ].join('\n');
 
 function shapedBodyWithStamp(sha) {
@@ -41,6 +44,9 @@ function shapedBodyWithStamp(sha) {
     '',
     '## Acceptance Criteria',
     '1. It works',
+    '',
+    '## Release Note',
+    'Fixed the thing.',
   ].join('\n');
 }
 

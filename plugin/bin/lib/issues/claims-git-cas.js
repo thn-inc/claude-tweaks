@@ -186,6 +186,157 @@ function writeClaimBlobGit({
   }
 }
 
+// Parse `git cat-file --batch`'s streamed output. Each requested object is
+// framed as one header line (`{sha} {type} {size}\n`, or `{sha} missing\n`
+// for a sha that doesn't resolve) followed — for a resolved object — by
+// exactly `{size}` content bytes and a single trailing newline. Slicing by
+// the declared byte length (never by splitting on '\n') is what keeps this
+// correct for claim JSON pretty-printed with embedded newlines (#2613's own
+// Gotcha) — a naive line-based split would truncate at the object's first
+// internal newline instead of its real end.
+function parseCatFileBatch(buf) {
+  const entries = [];
+  let offset = 0;
+  while (offset < buf.length) {
+    const nl = buf.indexOf(0x0a, offset);
+    if (nl === -1) break;
+    const header = buf.slice(offset, nl).toString('utf8');
+    offset = nl + 1;
+    const parts = header.split(' ');
+    if (parts.length === 2 && parts[1] === 'missing') {
+      entries.push({ sha: parts[0], missing: true });
+      continue;
+    }
+    const [sha, , sizeStr] = parts;
+    const size = parseInt(sizeStr, 10);
+    const content = buf.slice(offset, offset + size);
+    offset += size + 1; // +1 skips the single trailing newline git appends after content
+    entries.push({ sha, missing: false, content });
+  }
+  return entries;
+}
+
+// {issueNumbers?, tip, runner} -> {tipSha, results: {[issueNumber]: {content,
+// tipSha, absent, failure}}, failure}
+// Batched counterpart to readClaimBlobGit (#2613) — replaces N per-blob `git
+// show` subprocess calls with exactly 2 total, regardless of registry size:
+// one `git ls-tree -r {tip} -- claims/` (which doubles as the full-keyspace
+// listing itself — `issue-claims-backstops.md`'s "Primary: list the claims/
+// blob keyspace" step) and one `git cat-file --batch` fed every target
+// blob's sha over stdin. `tip` is a caller-resolved commit sha (the same
+// `knownTip` shape #1467 established for readClaimBlobGit) — this function
+// never fetches on its own, so its own call count stays fixed at 2 whether
+// the caller already had a tip from a prior read/write in the same batch, or
+// resolved one via a single upstream fetch+rev-parse.
+// `issueNumbers` is optional: omit it to read the FULL keyspace discovered
+// by the ls-tree call (every `claims/issue-{n}.json` entry present at `tip`)
+// — the common audit-scan case, where there is no candidate list yet to pass
+// in. Pass an explicit list to read only those issues; a number absent from
+// the tree resolves to `{absent: true}`, exactly as a missing path does for
+// readClaimBlobGit.
+function readClaimBlobsGitBatch({ issueNumbers = null, tip, runner = defaultRunner }) {
+  let lsTreeOut;
+  try {
+    lsTreeOut = runner(['ls-tree', '-r', tip, '--', 'claims/']);
+  } catch {
+    return { tipSha: tip, results: null, failure: 'transport-failure' };
+  }
+  const lsTreeText = Buffer.isBuffer(lsTreeOut) ? lsTreeOut.toString('utf8') : lsTreeOut;
+
+  // path -> sha, and issueNumber -> path, for every claims/issue-{n}.json
+  // entry the tree actually has.
+  const pathToSha = new Map();
+  const issueToPath = new Map();
+  for (const line of lsTreeText.split('\n')) {
+    if (!line) continue;
+    const tabIdx = line.indexOf('\t');
+    if (tabIdx === -1) continue;
+    const meta = line.slice(0, tabIdx).trim().split(/\s+/);
+    const sha = meta[2];
+    const filePath = line.slice(tabIdx + 1);
+    pathToSha.set(filePath, sha);
+    const m = /^claims\/issue-(\d+)\.json$/.exec(filePath);
+    if (m) issueToPath.set(Number(m[1]), filePath);
+  }
+
+  const targetNumbers = issueNumbers === null ? [...issueToPath.keys()] : issueNumbers;
+
+  const results = {};
+  const shaToIssues = new Map();
+  const orderedShas = [];
+  for (const issueNumber of targetNumbers) {
+    const targetPath = claimFilePath(issueNumber);
+    const sha = pathToSha.get(targetPath);
+    if (!sha) {
+      results[issueNumber] = {
+        content: null, tipSha: tip, absent: true, failure: null,
+      };
+      continue;
+    }
+    if (!shaToIssues.has(sha)) {
+      shaToIssues.set(sha, []);
+      orderedShas.push(sha);
+    }
+    shaToIssues.get(sha).push(issueNumber);
+  }
+
+  if (orderedShas.length === 0) {
+    return { tipSha: tip, results, failure: null };
+  }
+
+  const markTransportFailure = () => {
+    for (const sha of orderedShas) {
+      for (const issueNumber of shaToIssues.get(sha)) {
+        results[issueNumber] = {
+          content: null, tipSha: tip, absent: false, failure: 'transport-failure',
+        };
+      }
+    }
+  };
+
+  let batchRaw;
+  try {
+    batchRaw = runner(['cat-file', '--batch'], { input: `${orderedShas.join('\n')}\n`, encoding: 'buffer' });
+  } catch {
+    markTransportFailure();
+    return { tipSha: tip, results, failure: null };
+  }
+
+  const buf = Buffer.isBuffer(batchRaw) ? batchRaw : Buffer.from(batchRaw, 'utf8');
+  for (const entry of parseCatFileBatch(buf)) {
+    const issues = shaToIssues.get(entry.sha) || [];
+    for (const issueNumber of issues) {
+      results[issueNumber] = entry.missing
+        ? {
+          content: null, tipSha: tip, absent: false, failure: 'transport-failure',
+        }
+        : {
+          content: entry.content.toString('utf8'), tipSha: tip, absent: false, failure: null,
+        };
+    }
+  }
+  // Defensive: any target sha `cat-file --batch` didn't echo back at all
+  // (shouldn't happen against a real git object store) still resolves to a
+  // classifiable outcome rather than silently vanishing from `results`.
+  for (const sha of orderedShas) {
+    for (const issueNumber of shaToIssues.get(sha)) {
+      if (!(issueNumber in results)) {
+        results[issueNumber] = {
+          content: null, tipSha: tip, absent: false, failure: 'transport-failure',
+        };
+      }
+    }
+  }
+
+  return { tipSha: tip, results, failure: null };
+}
+
 module.exports = {
-  classifyGitError, CLAIMS_BRANCH, errText, readClaimBlobGit, writeClaimBlobGit, defaultRunner,
+  classifyGitError,
+  CLAIMS_BRANCH,
+  errText,
+  readClaimBlobGit,
+  writeClaimBlobGit,
+  readClaimBlobsGitBatch,
+  defaultRunner,
 };

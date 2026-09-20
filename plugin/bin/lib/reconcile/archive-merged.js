@@ -14,7 +14,9 @@ const {
   iterRunDirsWithState, writeRunState, readRunState, readEventLines,
 } = require('../hooks/context');
 const { resolvePrState, resolvePrStateByNumber, resolveIssueStateByNumber } = require('./pr-state');
-const { recordResidueSuccess, trackResidue, pruneResidueFailures } = require('./cache');
+const {
+  recordResidueSuccess, trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
+} = require('./cache');
 const { escalateResidue } = require('./escalate-residue');
 const { isWorktreeAlwaysOn } = require('../policy');
 const { repoSlugOf } = require('./release-merged');
@@ -1186,9 +1188,13 @@ function classifyRunDir(ctx, now = Date.now()) {
 // under its own 'structurally-stuck' key so the two failure classes never
 // blur together. A no-op below the staleness gate above — most skips, on
 // most passes, are perfectly healthy in-flight runs and never reach here.
-function trackStuckSkip(root, repoSlug, dir, reason, { escalate = escalateResidue, runner } = {}) {
+// `cacheTarget` is either a plain root string (single-call behavior,
+// unchanged) or a `beginCacheBatch` handle (#1235 — batched across
+// `archiveMerged`'s item loops); see cache.js's own comment on the two
+// shapes.
+function trackStuckSkip(cacheTarget, repoSlug, dir, reason, { escalate = escalateResidue, runner } = {}) {
   if (!isStructurallyStuck(dir, reason)) return;
-  trackResidue(root, repoSlug, 'structurally-stuck', dir, { failed: true, lastError: `stuck at ${reason}` }, { escalate, runner });
+  trackResidue(cacheTarget, repoSlug, 'structurally-stuck', dir, { failed: true, lastError: `stuck at ${reason}` }, { escalate, runner });
 }
 
 // #644 Deliverable 2 — every archive attempt's outcome, whichever of the two
@@ -1205,14 +1211,16 @@ function trackStuckSkip(root, repoSlug, dir, reason, { escalate = escalateResidu
 // `escalate` is injectable (defaults to the real `escalateResidue`, which
 // shells to `gh`) so a test can assert escalation actually fired — and how
 // many times — without touching real `gh` or the network.
-function trackArchiveResult(root, repoSlug, dir, result, { escalate = escalateResidue, runner } = {}) {
+// `cacheTarget` — plain root string, or a `beginCacheBatch` handle (#1235) —
+// see `trackStuckSkip`'s own comment above.
+function trackArchiveResult(cacheTarget, repoSlug, dir, result, { escalate = escalateResidue, runner } = {}) {
   if (result.ok) {
-    recordResidueSuccess(root, 'move-failed', dir);
+    recordResidueSuccess(cacheTarget, 'move-failed', dir);
     // #1613: a dir that just successfully archived can no longer be
     // structurally stuck — clear any prior tracking so a future, unrelated
     // reuse of this path (unlikely — paths are timestamp-uniqued, but cheap
     // to guard) starts a fresh count rather than resuming a stale one.
-    recordResidueSuccess(root, 'structurally-stuck', dir);
+    recordResidueSuccess(cacheTarget, 'structurally-stuck', dir);
     return;
   }
   // Archive-specific vocabulary — not part of the shared branching cache.js's
@@ -1222,7 +1230,7 @@ function trackArchiveResult(root, repoSlug, dir, result, { escalate = escalateRe
   // Mirrors reap-merged.js's trackReapResidue: forward the underlying error
   // (now captured at each move-failed catch site above) into the shared
   // residue-tracking/escalation choke point.
-  trackResidue(root, repoSlug, 'move-failed', dir, { failed: true, lastError: result.lastError }, { escalate, runner });
+  trackResidue(cacheTarget, repoSlug, 'move-failed', dir, { failed: true, lastError: result.lastError }, { escalate, runner });
 }
 
 // #1544: `iterRunDirsWithState` (context.js) excludes every `status:
@@ -1253,10 +1261,10 @@ function iterCleanRunDirs(root) {
 // specific `produceResult` is ready to run. Pulled out only because the tail
 // itself was five byte-identical copies; every branch keeps its own
 // condition, comment, and `continue` at the call site.
-function finishArchiveAttempt(root, repoSlug, dir, dryRun, runner, archived, skipped, produceResult) {
+function finishArchiveAttempt(cacheTarget, repoSlug, dir, dryRun, runner, archived, skipped, produceResult) {
   if (dryRun) { archived.push(dir); return; }
   const result = produceResult();
-  trackArchiveResult(root, repoSlug, dir, result, { runner });
+  trackArchiveResult(cacheTarget, repoSlug, dir, result, { runner });
   if (!result.ok) { skipped.push({ runDir: dir, reason: result.reason }); return; }
   archived.push(dir);
 }
@@ -1271,7 +1279,7 @@ function finishArchiveAttempt(root, repoSlug, dir, dryRun, runner, archived, ski
 // visibility); the clean loop does not (see this file's clean-loop comment
 // for why that asymmetry is intentional, not a gap to "fix").
 function archiveMergedRun({
-  root, repoSlug, dir, branch, dryRun, onSkip, runner,
+  root, repoSlug, dir, branch, dryRun, onSkip, runner, cacheTarget = root,
 }) {
   const prState = resolvePrState(root, branch);
   const consoleState = readConsoleState(dir);
@@ -1288,7 +1296,7 @@ function archiveMergedRun({
   if (dryRun) return { outcome: 'archived' };
 
   const result = archiveRunDir(root, dir);
-  trackArchiveResult(root, repoSlug, dir, result, { runner });
+  trackArchiveResult(cacheTarget, repoSlug, dir, result, { runner });
   if (!result.ok) return { outcome: 'skipped', reason: result.reason };
   return { outcome: 'archived' };
 }
@@ -1305,6 +1313,11 @@ function archiveMerged({
 
   const wtList = runGit(['worktree', 'list', '--porcelain'], root);
   const worktrees = wtList.failure ? [] : parseWorktreeList(wtList.stdout);
+
+  // #1235: one read before both loops below, one write after — instead of
+  // one read-modify-write per archived/skipped/stuck item. See cache.js's
+  // `beginCacheBatch` for the atomicity tradeoff this accepts.
+  const cacheBatch = beginCacheBatch(root);
 
   for (const { dir, state } of iterRunDirsWithState(root)) {
     // #1892 Deliverable 2: the split state — archive twin already exists,
@@ -1330,7 +1343,7 @@ function archiveMerged({
         });
         continue;
       }
-      finishArchiveAttempt(root, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
       continue;
     }
 
@@ -1346,7 +1359,7 @@ function archiveMerged({
     // escalation on success (trackArchiveResult's own success branch clears
     // both).
     if (isClosedSlugStuck(root, dir, state)) {
-      finishArchiveAttempt(root, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
       continue;
     }
 
@@ -1381,7 +1394,7 @@ function archiveMerged({
       // git mv + commit — same (root, dir) signature and {ok, reason} contract,
       // so the result handling below is shared. A bare mint with nothing
       // tracked keeps the fs-only move; see hasTrackedContent above.
-      finishArchiveAttempt(root, repoSlug, dir, dryRun, runner, archived, skipped, () => (
+      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => (
         hasTrackedContent(root, dir) ? archiveRunDir(root, dir) : archiveOrphanedMint(root, dir)
       ));
       continue;
@@ -1404,7 +1417,7 @@ function archiveMerged({
       // is the whole point — and only close it once the move has actually
       // landed.
       const archiveResult = archiveRunDir(root, dir);
-      trackArchiveResult(root, repoSlug, dir, archiveResult, { runner });
+      trackArchiveResult(cacheBatch, repoSlug, dir, archiveResult, { runner });
       if (!archiveResult.ok) {
         // Non-'move-failed' reasons (mkdir-failed, git-mv-failed,
         // commit-failed, ls-files-failed, tracked-entry, readdir-failed) are
@@ -1467,7 +1480,7 @@ function archiveMerged({
       // orphaned-mint branch above makes the same choice per-dir via
       // hasTrackedContent (#2227) — this branch is unconditional because an
       // ad-hoc dir is always a real session, tracked spec or not.
-      finishArchiveAttempt(root, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
       continue;
     }
 
@@ -1534,21 +1547,21 @@ function archiveMerged({
             // case, where a console really may still be pending).
             const consoleReason = byNumber.state === 'CLOSED' ? 'console-never-rendered-pr-closed' : 'console-never-rendered';
             skipped.push({ runDir: dir, reason: consoleReason });
-            trackStuckSkip(root, repoSlug, dir, consoleReason, { runner });
+            trackStuckSkip(cacheBatch, repoSlug, dir, consoleReason, { runner });
             continue;
           }
-          finishArchiveAttempt(root, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+          finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
           continue;
         }
       }
       skipped.push({ runDir: dir, reason });
-      trackStuckSkip(root, repoSlug, dir, reason, { runner });
+      trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner });
       continue;
     }
 
     const runResult = archiveMergedRun({
-      root, repoSlug, dir, branch, dryRun, runner,
-      onSkip: (reason) => trackStuckSkip(root, repoSlug, dir, reason, { runner }),
+      root, repoSlug, dir, branch, dryRun, runner, cacheTarget: cacheBatch,
+      onSkip: (reason) => trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner }),
     });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }
     skipped.push({ runDir: dir, reason: runResult.reason });
@@ -1567,10 +1580,19 @@ function archiveMerged({
     const branch = fallbackBranch(root, dir, state);
     if (!branch) { skipped.push({ runDir: dir, reason: 'no-branch' }); continue; }
 
-    const runResult = archiveMergedRun({ root, repoSlug, dir, branch, dryRun, runner });
+    const runResult = archiveMergedRun({
+      root, repoSlug, dir, branch, dryRun, runner, cacheTarget: cacheBatch,
+    });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }
     skipped.push({ runDir: dir, reason: runResult.reason });
   }
+
+  // #1235: flush the batched residue updates from both loops above BEFORE
+  // pruneResidueFailures reads the cache — that call does its own
+  // independent readCache/writeCache round-trip (a single call per pass, not
+  // per item, so it was never part of this record's batching scope), and
+  // needs to see this pass's own updates rather than stale on-disk state.
+  commitCacheBatch(cacheBatch);
 
   // #1892 Deliverable 3: prune residueFailures entries whose live path no
   // longer exists — after every archival attempt this pass made, so a path

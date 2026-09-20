@@ -32,7 +32,9 @@
 'use strict';
 
 const { execFileSync } = require('child_process');
-const { parseRepo, ghAvailable, remoteUrl } = require('./repo-resolve');
+const {
+  parseRepo, ghAvailable, remoteUrl, repoResolutionNote,
+} = require('./repo-resolve');
 const { LARGE_MAX_BUFFER_BYTES } = require('./shared-primitives');
 
 const isPos = (n) => Number.isInteger(n) && n > 0;
@@ -97,6 +99,10 @@ function makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote, runn
       : parseRepo(remote);
     if (!repoSpec) { deps.stderr(`${name}: could not resolve owner/repo — pass --repo owner/name\n`); return 2; }
     const { owner, repo, host } = repoSpec;
+    // #2538 Deliverable 3 — visible only for a resolved non-github.com host;
+    // see repoResolutionNote's own comment for why the common case stays silent.
+    const note = repoResolutionNote(repoSpec);
+    if (note) deps.stderr(`${name}: ${note}\n`);
 
     let fetched;
     try {

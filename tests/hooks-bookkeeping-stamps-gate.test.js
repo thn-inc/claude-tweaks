@@ -202,6 +202,115 @@ test('bookkeeping-stamps gate: materialize commit landed AND worktree stamp pres
   assert.deepStrictEqual(out, {});
 });
 
+// #2526: the claim-stamp branch — mirrors the PR-stamp branch's own test
+// shape immediately above/below. Runs strictly before the worktree-stamp
+// check in source order, so every fixture below leaves `worktree` unset to
+// isolate the claim branch's own verdict from the worktree branch's.
+function writeGithubIssuesClaudeMd(wt) {
+  fs.writeFileSync(path.join(wt, 'CLAUDE.md'), '# Fixture\n\nwork-backend: github-issues\nwork-types: labels\n');
+}
+
+test('bookkeeping-stamps gate (#2526): claim logged -> falls through past the claim branch to the next check (worktree deny), not a claim deny', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  fs.writeFileSync(path.join(run, 'decisions.md'), '# Auto-Decision Log\n\n## /flow\n- AUTO 00:00:00 — Step 2.8: claimed #991 (bin/claim-targets.js, transport: git).\n');
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected the NEXT check (worktree stamp, still unsatisfied) to deny');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
+});
+
+test('bookkeeping-stamps gate (#2526): claim missing after materialize -> deny, naming the missing record', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  const spec = out.json.hookSpecificOutput;
+  assert.strictEqual(spec.permissionDecision, 'deny');
+  assert.match(spec.permissionDecisionReason, /Step 2\.8/);
+  assert.match(spec.permissionDecisionReason, /#991/);
+  assert.match(spec.permissionDecisionReason, /IL-131/);
+  assert.ok(readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'));
+});
+
+test('bookkeeping-stamps gate (#2526): decisions.md exists but names a DIFFERENT record\'s claim -> still deny (no cross-record false-satisfy)', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  fs.writeFileSync(path.join(run, 'decisions.md'), '- AUTO 00:00:00 — Step 2.8: claimed #700 (bin/claim-targets.js, transport: git).\n');
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /#991/);
+});
+
+test('bookkeeping-stamps gate (#2526): work-backend: local-files -> exempt unconditionally (falls through to the worktree deny, never a claim deny)', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  fs.writeFileSync(path.join(wt, 'CLAUDE.md'), '# Fixture\n\nwork-backend: local-files\n');
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
+  assert.ok(!readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'), 'local-files must never trip the claim-log deny');
+});
+
+test('bookkeeping-stamps gate (#2526): no CLAUDE.md at all (unconfigured work-backend) -> exempt unconditionally, same as local-files', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
+});
+
+test('bookkeeping-stamps gate (#2526): a provably foreign-owned run warns instead of denying on the claim branch', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, 'owner-session');
+  const out = pre.run({
+    input: { ...editInput(path.join(wt, 'src', 'x.js')), session_id: 'caller-session' },
+    runDir: run,
+    runState: { status: 'active', sessionId: 'owner-session' },
+    cwd: wt,
+  });
+  assert.ok(!out.json || !out.json.hookSpecificOutput, 'a foreign-owned run must not be denied at the claim branch');
+  assert.match(out.json.systemMessage, /different session/);
+  assert.ok(readEvents(run).some((e) => e.type === 'wd-foreign-session' && e.stamp === 'claim-log'));
+});
+
+test('bookkeeping-stamps gate (#2526): a multi-record run — every record needs its own claim line, one missing still denies naming only that one', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('spec-991-995', 'work', '991-spec.md'));
+  // Materialize the second record's spec file directly (no separate commit
+  // needed — hasMaterializeCommit only needs ONE committed work/ file to arm;
+  // getMaterializedRecordNumbers reads the live tree, uncommitted is fine).
+  const dir995 = path.join(wt, '.claude-tweaks', 'pipelines', RUN_ID, 'spec-991-995', 'work');
+  fs.mkdirSync(dir995, { recursive: true });
+  fs.writeFileSync(path.join(dir995, '995-spec.md'), '---\nrecord: 995\n---\nbody\n');
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  fs.writeFileSync(path.join(run, 'decisions.md'), '- AUTO 00:00:00 — Step 2.8: claimed #991 (bin/claim-targets.js, transport: git).\n');
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  const reason = out.json.hookSpecificOutput.permissionDecisionReason;
+  assert.match(reason, /#995/, 'must name the still-missing record');
+  assert.doesNotMatch(reason, /#991/, 'must not name the already-claimed record');
+});
+
 test('bookkeeping-stamps gate: main checkout (not a linked worktree) -> allow regardless of stamps', () => {
   const main = gitRepo();
   commitMaterializedSpec(main, path.join('work', '991-spec.md'));
@@ -596,6 +705,114 @@ test('bookkeeping-stamps gate (#1259): a distinct ownedRun does NOT loosen the P
   assert.ok(out.json, 'expected a deny — the PR-stamp branch must not consult ownedRun');
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-pr|PR-early/);
+});
+
+// --- #1798 Task 0: empirical premise check — does isForeignSessionCall's
+// owner-vs-caller comparison genuinely fail to distinguish "the owning
+// session, whose sessionId just never got recorded (env-var-propagation
+// failure)" from "a foreign session" on the record-pr branch specifically?
+//
+// FINDING (recorded here per this record's own Task 0 convention, and in
+// steps-and-gates... no, in pre-tool-use.js's own header — see that file):
+// CONFIRMED at the code/fixture level — with runState.sessionId unset,
+// isForeignSessionCall(ctx) returns false (not foreign) regardless of
+// ctx.input.session_id's value, for BOTH a genuinely-owning caller AND a
+// wholly foreign one; stampCheckOutcome's non-foreign branch always denies.
+// This ambiguity is real. It does NOT, however, call for either of the
+// record's own conditional-deliverable options:
+//   (a) folding hasDistinctOwnedRun into the record-pr branch — refuted by
+//       the pre-existing #1259 pin two tests above ("a distinct ownedRun
+//       does NOT loosen the PR-stamp branch — that guard is unchanged",
+//       deliberate, not an oversight) AND because in the true incident
+//       shape ownedRun.dir already EQUALS ctx.runDir for a genuine owner
+//       (the session resolves its own run to the very run being checked),
+//       so hasDistinctOwnedRun stays false regardless — it would not have
+//       changed this incident's outcome even if folded in.
+//   (b) backfilling runState.sessionId mid-flight — even a safe version
+//       (re-reading process.env.CLAUDE_CODE_SESSION_ID, never trusting an
+//       unverified caller-claimed identity) does not change THIS call's own
+//       outcome: if the backfilled owner now equals the caller, `owner !==
+//       caller` is still false (not foreign), so stampCheckOutcome still
+//       denies — the ambiguity was never actually the thing standing between
+//       this call and an allow. The deny for an owning session that has not
+//       yet completed Step 6 (opened the PR) is IL-131's own intended
+//       behavior, not a bug: the gate exists specifically so this step
+//       cannot be judged "already done" and skipped.
+// The reporter's own three observed denials, followed by the stamp
+// "eventually landing," are equally well explained by "the gate correctly
+// held until Step 6 completed" as by "a false positive" — and the original
+// events.jsonl excerpt (bare stamp + worktree, no session-id fields) cannot
+// distinguish the two. That is exactly what Deliverable 2 below fixes: the
+// next occurrence of this shape will show ownerSessionId:null on the denied
+// event, immediately legible as "ambiguous-unset-owner," not requiring a
+// fresh investigation. No behavior-changing conditional fix ships in this
+// build — see this file's own bookkeeping-stamp-deny diagnostic fields
+// instead (added by this same record).
+
+test('#1798 Task 0: runState.sessionId unset + a covered call whose caller session_id matches this run\'s OWN resolved ownedRun (the genuine-owner shape) is still denied — isForeignSessionCall cannot rescue it', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const { run } = mkRunDir(project, wt, undefined); // worktree stamped, sessionId genuinely never recorded
+  const out = pre.run(
+    {
+      input: { ...editInput(path.join(wt, 'src', 'x.js')), session_id: 'genuine-owner-session' },
+      runDir: run,
+      runState: { status: 'active', worktree: wt },
+      ownedRun: { dir: run, attribution: 'session' }, // this IS the caller's own run — the true incident shape
+      cwd: wt,
+    },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  assert.ok(out.json, 'expected a deny — an unset owner cannot be proven to be this specific caller, and IL-131 denies until record-pr lands regardless');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+// --- #1798 Deliverable 2: bookkeeping-stamp-deny carries both compared
+// session-id values, unconditional on Task 0's finding — this is what
+// actually answers the reporter's own request: "log the reason so an
+// owner-session false positive is diagnosable from events.jsonl" without
+// needing a fresh investigation each time.
+
+test('#1798: a bookkeeping-stamp-deny event on the record-pr branch carries ownerSessionId (null when never recorded) and callerSessionId', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const { run } = mkRunDir(project, wt, undefined);
+  pre.run(
+    {
+      input: { ...editInput(path.join(wt, 'src', 'x.js')), session_id: 'caller-session-1' },
+      runDir: run,
+      runState: { status: 'active', worktree: wt },
+      cwd: wt,
+    },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  const denyEvent = readEvents(run).find((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'record-pr');
+  assert.ok(denyEvent, 'expected a bookkeeping-stamp-deny event for record-pr');
+  assert.strictEqual(denyEvent.ownerSessionId, null, 'never-recorded sessionId must read null, not undefined or missing');
+  assert.strictEqual(denyEvent.callerSessionId, 'caller-session-1');
+});
+
+test('#1798: a bookkeeping-stamp-deny event on the record-worktree branch also carries both session-id fields', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const { run } = mkRunDir(project, null, 'owner-session-42'); // no worktree stamped -> record-worktree branch
+  pre.run({
+    input: { ...editInput(path.join(wt, 'src', 'x.js')), session_id: 'owner-session-42' },
+    runDir: run,
+    runState: { status: 'active', sessionId: 'owner-session-42' },
+    ownedRun: { dir: run, attribution: 'session' },
+    cwd: wt,
+  });
+  const denyEvent = readEvents(run).find((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'record-worktree');
+  assert.ok(denyEvent, 'expected a bookkeeping-stamp-deny event for record-worktree');
+  assert.strictEqual(denyEvent.ownerSessionId, 'owner-session-42');
+  assert.strictEqual(denyEvent.callerSessionId, 'owner-session-42');
 });
 
 // --- #1520: end-to-end reproduction of #815's build-phase gap ---

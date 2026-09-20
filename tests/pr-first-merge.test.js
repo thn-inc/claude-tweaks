@@ -174,22 +174,21 @@ test('AC4: every remaining "ready-to-merge" mention across skills/ is local-merg
   assert.deepStrictEqual(offenders, [], `files mentioning ready-to-merge without local-merge scoping: ${offenders.join(', ')}`);
 });
 
-test('Step 4 runs the release-status check before reconcile and stages — never writes — the CHANGELOG backfill (#678)', () => {
+test('Step 4 runs the tag-ancestry release-status check before reconcile (#2257 replaced the CHANGELOG-backfill staging mechanism)', () => {
   const step4 = MERGE_POST_MERGE.indexOf('## Step 4: Post-merge reconcile');
   const step5 = MERGE_POST_MERGE.indexOf('## Step 5: Delete the remote branch');
   assert.ok(step4 > 0 && step5 > step4, 'Step 4 must precede Step 5');
   const section = MERGE_POST_MERGE.slice(step4, step5);
   assert.match(section, /### Step 4\.1: Which release carried this\?/, 'Step 4.1 subheading exists');
   assert.match(section, /### Step 4\.2: Reconcile/, 'Step 4.2 subheading exists');
-  assert.match(section, /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/release\.js" status --merge/, 'Step 4.1 invokes the status subcommand');
-  assert.match(section, /--records/, 'record numbers are passed explicitly');
-  assert.match(section, /staged\/release-backfill-v\{version\}\.md/, 'the already-carried outcome stages the backfill artifact');
-  assert.match(section, /STAGED \{time\}/, 'the staged row is auto-decision-logged');
-  assert.match(section, /never edits `CHANGELOG\.md`/i, 'Step 4 never writes CHANGELOG.md directly');
-  const status = section.indexOf('node "${CLAUDE_PLUGIN_ROOT}/bin/release.js" status');
+  assert.match(section, /git describe --tags --contains --first-parent --match 'v\*'/, 'Step 4.1 resolves via tag ancestry, not the retired bump-commit-walk');
+  assert.doesNotMatch(section, /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/release\.js" status --merge/, 'the old status-subcommand invocation must be fully retired, not left as a dual path');
+  assert.doesNotMatch(section, /staged\/release-backfill-v\{version\}\.md/, '#2257: the release-backfill staging mechanism is retired entirely, no dual-path fallback');
+  assert.match(section, /release status unavailable/, 'a genuine git-describe failure (not "no containing tag") still degrades, never silently reports merged');
+  const describeCall = section.indexOf("git describe --tags --contains --first-parent --match 'v*'");
   const reconcile = section.indexOf('bin/hooks.js" reconcile');
-  assert.ok(status >= 0 && reconcile >= 0, 'both calls must be present within Step 4');
-  assert.ok(status < reconcile, 'the status check now runs before the reconcile call');
+  assert.ok(describeCall >= 0 && reconcile >= 0, 'both calls must be present within Step 4');
+  assert.ok(describeCall < reconcile, 'the release-status check still runs before the reconcile call');
 });
 
 test('the three local-merge fallback sections route the post-merge release-status check to Step 4.1 (#678)', () => {
