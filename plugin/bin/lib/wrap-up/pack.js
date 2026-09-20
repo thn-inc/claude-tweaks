@@ -374,11 +374,7 @@ function ledgerProbe(inputs, deps) {
   // below is only the fallback for every other run (#2563 AC4).
   const runDirLedgerText = readText(deps, path.join(inputs.runDir, 'ledger.md'));
   if (runDirLedgerText !== null) {
-    const one = parseLedger(runDirLedgerText);
-    return {
-      open: one.open, total: one.total, byPhase: one.byPhase, files: ['ledger.md'],
-      unrecognized: one.unrecognized, unrecognizedValues: one.unrecognizedValues,
-    };
+    return { ...parseLedger(runDirLedgerText), files: ['ledger.md'] };
   }
 
   const dir = path.join(inputs.worktree, 'docs', 'plans');
