@@ -79,6 +79,42 @@ test('cli: --run resolving to a worktree-local shadow is refused (exit 3), nothi
   assert.equal(fs.existsSync(path.join(shadow, 'staged')), false);
 });
 
+test('cli: --json writes staged/<id>.json alongside staged/<id><ext> and prints both paths', () => {
+  const { main, runDir, sourceFile } = fixture();
+  const jsonFile = path.join(main, 'sidecar.json');
+  fs.writeFileSync(jsonFile, JSON.stringify([{ tag: 'claim', record: 1, title: 't', action: 'a', command: 'c' }]));
+  const { deps, out } = fakeDeps(main);
+  const code = run(['--run', runDir, '--id', 'review-2', '--file', sourceFile, '--json', jsonFile], deps);
+  assert.equal(code, 0);
+  const written = path.join(runDir, 'staged', 'review-2.patch');
+  const writtenJson = path.join(runDir, 'staged', 'review-2.json');
+  assert.equal(fs.readFileSync(written, 'utf8'), 'diff --git a b\n+x\n');
+  assert.deepEqual(JSON.parse(fs.readFileSync(writtenJson, 'utf8')), [{ tag: 'claim', record: 1, title: 't', action: 'a', command: 'c' }]);
+  const printed = out.join('');
+  assert.ok(printed.includes(written));
+  assert.ok(printed.includes(writtenJson));
+});
+
+test('cli: --json content that is not a JSON array is a malformed invocation (exit 2), nothing written', () => {
+  const { main, runDir, sourceFile } = fixture();
+  const jsonFile = path.join(main, 'sidecar.json');
+  fs.writeFileSync(jsonFile, JSON.stringify({ tag: 'claim' }));
+  const { deps } = fakeDeps(main);
+  const code = run(['--run', runDir, '--id', 'review-2', '--file', sourceFile, '--json', jsonFile], deps);
+  assert.equal(code, 2);
+  assert.equal(fs.existsSync(path.join(runDir, 'staged')), false);
+});
+
+test('cli: --json content that is not valid JSON is a malformed invocation (exit 2)', () => {
+  const { main, runDir, sourceFile } = fixture();
+  const jsonFile = path.join(main, 'sidecar.json');
+  fs.writeFileSync(jsonFile, 'not json');
+  const { deps } = fakeDeps(main);
+  const code = run(['--run', runDir, '--id', 'review-2', '--file', sourceFile, '--json', jsonFile], deps);
+  assert.equal(code, 2);
+  assert.equal(fs.existsSync(path.join(runDir, 'staged')), false);
+});
+
 test('cli: --help prints usage and exits 0 without touching the filesystem', () => {
   const { main } = fixture();
   const { deps, out } = fakeDeps(main);
