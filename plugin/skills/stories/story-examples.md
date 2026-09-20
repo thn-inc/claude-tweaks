@@ -1,6 +1,6 @@
 # Story Examples
 
-All examples use schema v2 — locators are semantic only: `{ role, name? }`, `{ testid }`, `{ text, exact? }`, `{ label }`, `{ placeholder }`. Raw selectors and `@eN` snapshot refs are forbidden in YAML. At runtime, a locator and its step's action execute as one command — `agent-browser --session <name> find <locator> <value> <action> [text]`; the action argument is mandatory (a bare `find` defaults to clicking) — see `agent-browser-reference.md` in the `/claude-tweaks:browse` skill directory for the full operation vocabulary.
+All examples use schema v2 — locators are semantic only: `{ role, name? }`, `{ testid }`, `{ text, exact? }`, `{ label }`, `{ placeholder }`. Raw selectors and `@eN` snapshot refs are forbidden in YAML. At runtime, a locator and its step's action execute as a two-step sequence — `snapshot` to resolve the locator to an `eN` ref, then a separate `click <eN>`/`fill <eN> "<text>"` (Playwright CLI's `find` is read-only and text-only, so it cannot resolve role/testid/css locators or perform an action in one call) — see `playwright-cli-reference.md` in the `/claude-tweaks:browse` skill directory for the full operation vocabulary.
 
 ### Example 1: DOM-only stories (no source files available)
 
@@ -193,7 +193,9 @@ stories:
         locator: { role: switch, name: "Email notifications" }
 ```
 
-Note: `source_files` merges the journey's `files:` frontmatter (`page.tsx`, `profile.ts`) with component-level files discovered during source analysis (`profile-form.tsx`, `password/page.tsx`, `notifications/page.tsx`). The `journey: profile-settings` field enables `/test qa journey=profile-settings` and coverage tracking. The `auth: { vault: "default-user" }` field causes the runtime to invoke `agent-browser --session <story-id> auth login default-user` after `open` and before the first action — credentials never appear in the YAML.
+Note: `source_files` merges the journey's `files:` frontmatter (`page.tsx`, `profile.ts`) with component-level files discovered during source analysis (`profile-form.tsx`, `password/page.tsx`, `notifications/page.tsx`). The `journey: profile-settings` field enables `/test qa journey=profile-settings` and coverage tracking. The `auth: { vault: "default-user" }` field is meant to cause the runtime to log in with the `default-user` vault after `open` and before the first action, so credentials never appear in the YAML.
+<!-- playwright-cli: no equivalent found for agent-browser auth login — see issue Gotchas -->
+(Previously `agent-browser --session <story-id> auth login default-user`.)
 
 ### Example 4: File-level blocks (setup, teardown, target_env)
 
