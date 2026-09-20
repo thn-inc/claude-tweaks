@@ -7,6 +7,7 @@ const {
   tokenizeTitle,
   jaccard,
   isReconcileResidueTitle,
+  DEFAULT_TITLE_SIMILARITY_THRESHOLD,
 } = require('../../../plugin/bin/lib/issues/near-duplicate');
 
 function withKeyFiles(files) {
@@ -63,7 +64,7 @@ test('body-anchor-overlap fires alone on a shared backticked symbol in Current S
 
 // ── thresholds honoured ──────────────────────────────────────────────────────
 
-test('title similarity below the default 0.5 threshold does not fire', () => {
+test(`title similarity below the default ${DEFAULT_TITLE_SIMILARITY_THRESHOLD} threshold does not fire`, () => {
   const subject = { number: 1, title: 'dispatch queue pull script', body: withKeyFiles(['a.js']) };
   const record = { number: 2, title: 'wrap-up review console summary', body: withKeyFiles(['z.js']) };
   assert.deepStrictEqual(findNearDuplicates(subject, [record]), []);

@@ -20,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { compareVersions } = require('../changelog');
+const { isPathContained } = require('../shared-primitives');
 
 const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)$/;
 // Pre-release/build-metadata tags (e.g. `v2.0.0-rc.1`) are not full releases
@@ -41,11 +42,21 @@ const RELEASE_STACK_TABLE = [
   { releaseType: 'dotnet', markers: ['*.csproj', '*.sln'] },
 ];
 
+// Every marker is a `test(name, isDir)` over one root directory entry; all but
+// one ask only "a root-level file whose name matches this pattern".
+function rootFile(re) {
+  return (name, isDir) => !isDir && re.test(name);
+}
+
+const RELEASE_TYPE_VALUES = new Set([...RELEASE_STACK_TABLE.map((row) => row.releaseType), 'simple']);
+
 const CONFLICT_MARKERS = [
-  { tool: 'semantic-release', test: (name, isDir) => !isDir && /^\.releaserc(\..+)?$/.test(name) },
-  { tool: 'semantic-release', test: (name, isDir) => !isDir && /^release\.config\..+$/.test(name) },
+  { tool: 'semantic-release', test: rootFile(/^\.releaserc(\..+)?$/) },
+  { tool: 'semantic-release', test: rootFile(/^release\.config\..+$/) },
   { tool: 'changesets', test: (name, isDir) => isDir && name === '.changeset' },
-  { tool: 'goreleaser', test: (name, isDir) => !isDir && /^\.goreleaser\..+$/.test(name) },
+  { tool: 'goreleaser', test: rootFile(/^\.goreleaser\..+$/) },
+  { tool: 'goreleaser', test: rootFile(/^goreleaser\.ya?ml$/) },
+  { tool: 'standard-version', test: rootFile(/^\.versionrc(\..+)?$/) },
 ];
 
 const CONFIG_FILE = 'release-please-config.json';
@@ -127,6 +138,15 @@ function detectReleaseProcess(root, { integrationModel } = {}) {
       if (marker.test(name, isDir)) return { verdict: 'conflict', tool: marker.tool, evidence: isDir ? `${name}/` : name };
     }
   }
+  // Second pass: semantic-release configured under package.json's `release` key — this needs
+  // file content, not just a name match, so it runs once here rather than as a CONFLICT_MARKERS
+  // entry (whose `test(name, isDir)` signature only ever sees the bare directory listing).
+  if (entries.some((e) => !e.isDir && e.name === 'package.json')) {
+    const release = readJson(path.join(root, 'package.json')).parsed?.release;
+    if (release && typeof release === 'object') {
+      return { verdict: 'conflict', tool: 'semantic-release', evidence: 'package.json' };
+    }
+  }
   if (entries.some((e) => !e.isDir && e.name === CONFIG_FILE)) {
     const result = readJson(path.join(root, CONFIG_FILE));
     if (result.error && result.error !== 'unparseable') {
@@ -164,6 +184,20 @@ function versionOfJson(file) {
   return typeof v === 'string' && SEMVER_RE.test(v) ? v : null;
 }
 
+// Same read as versionOfJson, but keeps readJson's error/parsed distinction
+// long enough to report which of the 6 ways an --extra-file can fail
+// actually happened, instead of collapsing them all to the same message.
+function extraFileProblem(root, extraFile) {
+  const { parsed, error } = readJson(path.join(root, extraFile));
+  if (parsed === undefined && error === undefined) return `--extra-file does not exist: ${extraFile}`;
+  if (error === 'unparseable') return `--extra-file is not valid JSON: ${extraFile}`;
+  if (error) return `--extra-file could not be read: ${extraFile} (${error})`;
+  const v = parsed && typeof parsed === 'object' ? parsed.version : undefined;
+  if (typeof v !== 'string') return `--extra-file has no "version" field: ${extraFile}`;
+  if (!SEMVER_RE.test(v)) return `--extra-file's "version" field is not a valid semver string: ${extraFile}`;
+  return null;
+}
+
 function findSimpleExtraFile(root, entries) {
   const candidates = ['.claude-plugin/plugin.json', 'plugin/.claude-plugin/plugin.json',
     ...entries.filter((e) => !e.isDir && e.name.endsWith('.json')).map((e) => e.name).sort()];
@@ -173,7 +207,27 @@ function findSimpleExtraFile(root, entries) {
   return [];
 }
 
-function resolveReleaseType(root) {
+function resolveReleaseType(root, override) {
+  if (override && (override.releaseType !== undefined || override.extraFile !== undefined)) {
+    // Both or neither: if one is set, both must be set. Past this check,
+    // the entry condition above (at least one defined) plus this parity
+    // check together guarantee both fields are defined.
+    const hasReleaseType = override.releaseType !== undefined;
+    const hasExtraFile = override.extraFile !== undefined;
+    if (hasReleaseType !== hasExtraFile) {
+      throw new Error('releaseType and extraFile must be given together');
+    }
+    if (!RELEASE_TYPE_VALUES.has(override.releaseType)) {
+      throw new Error(`invalid releaseType override: ${override.releaseType}`);
+    }
+    const resolvedExtraFile = path.resolve(root, override.extraFile);
+    if (!isPathContained(resolvedExtraFile, path.resolve(root), { orEqual: true })) {
+      throw new Error(`--extra-file must resolve inside the repo root: ${override.extraFile}`);
+    }
+    const problem = extraFileProblem(root, override.extraFile);
+    if (problem) throw new Error(problem);
+    return { releaseType: override.releaseType, extraFiles: [{ type: 'json', path: override.extraFile, jsonpath: '$.version' }] };
+  }
   const entries = rootEntries(root);
   const matched = RELEASE_STACK_TABLE.filter((row) => row.markers.some((m) => markerMatches(m, entries)));
   if (matched.length === 1) return { releaseType: matched[0].releaseType, extraFiles: [] };
@@ -297,7 +351,7 @@ function normalizeListTagsResult(result) {
 // the prose step to land through init/worktree-policy-finalization.md's
 // isolated-worktree write (a direct edit would be denied under
 // worktree-always, the same reason Step 6 defers its own row).
-function bootstrapRelease({ root, integrationModel, branch, dryRun = false, listTags } = {}) {
+function bootstrapRelease({ root, integrationModel, branch, dryRun = false, listTags, releaseType: releaseTypeOverride, extraFile } = {}) {
   const empty = { written: [], policyRows: [] };
   // A missing/non-directory root is a caller bug (a mistyped --root), never
   // a state this step should detect its way around — throw before any
@@ -315,9 +369,12 @@ function bootstrapRelease({ root, integrationModel, branch, dryRun = false, list
   }
   const detected = detectReleaseProcess(root, { integrationModel });
   if (detected.verdict !== 'fresh') return { ...detected, ...empty };
-  const { releaseType, extraFiles } = resolveReleaseType(root);
+  const { releaseType, extraFiles } = resolveReleaseType(root, { releaseType: releaseTypeOverride, extraFile });
   const { tags, failure: tagsFailure } = normalizeListTagsResult((listTags || defaultListTags)(root));
-  const version = seedManifestVersion({ tags, manifestVersion: readStackManifestVersion(root, releaseType) });
+  const seedSourceVersion = extraFiles.length
+    ? versionOfJson(path.join(root, extraFiles[0].path))
+    : readStackManifestVersion(root, releaseType);
+  const version = seedManifestVersion({ tags, manifestVersion: seedSourceVersion });
   // A manifest-missing re-run (detectReleaseProcess still reports `fresh`
   // when the config already exists in this step's own shape) must not
   // rewrite an already-correct — possibly hand-edited — config; only the
@@ -349,7 +406,7 @@ function bootstrapRelease({ root, integrationModel, branch, dryRun = false, list
       assertSafeWriteTarget(root, rel);
       fs.mkdirSync(path.dirname(full), { recursive: true });
       const resolvedDir = fs.realpathSync(path.dirname(full));
-      if (resolvedDir !== realRoot && !resolvedDir.startsWith(realRoot + path.sep)) {
+      if (!isPathContained(resolvedDir, realRoot, { orEqual: true })) {
         throw new Error(`refusing to write through a symlink: ${rel}`);
       }
       try {
@@ -397,7 +454,7 @@ function assertSafeWriteTarget(root, rel) {
 }
 
 module.exports = {
-  RELEASE_STACK_TABLE, CONFLICT_MARKERS, CONFIG_FILE, MANIFEST_FILE, WORKFLOW_FILE,
+  RELEASE_STACK_TABLE, RELEASE_TYPE_VALUES, CONFLICT_MARKERS, CONFIG_FILE, MANIFEST_FILE, WORKFLOW_FILE,
   isBootstrapShaped, detectReleaseProcess, resolveReleaseType, readStackManifestVersion, seedManifestVersion,
   isValidBranchName, renderWorkflowYaml, renderConfig, renderManifest, renderPolicyRows,
   defaultListTags, bootstrapRelease,

@@ -134,7 +134,9 @@ function changedFilesMode(parsed) {
   const priorStamp = ownGitDir ? readVerifyStamp(ownGitDir) : null;
   let base;
   try {
-    base = resolveBase({ stamp: priorStamp, integrationBranch: parsed.integrationBranch, base: parsed.base });
+    base = resolveBase({
+      stamp: priorStamp, integrationBranch: parsed.integrationBranch, base: parsed.base, requireNonDegenerate: true,
+    });
   } catch (err) {
     if (!(err instanceof ChangedFilesError)) throw err;
     process.stderr.write(`--changed-files: ${err.message}\n`);
@@ -142,7 +144,17 @@ function changedFilesMode(parsed) {
     return;
   }
   const { files } = changedFiles({ base });
-  process.stdout.write(`${JSON.stringify({ base, files })}\n`);
+  const result = { base, files };
+  // #2486: a distinct signal for the degenerate case a caller would
+  // otherwise only catch by independently cross-checking via `git diff` —
+  // covers any remaining legitimate base===HEAD outcome (e.g. no
+  // --integration-branch to fall through to, or the branch really is fully
+  // merged into it) that the requireNonDegenerate skip above cannot resolve.
+  const head = gitInfo().sha;
+  if (head && base === head) {
+    result.warning = 'resolved base equals HEAD — diff will be empty';
+  }
+  process.stdout.write(`${JSON.stringify(result)}\n`);
   process.exitCode = 0;
 }
 
@@ -318,11 +330,13 @@ async function main() {
     if (!plan.retry) return { ...result, retryDecision: decision };
     const retried = await runRetries({
       check: result, plan, maxRetries: decl.flaky.maxRetries,
-      logDir: ctx.logDir, runOne, spawnImpl: ctx.spawnImpl, now: ctx.now,
+      logDir: ctx.logDir, runOne, spawnImpl: ctx.spawnImpl, now: ctx.now, cwd: ctx.cwd,
     });
     return { ...retried, retryDecision: decision };
   };
-  const results = sel && sel.mode === 'none' ? [] : (await runChecks({ cmds, logDir, retry: retryHook })).map(enrich);
+  const results = sel && sel.mode === 'none' ? [] : (await runChecks({
+    cmds, logDir, retry: retryHook, cwd: parsed.cwd,
+  })).map(enrich);
   const retriedFiles = [...new Set(results.flatMap((c) => c.flakyRetried || []))];
   const git = gitInfo();
 

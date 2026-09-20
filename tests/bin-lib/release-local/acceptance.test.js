@@ -119,6 +119,25 @@ test('AC 5: a BREAKING CHANGE footer among fix/chore commits computes a major', 
   assert.match(r.stdout, /### ⚠ BREAKING CHANGES\n\n\* config key renamed\n/);
 });
 
+test('#2327: v0.4.2 + a breaking commit → --dry-run proposes 0.5.0 (minor), not 1.0.0 — bump-minor-pre-major defaults true', () => {
+  const root = tagged('0.4.2');
+  fixtureGit(['-C', root, 'commit', '-q', '--allow-empty', '-m', 'feat!: drop the old flag'], { env: ENV });
+  const r = runCli(root, ['--dry-run']);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /v0\.5\.0 \(minor\) from v0\.4\.2/);
+});
+
+test('#2327: bump-minor-pre-major: false in release-please-config.json restores the plain major bump on 0.x', () => {
+  const root = tagged('0.4.2');
+  const cfgPath = path.join(root, 'release-please-config.json');
+  fs.writeFileSync(cfgPath, JSON.stringify({ packages: { '.': { 'release-type': 'node', 'bump-minor-pre-major': false } } }, null, 2) + '\n');
+  commit(root, 'chore: pin bump-minor-pre-major false');
+  fixtureGit(['-C', root, 'commit', '-q', '--allow-empty', '-m', 'feat!: drop the old flag'], { env: ENV });
+  const r = runCli(root, ['--dry-run']);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /v1\.0\.0 \(major\) from v0\.4\.2/);
+});
+
 test('AC 7: no prior v* tag → the full first-parent history, base from the seeded manifest: 0.1.0 + feat → 0.2.0', () => {
   const root = bootstrapped('0.1.0');
   commit(root, 'feat: first');

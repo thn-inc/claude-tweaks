@@ -253,3 +253,21 @@ test('multi-spec pre-flight and dispatch cite bin/preflight-records.js (#723)', 
   assert.match(read('plugin/skills/flow/multi-spec.md'), /bin\/preflight-records\.js/);
   assert.match(read('plugin/skills/dispatch/SKILL.md'), /bin\/preflight-records\.js/);
 });
+
+test('claim-targets.md mandates a decisions.md log line on successful claim, and names the missing mechanical backstop (#2492)', () => {
+  const content = read('plugin/skills/flow/claim-targets.md');
+  const claimSection = content.split('## Claim every named target')[1];
+  assert.ok(claimSection, 'claim section heading must exist');
+  // The mandatory post-claim log-decision.js call — a local, durable trace
+  // independent of a fresh gh/MCP read against claims-registry.
+  assert.match(claimSection, /Log the claim \(mandatory, #2492\)/);
+  assert.match(claimSection, /bin\/log-decision\.js.*--run "\$PIPELINE_RUN_DIR" --status AUTO/s);
+  assert.match(claimSection, /--step "Step 2\.8"/);
+  // The known-gap note: no mechanical backstop exists yet, unlike the
+  // sibling worktree/PR bookkeeping stamps checkBookkeepingStampsGate already
+  // enforces — this must stay an honest "not yet enforced" note, not a claim
+  // that the gap is closed.
+  assert.match(claimSection, /Known gap: this step has no mechanical backstop today/);
+  assert.match(claimSection, /checkBookkeepingStampsGate/);
+  assert.match(claimSection, /claims\/issue-\{n\}\.json/);
+});

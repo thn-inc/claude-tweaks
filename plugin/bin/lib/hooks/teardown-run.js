@@ -17,6 +17,7 @@ const { archiveRunDir } = require('../reconcile/archive-merged');
 const { runGit } = require('./git-exec');
 const { parseWorktreeList, isWorktreeLocked, resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
 const { mainCheckoutRoot } = require('./worktree-detect');
+const { fallbackBranch, worktreePathForBranch } = require('./run-integrity');
 
 const GH_TIMEOUT_MS = 15000;
 
@@ -38,6 +39,17 @@ function defaultGhApiDelete(args) {
     if (/reference does not exist/i.test(stderr)) return { ok: true, alreadyGone: true };
     return { ok: false, error: stderr || 'gh api delete failed' };
   }
+}
+
+// Shared gating for Steps 4-5 below: both delete something keyed on `branch` and skip for the
+// same three reasons (no --merged, nothing recorded, or the integration branch itself) with only
+// the label differing. Returns the skip line, or null when the caller should proceed with its own
+// (differing) delete action.
+function modeGateSkip(mode, branch, isIntegrationBranch, label) {
+  if (mode !== 'merged') return `${label}: skipped — ${mode === 'abandoned' ? 'abandoned' : 'no --merged/--abandoned given'}`;
+  if (!branch) return `${label}: skipped — no branch recorded`;
+  if (isIntegrationBranch) return `${label}: skipped — refusing to delete the integration branch (${branch})`;
+  return null;
 }
 
 function repoSlugOf(root) {
@@ -101,7 +113,24 @@ function teardownRun(runDir, opts = {}) {
   // and resolveIntegrationBranch both shell out to git with `root` as cwd, so a null root must
   // never reach them; falling back to the recorded state's own `branch` field (no git needed)
   // keeps the foreign-owner refusal check below meaningful even when root can't be resolved.
-  const branch = (root ? branchOfWorktree(root, worktreePath) : null) || (prevState && prevState.branch) || null;
+  // `worktreePath` is null exactly when #2362's gap fires — run-state.json never
+  // got a `worktree` field written (EnterWorktree entered the worktree, but the
+  // formal record-worktree stamp never landed). Recover the branch the same way
+  // run-integrity.js's shipped-unclosed check already does for a torn-down
+  // worktree: state.pr.branch first, then the PR-early-lifecycle log lines in
+  // decisions.md. `prevState.branch` is kept as a defensive first check even
+  // though nothing in this codebase writes that top-level field today — it
+  // costs nothing and protects a future writer that might.
+  const branch = (root ? branchOfWorktree(root, worktreePath) : null)
+    || (prevState && prevState.branch)
+    || (!worktreePath && root ? fallbackBranch(root, runDir, prevState) : null)
+    || null;
+  // Fallback worktree-path recovery (#2362): only attempted when nothing was
+  // recorded at all. Never overrides a recorded (even if now-stale) worktree
+  // path — a caller that explicitly recorded one gets exactly that one's own
+  // skip/lock/removal handling, unchanged.
+  const recoveredWorktreePath = (!worktreePath && root && branch) ? worktreePathForBranch(root, branch) : null;
+  const effectiveWorktreePath = worktreePath || recoveredWorktreePath;
   // #1688: resolveIntegrationBranch's policy-configured path can now return
   // an `origin/{name}` remote-tracking ref (preferRemoteTrackingRef,
   // worktree-reap.js). `branch` above is always bare, so the equality check
@@ -171,23 +200,22 @@ function teardownRun(runDir, opts = {}) {
   // Step 3 (worktree removal) — never forced; a locked worktree means either a live session
   // (including this session's own ground, per [IL-58] — that removal path is ExitWorktree only)
   // or an unresolvable state, and worktree-reap.js's predicates fail CLOSED either way.
-  if (!worktreePath) {
+  if (!effectiveWorktreePath) {
     lines.push('worktree: skipped — no worktree recorded');
-  } else if (isWorktreeLocked(worktreePath, { cwd: root })) {
+  } else if (isWorktreeLocked(effectiveWorktreePath, { cwd: root })) {
     lines.push('worktree: skipped — worktree locked');
   } else {
-    const rm = runGit(['worktree', 'remove', worktreePath], root);
-    if (rm.failure) lines.push('worktree: skipped — removal failed');
-    else lines.push(`worktree: removed ${worktreePath}`);
+    const rm = runGit(['worktree', 'remove', effectiveWorktreePath], root);
+    if (rm.failure) lines.push(`worktree: skipped — removal failed${rm.stderr ? ` (${rm.stderr})` : ''}`);
+    else {
+      lines.push(`worktree: removed ${effectiveWorktreePath}${recoveredWorktreePath ? ' (resolved via branch-name fallback — no worktree recorded in run-state.json)' : ''}`);
+    }
   }
 
   // Step 4 (local branch delete) — only under --merged.
-  if (mode !== 'merged') {
-    lines.push(`branch: skipped — ${mode === 'abandoned' ? 'abandoned' : 'no --merged/--abandoned given'}`);
-  } else if (!branch) {
-    lines.push('branch: skipped — no branch recorded');
-  } else if (isIntegrationBranch) {
-    lines.push(`branch: skipped — refusing to delete the integration branch (${branch})`);
+  const branchSkip = modeGateSkip(mode, branch, isIntegrationBranch, 'branch');
+  if (branchSkip) {
+    lines.push(branchSkip);
   } else {
     const del = runGit(['branch', '-D', branch], root);
     if (del.failure) lines.push(`branch: skipped — delete failed for ${branch}`);
@@ -196,12 +224,9 @@ function teardownRun(runDir, opts = {}) {
 
   // Step 5 (remote ref delete) — same --merged-only gating as Step 4; never `git push --delete`
   // (denied by worktree.always from the main checkout) — the contents/refs API only.
-  if (mode !== 'merged') {
-    lines.push(`remote ref: skipped — ${mode === 'abandoned' ? 'abandoned' : 'no --merged/--abandoned given'}`);
-  } else if (!branch) {
-    lines.push('remote ref: skipped — no branch recorded');
-  } else if (isIntegrationBranch) {
-    lines.push(`remote ref: skipped — refusing to delete the integration branch (${branch})`);
+  const refSkip = modeGateSkip(mode, branch, isIntegrationBranch, 'remote ref');
+  if (refSkip) {
+    lines.push(refSkip);
   } else {
     const slug = repoSlugOf(root);
     if (!slug) {

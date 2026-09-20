@@ -113,6 +113,51 @@ test('listRunDirsWithState returns each non-terminal dir paired with its already
   ]);
 });
 
+// #1738: iterRunDirsWithState's opt-in `{ status: 'clean' }` filter — a
+// widened yield the default output must not change at all (session-start.js's
+// #1493 AC5 staged-proposals scan and archive-merged.js's #1544 clean-status
+// sweep both share this instead of hand-rolling their own directory walks).
+test('iterRunDirsWithState: default (no opts) excludes clean-status runs, unchanged', () => {
+  const project = tmpProject();
+  const active = mkRun(project, '2026-07-01T090000-spec-1', { status: 'active' });
+  mkRun(project, '2026-07-02T090000-spec-2', { status: 'clean' });
+  assert.deepStrictEqual(ctx.listRunDirs(project), [active]);
+  assert.deepStrictEqual(ctx.listRunDirs(project, {}), [active]);
+});
+
+test("iterRunDirsWithState: { status: 'clean' } yields only clean-status runs", () => {
+  const project = tmpProject();
+  mkRun(project, '2026-07-01T090000-spec-1', { status: 'active' });
+  const clean = mkRun(project, '2026-07-02T090000-spec-2', { status: 'clean' });
+  assert.deepStrictEqual(ctx.listRunDirs(project, { status: 'clean' }), [clean]);
+});
+
+test("iterRunDirsWithState: { status: 'clean' } excludes a dir with no run-state.json at all (state is null, not clean)", () => {
+  const project = tmpProject();
+  mkRun(project, '2026-07-01T090000-spec-1'); // no run-state.json — readRunState returns null
+  const clean = mkRun(project, '2026-07-02T090000-spec-2', { status: 'clean' });
+  assert.deepStrictEqual(ctx.listRunDirs(project, { status: 'clean' }), [clean]);
+});
+
+// Both shapes must honor the archive-twin skip below the status check — a
+// clean run whose archive twin is itself already 'clean' (fully archived)
+// must not be double-reported by the { status: 'clean' } shape either.
+test("iterRunDirsWithState: { status: 'clean' } honors the archive-twin skip (a fully-archived clean run is not re-yielded)", () => {
+  const project = tmpProject();
+  const runId = '2026-07-03T090000-spec-3';
+  mkRun(project, runId, { status: 'clean' });
+  mkRun(project, path.join('archive', runId), { status: 'clean' });
+  assert.deepStrictEqual(ctx.listRunDirs(project, { status: 'clean' }), []);
+});
+
+test("iterRunDirsWithState: default shape also honors the archive-twin skip (unchanged)", () => {
+  const project = tmpProject();
+  const runId = '2026-07-04T090000-spec-4';
+  mkRun(project, runId, { status: 'active' });
+  mkRun(project, path.join('archive', runId), { status: 'clean' });
+  assert.deepStrictEqual(ctx.listRunDirs(project), []);
+});
+
 // #593: defense in depth — a stray top-level dir whose archive twin already
 // carries a terminal run-state.json (a filesystem-only, non-git-aware
 // archival move, or a tracked work/ file resurrected by `git checkout`) must
@@ -358,6 +403,40 @@ test('scanWrapupEvents: malformed JSON lines are skipped, not fatal', () => {
   const wrapupLine = JSON.stringify({ type: 'skill_invoked', skill: 'claude-tweaks:wrap-up', ts: '2026-08-01T09:00:00Z' });
   fs.writeFileSync(path.join(run, 'events.jsonl'), 'not json\n' + wrapupLine + '\n\n');
   assert.deepStrictEqual(ctx.scanWrapupEvents(run), { any: true, wrapup: true });
+});
+
+// #1737: readEventLines — the shared raw reader underneath scanWrapupEvents
+// (above) and archive-merged.js's ownEventRecency. `null` (absent/unreadable)
+// and `[]` (readable but nothing parseable) must stay distinguishable, since
+// both of those callers rely on telling "we don't know" from "we know it's
+// empty."
+test('readEventLines: missing events.jsonl returns null', () => {
+  const project = tmpProject();
+  const run = mkRun(project, '2026-08-20T090005-spec-1', { status: 'active' });
+  assert.strictEqual(ctx.readEventLines(run), null);
+});
+
+test('readEventLines: unreadable dir returns null', () => {
+  assert.strictEqual(ctx.readEventLines('/nonexistent/run'), null);
+});
+
+test('readEventLines: an empty file returns []', () => {
+  const project = tmpProject();
+  const run = mkRun(project, '2026-08-20T090006-spec-1', { status: 'active' });
+  fs.writeFileSync(path.join(run, 'events.jsonl'), '');
+  assert.deepStrictEqual(ctx.readEventLines(run), []);
+});
+
+test('readEventLines: mixed valid/invalid lines returns only the parsed valid ones, in order', () => {
+  const project = tmpProject();
+  const run = mkRun(project, '2026-08-20T090007-spec-1', { status: 'active' });
+  const first = { type: 'skill_invoked', skill: 'claude-tweaks:build', ts: '2026-08-01T09:00:00Z' };
+  const second = { type: 'skill_invoked', skill: 'claude-tweaks:wrap-up', ts: '2026-08-01T09:05:00Z' };
+  fs.writeFileSync(
+    path.join(run, 'events.jsonl'),
+    [JSON.stringify(first), 'not json', '', JSON.stringify(second), ''].join('\n'),
+  );
+  assert.deepStrictEqual(ctx.readEventLines(run), [first, second]);
 });
 
 test('writeRunState serializes concurrent writers under an effectively-unbounded lock budget — no lost updates under real cross-process concurrency (finding regression)', async () => {

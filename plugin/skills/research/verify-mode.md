@@ -122,7 +122,7 @@ question nobody thought of.
 
 **When no run directory resolves** — the normal case for a direct human invocation — there is no
 `decisions.md` to append to, and `/claude-tweaks:research` is not on the standalone-auto allowlist
-in `skills/_shared/pipeline-run-dir.md`, so it may not create one. Report the drops inline in the
+in `skills/_shared/run-dir-resolution.md`'s step 4, so it may not create one. Report the drops inline in the
 run's own output instead, in the same one-line-per-drop shape. The requirement is that a drop is
 never silent; the log file is where that lands when a run exists, not the only place it may land.
 
@@ -180,7 +180,7 @@ does; the resolved tier is logged rather than asked.
 The bare-`verify` ambiguity above is not an exception to this, but it does need its own rule.
 `verify` is not reachable from `/claude-tweaks:flow` (see Lifecycle position), so no orchestrator
 invokes it as a pipeline step — but a run directory can still resolve here:
-`_shared/pipeline-run-dir.md`'s most-recent-matching-directory fallback can resolve one with no
+`_shared/run-dir-resolution.md`'s step 2 most-recent-matching-directory fallback can resolve one with no
 orchestrator at all.
 
 - **No run directory resolves** — a direct human invocation. Present the choice above. This is the

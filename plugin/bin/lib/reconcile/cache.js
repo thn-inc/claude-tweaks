@@ -105,17 +105,60 @@ function residueKey(reason, targetPath) {
   return `${reason}:${targetPath}`;
 }
 
-// Record one more consecutive failure for (reason, targetPath) and persist it
-// immediately (read-modify-write on the shared cache file — see the header
-// comment on why this file, not a new one). Returns whether THIS call is the
-// one that should trigger escalation: count has just reached the threshold
-// AND no escalation has fired yet for this still-failing streak. Once fired,
-// `escalated` stays true (and shouldEscalate stays false) for every
-// subsequent still-failing call, until `recordResidueSuccess` resets the
-// entry — this is what keeps escalation a one-shot event rather than a
-// re-trigger on every pass past the threshold (#644 Acceptance Criteria).
-function recordResidueFailure(root, reason, targetPath, { lastError, now = Date.now(), threshold = RESIDUE_ESCALATE_THRESHOLD } = {}) {
-  const cache = readCache(root);
+// #1235: `recordResidueFailure`/`recordResidueSuccess`/`trackResidue` below
+// each accept EITHER a plain `root` string (legacy behavior — read the cache
+// file, mutate, write it back, all in this one call) OR a "cache batch"
+// handle from `beginCacheBatch`/`commitCacheBatch` (mutate the handle's
+// in-memory copy only; nothing touches disk until `commitCacheBatch`). A
+// caller iterating N items in a loop uses a batch — one `readCache` before
+// the loop, N in-memory updates, one `writeCache` after — instead of N
+// separate read-modify-write round-trips against the same file. A caller
+// invoking one of these functions in isolation (a single reap, a test) keeps
+// passing a bare root string and gets the exact per-call behavior this file
+// has always had. See `beginCacheBatch`'s own comment for the atomicity
+// tradeoff batching accepts.
+function isCacheBatch(target) {
+  return !!target && typeof target === 'object' && typeof target.root === 'string' && !!target.cache;
+}
+
+// Load the cache once for a caller that's about to update it across a loop
+// of items. `commitCacheBatch` is the matching one-time write — call it once
+// after the loop, not per item.
+//
+// Atomicity tradeoff (#1235 Deliverable 2): the pre-batching code persisted
+// every single residue update the instant it was recorded, so a process
+// crash mid-loop lost at most the items not yet processed. Batching trades
+// that away — a crash after item K (of N) but before `commitCacheBatch`
+// loses every one of that pass's 1..K updates, not just the unprocessed
+// tail. Accepted deliberately: this cache is documented at the top of this
+// file as pure best-effort ("a cache miss/reset costs a little extra work or
+// a re-escalation, never incorrect skip of real work"), so the worst case of
+// a lost batch is a delayed escalation the next pass re-derives from
+// scratch — never a wrong action taken on stale data. The write-volume
+// savings (one write per pass instead of one per item) are worth that
+// bounded, self-healing risk.
+function beginCacheBatch(root) {
+  return { root, cache: readCache(root), dirty: false };
+}
+
+// Best-effort, like `writeCache` itself — a no-op when nothing changed
+// (`dirty` stays false for a pass that recorded zero updates), so callers
+// can always call this unconditionally at the end of their loop.
+function commitCacheBatch(batch) {
+  if (batch && batch.dirty) writeCache(batch.root, batch.cache);
+}
+
+// Record one more consecutive failure for (reason, targetPath). Returns
+// whether THIS call is the one that should trigger escalation: count has
+// just reached the threshold AND no escalation has fired yet for this
+// still-failing streak. Once fired, `escalated` stays true (and
+// shouldEscalate stays false) for every subsequent still-failing call, until
+// `recordResidueSuccess` resets the entry — this is what keeps escalation a
+// one-shot event rather than a re-trigger on every pass past the threshold
+// (#644 Acceptance Criteria).
+function recordResidueFailure(target, reason, targetPath, { lastError, now = Date.now(), threshold = RESIDUE_ESCALATE_THRESHOLD } = {}) {
+  const batch = isCacheBatch(target);
+  const cache = batch ? target.cache : readCache(target);
   const failures = { ...cache.residueFailures };
   const key = residueKey(reason, targetPath);
   const existing = failures[key];
@@ -129,7 +172,8 @@ function recordResidueFailure(root, reason, targetPath, { lastError, now = Date.
     lastError: lastError || (existing && existing.lastError) || null,
     escalated: alreadyEscalated || shouldEscalate,
   };
-  writeCache(root, { ...cache, residueFailures: failures });
+  const nextCache = { ...cache, residueFailures: failures };
+  if (batch) { target.cache = nextCache; target.dirty = true; } else { writeCache(target, nextCache); }
   return { count, firstFailedAt, shouldEscalate };
 }
 
@@ -137,13 +181,15 @@ function recordResidueFailure(root, reason, targetPath, { lastError, now = Date.
 // track — clear its streak so a LATER failure on the same path starts a
 // fresh count toward the threshold rather than resuming a stale one, and so
 // a resolved path can re-escalate if it starts failing again after recovery.
-function recordResidueSuccess(root, reason, targetPath) {
-  const cache = readCache(root);
+function recordResidueSuccess(target, reason, targetPath) {
+  const batch = isCacheBatch(target);
+  const cache = batch ? target.cache : readCache(target);
   const key = residueKey(reason, targetPath);
   if (!(key in cache.residueFailures)) return;
   const failures = { ...cache.residueFailures };
   delete failures[key];
-  writeCache(root, { ...cache, residueFailures: failures });
+  const nextCache = { ...cache, residueFailures: failures };
+  if (batch) { target.cache = nextCache; target.dirty = true; } else { writeCache(target, nextCache); }
 }
 
 // #1233 — the shared success/fail branch-into-{recordResidueSuccess,
@@ -155,17 +201,17 @@ function recordResidueSuccess(root, reason, targetPath) {
 // archive-merged.js's `result.reason !== 'move-failed'` early-return guard
 // in particular stays there, not here, since it's archive-specific and
 // unrelated to this branching.
-function trackResidue(root, repoSlug, reason, targetPath, { failed, lastError }, { escalate = escalateResidue } = {}) {
+function trackResidue(target, repoSlug, reason, targetPath, { failed, lastError }, { escalate = escalateResidue, runner } = {}) {
   if (!failed) {
-    recordResidueSuccess(root, reason, targetPath);
+    recordResidueSuccess(target, reason, targetPath);
     return;
   }
-  const streak = recordResidueFailure(root, reason, targetPath, { lastError });
+  const streak = recordResidueFailure(target, reason, targetPath, { lastError });
   if (!streak.shouldEscalate) return;
   try {
     escalate({
       repo: repoSlug, reason, targetPath,
-      count: streak.count, firstFailedAt: streak.firstFailedAt, lastError,
+      count: streak.count, firstFailedAt: streak.firstFailedAt, lastError, runner,
     });
   } catch { /* best-effort — never let escalation turn a residue-tracking call into a thrown error */ }
 }
@@ -198,7 +244,7 @@ function listResidueFailures(root) {
 // the path itself is gone either way — leaving the filed issue open for a
 // human to close manually later, same posture as escalateResidue's own
 // never-breaks-a-session contract.
-function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue } = {}) {
+function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue, runner } = {}) {
   const cache = readCache(root);
   const failures = { ...cache.residueFailures };
   let changed = false;
@@ -210,7 +256,7 @@ function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue } = {})
     delete failures[key];
     changed = true;
     if (entry && entry.escalated) {
-      try { resolve({ repo: repoSlug, reason, targetPath }); } catch { /* best-effort */ }
+      try { resolve({ repo: repoSlug, reason, targetPath, runner }); } catch { /* best-effort */ }
     }
   }
   if (changed) writeCache(root, { ...cache, residueFailures: failures });
@@ -219,5 +265,5 @@ function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue } = {})
 module.exports = {
   readCache, writeCache, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS, cachePath,
   RESIDUE_ESCALATE_THRESHOLD, residueKey, recordResidueFailure, recordResidueSuccess, listResidueFailures,
-  trackResidue, pruneResidueFailures,
+  trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
 };

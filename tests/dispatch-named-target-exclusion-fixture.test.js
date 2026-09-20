@@ -36,8 +36,10 @@ const QUEUE_PULL_SCRIPT = fs.readFileSync(
 // Structurally anchored (not a prose sentence): the first line is the require call unique to
 // this block, the last is the mv this block's own filter step performs -- both content, not
 // commentary, so a rewording of the surrounding prose does not move this extraction.
+// #1752: the tail now names the unified $DISPATCH_EXCLUSIONS file, not a dedicated
+// $DISPATCH_TARGET_MISSING_EXCLUDED one -- see queue-pull-script.md's Task 2 migration.
 const START_ANCHOR = 'node -e "\n  const fs = require(\'fs\');\n  const { namedTarget } = require(\'${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/named-target.js\');';
-const END_ANCHOR = '" "$DISPATCH_GROUPS" "$DISPATCH_TARGET_MISSING_EXCLUDED" > "${DISPATCH_GROUPS}.tmp" && mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"';
+const END_ANCHOR = '" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" > "${DISPATCH_GROUPS}.tmp" && mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"';
 
 function extractExclusionSnippet() {
   const startIdx = QUEUE_PULL_SCRIPT.indexOf(START_ANCHOR);
@@ -82,7 +84,7 @@ test('queue-pull-script.md\'s named-target exclusion excludes exactly the synthe
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-named-target-fixture-'));
   const dispatchGroups = path.join(scratch, 'dispatch-groups.json');
   const namedTargets = path.join(scratch, 'dispatch-named-targets.json');
-  const missingExcluded = path.join(scratch, 'dispatch-target-missing-excluded.json');
+  const exclusions = path.join(scratch, 'dispatch-exclusions.json');
   fs.writeFileSync(dispatchGroups, JSON.stringify(groups));
 
   execFileSync('bash', ['-c', snippet], {
@@ -93,12 +95,14 @@ test('queue-pull-script.md\'s named-target exclusion excludes exactly the synthe
       CLAUDE_PLUGIN_ROOT: path.join(ROOT, 'plugin'),
       DISPATCH_GROUPS: dispatchGroups,
       DISPATCH_NAMED_TARGETS: namedTargets,
-      DISPATCH_TARGET_MISSING_EXCLUDED: missingExcluded,
+      DISPATCH_EXCLUSIONS: exclusions,
       INTEGRATION_REF: integrationRef,
     },
   });
 
-  const missing = JSON.parse(fs.readFileSync(missingExcluded, 'utf8'));
+  const missing = JSON.parse(fs.readFileSync(exclusions, 'utf8'))
+    .filter((e) => e.reason === 'target-missing')
+    .map((e) => ({ number: e.records[0], path: e.detail.path }));
   assert.deepStrictEqual(
     missing.map((m) => m.number).sort((a, b) => a - b),
     [11776, 11804, 11818],

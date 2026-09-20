@@ -85,6 +85,9 @@ const SHAPED_BODY = [
   '',
   '## Acceptance Criteria',
   '1. It works',
+  '',
+  '## Release Note',
+  'Fixed the thing.',
 ].join('\n');
 
 // The #1210 end-to-end cases below drive the rewrite through a real

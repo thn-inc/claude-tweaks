@@ -3,8 +3,6 @@ name: wrap-up
 description: Use when /claude-tweaks:review passes and you need to capture learnings, clean up specs/plans, update skills, and decide next steps. The lifecycle closure step.
 argument-hint: "[#N|<spec>|<context>|resume] [--dry-run] [--skill-budget <n>] [--doc-budget <n>] [cleanup-only]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
-
 
 # Wrap-Up — Capture learnings, clean up, and close the lifecycle
 
@@ -207,6 +205,8 @@ Run the resolve gate from `/claude-tweaks:ledger` (see ledger skill for the thre
 
 **Gate the read.** Read `_shared/ledger-format.md`'s Resolve Gate when the ledger **holds at least one item** of any status, not just `open` (`pack.ledger` `total > 0` opens it; a pre-sweep `0` or `ok: false` → re-count after the sweep). If, after the sweep above has run, the ledger still doesn't exist or holds zero items, report "No ledger items to resolve" and skip this gate entirely without reading the file.
 
+**Unrecognized-status warning (#2080).** Before rendering the Resolve Gate table, when `pack.ledger.unrecognized > 0`, render one additive, non-blocking warning line naming the count and the distinct unrecognized values: `⚠ {n} ledger row(s) carry a status outside the recognized enum: {unrecognizedValues.join(', ')} — see _shared/ledger-format.md's status enum.` This never changes the gate's own `total > 0` open condition and never blocks completion — an unrecognized-status row was never `open`, so it was never blocking before this warning existed either; it only makes the previously-invisible drift visible to a human. Omit the line when `pack.ledger.unrecognized` is `0` or absent.
+
 The same condition gates `nothing-left-behind.md` in this skill's directory — wrap-up's own wrapper around that gate: the item-existence rationale, the hard requirements (Phase 1 fix-exhaust before any user-facing output, Phase 2's mandatory per-item input, and what `auto` never silences), the terminal-status bulk-resolve fast path, and the ops-acknowledgment sub-step with its `autonomy`-ceiling-gated batched multiSelect branch. When the gate is closed, read neither file.
 
 The ledger resolve gate's own Phase 2 per-item input stays **outside** the Review Console, per `_shared/auto-mode-card.md`'s never-silenced list.
@@ -287,12 +287,14 @@ When invoked directly by a user (standalone wrap-up), resolve 2-4 lines based on
 |--------|--------|
 | Next spec exists (Phase 3's unblocked-records lookup) | `/claude-tweaks:flow {N}` — full pipeline on spec {N}: "{title}" **(Recommended)** |
 | Newly unblocked records (Phase 3's dependent check — this run's session-scoped `wrapup-unblocked.json`, `_shared/session-tmp-root.md`, one option per entry) | `/claude-tweaks:flow #{N}` — record #{N} "{title}" now unblocked by this closure (bare `{N}` under `work-backend: local-files`) |
+| `_shared/release-recommendation-gate.md` gates it in (standalone runs its own pack, #2257) | `/claude-tweaks:release` — cut the release |
 | Always | `/claude-tweaks:help` — full pipeline status |
 
 Once the signals are resolved, render as plain markdown (docs/skill-authoring.md's Skill handoffs convention) — when a next spec exists, its line renders first, bolded, suffixed `(recommended)`; otherwise the lines render in the table's order with no line marked recommended:
 
 **`/claude-tweaks:flow {N}`** — full pipeline on spec {N}: "{title}" (recommended, when a next spec exists)
 `/claude-tweaks:flow #{N}` — record #{N} "{title}" now unblocked by this closure (one line per entry in this run's session-scoped `wrapup-unblocked.json`, up to the tool's option cap; bare `{N}` under `work-backend: local-files`)
+`/claude-tweaks:release` — cut the release — per `_shared/release-recommendation-gate.md`
 `/claude-tweaks:help` — full pipeline status
 
 ## Component-Skill Contract

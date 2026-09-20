@@ -3,7 +3,6 @@ name: assess-agent-autonomy
 description: Use when backlog, dispatch, or specify need a content-aware trust or ceremony verdict, not a label lookup. Keywords - autonomy, trust, judgment, grant recommendation, auto-merge, blast radius, failure classification, ceremony profile, fast-lane.
 argument-hint: "<grant-check|merge-check|failure-check|ceremony-check> [#{n}] [--base <ref>]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
 
 # Assess Agent Autonomy — Content-Aware Trust Verdicts
 

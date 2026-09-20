@@ -3,8 +3,6 @@ name: research
 description: Use for in-depth web research — multi-source, citation-audited reports across 4 runtime modes (quick to ultradeep), via /deep-research or an inline fallback. Keywords - research, deep research, web research, sources, citations, literature review.
 argument-hint: "verify [brief-path|#N] | <topic> [--mode=quick|standard|deep|ultradeep] [--engine=auto|inline] [--output=<path>]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
-
 
 # Research — Deep Web Research with Citation-Audited Reports
 

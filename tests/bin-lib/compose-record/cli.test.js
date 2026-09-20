@@ -18,7 +18,7 @@ const streamOf = (out, kind) => out.filter((o) => o[0] === kind).map((o) => o[1]
 
 const SHAPED_PAYLOAD = {
   title: 'A title',
-  body: '## Current State\n\ntext\n\n## Deliverables\n\n- [ ] thing\n\n## Acceptance Criteria\n\n1. done',
+  body: '## Current State\n\ntext\n\n## Deliverables\n\n- [ ] thing\n\n## Acceptance Criteria\n\n1. done\n\n## Release Note\n\nDid the thing.',
   type: 'feature',
   fingerprint: 'design-x:unit-y',
 };

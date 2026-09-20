@@ -15,6 +15,25 @@ test('fetchLinkedPRs maps each alias to its open linked PR number', () => {
   assert.deepStrictEqual(out.get(257), { openPR: null, mentions: [] });
 });
 
+// #2240: a non-github.com host threads --hostname onto this call — the only
+// gh-invoking call resolve-linked-prs.js makes.
+test('#2240: fetchLinkedPRs passes --hostname on a non-github.com host, omits it for github.com/unset', () => {
+  const response = () => resp({ i1224: { number: 1224, closedByPullRequestsReferences: { nodes: [] } } });
+  const ghe = []; const dotcom = []; const unset = [];
+  fetchLinkedPRs({
+    numbers: [1224], owner: 'o', repo: 'r', host: 'ghe.example.com', runner: (args) => { ghe.push(args); return response(); },
+  });
+  fetchLinkedPRs({
+    numbers: [1224], owner: 'o', repo: 'r', host: 'github.com', runner: (args) => { dotcom.push(args); return response(); },
+  });
+  fetchLinkedPRs({
+    numbers: [1224], owner: 'o', repo: 'r', runner: (args) => { unset.push(args); return response(); },
+  });
+  assert.deepStrictEqual(ghe[0].slice(-2), ['--hostname', 'ghe.example.com']);
+  assert.doesNotMatch(dotcom[0].join(' '), /--hostname/);
+  assert.doesNotMatch(unset[0].join(' '), /--hostname/);
+});
+
 test('no linked PR at all reports openPR: null', () => {
   const runner = () => resp({ i42: { number: 42, closedByPullRequestsReferences: { nodes: [] } } });
   const out = fetchLinkedPRs({ numbers: [42], owner: 'o', repo: 'r', runner });
@@ -33,7 +52,8 @@ test('null repository throws rather than returning a partial map', () => {
 
 test('a malformed nodes array (not an array) degrades to openPR: null rather than throwing', () => {
   const runner = () => resp({ i9: { number: 9, closedByPullRequestsReferences: { nodes: 'not-an-array' } } });
-  assert.doesNotThrow(() => fetchLinkedPRs({ numbers: [9], owner: 'o', repo: 'r', runner }));
+  const out = fetchLinkedPRs({ numbers: [9], owner: 'o', repo: 'r', runner });
+  assert.deepStrictEqual(out.get(9), { openPR: null, mentions: [] });
 });
 
 test('empty input returns empty result without calling the runner', () => {

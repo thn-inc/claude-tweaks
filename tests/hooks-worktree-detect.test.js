@@ -7,6 +7,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { nearestExistingDir, repoInfo, findPolicyFile, safeReal, mainCheckoutRoot, checkRunDirAnchoredOrOutside, unanchoredRunDirShadowMessage } = require('../plugin/bin/lib/hooks/worktree-detect');
 const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
+const { skipUnderRoot } = require('./helpers/root');
 
 test('nearestExistingDir: existing directory returns itself', () => {
   const dir = gitRepo();
@@ -156,12 +157,11 @@ test('mainCheckoutRoot: a path in no repository at all returns null', () => {
   assert.strictEqual(mainCheckoutRoot(dir), null);
 });
 
-test('mainCheckoutRoot: a stat failure that is NOT ENOENT returns null instead of walking up to an ancestor repo', () => {
+test('mainCheckoutRoot: a stat failure that is NOT ENOENT returns null instead of walking up to an ancestor repo', skipUnderRoot('root bypasses mode bits'), () => {
   // ENOENT is the ordinary walk-up case ("no .git here, look higher"). Every
   // other errno means we could not LOOK, which is a different fact: continuing
   // the walk hands back an ANCESTOR repository's root, and worktree-reap.js
   // then enumerates and removes worktrees belonging to that repo.
-  if (process.getuid && process.getuid() === 0) return; // root bypasses mode bits
   const repo = gitRepo();
   const blocked = path.join(repo, 'blocked');
   fs.mkdirSync(blocked);
@@ -242,7 +242,7 @@ test('checkRunDirAnchoredOrOutside: symlinked alias of the main checkout classif
   assert.strictEqual(r.ok, true, 'realpath normalization: alias resolves into the anchored main checkout');
 });
 
-test('checkRunDirAnchoredOrOutside: unreadable ancestor fails closed (rejects), never classifies outside', () => {
+test('checkRunDirAnchoredOrOutside: unreadable ancestor fails closed (rejects), never classifies outside', skipUnderRoot('root bypasses mode bits'), () => {
   const main = gitRepo();
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'wtd-eacces-'));
   const blocked = path.join(base, 'blocked');

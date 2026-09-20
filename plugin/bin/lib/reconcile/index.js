@@ -21,6 +21,7 @@ const { archiveBranches } = require('./archive-branches');
 const { pruneRemote } = require('./prune-remote');
 const { consoleExecuteDetect } = require('./console-execute');
 const { sharedFetch, sharedFetchAsync } = require('./shared-fetch');
+const { createIssueListCache } = require('./issue-list-cache');
 const {
   readCache, writeCache, isFresh, SHARED_HEALTH_TTL_MS,
 } = require('./cache');
@@ -239,6 +240,12 @@ async function reconcile(opts = {}) {
   // `skipped` entry and returns immediately rather than running a partial
   // remainder.
   const budget = require('./budget').createBudget();
+  // #2505 — one shared per-pass memo for the `gh issue list` fetch
+  // escalateResidue/resolveResidue's own findResidueDuplicate issues,
+  // reused across every stuck dir/path archive+reap escalate or resolve in
+  // THIS pass — created fresh every reconcile() call (never a module-level
+  // singleton), so nothing here survives across passes or processes.
+  const issueListCache = createIssueListCache();
   const DISPATCH_ORDER = ['mirror', 'red-tip', 'console', 'release', 'archive', 'archive-branches', 'remote-prune', 'reap'];
   function overBudget(remainingFromHere) {
     if (!budget.exceeded()) return false;
@@ -349,7 +356,9 @@ async function reconcile(opts = {}) {
 
   if (overBudget(DISPATCH_ORDER.slice(4))) return result;
   if (checks.includes('archive')) {
-    const r = archiveMerged({ cwd: root, dryRun, sessionId: opts.sessionId });
+    const r = archiveMerged({
+      cwd: root, dryRun, sessionId: opts.sessionId, runner: issueListCache.runner,
+    });
     result.runs = r.archived.map((d) => ({ runDir: d, action: 'archived' }))
       .concat(r.skipped.map((s) => ({ runDir: s.runDir, action: 'skipped', reason: s.reason })));
   }
@@ -395,7 +404,7 @@ async function reconcile(opts = {}) {
     // was always the main checkout, never inside any worktree), even though
     // reap-merged.test.js's isolated calls (which pass a worktree path
     // directly) still exercised and passed.
-    const r = reapMerged({ cwd, dryRun });
+    const r = reapMerged({ cwd, dryRun, runner: issueListCache.runner });
     if (r.failure) {
       result.skipped.push({ check: 'reap', reason: r.failure });
     } else {
