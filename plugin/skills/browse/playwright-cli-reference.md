@@ -65,8 +65,12 @@ bundled self-docs (Authority above) before relying on them.
 | Act on a ref | `click @e3` | `click e3` (spike-confirmed) |
 | Locator-based find+act | `find <locator> <value> <action>` | `find "<text>"` — **read-only, text-only** (see caution below; no direct translation for role/testid/css locators) |
 | Fill a field | `fill @e5 "<text>"` | `fill e5 "<text>"` (per tool docs, not spike-tested) |
+| Check a checkbox on a ref | *(via `find`'s `check` action)* | `check e5` (per tool docs, not spike-tested — inferred by analogy to `fill`'s ref-argument convention; verb name confirmed present in the CLI's own command list) |
+| Hover over a ref | *(via `find`'s `hover` action)* | `hover e5` (per tool docs, not spike-tested — inferred by analogy to `fill`'s ref-argument convention; verb name confirmed present in the CLI's own command list) |
 | Screenshot | `screenshot <path>` (positional) | `screenshot --filename=<path>` (flag) (spike-confirmed) |
 | Text-only assertion | plain `snapshot` (no refs) | `find "<text>"` or `eval` against the page (per tool docs) |
+| Start trace recording | `trace start` | `tracing-start` (per the CLI's own bundled self-docs/published docs — `node_modules/playwright-core/lib/tools/skills/playwright-cli/references/tracing.md`, mirrored at `github.com/microsoft/playwright-cli`; not spike-tested) |
+| Stop trace recording | `trace stop <path>` | `tracing-stop` — **takes no output-path argument** (per the same bundled self-docs; not spike-tested). Unlike `agent-browser`'s `trace stop <path>`, the trace is auto-written to `.playwright-cli/traces/trace-<tool-timestamp>.trace` (plus a sibling `.network` file and a `resources/` directory) relative to the working directory — there is no way to choose the output path or filename. A caller that needs the file at a specific location must locate and move it after `tracing-stop` returns. This directory is not session-scoped (shared across all sessions in the same working directory). |
 
 ### Cautions
 
@@ -82,6 +86,13 @@ bundled self-docs (Authority above) before relying on them.
 - Always pass **absolute output paths** — a relative path resolves against the
   invoking shell's cwd, which is not guaranteed stable across separate tool calls
   (confirmed during the spike).
+- `tracing-stop` has **no output-path argument at all** — the opposite gap from the
+  paths caution above. It writes to a fixed, tool-chosen relative location
+  (`.playwright-cli/traces/`) that is not session-scoped. A consumer that needs the
+  trace at a specific absolute path (e.g. per-story, per-session) must locate the
+  freshly-written file and move it there itself immediately after `tracing-stop`
+  returns, disambiguating by exact modification time rather than "most recent" alone
+  when multiple sessions may stop tracing concurrently.
 - Only `open`/`goto`/`snapshot`/`click`/`screenshot` were spike-verified against a
   real repro; every other row above is transcribed from Playwright CLI's own
   published documentation, not independently confirmed.
