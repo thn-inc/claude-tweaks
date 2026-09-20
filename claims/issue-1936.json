@@ -1,6 +1,7 @@
 {
-  "released": true,
-  "runId": "2026-09-20T002426-record-1235",
-  "reason": "not-delivered-this-run: Deliverable 0 needs a live isolated-session probe on subagent-stop.js; unsafe from this session (shared installed hook, concurrent sibling sessions active); see decisions.md SKIP 03:58:13",
-  "releasedAt": "2026-09-20T02:42:39.157Z"
+  "runId": "2026-09-20T061330-record-1936",
+  "sessionId": "028e4106-1942-499c-9deb-ee0256f467f5",
+  "claimedAt": "2026-09-20T06:16:04.748Z",
+  "ttlHours": 72,
+  "host": "Thomass-MacBook-Pro-3376.local"
 }
