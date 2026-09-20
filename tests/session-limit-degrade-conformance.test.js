@@ -30,10 +30,24 @@ function readAtRev(rev, file) {
   return execFileSync('git', ['show', `${rev}:${file}`], { cwd: ROOT, encoding: 'utf8' });
 }
 
-test('base SHA is a real ancestor of HEAD (precondition for the git-show proof below)', () => {
+test('base SHA is a real ancestor of HEAD (precondition for the git-show proof below)', (t) => {
   // Throws (non-zero exit) if BASE_SHA is not an ancestor — fails loud on a rebase or
   // history rewrite that would otherwise silently invalidate the go-red proof.
-  execFileSync('git', ['merge-base', '--is-ancestor', BASE_SHA, 'HEAD'], { cwd: ROOT });
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', BASE_SHA, 'HEAD'], { cwd: ROOT });
+  } catch (err) {
+    // #2532: a shallow/partial clone doesn't have BASE_SHA's object at all — skip this
+    // precondition (with the real git error) instead of failing loud on a gap that has
+    // nothing to do with a rebase or history rewrite.
+    if (/Not a valid (commit|object) name/.test(String(err.message))) {
+      t.skip(
+        `commit ${BASE_SHA} is not reachable in this checkout's git history — this ` +
+          `precondition needs full history: ${String(err.message).split('\n')[0]}`,
+      );
+      return;
+    }
+    throw err;
+  }
 });
 
 test('step3-lens-dispatch.md names the session-limit degrade path (#1449 AC1)', () => {
@@ -84,7 +98,7 @@ test('subagent-output-contract.md classifies the session-limit signature as term
   );
 });
 
-test('go-red proof: the pinned literal is absent at the pre-change base SHA (#1449 AC2)', () => {
+test('go-red proof: the pinned literal is absent at the pre-change base SHA (#1449 AC2)', (t) => {
   // CONTRACT_PATH's content (the Failed-agent retrieval section) moved from
   // subagent-output-contract.md to subagent-dispatch-core.md at #2019 — the new file did not
   // exist at BASE_SHA, so the pre-change read has to target the old path where this content
@@ -94,8 +108,21 @@ test('go-red proof: the pinned literal is absent at the pre-change base SHA (#14
   };
   for (const file of [DISPATCH_PATH, CONTRACT_PATH]) {
     const preChangeFile = HISTORICAL_PATH[file] || file;
+    // #2532: a shallow/partial clone doesn't have BASE_SHA's tree reachable — guard the read so
+    // this one test degrades to a skip with the real git error, instead of a misleading
+    // assertion failure.
+    let preChangeContent;
+    try {
+      preChangeContent = readAtRev(BASE_SHA, preChangeFile);
+    } catch (err) {
+      t.skip(
+        `commit ${BASE_SHA} is not reachable in this checkout's git history — the go-red proof ` +
+          `needs full history: ${String(err.message).split('\n')[0]}`,
+      );
+      return;
+    }
     assert.doesNotMatch(
-      readAtRev(BASE_SHA, preChangeFile),
+      preChangeContent,
       PINNED_LITERAL,
       `${preChangeFile} must NOT contain "session limit" (case-insensitive) at the pre-change base ` +
         `${BASE_SHA} — a match here means the literal pre-existed and this pin is vacuous.`,
