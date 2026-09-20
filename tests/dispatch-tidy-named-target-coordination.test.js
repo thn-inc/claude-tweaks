@@ -55,9 +55,9 @@ test('queue-pull-script.md excludes a record whose namedTarget is absent at the 
   assertPinnedInQueuePull(/\['cat-file', '-e', ref \+ ':' \+ target\.path\]/, 'checks existence via git cat-file -e against the resolved path');
 });
 
-test('queue-pull-script.md produces dispatch-target-missing-excluded.json and removes excluded candidates from DISPATCH_GROUPS', () => {
-  assertPinnedInQueuePull(/dispatch-target-missing-excluded\.json/, 'names the excluded-targets output file');
-  assertPinnedInQueuePull(/missingNums\.has\(c\.number\)/, 'filters excluded candidates out of the groups written back to DISPATCH_GROUPS');
+test('queue-pull-script.md appends reason:\'target-missing\' exclusion entries and removes excluded candidates from DISPATCH_GROUPS (#1752: migrated to the unified dispatch-exclusions.json)', () => {
+  assertPinnedInQueuePull(/reason: 'target-missing'/, 'appends the target-missing reason into the unified exclusions file');
+  assertPinnedInQueuePull(/groupIsExcluded\(\[c\], entries, \['target-missing'\]\)/, 'filters excluded candidates out of the groups written back to DISPATCH_GROUPS');
 });
 
 test('queue-pull-script.md logs the exact AUTO decision line naming the record and absent path', () => {
