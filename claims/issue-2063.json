@@ -1,6 +1,7 @@
 {
-  "released": true,
-  "runId": "2026-09-20T002426-record-1235",
-  "reason": "not-delivered-this-run: recommend /specify decomposition before building (size:high, load-bearing pipeline prose); see decisions.md SKIP 03:56:34",
-  "releasedAt": "2026-09-20T02:42:23.664Z"
+  "runId": "2026-09-20T061330-record-1936",
+  "sessionId": "028e4106-1942-499c-9deb-ee0256f467f5",
+  "claimedAt": "2026-09-20T06:16:16.993Z",
+  "ttlHours": 72,
+  "host": "Thomass-MacBook-Pro-3376.local"
 }
