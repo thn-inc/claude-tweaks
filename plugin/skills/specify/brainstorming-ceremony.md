@@ -2,13 +2,15 @@
 
 Cited by `SKILL.md`'s cases 1, 4, and 5 (case 5 reads "see case 1 for the
 full procedure" and inherits this by that existing pointer, so it carries
-no separate citation of its own). Case 1's own citation of this file
+no separate citation of its own), and by `/claude-tweaks:capture`'s
+`routing.md` (Route execution's `brainstorm` row — #2347) for its own
+`--route=brainstorm` call site. Case 1's own citation of this file
 avoids the literal word `fast-lane` in its wording — that paragraph
 already contains `skip` elsewhere, and `tests/ceremony-profile-roster.test.js`
 flags any skill-file line pairing those two words; if you reword case 1's
-citation, keep it clear of both words on the same line, or check that
-test. Before invoking `/superpowers:brainstorming` at any of those three
-sites:
+citation (or `routing.md`'s), keep it clear of both words on the same
+line, or check that test. Before invoking `/superpowers:brainstorming` at
+any of those four sites:
 
 1. Resolve the policy value — no `--run` flag, the same timing
    `specify-auto-continue` (`_shared/policy-schema.md`) already uses,

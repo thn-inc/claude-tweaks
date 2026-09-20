@@ -1,6 +1,6 @@
 # Visual Review — Journey Mode
 
-Loaded by `/claude-tweaks:visual-review` when the resolved mode is `journey:{name}`. Walks the full journey via a single `agent-browser batch` invocation, applies the creative framework at each step, then assesses the overall arc.
+Loaded by `/claude-tweaks:visual-review` when the resolved mode is `journey:{name}`. Walks the full journey via a sequence of `playwright-cli` commands against one session (no `batch` equivalent — see "Assemble the sequence" below), applies the creative framework at each step, then assesses the overall arc.
 
 Requires the shared prerequisites from `browser-review.md` (session naming, screenshot path convention, QA data loading, Step 0 reconnaissance) — load this file only AFTER those have been processed.
 
@@ -13,37 +13,37 @@ Read `docs/journeys/{name}.md`. Extract:
 - **Success state** — how you know the journey worked
 - **Steps** — each step has a URL, action, "should feel", "should understand", and "red flags"
 
-## Assemble the batch invocation
+## Assemble the sequence
 
-Walk the journey via a single `agent-browser batch` invocation that owns the session lifecycle for that walk. Bundle every step's `open`, `snapshot -i -c`, annotated `screenshot`, and `vitals` capture into one invocation. The batch ends with `close` only if no further interactive ops are needed.
+<!-- playwright-cli: no equivalent found for agent-browser batch — see issue Gotchas -->
+Walk the journey via a sequence of individual `playwright-cli` commands that owns the session lifecycle for that walk — Playwright CLI has no `batch` equivalent (`playwright-cli-reference.md`'s Operation vocabulary table), so what was previously one bundled invocation is now a script of separate commands against the same `-s=<name>` session. Run every step's `open`/`goto`, `snapshot`, screenshot, and (see the Vitals capability-gap note below) `vitals` capture in sequence. End with `close` only if no further interactive ops are needed.
+
+<!-- playwright-cli: no equivalent found for agent-browser vitals — see issue Gotchas -->
+**Vitals capability gap:** Playwright CLI has no `vitals` command or equivalent (`browser-review.md`'s Shared review contract, "Vitals interpretation (Step 1)"). The worked example below omits the `vitals` calls the pre-migration form issued after each screenshot — Performance findings cannot be produced for this journey until a replacement capture mechanism is designed.
 
 **Worked example — three-step checkout journey:**
 
 ```
-agent-browser batch --session checkout-journey-review \
-  "open https://app.example.com/cart" \
-  "trace start" \
-  "snapshot -i -c" \
-  "screenshot --annotate .claude-tweaks/artifacts/screenshots/browse/checkout-journey-review/01_cart.png" \
-  "vitals" \
-  "open https://app.example.com/checkout/shipping" \
-  "snapshot -i -c" \
-  "screenshot --annotate .claude-tweaks/artifacts/screenshots/browse/checkout-journey-review/02_shipping.png" \
-  "vitals" \
-  "open https://app.example.com/checkout/payment" \
-  "snapshot -i -c" \
-  "screenshot --annotate .claude-tweaks/artifacts/screenshots/browse/checkout-journey-review/03_payment.png" \
-  "vitals" \
-  "close"
+playwright-cli -s=checkout-journey-review open https://app.example.com/cart
+playwright-cli -s=checkout-journey-review tracing-start
+playwright-cli -s=checkout-journey-review snapshot
+playwright-cli -s=checkout-journey-review screenshot --filename=/absolute/path/to/repo/.claude-tweaks/artifacts/screenshots/browse/checkout-journey-review/01_cart.png
+playwright-cli -s=checkout-journey-review goto https://app.example.com/checkout/shipping
+playwright-cli -s=checkout-journey-review snapshot
+playwright-cli -s=checkout-journey-review screenshot --filename=/absolute/path/to/repo/.claude-tweaks/artifacts/screenshots/browse/checkout-journey-review/02_shipping.png
+playwright-cli -s=checkout-journey-review goto https://app.example.com/checkout/payment
+playwright-cli -s=checkout-journey-review snapshot
+playwright-cli -s=checkout-journey-review screenshot --filename=/absolute/path/to/repo/.claude-tweaks/artifacts/screenshots/browse/checkout-journey-review/03_payment.png
+playwright-cli -s=checkout-journey-review close
 ```
 
-The batch returns concatenated output: per-step snapshot trees (with element refs), screenshot file paths confirmed written, and Web Vitals values. Parse output by step boundary — each `open` starts a new step block.
+Each command returns its own output: per-step snapshot trees (with `eN` element refs), and each screenshot's file path confirmed written. There is no concatenated batch output to parse by step boundary anymore — each command is its own step block; each `open`/`goto` marks the start of a new step.
 
-**When per-step interactions are needed** (click, fill, type that depend on refs from a fresh snapshot): split the walk. Run a batch up through the page that needs interaction, perform the interactive ops outside the batch in the same session, then start a follow-on batch for the remaining steps. One `batch` invocation = one session lifecycle slice — never mix session names within a batch.
+**When per-step interactions are needed** (click, fill, type that depend on refs from a fresh snapshot): run them as additional individual commands against the same session, interleaved with the sequence above wherever the journey step calls for them — there is no `batch` boundary to split around anymore, since every command already runs individually in the same session.
 
-## Per-step review (against the batched output)
+## Per-step review (against the sequence's output)
 
-For each step's block in the batched output:
+For each step's block in the sequence's output:
 
 1. **Health check** — console errors, failed network requests, broken rendering visible in the snapshot. If the step is broken, capture a trace (see "Trace on failure" below) and continue to the next step.
 2. **Should-feel test** — the journey says this step should feel like "{should_feel}." Does the snapshot + annotated screenshot support that? Be honest and specific about gaps. This is the key per-step test.
@@ -102,18 +102,25 @@ If the browser review revealed that "should feel" descriptions are inaccurate, r
 
 When a journey step fails — assertion mismatch, page error, navigation timeout, broken render, unrecoverable interaction error — save the trace **before** closing the session. The trace lets you diagnose the failure offline without re-running the journey.
 
-Tracing is record-then-stop: recording was started by the `trace start` in the walk's opening batch (see the worked example above) — a trace can only be saved for the interval after recording started, so a walk that never started recording has nothing to save on failure. To save:
+Tracing is record-then-stop: recording was started by `tracing-start` in the walk's opening sequence (see the worked example above) — a trace can only be saved for the interval after recording started, so a walk that never started recording has nothing to save on failure. To save:
 
 ```
-agent-browser --session <session> trace stop .claude-tweaks/artifacts/traces/<session>/<timestamp>.zip
+playwright-cli -s=<session> tracing-stop
 ```
 
-`<timestamp>` should be ISO-like and filename-safe (`20260501-143022`). Then close the session:
+Unlike `agent-browser`'s `trace stop <path>`, `tracing-stop` takes no output-path argument — it auto-writes the trace to `.playwright-cli/traces/trace-<tool-timestamp>.trace` (plus a sibling `.network` file and a `resources/` directory) relative to the working directory (`playwright-cli-reference.md`'s caution on `tracing-stop`). Immediately after it returns, via the Bash tool, move that freshly-written file to an absolute path:
 
 ```
-agent-browser --session <session> close
+mv .playwright-cli/traces/trace-<tool-timestamp>.trace /absolute/path/to/repo/.claude-tweaks/artifacts/traces/<session>/<timestamp>.trace
 ```
 
-In the failure report, attach the trace path verbatim. The file is a Chrome DevTools trace — the user opens it via Chrome DevTools → Performance → Load profile (the CLI has no trace-viewing subcommand). Do not omit the trace — failure reports without a trace path are not actionable. Artifacts older than 30 days are surfaced for deletion by `/tidy`'s residue sweep (the `artifact` residue finding); `.claude-tweaks/artifacts/` belongs in `.gitignore`.
+`<timestamp>` should be ISO-like and filename-safe (`20260501-143022`); disambiguate by exact modification time rather than "most recent" alone when multiple sessions may stop tracing concurrently. Then close the session:
 
-If the failure is mid-batch, the batch invocation will return partial output up to the failure point. Run `trace stop <path>` and `close` as separate invocations after the batch returns; do not append them to the failed batch.
+```
+playwright-cli -s=<session> close
+```
+
+In the failure report, attach the trace's absolute path verbatim. The file is a Playwright CLI trace — a human opens it with `npx playwright show-trace <path>` (the CLI has no trace-viewing subcommand of its own). Do not omit the trace — failure reports without a trace path are not actionable. Artifacts older than 30 days are surfaced for deletion by `/tidy`'s residue sweep (the `artifact` residue finding); `.claude-tweaks/artifacts/` belongs in `.gitignore`.
+
+<!-- playwright-cli: no equivalent found for agent-browser batch — see issue Gotchas -->
+If the failure is mid-walk, the sequence run so far will have already returned per-command output up to the failure point — there is no batch to return partial output from anymore. Run `tracing-stop` (plus the relocation above) and `close` as the next two commands once the failure is detected.

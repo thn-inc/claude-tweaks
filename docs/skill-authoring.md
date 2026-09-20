@@ -24,6 +24,13 @@ A sub-file may carry a **tighter per-file pin** than that ceiling when a step re
 
 **Extracting to a sub-file under budget pressure.** When a file nearing its ceiling needs new content, extract the least-structural part — rationale paragraphs, "why" explanations, edge-case walkthroughs — into a cited sub-file rather than trimming inline prose to the point of losing clarity. This repo has done it repeatedly: `console-template.md`, `manifesto-overrides.md`, and `manifesto-authorized-merge.md` (extracted from `flow/manifesto.md` to clear its own #724 pin), `journey-health/deep-tier.md` and `specify/next-actions.md` (extracted from their respective `SKILL.md`s, #1806), and `wrap-up/resume-halted-run.md` and `wrap-up/flags.md` (extracted from `wrap-up/SKILL.md`, #2006) are worked examples.
 
+## Instruction-prose diet: operative text vs. provenance narrative
+
+Operative text — a `## Step N` body, a gate table, a Next Actions block, an Anti-Patterns row — states the rule and cites its `[IL-nn]` tag (`docs/incident-log.md`) or the record number that motivated it. One sentence of rationale is allowed alongside the citation; a paragraph retelling what happened, who filed it, or which prior draft it replaced is not — that narrative belongs in `docs/incident-log.md` or `docs/decisions/`, cited by tag rather than restated. This does not apply to this file (`docs/skill-authoring.md`) or other authoring/reference docs: those are read by a human shaping a skill, not composed into a pipeline step's runtime context, so a fuller "why" is appropriate there (#1909).
+
+Compliant: `Never {action} — {one-clause consequence} [IL-NN].`
+Non-compliant: the same rule followed by a paragraph re-explaining the incident that produced it — cite the real tag and move the retelling to that incident-log entry instead.
+
 ## Conditional blocks and the composer
 
 A `plugin/skills/_shared/*.md` contract or a skill sub-file may fence a passage that applies only under one resolved run condition, so a step reads one composed bundle instead of every branch of every file:
@@ -147,7 +154,7 @@ For the empirically observed boundary of what Bash commands pass and fail in a w
 
 ## Interaction style directive
 
-All skills use this identical directive after the frontmatter:
+Every skill follows this identical directive, but it is no longer restated inline in any `SKILL.md` (#1909): the SessionStart hook injects it into every session's context once, from a single source (`plugin/bin/lib/hooks/interaction-style.js`, wired in `session-start.js`). A new skill needs no frontmatter block for this — the directive already applies to it. Do not add a `> **Interaction style:**` line to a `SKILL.md`; `tests/skill-conventions.test.js` and `tests/bin-lib/skill-audit/house-structure.test.js` fail a skill that does.
 
 ```
 > **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.

@@ -150,7 +150,7 @@ no edit — consistent with the consoles' own dry-run bullets.
 
 The console apply log entry above (`decisions.md`) is never the only record of an outcome — when
 the preamble carries a `Ledger:` field, the same apply step also updates that exact row in
-`docs/plans/{feature}-ledger.md` (`_shared/ledger-format.md`'s Ledger File Format), in the same
+`docs/plans/{feature}-ledger.md` (`_shared/ledger-format.md`'s Ledger File Format), or its run-dir-scoped alternate — see that file's Location section, in the same
 pass, before moving to the next staged item:
 
 | Outcome (numbered above) | Ledger Status | Ledger Resolution |

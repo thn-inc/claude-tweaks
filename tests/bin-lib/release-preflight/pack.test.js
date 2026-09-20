@@ -19,6 +19,18 @@ function fakeDeps(o = {}) {
         const key = args.join(' ');
         calls.git.push(key);
         if (key === 'rev-parse --show-toplevel') return `${ROOT}\n`;
+        if (key === 'symbolic-ref --short refs/remotes/origin/HEAD') {
+          if (o.noSymbolicRef) throw new Error('fatal: ref refs/remotes/origin/HEAD is not a symbolic ref');
+          return `${o.originHead === undefined ? 'origin/main' : o.originHead}\n`;
+        }
+        if (key === 'remote show origin') {
+          if (o.noRemoteShow) throw new Error('fatal: could not query remote');
+          return `* remote origin\n  Fetch URL: git@github.com:o/r.git\n  HEAD branch: ${o.remoteShowHead === undefined ? 'main' : o.remoteShowHead}\n`;
+        }
+        if (key === 'branch --show-current') {
+          if (o.noCurrentBranch) throw new Error('fatal: not a git repository');
+          return `${o.currentBranch === undefined ? 'main' : o.currentBranch}\n`;
+        }
         if (key.startsWith('rev-parse --verify --quiet refs/remotes/origin/')) { if (o.noOriginRef) throw new Error('fatal: Needed a single revision'); return `${SHA}\n`; }
         if (key.startsWith('rev-parse ')) return `${SHA}\n`;
         if (key.startsWith('describe')) { if (o.noTag) throw new Error('fatal: No names found, cannot describe anything.'); return 'v1.2.0\n'; }
@@ -64,7 +76,7 @@ test('AC 1 (pr-first): one unreleased feat since v1.2.0 → proposedVersion 1.3.
   assert.deepStrictEqual(pack.lastTag.value, { tag: 'v1.2.0', version: '1.2.0', tipRef: 'origin/main' });
   assert.strictEqual(pack.unreleased.value.commits.length, 1);
   assert.strictEqual(pack.unreleased.value.commits[0].type, 'feat');
-  assert.deepStrictEqual(pack.proposedVersion.value, { version: '1.3.0', part: 'minor', base: '1.2.0', baseSource: 'tag', tipRef: 'origin/main' });
+  assert.deepStrictEqual(pack.proposedVersion.value, { version: '1.3.0', part: 'minor', base: '1.2.0', baseSource: 'tag', preMajor: false, tipRef: 'origin/main' });
   for (const k of PROBE_NAMES) assert.ok(k in pack && typeof pack[k].ok === 'boolean', k);
 });
 
@@ -79,7 +91,7 @@ test('AC 2: zero commits since the tag → unreleased is empty and proposedVersi
 test('AC 8 (local-merge): the same fixture yields the same unreleased/proposedVersion shape; releasePr is none, ciTip n/a, hook follows the policy key', async () => {
   const a = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ policy: 'integration-model: local-merge\nrelease-hook: ./publish.sh\n' }).deps });
   assert.strictEqual(a.engine.value, 'local-merge');
-  assert.deepStrictEqual(a.proposedVersion.value, { version: '1.3.0', part: 'minor', base: '1.2.0', baseSource: 'tag', tipRef: 'origin/main' });
+  assert.deepStrictEqual(a.proposedVersion.value, { version: '1.3.0', part: 'minor', base: '1.2.0', baseSource: 'tag', preMajor: false, tipRef: 'origin/main' });
   assert.strictEqual(a.unreleased.value.commits[0].type, 'feat');
   assert.deepStrictEqual(a.releasePr, { ok: true, value: 'none', durationMs: 0 });
   assert.deepStrictEqual(a.ciTip, { ok: true, value: 'n/a', durationMs: 0 });
@@ -108,6 +120,40 @@ test('ruling 3: without origin/{branch} the tip is refs/heads/{branch}; integrat
   assert.ok(calls.git.some((c) => c === 'rev-parse --verify --quiet refs/remotes/origin/develop'));
 });
 
+test('#2422 AC 1: no integration-branch policy key + non-main default branch → resolves via origin/HEAD, never falls back to a literal "main"', async () => {
+  const { deps } = fakeDeps({ policy: 'integration-model: local-merge\n', originHead: 'origin/master' });
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps });
+  assert.strictEqual(pack.branch, 'master');
+  assert.strictEqual(pack.tipRef, 'origin/master');
+});
+
+test('#2422: symbolic-ref refs/remotes/origin/HEAD unset locally falls back to `git remote show origin`\'s HEAD branch', async () => {
+  const { deps, calls } = fakeDeps({ policy: 'integration-model: local-merge\n', noSymbolicRef: true, remoteShowHead: 'trunk' });
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps });
+  assert.strictEqual(pack.branch, 'trunk');
+  assert.ok(calls.git.includes('remote show origin'));
+});
+
+test('#2422: no `origin` remote at all falls back to the current checked-out branch, never a hardcoded "main" — a repo with no other signal (real-world: acceptance.test.js\'s no-origin fixture)', async () => {
+  const { deps, calls } = fakeDeps({ policy: 'integration-model: local-merge\n', noSymbolicRef: true, noRemoteShow: true, currentBranch: 'trunk' });
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps });
+  assert.strictEqual(pack.branch, 'trunk');
+  assert.ok(calls.git.includes('branch --show-current'));
+});
+
+test('#2422: origin-derived resolution wins over the current-branch fallback when both are available (the current branch can be switched underfoot by a concurrent session — integration-branch.md\'s anti-pattern)', async () => {
+  const { deps } = fakeDeps({ policy: 'integration-model: local-merge\n', originHead: 'origin/release', currentBranch: 'some-feature-branch' });
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps });
+  assert.strictEqual(pack.branch, 'release');
+});
+
+test('#2422: no policy key, no origin, and no current branch either degrades every probe (preamble failure) rather than guessing "main"', async () => {
+  const { deps } = fakeDeps({ policy: 'integration-model: local-merge\n', noSymbolicRef: true, noRemoteShow: true, noCurrentBranch: true });
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps });
+  assert.strictEqual(pack.branch, null);
+  assert.match(pack.engine.error, /preamble failed: .*integration branch unresolved/);
+});
+
 test('ruling 12: the base is the highest of the v* tags, the manifest at tipRef and the first-parent tag — never a guessed 0.0.0', async () => {
   // No tag anywhere, a bootstrap-seeded manifest at the tip: the manifest is
   // the base, read through `git show {tipRef}:` rather than the worktree.
@@ -116,14 +162,14 @@ test('ruling 12: the base is the highest of the v* tags, the manifest at tipRef 
   assert.strictEqual(a.lastTag.ok, false);
   assert.match(a.lastTag.error, /no v\* tag reachable from origin\/main/);
   assert.ok(withManifest.calls.git.some((c) => c.startsWith('log --first-parent') && c.endsWith(' origin/main')));
-  assert.deepStrictEqual(a.proposedVersion.value, { version: '0.2.0', part: 'minor', base: '0.1.0', baseSource: 'manifest', tipRef: 'origin/main' });
+  assert.deepStrictEqual(a.proposedVersion.value, { version: '0.2.0', part: 'minor', base: '0.1.0', baseSource: 'manifest', preMajor: true, tipRef: 'origin/main' });
   // A manifest ahead of every tag wins over the tag.
   const ahead = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ tags: ['v1.2.0'], show: { 'origin/main:.release-please-manifest.json': '{ ".": "1.5.0" }' } }).deps });
-  assert.deepStrictEqual(ahead.proposedVersion.value, { version: '1.6.0', part: 'minor', base: '1.5.0', baseSource: 'manifest', tipRef: 'origin/main' });
+  assert.deepStrictEqual(ahead.proposedVersion.value, { version: '1.6.0', part: 'minor', base: '1.5.0', baseSource: 'manifest', preMajor: false, tipRef: 'origin/main' });
   // A higher tag that is NOT on the first-parent chain (describe never sees it)
   // still raises the base above the reachable one.
   const offChain = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ tags: ['v1.2.0', 'v2.0.0', 'vnope'] }).deps });
-  assert.deepStrictEqual(offChain.proposedVersion.value, { version: '2.1.0', part: 'minor', base: '2.0.0', baseSource: 'tag', tipRef: 'origin/main' });
+  assert.deepStrictEqual(offChain.proposedVersion.value, { version: '2.1.0', part: 'minor', base: '2.0.0', baseSource: 'tag', preMajor: false, tipRef: 'origin/main' });
   // Nothing resolves a base: degrade, never offer 0.0.1.
   const bare = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ noTag: true, tags: [], subjects: ['fix: x'] }).deps });
   assert.strictEqual(bare.proposedVersion.ok, false);
@@ -147,7 +193,18 @@ test('ruling 12: a release-please-config.json at tipRef routes the manifest read
     'origin/main:package.json': '{\n  "name": "x",\n  "version": "3.4.0"\n}\n',
   };
   const pack = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ tags: ['v1.2.0'], show }).deps });
-  assert.deepStrictEqual(pack.proposedVersion.value, { version: '3.5.0', part: 'minor', base: '3.4.0', baseSource: 'manifest', tipRef: 'origin/main' });
+  assert.deepStrictEqual(pack.proposedVersion.value, { version: '3.5.0', part: 'minor', base: '3.4.0', baseSource: 'manifest', preMajor: false, tipRef: 'origin/main' });
+});
+
+test('#2327 AC 2: a 0.x base with a breaking commit reports part: minor, preMajor: true (bump-minor-pre-major defaults true)', async () => {
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ noTag: true, tags: ['v0.4.2'], subjects: ['feat!: drop the old flag'] }).deps });
+  assert.deepStrictEqual(pack.proposedVersion.value, { version: '0.5.0', part: 'minor', base: '0.4.2', baseSource: 'tag', preMajor: true, tipRef: 'origin/main' });
+});
+
+test('#2327: bump-minor-pre-major: false in release-please-config.json at tipRef overrides the default — a 0.x breaking commit stays major', async () => {
+  const show = { 'origin/main:release-please-config.json': '{ "packages": { ".": { "release-type": "node", "bump-minor-pre-major": false } } }' };
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ noTag: true, tags: ['v0.4.2'], subjects: ['feat!: drop the old flag'], show }).deps });
+  assert.deepStrictEqual(pack.proposedVersion.value, { version: '1.0.0', part: 'major', base: '0.4.2', baseSource: 'tag', preMajor: true, tipRef: 'origin/main' });
 });
 
 const hookOf = async (workflows) => (await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ workflows }).deps })).hook.value;

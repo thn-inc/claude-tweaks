@@ -51,6 +51,44 @@ test('15.0.0: a breaking feat and a breaking hidden-type refactor render notes i
   assert.strictEqual(out, stripPrLinks(read('release-please-15.0.0.md')));
 });
 
+test('renderSection: a releaseNote + a breaking commit renders Highlights after BREAKING CHANGES and before the first type-grouped section', () => {
+  const out = renderSection({
+    version: '1.2.0', previousTag: 'v1.1.0', date: '2026-09-18', repo,
+    commits: [
+      commit('feat', null, 'drop node 16', 's'.repeat(40), { breaking: true, breakingNote: 'drop node 16', releaseNote: 'Dropped support for Node 16.' }),
+      commit('fix', null, 'bump x', 't'.repeat(40), { releaseNote: 'Fixed a bug with x.' }),
+    ],
+  });
+  const iBreaking = out.indexOf('### ⚠ BREAKING CHANGES');
+  const iHighlights = out.indexOf('### Highlights');
+  const iFeatures = out.indexOf('### Features');
+  assert.ok(iBreaking !== -1 && iHighlights !== -1 && iFeatures !== -1, out);
+  assert.ok(iBreaking < iHighlights, out);
+  assert.ok(iHighlights < iFeatures, out);
+  assert.ok(out.includes('* Dropped support for Node 16.'), out);
+  assert.ok(out.includes('* Fixed a bug with x.'), out);
+});
+
+test('renderSection: a releaseNote with no breaking commit renders Highlights first', () => {
+  const out = renderSection({
+    version: '1.2.0', previousTag: 'v1.1.0', date: '2026-09-18', repo,
+    commits: [commit('fix', null, 'bump x', 'u'.repeat(40), { releaseNote: 'Fixed a bug with x.' })],
+  });
+  assert.strictEqual(out.indexOf('### ⚠ BREAKING CHANGES'), -1, out);
+  const iHighlights = out.indexOf('### Highlights');
+  const iFixes = out.indexOf('### Bug Fixes');
+  assert.ok(iHighlights !== -1 && iFixes !== -1, out);
+  assert.ok(iHighlights < iFixes, out);
+});
+
+test('renderSection: zero releaseNote values renders no Highlights block at all', () => {
+  const out = renderSection({
+    version: '1.2.0', previousTag: 'v1.1.0', date: '2026-09-18', repo,
+    commits: [commit('fix', null, 'bump x', 'v'.repeat(40))],
+  });
+  assert.strictEqual(out.indexOf('### Highlights'), -1, out);
+});
+
 test('the fixtures are the captured bytes (re-capture, never edit)', () => {
   const crypto = require('crypto');
   const sha256 = (name) => crypto.createHash('sha256').update(fs.readFileSync(path.join(FIXTURES, name))).digest('hex');

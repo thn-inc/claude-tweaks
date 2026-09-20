@@ -27,7 +27,9 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const wtDetect = require('./lib/hooks/worktree-detect');
 const { appendEntry, formatEntry, hms } = require('./lib/log-decision/append');
-const { parseRepo, ghAvailable, remoteUrl } = require('./lib/repo-resolve');
+const {
+  parseRepo, ghAvailable, remoteUrl, repoSlug,
+} = require('./lib/repo-resolve');
 
 const USAGE = 'usage: apply-refine-labels.js <actions.json> [--run <run-dir>] [--repo owner/name] [--help]\n';
 
@@ -169,9 +171,9 @@ function run(argv, deps = realDeps) {
 
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
+  const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
   if (!repoSpec) { deps.stderr('apply-refine-labels.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
-  const repoFlag = `${repoSpec.owner}/${repoSpec.repo}`;
+  const repoFlag = repoSlug(repoSpec);
 
   const ok = [];
   const failed = [];

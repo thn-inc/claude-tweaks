@@ -94,11 +94,15 @@ test('applyRetryResults: every attempted file passed → exitCode 0 + flakyRetri
 // attempts return; records every call in order.
 function fakeRunOne(script) {
   const calls = [];
-  const runOne = async ({ name, command }) => {
+  const runOne = async ({
+    name, command, cwd,
+  }) => {
     const file = command.replace(/^run /, '');
     const codes = script[file] || [0];
     const attempt = calls.filter((c) => c.file === file).length;
-    calls.push({ name, file });
+    calls.push({
+      name, file, cwd,
+    });
     return { name, command, exitCode: codes[Math.min(attempt, codes.length - 1)], durationMs: 1, logPath: `/l/${name}.log` };
   };
   return { runOne, calls };
@@ -121,6 +125,15 @@ test('runRetries: a file that exhausts maxRetries fails the run and short-circui
   assert.strictEqual(out.exitCode, 1);
   assert.deepStrictEqual(out.retryFailed, ['tests/a.test.js']);
   assert.deepStrictEqual(out.flakyRetried, []);
+});
+
+test('runRetries forwards cwd to every runOne call (#2376)', async () => {
+  const { runOne, calls } = fakeRunOne({ 'tests/a.test.js': [0] });
+  const plan = { retry: true, files: ['tests/a.test.js'], command: [{ file: 'tests/a.test.js', cmd: 'run tests/a.test.js' }] };
+  await runRetries({
+    check: { name: 'tests', exitCode: 1 }, plan, maxRetries: 2, logDir: '/l', runOne, spawnImpl: null, now: () => 0, cwd: '/repo/packages/app',
+  });
+  assert.deepStrictEqual(calls.map((c) => c.cwd), ['/repo/packages/app']);
 });
 
 test('flakyCaveatLines: one line per retried check naming the files and the passing retry logs; none for an ordinary check', () => {

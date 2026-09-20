@@ -30,9 +30,10 @@ const {
 const ctxLib = require('./context');
 const policy = require('../policy');
 const wtDetect = require('./worktree-detect');
-const { resolveIntegrationBranch, preferRemoteTrackingRef } = require('./worktree-reap');
+const { resolveIntegrationBranch, preferRemoteTrackingRef, bareIntegrationName } = require('./worktree-reap');
 const { runGit, FAILURE } = require('./git-exec');
 const { detectIntegrationModel, resolvePolicyConfig } = require('../policy-schema');
+const { isPathContained } = require('../shared-primitives');
 
 function pluginRoot() {
   return process.env.CLAUDE_PLUGIN_ROOT || '${CLAUDE_PLUGIN_ROOT}';
@@ -78,6 +79,19 @@ const POLICY_FILE = path.join('.claude-tweaks', 'policy.yml');
 // so the carve-out cannot be used to shadow-write arbitrary pipeline state into a
 // worktree — only the one tracked, committed-on-branch artifact this section documents.
 const WORK_SPEC_TAIL_RE = /^(?:spec-[^/\\]+[/\\])?work(?:[/\\]\d+-spec\.md)?$/;
+
+// #1493/#1494: the second documented worktree-local exception — a
+// `*-tidy-standalone*`/`*-sweep-standalone*` run's `decisions.md`, `report.md`,
+// and `staged/**` are the exact three shapes `.gitignore`'s block un-ignores
+// (top-level pipelines depth only, never spec-*/-nested — see that block's own
+// comment) so `tidy/step-7-5-worktree-always.md`'s pr-first mirror-then-commit
+// procedure can land the run's audit trail on the worktree's own branch instead
+// of only the main-checkout copy. Keyed on the run-dir NAME (new for this
+// guard, unlike WORK_SPEC_TAIL_RE which is tail-only) — anchored so a
+// `spec-{slug}` nesting or an `archive/` parent can never match, since
+// `runDirName` is always the top-level segment (relParts[0]) by construction.
+const STANDALONE_AUDIT_RUN_RE = /-(?:tidy|sweep)-standalone/;
+const STANDALONE_AUDIT_TAIL_RE = /^(?:decisions\.md|report\.md|staged(?:[/\\].+)?)$/;
 
 // git always reports/accepts forward-slash paths regardless of platform —
 // used for GATE_COVERAGE's prose-facing rendering and for comparing against
@@ -127,7 +141,7 @@ const GATE_COVERAGE = Object.freeze({
   exemptions: Object.freeze({
     paths: Object.freeze([`${toPosix(PIPELINE_STATE_DIR)}/`, toPosix(POLICY_FILE)]),
     commit: 'policy-only',
-    push: 'delete-only',
+    push: 'delete-only or ff-integration-branch',
     target: 'gitignored',
   }),
 });
@@ -141,7 +155,7 @@ const GATE_COVERAGE = Object.freeze({
 function isPipelineBookkeeping(repoRoot, targetPath) {
   if (!repoRoot || typeof targetPath !== 'string' || !targetPath) return false;
   if (!path.isAbsolute(targetPath)) return false;
-  return path.resolve(targetPath).startsWith(path.join(repoRoot, PIPELINE_STATE_DIR) + path.sep);
+  return isPathContained(path.resolve(targetPath), path.join(repoRoot, PIPELINE_STATE_DIR));
 }
 
 // Resolves a write TARGET the way an already-existing file or symlink chain
@@ -332,6 +346,50 @@ function isDeleteOnlyPush(command) {
   return typeof command === 'string' && DELETE_ONLY_PUSH_ALLOWLIST.test(command);
 }
 
+// The integration-branch fast-forward push exemption (#2542): admits EXACTLY
+// `git push <remote> <branch>` — one remote, one branch, nothing else — no
+// `--force`/`-f`, no `+`-prefixed refspec, no `:`-refspec, no other flag, no
+// shell operator, no env-var prefix, no path to git other than the bare
+// word. Same default-deny-by-construction grammar as the delete-only
+// exemption above; unlike that one, this needs a live git query — a
+// fast-forward is a fact about ref state, not something the command text
+// alone can prove.
+const INTEGRATION_BRANCH_PUSH_RE = Object.freeze(new RegExp(
+  `^\\s*git\\s+push\\s+(${CQ_ARG})\\s+(${CQ_ARG})\\s*$`,
+));
+
+function unquoteCqArg(raw) {
+  if (raw.length >= 2) {
+    if (raw[0] === "'" && raw[raw.length - 1] === "'") return raw.slice(1, -1);
+    if (raw[0] === '"' && raw[raw.length - 1] === '"') return raw.slice(1, -1);
+  }
+  return raw;
+}
+
+// Only a push of the CANONICAL integration branch qualifies, resolved the
+// same way the materialize-commit range check below resolves it (policy
+// `integration-branch:` key, else a local main/master probe) — never
+// re-derived from the command text, so a command naming some OTHER branch is
+// correctly left to fall through to the deny below on its own, by simple
+// name mismatch. No remote-tracking ref to compare against, or the branch is
+// not actually an ancestor of it (not provably a fast-forward) — not exempt,
+// the same fail-closed posture as every other check in this file.
+function isIntegrationBranchFastForwardPush(command, cwd) {
+  if (typeof command !== 'string') return false;
+  const m = command.match(INTEGRATION_BRANCH_PUSH_RE);
+  if (!m) return false;
+  const remote = unquoteCqArg(m[1]);
+  const branch = unquoteCqArg(m[2]);
+  if (remote !== 'origin') return false;
+  const bound = resolveIntegrationBranch(cwd) || resolveLocalDefaultBranchBound(cwd);
+  if (!bound || branch !== bareIntegrationName(bound)) return false;
+  const remoteRef = `refs/remotes/origin/${branch}`;
+  const { failure: refMissing } = runGit(['rev-parse', '--verify', '--quiet', remoteRef], cwd);
+  if (refMissing) return false;
+  const { failure } = runGit(['merge-base', '--is-ancestor', remoteRef, branch], cwd);
+  return !failure;
+}
+
 // Kept returning `string | null` — E1's own callers below compare toplevels for
 // a PROVABLE mismatch and already resolve any falsy value to allow, so the
 // indeterminate/negative distinction that repoInfo now draws would change no
@@ -489,7 +547,7 @@ function checkTeardownGate(ctx, teardownWarnings = []) {
     // still resolves to allow, matching this file's own posture throughout.
     if (source === 'bash') {
       const targetReal = safeReal(target);
-      if (targetReal && cwdReal && (cwdReal === targetReal || cwdReal.startsWith(targetReal + path.sep))) {
+      if (targetReal && cwdReal && isPathContained(cwdReal, targetReal, { orEqual: true })) {
         return denyResult(
           `claude-tweaks teardown gate: this \`git worktree remove\` targets ${target}, which is the ` +
           `current session's own working directory (or an ancestor of it). Removing it deletes the ` +
@@ -615,6 +673,7 @@ function shadowPipelineRunDir(targetPath) {
   const runDirName = relParts[0];
   const tail = relParts.slice(1).join(path.sep);
   if (WORK_SPEC_TAIL_RE.test(tail)) return null;
+  if (STANDALONE_AUDIT_RUN_RE.test(runDirName) && STANDALONE_AUDIT_TAIL_RE.test(tail)) return null;
   const runDirCandidate = path.join(pipelinesDir, runDirName);
   let exists = false;
   try { exists = fs.statSync(runDirCandidate).isDirectory(); } catch { /* not there yet — a genuinely new shadow */ }
@@ -840,6 +899,14 @@ function checkWorktreeRequired(ctx, precomputedGitTargets, indeterminateTargets 
     // resolved from a 'push' action, and only when the ENTIRE command
     // matches the allowlist grammar above.
     if (action === 'push' && isDeleteOnlyPush(bashCommand)) continue;
+    // The integration-branch fast-forward push exemption (#2542): ONLY for a
+    // target this loop resolved from a 'push' action, and only when the
+    // entire command matches the allowlist grammar above AND a live query
+    // proves it a fast-forward of the canonical integration branch. Reuses
+    // `ctx.cwd`, not `targetPath`, for the same reason `isPolicyOnlyCommit`
+    // does just above: `targetPath` here is the command's working directory,
+    // not a file.
+    if (action === 'push' && isIntegrationBranchFastForwardPush(bashCommand, ctx.cwd)) continue;
 
     // Breadcrumb for the residue sweep's judgment class (#185, Task 12) —
     // scoped to ctx.ownedRun, NEVER ctx.runDir: this gate fires before any
@@ -946,6 +1013,32 @@ function resolveLocalDefaultBranchBound(repoRoot) {
   return null;
 }
 
+// A multi-spec run's per-spec skill invocations (including this gate's own
+// caller, checkBookkeepingStampsGate) receive `$PIPELINE_RUN_DIR` =
+// `{parent}/spec-{N}/`, NOT the parent directory (flow/multi-spec.md's env-var
+// table) — the same per-spec shape #2571 found `checkPrBookkeepingPrecondition`
+// blind to. `path.basename(runDir)` of that value is `spec-{N}`, which carries
+// no ISO-timestamp prefix and is never itself a real top-level run id, so the
+// single-record branch below would build a pathspec rooted at a nonexistent
+// `.../spec-{N}/work` sibling and never match the real committed path
+// `{parent-run-id}/spec-{N}/work/{N}-spec.md`. Detect this shape here — a
+// bare `spec-{digits}` basename whose PARENT directory basename *does* look
+// like a canonical run id (RUN_ID_RE) — and resolve the pathspec against the
+// PARENT's run id, scoped to this one spec's own nested `work/` (never the
+// `spec-*` wildcard the parent-dir branch below uses, since a per-spec caller
+// only ever cares about its own materialize commit, not a sibling spec's).
+// Returns null for every other shape (a real top-level run dir, an unrelated
+// directory, or a `spec-{N}` dir with no run-id-shaped parent) so the caller
+// falls through to the existing single-record/parent-dir pathspec unchanged.
+const PER_SPEC_SUBDIR_RE = /^spec-\d+$/;
+function perSpecPathspec(runDir, runId) {
+  if (!PER_SPEC_SUBDIR_RE.test(runId)) return null;
+  const parentId = path.basename(path.dirname(runDir));
+  if (!ctxLib.RUN_ID_RE.test(parentId)) return null;
+  const parentRel = toPosix(path.join(PIPELINE_STATE_DIR, parentId));
+  return ['--', `${parentRel}/${runId}/work/*`];
+}
+
 // Read-only, best-effort: any git failure (no commits yet, git unavailable)
 // and an unusable runDir both resolve to false — ambiguity never triggers the
 // gate, same posture as every other check in this file.
@@ -953,6 +1046,7 @@ function hasMaterializeCommit(worktreeRoot, runDir) {
   if (typeof runDir !== 'string' || !runDir) return false;
   const runId = path.basename(runDir);
   if (!runId || runId === '.' || runId === '..') return false;
+  const perSpec = perSpecPathspec(runDir, runId);
   // PIPELINE_STATE_DIR (not a second hardcoded literal) + toPosix, since git
   // pathspecs are always forward-slash regardless of platform.
   const runRel = toPosix(path.join(PIPELINE_STATE_DIR, runId));
@@ -1016,7 +1110,7 @@ function hasMaterializeCommit(worktreeRoot, runDir) {
   // ref when one exists (no fetch — see `preferRemoteTrackingRef` in
   // worktree-reap.js). The probed `main`/`master` fallback just below gets the
   // same upgrade for the same reason.
-  const paths = ['--', `${runRel}/work`, `${runRel}/spec-*/work/*`];
+  const paths = perSpec || ['--', `${runRel}/work`, `${runRel}/spec-*/work/*`];
   const bound = resolveIntegrationBranch(worktreeRoot) || resolveLocalDefaultBranchBound(worktreeRoot);
   const integration = bound ? preferRemoteTrackingRef(worktreeRoot, bound) : null;
   // Two distinct ways the bound can be unusable, and both must fall back the
@@ -1645,35 +1739,7 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
 // this parameter is what lets a test exercise checkBookkeepingStampsGate's
 // pr-first branch through run()'s own dispatch instead of calling the gate
 // function directly, bypassing every gate ahead of it in runInner (record #1268).
-// #1501: env-gated debug capture. Every reproduction attempt for the #989
-// exemption's repro-resistant failure (a real `git push` denied even though
-// it should match `hasNoUpstreamYet`) matched a synthetic replay field-for-
-// field and still allowed — the discrepancy must live in some field of the
-// real invocation's `ctx` that no synthetic payload has captured yet.
-// Setting CT_HOOKS_DEBUG_CAPTURE to a file path appends this call's
-// `ctx.input`/`cwd`/`runDir`/`runState`/`ownedRun` to that file on every
-// pre-tool-use invocation, so the next live occurrence can be diffed
-// byte-for-byte against a synthetic payload built from the same fields.
-// Best-effort and silent on failure — a debug aid must never itself change
-// gate behavior or crash a real session; unset by default, so this never
-// runs (or costs anything) outside a deliberate capture session.
-function captureDebugPayload(ctx) {
-  const target = process.env.CT_HOOKS_DEBUG_CAPTURE;
-  if (!target) return;
-  try {
-    fs.appendFileSync(target, `${JSON.stringify({
-      at: new Date().toISOString(),
-      input: ctx.input,
-      cwd: ctx.cwd,
-      runDir: ctx.runDir,
-      runState: ctx.runState,
-      ownedRun: ctx.ownedRun,
-    })}\n`);
-  } catch { /* best-effort — a debug capture must never break a real hook call */ }
-}
-
 function run(ctx, deps = {}) {
-  captureDebugPayload(ctx);
   const indeterminateTargets = [];
   const warnings = [];
   const out = runInner(ctx, indeterminateTargets, warnings, deps) || {};
@@ -1725,5 +1791,4 @@ module.exports = {
   toplevel,
   checkBookkeepingStampsGate,
   hasLoggedPrDegrade,
-  teardownTargets,
 };

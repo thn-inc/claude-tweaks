@@ -3,7 +3,6 @@ name: demo
 description: Use for a human verdict on one built thing at a time: unrecorded work, a `#N` record, or a `#N,#M` list. Distinct from /test and /review. Keywords - acceptance, sign-off, demo, verification brief, human verdict, demo:pending, session-recall, closing commit.
 argument-hint: "[#N[,#M...]]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
 
 # Demo — Human Acceptance Sign-Off
 
@@ -156,8 +155,8 @@ point does not respond afterward (connection refused or HTTP 404), fall back to
 plan's own Entry point verbatim.
 
 **Validate** — URL surfaces (`rendered-page`/`app-route`) only; `cli`/`flow`/`diff` plans skip
-straight to Show. Run whenever browser tools are available (agent-browser is headless-capable, so
-this never needs a visible window): open a quick `agent-browser` session at the plan's exact deep
+straight to Show. Run whenever browser tools are available (playwright-cli is headless-capable, so
+this never needs a visible window): open a quick `playwright-cli` session at the plan's exact deep
 link, confirm it actually renders (not just an HTTP 200), attempt Auth Vault login when
 credentials resolve (the same source `/claude-tweaks:stories` uses; no configured credentials →
 skip the login check, reachability/render alone is still worth confirming), then close the

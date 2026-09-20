@@ -17,7 +17,7 @@ unchanged from before.
 >
 > **Dispatch shape:** single-assistant-message rule (`_shared/subagent-dispatch-core.md`'s fan-out section) applies. Batching unit here: one message per sub-issue's persona set — a `fast-lane` sub-issue's single Skeptical Reviewer call joins the next sub-issue's message rather than spending a whole message on one agent.
 >
-> **Contract:** Each agent follows the Subagent Contract — minimal input (a record reference + persona lens question + Template A), one of `DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED` as its first reply line. `[Use: Standard]` (resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard`, contract § Model Selection). Read-only — personas never modify the record themselves.
+> **Contract:** Each agent follows the Subagent Contract — minimal input (a record reference + persona lens question + Template A), a trailing `STATUS: {WORD}` line (one of DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) as the last non-empty line of its reply. `[Use: Standard]` (resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard`, contract § Model Selection). Read-only — personas never modify the record themselves.
 >
 > **Persona prompts (inline literally per agent — Mode 3 from `skills/_shared/multi-agent-coordination.md`):**
 >
@@ -41,7 +41,7 @@ unchanged from before.
 > Return at most 7 rows, highest severity first; if more were found, append a final row reading "+N more" with the count in place of N — never omit this row when findings exceed the cap.
 > Do not add narration, headers, or summaries before or after the table.
 >
-> After the table, on its own trailing line — the last non-empty line of your reply — write exactly one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
+> After the table, on its own trailing line — the last non-empty line of your reply — must read exactly `STATUS: DONE` (or DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED).
 >
 > [Use: Standard] — resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard` (contract § Model Selection).
 > ```

@@ -112,11 +112,11 @@ function run(argv, deps = realDeps) {
   if (workLinks === 'native') {
     let remote = null;
     if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-    const repoSpec = parseRepo(opts.repo ? `github.com/${opts.repo}` : remote);
+    const repoSpec = parseRepo(opts.repo ? (opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : remote);
     if (!repoSpec) { deps.stderr('preflight-records.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
     try {
       dependencies = preflight.fetchNativeDependencies({
-        numbers, owner: repoSpec.owner, repo: repoSpec.repo, runner: deps.runner,
+        numbers, owner: repoSpec.owner, repo: repoSpec.repo, host: repoSpec.host, runner: deps.runner,
       });
     } catch (err) {
       deps.stderr(`preflight-records.js: ${preflight.errorText(err)}\n`);

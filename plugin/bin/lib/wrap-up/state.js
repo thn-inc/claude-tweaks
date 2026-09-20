@@ -29,6 +29,7 @@ function readState({ cwd, since, run } = {}) {
   const base = {
     isRepo: false, branch: null, detachedAt: null, upstream: null,
     ahead: null, behind: null, pushed: false, commitsInScope: null, linkedWorktree: false,
+    remoteRef: null, pushedVia: null,
   };
   if (git(['rev-parse', '--is-inside-work-tree']) !== 'true') return base;
 
@@ -37,12 +38,44 @@ function readState({ cwd, since, run } = {}) {
   const detachedAt = branch ? null : git(['rev-parse', '--short', 'HEAD']);
 
   const upstream = git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
+
+  // The branch's own remote-tracking ref. Hard-coded to `origin` — the
+  // pr-first lifecycle pushes to `origin` by contract
+  // (`_shared/integration-branch.md`), so a remote named anything else is out
+  // of scope. Detached HEAD (branch null) skips this probe entirely,
+  // preserving today's detached-HEAD output — there is no branch name to
+  // form a remote ref from.
+  const originBranchRef = branch ? `origin/${branch}` : null;
+  const remoteRefExists = Boolean(
+    branch && git(['rev-parse', '--verify', '--quiet', '--end-of-options', `refs/remotes/${originBranchRef}`])
+  );
+
+  // `pushed` is always judged against exactly one ref, never both. A
+  // configured upstream that already equals this branch's own origin ref
+  // takes precedence and the remote-ref fallback is never consulted.
+  // Otherwise, when the branch's own remote-tracking ref exists — whether
+  // some OTHER upstream is configured (the #1860 inherited-upstream shape)
+  // or none at all — judge from that ref instead, since `git push origin
+  // {branch}` (no `-u`) updates it without ever touching `@{u}`.
+  let judgeRef = null;
+  let pushedVia = null;
+  if (upstream && upstream === originBranchRef) {
+    judgeRef = '@{u}';
+    pushedVia = 'upstream';
+  } else if (remoteRefExists) {
+    judgeRef = originBranchRef;
+    pushedVia = 'remote-ref';
+  } else if (upstream) {
+    judgeRef = '@{u}';
+    pushedVia = 'upstream';
+  }
+
   let ahead = null;
   let behind = null;
-  if (upstream) {
-    // `--left-right --count @{u}...HEAD`: left is upstream-only (behind),
-    // right is local-only (ahead).
-    const counts = git(['rev-list', '--left-right', '--count', '@{u}...HEAD']);
+  if (judgeRef) {
+    // `--left-right --count {ref}...HEAD`: left is ref-only (behind), right
+    // is local-only (ahead).
+    const counts = git(['rev-list', '--left-right', '--count', `${judgeRef}...HEAD`]);
     if (counts) {
       const [b, a] = counts.split(/\s+/);
       behind = toInt(b);
@@ -61,14 +94,18 @@ function readState({ cwd, since, run } = {}) {
     upstream: upstream || null,
     ahead,
     behind,
-    // Pushed requires a known upstream AND nothing ahead of it. Absent an
-    // upstream there is nowhere for the work to have gone, so it is unpushed —
-    // not unknown. But WITH an upstream, a failed ahead/behind read must stay
-    // null rather than collapse to a definite false — an unmeasured push state
-    // is exactly the unknown this module exists to keep representable.
-    pushed: upstream ? (ahead === null ? null : ahead === 0) : false,
+    // Pushed requires a chosen ref (upstream or the remote-ref fallback) AND
+    // nothing ahead of it. No ref at all — no upstream configured and no
+    // origin/{branch} remote-tracking ref — means there is nowhere for the
+    // work to have gone, so it is unpushed, not unknown. But WITH a chosen
+    // ref, a failed ahead/behind read must stay null rather than collapse to
+    // a definite false — an unmeasured push state is exactly the unknown
+    // this module exists to keep representable.
+    pushed: judgeRef ? (ahead === null ? null : ahead === 0) : false,
     commitsInScope,
     linkedWorktree: Boolean(gitDir && commonDir && gitDir !== commonDir),
+    remoteRef: pushedVia === 'remote-ref' ? originBranchRef : null,
+    pushedVia,
   };
 }
 

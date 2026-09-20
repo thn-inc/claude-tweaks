@@ -89,6 +89,81 @@ test('CLI: --signals - reads Layer 0 JSON from stdin', () => {
   assert.deepEqual(parsed, { decision: 'proceed', track: 'web' });
 });
 
+test('CLI: --surface-lines classifies a control-flow-only diff as no surface', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'design-detect-'));
+  const diffPath = path.join(tmp, 'diff.patch');
+  fs.writeFileSync(diffPath, [
+    'diff --git a/src/components/Widget.tsx b/src/components/Widget.tsx',
+    'index 1111111..2222222 100644',
+    '--- a/src/components/Widget.tsx',
+    '+++ b/src/components/Widget.tsx',
+    '@@ -10,1 +10,1 @@',
+    "-  const res = await fetch('/api/widget');",
+    "+  const res = await fetch('/api/widget', { cache: 'no-store' });",
+    '',
+  ].join('\n'));
+  try {
+    const r = run(['--surface-lines', diffPath]);
+    assert.equal(r.code, 0);
+    const parsed = JSON.parse(r.stdout);
+    assert.equal(parsed.surface, false);
+    assert.equal(parsed.files.length, 1);
+    assert.equal(parsed.files[0].kind, 'jsx');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('CLI: --surface-lines classifies a JSX attribute change as surface', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'design-detect-'));
+  const diffPath = path.join(tmp, 'diff.patch');
+  fs.writeFileSync(diffPath, [
+    'diff --git a/src/components/Widget.tsx b/src/components/Widget.tsx',
+    'index 1111111..2222222 100644',
+    '--- a/src/components/Widget.tsx',
+    '+++ b/src/components/Widget.tsx',
+    '@@ -30,1 +30,1 @@',
+    '-  <div className="widget">',
+    '+  <div className="widget widget--active">',
+    '',
+  ].join('\n'));
+  try {
+    const r = run(['--surface-lines', diffPath]);
+    const parsed = JSON.parse(r.stdout);
+    assert.equal(parsed.surface, true);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('CLI: --surface-lines reads from stdin with -', () => {
+  const diff = [
+    'diff --git a/a.css b/a.css',
+    'index 1111111..2222222 100644',
+    '--- a/a.css',
+    '+++ b/a.css',
+    '@@ -1,1 +1,1 @@',
+    '-.a { color: red; }',
+    '+.a { color: blue; }',
+    '',
+  ].join('\n');
+  const out = execFileSync('node', [CLI, '--surface-lines', '-'], { input: diff, encoding: 'utf8' });
+  const parsed = JSON.parse(out);
+  assert.equal(parsed.surface, true);
+});
+
+test('CLI: --surface-lines and --mode together is a malformed invocation', () => {
+  const r = run(['--surface-lines', '-', '--mode', 'review']);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /mutually exclusive/);
+});
+
+test('CLI: --surface-lines with an unreadable path fails loudly', () => {
+  const r = run(['--surface-lines', '/nonexistent/path/to/diff.patch']);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /could not read diff/);
+});
+
 test('CLI: --claude-md reads design-integration from an explicit file path', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'design-detect-'));
   const claudeMdPath = path.join(tmp, 'CLAUDE.md');

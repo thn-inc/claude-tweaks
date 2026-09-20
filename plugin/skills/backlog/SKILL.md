@@ -3,7 +3,6 @@ name: backlog
 description: Use for backlog labels (refine — human-present or headless), next-build pick (overview), or a needs-you list (attention). Keywords - backlog, triage, authorize, grant, auto:build, auto:merge, priority, related, unattended, headless, autonomy ceiling.
 argument-hint: "[refine|overview|attention] [#N[,#M...]] [critical|risk-value|cleanup|trust] [--budget <n>] [--origin <origin>] [--source <human|routine|sweep>] [--reset-breaker]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
 
 # Backlog — Refine Labels and Understand the Queue
 

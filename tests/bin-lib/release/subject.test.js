@@ -7,25 +7,25 @@ test('type mapping: feature→feat, bug→fix, task→chore', () => {
   assert.equal(TYPE_PREFIX.feature, 'feat');
   assert.equal(TYPE_PREFIX.bug, 'fix');
   assert.equal(TYPE_PREFIX.task, 'chore');
-  assert.equal(composeSubject({ type: 'feature', title: 'Add X', number: 42, summary: 'Adds X.' }).title, 'feat: Add X (#42)');
-  assert.equal(composeSubject({ type: 'bug', title: 'Fix Y', number: 7, summary: 'Fixes Y.' }).title, 'fix: Fix Y (#7)');
-  assert.equal(composeSubject({ type: 'task', title: 'Tidy Z', number: 9, summary: 'Tidies Z.' }).title, 'chore: Tidy Z (#9)');
+  assert.equal(composeSubject({ type: 'feature', title: 'Add X', number: 42, summary: 'Adds X.', releaseNote: 'Note.' }).title, 'feat: Add X (#42)');
+  assert.equal(composeSubject({ type: 'bug', title: 'Fix Y', number: 7, summary: 'Fixes Y.', releaseNote: 'Note.' }).title, 'fix: Fix Y (#7)');
+  assert.equal(composeSubject({ type: 'task', title: 'Tidy Z', number: 9, summary: 'Tidies Z.', releaseNote: 'Note.' }).title, 'chore: Tidy Z (#9)');
 });
 
 test('body: summary, optional tag paragraph, then one Fixes line per record', () => {
-  const { body } = composeSubject({ type: 'feature', title: 'Add X', number: 42, summary: 'Adds X.', tag: 'auto-merge', fixes: [42, 43] });
-  assert.equal(body, 'Adds X.\n\n[auto-merge]\n\nFixes #42\nFixes #43');
-  const noTag = composeSubject({ type: 'feature', title: 'Add X', number: 42, summary: 'Adds X.' });
-  assert.equal(noTag.body, 'Adds X.\n\nFixes #42');
-  const noSummary = composeSubject({ type: 'task', title: 'T', number: 1 });
-  assert.equal(noSummary.body, 'Fixes #1');
+  const { body } = composeSubject({ type: 'feature', title: 'Add X', number: 42, summary: 'Adds X.', tag: 'auto-merge', releaseNote: 'Added X.', fixes: [42, 43] });
+  assert.equal(body, 'Adds X.\n\n[auto-merge]\n\nRelease-Note: Added X.\n\nFixes #42\nFixes #43');
+  const noTag = composeSubject({ type: 'feature', title: 'Add X', number: 42, summary: 'Adds X.', releaseNote: 'Added X.' });
+  assert.equal(noTag.body, 'Adds X.\n\nRelease-Note: Added X.\n\nFixes #42');
+  const noSummary = composeSubject({ type: 'task', title: 'T', number: 1, releaseNote: 'Tidied.' });
+  assert.equal(noSummary.body, 'Release-Note: Tidied.\n\nFixes #1');
 });
 
 test('breaking: ! suffix on the prefix and a trailing BREAKING CHANGE footer', () => {
-  const out = composeSubject({ type: 'feature', title: 'Drop legacy flag', number: 5, breaking: true, summary: 'Removes it.', migrationNote: 'Pass --new instead of --legacy.' });
+  const out = composeSubject({ type: 'feature', title: 'Drop legacy flag', number: 5, breaking: true, summary: 'Removes it.', migrationNote: 'Pass --new instead of --legacy.', releaseNote: 'Removed legacy flag support.' });
   assert.equal(out.title, 'feat!: Drop legacy flag (#5)');
   assert.ok(out.body.endsWith('\n\nBREAKING CHANGE: Pass --new instead of --legacy.'), out.body);
-  assert.equal(out.body, 'Removes it.\n\nFixes #5\n\nBREAKING CHANGE: Pass --new instead of --legacy.');
+  assert.equal(out.body, 'Removes it.\n\nRelease-Note: Removed legacy flag support.\n\nFixes #5\n\nBREAKING CHANGE: Pass --new instead of --legacy.');
 });
 
 test('throws on breaking without a migration note, and on an unresolvable type', () => {
@@ -64,23 +64,48 @@ test('empty-migrationNote usage error cites breakingRecords when given, else the
   );
 });
 
+test('releaseNote: throws ComposeSubjectError naming the record number when empty, missing, or non-string', () => {
+  assert.throws(() => composeSubject({ type: 'feature', title: 'T', number: 42, releaseNote: '' }), /releaseNote must be a non-empty string[^]*#42/);
+  assert.throws(() => composeSubject({ type: 'feature', title: 'T', number: 42, releaseNote: '   ' }), /releaseNote must be a non-empty string[^]*#42/);
+  assert.throws(() => composeSubject({ type: 'feature', title: 'T', number: 42 }), /releaseNote must be a non-empty string[^]*#42/);
+  assert.throws(() => composeSubject({ type: 'feature', title: 'T', number: 42, releaseNote: 123 }), /releaseNote must be a non-empty string[^]*#42/);
+  assert.throws(() => composeSubject({ type: 'feature', title: 'T', number: 42 }), (err) => err instanceof ComposeSubjectError);
+});
+
+test('body: Release-Note paragraph sits after summary/tag and before Fixes (and before BREAKING CHANGE)', () => {
+  const { body } = composeSubject({ type: 'feature', title: 'Add X', number: 42, summary: 'Adds X.', tag: 'auto-merge', releaseNote: 'Added X.', fixes: [42, 43] });
+  const paras = body.split('\n\n');
+  assert.deepEqual(paras, ['Adds X.', '[auto-merge]', 'Release-Note: Added X.', 'Fixes #42\nFixes #43']);
+
+  const brk = composeSubject({ type: 'feature', title: 'Drop legacy flag', number: 5, breaking: true, summary: 'Removes it.', migrationNote: 'Pass --new instead of --legacy.', releaseNote: 'Removed legacy flag support.' });
+  const idx = {
+    summary: brk.body.indexOf('Removes it.'),
+    releaseNote: brk.body.indexOf('Release-Note: Removed legacy flag support.'),
+    fixes: brk.body.indexOf('Fixes #5'),
+    breaking: brk.body.indexOf('BREAKING CHANGE:'),
+  };
+  assert.ok(idx.summary < idx.releaseNote, 'summary must precede Release-Note');
+  assert.ok(idx.releaseNote < idx.fixes, 'Release-Note must precede Fixes');
+  assert.ok(idx.fixes < idx.breaking, 'Fixes must precede BREAKING CHANGE');
+});
+
 test('truncation: word-boundary cut, … marker, (#N) suffix intact, total ≤ 72', () => {
   const title = 'word '.repeat(30).trim(); // 149 chars, all word boundaries
-  const { title: subject } = composeSubject({ type: 'feature', title, number: 2251 });
+  const { title: subject } = composeSubject({ type: 'feature', title, number: 2251, releaseNote: 'Note.' });
   assert.ok(subject.length <= SUBJECT_BUDGET, `${subject.length} > 72: ${subject}`);
   assert.ok(subject.endsWith(' (#2251)'), subject);
   assert.match(subject, /^feat: (word )*word… \(#2251\)$/);
 });
 
 test('truncation: a title that fits is never touched, and 72 exactly is allowed', () => {
-  const short = composeSubject({ type: 'bug', title: 'Short title', number: 1 }).title;
+  const short = composeSubject({ type: 'bug', title: 'Short title', number: 1, releaseNote: 'Note.' }).title;
   assert.equal(short, 'fix: Short title (#1)');
   // "feat: " (6) + title (58) + " (#1)" (5) = 69 → untouched
   const t58 = 'a'.repeat(58);
-  assert.equal(composeSubject({ type: 'feature', title: t58, number: 1 }).title, `feat: ${t58} (#1)`);
+  assert.equal(composeSubject({ type: 'feature', title: t58, number: 1, releaseNote: 'Note.' }).title, `feat: ${t58} (#1)`);
   // Exactly 72: "feat: " (6) + 61 + " (#1)" (5) = 72 → untouched
   const t61 = ('word '.repeat(13)).slice(0, 61);
-  const exact = composeSubject({ type: 'feature', title: t61, number: 1 }).title;
+  const exact = composeSubject({ type: 'feature', title: t61, number: 1, releaseNote: 'Note.' }).title;
   assert.equal(exact.length, 72);
   assert.ok(!exact.includes('…'));
 });
@@ -88,8 +113,8 @@ test('truncation: a title that fits is never touched, and 72 exactly is allowed'
 test('truncation: the ! suffix is counted inside the budget before the cut', () => {
   // With "feat: " (6) + 61 + " (#1)" (5) = 72 it fits; "feat!: " (7) pushes it to 73 → truncated.
   const t61 = ('word '.repeat(13)).slice(0, 61);
-  const plain = composeSubject({ type: 'feature', title: t61, number: 1 }).title;
-  const brk = composeSubject({ type: 'feature', title: t61, number: 1, breaking: true, migrationNote: 'n' }).title;
+  const plain = composeSubject({ type: 'feature', title: t61, number: 1, releaseNote: 'Note.' }).title;
+  const brk = composeSubject({ type: 'feature', title: t61, number: 1, breaking: true, migrationNote: 'n', releaseNote: 'Note.' }).title;
   assert.ok(!plain.includes('…'));
   assert.ok(brk.includes('…'), brk);
   assert.ok(brk.startsWith('feat!: '));
@@ -98,7 +123,7 @@ test('truncation: the ! suffix is counted inside the budget before the cut', () 
 });
 
 test('truncation: a single over-long word is hard-cut rather than reduced to the bare prefix', () => {
-  const { title } = composeSubject({ type: 'task', title: 'x'.repeat(100), number: 12 });
+  const { title } = composeSubject({ type: 'task', title: 'x'.repeat(100), number: 12, releaseNote: 'Note.' });
   assert.ok(title.length <= SUBJECT_BUDGET);
   assert.match(title, /^chore: x+… \(#12\)$/);
 });
@@ -107,7 +132,7 @@ test('truncation: a hard cut through a surrogate pair never leaves a lone surrog
   // A single over-long "word" of astral emoji, no spaces, so the word-boundary
   // branch cannot help — the hard cut is the only thing that can save this.
   const title = '🚀'.repeat(60);
-  const { title: subject } = composeSubject({ type: 'task', title, number: 100 });
+  const { title: subject } = composeSubject({ type: 'task', title, number: 100, releaseNote: 'Note.' });
   const lonelySurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u;
   assert.ok(!lonelySurrogate.test(subject), subject);
   assert.ok(subject.endsWith(' (#100)'), subject);
@@ -118,7 +143,7 @@ test('truncation: trailing punctuation is trimmed when the word-boundary cut lan
   // The word before the dropped tail ends in a comma ("bug,"), so the untrimmed cut would end
   // "...bug,… (#1)" — a bare .replace trim proves it strips the comma before the ellipsis.
   const title = 'word '.repeat(5) + 'bug,' + ' ' + 'y'.repeat(50);
-  const { title: subject } = composeSubject({ type: 'bug', title, number: 1 });
+  const { title: subject } = composeSubject({ type: 'bug', title, number: 1, releaseNote: 'Note.' });
   assert.ok(!subject.includes(',…'), subject);
   assert.ok(subject.length <= SUBJECT_BUDGET, `${subject.length} > 72: ${subject}`);
   assert.ok(subject.endsWith(' (#1)'), subject);

@@ -35,3 +35,13 @@ point of this file is the two shapes that mechanism misses.
 from the candidate pool, the same way it already excludes an oversized group. `next`'s
 single-iteration alias never reads or writes this file — there is no second iteration in the same
 firing for it to protect.
+
+**A continuation reads this file before its first pick, not only appends to it afterward.** A
+continuation of an existing firing — a session restart, a `continue` after compaction, any
+resumption that re-enters `SKILL.md` Step 3's Loop — must run `next-ranking.md`'s script verbatim
+(which is what reads this file) for its very first candidate pick of that continuation, and never
+re-derive candidates from the raw `dispatch-groups.json` queue-pull output alone. The file is still
+in place under the same session's temp root (`_shared/session-tmp-root.md`'s "Idempotency and
+resume"), so skipping that read re-dispatches a group this same firing already drove to a stuck
+outcome — the precise waste this file exists to prevent, and the one shape a continuation is most
+likely to miss, since nothing in the raw queue pull looks any different.

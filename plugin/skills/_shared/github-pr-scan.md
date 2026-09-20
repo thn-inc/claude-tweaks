@@ -47,9 +47,9 @@ Emit `[pr]` rows per the Output Contract.
 
 Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-labelled issues, `by:journey-health`-labelled issues, and `by:docs-health`-labelled issues. Backlog-record findings (stale, parked-trigger, unsynced, needs-scoring, `bot:blocked`, legacy-taxonomy, `bot:parked`) are `/tidy` Step 1's job now, not this scope's — `repo-wide` no longer queries the retired `backlog` label (see `tidy/step-1-records.md`).
 
-**Transport split (see Transport above):** items 3, 5, 6, 7, and 8 are issue-backed (`gh issue list`) and run unchanged on either transport. Items 1, 2, 4, 9, and 10 are PR-backed (`gh pr list`/`gh pr checks`/`gh api graphql`/`gh api repos/.../commits`) — on `gh`-absent, each degrades individually per the rule above rather than the whole scope skipping; item 10's claims-registry read (its first fetch) is issue-adjacent, not PR-backed, and already has a documented MCP path via `_shared/issue-claims.md`'s "List all claims", so only item 10's second (`bot:in-progress` list — issue-backed, routes via MCP too) and third (`gh pr list --state all`, PR-backed — degrades) fetches split the same way.
+**Transport split (see Transport above):** items 3, 5, 6, 7, and 8 are issue-backed (`gh issue list`) and run unchanged on either transport. Items 1, 2, 4, 9, 10, and 11 are PR-backed (`gh pr list`/`gh pr checks`/`gh api graphql`/`gh api repos/.../commits`) — on `gh`-absent, each degrades individually per the rule above rather than the whole scope skipping; item 10's claims-registry read (its first fetch) is issue-adjacent, not PR-backed, and already has a documented MCP path via `_shared/issue-claims.md`'s "List all claims", so only item 10's second (`bot:in-progress` list — issue-backed, routes via MCP too) and third (`gh pr list --state all`, PR-backed — degrades) fetches split the same way. Item 11 reuses item 9's already-fetched PR list for its own filter but its mergeability re-check (`resolvePrStateByNumber`, gh-CLI-only by design — see that function's own header comment) has no MCP fallback of its own, so it degrades the same way as every other PR-backed item here.
 
-> **Parallel execution:** Use parallel tool calls aggressively — items 1, 3, 4, 5, 6, 7, 8, and the initial fetches of items 9 and 10 below, plus each open PR's own review-thread query in item 2, are independent gh/bash calls with no dependency on one another and should run concurrently. Item 9's per-candidate thread/link fetches and item 10's per-issue claim-blob reads depend on their own item's earlier filter step, so only those later sub-steps are sequential.
+> **Parallel execution:** Use parallel tool calls aggressively — items 1, 3, 4, 5, 6, 7, 8, and the initial fetches of items 9 and 10 below, plus each open PR's own review-thread query in item 2, are independent gh/bash calls with no dependency on one another and should run concurrently. Item 9's per-candidate thread/link fetches and item 10's per-issue claim-blob reads depend on their own item's earlier filter step, so only those later sub-steps are sequential. Item 11 depends on item 9's initial PR-list fetch (reused, not re-fetched) and runs after it.
 
 1. **Open PRs** — `gh pr list --state open --json number,title,updatedAt,isDraft,reviewDecision,headRefName,url --limit 100` → classify each per the Staleness Thresholds. A PR that is simultaneously not draft, not yet `Stale` (< 4 weeks since `updatedAt` — spans both the `Fresh` and `Review` bands, since neither currently has its own finding for a PR with nothing wrong), has zero unresolved review threads (item 2 below), and has no failing/pending CI (`gh pr checks`) gets its own finding, carrying a per-PR command rather than landing as summary-only: `[pr] PR #{n}: {title} — awaiting review — last updated {age} ago, CI {status}, 0 unresolved threads — gh pr view {n} --web`. This is informational only — see the Severity mapping and `tidy/SKILL.md`'s Step 6 routing below — but "informational" describes the *severity*, not whether the row carries a command: the trailing `gh pr view {n} --web` is what a human runs to actually look at the PR, and its absence was a confirmed gap (a bare summary sentence with zero per-PR follow-up), not a deliberate no-command finding. A PR with failing/pending CI (`gh pr checks`) or `reviewDecision: CHANGES_REQUESTED` instead gets its own finding, regardless of staleness: `[pr] PR #{n}: {title} — CI failing/pending or changes requested — CI {status}, review {reviewDecision}`. This is `high` severity per the Severity mapping below, not informational — see the Findings and recommendations table below.
 2. **Unresolved threads per open PR** — the same GraphQL query as `current-pr` item 2, once per open PR.
@@ -267,6 +267,41 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
 
     `gh pr list`'s `commits`/`comments` fields are bounded per-PR (recent-first) — a PR whose activity list is long enough to truncate before reaching its true latest entry is not the failure mode this check guards against (truncation drops the *oldest* entries, and this check only ever needs the *newest* one), so no `--limit`-exhaustion warning applies here the way it does for the `acceptance-gap`/`parent-gate` scopes' parent-fetch truncations. The resume command comes from the PR body's own Resume line (`_shared/pr-early-run-lifecycle.md`'s `PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow "{target}" {next-step}`) when a PR exists — read and report it verbatim rather than reconstructing it, since only the PR body carries `{next-step}`. When no PR exists, the claim blob's own `runId` is all that is known — the reconstructed command above starts from `reconcile` rather than a specific `{next-step}`, since a claim with no PR is exactly the state `_shared/pr-early-run-lifecycle.md`'s reopen-or-create step is designed to repair on its own the next time anything touches that run.
 
+11. **Stale pending-review PR** (#2367) — a `pending-review` PR (`dispatch/reporting.md`'s parking outcome: an open, non-draft, plugin-created PR — the same `claude-tweaks-run` marker item 9 detects, housekeeping-marker PRs excluded since those are mechanical, never a parked record — that has never been armed, `autoMergeRequest` absent) has no proactive mergeability re-check while it waits for a human; it can go from clean to conflicting purely from *other* records merging into the integration branch, discovered only at merge time. This scope's own schedule (independent of any single dispatch firing) is what re-checks it.
+
+<!-- when: transport=gh -->
+    Reuses `$PR_SCAN_UNARMED` from item 9 above (already fetched with `body`/`autoMergeRequest`) — no duplicate `gh pr list` call. Resolve this item's own session-scoped temp path first:
+
+    ```bash
+    eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_SCAN_UNARMED=pr-scan-unarmed.json PR_SCAN_STALE_PENDING=pr-scan-stale-pending.json)"
+    node -e "
+      const fs = require('fs');
+      const RUN_MARKER = /<!-- claude-tweaks-run: [^\s]+ -->/;
+      const prs = require('$PR_SCAN_UNARMED');
+      const pending = prs.filter((pr) => !pr.isDraft && !pr.autoMergeRequest && RUN_MARKER.test(pr.body || ''));
+      fs.writeFileSync('$PR_SCAN_STALE_PENDING', JSON.stringify(pending.map((p) => p.number)));
+    "
+    ```
+
+    For each pending-review PR number, re-check mergeability by reusing `resolvePrStateByNumber` from `bin/lib/reconcile/pr-state.js` — the same function `/tidy`'s Merged/closed-branch check and the reconciler's own archive-merged sweep already use for their own PR-state reads, widened (#2367) to also carry `mergeable`/`mergeStateStatus`, rather than adding a third PR-state-reading code path:
+
+    ```bash
+    eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_SCAN_STALE_PENDING=pr-scan-stale-pending.json)"
+    REPO_ROOT="{REPO_ROOT}" node -e "
+      const { resolvePrStateByNumber } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/reconcile/pr-state.js');
+      const numbers = require('$PR_SCAN_STALE_PENDING');
+      numbers.forEach((n) => {
+        const r = resolvePrStateByNumber(process.env.REPO_ROOT, n);
+        if (r && typeof r === 'object' && r.mergeStateStatus === 'DIRTY') {
+          console.log('[pr-stale] PR #' + n + ' — pending-review, gone stale: mergeStateStatus DIRTY (conflicts with the integration branch, purely from other records merging since it was parked) — rebase and re-verify (typecheck, lint, full test suite) before a human merges it');
+        }
+      });
+    "
+    ```
+
+    **Flag-only, never auto-rebase.** The lower-risk default consistent with this scope's report-only posture (`/tidy`'s documented posture for most of its scans) — an unattended rebase changes PR content without the PR author present and would need the same unconditional-at-every-`autonomy`-tier confirmation gate `dispatch/resume-confirmation.md` already establishes elsewhere in this codebase, not a weaker one just because it's a background sweep. This check's job is detection only: it feeds a human, or #2364's own close-out process, which already reuses `assess-agent-autonomy`'s `merge-check` and `_shared/pr-first-merge.md` for the approved-and-ready case — this check never re-implements that second merge path.
+<!-- /when -->
+
 Findings and recommendations (tidy Action Vocabulary):
 
 | Finding | Recommendation |
@@ -283,8 +318,9 @@ Findings and recommendations (tidy Action Vocabulary):
 | Unarmed ready PR, granted (item 9) | Arm `--auto` per `_shared/pr-first-merge.md` — local action, no new merge mechanics |
 | Unarmed ready PR, ungranted (item 9) | Grant `auto:merge` on every linked record, or set `housekeeping-auto-merge` for a tidy PR — judgment call, never auto-granted by this sweep |
 | Unsettled run (item 10) | Resume via the reported command, or release the claim and let a fresh dispatch pick the record back up — judgment call |
+| Stale pending-review PR, `mergeStateStatus DIRTY` (item 11) | Rebase and re-verify (typecheck, lint, full test suite) before it can merge — flag-only, never auto-rebased by this sweep; a human or #2364's close-out process acts on it |
 
-Emit `[pr]` and `[gh-issue]` rows per the Output Contract. Backlog-record findings (the record-scan shapes: stale, parked-trigger, unsynced, needs-scoring, `bot:blocked`, legacy-taxonomy, `bot:parked`) no longer originate from this scope — see `tidy/step-1-records.md` for their findings table and `[backlog]`/`[parked]`/`[unsynced]`/`[scoring]`/`[blocked]`/`[legacy]`/`[bot-parked]` row prefixes. Items 9 and 10 emit their own `[pr-unarmed]` and `[unsettled]` prefixes instead — see the Output Contract below.
+Emit `[pr]` and `[gh-issue]` rows per the Output Contract. Backlog-record findings (the record-scan shapes: stale, parked-trigger, unsynced, needs-scoring, `bot:blocked`, legacy-taxonomy, `bot:parked`) no longer originate from this scope — see `tidy/step-1-records.md` for their findings table and `[backlog]`/`[parked]`/`[unsynced]`/`[scoring]`/`[blocked]`/`[legacy]`/`[bot-parked]` row prefixes. Items 9, 10, and 11 emit their own `[pr-unarmed]`, `[unsettled]`, and `[pr-stale]` prefixes instead — see the Output Contract below.
 
 **Anti-pattern: a self-scheduled per-PR check-in loop.** Do not have a session poll or re-check a single PR's arm/CI/merge state on its own schedule to "make sure it merges" — that durability lives in GitHub's own `--auto` (which merges the moment checks pass, with no session watching) plus this scheduled sweep (which catches the cases `--auto` alone can't: unarmed PRs and unsettled claims), neither of which depends on any session surviving. A per-PR loop dies with the session that started it and duplicates what the sweep already covers on a schedule nothing has to remember to run.
 
@@ -373,6 +409,7 @@ Two collection prefixes for PR/code-health/harness-health/journey-health/docs-he
 - `[parent-gate]` — decomposition parents with every sub-issue closed and no acceptance disposition on the parent (`parent-gate` scope above): `[parent-gate] #{n}: {title} — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo #{n}`
 - `[pr-unarmed]` — a green, gate-passed, plugin-created PR whose `--auto` was never armed, granted or not (`repo-wide` item 9): `[pr-unarmed] PR #{n}: {title} — {granted-or-ungranted content} — {recommendation}`
 - `[unsettled]` — a claimed or `bot:in-progress` issue whose pipeline shows no progress past the threshold (`repo-wide` item 10): `[unsettled] #{n}: {PR-silent-or-no-PR content} — resume: {command}`
+- `[pr-stale]` — a `pending-review` PR whose `mergeStateStatus` has gone `DIRTY` since it was parked (`repo-wide` item 11, #2367): `[pr-stale] PR #{n} — pending-review, gone stale: mergeStateStatus DIRTY (...) — rebase and re-verify (...) before a human merges it`
 
 Backlog-record findings (the record-scan shapes: stale, parked-trigger, unsynced, needs-scoring, `bot:blocked`, legacy-taxonomy, `bot:parked`) no longer emit from this scope — they are `/tidy` Step 1's `[backlog]` / `[parked]` / `[unsynced]` / `[scoring]` / `[blocked]` / `[legacy]` / `[bot-parked]` rows now (`tidy/step-1-records.md`).
 
@@ -385,6 +422,7 @@ Severity mapping (Template A Severity column):
 | Stale open PR (>4 weeks) | medium |
 | Open PR superseded (related work already merged) | medium |
 | Merged/closed PR with local branch/worktree remnants | medium |
+| `pending-review` PR gone stale, `mergeStateStatus DIRTY` (item 11) | medium |
 | Code-health/harness-health/journey-health/docs-health issue stale/superseded | medium |
 | Code-health/harness-health/journey-health/docs-health issue still valid, awaiting `/claude-tweaks:backlog refine` | low |
 | Open PR awaiting review (not draft, not yet `Stale`, 0 unresolved threads, CI clean) | info |

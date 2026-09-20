@@ -198,6 +198,12 @@ test('gatherFacts claudeMdOverBudget is true when CLAUDE.md exceeds the always-l
     const sha = git(['rev-parse', 'HEAD'], dir);
     const f = gatherFacts({ cwd: dir, base: sha });
     assert.strictEqual(f.claudeMdOverBudget, true);
+    // #1829: claudeMdBudgetTargets is the measured sibling fact — same
+    // pass, same target list, never just the boolean.
+    const claudeMdTarget = f.claudeMdBudgetTargets.find((t) => t.path.endsWith('CLAUDE.md'));
+    assert.ok(claudeMdTarget, 'CLAUDE.md is listed in claudeMdBudgetTargets');
+    assert.strictEqual(claudeMdTarget.lines, 151);
+    assert.strictEqual(claudeMdTarget.budget, 150);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -239,6 +245,10 @@ test('gatherFacts claudeMdOverBudget is false when CLAUDE.md is within budget an
     const sha = git(['rev-parse', 'HEAD'], dir);
     const f = gatherFacts({ cwd: dir, base: sha });
     assert.strictEqual(f.claudeMdOverBudget, false);
+    const claudeMdTarget = f.claudeMdBudgetTargets.find((t) => t.path.endsWith('CLAUDE.md'));
+    assert.ok(claudeMdTarget);
+    assert.strictEqual(claudeMdTarget.lines, 1);
+    assert.strictEqual(claudeMdTarget.budget, 150);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -261,6 +271,10 @@ test('gatherFacts claudeMdOverBudget is true when a scoped rule exceeds the scop
     const sha = git(['rev-parse', 'HEAD'], dir);
     const f = gatherFacts({ cwd: dir, base: sha });
     assert.strictEqual(f.claudeMdOverBudget, true);
+    const ruleTarget = f.claudeMdBudgetTargets.find((t) => t.path.endsWith('scoped.md'));
+    assert.ok(ruleTarget, 'the scoped rule is listed in claudeMdBudgetTargets');
+    assert.strictEqual(ruleTarget.budget, 30, 'a paths:-scoped rule is measured against the scoped-rule budget, not the always-loaded one');
+    assert.ok(ruleTarget.lines > ruleTarget.budget);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

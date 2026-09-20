@@ -50,7 +50,7 @@ QA page inventories already captured mechanical measurements. Skip the following
 - **Spacing and alignment feel** — not pixel counts, but whether spacing *feels* right
 - **Content and microcopy quality** — are labels descriptive? Do error messages explain AND guide? Is the tone human?
 - **Visual polish** — do hover/focus states feel right? Are interactive elements obviously clickable? Are fonts/icons crisp?
-- **Responsive feel** (if applicable) — set viewport to mobile and re-capture: `agent-browser --session <session> set viewport 375 667` then a fresh annotated screenshot. Check feel, not measurements QA already captured.
+- **Responsive feel** (if applicable) — resize the viewport to mobile and re-capture: `playwright-cli -s=<session> resize 375 667` then a fresh screenshot at an absolute `--filename=` path. Check feel, not measurements QA already captured.
 - **Performance feel** — cross-reference Web Vitals captured in Step 1. Does the LCP/CLS/INP match the lived experience?
 
 Note QA-confirmed issues briefly (e.g., "QA confirmed 3 missing ARIA labels") without re-analyzing them. Any QA issue that feels worse visually than its data suggests gets elevated.

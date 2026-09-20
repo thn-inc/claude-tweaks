@@ -69,6 +69,26 @@ test('fetchNativeDependencies: one batched aliased GraphQL call, -f owner/repo/q
   assert.deepEqual(deps.get(721), { blockedBy: [], openBlocker: false, openBlockerIds: [] });
 });
 
+// #2240: a non-github.com host threads --hostname onto this call — the only
+// gh-invoking call resolve-blockers.js / preflight-records.js's native mode
+// makes, so it's the flag's sole attachment point (no separate REST call).
+test('#2240: fetchNativeDependencies passes --hostname on a non-github.com host, omits it for github.com/unset', () => {
+  const response = () => JSON.stringify({ data: { repository: { i720: { number: 720, blockedBy: { nodes: [] } } } } });
+  const ghe = []; const dotcom = []; const unset = [];
+  fetchNativeDependencies({
+    numbers: [720], owner: 'a', repo: 'b', host: 'ghe.example.com', runner: (args) => { ghe.push(args); return response(); },
+  });
+  fetchNativeDependencies({
+    numbers: [720], owner: 'a', repo: 'b', host: 'github.com', runner: (args) => { dotcom.push(args); return response(); },
+  });
+  fetchNativeDependencies({
+    numbers: [720], owner: 'a', repo: 'b', runner: (args) => { unset.push(args); return response(); },
+  });
+  assert.deepEqual(ghe[0].slice(-2), ['--hostname', 'ghe.example.com']);
+  assert.doesNotMatch(dotcom[0].join(' '), /--hostname/);
+  assert.doesNotMatch(unset[0].join(' '), /--hostname/);
+});
+
 test('fetchNativeDependencies: a closed-only blockedBy list still reports the numbers, openBlocker false', () => {
   const runner = () => JSON.stringify({
     data: { repository: { i720: { number: 720, blockedBy: { nodes: [{ number: 700, state: 'CLOSED' }] } } } },
@@ -242,6 +262,49 @@ test('(b) CLI native mode: one batched graphql call, blockedBy + openBlocker map
   assert.equal(env.records['720'].openBlocker, true);
   assert.deepEqual(env.records['721'].blockedBy, []);
   assert.equal(env.records['721'].openBlocker, false);
+});
+
+// #2444 review fix: a caller-supplied --repo can itself already be a
+// host-qualified `host/owner/repo` slug (repoSlug()'s GHE output) — before
+// this fix, --repo was always prefixed with `github.com/` regardless of
+// shape, producing an unparseable 4-segment string for a slug like this.
+// Only native-mode's GraphQL call actually consults owner/repo/host.
+test('#2444 fix: native mode with a host-qualified --repo slug threads --hostname onto the graphql call', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isIssueView(args, 720)) return JSON.stringify(issue({ number: 720, title: 'A', body: specBody(['a.js']) }));
+    if (isGraphQL(args)) {
+      return JSON.stringify({ data: { repository: { i720: { number: 720, blockedBy: { nodes: [] } } } } });
+    }
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out } = cliDeps({ runner, workLinks: 'native', remoteUrl: () => { throw new Error('remoteUrl should not be called when --repo is passed'); } });
+  const code = run(['720', '--repo', 'ghe.example.com/acme/widgets'], deps);
+  assert.equal(code, 0);
+  const q = calls.find(isGraphQL).join(' ');
+  assert.match(q, /-f owner=acme -f repo=widgets/);
+  assert.match(q, /--hostname ghe\.example\.com/);
+  const env = JSON.parse(out.join(''));
+  assert.equal(env.workLinks, 'native');
+});
+
+test('#2444 fix: native mode with a bare --repo owner/repo still resolves to github.com (unchanged)', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isIssueView(args, 720)) return JSON.stringify(issue({ number: 720, title: 'A', body: specBody(['a.js']) }));
+    if (isGraphQL(args)) {
+      return JSON.stringify({ data: { repository: { i720: { number: 720, blockedBy: { nodes: [] } } } } });
+    }
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out } = cliDeps({ runner, workLinks: 'native', remoteUrl: () => { throw new Error('remoteUrl should not be called when --repo is passed'); } });
+  const code = run(['720', '--repo', 'acme/widgets'], deps);
+  assert.equal(code, 0);
+  const q = calls.find(isGraphQL).join(' ');
+  assert.match(q, /-f owner=acme -f repo=widgets/);
+  assert.doesNotMatch(q, /--hostname/);
 });
 
 test('(c) CLI overlapGroups: shared keyFiles union across three records', () => {

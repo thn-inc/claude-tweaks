@@ -3,8 +3,6 @@ name: deepen
 description: Use for an architectural-depth pass on recently changed code — finds shallow modules and proposes deepening or collapsing them, ranked by leverage. Standalone, or surfaced by /review and /reflect.
 argument-hint: "[<file-or-dir>...|<spec-number>] [--kind deepen|collapse]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
-
 
 # Deepen — Architectural Depth Pass
 
