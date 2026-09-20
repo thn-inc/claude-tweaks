@@ -60,8 +60,20 @@ test('tidy/step-1-records.md worklist-rule paragraph names the same /^needs:/ pr
 // since HEAD for these files IS the post-change content from here forward). Each control
 // proves the corresponding assertion above is capable of failing against real history.
 
-test('go-red control: pre-change grant-gate.js has no needs: prefix check at all (real content @ BASE_SHA)', () => {
-  const GRANT_GATE_AT_BASE = readAtBase('plugin/bin/lib/issues/grant-gate.js');
+test('go-red control: pre-change grant-gate.js has no needs: prefix check at all (real content @ BASE_SHA)', (t) => {
+  // #2532: a shallow/partial clone doesn't have BASE_SHA's tree reachable — guard the read so
+  // this one test degrades to a skip with the real git error, instead of a misleading
+  // assertion failure.
+  let GRANT_GATE_AT_BASE;
+  try {
+    GRANT_GATE_AT_BASE = readAtBase('plugin/bin/lib/issues/grant-gate.js');
+  } catch (err) {
+    t.skip(
+      `commit ${BASE_SHA} is not reachable in this checkout's git history — this go-red control ` +
+        `needs full history: ${String(err.message).split('\n')[0]}`,
+    );
+    return;
+  }
   assert.ok(
     !GRANT_GATE_AT_BASE.includes("startsWith('needs:')"),
     'pre-change grant-gate.js must not already have a prefix check'
@@ -74,8 +86,18 @@ test('go-red control: pre-change grant-gate.js has no needs: prefix check at all
   );
 });
 
-test('go-red control: pre-change next-mode.md EXCLUDE construction has no needs: prefix check at all (real content @ BASE_SHA)', () => {
-  const NEXT_MODE_AT_BASE_FLAT = readAtBaseFlat('plugin/skills/specify/next-mode.md');
+test('go-red control: pre-change next-mode.md EXCLUDE construction has no needs: prefix check at all (real content @ BASE_SHA)', (t) => {
+  // #2532: same shallow-clone guard as the grant-gate.js control above.
+  let NEXT_MODE_AT_BASE_FLAT;
+  try {
+    NEXT_MODE_AT_BASE_FLAT = readAtBaseFlat('plugin/skills/specify/next-mode.md');
+  } catch (err) {
+    t.skip(
+      `commit ${BASE_SHA} is not reachable in this checkout's git history — this go-red control ` +
+        `needs full history: ${String(err.message).split('\n')[0]}`,
+    );
+    return;
+  }
   assert.ok(
     !NEXT_MODE_AT_BASE_FLAT.includes("startsWith('needs:')"),
     'pre-change next-mode.md must not already have a prefix check'

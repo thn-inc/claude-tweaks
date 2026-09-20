@@ -84,7 +84,7 @@ test('subagent-output-contract.md classifies the session-limit signature as term
   );
 });
 
-test('go-red proof: the pinned literal is absent at the pre-change base SHA (#1449 AC2)', () => {
+test('go-red proof: the pinned literal is absent at the pre-change base SHA (#1449 AC2)', (t) => {
   // CONTRACT_PATH's content (the Failed-agent retrieval section) moved from
   // subagent-output-contract.md to subagent-dispatch-core.md at #2019 — the new file did not
   // exist at BASE_SHA, so the pre-change read has to target the old path where this content
@@ -94,8 +94,21 @@ test('go-red proof: the pinned literal is absent at the pre-change base SHA (#14
   };
   for (const file of [DISPATCH_PATH, CONTRACT_PATH]) {
     const preChangeFile = HISTORICAL_PATH[file] || file;
+    // #2532: a shallow/partial clone doesn't have BASE_SHA's tree reachable — guard the read so
+    // this one test degrades to a skip with the real git error, instead of a misleading
+    // assertion failure.
+    let preChangeContent;
+    try {
+      preChangeContent = readAtRev(BASE_SHA, preChangeFile);
+    } catch (err) {
+      t.skip(
+        `commit ${BASE_SHA} is not reachable in this checkout's git history — the go-red proof ` +
+          `needs full history: ${String(err.message).split('\n')[0]}`,
+      );
+      return;
+    }
     assert.doesNotMatch(
-      readAtRev(BASE_SHA, preChangeFile),
+      preChangeContent,
       PINNED_LITERAL,
       `${preChangeFile} must NOT contain "session limit" (case-insensitive) at the pre-change base ` +
         `${BASE_SHA} — a match here means the literal pre-existed and this pin is vacuous.`,
