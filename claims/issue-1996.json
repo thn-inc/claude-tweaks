@@ -1,7 +1,6 @@
 {
+  "released": true,
   "runId": "2026-09-20T002426-record-1235",
-  "sessionId": "f4c8c36c-9eea-4b94-b74b-cabb73f81cb9",
-  "claimedAt": "2026-09-20T00:28:37.616Z",
-  "ttlHours": 72,
-  "host": "Thomass-MacBook-Pro-3376.local"
+  "reason": "not-delivered-this-run: precondition absent -- #1995 has no post-release measurement posted; matches record's own parked-at-shaping frontmatter; see decisions.md SKIP 03:57:28",
+  "releasedAt": "2026-09-20T02:42:33.317Z"
 }
