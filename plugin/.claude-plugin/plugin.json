@@ -16,7 +16,7 @@
     "code-review",
     "browser",
     "automation",
-    "agent-browser",
+    "playwright-cli",
     "semantic-locators",
     "testing",
     "qa",
