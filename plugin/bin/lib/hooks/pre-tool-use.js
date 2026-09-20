@@ -554,6 +554,19 @@ function checkTeardownGate(ctx, teardownWarnings = []) {
     if (source === 'bash') {
       const targetReal = safeReal(target);
       if (targetReal && cwdReal && isPathContained(cwdReal, targetReal, { orEqual: true })) {
+        // #2282: this deny previously left no friction-event trace at all —
+        // unlike the assigned-run deny below (wd-deny), which was already
+        // logged. Same ownedRun/stampAdHocRunDirForDenial rigor as that
+        // sibling deny in this same function, for consistency within it.
+        const ownCwdOwnedRun = ctx.ownedRun || {};
+        const ownCwdTrustedDir = (ownCwdOwnedRun.dir && ownCwdOwnedRun.attribution !== 'fallback') ? ownCwdOwnedRun.dir : null;
+        const ownCwdStamped = ownCwdTrustedDir ? null : ctxLib.stampAdHocRunDirForDenial({ ...ctx, ownedRun: {} });
+        const ownCwdDenialRunDir = ownCwdTrustedDir || ownCwdStamped || ownCwdOwnedRun.dir;
+        const ownCwdAttribution = ownCwdStamped ? undefined : ownCwdOwnedRun.attribution;
+        const ownCwdTestTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
+        ctxLib.appendEvent(
+          ownCwdDenialRunDir, 'wd-guard-refusal', { path: target, reason: 'own-cwd-removal', ...ownCwdTestTag }, ownCwdAttribution,
+        );
         return denyResult(
           `claude-tweaks teardown gate: this \`git worktree remove\` targets ${target}, which is the ` +
           `current session's own working directory (or an ancestor of it). Removing it deletes the ` +
@@ -702,6 +715,17 @@ function checkPipelineShadowGuard(ctx) {
   for (const candidate of candidates) {
     const shadow = shadowPipelineRunDir(candidate);
     if (!shadow) continue;
+    // #2282: previously left no friction-event trace — mirrors
+    // checkWorktreeRequired's own gate-denial breadcrumb below (same
+    // ownedRun-first, stamp-a-new-one-if-absent posture; this guard fires
+    // unconditionally, before any pipeline run necessarily exists for THIS
+    // session, same as that one).
+    const ownedRun = ctx.ownedRun || {};
+    const denialRunDir = ownedRun.dir || ctxLib.stampAdHocRunDirForDenial(ctx);
+    const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
+    ctxLib.appendEvent(
+      denialRunDir, 'wd-guard-refusal', { tool: toolName, path: candidate, reason: 'shadow-run-dir', ...testTag }, ownedRun.attribution,
+    );
     return denyResult(
       `claude-tweaks: refusing to create ${shadow.runDirCandidate} — a NEW pipeline run directory inside a ` +
       `linked worktree (${shadow.worktreeRoot}). Run directories are anchored to the main checkout ` +
