@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node.js (`node --test`), `execFileSync`-based git shell-outs with an injectable `execImpl` seam (this codebase's existing pattern — see `gh-api-module-pattern` skill).
 
-**Spec:** `.claude-tweaks/pipelines/2026-09-16T161629-record-2486/work/2486-spec.md` (materialized from GitHub issue #2486)
+**Spec:** `.claude-tweaks/pipelines/archive/2026-09-16T161629-record-2486/work/2486-spec.md` (materialized from GitHub issue #2486; run archived after close)
 
 ## Global Constraints
 
