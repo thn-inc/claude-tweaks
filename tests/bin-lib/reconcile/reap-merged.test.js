@@ -279,6 +279,49 @@ test('reapMerged: removal-failed threads git\'s real stderr through as lastError
   }
 });
 
+// #1235 AC1 — a reap pass processing N items performs exactly one read and
+// one write of reconcile-cache.json, not N of each. Two locked (thus
+// removal-failed) worktrees in the same pass exercise trackReapResidue's
+// batched path twice; fs.{read,write}FileSync are spied at the cache file's
+// own path so unrelated reads/writes elsewhere in the same pass (git output,
+// events.jsonl, run-state.json) never pollute the count.
+test('reapMerged: a pass processing 2 removal-failed worktrees reads and writes reconcile-cache.json exactly once each, not once per worktree', () => {
+  const { root, wtPath } = buildReapableFixture();
+  const wtPath2 = path.join(root, '.claude', 'worktrees', 'issue-2');
+  git(root, 'worktree', 'add', '-q', '-b', 'worktree-issue-2', wtPath2);
+  execFileSync('git', ['worktree', 'lock', wtPath, '--reason', 'stuck'], { cwd: root, stdio: 'ignore' });
+  execFileSync('git', ['worktree', 'lock', wtPath2, '--reason', 'stuck'], { cwd: root, stdio: 'ignore' });
+  const wrapper = installGhWrapper([{ number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
+
+  const cachePath = path.join(root, '.claude-tweaks', 'reconcile-cache.json');
+  const realReadFileSync = fs.readFileSync;
+  const realWriteFileSync = fs.writeFileSync;
+  let reads = 0;
+  let writes = 0;
+  fs.readFileSync = (p, ...rest) => {
+    if (p === cachePath) reads += 1;
+    return realReadFileSync(p, ...rest);
+  };
+  fs.writeFileSync = (p, ...rest) => {
+    if (p === cachePath) writes += 1;
+    return realWriteFileSync(p, ...rest);
+  };
+  try {
+    const result = reapMerged({ cwd: root });
+    assert.equal(result.reaped.length, 0);
+    assert.equal(result.skipped.length, 2, `expected both worktrees to skip as removal-failed, got: ${JSON.stringify(result)}`);
+    assert.equal(reads, 1, `expected exactly one read of reconcile-cache.json for a 2-item pass, got ${reads}`);
+    assert.equal(writes, 1, `expected exactly one write of reconcile-cache.json for a 2-item pass, got ${writes}`);
+  } finally {
+    fs.readFileSync = realReadFileSync;
+    fs.writeFileSync = realWriteFileSync;
+    wrapper.restore();
+  }
+
+  const stuck = listResidueFailures(root);
+  assert.equal(stuck.length, 2, `expected two independently tracked residue entries, got: ${JSON.stringify(stuck)}`);
+});
+
 test('trackReapResidue: escalates exactly once at the threshold via an injected escalate, never on later still-failing calls', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-track-'));
   const calls = [];
