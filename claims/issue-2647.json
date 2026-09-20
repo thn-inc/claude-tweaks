@@ -1,7 +1,7 @@
 {
+  "released": true,
   "runId": "2026-09-20T082602-spec-2645-2646-2647-2648-2649",
-  "sessionId": "0719cf96-cf8d-40bc-8412-1a92bde9cdd0",
-  "claimedAt": "2026-09-20T08:26:42.782Z",
-  "ttlHours": 72,
-  "host": "Thomass-MacBook-Pro-3376.local"
+  "reason": "merged: PR #2673",
+  "releasedAt": "2026-09-20T10:39:28.750Z",
+  "link": "https://github.com/thomasholknielsen/claude-tweaks/pull/2673"
 }
