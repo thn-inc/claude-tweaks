@@ -212,6 +212,33 @@ main loop, landed via #1962/#2226/#2228/#2231):
   path it named has resolved, so fixing directory A never silently closes the record while
   directory B is still genuinely stuck.
 
+## gh-absent preflight: accepted MCP gap (#2523)
+
+`reconcile()` (`plugin/bin/lib/reconcile/index.js`) is a plain Node subprocess, not an agent-session
+skill — it cannot reach an agent session's MCP tools, only `gh`. When `gh` is absent (a cloud
+Routine sandbox with GitHub MCP tools instead of the CLI), every GitHub-dependent check —
+`red-tip`, `reap`, `release`, `archive`, `archive-branches`, `remote-prune`, `console` — is skipped
+via the preflight gate (`ghHealthCheck`/`ghHealthCheckAsync`, `preflight.js`), reported as
+`{"skipped":[{"check":"red-tip,reap,release,archive,archive-branches,remote-prune,console","reason":"preflight-gh-absent"}]}`.
+`mirror` is the one exception — pure git, no `gh` call — and keeps running.
+
+This is an **accepted gap, not a bug to fix here**: unlike `/claude-tweaks:dispatch`'s own queue-pull
+(`dispatch/mcp-transport.md`), which runs inside an agent-session skill and therefore *can* call
+MCP tools directly, `reconcile()` runs as a detached background child process
+(`bin/hooks.js`'s `reconcile-background`) with no agent session attached to hand it MCP access —
+bridging it would mean either giving a bare Node subprocess its own MCP client (a much larger
+architectural change, out of scope here) or moving these checks into an agent-session skill
+entirely (changing when/how they run, not just how they reach GitHub).
+
+**Consequence:** in a `gh`-absent sandbox, merged-PR residue (a group's worktree under
+`.claude/worktrees/`, its run directory under `.claude-tweaks/pipelines/`) is never reaped or
+archived automatically — it accumulates indefinitely across every `gh`-absent firing until either
+`gh` becomes available in that sandbox, or a human runs `bin/hooks.js reconcile` manually from an
+environment with `gh`. This is harmless (stale local state, not a correctness bug — the merged PR
+and closed issue are still the source of truth on GitHub), but it is unbounded, so a project running
+its scheduled Routines exclusively in `gh`-absent sandboxes should periodically reconcile from a
+`gh`-present environment to bound the residue.
+
 ## Referenced by
 
 `CLAUDE.md`'s `### Reconcile` subsection points here for anyone touching

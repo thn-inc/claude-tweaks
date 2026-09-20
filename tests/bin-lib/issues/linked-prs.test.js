@@ -52,7 +52,8 @@ test('null repository throws rather than returning a partial map', () => {
 
 test('a malformed nodes array (not an array) degrades to openPR: null rather than throwing', () => {
   const runner = () => resp({ i9: { number: 9, closedByPullRequestsReferences: { nodes: 'not-an-array' } } });
-  assert.doesNotThrow(() => fetchLinkedPRs({ numbers: [9], owner: 'o', repo: 'r', runner }));
+  const out = fetchLinkedPRs({ numbers: [9], owner: 'o', repo: 'r', runner });
+  assert.deepStrictEqual(out.get(9), { openPR: null, mentions: [] });
 });
 
 test('empty input returns empty result without calling the runner', () => {

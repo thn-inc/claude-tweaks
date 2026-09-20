@@ -216,7 +216,7 @@ done
 
 # agent-browser — required in the cloud sandbox for /browse-dependent skills
 # (/stories, /visual-review, /review, qa-agent, /flow) to work in cloud sessions.
-npm install -g agent-browser
+npm install -g @playwright/cli
 
 # Chrome, so agent-browser can actually launch a browser (the CLI alone can't render a
 # page). Unmodified `agent-browser install --with-deps` doesn't work in a cloud sandbox:

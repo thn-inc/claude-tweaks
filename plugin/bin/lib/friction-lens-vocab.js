@@ -13,6 +13,9 @@ const FRICTION_EVENT_TYPES = Object.freeze([
   'bookkeeping-stamp-deny',
   'contract-violation',
   'ask-user-question',
+  // #2345: a verdict/findings/pass-fail claim from an agent whose transcript
+  // carries zero tool-use blocks — a failed dispatch, never evidence.
+  'zero-tool-use-verdict',
 ]);
 
 module.exports = { FRICTION_EVENT_TYPES };
