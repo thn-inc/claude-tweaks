@@ -143,6 +143,43 @@ successful claim it bootstraps `bot:in-progress` (per `_shared/label-bootstrap.m
 claim comment (`claimPayload`'s `commentBody`) for that target — best-effort: a label or comment
 failure is logged to stderr and never un-claims the target.
 
+**Log the claim (mandatory, #2492).** Immediately after this call exits 0, for every target in
+its `claimed` array (both transports — the CLI's own JSON envelope on the `gh` path, the manual
+MCP procedure's own successful writes on the `gh`-absent path), write one `decisions.md` entry so
+a successful Step 2.8 always leaves a local, durable trace independent of a fresh `gh`/MCP read
+against `claims-registry`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO \
+  --section "/flow" --step "Step 2.8" --reversibility high \
+  --text "claimed #{n} (bin/claim-targets.js, transport: {git|contents-api|mcp})"
+```
+
+This does not itself guarantee the CLI/procedure was invoked — an agent that skips the claim call
+above skips this log line too, for the same reason. It exists so a **later** phase (`/wrap-up`'s
+Review Console, a `/tidy` sweep, or a human auditing `decisions.md`) can tell "Step 2.8 ran and
+claimed cleanly" apart from "Step 2.8 was silently skipped" without a live registry read, and so a
+future mechanical gate (see the gap note below) has a local signal to check against.
+
+**Known gap: this step has no mechanical backstop today.** Unlike its sibling bookkeeping
+stamps — `record-worktree` and, under `integration-model: pr-first` (`_shared/integration-model.md`),
+the PR-early draft-PR open — which `bin/lib/hooks/pre-tool-use.js`'s `checkBookkeepingStampsGate` denies the next covered write
+until it sees the stamp, nothing in this codebase mechanically verifies that this step's
+`bin/claim-targets.js` call (or its MCP equivalent) actually ran before a build proceeds. #2492
+confirmed this the hard way: a `/flow #{n} build,test` dispatch completed a full build and test
+pass with no `claims/issue-{n}.json` blob ever written on `claims-registry`, and none of this
+file's own skip-guard conditions applied to that dispatch shape — the call was simply never made.
+`bin/claim-targets.js`'s own write path is not the gap (`tests/bin-lib/claim-targets/claim-targets.test.js`
+already covers the create-only/conditional/contested/transient/unverified-write-back cases in
+depth, including the exact write-then-verify race #2073 closed); the gap is that this step is
+prose-only, with no code path enforcing it independent of the orchestrating agent's own
+compliance. A mechanical fix — extending `checkBookkeepingStampsGate` to require this section's
+new log line (mirroring its existing `hasLoggedPrDegrade` PR-stamp check) before allowing the
+materialize commit's first covered follow-up write — is scoped and tracked separately rather than
+folded into this doc-only pass, since that gate's own incident history (`IL-131`, its recurrence
+on #893, the `prExempt`/`hasNoUpstreamYet` caching it already carries) means it deserves its own
+dedicated build and review, not a rider on an unrelated fix.
+
 This CLI is the `gh` transport only — its `deps.gh`/`deps.ghApi` shell to real `gh` (per
 `gh-api-module-pattern`'s injectable-runner convention). In a `gh`-absent environment
 (`_shared/github-write-transport.md`'s MCP routing), this CLI does not apply: follow

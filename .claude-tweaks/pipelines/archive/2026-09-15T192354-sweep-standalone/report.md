@@ -49,4 +49,4 @@ decomposition parents  3 checked
 Impeccable doctor      1 checked
 ```
 
-Full decision log: .claude-tweaks/pipelines/2026-09-15T192354-sweep-standalone/decisions.md
+Full decision log: .claude-tweaks/pipelines/archive/2026-09-15T192354-sweep-standalone/decisions.md

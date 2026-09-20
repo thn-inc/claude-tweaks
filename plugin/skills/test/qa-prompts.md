@@ -2,9 +2,9 @@ QA parallel dispatch + agent prompt templates — Phase 3. Read `qa-procedures.m
 
 # QA Phase 3: Spawn
 
-This phase dispatches qa-agent subagents in parallel — one per story, bounded by `MAX_PARALLEL` and tier dependencies from Phase 2. Each agent owns a single `agent-browser` session named after the story id (kebab-case). One session per agent — never share a session across parallel stories.
+This phase dispatches qa-agent subagents in parallel — one per story, bounded by `MAX_PARALLEL` and tier dependencies from Phase 2. Each agent owns a single `playwright-cli` session named after the story id (kebab-case). One session per agent — never share a session across parallel stories.
 
-> **Parallel execution:** Dispatch each tier's stories as parallel Task agents — each runs independently against its own `agent-browser` session and returns a `RESULT:` summary line (plus optional `TRACE:` line and `REPORT_JSON` comment). Assemble results after all agents in the tier complete. Follow the subagent contract in `skills/_shared/subagent-output-contract.md`: inline the prompt template below verbatim per agent (no references to sibling files), pick `[Use: Standard]` (qa-agent work is browser-driven step execution, not deep analysis — resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard`, `skills/_shared/subagent-dispatch-core.md` § Model Selection), and treat the agent's trailing `STATUS: {WORD}` line (`DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED`) as its status — the last non-empty line of the reply, after `RESULT`/`TRACE`/`REPORT_JSON`, per `bin/lib/hooks/subagent-stop.js`'s canonical format (#2265). Dispatch shape: single-assistant-message rule (`_shared/subagent-dispatch-core.md`'s fan-out section) applies.
+> **Parallel execution:** Dispatch each tier's stories as parallel Task agents — each runs independently against its own `playwright-cli` session and returns a `RESULT:` summary line (plus optional `TRACE:` line and `REPORT_JSON` comment). Assemble results after all agents in the tier complete. Follow the subagent contract in `skills/_shared/subagent-output-contract.md`: inline the prompt template below verbatim per agent (no references to sibling files), pick `[Use: Standard]` (qa-agent work is browser-driven step execution, not deep analysis — resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard`, `skills/_shared/subagent-dispatch-core.md` § Model Selection), and treat the agent's trailing `STATUS: {WORD}` line (`DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED`) as its status — the last non-empty line of the reply, after `RESULT`/`TRACE`/`REPORT_JSON`, per `bin/lib/hooks/subagent-stop.js`'s canonical format (#2265). Dispatch shape: single-assistant-message rule (`_shared/subagent-dispatch-core.md`'s fan-out section) applies.
 >
 > **Working directory discipline:** Resolve `{SCREENSHOT_PATH}` and `{TRACES_BASE}` to absolute paths *before* substituting them into each agent's prompt — relative paths cannot reach the agent's working directory reliably. The dispatch also anchors the working directory by inlining a "Working directory" line at the top of each agent's prompt body (see templates below).
 >
@@ -55,7 +55,7 @@ This phase dispatches qa-agent subagents in parallel — one per story, bounded 
     Story {completed_count}/{total_count} completed ({active_count} active, {queue_count} queued)
     ```
 
-    Each story agent owns a single `agent-browser` session named after the story id (kebab-case). One session per agent — never share a session across parallel stories.
+    Each story agent owns a single `playwright-cli` session named after the story id (kebab-case). One session per agent — never share a session across parallel stories.
 
 18. **Detect story format** for each story:
     - If the story has a `steps` array -> structured format
@@ -67,7 +67,7 @@ This phase dispatches qa-agent subagents in parallel — one per story, bounded 
 
 **Structured format prompt:**
 ```
-Execute this user story and report results using the agent-browser CLI.
+Execute this user story and report results using the playwright-cli CLI.
 
 **Working directory:** {ABSOLUTE_WORKTREE_PATH}. Start every shell command with `cd "{ABSOLUTE_WORKTREE_PATH}" && ...` so screenshots, traces, and git operations land in the correct checkout.
 
@@ -91,25 +91,26 @@ Execute this user story and report results using the agent-browser CLI.
 {serialize story.steps as YAML}
 
 Instructions:
-- Open the session: `agent-browser --session {story.id} open {story.url}`
-- Start trace recording immediately after `open`: `agent-browser --session {story.id} trace start` (a trace can only be saved for the interval after recording started — there is no retroactive capture).
-- If `Auth (vault)` is present, run `agent-browser --session {story.id} auth login <vault-name>` immediately after `trace start` and before the first interactive step.
-- If a `Viewport` is set, run `agent-browser --session {story.id} set viewport <w> <h>`.
-- If `Setup` is present, execute its steps first, using the same step semantics as the Steps loop below (locator-first, snapshot-fallback, annotated screenshot). Setup failures are treated like any other step failure (save trace, stop, report).
+- Open the session: `playwright-cli -s={story.id} open {story.url}`
+- Start trace recording immediately after `open`: `playwright-cli -s={story.id} tracing-start` (a trace can only be saved for the interval after recording started — there is no retroactive capture).
+<!-- playwright-cli: no equivalent found for agent-browser auth login — see issue Gotchas -->
+- If `Auth (vault)` is present, run `agent-browser --session {story.id} auth login <vault-name>` immediately after `tracing-start` and before the first interactive step.
+- If a `Viewport` is set, run `playwright-cli -s={story.id} resize <w> <h>`.
+- If `Setup` is present, execute its steps first, using the same step semantics as the Steps loop below (snapshot+ref resolution, plain screenshot). Setup failures are treated like any other step failure (save trace, stop, report).
 - For each step in the steps array sequentially:
-  - Use semantic locators (role/name, testid, text, label, placeholder) — never CSS or `@eN` refs from prior snapshots.
-  - For action steps: execute locator and action in one command — `find <locator> <value> <action> [text]` (e.g. `find role button click --name "Submit"`, `find label "Email" fill "user@example.com"`). The action argument is mandatory: a bare `find` with no action defaults to CLICKING the element, so never run `find` as an existence probe. If the command errors with element-not-found, take a snapshot (`snapshot -i -c`) and resolve the target from the fresh tree.
-  - For verify-only and `assert_visible` steps: snapshot (`snapshot -i -c`) and evaluate the assertion against the tree — never an action-less `find`.
-  - Take an annotated screenshot after each step: `screenshot --annotate {SCREENSHOT_PATH}/<NN>_<step>.png` (path is positional — there is no `--filename` flag).
+  - Use semantic locators (role/name, testid, text, label, placeholder) — never CSS.
+  - For action steps: take `playwright-cli -s={story.id} snapshot` to resolve the target element's `eN` ref (Playwright CLI's `find` is read-only and text-only — it cannot click or fill, so it never substitutes for this step), then act on that ref: `click <eN>`, `fill <eN> "<text>"`, `check <eN>`, or `hover <eN>` (the story's `action` field selects which). If the snapshot has no unambiguous match, or the act call errors against the resolved ref, take a fresh snapshot and retry once against a semantically-equivalent match (record the recovery); if still no unambiguous match, mark FAIL.
+  - For verify-only and `assert_visible` steps: take a fresh `snapshot` and evaluate the assertion against the tree — never an action-less `find`, which is also read-only-but-text-only and cannot check role/testid/placeholder locators either.
+  - Take a screenshot after each step: `screenshot --filename={SCREENSHOT_PATH}/<NN>_<step>.png` (Playwright CLI has no annotation overlay — this is a plain screenshot of the page as it stands after the action).
 - On any step failure (assertion mismatch, locator unrecoverable, navigation timeout, console error blocking the flow):
   - Save the trace BEFORE closing the session:
-    `agent-browser --session {story.id} trace stop {TRACES_BASE}/{story.id}/{ISO-timestamp}.zip`
-  - Include the trace path in the failure report.
+    `playwright-cli -s={story.id} tracing-stop` — this takes no output-path argument; it auto-writes the trace under `.playwright-cli/traces/` (relative to the working directory). Immediately after it returns, move the freshly-written trace file (the most recently modified one there, disambiguated by exact modification time if multiple sessions stop concurrently) to an absolute path: `{TRACES_BASE}/{story.id}/{ISO-timestamp}.trace`.
+  - Include the relocated trace path in the failure report.
   - If `Teardown` is present, execute its steps now, before closing the session.
-  - Then close the session: `agent-browser --session {story.id} close`.
+  - Then close the session: `playwright-cli -s={story.id} close`.
   - Stop executing remaining steps.
 - On success, if `Teardown` is present, execute its steps now, before closing the session.
-- On success, close the session at the end: `agent-browser --session {story.id} close`.
+- On success, close the session at the end: `playwright-cli -s={story.id} close`.
 - Report each step as PASS or FAIL with a brief explanation.
 - **Decide your status word:** exactly one of `DONE` | `DONE_WITH_CONCERNS` | `NEEDS_CONTEXT` | `BLOCKED`. Mapping:
   - `PASS` → `DONE`
@@ -131,7 +132,7 @@ Instructions:
 
 **Legacy format prompt:**
 ```
-Execute this user story and report results using the agent-browser CLI.
+Execute this user story and report results using the playwright-cli CLI.
 
 **Working directory:** {ABSOLUTE_WORKTREE_PATH}. Start every shell command with `cd "{ABSOLUTE_WORKTREE_PATH}" && ...` so screenshots, traces, and git operations land in the correct checkout.
 
@@ -147,11 +148,13 @@ Execute this user story and report results using the agent-browser CLI.
 {story.workflow}
 
 Instructions:
-- Open the session, run `agent-browser --session <session> trace start` immediately after `open` (traces are record-then-stop — no retroactive capture), apply auth (vault preferred via `auth login <vault-name>`, legacy fallback), follow the workflow steps sequentially.
-- Act on elements via `find <locator> <value> <action> [text]` — the action argument is mandatory (a bare `find` defaults to clicking); assertions go through `snapshot -i -c`, never an action-less `find`.
-- Take an annotated screenshot after each significant step: `screenshot --annotate {SCREENSHOT_PATH}/<NN>_<step>.png` (path is positional — no `--filename` flag).
-- On any failure: `agent-browser --session <session> trace stop {TRACES_BASE}/<session>/<timestamp>.zip`, then `close`. Include the trace path in the report.
-- On success: `agent-browser --session <session> close` at the end.
+- Open the session, run `playwright-cli -s=<session> tracing-start` immediately after `open` (traces are record-then-stop — no retroactive capture).
+  <!-- playwright-cli: no equivalent found for agent-browser auth login — see issue Gotchas -->
+  Apply auth (vault preferred via `auth login <vault-name>`, legacy fallback), follow the workflow steps sequentially.
+- Act on elements: take `playwright-cli -s=<session> snapshot` to resolve the target's `eN` ref via a semantic locator inferred from the free-text step (Playwright CLI's `find` is read-only and text-only, so it cannot resolve-and-act the way a locator-flexible find would), then act on that ref (`click <eN>`, `fill <eN> "<text>"`, `check <eN>`, `hover <eN>`); assertions also go through a fresh `snapshot`, never an action-less `find`.
+- Take a screenshot after each significant step: `screenshot --filename={SCREENSHOT_PATH}/<NN>_<step>.png` (no annotation overlay under Playwright CLI).
+- On any failure: `playwright-cli -s=<session> tracing-stop` (takes no output-path argument — auto-writes under `.playwright-cli/traces/`; immediately relocate the freshly-written file to an absolute path: `{TRACES_BASE}/<session>/<timestamp>.trace`), then `close`. Include the relocated trace path in the report.
+- On success: `playwright-cli -s=<session> close` at the end.
 - **Decide your status word:** exactly one of `DONE` | `DONE_WITH_CONCERNS` | `NEEDS_CONTEXT` | `BLOCKED`. Mapping:
   - `PASS` → `DONE`
   - `PASS_WITH_CAVEATS` → `DONE_WITH_CONCERNS`
