@@ -47,7 +47,7 @@ under the title:
 | Axis | Channel | Values |
 |---|---|---|
 | Origin | Node fill color | `by:code-health` / `by:harness-health` / `by:journey-health` / `by:docs-health` / `by:capture` / `by:dispatch` / none → `human` |
-| Bot state | Node border style + color | `bot:in-progress` (solid accent), `bot:blocked` (dashed warning), neither (default) |
+| Bot state | Node border style + color | `bot:in-progress` (solid accent), `bot:blocked` (dashed warning), `bot:parked` (solid amber — merge-verification gate parked it, grants intact), neither (default) |
 | Type | Text badge | `[bug]` / `[feature]` / `[task]` — native Issue Type wins over a `type:*` label; an unrecognized type omits the badge rather than guessing |
 | Scoring | Text badge | `R:{risk} S:{size}`, with `?` for whichever side is unset; omitted entirely when both are unset |
 | Authorization | Text badge | `AUTO-BUILD`, `AUTO-MERGE` — both shown when both are granted, omitted when neither is |
