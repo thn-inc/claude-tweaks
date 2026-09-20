@@ -73,4 +73,17 @@ function writeStagedItem({ runDir, id, sourcePath, content }) {
   return { file };
 }
 
-module.exports = { resolveTarget, sanitizeId, writeStagedItem };
+// { runDir, id, content } -> { file }. Writes the machine-readable sidecar
+// (#2612) alongside a staged item's own `.md`/`.patch` file — same
+// mkdir-then-write, same overwrite semantics as writeStagedItem, always at
+// `staged/{id}.json` regardless of the sibling file's own extension so
+// render-tidy-report.js's glob (`staged/*.json`) finds it unambiguously.
+function writeStagedSidecar({ runDir, id, content }) {
+  const stagedDir = path.join(runDir, 'staged');
+  fs.mkdirSync(stagedDir, { recursive: true });
+  const file = path.join(stagedDir, `${id}.json`);
+  fs.writeFileSync(file, content);
+  return { file };
+}
+
+module.exports = { resolveTarget, sanitizeId, writeStagedItem, writeStagedSidecar };
