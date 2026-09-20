@@ -15,6 +15,12 @@ The Working-directory discipline note at the top of `scan-procedures.md`'s Step 
 to that step's primary claim listing — both `find .claude-tweaks/pipelines` backstops take
 `{RUN_ROOT}`, the `gh issue list` backstop takes `{REPO_ROOT}`.
 
+**Never sample the primary claim listing (#2613).** The explicit statement, the batched
+git-CAS reader (`readClaimBlobsGitBatch`), and the per-blob fallback all live in
+`scan-procedures.md`'s own Step 4.7 section (the "Primary" heading, immediately before this
+file's own content in the assembled prompt) — this pointer exists only so a reference to this
+file also finds it, without duplicating the procedure here.
+
 ---
 
 ### Backstop: missed `parked` restoration

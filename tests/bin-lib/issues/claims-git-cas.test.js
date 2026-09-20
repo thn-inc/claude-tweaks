@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  classifyGitError, readClaimBlobGit, writeClaimBlobGit, CLAIMS_BRANCH,
+  classifyGitError, readClaimBlobGit, writeClaimBlobGit, readClaimBlobsGitBatch, CLAIMS_BRANCH,
 } = require('../../../plugin/bin/lib/issues/claims-git-cas');
 
 test('classifyGitError: missing path in a git show', () => {
@@ -237,4 +237,83 @@ test('writeClaimBlobGit: unrelated existing files in the tree survive a write', 
   assert.equal(readme, 'seed\n');
   const issue1 = readClaimBlobGit({ issueNumber: 1, remote: 'origin', runner });
   assert.equal(issue1.content, '{"runId":"r1"}');
+});
+
+// #2613: readClaimBlobsGitBatch replaces N per-blob `git show` calls with 2
+// total subprocess invocations (`ls-tree` + `cat-file --batch`), regardless
+// of registry size — the fix for a documented full-scan procedure that had
+// no batched alternative and, on a ~1000-blob registry, tempted a sampling
+// shortcut that produced a 93% false-positive rate.
+function writeBlob(cloneDir, runner, issueNumber, content) {
+  const before = readClaimBlobGit({ issueNumber, remote: 'origin', runner });
+  const write = writeClaimBlobGit({
+    issueNumber, content, message: `Claim #${issueNumber}`, expectedTipSha: before.tipSha, remote: 'origin', runner,
+  });
+  assert.equal(write.ok, true, `fixture setup: claim #${issueNumber} must write cleanly`);
+  return write.commitSha;
+}
+
+test('readClaimBlobsGitBatch: returns identical per-blob classification to N sequential readClaimBlobGit calls, including an absent number', () => {
+  const { cloneDir } = makeBareOriginAndClone();
+  const runner = (args, opts) => realRunner(args, { ...opts, cwd: cloneDir });
+  let tip;
+  tip = writeBlob(cloneDir, runner, 10, '{"runId":"r10"}');
+  tip = writeBlob(cloneDir, runner, 11, '{"runId":"r11"}');
+  tip = writeBlob(cloneDir, runner, 12, '{"runId":"r12"}');
+  // 13 is left absent on purpose.
+
+  const batch = readClaimBlobsGitBatch({ issueNumbers: [10, 11, 12, 13], tip, runner });
+  assert.equal(batch.failure, null);
+  for (const n of [10, 11, 12, 13]) {
+    const sequential = readClaimBlobGit({ issueNumber: n, remote: 'origin', runner, knownTip: tip });
+    assert.deepEqual(batch.results[n], sequential, `issue #${n} must classify identically via both paths`);
+  }
+  assert.equal(batch.results[13].absent, true);
+});
+
+test('readClaimBlobsGitBatch: with issueNumbers omitted, discovers the full claims/ keyspace from the same ls-tree call (the Primary listing use case)', () => {
+  const { cloneDir } = makeBareOriginAndClone();
+  const runner = (args, opts) => realRunner(args, { ...opts, cwd: cloneDir });
+  let tip;
+  tip = writeBlob(cloneDir, runner, 20, '{"runId":"r20"}');
+  tip = writeBlob(cloneDir, runner, 21, '{"runId":"r21"}');
+
+  const batch = readClaimBlobsGitBatch({ tip, runner });
+  assert.equal(batch.failure, null);
+  assert.deepEqual(Object.keys(batch.results).map(Number).sort(), [20, 21]);
+  assert.equal(batch.results[20].content, '{"runId":"r20"}');
+  assert.equal(batch.results[21].content, '{"runId":"r21"}');
+});
+
+test('readClaimBlobsGitBatch: a claim blob with embedded newlines (pretty-printed JSON, the real production shape) survives batching intact', () => {
+  const { cloneDir } = makeBareOriginAndClone();
+  const runner = (args, opts) => realRunner(args, { ...opts, cwd: cloneDir });
+  const prettyContent = JSON.stringify({ runId: 'r1', claimedAt: '2026-01-01T00:00:00.000Z', ttlHours: 72 }, null, 2);
+  assert.ok(prettyContent.includes('\n'), 'fixture must actually exercise the embedded-newline case');
+  const tip = writeBlob(cloneDir, runner, 30, prettyContent);
+
+  const batch = readClaimBlobsGitBatch({ issueNumbers: [30], tip, runner });
+  assert.equal(batch.results[30].content, prettyContent);
+});
+
+test('readClaimBlobsGitBatch: issues exactly 2 subprocess invocations regardless of blob count', () => {
+  const { cloneDir } = makeBareOriginAndClone();
+  const setupRunner = (args, opts) => realRunner(args, { ...opts, cwd: cloneDir });
+  let tip;
+  const numbers = [40, 41, 42, 43, 44];
+  for (const n of numbers) {
+    tip = writeBlob(cloneDir, setupRunner, n, `{"runId":"r${n}"}`);
+  }
+
+  const calls = [];
+  const countingRunner = (args, opts) => {
+    calls.push(args[0]);
+    return realRunner(args, { ...opts, cwd: cloneDir });
+  };
+  const batch = readClaimBlobsGitBatch({ issueNumbers: numbers, tip, runner: countingRunner });
+  assert.equal(batch.failure, null);
+  assert.deepEqual(calls, ['ls-tree', 'cat-file'], 'exactly one ls-tree call and one cat-file --batch call, never one per blob');
+  for (const n of numbers) {
+    assert.equal(batch.results[n].content, `{"runId":"r${n}"}`);
+  }
 });
