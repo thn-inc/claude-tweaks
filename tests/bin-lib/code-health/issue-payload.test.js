@@ -115,6 +115,12 @@ test('v2 body has ## Deliverables containing suggestedApproach', () => {
   assert.ok(body.includes('Inline the call at the call site'), 'suggestedApproach missing');
 });
 
+test('v2 body has ## Release Note with a plain "no user-visible change" phrasing (#2660)', () => {
+  const { body } = toIssuePayloadV2(V2_FINDING);
+  assert.ok(body.includes('## Release Note'), '## Release Note missing');
+  assert.ok(body.includes('No user-visible change — internal code-quality fix.'), 'release note text missing');
+});
+
 test('v2 body has ## Acceptance Criteria containing acceptance', () => {
   const { body } = toIssuePayloadV2(V2_FINDING);
   assert.ok(body.includes('## Acceptance Criteria'), '## Acceptance Criteria missing');

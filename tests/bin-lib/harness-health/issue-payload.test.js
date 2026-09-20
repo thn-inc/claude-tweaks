@@ -89,11 +89,19 @@ test('toIssuePayload body starts directly with the header line (no leading marke
 
 // ── body sections ────────────────────────────────────────────────────────
 
-test('toIssuePayload body always includes Current State, Deliverables, and Acceptance Criteria sections', () => {
+test('toIssuePayload body always includes Current State, Deliverables, Acceptance Criteria, and Release Note sections', () => {
   const payload = toIssuePayload(patchFinding());
   assert.ok(payload.body.includes('## Current State'));
   assert.ok(payload.body.includes('## Deliverables'));
   assert.ok(payload.body.includes('## Acceptance Criteria'));
+  assert.ok(payload.body.includes('## Release Note'));
+});
+
+test('toIssuePayload body Release Note is a plain "no user-visible change" phrasing, including for new-skill candidates (#2660)', () => {
+  const patch = toIssuePayload(patchFinding());
+  assert.ok(patch.body.includes('No user-visible change — agent harness reliability fix.'));
+  const newSkill = toIssuePayload(newSkillFinding());
+  assert.ok(newSkill.body.includes('No user-visible change — agent harness reliability fix.'));
 });
 
 // ── preserved structured fields (Step 7 producer/consumer invariant) ───────

@@ -710,8 +710,27 @@ function parseDependencyAssumptions(body) {
 // running it on the issue author's GitHub-attested author_association (trusted only at
 // OWNER/MEMBER/COLLABORATOR), never on this string alone. See flow/materialize.md's
 // "Author-association gate" paragraph.
+// (#2660) `releaseNote` is REQUIRED, not optional, alongside currentState/
+// deliverables/filedBy below — deliberately, not an oversight. This composer
+// is the shared body-composition path for every "born-ready" producer
+// (`_shared/work-record.md`'s Born-ready rule): the four health-sweep
+// skills' issue-payload.js files, plus /wrap-up, /reflect, and /review's
+// `side-effect:*` producers. `_shared/work-record.md` and
+// `bin/lib/compose-record/compose.js`'s own `REQUIRED_SECTIONS` both already
+// treat `## Release Note` as a required fourth section (#2580/#2581), but
+// this composer was never updated to match — every record it filed was
+// missing that section from day one, invisible at filing time AND at
+// `/flow`'s materialize-time gate, and caught only much later, at merge
+// time, by `bin/compose-subject.js`'s hard refusal (confirmed live on #2587).
+// A required parameter here — failing loud at filing time, the same posture
+// `currentState`/`deliverables`/`filedBy` already have — closes that gap at
+// its cheapest, earliest point instead of leaving it to surface at the most
+// expensive one. A genuinely no-op finding still needs a value: pass a
+// plain "No user-visible change." rather than omitting the parameter —
+// `spec-template.md`'s Release Note guidance treats that phrasing as valid
+// content, never as licence to skip the section.
 function specShapedBody({
-  header, currentState, deliverables, acceptanceCriteria, openQuestion, filedBy, provenance, footer, verifiedAsOf, premiseCheck,
+  header, currentState, deliverables, acceptanceCriteria, openQuestion, releaseNote, filedBy, provenance, footer, verifiedAsOf, premiseCheck,
 } = {}) {
   const isEmpty = (value) => value === undefined || value === null || value === ''
     || (Array.isArray(value) && value.length === 0);
@@ -723,6 +742,7 @@ function specShapedBody({
   const sections = [
     ['currentState', currentState],
     ['deliverables', deliverables],
+    ['releaseNote', releaseNote],
     ['filedBy', filedBy],
   ];
   for (const [name, value] of sections) {
@@ -748,6 +768,7 @@ function specShapedBody({
   parts.push('## Current State', block(currentState), '## Deliverables', block(deliverables));
   if (hasOQ) parts.push('## Open Question', block(openQuestion));
   else parts.push('## Acceptance Criteria', block(acceptanceCriteria));
+  parts.push('## Release Note', block(releaseNote));
   if (footer === undefined) {
     parts.push(`_Filed by \`${filedBy}\`. Close to resolve; label \`wontfix\` to suppress future reports of this finding._`);
   } else if (footer !== null && !isEmpty(footer)) {
