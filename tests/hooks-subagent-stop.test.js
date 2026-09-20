@@ -21,6 +21,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const substop = require('../plugin/bin/lib/hooks/subagent-stop');
+const contractRetries = require('../plugin/bin/lib/hooks/contract-retries');
 
 function mkRun() {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-substop-'));
@@ -39,10 +40,10 @@ function transcript(lastText) {
   return f;
 }
 
-function callSubstop(lastText) {
+function callSubstop(lastText, extraInput = {}) {
   const run = mkRun();
   const out = substop.run({
-    input: { agent_transcript_path: transcript(lastText) },
+    input: { agent_transcript_path: transcript(lastText), ...extraInput },
     runDir: run,
     runState: null,
     ownedRun: { dir: run, attribution: 'session' },
@@ -137,4 +138,70 @@ test('AC7 companion: a findings table followed by a genuine trailing STATUS line
   const { out, events } = callSubstop(body);
   assert.deepStrictEqual(out, {});
   assert.strictEqual(events.length, 0, 'a genuine trailing STATUS line after a table is fully canonical, no event at all');
+});
+
+// #1936: forced in-run retry, one shot per (session_id, agent_id). Live-
+// confirmed (2026-09-20, Task 0) that SubagentStop's JSON output supports
+// `{ decision: 'block', reason }`, which keeps the subagent running and
+// delivers `reason` as its next instruction.
+function cleanupRetries(sessionId) {
+  const p = contractRetries.retriesPath(sessionId);
+  if (p) { try { fs.unlinkSync(p); } catch { /* already absent */ } }
+}
+
+test('#1936: a first genuine violation for a known (session_id, agent_id) is blocked once, with a reason quoting the rule and the offending first line, and writes no contract-violation event yet', () => {
+  const sessionId = `substop-retry-first-${process.pid}`;
+  cleanupRetries(sessionId);
+  const { out, events } = callSubstop('Looked into it.\nNot sure yet.\nWill keep digging.', {
+    session_id: sessionId, agent_id: 'agent-a',
+  });
+  assert.strictEqual(out.json.decision, 'block');
+  assert.match(out.json.reason, /STATUS: DONE/);
+  assert.match(out.json.reason, /Looked into it\./, 'the reason must quote the offending first line');
+  assert.strictEqual(events.length, 0, 'the forced-retry path does not log a contract-violation event on the first (blocked) violation');
+  cleanupRetries(sessionId);
+});
+
+test('#1936: a second genuine violation for the SAME (session_id, agent_id) is no longer blocked — falls through to the warn-and-log path unchanged', () => {
+  const sessionId = `substop-retry-second-${process.pid}`;
+  cleanupRetries(sessionId);
+  callSubstop('First bad reply, no status word at all.', { session_id: sessionId, agent_id: 'agent-b' });
+  const { out, events } = callSubstop('Second bad reply, still no status word.', {
+    session_id: sessionId, agent_id: 'agent-b',
+  });
+  assert.strictEqual(out.json.decision, undefined, 'the second violation by the same agent must not be blocked again');
+  assert.match(out.json.systemMessage, /status line/i);
+  assert.strictEqual(events.length, 1);
+  assert.strictEqual(events[0].type, 'contract-violation');
+  cleanupRetries(sessionId);
+});
+
+test('#1936: an exempt agent_type is never blocked and never writes a retry-counter entry', () => {
+  const sessionId = `substop-retry-exempt-${process.pid}`;
+  cleanupRetries(sessionId);
+  const { out, events } = callSubstop('No status word here at all.', {
+    session_id: sessionId, agent_id: 'agent-c', agent_type: 'code-simplifier:code-simplifier',
+  });
+  assert.deepStrictEqual(out, {}, 'an exempt third-party agent is never governed by this contract');
+  assert.strictEqual(events.length, 0);
+  assert.deepStrictEqual(contractRetries.readRetried(sessionId), new Set(), 'an exempt agent must never be recorded in the retry counter');
+});
+
+test('#1936: a counter-write failure is treated as already-retried, falling through to the warn-and-log path rather than blocking', (t) => {
+  const sessionId = `substop-retry-writefail-${process.pid}`;
+  cleanupRetries(sessionId);
+  t.mock.method(contractRetries, 'recordRetry', () => false);
+  const { out, events } = callSubstop('No status word here either.', { session_id: sessionId, agent_id: 'agent-d' });
+  assert.strictEqual(out.json.decision, undefined, 'a failed counter write must never itself cause a block');
+  assert.match(out.json.systemMessage, /status line/i);
+  assert.strictEqual(events.length, 1);
+});
+
+test('#1936: a compliant reply is never blocked and writes no retry-counter entry', () => {
+  const sessionId = `substop-retry-compliant-${process.pid}`;
+  cleanupRetries(sessionId);
+  const { out, events } = callSubstop('All good.\nSTATUS: DONE', { session_id: sessionId, agent_id: 'agent-e' });
+  assert.deepStrictEqual(out, {});
+  assert.strictEqual(events.length, 0);
+  assert.deepStrictEqual(contractRetries.readRetried(sessionId), new Set(), 'a compliant reply must never touch the retry counter');
 });

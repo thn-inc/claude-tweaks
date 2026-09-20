@@ -1,6 +1,16 @@
-// bin/lib/hooks/subagent-stop.js — E3: Subagent Contract status-line check (warn tier).
+// bin/lib/hooks/subagent-stop.js — E3: Subagent Contract status-line check.
 // Best-effort by design: SubagentStop fires unreliably for Task dispatches
-// (claude-code#27755) and transcript field names may drift. Never blocks.
+// (claude-code#27755) and transcript field names may drift. One forced
+// in-run retry per (session_id, agent_id) on a genuine violation (#1936
+// Task 0 — live-confirmed 2026-09-20 against Claude Code v2.1.258 that
+// SubagentStop's JSON output supports `{ decision: 'block', reason }`,
+// which keeps the subagent running and delivers `reason` as its next
+// instruction, exactly as https://code.claude.com/docs/en/hooks documents:
+// "SubagentStop hooks use the same decision control format as Stop hooks
+// ... Returning decision: 'block' with a reason keeps the subagent running
+// and delivers reason to the subagent as its next instruction."); every
+// other path — a second violation by the same agent, an exempt agent_type,
+// an unreadable/absent transcript — never blocks.
 // Two-tier canonical/lenient detection (#2265 — migrated the canonical
 // status signal from a first-line bare word to a labeled trailing line):
 //   1. Canonical — the reply's LAST non-empty line reads exactly
@@ -14,7 +24,11 @@
 //      makes the format migration itself safe with no explicit transition
 //      period — an in-flight dispatch given an old-format prompt (status
 //      word first) is still accepted here.
-//   3. Neither — genuine violation, logged exactly as before.
+//   3. Neither — genuine violation. The first such violation for a given
+//      (session_id, agent_id) is blocked once (see above); a second
+//      violation by the same agent (or a failure to write the retry
+//      counter — see contract-retries.js) falls through to the pre-#1936
+//      warn-and-log path, unchanged.
 // Known false-positive sources:
 // 1. A dispatch whose own template specifies a different status contract
 //    (e.g. superpowers:subagent-driven-development's task-reviewer, which
@@ -43,6 +57,7 @@
 'use strict';
 const fs = require('fs');
 const ctxLib = require('./context');
+const contractRetries = require('./contract-retries');
 
 // The reply's last non-empty line must read exactly this — trimmed,
 // case-sensitive, one of the four contract words.
@@ -186,6 +201,29 @@ function run(ctx) {
       ctxLib.appendEvent(ownedRun.dir, 'contract-violation', { firstLine, variant: 'lenient' }, ownedRun.attribution);
     }
     return {};
+  }
+  // Genuine violation (tier 3). One forced in-run retry per (session_id,
+  // agent_id) — confirmed live (#1936 Task 0) that SubagentStop's JSON
+  // output supports `{ decision: 'block', reason }`, which keeps the
+  // subagent running and delivers `reason` as its next instruction. Never
+  // offered twice for the same agent: a still-violating retry falls straight
+  // through to the warn-and-log path below, unchanged from before this tier
+  // existed. `recordRetry` returning `false` (no agent_id, or the counter
+  // write itself failing — a broken tmp dir) is treated identically to
+  // "already retried" so a write failure can never cause a retry loop.
+  const agentId = ctx.input.agent_id;
+  const alreadyRetried = agentId ? contractRetries.readRetried(ctx.input.session_id).has(agentId) : true;
+  if (!alreadyRetried && contractRetries.recordRetry(ctx.input.session_id, agentId)) {
+    return {
+      json: {
+        decision: 'block',
+        reason: 'claude-tweaks Subagent Contract violation: your reply\'s last non-empty '
+          + 'line must read exactly "STATUS: DONE" (or DONE_WITH_CONCERNS / NEEDS_CONTEXT / '
+          + 'BLOCKED) — a labeled trailing line, never a bare word or opening narration. Your '
+          + `reply's first line was: "${firstLine}". Reply again now, ending with the correct `
+          + 'trailing STATUS: line.',
+      },
+    };
   }
   ctxLib.appendEvent(ownedRun.dir, 'contract-violation', { firstLine }, ownedRun.attribution);
   return { json: { systemMessage: 'claude-tweaks: a subagent reply is missing the Subagent Contract status line (STATUS: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, as the last non-empty line). Logged to events.jsonl.' } };
