@@ -39,6 +39,7 @@ const {
   parseRecordFacets, extractFingerprint, extractVerifiedAsOf, extractPremiseCheck, parseDependencies,
 } = require('./lib/issues/record');
 const { shapeGate, liftMetadata, composeHeader, composeFile } = require('./lib/issues/materialize-format');
+const { findSiblingPremiseDisproof } = require('./lib/issues/sibling-premise');
 const wtDetect = require('./lib/hooks/worktree-detect');
 const { parseRepo, ghAvailable, repoSlug } = require('./lib/repo-resolve');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
@@ -170,6 +171,12 @@ function parseArgs(argv) {
 
 const realDeps = {
   ghView: (owner, repo, n, host) => execFileSync('gh', ['issue', 'view', String(n), '--repo', repoSlug({ host, owner, repo }), '--json', 'number,title,body,labels,url'], { encoding: 'utf8' }),
+  // #2590: closed PRs referencing this issue, searched by body text — used
+  // to detect a sibling attempt that already reached this record's own
+  // "premise disproved" conclusion. Read-only; no author-association gate
+  // needed (unlike ghAuthorAssociation/runPremiseCheck, nothing here
+  // executes body content — it only searches and pattern-matches it).
+  ghSearchClosedPRs: (owner, repo, n, host) => execFileSync('gh', ['pr', 'list', '--repo', repoSlug({ host, owner, repo }), '--state', 'closed', '--search', `#${n} in:body`, '--json', 'number,url,body'], { encoding: 'utf8' }),
   // Security fix (see TRUSTED_AUTHOR_ASSOCIATIONS above): GitHub's REST API
   // computes author_association from the issue author's *current* repo
   // relationship — not body content, so it can't be spoofed by editing the
@@ -437,6 +444,60 @@ function run(argv, deps = realDeps) {
     }
   }
 
+  // #2590: sibling-PR premise-disproof scan — before planning a fresh
+  // investigation, check whether a closed PR already reached the same
+  // "premise disproved" conclusion for this record. gh-backed path only
+  // (repoSpec is null on --record-json); best-effort, never blocks.
+  let siblingPremiseDisproof = null;
+  if (repoSpec && typeof deps.ghSearchClosedPRs === 'function') {
+    try {
+      const prs = JSON.parse(deps.ghSearchClosedPRs(repoSpec.owner, repoSpec.repo, opts.n, repoSpec.host));
+      siblingPremiseDisproof = findSiblingPremiseDisproof(prs);
+    } catch {
+      siblingPremiseDisproof = null;
+    }
+    if (opts.runDir) {
+      try {
+        deps.mkdirp(opts.runDir);
+        const mainRoot = deps.mainRoot(deps.cwd());
+        const decisionTarget = resolveDecisionTarget({ runDir: opts.runDir, cwd: deps.cwd(), mainRoot });
+        if (decisionTarget.ok) {
+          const outcome = siblingPremiseDisproof
+            ? `found closed PR #${siblingPremiseDisproof.number} already stating "${siblingPremiseDisproof.matchedPhrase}"`
+            : 'no closed PR found stating the premise was already disproved';
+          const entry = formatEntry({
+            status: 'SCANNED',
+            now: Date.now(),
+            step: 'materialize',
+            text: `Sibling-PR premise scan for #${opts.n}: searched closed PRs referencing #${opts.n} — ${outcome}.`,
+            reversibility: 'n/a',
+          });
+          appendEntry({ runDir: opts.runDir, section: undefined, entry });
+        }
+        if (siblingPremiseDisproof) {
+          const stageTarget = resolveStageTarget({ runDir: opts.runDir, cwd: deps.cwd(), mainRoot });
+          if (stageTarget.ok) {
+            const note = `# Staged: closed sibling PR already disproved #${opts.n}'s premise\n\n`
+              + `PR #${siblingPremiseDisproof.number} (${siblingPremiseDisproof.url}) was closed without merging, but its body `
+              + `already states "${siblingPremiseDisproof.matchedPhrase}" — a prior attempt already reached this record's `
+              + `conclusion. Proposed action: review that PR before re-running a fresh full-suite investigation for #${opts.n}.\n`;
+            writeStagedItem({
+              runDir: stageTarget.dir, id: `sibling-premise-disproof-${opts.n}`, sourcePath: 'note.md', content: note,
+            });
+          }
+        }
+      } catch (err) {
+        deps.stderr(`materialize.js: could not log/stage the sibling-premise scan (${err && err.message ? err.message : String(err)})\n`);
+      }
+    }
+    if (siblingPremiseDisproof) {
+      deps.stderr(
+        `materialize.js: Record #${opts.n} — closed PR #${siblingPremiseDisproof.number} already states the premise `
+        + `is disproved ("${siblingPremiseDisproof.matchedPhrase}") — review it before re-running the investigation.\n`,
+      );
+    }
+  }
+
   const facets = parseRecordFacets(record.labels);
   const labelNames = (record.labels || []).map((l) => (typeof l === 'string' ? l : l && l.name)).filter(Boolean);
   const ceremony = facets.ceremony || opts.ceremony;
@@ -470,7 +531,7 @@ function run(argv, deps = realDeps) {
   deps.writeFile(outFile, fileContent);
 
   deps.stdout(JSON.stringify({
-    record: opts.n, file: outFile, ceremonySource: facets.ceremony ? 'label' : 'override', surface: meta.surface || null, uiStack: meta.uiStack || null, drift, premise,
+    record: opts.n, file: outFile, ceremonySource: facets.ceremony ? 'label' : 'override', surface: meta.surface || null, uiStack: meta.uiStack || null, drift, premise, siblingPremiseDisproof,
   }, null, 2) + '\n');
   return 0;
 }
