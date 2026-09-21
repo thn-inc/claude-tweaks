@@ -270,7 +270,19 @@ function detectCrossPRFileOverlap(candidates, openPRs, options = {}) {
     for (const pr of pool) {
       if ((pr.closingIssueNumbers || []).includes(candidate.number)) continue;
       const shared = (pr.files || []).filter((file) => keyFiles.has(file));
-      if (shared.length > 0) overlaps.push({ candidate: candidate.number, pr: pr.number, files: shared });
+      if (shared.length > 0) {
+        const overlap = { candidate: candidate.number, pr: pr.number, files: shared };
+        // Additive attribution (#1985): a caller that tags its pool entries
+        // with `source` (e.g. 'drain' for a PR this same firing opened,
+        // distinct from the pre-drain snapshot) gets that source carried
+        // onto the matching overlap entry, so a re-check against a UNION of
+        // pre-drain + in-flight-drain PRs can tell which pool a hit came
+        // from without re-deriving it. Omitted entirely (not even `source:
+        // undefined`) when the caller's pool entries carry no `source` at
+        // all, so every existing caller's output stays byte-identical.
+        if (pr.source !== undefined) overlap.source = pr.source;
+        overlaps.push(overlap);
+      }
     }
   }
   return overlaps;

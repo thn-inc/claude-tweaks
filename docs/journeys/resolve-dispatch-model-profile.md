@@ -5,13 +5,13 @@ files:
   - plugin/bin/lib/model-profiles/profiles.js
   - plugin/bin/lib/model-profiles/policy-fragment.js
   - plugin/bin/lib/model-profiles/session-failures.js
-  - plugin/skills/_shared/subagent-output-contract.md
+  - plugin/skills/_shared/subagent-dispatch-core.md
 ---
 
 # Resolve a Dispatch's Model Profile
 
 **Persona:** claude-tweaks skill author (or a maintainer of a project using the plugin) who wants proof that dispatch-time model resolution actually honors the documented override chain — table default, policy row, stance, ceiling, Frontier gates, session-failure avoidance — rather than trusting the contract's prose.
-**Goal:** Watch one profile resolve under five configurations and confirm the returned `model`/`effort`/`source` change exactly as `plugin/skills/_shared/subagent-output-contract.md` §Model Selection says they will.
+**Goal:** Watch one profile resolve under five configurations and confirm the returned `model`/`effort`/`source` change exactly as `plugin/skills/_shared/subagent-dispatch-core.md` §Model Selection says they will.
 **Entry point:** A terminal at this repo's checkout root — the repo that ships `plugin/bin/resolve-profile.js`, not the `plugin/` payload directory itself.
 **Success state:** Five JSON lines whose `source` fields read `default`, `policy`, `degraded:cap`, `degraded:session-failure`, and back to `default` (post-`clear-failures`) respectively, with the models the contract's table and override rules predict.
 

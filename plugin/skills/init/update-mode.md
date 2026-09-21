@@ -588,7 +588,7 @@ After Phase 1u (inventory) and Phase 1u.5 (contract drift) complete, evaluate th
 
    Only include lines for checks that ran; omit any the inventory pass did not compute.
 
-2. Log to the active pipeline's `decisions.md` using the resolution order in `_shared/pipeline-run-dir.md`. `/init` is on the standalone-auto allowlist — if `PIPELINE_RUN_DIR` is unset and no recent run matches, create a standalone run dir at `.claude-tweaks/pipelines/{ISO-timestamp}-init-standalone/` and append the entry there. Never suppress the audit-log write.
+2. Log to the active pipeline's `decisions.md` using the resolution order in `_shared/run-dir-resolution.md`. `/init` is on the standalone-auto allowlist — if `PIPELINE_RUN_DIR` is unset and no recent run matches, create a standalone run dir at `.claude-tweaks/pipelines/{ISO-timestamp}-init-standalone/` and append the entry there. Never suppress the audit-log write.
    ```
    AUTO {ISO-time} — Phase 1u.6: early-exit (drift=0, gaps<3). Reason: Update Mode fast path per the Phase 1u.6 early-exit gate. Reversibility: high.
    ```

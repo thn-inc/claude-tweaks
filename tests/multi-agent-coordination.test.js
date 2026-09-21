@@ -5,21 +5,21 @@ const path = require('node:path');
 
 const c = require('../plugin/bin/lib/coordination');
 
-const PRIMITIVE_DOC = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'multi-agent-coordination.md'),
-  'utf8',
-);
+// Reads one live skill file under plugin/skills/. These tests assert against the real
+// shipped prose, so every read below goes through here rather than re-spelling the path.
+function readSkillFile(...segments) {
+  return fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', ...segments), 'utf8');
+}
+
+const PRIMITIVE_DOC = readSkillFile('_shared', 'multi-agent-coordination.md');
 // Several of /review's decision-log templates live in sub-files lazy-loaded from SKILL.md rather
 // than inlined in it: reproduction's in step3-lens-dispatch.md, Cross-Lens Debate's and
 // Per-Candidate Refutation's in step3-debate-and-refutation.md. Concatenate all three so this
 // still asserts against the real documented format wherever it currently lives.
 const REVIEW_SKILL = ['SKILL.md', 'step3-lens-dispatch.md', 'step3-debate-and-refutation.md']
-  .map((f) => fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', 'review', f), 'utf8'))
+  .map((f) => readSkillFile('review', f))
   .join('\n');
-const SPECIFY_RED_TEAM = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin', 'skills', 'specify', 'red-team.md'),
-  'utf8',
-);
+const SPECIFY_RED_TEAM = readSkillFile('specify', 'red-team.md');
 
 // ---------- Dispatch recorder helper ----------
 //
@@ -205,6 +205,103 @@ test('reproduction: genuine location disagreement (not merely a severity straddl
   const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
   assert.strictEqual(confirmed.length, 0);
   assert.strictEqual(unconfirmed.length, 2);
+});
+
+// ------------------------------------------------------------
+// #1980: sameSubstance — a second signal alongside location, so a
+// same-location pair that is NOT the same underlying issue no longer
+// silently merges into one confirmed finding with the other discarded.
+// ------------------------------------------------------------
+
+test('reproduction: same location, substantively different findings → NOT confirmed; both unconfirmed with nearLocation', () => {
+  const a = [{ path: 'file.md', line: 100, severity: 'low', text: 'trailing comma' }];
+  const b = [{ path: 'file.md', line: 101, severity: 'critical', text: 'null deref on empty list' }];
+  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  assert.strictEqual(confirmed.length, 0);
+  assert.strictEqual(unconfirmed.length, 2);
+
+  const fromA = unconfirmed.find((f) => f.source === 'A');
+  const fromB = unconfirmed.find((f) => f.source === 'B');
+  assert.ok(fromA && fromB, 'both sides must surface, neither silently discarded');
+  assert.deepStrictEqual(fromA.nearLocation, { source: 'B', path: 'file.md', line: 101 });
+  assert.deepStrictEqual(fromB.nearLocation, { source: 'A', path: 'file.md', line: 100 });
+
+  const entry =
+    `- STAGED 11:02:44 — Reproduction: lens "3c" findings ${fromA.path}:${fromA.line} / ` +
+    `${fromB.path}:${fromB.line} share a location but not substance; both staged. Reversibility: high.`;
+  assert.match(
+    entry,
+    decisionLogPattern(REVIEW_SKILL, ['share a location but not substance', 'both staged']),
+  );
+});
+
+test('step3-lens-dispatch.md documents the nearLocation routing-table clause for a same-location, different-substance pair', () => {
+  assert.match(REVIEW_SKILL, /nearLocation/);
+  assert.match(REVIEW_SKILL, /same location as \{source\} finding at \{path\}:\{line\}, different substance/);
+});
+
+test('reproduction: #733 straddle case (same substance, straddled severity) is unaffected by the #1980 substance check', () => {
+  // Same fixture as the #733 test above — re-asserted here to pin that the
+  // substance check and the severity-straddle rescue compose correctly:
+  // agreeing on substance is what lets a straddled-severity pair still
+  // reproduce.
+  const a = [{ path: 'step-6-auto.md', line: 154, severity: 'medium', text: 'digest-vs-Approve finding' }];
+  const b = [{ path: 'step-6-auto.md', line: 154, severity: 'high', text: 'digest-vs-Approve finding' }];
+  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  assert.strictEqual(confirmed.length, 1);
+  assert.strictEqual(unconfirmed.length, 0);
+  assert.strictEqual(confirmed[0].severityContested, true);
+});
+
+test('reproduction: missing text on either side falls back to location-only pairing (today\'s behavior)', () => {
+  const oneSideNoText = c.categoriseReproduction(
+    [{ path: 'x.js', line: 10, severity: 'high' }],
+    [{ path: 'x.js', line: 11, severity: 'high', text: 'something specific' }],
+  );
+  assert.strictEqual(oneSideNoText.confirmed.length, 1, 'unknown substance must not discard a location match');
+  assert.strictEqual(oneSideNoText.unconfirmed.length, 0);
+
+  const neitherSideHasText = c.categoriseReproduction(
+    [{ path: 'x.js', line: 10, severity: 'high' }],
+    [{ path: 'x.js', line: 11, severity: 'high' }],
+  );
+  assert.strictEqual(neitherSideHasText.confirmed.length, 1);
+});
+
+test('reproduction: several same-location B candidates → the highest-substance-similarity one is paired, others stay unconfirmed', () => {
+  const a = [{ path: 'x.js', line: 100, severity: 'high', text: 'null pointer dereference on empty list' }];
+  const b = [
+    { path: 'x.js', line: 100, severity: 'low', text: 'trailing whitespace' },
+    { path: 'x.js', line: 101, severity: 'high', text: 'null pointer dereference on an empty list' },
+    { path: 'x.js', line: 99, severity: 'medium', text: 'unused import statement' },
+  ];
+  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  assert.strictEqual(confirmed.length, 1, 'the substantively-matching candidate must be paired');
+  // reconcileSeverity's confirmed entry is built from `fa` (A's own line/path) — its severity
+  // agrees with B's bucket here, so no severityContested flag, but the pairing itself is what
+  // this test pins: the two textually-unrelated B candidates at the same location must NOT be
+  // the one selected.
+  assert.strictEqual(confirmed[0].line, 100);
+  assert.strictEqual(confirmed[0].severityContested, undefined);
+  assert.ok(!unconfirmed.some((f) => f.line === 101), 'the matched B candidate (line 101) must not also appear unconfirmed');
+  // The other two same-location B findings are genuinely different issues —
+  // they surface as their own unconfirmed entries (not silently dropped),
+  // but are not the chosen pairing partner so carry no nearLocation.
+  assert.strictEqual(unconfirmed.length, 2);
+  assert.ok(unconfirmed.every((f) => f.source === 'B'));
+});
+
+test('sameSubstance: identical text → true; unrelated text → false; missing text on either side → null', () => {
+  const withText = (text) => c.normalizeFinding({ path: 'x.js', line: 1, text });
+  assert.strictEqual(c.sameSubstance(withText('missing null check'), withText('missing null check')), true);
+  assert.strictEqual(c.sameSubstance(withText('missing null check'), withText('trailing comma in export list')), false);
+  assert.strictEqual(c.sameSubstance(withText('missing null check'), c.normalizeFinding({ path: 'x.js', line: 1 })), null);
+});
+
+test('findingsMatch: same location and matching severity bucket, but substantively different text → does not match', () => {
+  const a = { path: 'x.js', line: 100, severity: 'high', text: 'null pointer dereference' };
+  const b = { path: 'x.js', line: 101, severity: 'critical', text: 'unrelated trailing comma issue' };
+  assert.strictEqual(c.findingsMatch(a, b), false);
 });
 
 test('reproduction: one-side-only finding → unconfirmed with STAGED entry matching the documented schema', () => {
@@ -695,10 +792,7 @@ test('/review summary assembly: confirmed flow to summary; unconfirmed + contest
   // Verify the wrap-up Review Console template documents the two new subsections.
   // The template itself lives in console-template.md — review-console.md's "Present
   // the console" section points readers there rather than inlining it (40 KB ceiling).
-  const REVIEW_CONSOLE = fs.readFileSync(
-    path.join(__dirname, '..', 'plugin', 'skills', 'wrap-up', 'console-template.md'),
-    'utf8',
-  );
+  const REVIEW_CONSOLE = readSkillFile('wrap-up', 'console-template.md');
   assert.ok(
     REVIEW_CONSOLE.includes('Low-confidence findings (not reproduced)'),
     'console-template.md must document the Low-confidence subsection',
@@ -808,4 +902,163 @@ test('/specify red-team integration: zero findings → Open Questions section is
   const result = applyRedTeamFindings(draftSpec, []);
   assert.ok(!result.includes('## Open Questions'), 'empty findings must not emit a placeholder header');
   assert.strictEqual(result, draftSpec, 'spec body unchanged when there are no findings');
+});
+
+// ============================================================
+// Post-fan-out scratch path + untracked-file sweep (#2022)
+// ============================================================
+
+// Slices the region of REVIEW_SKILL between two literal markers, failing with a
+// named message when either is missing rather than slicing from a -1 index. The
+// dispatch-template tests below each pin one such block.
+function reviewSkillBlock(startMarker, endMarker, label) {
+  const start = REVIEW_SKILL.indexOf(startMarker);
+  assert.notStrictEqual(start, -1, `${label} template must exist`);
+  const end = REVIEW_SKILL.indexOf(endMarker, start);
+  assert.notStrictEqual(end, -1, `${label} template end marker must exist`);
+  return REVIEW_SKILL.slice(start, end);
+}
+
+// AC1's "the Calibration/Output block stays byte-identical (its existing pin proves it)" is
+// covered by tests/code-health-misc/criteria-fragments.test.js's "review-quality CALIBRATION
+// block stays byte-identical between fragment and step3-lens-dispatch" — that pin reads
+// step3-lens-dispatch.md directly, so it does not need re-authoring here against the weaker,
+// concatenated REVIEW_SKILL constant.
+
+test('step3-lens-dispatch.md gives each dispatched lens agent a scratch path (#2022)', () => {
+  // Read step3-lens-dispatch.md directly rather than via the concatenated REVIEW_SKILL constant:
+  // step3-debate-and-refutation.md's refutation template carries a byte-identical
+  // "SCRATCH: {ctx-dir}/agent-scratch/{agent-id}" line, so matching against REVIEW_SKILL would
+  // still pass even if step3-lens-dispatch.md's own SCRATCH line were deleted.
+  const lensDispatch = readSkillFile('review', 'step3-lens-dispatch.md');
+  const scratchIdx = lensDispatch.indexOf('SCRATCH: {ctx-dir}/agent-scratch/{agent-id}');
+  assert.notStrictEqual(
+    scratchIdx,
+    -1,
+    'step3-lens-dispatch.md must give each dispatched lens agent a ' +
+      'SCRATCH: {ctx-dir}/agent-scratch/{agent-id} line, minted per dispatch',
+  );
+  assert.match(
+    lensDispatch.slice(scratchIdx, scratchIdx + 400),
+    /Scratch rule/,
+    'the SCRATCH line must cite the Subagent Contract\'s Scratch rule by name',
+  );
+});
+
+test('step3-lens-dispatch.md defines the post-fan-out untracked-file sweep (#2022)', () => {
+  assert.match(
+    REVIEW_SKILL,
+    /## Post-fan-out untracked-file sweep/,
+    'step3-lens-dispatch.md must define the post-fan-out untracked-file sweep section',
+  );
+  assert.match(
+    REVIEW_SKILL,
+    /git status --porcelain --untracked-files=all/,
+    'the sweep must use --untracked-files=all, not bare --porcelain, so a freshly created ' +
+      'directory\'s contents are not collapsed to one line',
+  );
+  // Match a constructed sample entry against the doc-derived pattern, the same idiom every
+  // other decisionLogPattern(REVIEW_SKILL, ...) usage in this file follows (see e.g. the
+  // reproduction/debate/refutation tests above) — decisionLogPattern's regex is anchored
+  // (^...$, no multiline flag), so it can only ever match a single line the same shape as
+  // the template, never the full multi-file REVIEW_SKILL text itself.
+  const sweepEntry =
+    '- STAGED 09:14:02 — Review fan-out left 2 untracked file(s): scratch/foo.tmp, notes.txt. ' +
+    'Not deleted. Reversibility: n/a.';
+  assert.match(
+    sweepEntry,
+    decisionLogPattern(REVIEW_SKILL, ['Review fan-out left', 'untracked file']),
+    'the sweep\'s STAGED log line must match the documented shape',
+  );
+});
+
+test('step3-lens-dispatch.md captures a pre-dispatch listing before Step 3\'s first dispatch (#2022)', () => {
+  const preDispatchIdx = REVIEW_SKILL.indexOf('pre-dispatch-status.txt');
+  const firstDispatchIdx = REVIEW_SKILL.indexOf('Reproduction dispatch (Mode 1');
+  assert.notStrictEqual(preDispatchIdx, -1, 'must capture a pre-dispatch listing file');
+  assert.ok(
+    preDispatchIdx < firstDispatchIdx,
+    'the pre-dispatch listing must be captured before the first lens dispatch, not after',
+  );
+});
+
+test('the refutation template gains a SCRATCH line, the debate template does not (#2022)', () => {
+  const refutationBlock = reviewSkillBlock(
+    'You are trying to FALSIFY this finding',
+    '[Use: Capable — refutation agent',
+    'refutation',
+  );
+  assert.match(
+    refutationBlock,
+    /SCRATCH: \{ctx-dir\}\/agent-scratch\/\{agent-id\}/,
+    'the refutation template must carry a SCRATCH: {ctx-dir}/agent-scratch/{agent-id} line before its [Use: ...] tag',
+  );
+
+  const debateBlock = reviewSkillBlock(
+    'Two lenses disagreed on this region',
+    '[Use: Frontier — debate agent',
+    'debate',
+  );
+  assert.doesNotMatch(
+    debateBlock,
+    /SCRATCH:/,
+    'debate judges write nothing and must get no SCRATCH line (spec Deliverables)',
+  );
+});
+
+test('the gap-sweep template gains a SCRATCH line (#2022)', () => {
+  const gapSweepBlock = reviewSkillBlock(
+    'You are a fresh-eyes reviewer',
+    '[Use: Frontier — gap-sweep agent',
+    'gap-sweep',
+  );
+  assert.match(
+    gapSweepBlock,
+    /SCRATCH: \{ctx-dir\}\/agent-scratch\/gap-sweep\b/,
+    'the gap-sweep template must carry a SCRATCH: {ctx-dir}/agent-scratch/gap-sweep line before its [Use: ...] tag',
+  );
+  assert.doesNotMatch(
+    gapSweepBlock,
+    /\{agent-id\}/,
+    'the gap-sweep SCRATCH line must use the fixed literal "gap-sweep" suffix, not {agent-id} — ' +
+      'gap-sweep is always a single dispatch, unlike per-lens/per-candidate agents',
+  );
+});
+
+test('step3-debate-and-refutation.md runs the post-fan-out sweep after Step 3.5/3.6 (#2022)', () => {
+  const gapSweepSection = REVIEW_SKILL.slice(REVIEW_SKILL.indexOf('## Step 3.6: Gap-Sweep'));
+  assert.match(
+    gapSweepSection,
+    /post-fan-out (untracked-file )?sweep/i,
+    'step3-debate-and-refutation.md must point at step3-lens-dispatch.md\'s post-fan-out sweep ' +
+      'as this run\'s closing step, after its own Step 3.5/3.6 dispatches',
+  );
+});
+
+test('step3-routing.md\'s post-dispatch diff audit names the post-fan-out sweep as its sibling (#2022)', () => {
+  const routing = readSkillFile('review', 'step3-routing.md');
+  const auditStart = routing.indexOf('**Post-dispatch diff audit (mandatory).**');
+  assert.notStrictEqual(auditStart, -1, 'step3-routing.md must keep its post-dispatch diff audit paragraph');
+  const auditParagraph = routing.slice(auditStart, routing.indexOf('\n\n', auditStart));
+  assert.match(
+    auditParagraph,
+    /post-fan-out (untracked-file )?sweep/i,
+    'the post-dispatch diff audit paragraph must name the post-fan-out sweep ' +
+      '(step3-lens-dispatch.md) as its sibling — one rule applied at two points',
+  );
+});
+
+test('review-summary-template.md has a Fan-out leftovers slot, full and compact (#2022)', () => {
+  const summaryTemplate = readSkillFile('review', 'review-summary-template.md');
+  assert.match(
+    summaryTemplate,
+    /### Fan-out leftovers/,
+    'the full template must carry a "### Fan-out leftovers" section for the post-fan-out ' +
+      'sweep\'s reported paths (step3-lens-dispatch.md)',
+  );
+  assert.match(
+    summaryTemplate,
+    /Fan-out leftovers 0/,
+    'the compact-form clean-PASS block must carry a "Fan-out leftovers 0" status fact',
+  );
 });

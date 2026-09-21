@@ -221,7 +221,8 @@ test('#1928: a manifest without phases[] still round-trips unchanged', () => {
 
 // --- composeFixesBlock (#2015): a bundle PR's Fixes block must never close a
 // not-run/failed spec on merge — this is the helper the pre-merge refresh
-// (pr-early-run-lifecycle.md's "Pre-merge title/description refresh") calls.
+// (pr-checklist-refresh.md's "Pre-merge title/description refresh", split out of
+// pr-early-run-lifecycle.md by #2002) calls.
 
 test('#2015: composeFixesBlock emits Fixes for complete specs, Refs for a not-run spec, none for both on the same spec', () => {
   const lines = composeFixesBlock([

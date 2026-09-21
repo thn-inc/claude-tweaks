@@ -57,6 +57,31 @@ test('writeStamp writes the JSON stamp and the legacy bare-SHA twin atomically',
   assert.ok(!Object.keys(fsImpl.files).some((p) => p.endsWith('.tmp')), 'no tmp files left behind');
 });
 
+test('writeStamp writes the JSON stamp through a pid-suffixed tmp file (#2004 — migrated off the retired lib/verify/atomic-write.js)', () => {
+  const fsImpl = fakeFs();
+  const stamp = composeStamp({
+    report: REPORT, scope: 'full', fullSha: 'abc123', base: null, changedFiles: [],
+    suitesRun: ['tests'], flakyRetried: [], reportPath: '/r.json', at: 't',
+  });
+  const writeCalls = [];
+  const spiedFsImpl = {
+    ...fsImpl,
+    writeFileSync: (p, data) => { writeCalls.push(p); fsImpl.writeFileSync(p, data); },
+  };
+  const out = writeStamp('/g', stamp, { fsImpl: spiedFsImpl });
+  // out.legacyPath ("…verify-pass") is a string-prefix of out.jsonPath
+  // ("…verify-pass.json"), so an exact-match check is required here — a
+  // startsWith/prefix match against the legacy path would also match the
+  // JSON tmp write, since it happens first.
+  const jsonTmpWrite = writeCalls.find((p) => p.startsWith(`${out.jsonPath}.tmp`));
+  assert.ok(jsonTmpWrite, 'the JSON stamp write must go through a tmp-then-rename path');
+  assert.ok(/\.tmp-\d+$/.test(jsonTmpWrite), `JSON stamp tmp path must be pid-suffixed (got ${jsonTmpWrite}), not the retired module's bare .tmp`);
+  // The legacy bare-SHA twin write is untouched (Non-Goals) — still the plain,
+  // non-pid-suffixed `.tmp` shape.
+  const legacyTmpWrite = writeCalls.find((p) => p === `${out.legacyPath}.tmp`);
+  assert.strictEqual(legacyTmpWrite, `${out.legacyPath}.tmp`);
+});
+
 test('writeStamp with legacy:false writes only the JSON stamp and leaves an existing bare file untouched (#1922 review H1)', () => {
   const fsImpl = fakeFs({ [path.join('/g', STAMP_LEGACY_NAME)]: 'lastfullsha\n' });
   const stamp = composeStamp({

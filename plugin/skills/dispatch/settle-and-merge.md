@@ -56,6 +56,33 @@ failure. When `DISPATCH_HEADLESS` is unset (a human-present dispatch form), skip
 message the Task call already produced is sufficient; nobody headless needs a durable trace of
 it.
 
+**Open-linked-PR enrichment for the contested-claim shape (#2402).** For the contested-claim stop
+specifically — never the in-flight stop, whose card already names its PR via `link` — attempt one
+best-effort open-linked-PR lookup for `#{target}` before filing, so a future reader isn't left to
+do this by hand the way #2402's own incident required: on the `gh` transport,
+`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-linked-prs.js" {target}`. `mcp-transport.md`'s Step 2 note
+applies unchanged here — there is no confirmed MCP mapping for this query (investigated and
+confirmed infeasible, #2402), so on the MCP transport skip this lookup outright, never attempt it.
+A `gh`-transport exit 0 with a non-null `openPR` appends one line to the diagnostic body handed to
+`headless-self-report.md`: `Open linked PR: #{openPR} — not yet caught by the #1224 exclusion on
+this transport; see #2402.` A null `openPR`, a non-zero exit, or the MCP transport all fall through
+to the card's own text unchanged — this is enrichment only, never a gate, and a lookup failure here
+never blocks or fails the self-report itself.
+
+**Headless ride-along special case (#1780).** When the failure this call is settling is instead
+`_shared/worktree-setup.md`'s Post-creation catch-up "Headless ride-along check" — reached during
+`build`'s Common Step 1 worktree creation, always `DISPATCH_HEADLESS=1`-only by construction (see
+`flow/claim-targets.md`'s "Local-ahead-of-origin ride-along stop") — this record HAS already been
+claimed by this run (unlike the claim-contest/in-flight case above, which stops before any claim
+is acquired), so the numbered steps below run normally: step 1's ownership check, then step 2's
+release with `--reason "failed: local-ahead-of-origin"`. In addition to that ordinary release,
+since this stop is unconditionally `DISPATCH_HEADLESS=1`-only, always read
+`_shared/headless-self-report.md` and follow its dedup-and-file procedure (caller = `dispatch`),
+using failing-check-name `flow-step-2.5-headless-local-ahead` and the stop's own card text as the
+diagnostic body — the identical file lookup/dedup/self-file mechanics the claim-contest/in-flight
+case above uses, just for this different stop shape and with the release folded into the normal
+numbered sequence instead of skipped.
+
 1. The CLI in step 2 performs the ownership read itself (`claims/issue-{n}.json` on `claims-registry`, per `_shared/issue-claims.md`'s "The lock" and Ownership rule) and exits `4` — writing nothing — when the blob's `runId` doesn't match `basename($PIPELINE_RUN_DIR)` — the group directory dispatch minted before claiming and this Task call received directly (`dispatch/task-prompt.md`): a mismatch means a successor already broke the stale claim and now holds the lock. Skip the rest of this step for that record and move to the next one — no manual read.
 2. Release the claim and remove `bot:in-progress` in one command — `node "${CLAUDE_PLUGIN_ROOT}/bin/release-claim.js" "$ISSUE" --run "$PIPELINE_RUN_DIR" --reason "failed: {gate}" --remove-in-progress --section "/dispatch" --step "Settle"` (reason per `_shared/issue-claims.md`'s Release triggers table; label removal best-effort, the CLI logs a warning and continues on failure). Same CLI `wrap-up/cleanup-procedures-execution.md` Section E uses — the exit-code contract lives there, not restated here.
 3. **Classify the failure and act on `auto:merge`/`auto:merge-pending` accordingly.** Invoke `/claude-tweaks:assess-agent-autonomy` in `failure-check` mode: `Skill(skill: "claude-tweaks:assess-agent-autonomy", args: "failure-check #{n}")`. If `CLASSIFICATION` is `correctness` or `ambiguous`, revoke whichever of `auto:merge` / `auto:merge-pending` is present — today's behavior for this class, unchanged for `auto:merge`, extended so a still-maturing grant is equally revocable (a record carries at most one of the two per `_shared/work-record.md`'s Grant semantics, so at most one check fires — check both rather than assuming which):
@@ -216,7 +243,11 @@ A `correctness`- or `ambiguous`-classified failure revokes `auto:merge` before t
 
 Because a bundle shares one branch/worktree, the merge decision is necessarily group-wide even though blast radius is attributed per record below: **every member of the group must carry `auto:merge`, either already or via a matured `auto:merge-pending`** (see Authorization below) for the gate to apply at all — a group with even one `auto:build`-only member falls back to the normal pending-review path for the whole group; mixed grants inside one bundle are never split at merge time, and a group with even one still-pending, not-yet-matured member falls back the same way (the group's *slowest* member's veto window governs the whole group, same as its slowest member's review verdict already does below).
 
-When a qualifying group's `/flow` run reaches `/wrap-up`'s Review Console, check two layers before presenting it for approval:
+When a qualifying group's `/flow` run reaches `/wrap-up`'s Review Console, check two layers before presenting it for approval — but first, a live-drain overlap hold (refs #1985):
+
+**Drain-overlap hold, before `merge-check`.** Read `drain-pr-overlap.md`'s "Step 6 (Auto-merge
+gate)" section, this skill's directory, and follow it before Authorization/Content judgment below
+— extracted to keep this file under the 40 KB ceiling (`[IL-153]`).
 
 1. **Authorization** — a two-phase check: evaluate every group member first (fresh labels +
    comments, `evaluateMaturation` per member), act only if every one cleared. A member already
@@ -238,6 +269,32 @@ When a qualifying group's `/flow` run reaches `/wrap-up`'s Review Console, check
    AUTO {time} — Auto-merge gate: #{n} assess-agent-autonomy verdict needs-human — group falls back to the Review Console. Reversibility: n/a.
    ```
 
+   **Log a passing verdict too, the same way** — one entry per member, same command, same file,
+   whether the verdict is `auto-merge` or `needs-human` (#2429). A verdict recorded only on the
+   failure path left nothing in `decisions.md` for a mechanical check to find on the success
+   path — nothing outside this Task call's own self-report could confirm Content judgment
+   actually ran before a merge landed, which is exactly the gap that let two merges in one
+   firing skip this gate undetected.
+
+   ```
+   AUTO {time} — Auto-merge gate: #{n} assess-agent-autonomy verdict auto-merge. Reversibility: n/a.
+   ```
+
+   **Mechanically verify every member's entry exists before proceeding to merge — do not rely on
+   having just run the loop above.** Re-read `{run-dir}/decisions.md` back, the same
+   re-derive-from-the-artifact-you-just-wrote discipline `bin/lib/dispatch/artifact-verdict.js`'s
+   `deriveTestVerdict` already applies to test output, one grep per member:
+
+   ```bash
+   grep -c "Auto-merge gate: #{n} assess-agent-autonomy verdict auto-merge" "{run-dir}/decisions.md"
+   ```
+
+   A count of 0 for any member — the entry is missing, whatever the reason — means Content
+   judgment for that member is not confirmed to have run. Do not merge on that member's behalf:
+   treat it exactly like a `needs-human` verdict (fall the whole group back to the normal
+   pending-review path) rather than proceeding on the assumption that the step above simply ran
+   silently and its log write was merely skipped.
+
 **Both layers pass — acceptance labeling runs first, for every member of the group.** This gate bypasses `/wrap-up`'s Phase 4 execution step, which is where acceptance labeling normally happens, so this gate must perform it itself. For each record in the group, run `wrap-up/verification-brief.md` starting from its **Routing** section — **one record at a time, never batched or concurrent.** Sequencing is what makes the once-per-parent idempotence below hold: each invocation re-reads the parent's labels, so a second member of the same parent sees the first's `demo:pending` and no-ops. Run two concurrently and both read no label, both compose, and both post — two briefs on one parent. That file owns the routing: a record with a resolvable parent goes to its Parent-Gate Procedure (the parent gets the one gate; this sub-issue gets none), and everything else goes through its Steps 1-4 — bootstrap, observation-plan authoring, the safety-net gate, sourcing, posting, then `demo:pending`. Do not apply `demo:pending` to a group member independently of that routing: an `auto:merge`'d sub-issue is exactly the population `_shared/github-pr-scan-acceptance.md`'s `parent-gate` backstop scope exists to catch. One brief and one label per record with no resolvable parent — the merge decision is group-wide, but acceptance is a per-record judgment and a group's members can differ in observation-plan kind and in what shipped for each. A parent-linked sub-issue is routed to the Parent-Gate Procedure instead. **Pass the whole group's record numbers as `$CLOSING_SUB_ISSUES` on every one of these per-member invocations** — not just the member in hand. That is the set `verification-brief.md`'s **Self-inclusion rule** reads: every number in it counts as `CLOSED` when the parent's `leaves` array is built (it overrides state, never adds sub-issues — a group member from another parent, or from none, is simply irrelevant to this parent). The whole group is the correct set here because the single merge below carries one `Fixes #{issue}` line per record, so the group closes together; every record is still open at this point (label before merge, below), and counting only the member in hand would make a group holding two or more sub-issues of one parent evaluate `incomplete` on every one of them, labeling nothing at all — sub-issue or parent — and leaving the parent to `/tidy`'s backstop that the eager gate exists to pre-empt. With the group's set passed, the first such member reaches `due` and gates the parent; the parent's remaining members re-fetch the parent's labels, read `gated`, and no-op — one brief and one `demo:pending` per parent, never a second. `/tidy`'s `parent-gate` sweep stays the backstop for parents this gate never sees at all: a sub-issue closed by hand, or a dispatch run that ended before this gate.
 
 Order is load-bearing: the merge carries one `Fixes #{issue}` line per record, so once it lands every member is closed and this gate has moved on. Label before merging, while the records are still open.
@@ -247,7 +304,7 @@ Order is load-bearing: the merge carries one `Fixes #{issue}` line per record, s
 **Both layers pass — merge (`integration-model: pr-first`, `_shared/integration-model.md`):**
 run `_shared/pr-first-merge.md`'s procedure now, in this same Task call — its Step 2.5
 (Merge-verification gate) applies the resolved merge-verification lever before any merge attempt:
-green arms or merges, pending waits or arms, red parks the group with bot:blocked and reports
+green arms or merges, pending waits or arms, red parks the group with bot:parked and reports
 pending-review, never merges (this is where a #540-shaped red merge is stopped) —
 `tag: auto-merge`, `issue-list` the group's full record set, `summary` the lowest-numbered
 record's title for a singleton or a semicolon-joined list of every member's title for a bundle.
@@ -296,11 +353,18 @@ this call's report is read.
 
 Runs in `dispatch/SKILL.md` Step 6, in the dispatching session's own thread — never inside a Task call. This is the one part of the Auto-merge gate that needs main-checkout access, which only a top-level session has, never a Task-tool subagent.
 
+**Before executing the merge below, re-run the Content judgment step's own mechanical check**
+(#2429) — this thread is separate from the Task call that reported `OUTCOME: ready-to-merge`,
+and that line alone is not evidence Content judgment ran (it is exactly the self-report the check
+exists not to trust): `grep -c "Auto-merge gate: #{n} assess-agent-autonomy verdict auto-merge"
+"{run-dir}/decisions.md"` for every group member, same as above. A count of 0 for any member
+means do not merge — fall the group back to the normal pending-review path instead.
+
 Nothing is threaded back from the second Task call beyond its `OUTCOME: ready-to-merge` line itself (per `_shared/subagent-output-contract.md`'s no-echo rule — a resolution trigger, not a summarized finding). The dispatching session already holds everything else it needs:
 
 - **`{group-worktree}` and `{branch}`** — this session created and entered both for this group in Step 5; it is still inside it (or can `cd` back — the path was captured then). Neither is derived from the Task call's report.
 - **`{run-dir}`** — the same value this session minted for the group in Step 4 and passed as `PIPELINE_RUN_DIR` on both Task calls; nothing to derive from either call's report.
-- **the group's issue numbers and titles** — already in this run's session-scoped `dispatch-groups.json` (`_shared/session-tmp-root.md`; `queue-pull-script.md`'s Step 2 queue pull wrote it under the same session id). Use the lowest-numbered record's title as `{one-line summary}` for a singleton, or a semicolon-joined list of every member's title for a bundle — the same "issue title as summary" convention `_shared/pr-first-merge.md`'s own `summary` argument (line 128 above) uses for its PR title on the `pr-first` path.
+- **the group's issue numbers and titles** — already in this run's session-scoped `dispatch-groups.json` (`_shared/session-tmp-root.md`; `queue-pull-script.md`'s Step 2 queue pull wrote it under the same session id). The issue numbers are what `bin/compose-subject.js` takes as positional arguments below — the composer derives the subject and body itself; no title-derived summary is composed by hand.
 
 Clear this run's worktree assignment before merging, the same way `flow/worktree-merge.md`'s reconciliation does:
 
@@ -327,10 +391,11 @@ if [ "$CURRENT" != "{integration-branch}" ]; then
   echo "Main checkout is on '$CURRENT', not '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
   exit 1
 fi
-git merge --no-ff {branch} -m "[auto-merge] {one-line summary}
+SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} {second-issue} --tag auto-merge --shell) || exit 1
+eval "$SUBJECT_EXPORTS"
+git merge --no-ff {branch} -m "$SUBJECT_TITLE
 
-Fixes #{issue}
-Fixes #{second-issue}"
+$SUBJECT_BODY"
 ```
 
 The guard's job is catching a concurrent session switching the shared checkout out from under this merge.
@@ -341,7 +406,7 @@ The guard's job is catching a concurrent session switching the shared checkout o
 git -C "{group-worktree}" push origin {integration-branch}
 ```
 
-One `Fixes #{issue}` line per record in the group. The explicit `--no-ff` guarantees a real merge commit exists even when the branch would otherwise fast-forward — this is what the `[auto-merge]` tag lands on, and the same commit message carries the closing keyword per "Close-via-merge" in `_shared/issue-claims.md`, so no separate carrier commit is needed for this path.
+The composer emits one `Fixes #{issue}` line per record passed. The explicit `--no-ff` guarantees a real merge commit exists even when the branch would otherwise fast-forward — this is what the `[auto-merge]` tag lands on, and the same commit message carries the closing keyword per "Close-via-merge" in `_shared/issue-claims.md`, so no separate carrier commit is needed for this path.
 
 After the push, run `_shared/pr-first-merge-post-merge.md` Step 4.1 against the local merge commit (`git rev-parse {integration-branch}` immediately after the merge) with `--ref {integration-branch}` — same outcomes and staged file, closing-report line only (no PR to comment on).
 
@@ -356,4 +421,4 @@ Attach the full Review-Console-equivalent summary (whatever `/wrap-up` already p
 
 **That claim covers what wrap-up *found*, not everything its Phase 4 execution step *does*.** Acceptance labeling is an action the second Task call already performed, before ever reporting `ready-to-merge` — not something this section repeats.
 
-**If the merge conflicts, or the branch guard aborts:** `git merge --abort` if a merge is actually in progress. Conflict resolution requires judgment a headless run can't supply. Unlike the Task-call branches above, this session (the dispatching session's own thread — see this section's own opening) has no structural barrier to tearing the worktree down itself; it chooses not to, for the same reason it defers claim release and run-dir archival here: the run genuinely isn't finished, and a human needs to resolve the conflict before any of the three is safe to run — exactly the ordinary un-pushed `pending-review` case `dispatch/SKILL.md`'s Reporting section already parks for. Leave the worktree and run dir parked accordingly; a human resuming the parked run handles all three normally. **One accepted residual:** `close-run` already ran, above, before this conflict was discovered — unlike a normal `pending-review` outcome, this run is no longer E1-protected while parked. Not fixed here; there is no "reopen-run" mechanic to reverse it. Report this group's outcome as `pending-review` (not `ready-to-merge`, which is a transient signal, never terminal), and log why the auto-merge path was abandoned.
+**If the composer call exits non-zero (the `|| exit 1` before any merge — nothing has been merged), the merge conflicts, or the branch guard aborts:** `git merge --abort` if a merge is actually in progress. Conflict resolution requires judgment a headless run can't supply. Unlike the Task-call branches above, this session (the dispatching session's own thread — see this section's own opening) has no structural barrier to tearing the worktree down itself; it chooses not to, for the same reason it defers claim release and run-dir archival here: the run genuinely isn't finished, and a human needs to resolve the conflict before any of the three is safe to run — exactly the ordinary un-pushed `pending-review` case `dispatch/SKILL.md`'s Reporting section already parks for. Leave the worktree and run dir parked accordingly; a human resuming the parked run handles all three normally. **One accepted residual:** `close-run` already ran, above, before this conflict was discovered — unlike a normal `pending-review` outcome, this run is no longer E1-protected while parked. Not fixed here; there is no "reopen-run" mechanic to reverse it. Report this group's outcome as `pending-review` (not `ready-to-merge`, which is a transient signal, never terminal), and log why the auto-merge path was abandoned.

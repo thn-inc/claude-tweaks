@@ -18,12 +18,12 @@ const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine, extractFailingFiles, stripAnsi,
 } = require('./lib/verify/extract');
 const { planRetry, runRetries, flakyCaveatLines } = require('./lib/verify/flaky');
-const { gitInfo, gitDir: resolveGitDir, composeReport } = require('./lib/verify/report');
+const { gitInfo, gitDir: resolveGitDir, composeReport, writeReportAtomic } = require('./lib/verify/report');
 const {
   readStamp: readCountStamp, detectRegression, caveatLine,
   nextFlakyHits, flakyEscalations, escalationCaveatLine,
 } = require('./lib/verify/count-stamp');
-const { writeJsonAtomic } = require('./lib/verify/atomic-write');
+const { writeFileAtomic } = require('./lib/atomic-write');
 const { composeStamp, writeStamp, readStamp: readVerifyStamp, anchorOf } = require('./lib/verify/stamp');
 const { readDeclaration } = require('./lib/verify/declaration');
 const {
@@ -134,7 +134,9 @@ function changedFilesMode(parsed) {
   const priorStamp = ownGitDir ? readVerifyStamp(ownGitDir) : null;
   let base;
   try {
-    base = resolveBase({ stamp: priorStamp, integrationBranch: parsed.integrationBranch, base: parsed.base });
+    base = resolveBase({
+      stamp: priorStamp, integrationBranch: parsed.integrationBranch, base: parsed.base, requireNonDegenerate: true,
+    });
   } catch (err) {
     if (!(err instanceof ChangedFilesError)) throw err;
     process.stderr.write(`--changed-files: ${err.message}\n`);
@@ -142,7 +144,17 @@ function changedFilesMode(parsed) {
     return;
   }
   const { files } = changedFiles({ base });
-  process.stdout.write(`${JSON.stringify({ base, files })}\n`);
+  const result = { base, files };
+  // #2486: a distinct signal for the degenerate case a caller would
+  // otherwise only catch by independently cross-checking via `git diff` —
+  // covers any remaining legitimate base===HEAD outcome (e.g. no
+  // --integration-branch to fall through to, or the branch really is fully
+  // merged into it) that the requireNonDegenerate skip above cannot resolve.
+  const head = gitInfo().sha;
+  if (head && base === head) {
+    result.warning = 'resolved base equals HEAD — diff will be empty';
+  }
+  process.stdout.write(`${JSON.stringify(result)}\n`);
   process.exitCode = 0;
 }
 
@@ -292,14 +304,18 @@ async function main() {
 
   const startedAt = new Date().toISOString();
   const startMs = Date.now();
-  // Flaky retry (#1925): only a --scope run with a declaration that lists
-  // flaky files ever retries; without one every failure is byte-for-byte
-  // today's. Eligible checks are `tests` or a declared suite — never
-  // types/lint (run.js never offers those to the hook either). The decision
-  // is recorded on the check whether or not a retry ran.
-  const flakyEnabled = Boolean(decl && decl.flaky.files.length > 0);
+  // Flaky retry (#1925): only a --scope run ever classifies or retries;
+  // without --scope every failure is byte-for-byte today's. Eligible checks
+  // are `tests` or a declared suite — never types/lint (run.js never offers
+  // those to the hook either). The decision is recorded on the check whether
+  // or not a retry ran, and whether or not `flaky.files` lists anything —
+  // an empty/absent `flaky` declaration still needs a `retryDecision.reason`
+  // recorded so #2026's no-parse/unlisted isolation-path selection has a
+  // signal to read (`planRetry` already returns `retry: false` for an empty
+  // allowlist, so gating classification on `flaky.files.length > 0` only
+  // ever suppressed the decision, never changed whether a retry could run).
   const retryHook = async (result, ctx) => {
-    if (!flakyEnabled) return result;
+    if (!decl) return result;
     // `result.name === 'tests'` is belt-and-braces here: the --cmd-vs-
     // declaration check earlier already rejects an undeclared `tests`, and
     // tool-scoped mode's synthesized `tests` is always declared — so this
@@ -314,11 +330,13 @@ async function main() {
     if (!plan.retry) return { ...result, retryDecision: decision };
     const retried = await runRetries({
       check: result, plan, maxRetries: decl.flaky.maxRetries,
-      logDir: ctx.logDir, runOne, spawnImpl: ctx.spawnImpl, now: ctx.now,
+      logDir: ctx.logDir, runOne, spawnImpl: ctx.spawnImpl, now: ctx.now, cwd: ctx.cwd,
     });
     return { ...retried, retryDecision: decision };
   };
-  const results = sel && sel.mode === 'none' ? [] : (await runChecks({ cmds, logDir, retry: retryHook })).map(enrich);
+  const results = sel && sel.mode === 'none' ? [] : (await runChecks({
+    cmds, logDir, retry: retryHook, cwd: parsed.cwd,
+  })).map(enrich);
   const retriedFiles = [...new Set(results.flatMap((c) => c.flakyRetried || []))];
   const git = gitInfo();
 
@@ -367,7 +385,7 @@ async function main() {
       // unguarded: it IS the run's output, so a failure there must surface.
       try {
         fs.mkdirSync(path.dirname(countStampPath), { recursive: true });
-        writeJsonAtomic(countStampPath, toWrite);
+        writeFileAtomic(countStampPath, `${JSON.stringify(toWrite, null, 2)}\n`);
       } catch { /* best-effort persistence; next run simply has no baseline */ }
     }
   }
@@ -389,7 +407,7 @@ async function main() {
     scope: sel ? { mode: sel.mode, suites: scopeSuites, static: sel.static, base: resolvedBase, unmatched: sel.unmatched, changedFiles: files, matched: sel.matched } : null,
     flakyEscalation,
   });
-  writeJsonAtomic(jsonPath, report);
+  writeReportAtomic(report, jsonPath);
 
   // Verify event (#1928): the runner is the mechanical source for the
   // tasks→test phase boundary (bin/lib/timing/derive.js). Written only when
@@ -481,7 +499,15 @@ async function main() {
   lines.push('| Check | Status | Duration | Summary |', '|---|---|---|---|');
   for (const check of results) {
     const duration = check.skipped ? '—' : `${(check.durationMs / 1000).toFixed(1)}s`;
-    const summary = check.skipped ? '—' : (check.summary || '—');
+    let summary = check.skipped ? '—' : (check.summary || '—');
+    // #2026: a `no-parse` retryDecision means extractFailingFiles could not
+    // name a file for this failure — the stdout summary surfaces that the
+    // whole-suite re-run isolation path applies, so it's visible without
+    // opening report.json.
+    if (!check.skipped && check.exitCode !== 0 && check.retryDecision && check.retryDecision.reason === 'no-parse') {
+      const clause = '(retry: no-parse — whole-suite re-run applies)';
+      summary = check.summary ? `${summary} ${clause}` : clause;
+    }
     lines.push(`| ${check.name} | ${statusOf(check)} | ${duration} | ${summary} |`);
   }
   for (const check of results) {

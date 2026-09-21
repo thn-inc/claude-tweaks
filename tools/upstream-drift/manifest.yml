@@ -22,6 +22,15 @@ dependencies:
       root: "npm root -g"
       root-suffix: "impeccable"
     pinned: "3.6.0"
+    # This is a shared dev host: other sessions running bare `npx impeccable`
+    # (no --no-install, no version pin) periodically refresh npm's local npx
+    # cache to whatever is then "latest" on the registry, and `npx --no-install`
+    # here resolves against that cache non-deterministically — this drifted
+    # exact-pin twice (#1900, then #2277) with no behavioral change between
+    # 3.6.0 and 4.1.0 either time. `floor` accepts any installed version >= the
+    # pin instead of requiring an exact match; a real behavioral break is still
+    # caught by this dependency's own fixtures below, which run regardless.
+    version-mode: floor
     upstream:
       repo: "pbakaus/impeccable"
       tag-prefix: "cli-v"
@@ -37,6 +46,14 @@ dependencies:
         claims: "a clean scan prints an empty JSON array rather than nothing"
         upstream-path: "cli/engine/cli/main.mjs"
         must-match: "process.stdout.write('[]"
+    # Engine-download-failure fixture: accepted gap, not added (#2480).
+    # tools/upstream-drift/checks.js's checkOneFixture hard-requires the
+    # named expect.stream to parse as JSON; the shim's locate()/download()
+    # failure path (IMPECCABLE_BIN/HOME/DOWNLOAD_BASE all exhausted) writes a
+    # plain-text message to stderr, which this harness cannot express as a
+    # passing fixture today. Extending checkOneFixture with a text/substring
+    # assertion mode would make this fixture expressible — tracked as #2573,
+    # not folded into this decision-only change.
     fixtures:
       - run: "npx --no-install impeccable detect --json --no-config --no-design-system tests/fixtures/impeccable-cli/warning.html"
         expect:

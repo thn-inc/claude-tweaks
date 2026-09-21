@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// plugin/bin/plan-audit.js — mechanized plan audit (#903): Checks A/B/C plus
-// a size-headroom check, replacing the hand-run prose procedure that used to
+// plugin/bin/plan-audit.js — mechanized plan audit (#903): Checks A/B/C/D
+// plus a size-headroom check, replacing the hand-run prose procedure that used to
 // live entirely in plugin/skills/build/plan-audit.md. Exit 0 iff every check
 // is ok (a `nearCeiling` headroom flag alone does not fail). `--count-tasks`
 // (#1926) is a read-only verb printing `{tasks, batched}` for /build's
@@ -13,9 +13,11 @@ const { execFileSync } = require('node:child_process');
 
 const { parseArgs, UsageError, USAGE } = require('./lib/plan-audit/args');
 const {
-  extractFileEntries, extractScopeKeywords, extractVerificationChecks, countTasks,
+  extractFileEntries, extractScopeKeywords, extractVerificationChecks, extractUnparseableStep2s, countTasks,
 } = require('./lib/plan-audit/parser');
-const { checkA, checkB, checkC, headroomCheck } = require('./lib/plan-audit/checks');
+const {
+  checkA, checkB, checkC, checkD, headroomCheck,
+} = require('./lib/plan-audit/checks');
 
 function resolveRepoRoot(explicit, cwd) {
   if (explicit) return path.resolve(explicit);
@@ -31,6 +33,9 @@ function summaryLine(report) {
   if (!report.checkA.ok) parts.push(`Check A: ${report.checkA.missing.length} missing path(s)`);
   if (!report.checkB.ok) parts.push(`Check B: ${report.checkB.unplanned.length} unplanned file(s)`);
   if (!report.checkC.ok) parts.push(`Check C: ${report.checkC.findings.length} non-discriminating command(s)`);
+  if (report.checkC.warnings.length) parts.push(`Check C: ${report.checkC.warnings.length} unparseable Step 2(s)`);
+  if (report.checkC.appendShaped.length) parts.push(`Check C: ${report.checkC.appendShaped.length} append-shaped pre-run(s) accepted`);
+  if (!report.checkD.ok) parts.push(`Control bytes: ${report.checkD.findings.length}${report.checkD.truncated ? '+' : ''}`);
   if (!report.headroom.ok) parts.push(`Headroom: ${report.headroom.breaches.length} breach(es)`);
   if (report.headroom.nearCeiling.length) parts.push(`Headroom: ${report.headroom.nearCeiling.length} near-ceiling`);
   const composedOver = report.headroom.composed.filter((c) => c.over > 0).length;
@@ -78,15 +83,29 @@ function main() {
     return;
   }
 
+  // #2000: --bytes runs Check D alone (the one check Common Step 1.5's skip
+  // gate doesn't cover) — no repo-root resolution or parsing needed.
+  if (parsed.bytes) {
+    const checkDResult = checkD(text);
+    process.stdout.write(`${JSON.stringify({ checkD: checkDResult })}\n`);
+    process.exitCode = checkDResult.ok ? 0 : 1;
+    return;
+  }
+
   const repoRoot = resolveRepoRoot(parsed.repoRoot, process.cwd());
+  // #2000: Check D runs on the raw text before the parser — a byte scan on
+  // text already in memory costs nothing.
+  const checkDResult = checkD(text);
   const entries = extractFileEntries(text);
   const scopeKeywords = extractScopeKeywords(text);
   const verificationChecks = extractVerificationChecks(text);
+  const unparseableStep2s = extractUnparseableStep2s(text);
 
   const report = {
     checkA: checkA(entries, repoRoot),
     checkB: checkB(scopeKeywords, entries.map((e) => e.path), repoRoot),
-    checkC: checkC(verificationChecks, repoRoot),
+    checkC: checkC(verificationChecks, repoRoot, {}, unparseableStep2s),
+    checkD: checkDResult,
     headroom: headroomCheck(entries, repoRoot),
   };
 
@@ -96,7 +115,7 @@ function main() {
   process.stdout.write(`${JSON.stringify(report)}\n`);
   process.stdout.write(`${summaryLine(report)}\n`);
 
-  const pass = report.checkA.ok && report.checkB.ok && report.checkC.ok && report.headroom.ok;
+  const pass = report.checkA.ok && report.checkB.ok && report.checkC.ok && report.checkD.ok && report.headroom.ok;
   process.exitCode = pass ? 0 : 1;
 }
 

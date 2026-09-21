@@ -1,0 +1,28 @@
+template_version: 1
+routine_name: release-train-daily
+kickoff: release --train
+# Optional: `branch: <name>` pins the assembled kernel's target-branch placeholder.
+# Normally unset here — a branch is project-specific, so /claude-tweaks:routine resolves
+# it at instantiation.
+model: claude-sonnet-5
+allowed_tools: [Bash, Read, Grep, Glob, Task]
+mcp_connections: []
+default_schedule:
+  cron_expression: "37 7 * * 1-5"
+  description: "daily on weekdays, UTC — confirm against your local timezone at creation time. Offset from dispatch's 11 */2 and specify's 23 */2 cadences and from every fleet-table minute, so a firing never shares a minute with a queue drain"
+notes: >
+  The release train (refs #2258): each firing invokes /claude-tweaks:release --train and lets
+  that skill decide — it reads the preflight fact pack, runs the whole-branch review before any
+  bump, and merges release-please's PR (pr-first) or runs bin/release-local.js (local-merge)
+  only for a minor or patch bump whose review came back clean or non-blocking. Two policy
+  levers gate every firing: `release-train: true` and `autonomy: unattended` in
+  .claude-tweaks/policy.yml. Without both, --train is refused and, no human being present,
+  the skill stops before its Step 1 with outcome `failed` and the refusal as its reason —
+  nothing read, nothing merged, nothing tagged, no record touched; the firing reports blocked. A major bump
+  (measured on the effective version, --as included) or a `review: blocking` verdict ends the
+  firing with `HELD` and a `release-held.md` in the firing's run directory naming the gate;
+  re-run the train once the gate is addressed. A hook that fails after the tag landed is
+  `PARTIAL` with the recovery command in the report — the release exists; only the publish
+  step needs re-running. A firing with nothing to release is a cheap no-op (`nothing to
+  release since v{lastTag}`); a repository that has never tagged a version is held at the
+  first-release gate until its manifest version is tagged (#2259 bootstraps that for this repo).

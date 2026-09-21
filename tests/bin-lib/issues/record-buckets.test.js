@@ -2,13 +2,13 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { isBacklog, isParked, isBotBlocked, isBotInProgress, classifyStaleness } = require('../../../plugin/bin/lib/issues/record-buckets');
+const { isBacklog, isParked, isBotBlocked, isBotParked, isBotInProgress, classifyStaleness } = require('../../../plugin/bin/lib/issues/record-buckets');
 
 function makeRecord(overrides = {}) {
   return {
     facets: {
       stage: 'backlog',
-      bot: { inProgress: false, blocked: false },
+      bot: { inProgress: false, blocked: false, parked: false },
       ...overrides,
     },
   };
@@ -48,10 +48,29 @@ test('isBotBlocked returns false for the default (false) bot state', () => {
 
 test('isBotBlocked returns false for a local-files-shaped record (facets.bot is always the default object, never absent)', () => {
   // local-store.js's defaultFacets() spreads facet-shape.js's sharedFacetDefaults(), which
-  // always includes bot: { inProgress: false, blocked: false } — this is the actual shape a
-  // brand-new local-files record produces, never an undefined/missing field.
-  const localFilesRecord = { facets: { stage: 'backlog', bot: { inProgress: false, blocked: false } } };
+  // always includes bot: { inProgress: false, blocked: false, parked: false } — this is the
+  // actual shape a brand-new local-files record produces, never an undefined/missing field.
+  const localFilesRecord = { facets: { stage: 'backlog', bot: { inProgress: false, blocked: false, parked: false } } };
   assert.strictEqual(isBotBlocked(localFilesRecord), false);
+});
+
+// ── isBotParked ──────────────────────────────────────────────────────────────
+
+test('isBotParked returns true when facets.bot.parked is true', () => {
+  const record = makeRecord();
+  record.facets.bot.parked = true;
+  assert.strictEqual(isBotParked(record), true);
+});
+
+test('isBotParked returns false for the default (false) bot state', () => {
+  assert.strictEqual(isBotParked(makeRecord()), false);
+});
+
+test('isBotParked returns false when only bot.blocked is true (the two never overlap)', () => {
+  const record = makeRecord();
+  record.facets.bot.blocked = true;
+  assert.strictEqual(isBotParked(record), false);
+  assert.strictEqual(isBotBlocked(record), true);
 });
 
 // ── isBotInProgress ──────────────────────────────────────────────────────────

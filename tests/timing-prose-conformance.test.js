@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
+const { CEILING_BYTES } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'skill-audit', 'context-cost'));
 
 test('#1928: multi-spec.md cites the run-dir layout sub-file and stays under its read budget', () => {
   const ms = read('plugin/skills/flow/multi-spec.md');
@@ -21,7 +22,7 @@ test('#1928: the layout sub-file documents manifest.yml phases[] and the latest 
   assert.match(sub, /spec-status/);
 });
 
-const CEILING = 40960;
+const CEILING = CEILING_BYTES;
 
 test('#1928 AC6: both summary templates carry a ### Timing section rendered from phase-timing.js', () => {
   for (const f of ['plugin/skills/flow/summary-template.md', 'plugin/skills/wrap-up/summary-template.md']) {

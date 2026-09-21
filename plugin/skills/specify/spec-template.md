@@ -63,6 +63,12 @@ When a Deliverable adds a new Manifesto policy lever — a new `auto`-mode behav
 2. {Specific, testable criterion}
 3. ...
 
+## Release Note
+
+{One plain-language, verb-first sentence describing what this record delivers, written for someone reading the release notes — never a raw conventional-commit subject, an internal module name, a record number, or a file path. Required on every record, including one with no end-user-visible effect: describe what changed from the release-notes reader's perspective, even when that's "no user-visible change" phrased plainly (e.g. "Improved internal test coverage for the release composer") — never omitted.}
+
+Example: "Added a visible warning when memory usage is critical" — verb-first, plain language, no record numbers or file paths. The `Release-Note:` trailer this section composes into at merge time is single-line by construction (`plugin/bin/lib/release/subject.js`'s `Release-Note:` paragraph) — write this section as one line even if drafting notes elsewhere run longer, since only the first line survives at merge time.
+
 ## Technical Approach
 
 {Key architectural decisions absorbed from the design doc, specific to this work unit. When a `/claude-tweaks:research` report already exists for this topic — prior-art lookup, dependency behavior, or an existing convention elsewhere in the codebase — cite its finding directly here (or in Gotchas below) rather than re-deriving it; `docs/skill-graph.md`'s `## specify` section names this as the advisory research↔specify edge.}
@@ -102,6 +108,7 @@ When a deliverable documents a newly-discovered limitation or constraint of an e
 - {e.g., "The status enum values are exactly: draft, published, archived"}
 - {e.g., "This mutation needs a transaction — it modifies two tables atomically"}
 - {e.g., "Import shared types from the contracts package, don't redeclare inline"}
+- {`_shared/premise-verification.md` unsettled: `ASSUMPTION — verify at build: {claim} — via {what settles it}.`}
 
 ## Decision Rationale (optional)
 
@@ -154,6 +161,7 @@ Every spec section must contain content that `/superpowers:writing-plans` can ac
 - Types, models, endpoints, or files referenced anywhere in the spec that aren't defined in `Data / API Surface` or `Key Files`
 - Gotchas that say "be careful" without saying what to do (`"watch out for races"` ≠ `"use upsert, not delete+insert"`)
 - An AC asserting "styling/classes are unchanged" as literal string equality (`className === "flex p-4 text-sm"` ≠ class-*set* equivalence or a rendered/visual check) — a class-sorting formatter such as `prettier-plugin-tailwindcss` reorders class tokens on every commit, making literal-string equality structurally unenforceable
+- An existing-code fact with neither an inline evidence citation nor the `ASSUMPTION — verify at build:` marker (#1769)
 
 If you would need `/superpowers:writing-plans` to guess, the spec is incomplete — finish it before handing off. Vagueness here compounds into plan failures downstream.
 

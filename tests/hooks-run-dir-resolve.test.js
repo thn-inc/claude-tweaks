@@ -1,7 +1,7 @@
 // tests/hooks-run-dir-resolve.test.js
 //
 // #692: bin/lib/hooks/run-dir-resolve.js — the pure resolver behind
-// `node bin/hooks.js resolve-run-dir`. Implements _shared/pipeline-run-dir.md's
+// `node bin/hooks.js resolve-run-dir`. Implements _shared/run-dir-resolution.md's
 // resolution order (env var with adoption-time anchoring check -> newest
 // matching dir -> standalone fallback) on top of worktree-detect.js's
 // mainCheckoutRoot(), so a skill step can get the anchored $RUN_ROOT/run

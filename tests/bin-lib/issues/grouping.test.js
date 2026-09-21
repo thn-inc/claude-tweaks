@@ -980,3 +980,41 @@ test('a custom hubPathMinCount/hubPathFraction can tighten or loosen the thresho
   const tightenedOverlaps = detectCrossPRFileOverlap([{ number: 1, keyFiles: ['shared.js'] }], openPRs, { hubPathMinCount: 2 });
   assert.deepStrictEqual(tightenedOverlaps, []);
 });
+
+// ── detectCrossPRFileOverlap: source attribution (#1985) ────────────────────
+// A caller re-running this over a UNION of the pre-drain snapshot and this
+// same firing's own in-flight drain PRs (dispatch/SKILL.md Step 4's re-check)
+// needs to tell which pool a hit came from, without re-deriving it itself.
+
+test('a pool entry tagged with source carries that source onto its matching overlap entry', () => {
+  const overlaps = detectCrossPRFileOverlap(
+    [{ number: 456, keyFiles: ['plugin/skills/_shared/subagent-output-contract.md'] }],
+    [{ number: 123, files: ['plugin/skills/_shared/subagent-output-contract.md'], closingIssueNumbers: [], source: 'drain' }],
+  );
+  assert.strictEqual(overlaps.length, 1);
+  assert.strictEqual(overlaps[0].source, 'drain');
+});
+
+test('an untagged pool entry (today\'s every existing caller) carries no source key at all — byte-identical output', () => {
+  const overlaps = detectCrossPRFileOverlap(
+    [{ number: 1410, keyFiles: ['plugin/bin/lib/hooks/context.js'] }],
+    [{ number: 1577, files: ['plugin/bin/lib/hooks/context.js'], closingIssueNumbers: [] }],
+  );
+  assert.deepStrictEqual(overlaps[0], { candidate: 1410, pr: 1577, files: ['plugin/bin/lib/hooks/context.js'] });
+  assert.strictEqual('source' in overlaps[0], false);
+});
+
+test('a mixed pool of pre-drain (untagged) and drain-tagged PRs attributes each overlap to its own pool', () => {
+  const overlaps = detectCrossPRFileOverlap(
+    [{ number: 456, keyFiles: ['shared.js'] }],
+    [
+      { number: 100, files: ['shared.js'], closingIssueNumbers: [] },
+      { number: 123, files: ['shared.js'], closingIssueNumbers: [], source: 'drain' },
+    ],
+  );
+  assert.strictEqual(overlaps.length, 2);
+  const preDrain = overlaps.find((o) => o.pr === 100);
+  const drain = overlaps.find((o) => o.pr === 123);
+  assert.strictEqual('source' in preDrain, false);
+  assert.strictEqual(drain.source, 'drain');
+});

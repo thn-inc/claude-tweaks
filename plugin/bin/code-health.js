@@ -367,7 +367,7 @@ function main(argv) {
   const args = parseArgs(argv);
   const cmd = args._[0];
   if (cmd === 'status') return cmdStatus(args);
-  if (cmd === 'churn-report') return cmdChurnReport(args);
+  if (cmd === 'churn-report') { const code = cmdChurnReport(args); if (code) process.exitCode = code; return; }
   if (cmd === 'pull-issues') return cmdPullIssues(args);
   if (cmd === 'validate-findings') return cmdValidateFindings(args);
   if (cmd === 'classify') return cmdClassify(args);
@@ -380,7 +380,11 @@ function main(argv) {
   // stand-alone "update <results.json>" invocation would parse), so slice off
   // the leading 'retry-queue' entry before handing args to it.
   if (cmd === 'retry-queue' && args._[1] === 'drain') return retryQueueCommands.drain(args);
-  if (cmd === 'retry-queue' && args._[1] === 'update') return retryQueueCommands.update({ ...args, _: args._.slice(1) });
+  if (cmd === 'retry-queue' && args._[1] === 'update') {
+    const code = retryQueueCommands.update({ ...args, _: args._.slice(1) });
+    if (code) process.exitCode = code;
+    return;
+  }
   process.stderr.write(
     'usage: code-health.js <command> [options]\n' +
     'commands: validate-findings [--slice <id>], classify, next-slice, status, churn-report, pull-issues, ' +

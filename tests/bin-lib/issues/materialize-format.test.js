@@ -18,6 +18,9 @@ const SHAPED_BODY = [
   '',
   '## Acceptance Criteria',
   '1. It works',
+  '',
+  '## Release Note',
+  'Fixed the thing.',
 ].join('\n');
 
 // ---- sectionText -------------------------------------------------------
@@ -62,7 +65,14 @@ test('shapeGate: an unresolved TBD/TODO/ambiguity marker fails even with all sec
 
 test('shapeGate: multiple missing sections are all reported at once', () => {
   const gate = shapeGate('Just a title, no sections at all.');
-  assert.deepEqual(gate.missing.sort(), ['Acceptance Criteria', 'Current State', 'Deliverables']);
+  assert.deepEqual(gate.missing.sort(), ['Acceptance Criteria', 'Current State', 'Deliverables', 'Release Note']);
+});
+
+// #2603 — REQUIRED_SECTIONS now enforces the fourth canonical section too.
+test('shapeGate: a body with all sections except Release Note fails, naming only Release Note', () => {
+  const body = SHAPED_BODY.replace(/\n\n## Release Note\nFixed the thing\.$/, '');
+  const gate = shapeGate(body);
+  assert.deepEqual(gate, { ok: false, missing: ['Release Note'] });
 });
 
 test('shapeGate: placeholder markers inside a verbatim ## Original request section pass — even after nested ## headings (refs #1240)', () => {

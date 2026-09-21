@@ -37,8 +37,10 @@ test('every run-dir timestamp snippet under skills/ uses date -u (#721)', () => 
   assert.deepStrictEqual(offenders, []);
 });
 
-test('pipeline-run-dir.md states the UTC ISO-timestamp rule once (#721)', () => {
-  const content = read('plugin/skills/_shared/pipeline-run-dir.md');
+test('run-dir-resolution.md states the UTC ISO-timestamp rule once (#721)', () => {
+  // Moved from pipeline-run-dir.md to run-dir-resolution.md at #2019, alongside the
+  // Resolution order and Bash snippet it's adjacent to.
+  const content = read('plugin/skills/_shared/run-dir-resolution.md');
   assert.match(content, /ISO-timestamp rule/);
   assert.match(content, /UTC/);
   assert.match(content, /date -u \+%Y-%m-%dT%H%M%S/);
@@ -59,12 +61,13 @@ test('claim-targets contest path removes a self-minted empty dir immediately (#7
   assert.doesNotMatch(content, /isOrphanedMint` sweep reclaims after 24h if it was freshly minted here/);
 });
 
-test('claim-targets spec-slug rule cites pipeline-run-dir.md, not manifesto.md (#724)', () => {
+test('claim-targets spec-slug rule cites run-dir-resolution.md, not manifesto.md (#724)', () => {
+  // SPEC_SLUG conventions moved from pipeline-run-dir.md to run-dir-resolution.md at #2019.
   const content = read('plugin/skills/flow/claim-targets.md');
   const slugLines = content.split('\n').filter((l) => l.includes('{spec-slug}') && l.includes('follows'));
   assert.ok(slugLines.length > 0, 'the mint step must still state where the spec-slug rule lives');
   for (const l of slugLines) {
-    assert.match(l, /pipeline-run-dir\.md/);
+    assert.match(l, /run-dir-resolution\.md/);
     assert.doesNotMatch(l, /manifesto\.md/);
   }
 });

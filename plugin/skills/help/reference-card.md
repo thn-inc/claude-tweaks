@@ -14,8 +14,9 @@ Quick reference for all claude-tweaks skills. For full details, run `/claude-twe
 | `/claude-tweaks:build` | Implement a work record, spec, or design doc | `[#<n>\|<design-doc-path>\|<topic>] [subagent\|batched] [auto] [worktree\|current-branch] [profile=<fast\|standard\|capable\|frontier>] [ops=confirm]` |
 | `/claude-tweaks:stories` | Generate or update QA story YAML files (journey-aware) | `[<url>] [persona=<name>] [dir=<path>] [focus=<area>] [pages=<n>] [refine=false] [negative=false] [journey=<name>]` |
 | `/claude-tweaks:test` | Verification gate — types, lint, tests, QA stories | `[types\|lint\|unit\|integration\|e2e\|affected\|qa\|all\|skip-qa\|<path>] [tag=<tag>] [story=<name>] [retry=<path>] [journey=<name>] [dir=<path>] [priority=<level>] [max_parallel=N] [timeout=<ms>] [headless]` |
-| `/claude-tweaks:review` | Analytical quality gate: code review, UX analysis (when QA data available), visual + creative ideas (default in `/claude-tweaks:flow`). Gates on `/claude-tweaks:test`. | `[<spec-number>\|<file-path>...\|visual <url-or-description>\|journey:<name>\|discover] [full] [low\|medium\|high\|xhigh\|max]` |
+| `/claude-tweaks:review` | Analytical quality gate: code review, UX analysis (when QA data available), visual + creative ideas (default in `/claude-tweaks:flow`). Gates on `/claude-tweaks:test`. | `[<spec-number>\|<file-path>...\|base:<ref>\|visual <url-or-description>\|journey:<name>\|discover] [full] [low\|medium\|high\|xhigh\|max]` |
 | `/claude-tweaks:wrap-up` | Reflect, capture learnings, clean up | `[#N\|<spec>\|<context>\|resume] [--dry-run] [--skill-budget <n>] [--doc-budget <n>] [cleanup-only]` |
+| `/claude-tweaks:release` | Drive a release — preflight pack, pre-bump whole-branch review, one console, release-please merge or the local engine, verify, bookkeeping; `--train` for the unattended tier | `[--dry-run] [--train] [--as <version>] [--allow-blocking]` |
 
 ## Component (standalone or called by lifecycle skills)
 
@@ -41,7 +42,7 @@ Quick reference for all claude-tweaks skills. For full details, run `/claude-twe
 | `/claude-tweaks:tidy` | Batch backlog hygiene (incl. GitHub PRs + code-health/harness-health/journey-health/docs-health issues) | `[--scope=<name>[,<name>...]] [--dry-run] [--approve [run-dir]] [--source sweep]` |
 | `/claude-tweaks:flow` | Automated pipeline: build → [stories →] test → review → polish → wrap-up (+ end-of-run depth survey); pure executor — never selects records itself | `#N[,#M...] [worktree\|current-branch] [no-stories] [no-polish] [no-deepen] [no-creative] [auto\|interactive\|hybrid\|confirm] [keep-going] [cleanup-only] [step1,step2,step3]` |
 | `/claude-tweaks:backlog` | Three modes over the open backlog: `refine` ensures every record has the right priority/Related/grant labels (a write sweep) and, given `#N[,#M...]`, resolves exactly those records' own decision comments/`bot:blocked` state — human-present by default, or headless via `--source routine\|sweep`, which additionally runs the machine-grant chain behind the `unattended` autonomy ceiling (`github-issues` only, off by default; `grant` is a deprecated mode-word alias that forces this headless posture); `overview` renders a distribution picture and recommends what to build next (read-only); `attention` is a read-only, ranked list of every open `needs:*`/`solution:unjustified`/`bot:blocked` record plus every ungranted `shaped:headless` spec, with a merge-lane breaker banner and staged-tidy-proposals pointer (`github-issues` only). | `[refine\|overview\|attention] [#N[,#M...]] [critical\|risk-value\|cleanup\|trust] [--budget <n>] [--origin <origin>] [--source <human\|routine\|sweep>] [--reset-breaker]` |
-| `/claude-tweaks:dispatch` | The queue consumer — selects an authorized record's whole file-overlap group, mints its run directory, and hands it to `/flow` (which claims it via an atomic blob lock at its Step 2.8); settles on success/failure | `[#N[,#M...]] [--budget <n\|all>] [--priority high\|medium\|low]` |
+| `/claude-tweaks:dispatch` | The queue consumer — selects an authorized record's whole file-overlap group, mints its run directory, and hands it to `/flow` (which claims it via an atomic blob lock at its Step 2.8); settles on success/failure | `[#N[,#M...]] [--budget <n\|all>] [--priority high\|medium\|low] [--settle-parked]` |
 | `/claude-tweaks:browse` | Unified browser automation (utility) | `[<url>\|<task description>] [--session <name> ...] [set viewport <wxh>\|set device \"<name>\"] [backend=chrome ...] [--quick]` |
 | `/claude-tweaks:ledger` | Open items tracking — query, resolve ledger entries | `[resolve [<feature-name>]\|<feature-name>]` |
 | `/claude-tweaks:research` | Deep web research with citation-audited reports — 4 runtime modes from quick to ultradeep. `verify` mode grounds a design's assumptions before `/superpowers:brainstorming`; the bare-topic form stays a no-fixed-position utility. | `verify [brief-path\|#N] \| <topic> [--mode=quick\|standard\|deep\|ultradeep] [--engine=auto\|inline] [--output=<path>]` |
@@ -128,7 +129,7 @@ or standalone:
 ## Artifact Lifecycle
 
 ```
-Backlog record → Design Doc → Ready record(s) → Code → Stories → TEST_PASSED → Review → Polish (frontend) → Done
+Backlog record → Design Doc → Ready record(s) → Code → Stories → TEST_PASSED → Review → Polish (frontend) → Done → Tag + Release
 ```
 
 | Skill | Creates | Deletes |
@@ -143,6 +144,7 @@ Backlog record → Design Doc → Ready record(s) → Code → Stories → TEST_
 | `/claude-tweaks:test` | TEST_PASSED flag | — |
 | `/claude-tweaks:review` | Review summary | — |
 | `/claude-tweaks:wrap-up` | Learnings (CLAUDE.md), Verification Brief | Spec, plans, ledger |
+| `/claude-tweaks:release` | Tag + Release (or a staged `release-held.md` on a HARD-GATE) | — |
 | `/claude-tweaks:demo` | Follow-up record (on changes-requested) | — |
 
 Consumed artifacts are deleted — specs and code are the durable outputs.

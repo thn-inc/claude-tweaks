@@ -20,6 +20,26 @@ test('verification.md: the runner owns flake retries — the section is "Flake h
   assert.ok(text.includes('node --test path/to/file.test.js'), 'the isolated rerun still applies to an UNLISTED failing file');
 });
 
+test('verification.md: the isolate-and-rerun-once rule names two paths — named-file isolation and whole-suite re-run — selected by retryDecision.reason (#2026)', () => {
+  const text = read('plugin/skills/test/verification.md');
+  assert.ok(text.includes('#### Named-file isolation'));
+  assert.ok(text.includes('#### Whole-suite re-run'));
+  assert.ok(text.includes('retryDecision.reason'));
+  assert.ok(text.includes("an `unlisted: […]` reason selects **named-file isolation**"));
+  assert.ok(text.includes("a `no-parse` reason"));
+  assert.ok(text.includes('(retry: no-parse — whole-suite re-run applies)'), 'the stdout clause is documented');
+  assert.ok(text.includes('One re-run, never more'), 'the whole-suite path states the single-re-run cap');
+  assert.ok(text.includes('node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --cmd tests="{command}"'), 'the whole-suite re-run command is documented');
+  assert.ok(text.includes('Whole-suite re-run path below is the fallback for that'), 'the pre-existing-failures section cross-references the whole-suite path');
+});
+
+test('verification.md: flaky.files entries may be globs, reusing the same engine rules[].match uses (#2029)', () => {
+  const text = read('plugin/skills/test/verification.md');
+  assert.ok(text.includes('repo-relative paths or globs (the same `**`/`*` forms `rules[].match` accepts)'));
+  assert.ok(!text.includes('exact repo-relative paths'), 'the old "exact" wording is fully replaced');
+  assert.ok(text.includes('a glob is matched against the same printed path'));
+});
+
 test('docs/plugin-structure.md names flaky.js and the count stamp\'s flakyHits (#1925)', () => {
   const text = read('docs/plugin-structure.md');
   assert.ok(text.includes('flaky.js (#1925'));

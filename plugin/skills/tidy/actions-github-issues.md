@@ -96,6 +96,20 @@ state read has already happened here and the lever never needs resolving. Should
 unavailable, item 1's degrade branch that applies is the `off` one (an immediate merge of an
 already-green PR), never the `wait` row.
 
+## Release claim
+
+Executor for a `[claim]` Release row from Step 4.7's claim audit (`scan-procedures.md`) — both
+the `Blob classified 'stale'` and the `Issue closed (any claim state)` recommendation rows.
+`node "${CLAUDE_PLUGIN_ROOT}/bin/release-claim.js" <n> --run <tidy-run-dir> --sweep --reason
+"swept: stale claim"` (or `"swept: issue closed"`). `--sweep` is required — this run's `--run`
+basename is never the crashed dispatcher's `runId`, so without it `release-claim.js`'s ordinary
+ownership check refuses the release as `skipped-not-owner` (#2090). `--sweep` performs the same
+read → classify → tombstone `PUT` → conflict re-verify → comment → best-effort `bot:in-progress`
+removal sequence any release does, resolving the issue's own open/closed state itself; a `'stale'`
+blob is releasable unconditionally, a `'live'` blob only when the issue reads closed. Never pass
+`--remove-grants` here — grant retention on a swept release is the standing retry request
+(`_shared/issue-claims.md`'s Grant revocation section), and this action doesn't opt out of it.
+
 ## Sync to GitHub
 
 This action exists only on this backend — a local record carrying `unsynced: true` while `work-backend: github-issues` is what it fixes.

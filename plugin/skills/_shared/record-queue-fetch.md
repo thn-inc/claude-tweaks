@@ -183,7 +183,7 @@ git -C "{REPO_ROOT}" log -1 --format=%cI -- "{path}"
 
 An empty result — an uncommitted/brand-new record — is treated as fresh, not stale.
 `{REPO_ROOT}` resolves via `git rev-parse --show-toplevel` in the dispatcher before the agent
-fires (see Working Directory Discipline in `_shared/subagent-output-contract.md`).
+fires (see Working Directory Discipline in `_shared/subagent-dispatch-core.md`).
 
 ### Threshold resolution
 

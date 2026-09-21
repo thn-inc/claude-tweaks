@@ -1,7 +1,7 @@
 // bin/lib/hooks/run-dir-resolve.js — pure resolver behind
 // `node bin/hooks.js resolve-run-dir` (#692).
 //
-// Implements _shared/pipeline-run-dir.md's resolution order (env var with
+// Implements _shared/run-dir-resolution.md's resolution order (env var with
 // adoption-time anchoring check -> newest matching directory -> standalone
 // fallback) on top of worktree-detect.js's mainCheckoutRoot(), so a skill step
 // gets the anchored $RUN_ROOT/run directory back as a single command instead of
@@ -10,7 +10,7 @@
 // read from inside a worktree silently created/used a worktree-local shadow,
 // splitting run state across two locations ([IL-127]).
 //
-// `pipeline-run-dir.md`'s Bash snippet stays as the reference implementation
+// `run-dir-resolution.md`'s Bash snippet stays as the reference implementation
 // this module mirrors — every call site should cite this command instead of
 // restating that snippet.
 //
@@ -29,7 +29,7 @@ function safeReal(p) {
 }
 
 // ISO-timestamp-prefixed run-dir naming: YYYY-MM-DDTHHMMSS (no colons —
-// portable across filesystems), matching pipeline-run-dir.md's SPEC_SLUG
+// portable across filesystems), matching run-dir-resolution.md's SPEC_SLUG
 // conventions and every hand-written snippet this module replaces.
 function formatTimestamp(d) {
   const pad = (n) => String(n).padStart(2, '0');
@@ -90,7 +90,7 @@ function isDeadRunDir(dir) {
   return false;
 }
 
-// Step 2 (`_shared/pipeline-run-dir.md`'s resolution order): the most recent
+// Step 2 (`_shared/run-dir-resolution.md`'s resolution order): the most recent
 // directory under `{pipelinesRoot}` whose name contains `specSlug`, matching
 // the reference snippet's `find ... -name "*${SPEC_SLUG}*" | sort | tail -n 1`
 // — except a dead candidate (#1962, `isDeadRunDir` above) is skipped in favor
@@ -185,12 +185,14 @@ function resolve(opts = {}) {
     // clause for the standalone-auto allowlist (/tidy, /init, /capture,
     // /claude-tweaks:dispatch, /claude-tweaks:backlog, /claude-tweaks:specify,
     // /claude-tweaks:sweep).
-    // When `--mode` is OMITTED entirely, no such gate applies — that is
-    // wrap-up's own documented exception (pipeline-run-dir.md resolution order step 4):
-    // wrap-up creates a standalone run dir in *every* mode, not only auto,
-    // because its Review Console runs in every mode. Callers on the
-    // standalone-auto allowlist pass `--mode auto` themselves (only once
-    // they have already confirmed auto mode); wrap-up passes neither.
+    // When `--mode` is OMITTED entirely, no such gate applies — that is the
+    // two documented exceptions' path (run-dir-resolution.md resolution order
+    // step 4's own clauses): wrap-up and /claude-tweaks:release each create a
+    // standalone run dir in *every* mode, not only auto, because wrap-up's
+    // Review Console and release's Step 4 console / release-held.md staging
+    // each run in every mode. Callers on the standalone-auto allowlist pass
+    // `--mode auto` themselves (only once they have already confirmed auto
+    // mode); wrap-up and release pass neither.
     if (opts.mode && opts.mode !== 'auto') {
       return fail(
         'mode-not-auto',

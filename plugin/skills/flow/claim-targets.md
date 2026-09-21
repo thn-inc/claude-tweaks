@@ -74,9 +74,9 @@ directory, so the claim needs an identity to claim under before one necessarily 
   `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug "{spec-slug}" --create`
   (`_shared/pipeline-run-dir.md`'s Anchoring section — mkdir only; Step 3 writes `config.yml`/
   `decisions.md` when it adopts the now-set `PIPELINE_RUN_DIR` per case 2). Export the printed
-  path as `PIPELINE_RUN_DIR` for the rest of this pipeline invocation. `{spec-slug}` follows `_shared/pipeline-run-dir.md`'s SPEC_SLUG conventions
+  path as `PIPELINE_RUN_DIR` for the rest of this pipeline invocation. `{spec-slug}` follows `_shared/run-dir-resolution.md`'s SPEC_SLUG conventions
   (`spec-{N}` single, dash-joined multi with the load-bearing `spec-` prefix, or a topic slug). The directory's own ISO-timestamp prefix is
-  minted by `resolve-run-dir` itself per `_shared/pipeline-run-dir.md`'s ISO-timestamp rule
+  minted by `resolve-run-dir` itself per `_shared/run-dir-resolution.md`'s ISO-timestamp rule
   (`date -u`) — this step never composes the timestamp by hand.
 
 Either way, `basename($PIPELINE_RUN_DIR)` is this run's claim identity for every target below.
@@ -143,11 +143,50 @@ successful claim it bootstraps `bot:in-progress` (per `_shared/label-bootstrap.m
 claim comment (`claimPayload`'s `commentBody`) for that target — best-effort: a label or comment
 failure is logged to stderr and never un-claims the target.
 
+**Log the claim (mandatory, #2492).** Immediately after this call exits 0, for every target in
+its `claimed` array (both transports — the CLI's own JSON envelope on the `gh` path, the manual
+MCP procedure's own successful writes on the `gh`-absent path), write one `decisions.md` entry so
+a successful Step 2.8 always leaves a local, durable trace independent of a fresh `gh`/MCP read
+against `claims-registry`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO \
+  --section "/flow" --step "Step 2.8" --reversibility high \
+  --text "claimed #{n} (bin/claim-targets.js, transport: {git|contents-api|mcp})"
+```
+
+This does not itself guarantee the CLI/procedure was invoked — an agent that skips the claim call
+above skips this log line too, for the same reason. It exists so a **later** phase (`/wrap-up`'s
+Review Console, a `/tidy` sweep, or a human auditing `decisions.md`) can tell "Step 2.8 ran and
+claimed cleanly" apart from "Step 2.8 was silently skipped" without a live registry read, and so a
+future mechanical gate (see the gap note below) has a local signal to check against.
+
+**Known gap: this step has no mechanical backstop today.** Unlike its sibling bookkeeping
+stamps — `record-worktree` and, under `integration-model: pr-first` (`_shared/integration-model.md`),
+the PR-early draft-PR open — which `bin/lib/hooks/pre-tool-use.js`'s `checkBookkeepingStampsGate` denies the next covered write
+until it sees the stamp, nothing in this codebase mechanically verifies that this step's
+`bin/claim-targets.js` call (or its MCP equivalent) actually ran before a build proceeds. #2492
+confirmed this the hard way: a `/flow #{n} build,test` dispatch completed a full build and test
+pass with no `claims/issue-{n}.json` blob ever written on `claims-registry`, and none of this
+file's own skip-guard conditions applied to that dispatch shape — the call was simply never made.
+`bin/claim-targets.js`'s own write path is not the gap (`tests/bin-lib/claim-targets/claim-targets.test.js`
+already covers the create-only/conditional/contested/transient/unverified-write-back cases in
+depth, including the exact write-then-verify race #2073 closed); the gap is that this step is
+prose-only, with no code path enforcing it independent of the orchestrating agent's own
+compliance. A mechanical fix — extending `checkBookkeepingStampsGate` to require this section's
+new log line (mirroring its existing `hasLoggedPrDegrade` PR-stamp check) before allowing the
+materialize commit's first covered follow-up write — is scoped and tracked separately rather than
+folded into this doc-only pass, since that gate's own incident history (`IL-131`, its recurrence
+on #893, the `prExempt`/`hasNoUpstreamYet` caching it already carries) means it deserves its own
+dedicated build and review, not a rider on an unrelated fix.
+
 This CLI is the `gh` transport only — its `deps.gh`/`deps.ghApi` shell to real `gh` (per
 `gh-api-module-pattern`'s injectable-runner convention). In a `gh`-absent environment
 (`_shared/github-write-transport.md`'s MCP routing), this CLI does not apply: follow
 `_shared/issue-claims.md`'s "The lock" steps 1-6 directly via the MCP contents-API calls, per
 target, exactly as before this CLI existed — read them from the composed `claims` bundle (`node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step claims "${CLAUDE_PLUGIN_ROOT}/skills/_shared/issue-claims.md"`, then `$PIPELINE_RUN_DIR/context/claims.md`; the run directory always exists here, set or minted mkdir-only by "Resolve this run's identity" above, and the composer needs only the directory, not `config.yml`); if the compose command is unavailable or exits non-zero, read the named source files directly.
+
+**Confirming the manual MCP path actually landed (#1728).** The hand-run procedure above has no CLI enforcing that every step actually ran, so before this call (or a `build,test`-scoped headless dispatch call) reports `DONE`/`build-test-ok`, run `node "${CLAUDE_PLUGIN_ROOT}/bin/verify-run-bookends.js" --run "$PIPELINE_RUN_DIR" --targets {n}[,{m}…]` — a mechanical, `gh`-independent check (it reads the claim via git, never `gh`) confirming this run's `worktree`/`pr` stamps and a live claim per target, by direct inspection rather than trusting the manual procedure was followed correctly. Exit 0 → proceed. Non-zero → the named bookend(s) in its `missing` array were never confirmed; report `BLOCKED`/`build-test-blocked` instead of a false `DONE`/`build-test-ok`, per this issue's own Acceptance Criteria.
 
 **Branch on exit code:**
 
@@ -195,7 +234,7 @@ target, exactly as before this CLI existed — read them from the composed `clai
   anyone with write access to it, so this value is exactly as untrusted as `link`, and gets the
   same reject-rather-than-sanitize treatment `tombstoneInFlightPr` already applies there — require
   it to match `^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$` (the canonical run-id shape,
-  `_shared/pipeline-run-dir.md`'s ISO-timestamp + spec-slug convention) with no `/` or `..`
+  `_shared/run-dir-resolution.md`'s ISO-timestamp + spec-slug convention) with no `/` or `..`
   anywhere in it; a value that doesn't match is treated identically to no marker found. No marker
   found, the marker fails that validation, `gh` unavailable, the `### Resume` line is missing or
   doesn't parse, or the resolved `$RUN_ROOT/.claude-tweaks/pipelines/{run-id}` directory absent (a
@@ -214,10 +253,26 @@ target, exactly as before this CLI existed — read them from the composed `clai
 - **4** — transient `gh` failure, same fail-fast/all-or-abort shape as exit 3: stdout carries
   `{transient: [{issue, error}], released, releaseFailed}`, release already attempted. Render the
   transient-failure card below.
+- **5** (#2073) — a claim write reported success but the post-write read-back never confirmed it
+  (a live claim carrying this run's `runId`) — same fail-fast/all-or-abort shape as exit 3/4: stdout
+  carries `{unverified: [{issue}], released, releaseFailed}`. The unverified target itself is never
+  released by the CLI (a write it cannot confirm might still be its own valid, slow-to-replicate
+  claim — releasing it risks tombstoning a claim that is in fact live), so it is left exactly as the
+  write left it. Render:
+
+  ```markdown
+  ## Flow: Claim unverified
+
+  #{target}'s claim write reported success, but re-reading it did not confirm a live claim under
+  this run. Next: re-run the claim step, or use `/claude-tweaks:tidy` to inspect and, if warranted,
+  repair the blob.
+  ```
+
+  No `AskUserQuestion` — same as the contest and transient cards, nothing to choose between.
 - **2** — malformed invocation or missing dependency (a bad `--run-id`/`--targets` value, or repo
   resolution failed) — a bug in this call, not a claim outcome. Treat as a hard stop.
 
-**On exit 3 or 4** — release nothing further (the CLI's `released`/`releaseFailed` already covers
+**On exit 3, 4, or 5** — release nothing further (the CLI's `released`/`releaseFailed` already covers
 the attempt; a non-empty `releaseFailed` is not this step's problem to retry — the named claim
 simply rides out its TTL). When this
 invocation minted the run dir itself (`PIPELINE_RUN_DIR` was unset on entry) and it still holds no
@@ -285,17 +340,19 @@ The `released` array's write (default mode, no `--keep-going`) uses the reason
 `never-started: file-overlap group partial claim` internally, per `_shared/issue-claims.md`'s
 Failure-posture table — the CLI's own `ABORT_REASON`, not something this flow step writes itself.
 
-**`--keep-going`** — the CLI never exits 3 or 4; a per-target contest or transient failure is
-downgraded to a `skipped` entry in the exit-0 JSON envelope (`{issue, reason: 'contested', holder}`,
-`{issue, reason: 'transient', error}`, or, for a pr-opened tombstone whose linked PR is still open
+**`--keep-going`** — the CLI never exits 3, 4, or 5; a per-target contest, transient failure, or
+unverified write is downgraded to a `skipped` entry in the exit-0 JSON envelope
+(`{issue, reason: 'contested', holder}`, `{issue, reason: 'transient', error}`,
+`{issue, reason: 'unverified'}` (#2073), or, for a pr-opened tombstone whose linked PR is still open
 (#315), `{issue, reason: 'in-flight', link}`) and the CLI proceeds to the remaining targets rather
 than releasing and aborting — consistent with `--keep-going`'s existing meaning elsewhere in flow
 (`multi-spec.md`): continue past a per-target failure rather than aborting the whole run. Drop each
 skipped target from the target list for Step 3 onward. For a `reason: 'contested'` entry, gather
 liveness evidence (steps 1-5 above) and render the contest card using that entry's `holder`; for a
-`reason: 'transient'` entry, render the transient-failure card below; for a `reason: 'in-flight'`
-entry, render the in-flight card above using that entry's `link`. Each renders as one informational
-block per skipped target, not a pipeline stop, since the run proceeds with the remainder.
+`reason: 'transient'` entry, render the transient-failure card below; for a `reason: 'unverified'`
+entry, render the claim-unverified card above (no `holder`); for a `reason: 'in-flight'` entry,
+render the in-flight card above using that entry's `link`. Each renders as one informational block
+per skipped target, not a pipeline stop, since the run proceeds with the remainder.
 
 **A transient `gh` failure during claim (exit 4, not a classification-based contest)** — a network
 timeout, a transport error, or any other unclassified failure the CLI hit while reading, writing,
@@ -317,3 +374,40 @@ dropping one issue and continuing is safe because each issue in that context is 
 section's group-claim **all-or-abort** invariant is exactly the case that general line doesn't
 fit: silently proceeding to Step 3 with one named target unclaimed reopens the double-build race
 this step exists to prevent.
+
+## Local-ahead-of-origin ride-along stop (#1780)
+
+Not a Step 2.8 claim-time stop — this one fires later, during `build`'s Common Step 1 worktree
+creation (`_shared/worktree-setup.md`'s Post-creation catch-up, "Headless ride-along check"),
+after this run's targets are already claimed above. Registered here anyway, alongside "Claim
+contested"/"Claim in-flight" earlier in this file, since it is the identical static-card,
+no-`AskUserQuestion`, `DISPATCH_HEADLESS=1`-only stop shape those two use.
+
+When the Post-creation catch-up's Headless ride-along check finds the new worktree branch ahead
+of `origin/{integration-branch}` (a non-zero `git rev-list --count
+"origin/{integration-branch}..HEAD"`), stop and render:
+
+```markdown
+## Flow: Local-ahead-of-origin ride-along
+
+This worktree's branch is ahead of origin/{integration-branch} by {N} commit(s) that predate
+this record's own work:
+
+{one line per captured commit, from `git log --oneline "origin/{integration-branch}..HEAD"`}
+
+Nobody is present in this headless run to judge whether this content belongs in #{target}'s PR.
+Next: push or stash the local commit(s) first, then re-dispatch this record.
+```
+
+No `AskUserQuestion` — same as the contest and in-flight cards above, nothing to choose between
+in a headless run.
+
+**Headless self-report.** This stop is `DISPATCH_HEADLESS=1`-only by construction, so always read
+`_shared/headless-self-report.md` and follow its dedup-and-file procedure (caller = `dispatch`),
+using failing-check-name `flow-step-2.5-headless-local-ahead` and this card's own text as the
+diagnostic body — mirroring the claim-contest/in-flight wiring above exactly (same file
+lookup/dedup/self-file mechanics). `dispatch/settle-and-merge.md`'s Settle procedure is where this
+actually runs: unlike the claim-contest/in-flight stops above, this record has already been
+claimed by the time worktree creation reaches this check, so Settle's ordinary
+ownership-check-then-release (steps 1-2) also applies here, unmodified — see that file's own
+"Headless ride-along special case" for the combined sequence.

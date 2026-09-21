@@ -1,5 +1,7 @@
 'use strict';
 
+const { sanitizeCell } = require('../wrap-up/engine-verify');
+
 // Supporting code for the pipeline-smoke-test skill's Step 6 (record #44):
 // "never trust the cleanup step's own exit code" as a mechanical guarantee
 // rather than prose alone. A cleanup step can claim success (its gh/git call
@@ -38,7 +40,7 @@ function renderCleanupTable(rows) {
   const list = Array.isArray(rows) ? rows : [];
   const header = '| Artifact | Cleanup claimed | Verified absent |\n|---|---|---|';
   const body = list
-    .map((row) => `| ${row.artifact} | ${row.claimed ? 'yes' : 'no'} | ${row.verifiedAbsent ? 'yes' : 'no'} |`)
+    .map((row) => `| ${sanitizeCell(row.artifact)} | ${row.claimed ? 'yes' : 'no'} | ${row.verifiedAbsent ? 'yes' : 'no'} |`)
     .join('\n');
   return list.length ? `${header}\n${body}` : header;
 }

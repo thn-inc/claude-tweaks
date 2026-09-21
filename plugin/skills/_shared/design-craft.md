@@ -85,4 +85,12 @@ Never a gate, never a stop:
 
 ## Subagent Contract compliance
 
-Assembled craft content is **inlined into dispatch prompts** — dispatched agents can't follow references (`skills/_shared/subagent-output-contract.md`: agents only see what's in their prompt; a path string reaches nothing). Volume is governed by the consumer's existing `context_size` summarize-vs-inline mechanism; this contract adds no size handling of its own.
+Assembled craft content is **inlined into dispatch prompts** by default — dispatched agents can't
+follow an unnamed, uninstructed path (`skills/_shared/subagent-output-contract.md`: agents only see
+what's in their prompt; a bare path string reaches nothing). A **named** path paired with an
+explicit "read this file first" instruction is not that case — it works whenever the dispatched
+agent carries the `Read` tool (`modes/review.md` Step 3.8 (e) item 3's instructed read of the
+decisions layer is the one consumer that takes this exception; #1863) — but this contract's own
+writing-time assembly names no such exception: `pre-build`/`explore` inline every source class
+unconditionally, regardless of agent tooling. Volume is governed by the consumer's existing
+`context_size` summarize-vs-inline mechanism; this contract adds no size handling of its own.

@@ -5,7 +5,7 @@ Referenced by `skills/wrap-up/review-console-interactive.md`'s "Present the cons
 ```markdown
 ### Wrap-Up Review Console
 
-The pipeline auto-resolved {N} decisions and staged {M} items for your review. Every section below — the named batch sections, plus Queue writes, Memory updates, and Upstream feedback — resolves via the same terminal Approve all / Override / Stop choice. Approve all applies each section's own default (batch sections: apply; `Q#`/`M#`: their pre-checked `Apply` default; `U#`: its unchecked/declined default) with no further prompts, except rows marked drills-individually (listed above the terminal options when present — see `review-console-interactive.md`'s Hard requirements). Override is what still drills `Q#`/`M#`/`U#` individually — one or more chunked `multiSelect` calls, `_shared/batched-item-drill.md` for `Q#`/`M#`, `_shared/upstream-feedback-batch.md` for `U#` (see `review-console-interactive.md`'s Hard requirements for why).
+The pipeline auto-resolved {N} decisions and staged {M} items for your review. Every section below — the named batch sections, plus Queue writes, Memory updates, and Upstream feedback — resolves via the same terminal Approve all / Override / Stop choice. Approve all applies each section's own default (batch sections: apply; `Q#`/`M#`: their pre-checked `Apply` default; `U#`: filed when its staged draft carries a `**Causal:** systemic` tag, else its usual unchecked/declined default) with no further prompts, except rows marked drills-individually (listed above the terminal options when present — see `review-console-interactive.md`'s Hard requirements). Override is what still drills `Q#`/`M#`/`U#` individually — one or more chunked `multiSelect` calls, `_shared/batched-item-drill.md` for `Q#`/`M#`, `_shared/upstream-feedback-batch.md` for `U#` (see `review-console-interactive.md`'s Hard requirements for why).
 
 #### Auto-applied (already in commits — override = revert)
 
@@ -166,13 +166,15 @@ Render this section only when the Memory curation row staged a memory-file propo
 
 > A memory file is cross-project and always-loaded — a wrong one degrades every future session in every project.
 
-#### Upstream feedback (Approve all declines by default; Override files per item)
+#### Upstream feedback (Approve all files a systemic-tagged row, declines the rest by default; Override files per item)
 
 Render this section only when the Upstream feedback curation row staged one or more upstream
 defect/gap reports (`staged/wrap-up-upstream-*.md`); omit it entirely otherwise. Approve all
-resolves every row here to declined, same as `Q#`/`M#` resolve to their own default — nothing
-files without an explicit act (the `unattended`-only `consoleAutoResolve` path is the one
-exception; see `review-console.md`). Filing an item requires choosing Override, which runs
+resolves each row to filed when its staged draft carries a `**Causal:** systemic` tag
+(`upstream-feedback.md`'s Step 2), same as `Q#`/`M#` resolve to their own `Apply` default —
+otherwise it resolves to declined, same as before (#2551). The `unattended`-only
+`consoleAutoResolve` path files every row unconditionally regardless of the tag; see
+`review-console.md`. Filing an untagged item still requires choosing Override, which runs
 through `_shared/upstream-feedback-batch.md`'s shared batch contract — one or more `multiSelect`
 `AskUserQuestion` calls, chunked per that file's own rule (unchecked by default; checking is the
 explicit approval) — instead of one call per item; see below for where this fires relative to the

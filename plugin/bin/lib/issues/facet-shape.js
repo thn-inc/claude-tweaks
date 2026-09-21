@@ -14,6 +14,10 @@
 // label, the local driver from the is-parent-issue: frontmatter line — each
 // with a permanent pre-rename legacy fallback (the [IL-85] branches in
 // record.js and local-store.js).
+//
+// breaking (the Compatibility axis, #2251) is shared too: presence-only, like
+// solutionUnjustified — true when the record's contract-change label/line is
+// present, false otherwise, never undefined.
 'use strict';
 
 // Returns a fresh object every call — grants/bot are nested objects, and two
@@ -25,11 +29,12 @@ function sharedFacetDefaults() {
     size: null,
     ceremony: null,
     solutionUnjustified: false,
+    breaking: false,
     needsDefinition: false,
     priority: null,
     stage: 'backlog',
     grants: { build: false, merge: false },
-    bot: { inProgress: false, blocked: false },
+    bot: { inProgress: false, blocked: false, parked: false },
     acceptance: null,
     isParentIssue: false,
     notPlanned: false,

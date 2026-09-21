@@ -201,8 +201,8 @@ Initialize `decisions.md` in the same directory with the config snapshot header 
   creating anything else, and build every later path in this section from its printed output —
   `cd`-ing into the run directory afterward for convenience is fine, resolving the *path* relative
   to cwd is not.
-- `ISO-timestamp` is `YYYY-MM-DDTHHMMSS` in UTC (no colons; portable across filesystems) — per `_shared/pipeline-run-dir.md`'s ISO-timestamp rule (`date -u`), cited rather than restated by mint sites
-- `spec-slug` uses a single `spec-` prefix on numeric IDs to disambiguate from timestamp digits: `spec-42` (single spec), `spec-42-45-48` (multi-spec, dash-joined), or a non-numeric topic slug like `meal-planning` (no prefix needed). See `_shared/pipeline-run-dir.md` for the canonical SPEC_SLUG conventions.
+- `ISO-timestamp` is `YYYY-MM-DDTHHMMSS` in UTC (no colons; portable across filesystems) — per `_shared/run-dir-resolution.md`'s ISO-timestamp rule (`date -u`), cited rather than restated by mint sites
+- `spec-slug` uses a single `spec-` prefix on numeric IDs to disambiguate from timestamp digits: `spec-42` (single spec), `spec-42-45-48` (multi-spec, dash-joined), or a non-numeric topic slug like `meal-planning` (no prefix needed). See `_shared/run-dir-resolution.md` for the canonical SPEC_SLUG conventions.
 - Collisions never happen — each parallel agent in the same checkout gets its own run directory
 - The run directory is exposed to downstream skills via `PIPELINE_RUN_DIR`
 - After successful pipeline closure, `/wrap-up` moves the directory to `.claude-tweaks/pipelines/archive/`

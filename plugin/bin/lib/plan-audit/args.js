@@ -4,7 +4,7 @@
 
 class UsageError extends Error {}
 
-const USAGE = 'usage: plan-audit.js <plan-file> [--repo-root <dir>] [--count-tasks]';
+const USAGE = 'usage: plan-audit.js <plan-file> [--repo-root <dir>] [--count-tasks] [--bytes]';
 
 // argv = process.argv.slice(2). Throws UsageError on any malformed input —
 // the CLI prints message + USAGE to stderr and exits non-zero.
@@ -12,6 +12,7 @@ function parseArgs(argv) {
   let planFile = null;
   let repoRoot = null;
   let countTasks = false;
+  let bytes = false;
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (flag === '--repo-root') {
@@ -22,12 +23,15 @@ function parseArgs(argv) {
       continue;
     }
     if (flag === '--count-tasks') { countTasks = true; continue; }
+    if (flag === '--bytes') { bytes = true; continue; }
     if (flag.startsWith('--')) throw new UsageError(`unknown flag: ${flag}`);
     if (planFile !== null) throw new UsageError(`unexpected extra positional argument: ${flag}`);
     planFile = flag;
   }
   if (planFile === null) throw new UsageError('plan-file is required');
-  return { planFile, repoRoot, countTasks };
+  return {
+    planFile, repoRoot, countTasks, bytes,
+  };
 }
 
 module.exports = { parseArgs, UsageError, USAGE };

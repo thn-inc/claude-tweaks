@@ -2,9 +2,9 @@
 
 Runs only when the user specified `worktree` (or it's the default). Skipped entirely in `current-branch` mode.
 
-**Skip creation when already inside an externally-created worktree.** If `MULTISPEC_SHARED_WORKTREE=1` is set, or `_shared/worktree-setup.md`'s "Adopt-or-create" gate detects the session is already isolated (its own "Already isolated" branch), a worktree for this run already exists and the pipeline is running inside it. This condition is not exclusive to multi-spec runs — `/claude-tweaks:dispatch` Step 5 creates and enters a group's worktree directly (`dispatch/sequential-execution.md`) before dispatching either Task call, for a singleton group exactly as for a bundle, so a dispatched `/flow`/`/build` invocation hits this same detection on its very first commit. **Skip steps 1-3 and 5** — do not create a nested worktree, and (multi-spec only) do not finish the branch between specs; `/flow` created the shared worktree once up front and finishes it once at the end of the multi-spec run (see `skills/flow/multi-spec.md`, "Shared worktree").
+**Skip creation when already inside an externally-created worktree.** If `MULTISPEC_SHARED_WORKTREE=1` is set, or `_shared/worktree-setup.md`'s "Adopt-or-create" gate detects the session is already isolated (its own "Already isolated" branch), a worktree for this run already exists and the pipeline is running inside it. This condition is not exclusive to multi-spec runs — `/claude-tweaks:dispatch` Step 5 creates and enters a group's worktree directly (`dispatch/sequential-execution.md`) before dispatching either Task call, for a singleton group exactly as for a bundle, so a dispatched `/flow`/`/build` invocation hits this same detection on its very first commit. **Skip steps 1-3 and 5** — do not create a nested worktree, and (multi-spec only) do not finish the branch between specs; `/flow` created the shared worktree once up front and finishes it once at the end of the multi-spec run (see `skills/flow/multi-spec.md`, "Shared worktree"). **Step 3's "dependency install" never runs on this skip path** (it lives inside `/superpowers:using-git-worktrees`, which the adopt branch never invokes) — `_shared/worktree-setup.md`'s Adopt-or-create section runs its own "Dependency freshness check" in its place, so an adopted worktree still gets a missing/stale-`node_modules` signal even though it never gets the fresh-creation install step itself.
 
-**Still run Step 4.5 (record the assignment) even on this skip path.** It is the one step in this procedure a worktree created outside it never receives on its own: `/flow`'s multi-spec up-front creation already runs this file's full procedure (including Step 4.5) when it creates the shared worktree, but `dispatch/sequential-execution.md`'s `EnterWorktree` call stamps nothing — a dispatched run arrives at this point with no `run-state.json` `worktree` field at all. Step 4.5 is documented there as "an idempotent restamp," so running it unconditionally here is always safe, never destructive to a prior stamp. Without this, the working-directory hook (E1) denies this run's very first commit — the gap #778 traced to this guard, and the retry-with-restamp workaround `dispatch/task-prompt.md` documents for a denied first commit exists only because this step was skipped instead of re-run. Step 6 (open the draft PR) is unaffected either way — it is invoked separately from `build/SKILL.md` Spec Step 1, never from within this numbered procedure (see Step 6 below).
+**Still run Step 4.5 (record the assignment) even on this skip path.** It is the one step in this procedure a worktree created outside it never receives on its own: `/flow`'s multi-spec up-front creation (`skills/flow/multi-spec.md`'s "Shared worktree" Step 1) has two branches — its **Created** branch (not isolated, or dirty) runs this file's full procedure, Step 4.5 included, when it creates the shared worktree; its **Adopted** branch (already isolated, clean tree — the common case under this project's `worktree-always` policy, since an interactive `/flow` is always already isolated by the time it runs) is a pure detection-plus-skip that records the current branch name and stamps nothing (`_shared/worktree-setup.md`'s Adopt-or-create section). `dispatch/sequential-execution.md`'s `EnterWorktree` call stamps nothing either — a dispatched run arrives at this point with no `run-state.json` `worktree` field at all. For both the Adopted branch and the dispatch case, this unconditional re-run is the only stamp such a run ever gets. Step 4.5 is documented there as "an idempotent restamp," so running it unconditionally here is always safe, never destructive to a prior stamp. Without this, the working-directory hook (E1) denies this run's very first commit — the gap #778 traced to this guard, and the retry-with-restamp workaround `dispatch/task-prompt.md` documents for a denied first commit exists only because this step was skipped instead of re-run. Step 6 (open the draft PR) is unaffected either way — it is invoked separately from `build/SKILL.md` Spec Step 1, never from within this numbered procedure (see Step 6 below).
 
 ## Base ref — branch from local HEAD, not stale origin
 
@@ -155,6 +155,62 @@ re-derived regexes.
    push-then-create, the draft PR body template, idempotent resume, and degrade behavior for a
    failed push or a `gh`-absent environment — lives in `_shared/pr-early-run-lifecycle.md`; this
    step cites it rather than restating it.
+
+## Cherry-pick source-branch PR check (#1957)
+
+Runs later than Steps 1.5/1.6 — in Common Step 2's per-commit loop, **after each commit lands**,
+since it needs a commit to inspect. Extends Step 1.6 (guards this record's own branch name) to a
+second shape: a build reusing *another* record's code via `git cherry-pick` without checking
+whether that record's branch backs an open PR. #1821: a build cherry-picked a commit believing
+its source branch abandoned, but that branch backed a still-open, review-passed PR — two open PRs
+with byte-identical implementation, caught only by an off-lens manual review.
+
+**Trigger — narrow by design.** `git cherry-pick -x <sha>` appends a
+`(cherry picked from commit <sha>)` trailer; `cherry-pick` without `-x` does not. Only that
+trailer is scanned for — a git-native, zero-false-positive signal. A manual port of code (hand
+copy-pasted, or cherry-picked without `-x`) leaves no such trailer and is not caught by this
+check — the same accepted-gap class Step 1.6 carries for its own remote-lookup failure; don't
+imply broader coverage than this mechanism gives.
+
+**Procedure**, via `plugin/bin/lib/worktree/cherry-pick-provenance.js`'s
+`checkCherryPickProvenance({ message, ownBranch, repo })` (unit-tested,
+`tests/bin-lib/worktree/cherry-pick-provenance.test.js`):
+
+1. No trailer — nothing to do (an ordinary commit is never scanned further; no overhead on the
+   common case).
+2. Trailer found — resolve remote branches containing `{sha}` (`git branch -r --contains {sha}`),
+   excluding this record's own branch. Multiple branches can come back — check every one.
+3. Lookup fails (no network/`origin`) — **fail open**, Step 1.6's own posture: log the degrade
+   distinctly and proceed, never treat "unreachable" as "no other branch."
+4. No other branch contains `{sha}` — nothing to do.
+5. Per candidate branch, check for an open PR: `gh pr list --repo {owner}/{repo} --head "{branch}"
+   --state open --json number,url,isDraft`. A per-branch failure degrades that branch distinctly
+   from "confirmed no open PR."
+6. No open PR anywhere — nothing to do.
+7. An open PR is found — render the stop card (`formatStopCard`), naming the commit, source
+   branch(es), and PR number/URL:
+
+   ```markdown
+   ## Build: Cherry-picked commit reused from another record's open-PR branch
+
+   Commit `{sha}` carries a `(cherry picked from commit {sha})` trailer. Its source commit is
+   also reachable from: `{branch}` (open PR #{number} — {url}).
+
+   Options: (1) stop and route to the existing PR (reuse/resume that prior work instead of
+   duplicating it), (2) proceed anyway, explicitly choosing to duplicate the implementation
+   (record this choice in `decisions.md`).
+   ```
+
+   **Interactive mode:** `AskUserQuestion` with these two options, recommending (1).
+   **Auto mode:** same posture as Step 1.6 — this is **not** a lever
+   `_shared/auto-mode-contract.md` lists as silenceable (no safe default: the build can't know
+   whether the other PR's author abandoned it or is still working it). Render the card and
+   **stop the build** before this commit's next step — the same HARD-GATE posture
+   `flow/claim-targets.md` uses for a claim contest.
+
+**Out of scope:** a review-time Cherry-Pick Provenance Check (none exists in
+`plugin/skills/review/` — this is the earliest of at most two catch points) and #1944's
+specify-time near-duplicate *record* detection (duplicate issue content, not duplicate code).
 
 ## Consent prompt (v5.1.0+)
 

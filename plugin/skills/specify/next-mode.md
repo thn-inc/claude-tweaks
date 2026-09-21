@@ -134,8 +134,8 @@ label predicate; the additional exclusion happens after the fetch returns.
 
 Per `_shared/record-queue-fetch.md`'s `work-backend: github-issues` fetch:
 open records carrying none of `ready`, any `needs:*`-prefixed label
-(`_shared/work-record.md`'s worklist rule), `parked`, `parent-issue`, and
-`bot:in-progress`. The last is a cheap label-based
+(`_shared/work-record.md`'s worklist rule), `parked`, `parent-issue`,
+`digest`, and `bot:in-progress`. The last is a cheap label-based
 pre-filter, the identical posture `dispatch/SKILL.md` Step 2 already takes
 for its own `bot:*` exclusion ("labels are projection, not truth... the
 authoritative unclaimed check is `/flow`'s Step 2.8 atomic claim
@@ -145,7 +145,11 @@ check happens at the Claim step below. `ready` and `parent-issue` are
 excluded because they are not this skill's job at all — a `ready` record
 is already shaped (nothing left for bare drain to do), and a `parent-issue` is
 a decomposition summary, never itself a shaping target
-(`_shared/work-record.md`'s Structure family). That exclusion is
+(`_shared/work-record.md`'s Structure family). `digest` is excluded for the
+same reason — an issue carrying it is the materiality floor's rolling
+container (`_shared/materiality-floor.md`), never a work record at all, the
+same exemption `/tidy`'s Shape 1 already gives a `parent-issue`-labeled
+parent (`tidy/step-1-records.md`). That exclusion is
 label-only and selection-time; an unlabeled legacy parent (a
 `## Leaves`-table body with no `parent-issue` label) passes it —
 `SKILL.md` case 1's parent-record guard is the shaping-time backstop that
@@ -184,7 +188,7 @@ if [ "$RAW_COUNT" -ge 500 ]; then
 fi
 node -e "
   const records = require('$RAW');
-  const EXCLUDE = new Set(['ready', 'parked', 'parent-issue', 'bot:in-progress']);
+  const EXCLUDE = new Set(['ready', 'parked', 'parent-issue', 'bot:in-progress', 'digest']);
   const eligible = records.filter((r) =>
     !r.labels.some((l) => EXCLUDE.has(l.name) || l.name.startsWith('needs:'))
   );
@@ -364,7 +368,7 @@ gh issue view {n} --json labels -q '[.labels[].name]'
 ```
 
 If the re-read shows the record no longer eligible (now carries `ready`,
-any `needs:*`-prefixed label, `parked`, `parent-issue`, or `bot:in-progress`),
+any `needs:*`-prefixed label, `parked`, `parent-issue`, `digest`, or `bot:in-progress`),
 or the claim write below is contested — either is a **lost claim race**: it
 consumes no `--budget` unit, and the loop normally retries immediately,
 exactly as if the record had never appeared, against a fresh Eligibility
@@ -449,7 +453,7 @@ prompt, so `--mode auto` is a structural fact of the form itself (the
 deprecated `next` alias inherits the same posture), not a policy choice.
 `runId` for every claim this firing makes is this firing's own resolved
 run directory identity — resolved **once per firing, not once per
-iteration**, via `_shared/pipeline-run-dir.md`'s standalone-auto fallback
+iteration**, via `_shared/run-dir-resolution.md`'s standalone-auto fallback
 (Resolution order step 4) — `specify` is on that file's allowlist as of
 this task, added alongside `/claude-tweaks:dispatch`'s own bare-drain
 entry, for the identical reason: bare drain is the headless-safe form a

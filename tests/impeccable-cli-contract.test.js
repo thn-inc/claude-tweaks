@@ -10,6 +10,20 @@
 // it is exactly the drift this file used to carry: this constant read
 // '3.6.0' while manifest.yml's own entry read '3.5.0', and nothing ever
 // compared the two (#1900).
+//
+// Resolution path (confirmed on this host, #2321): `npm list -g impeccable`
+// is empty and no `impeccable` binary is on PATH, yet `npx --no-install
+// impeccable --version` (manifest.yml's installed-probe) still resolves to a
+// concrete version. There is no single "installed" copy to name — npx keeps
+// its own cache under `~/.npm/_npx/<hash>/node_modules/impeccable`, one
+// directory per distinct dependency-range it has ever resolved (this host
+// carries entries for `^3.2.0`, `^3.6.0`, and `^4.1.0` simultaneously), and
+// `--no-install` picks whichever cached entry npx's own unversioned-specifier
+// resolution currently prefers. That resolution drifts across sessions
+// independent of anything this repo controls — exactly the shared-host
+// non-determinism `version-mode: floor` below (see manifest.yml's own
+// comment on this dependency, added for #2277) exists to tolerate rather than
+// chase.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -58,13 +72,16 @@ test('impeccable-cli.md pins the same version the drift manifest does', () => {
 });
 
 test('the installed CLI matches the pinned version', { skip }, () => {
-  assert.strictEqual(
-    versionCheck.status,
-    'ok',
-    `${versionCheck.detail}. Every assertion below describes the pinned version's behaviour, so they prove ` +
+  // Under `floor` only an OLDER install can land here, so the remedy is
+  // "upgrade to at least the pin"; under `exact` either direction can, so the
+  // remedy includes deliberately re-pinning.
+  const suggestion = ENTRY['version-mode'] === 'floor'
+    ? "Every assertion below describes the pinned floor version's (or a newer) behaviour, so they prove " +
+      'nothing about this older install. Run `npm install -g impeccable@' + PINNED + '` or newer.'
+    : "Every assertion below describes the pinned version's behaviour, so they prove " +
       'nothing about this one. Run `npm install -g impeccable@' + PINNED + '`, or ' +
-      're-pin deliberately by re-recording the fixtures against the new version.'
-  );
+      're-pin deliberately by re-recording the fixtures against the new version.';
+  assert.strictEqual(versionCheck.status, 'ok', `${versionCheck.detail}. ${suggestion}`);
 });
 
 test('a warning finding exits 2 with JSON on stdout and nothing on stderr', { skip }, () => {

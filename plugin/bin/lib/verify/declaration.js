@@ -129,7 +129,7 @@ function readDeclaration(filePath, fsImpl = fs) {
       errors.push('flaky: must be an object');
     } else {
       const files = raw.flaky.files;
-      if (files !== undefined && (!Array.isArray(files) || files.some((f) => typeof f !== 'string'))) errors.push('flaky.files: must be an array of path strings');
+      if (files !== undefined && (!Array.isArray(files) || files.some((f) => typeof f !== 'string'))) errors.push('flaky.files: must be an array of path or glob strings');
       let maxRetries = DEFAULT_MAX_RETRIES;
       if (raw.flaky.maxRetries !== undefined) {
         const n = raw.flaky.maxRetries;

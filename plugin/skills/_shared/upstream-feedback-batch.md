@@ -4,9 +4,11 @@ The shared render + chunked-`multiSelect` + drift-fallback contract for filing u
 feedback (`U#` items) in bulk. Cited by every call site — `skills/feedback/SKILL.md`'s Step 7
 (1..N items via direct or `--queue` invocation), and `skills/wrap-up/review-console.md`'s and
 `skills/flow/multispec-review-console.md`'s Upstream feedback sections, where it is the Override
-drill specifically (Approve all resolves `U#` to declined by default with no call into this
-contract; the `unattended`-only `consoleAutoResolve` path resolves `U#` to filed the same way,
-also without a call here — see `review-console.md`'s Auto-resolution short-circuit) — none of
+drill specifically (Approve all resolves `U#` to its own stated default with no call into this
+contract — filed when the staged draft carries a `**Causal:** systemic` tag, declined otherwise
+(#2551); the `unattended`-only `consoleAutoResolve` path resolves `U#` to filed unconditionally
+the same way, also without a call here — see `review-console.md`'s Auto-resolution
+short-circuit) — none of
 which restates these rules inline (CLAUDE.md's cross-reference rule: every relationship stated
 once).
 

@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey } = require('../plugin/bin/lib/policy');
+const { isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, readGhTimeoutMs } = require('../plugin/bin/lib/policy');
 
 function tmpRepo() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-policy-'));
@@ -193,4 +193,31 @@ test('readListKey: a dotted key name (e.g. harness-health.scoped-rule-budget-sty
   const repo = tmpRepo();
   writePolicy(repo, 'doc-convention.adr: plugin\nexperiment-flag-patterns: a,b\n');
   assert.deepStrictEqual(readListKey(repo, 'experiment-flag-patterns'), ['a', 'b']);
+});
+
+// readGhTimeoutMs (#2567) — thin wrapper over policy-schema.js's own
+// resolveValue for the `gh-timeout-ms` key; these pin that the wrapper wires
+// parsePolicy's raw string through correctly, not policy-schema's own
+// validation logic (already covered by policy-schema.test.js).
+
+test('readGhTimeoutMs: no policy file -> the schema default (5000)', () => {
+  assert.strictEqual(readGhTimeoutMs(tmpRepo()), 5000);
+});
+
+test('readGhTimeoutMs: a valid in-range value is used', () => {
+  const repo = tmpRepo();
+  writePolicy(repo, 'gh-timeout-ms: 12000\n');
+  assert.strictEqual(readGhTimeoutMs(repo), 12000);
+});
+
+test('readGhTimeoutMs: an out-of-range value falls back to the default', () => {
+  const repo = tmpRepo();
+  writePolicy(repo, 'gh-timeout-ms: 100\n'); // under the schema's 1000 min
+  assert.strictEqual(readGhTimeoutMs(repo), 5000);
+});
+
+test('readGhTimeoutMs: a non-integer value falls back to the default', () => {
+  const repo = tmpRepo();
+  writePolicy(repo, 'gh-timeout-ms: soon\n');
+  assert.strictEqual(readGhTimeoutMs(repo), 5000);
 });

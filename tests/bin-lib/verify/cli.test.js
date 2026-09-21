@@ -989,6 +989,58 @@ test('--changed-files honors --base and never writes a stamp or report (#1923)',
   assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json')));
 });
 
+// #2486: a full verify pass that stamps fullSha === current HEAD (verify ran
+// after this branch's own commits already landed — the common in-pipeline
+// case, not a rewritten-history scenario) must not make --changed-files
+// silently answer "nothing changed" when the branch is genuinely ahead of
+// the named --integration-branch. Before the fix, usableAnchor's own
+// "commit is its own ancestor" fact made the self-referential stamp win over
+// --integration-branch, producing {base: HEAD, files: []} even though the
+// branch has a real, unpushed commit relative to origin/{branch}.
+test('--changed-files with a self-referential stamp (fullSha === HEAD) still resolves the real diff against --integration-branch, not an empty result (#2486)', async () => {
+  const r = tmpGitRepo();
+  const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  const origin = tmpDir();
+  execFileSync('git', ['init', '--bare', '-q'], { cwd: origin });
+  r.git('remote', 'add', 'origin', origin);
+  r.git('push', '-q', 'origin', branch);
+  // The worktree's branch moves ahead of origin/{branch} — mirrors #2324's
+  // worktree checkout being well ahead of main.
+  commitFile(r, 'src/feature.js', 'ahead-of-origin');
+  const head = r.git('rev-parse', 'HEAD').trim();
+  // A full verify pass runs at this exact HEAD, stamping fullSha === head —
+  // the self-referential anchor #2486 is about.
+  const full = await runCli(['--cmd', 'tests=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(full.code, 0, full.stderr);
+  assert.strictEqual(stampOf(r.gitDir).fullSha, head);
+
+  const run = await runCli(['--changed-files', '--integration-branch', branch], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const out = JSON.parse(run.stdout.trim());
+  assert.notStrictEqual(out.base, head, 'base must not silently collapse to HEAD when the branch is ahead of origin/{branch}');
+  assert.deepStrictEqual(out.files, ['src/feature.js']);
+  assert.ok(!('warning' in out), 'a real, non-degenerate diff must not carry the degenerate-base warning');
+});
+
+// The companion guard: when the resolved base genuinely still equals HEAD
+// (no --integration-branch given, so there is nothing to fall through to),
+// the CLI must surface that plainly rather than let a caller mistake an
+// empty result for "nothing changed" without any signal.
+test('--changed-files surfaces a warning field when the resolved base equals HEAD and there is no integration branch to fall through to (#2486)', async () => {
+  const r = tmpGitRepo();
+  const full = await runCli(['--cmd', 'tests=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(full.code, 0, full.stderr);
+  const head = r.git('rev-parse', 'HEAD').trim();
+  assert.strictEqual(stampOf(r.gitDir).fullSha, head);
+
+  const run = await runCli(['--changed-files'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const out = JSON.parse(run.stdout.trim());
+  assert.strictEqual(out.base, head);
+  assert.deepStrictEqual(out.files, []);
+  assert.strictEqual(out.warning, 'resolved base equals HEAD — diff will be empty');
+});
+
 test('#1801 shape: a ledger-row commit after a full pass resolves to none — still-verified line, no tests spawned (#1923 AC5)', async () => {
   const r = tmpGitRepo();
   const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
@@ -1080,6 +1132,45 @@ test('flaky retry: an unlisted failing file is an ordinary failure — no retry 
   const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
   assert.deepStrictEqual(report.checks.tests.retryDecision, { retry: false, reason: 'unlisted: [tests/real.test.js]' });
   assert.strictEqual('flakyRetried' in report.checks.tests, false);
+});
+
+// Shared by the no-parse test below: writes a verify-scope.json declaring
+// `testsCmd` (with a flaky allowlist that never matches this fixture) and
+// commits it, returning the --scope args to run it under.
+function noParseArgs(r, testsCmd) {
+  const decl = {
+    checks: { tests: testsCmd },
+    retry: { tests: 'node retry.js {file}' },
+    rules: [{ match: 'src/**', suites: ['tests'], static: true }],
+    flaky: { files: ['tests/flaky.test.js'] },
+  };
+  fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'no-parse fixture');
+  const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  return ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', branch, '--cmd', `tests=${testsCmd}`];
+}
+
+test('flaky retry: a generic-family failing fixture (no extractable file) gets the no-parse clause on stdout; a passing check gets no clause (#2026)', async () => {
+  const r = tmpGitRepo();
+  // No TAP/mocha markers at all — sniffFamily classifies this as 'generic'
+  // and extractFailingFiles finds nothing to name.
+  fs.writeFileSync(path.join(r.repo, 'fail.js'), "process.stdout.write('Something went wrong\\n'); process.exit(1);\n");
+  const args = noParseArgs(r, 'node fail.js');
+  const { code, stdout } = await runCli(args, { cwd: r.repo });
+  assert.strictEqual(code, 1);
+  assert.match(stdout, /\| tests \| fail \| .*\(retry: no-parse — whole-suite re-run applies\) \|/);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.deepStrictEqual(report.checks.tests.retryDecision, { retry: false, reason: 'no-parse' });
+
+  // A passing check never carries the clause, even with flaky declared.
+  const passRepo = tmpGitRepo();
+  fs.writeFileSync(path.join(passRepo.repo, 'ok.js'), "process.exit(0);\n");
+  const passArgs = noParseArgs(passRepo, 'node ok.js');
+  const passRun = await runCli(passArgs, { cwd: passRepo.repo });
+  assert.strictEqual(passRun.code, 0, passRun.stderr);
+  assert.doesNotMatch(passRun.stdout, /no-parse/);
 });
 
 test('flaky retry: maxRetries 2 performs at most two attempts and an exhausted file fails the run with retryFailed; maxRetries 3 is rejected by the declaration (#1925 AC6)', async () => {

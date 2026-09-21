@@ -1,10 +1,8 @@
 ---
 name: review
 description: Use when a build is complete and you need analytical judgment on code quality, correctness, and simplicity before wrapping up. Gates on /claude-tweaks:test passing. The quality gate between implementation and lifecycle cleanup.
-argument-hint: "[<spec-number>|<file-path>...|visual <url-or-description>|journey:<name>|discover] [full] [low|medium|high|xhigh|max]"
+argument-hint: "[<spec-number>|<file-path>...|base:<ref>|visual <url-or-description>|journey:<name>|discover] [full] [low|medium|high|xhigh|max]"
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
-
 
 # Review — Analytical Judgment Gate
 
@@ -45,7 +43,7 @@ When invoked by `/claude-tweaks:flow`, review runs in **full** mode by default (
 
 ## Input
 
-`$ARGUMENTS` = spec number, file paths, mode, effort tier, or visual review target.
+`$ARGUMENTS` = spec number, file paths, a `base:{ref}` scope, mode, effort tier, or visual review target.
 
 ### Resolve the input:
 
@@ -57,8 +55,11 @@ When invoked by `/claude-tweaks:flow`, review runs in **full** mode by default (
 6. **`discover`** — browser review only (discover mode)
 7. **No arguments** — resolve changed files per `_shared/scope-resolution.md`'s deterministic fallback ladder. Mode: code. Append `full` (e.g. `/claude-tweaks:review full`) to run full mode on this same git-diff-derived scope — code review followed by a visual browser review pass (Step 6), resolved via `/claude-tweaks:visual-review discover`'s UI-file/affected-journey detection since no spec exists to look up an explicit target.
 8. **Effort token** — the literal `low`, `medium`, `high`, `xhigh`, or `max`, appearing anywhere among the other tokens above (e.g. `/claude-tweaks:review 42 high` or `/claude-tweaks:review 42 full xhigh`). Sets the `review-effort` tier explicitly (see `code-mode-steps.md` Step 2.5), overriding derivation. Order-independent relative to the other tokens. Unambiguous against the rest of this grammar — spec numbers are numeric, `full`/`visual`/`journey:`/`discover` are fixed keywords that never collide with the five effort words. A standalone effort token with no other tokens (e.g. `/claude-tweaks:review high`) sets the tier and otherwise falls back to rule 7 — no spec number, so scope resolves per rule 7's ladder, same as no arguments at all.
+9. **`base:{ref}`** (e.g. `/claude-tweaks:review base:v1.2.0`, `base:v1.2.0 high`) — a whole-branch scope: every first-parent commit from `{ref}` to `origin/{integration-branch}` (the integration branch per `_shared/integration-branch.md`, fetched first), spanning many already-merged PRs. Mode: code. No spec exists to check, so Step 1 is skipped; Step 2's `{base}` is `{ref}` and `{branch}` is `origin/{integration-branch}` (the first-parent walk, never `--merges` exclusion — every squash-merged PR is one commit on that line); effort derives from the diff heuristic unless rule 8's token is given. This is the pre-bump gate `/claude-tweaks:release` Step 3 runs (design stance 8, `[IL-97]`) — findings stage per `_shared/staged-patch.md` exactly as on a spec review, and Step 7's summary records the tier.
 
 In visual, journey, and discover modes, delegate entirely to `/claude-tweaks:visual-review` — skip Steps 1-7 (an effort token passed alongside one of these mode keywords is silently ignored, since Steps 1-7 are exactly where the lens system it gates lives).
+
+**Flow-context default.** When `$PIPELINE_RUN_DIR` is set (this invocation is running inside a pipeline — `/claude-tweaks:flow` or another orchestrator) and none of rules 2/4/5/6's mode tokens (`full`/`visual`/`journey:`/`discover`) appear anywhere in `$ARGUMENTS`, rules 1 and 7's `Mode: code` resolves to **full** mode instead — code review followed by a visual browser review pass (Step 6). This makes the Overview's documented "flow invokes review in full mode by default" promise self-enforcing rather than dependent on the flow executor remembering to type `full`. An explicit mode token in `$ARGUMENTS` (`full`/`visual`/`journey:`/`discover`) always wins over this default. Standalone invocation (no `$PIPELINE_RUN_DIR`) is unaffected — rules 1 and 7 still resolve to code mode there, unchanged.
 
 ## Code-Mode Procedure (Steps 1-7)
 

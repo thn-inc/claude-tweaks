@@ -42,8 +42,8 @@ files:
 - **URL:** `{run-dir}/decisions.md` after a fast-lane single-task run
 - **Action:** Find the two new entries.
 - **Should feel:** Each skip is named, once, with its writer — never silent.
-- **Should understand:** `SKIP {time} — Whole-branch review skipped: fast-lane, single-task plan (task review covers the whole branch). Reversibility: n/a.` under `## /build`, and `SKIP {time} — polish skipped: fast-lane. Reversibility: n/a.` under `## /flow`, both written through `log-decision.js --status SKIP`. A fast-lane frontend record still gets `/claude-tweaks:test`'s Design CLI gate and `/claude-tweaks:review` Step 6.5; the polish PR checklist row is removed at polish's would-be exit, like `no-polish`.
-- **Red flags:** An `AUTO … Whole-branch review dispatched on {model}` line next to the SKIP line (the dispatch did not happen); a polish row left unchecked on the PR.
+- **Should understand:** `SKIP {time} — Whole-branch review skipped: fast-lane, single-task plan (task review covers the whole branch). Reversibility: n/a.` under `## /build`, and `SKIP {time} — polish skipped: fast-lane. Reversibility: n/a.` under `## /flow`, both written through `log-decision.js --status SKIP`. A fast-lane frontend record still gets `/claude-tweaks:test`'s Design CLI gate and `/claude-tweaks:review` Step 6.5; the polish PR checklist row is removed at polish's would-be exit, like `no-polish`, in a single-record run — a multi-spec run instead defers that removal to the pre-merge refresh (`_shared/pr-early-run-lifecycle.md`'s skip-rule scoping, #1712).
+- **Red flags:** An `AUTO … Whole-branch review dispatched on {model}` line next to the SKIP line (the dispatch did not happen); a polish row left unchecked on the PR in a single-record run (in a multi-spec run this is expected until the pre-merge refresh, not a red flag).
 
 ## Origin
 - Created during build of #1926 (fast lane that sheds cost: the ceremony-profile skip roster, the single-task whole-branch review skip, the polish skip) — the developer-facing half of the parent's ceremony-cost work (#1920).

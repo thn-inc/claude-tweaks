@@ -2,7 +2,7 @@
 
 Canonical git rules for skills that commit code. Referenced from `/build`, `/review`, `/wrap-up`, `/simplify`, `/journeys`, and any other skill that runs `git commit`.
 
-For working-directory rules specific to dispatched subagents (anchoring CWD, `git -C "$WORKTREE"`, `pwd` checks before commit), see `subagent-output-contract.md` (Working Directory Discipline section) — that contract applies whenever a skill dispatches an agent that runs `git` or `node --test`.
+For working-directory rules specific to dispatched subagents (anchoring CWD, `git -C "$WORKTREE"`, `pwd` checks before commit), see `subagent-dispatch-core.md` (Working Directory Discipline section) — that contract applies whenever a skill dispatches an agent that runs `git` or `node --test`.
 
 During worktree-mode pipeline runs, the wrong-checkout commit rule is mechanically enforced by the plugin's PreToolUse hook (E1) — a denied commit names the assigned worktree; clear the assignment with `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run` when legitimately finishing the branch. Enforcement is scoped to the session that recorded the worktree: a commit from a different session (e.g. unrelated fix work in the main checkout while the pipeline runs elsewhere) is allowed with a warning, not denied. Run `close-run` only from the session that owns the run or at the merge/finish handoff — closing another session's live run ends its enforcement and event logging mid-flight.
 
@@ -76,7 +76,7 @@ A long-running branch has to be realigned with `main` before it merges (`[IL-20]
 
 The second form is not wrong as history — nothing is lost, and `git log` still shows every commit. What it destroys is any tool that reads `--first-parent` as "what `main` reported over time", and it destroys it retroactively and invisibly: the same query answers differently before and after, and versions *leave* the reconstructed set as later merges land (#144, `[IL-95]`). Two releases were written up as never-shipped on that evidence.
 
-`docs/shipped-versions.tsv` now records the release history directly, so a single inverted merge no longer loses a version. Prefer the first form anyway — the record survives it, but nothing else that reads first-parent history does, and the inversion is invisible in review.
+Git tags (created by release-please under `pr-first`, by `bin/release-local.js` under `local-merge`, or — for this repo's own pre-migration history — the one-time retro-tag backfill, #2259) now record the release history directly — a version's tag is anchored to its commit, immune to first-parent inversion entirely. Prefer the first form anyway — nothing else that reads first-parent history is immune, and the inversion is invisible in review.
 
 ## Merge conflict resolution
 

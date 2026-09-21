@@ -1,0 +1,128 @@
+# Staged: Absorb — auto-filed `reconcile: move-failed` records → #1892
+
+**Finding:** each row below is a `[gh-issue]` auto-filed by `bin/lib/reconcile`'s escalation (#644, one record per run directory) for the `move-failed` class that #1892 now consolidates: #1892's Deliverables cover the split-state archival fix, pruning `residueFailures` entries whose path is gone (closing their escalated records), and all-state dedup so a closed per-path record is never re-filed. Rows naming a `C:\repos\claude-tweaks\…` path were filed from a Windows checkout of this repo; that checkout's own reconcile pass applies the same fix and prune. A row whose path no longer exists on the filing checkout is already resolved by other means.
+
+**Proposed:** Absorb each into #1892 — comment `Absorbed into #1892.` and close with `--reason "not planned"`. Surfaced by the sweep's specify drain (Framing Guard: open, per record); the `needs:decision` marker on each names this proposal.
+
+**Why staged:** Absorb of a `github-issues` record closes an issue — Stage at every tier.
+
+**Rows (record — path — live on this checkout at 2026-09-09):**
+- #1715 — `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-08-26T055917-record-1219` — gone
+- #1716 — `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-08-26T054601-record-1214` — gone
+- #1741 — `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-08-29T153740-spec-1296-1336` — LIVE
+- #1889 — `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-08-31T182808-record-1679` — gone
+- #2091 — `C:\repos\claude-tweaks\.claude-tweaks\pipelines\2026-09-04T181649-record-1484` — gone
+- #2092 — `C:\repos\claude-tweaks\.claude-tweaks\pipelines\2026-09-04T174813-record-1766` — gone
+- #2093 — `` — gone
+- #2094 — `` — gone
+- #2095 — `` — gone
+- #2096 — `` — gone
+- #2097 — `` — gone
+- #2098 — `` — gone
+- #2099 — `` — gone
+- #2100 — `` — gone
+- #2101 — `` — gone
+- #2102 — `` — gone
+- #2103 — `` — gone
+- #2104 — `` — gone
+- #2105 — `` — gone
+- #2106 — `` — gone
+- #2107 — `` — gone
+- #2108 — `` — gone
+- #2109 — `` — gone
+- #2110 — `` — gone
+- #2111 — `` — gone
+- #2112 — `` — gone
+- #2113 — `` — gone
+- #2114 — `` — gone
+- #2115 — `` — gone
+- #2116 — `` — gone
+- #2117 — `` — gone
+- #2118 — `` — gone
+- #2119 — `` — gone
+- #2120 — `` — gone
+- #2121 — `` — gone
+- #2122 — `` — gone
+- #2123 — `` — gone
+- #2124 — `` — gone
+- #2125 — `` — gone
+- #2126 — `` — gone
+- #2127 — `` — gone
+- #2128 — `` — gone
+- #2129 — `` — gone
+- #2130 — `` — gone
+- #2131 — `` — gone
+- #2132 — `` — gone
+- #2133 — `` — gone
+- #2134 — `` — gone
+- #2135 — `` — gone
+- #2136 — `` — gone
+- #2137 — `` — gone
+- #2138 — `` — gone
+- #2139 — `` — gone
+- #2140 — `` — gone
+- #2141 — `` — gone
+- #2142 — `` — gone
+- #2143 — `` — gone
+- #2144 — `` — gone
+- #2145 — `` — gone
+- #2146 — `` — gone
+- #2147 — `` — gone
+- #2148 — `` — gone
+- #2149 — `` — gone
+- #2150 — `` — gone
+- #2151 — `` — gone
+- #2152 — `` — gone
+- #2153 — `` — gone
+- #2154 — `` — gone
+- #2155 — `` — gone
+- #2156 — `` — gone
+- #2157 — `` — gone
+- #2158 — `` — gone
+- #2159 — `` — gone
+- #2160 — `` — gone
+- #2161 — `` — gone
+- #2162 — `` — gone
+- #2163 — `` — gone
+- #2164 — `` — gone
+- #2165 — `` — gone
+- #2166 — `` — gone
+- #2167 — `` — gone
+- #2168 — `` — gone
+- #2169 — `` — gone
+- #2170 — `` — gone
+- #2171 — `` — gone
+- #2172 — `` — gone
+- #2173 — `` — gone
+- #2174 — `` — gone
+- #2175 — `` — gone
+- #2176 — `` — gone
+- #2177 — `` — gone
+- #2178 — `` — gone
+- #2179 — `` — gone
+- #2180 — `` — gone
+- #2181 — `` — gone
+- #2182 — `` — gone
+- #2183 — `` — gone
+- #2184 — `` — gone
+- #2185 — `` — gone
+- #2186 — `` — gone
+- #2187 — `` — gone
+- #2188 — `` — gone
+- #2189 — `` — gone
+- #2190 — `` — gone
+- #2191 — `` — gone
+- #2192 — `` — gone
+- #2193 — `` — gone
+- #2194 — `` — gone
+- #2195 — `` — gone
+- #2196 — `` — gone
+- #2197 — `` — gone
+- #2198 — `` — gone
+- #2199 — `` — gone
+- #2200 — `` — gone
+- #2201 — `` — gone
+- #2202 — `` — gone
+- #2203 — `` — gone
+- #2204 — `` — gone
+- #2205 — `` — gone

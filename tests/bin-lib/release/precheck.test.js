@@ -28,10 +28,7 @@ function baseDeps(overrides = {}) {
       ['show main:plugin/.claude-plugin/plugin.json', () => manifest(overrides.local || '6.70.1')],
       ['worktree list --porcelain', () => overrides.worktrees || 'worktree /repo\nbranch refs/heads/main\n'],
       ['show wt-feature:plugin/.claude-plugin/plugin.json', () => manifest(overrides.wtVersion || '6.70.1')],
-      ['show main:docs/shipped-versions.tsv', () => {
-        if (overrides.tsv === undefined) throw new Error("fatal: path 'docs/shipped-versions.tsv' does not exist in 'main'");
-        return overrides.tsv;
-      }],
+      ['tag -l v*', () => overrides.tags || ''],
     ]),
     listPlanFiles: () => overrides.plans || [],
     readFile: (p) => (overrides.planText || {})[p] || '',
@@ -54,25 +51,6 @@ test('a bump already on origin/main raises the base instead of colliding', () =>
 test('an executed bump on unpushed local main raises the base [IL-98]', () => {
   const { candidate, result } = precheck(baseDeps({ local: '6.71.0' }), 'minor');
   assert.strictEqual(candidate, '6.72.0');
-  assert.strictEqual(result.ok, true);
-});
-
-test('a burned tsv tombstone above the manifest raises the base past it', () => {
-  // A wip-never-shipped tsv line at manifest+1 (a reverted premature bump) is
-  // documented in CHANGELOG/tsv but never reached the manifest — deriving the
-  // candidate from the manifest alone lands exactly on the burned number and
-  // compose's duplicate-heading guard wedges every future release. Observed
-  // live after 6.75.0's revert.
-  const { candidate, result } = precheck(baseDeps({
-    tsv: '6.70.1\t2026-08-09\trelease\n6.71.0\t2026-08-09\twip-never-shipped\n',
-  }), 'minor');
-  assert.strictEqual(candidate, '6.72.0');
-  assert.strictEqual(result.ok, true);
-});
-
-test('a missing shipped-versions.tsv contributes nothing to the base', () => {
-  const { candidate, result } = precheck(baseDeps(), 'minor');
-  assert.strictEqual(candidate, '6.71.0');
   assert.strictEqual(result.ok, true);
 });
 
@@ -132,9 +110,7 @@ test('a branch with no manifest is skipped silently — not a claim', () => {
     ['show wt-feature:.claude-plugin/plugin.json', () => {
       throw new Error("fatal: path '.claude-plugin/plugin.json' does not exist in 'wt-feature'");
     }],
-    ['show main:docs/shipped-versions.tsv', () => {
-      throw new Error("fatal: path 'docs/shipped-versions.tsv' does not exist in 'main'");
-    }],
+    ['tag -l v*', () => ''],
   ]);
   const { result } = precheck(deps, 'minor');
   assert.strictEqual(result.ok, true);
@@ -155,9 +131,7 @@ test('a pre-cutover branch whose manifest is at the OLD root path is still a cla
       throw new Error("fatal: path 'plugin/.claude-plugin/plugin.json' does not exist in 'wt-feature'");
     }],
     ['show wt-feature:.claude-plugin/plugin.json', () => manifest('6.71.0')],
-    ['show main:docs/shipped-versions.tsv', () => {
-      throw new Error("fatal: path 'docs/shipped-versions.tsv' does not exist in 'main'");
-    }],
+    ['tag -l v*', () => ''],
   ]);
   const { result } = precheck(deps, 'minor');
   assert.strictEqual(result.ok, false, 'the legacy-path bump must still register as a collision');
@@ -179,9 +153,7 @@ test('a pre-cutover origin/main manifest still sets the base', () => {
     ['show origin/main:.claude-plugin/plugin.json', () => manifest('6.94.0')],
     ['show main:plugin/.claude-plugin/plugin.json', () => manifest('6.94.0')],
     ['worktree list --porcelain', () => 'worktree /repo\nbranch refs/heads/main\n'],
-    ['show main:docs/shipped-versions.tsv', () => {
-      throw new Error("fatal: path 'docs/shipped-versions.tsv' does not exist in 'main'");
-    }],
+    ['tag -l v*', () => ''],
   ]);
   const { candidate, result } = precheck(deps, 'minor');
   assert.strictEqual(candidate, '6.95.0');
@@ -198,4 +170,54 @@ test('any other branch-manifest read failure aborts naming the branch — never 
     ['show wt-feature:plugin/.claude-plugin/plugin.json', () => 'not valid json'],
   ]);
   assert.throws(() => precheck(deps, 'minor'), /wt-feature/);
+});
+
+// AC 8: the tag-based key source (release-local.js) computes claims from git
+// tags and manifest reads alone — no shipped-versions.tsv involved (#2259
+// retired the tsv-backed 'tsv' keySource this module used to also serve).
+function tagDeps({ tags, local = '1.2.0', origin = '1.2.0', hasOrigin = true, worktrees = 'worktree /repo\nbranch refs/heads/main\n', wtVersion = '1.2.0' } = {}) {
+  const versions = { main: local, 'origin/main': origin, 'wt-feature': wtVersion };
+  const git = fakeGit([
+    ['fetch origin main', () => ''],
+    ['worktree list --porcelain', () => worktrees],
+    ['tag -l v*', () => tags],
+  ]);
+  return { git, listPlanFiles: () => [], readFile: () => '', versionAtRef: (ref) => versions[ref] };
+}
+
+test('keySource tags: the highest v* tag raises the base past a stale manifest', () => {
+  const deps = tagDeps({ tags: 'v1.0.0\nv1.2.0\nv1.2.1\nv2.0.0-rc.1\n', local: '1.2.0', origin: '1.2.0' });
+  const { candidate, claims, result } = precheck(deps, 'minor', { keySource: 'tags', versionAtRef: deps.versionAtRef });
+  assert.strictEqual(claims.tagTip, '1.2.1');
+  assert.strictEqual(candidate, '1.3.0');
+  assert.strictEqual(result.ok, true);
+});
+
+test('keySource tags without an origin: no fetch, no origin read, base from the tag', () => {
+  const deps = tagDeps({ tags: 'v1.2.0\n' });
+  const { candidate } = precheck(deps, 'major', { keySource: 'tags', hasOrigin: false, versionAtRef: (ref) => (ref === 'main' ? '1.2.0' : assert.fail(`unexpected ref ${ref}`)) });
+  assert.strictEqual(candidate, '2.0.0');
+  assert.ok(!deps.git.calls.some((c) => c.startsWith('fetch')));
+});
+
+test('keySource tags: a sibling worktree bump still collides; the renumber follows the requested part', () => {
+  const deps = tagDeps({ tags: 'v1.2.0\n', worktrees: SIBLING_WORKTREES, wtVersion: '1.3.0' });
+  const { result } = precheck(deps, 'minor', { keySource: 'tags', versionAtRef: deps.versionAtRef });
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.conflicts[0].source, 'worktree-branch');
+  assert.strictEqual(result.suggested, '1.4.0');
+});
+
+test('keySource tags: a stack with no manifest at all (go) bases on the tag alone', () => {
+  const deps = tagDeps({ tags: 'v0.4.0\n' });
+  const { candidate } = precheck(deps, 'patch', { keySource: 'tags', versionAtRef: () => null });
+  assert.strictEqual(candidate, '0.4.1');
+});
+
+test('keySource defaults to tags when opts are omitted; an unrecognized keySource throws', () => {
+  const withDefault = precheck(baseDeps(), 'minor');
+  const withExplicit = precheck(baseDeps(), 'minor', { keySource: 'tags' });
+  assert.deepStrictEqual(withDefault, withExplicit);
+  assert.throws(() => precheck(baseDeps(), 'minor', { keySource: 'tsv' }), /keySource/);
+  assert.throws(() => precheck(baseDeps(), 'minor', { keySource: 'labels' }), /keySource/);
 });

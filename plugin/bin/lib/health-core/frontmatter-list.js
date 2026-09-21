@@ -32,7 +32,7 @@
 // rolling a fourth copy — see bin/lib/issues/local-store.js's splitFrontmatter,
 // which was exactly that fourth copy before being folded into this helper.
 function splitFrontmatterFence(content) {
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   if (lines[0] !== '---') return null;
   const closeIdx = lines.indexOf('---', 1);
   if (closeIdx === -1) return null;

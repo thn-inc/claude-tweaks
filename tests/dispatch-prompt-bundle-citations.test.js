@@ -23,7 +23,7 @@ const LENS_DISPATCH = path.join(PLUGIN, 'skills', 'review', 'step3-lens-dispatch
 // (parse-signal-discipline): if a gap's file is ever composed and its citation moves to a
 // bundle path (or gains a "read directly" fallback of its own), this list must shrink with it,
 // or a rotted exemption starts silently covering something new.
-const GAPS = ['_shared/pipeline-run-dir.md', '_shared/integration-model.md'];
+const GAPS = ['_shared/run-dir-resolution.md', '_shared/integration-model.md'];
 
 // The agent-side fallback shape: a `_shared/` mention is allowed only when it is the source
 // named by a "read `_shared/<file>` directly" fallback clause on the same physical line — every

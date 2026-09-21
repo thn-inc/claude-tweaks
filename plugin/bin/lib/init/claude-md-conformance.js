@@ -88,6 +88,7 @@ const PROJECT_AUTHORED_SECTIONS = [
   'Testing',
   'Environment',
   'Git',
+  'Releasing',
   "Don'ts",
 ];
 

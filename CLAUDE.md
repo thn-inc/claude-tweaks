@@ -10,7 +10,7 @@ A Claude Code plugin containing markdown skill files that guide Claude through a
 |-------|-----------|
 | Runtime | Claude Code plugin system + Node 18+ (for the statusline) |
 | Content | Markdown (SKILL.md files with YAML frontmatter); Node modules under `plugin/bin/` |
-| Dependencies | Superpowers plugin (`/superpowers:brainstorming`, `/superpowers:writing-plans`, `/superpowers:subagent-driven-development`, `/superpowers:executing-plans`, `/superpowers:using-git-worktrees`, `/superpowers:finishing-a-development-branch`, `/superpowers:dispatching-parallel-agents`, `/superpowers:systematic-debugging`), code-simplifier plugin (`code-simplifier:code-simplifier` subagent), agent-browser (optional), git CLI (optional — statusline git segment only), gh CLI (optional — default transport for `work-backend: github-issues`: work-record system, the four health-sweep skills' issue filing, /tidy and /help's PR/issue scans. Not required — a `gh`-absent env (typically cloud Routine sandbox) routes the same CRUD via `_shared/github-write-transport.md`'s MCP path, with `_shared/issue-claims.md`'s file-blob lock standing in for the ref-level one) |
+| Dependencies | Superpowers plugin (`/superpowers:brainstorming`, `/superpowers:writing-plans`, `/superpowers:subagent-driven-development`, `/superpowers:executing-plans`, `/superpowers:using-git-worktrees`, `/superpowers:finishing-a-development-branch`, `/superpowers:dispatching-parallel-agents`, `/superpowers:systematic-debugging`), code-simplifier plugin (`code-simplifier:code-simplifier` subagent), git CLI (optional — statusline git segment only), gh CLI (optional — default transport for `work-backend: github-issues`: work-record system, the four health-sweep skills' issue filing, /tidy and /help's PR/issue scans. Not required — a `gh`-absent env (typically cloud Routine sandbox) routes the same CRUD via `_shared/github-write-transport.md`'s MCP path, with `_shared/issue-claims.md`'s file-blob lock standing in for the ref-level one) |
 | Test runner | `node --test` (built-in, no external deps; invoked via `npm test`) |
 | Distribution | Plugin marketplace via `thomasholknielsen/claude-tweaks-marketplace` |
 
@@ -32,13 +32,13 @@ SKILL.md structure, Interaction patterns (incl. the canonical CSC template), Fro
 
 ### Versioning
 
-- Version lives in `plugin/.claude-plugin/plugin.json`
+- Version is the `v*` git tag; release-please bumps `plugin/.claude-plugin/plugin.json` as part of merging its release PR.
 - Bump minor version for feature additions, patch for fixes
-- Commit message style: `{Verb} {what} — {detail}` (imperative, no conventional commit prefixes)
+- Commit message style: `{Verb} {what} — {detail}` (imperative, no conventional commit prefixes) — for hand-written commits; merge commits the plugin composes at merge time are Conventional-Commits shaped (`plugin/bin/compose-subject.js`, #2251); on `main`, release commits are release-please's own conventional-commit-shaped subjects — feature-branch commits keep the `{Verb} {what} — {detail}` style
 
 ### Releasing (two repos)
 
-Invocation: `node plugin/bin/release.js <minor|patch> "<summary>"` from clean `main`. The whole-branch review gates the bump — run it before the version bump, not as a later task in the same plan. Full procedure, judgment calls, and the shipped-vs-never-shipped renumber split: `docs/releasing.md`.
+Invocation: `/claude-tweaks:release` (no arguments) — this repo dogfoods the same shipped path every consumer project uses (#2259), driving release-please under `pr-first`. The whole-branch review gates the bump — run it before the version bump, not as a later task in the same plan. Full procedure: `docs/releasing.md`.
 
 ### Cross-references
 
@@ -52,7 +52,7 @@ All hook registrations route through `plugin/bin/hooks.js <event>` — one dispa
 
 ### Reconcile
 
-Adding a new `bin/lib/reconcile/` convergence check touches multiple registration sites — the full procedure is in `docs/reconcile-checks.md`. Read it before touching `bin/lib/reconcile/` or `bin/hooks.js`'s `reconcile` command.
+Adding a new `plugin/bin/lib/reconcile/` convergence check touches multiple registration sites — the full procedure is in `docs/reconcile-checks.md`. Read it before touching `plugin/bin/lib/reconcile/` or `plugin/bin/hooks.js`'s `reconcile` command.
 
 ## Philosophy
 
@@ -100,7 +100,7 @@ Skills that dispatch parallel Task agents must reference `plugin/skills/_shared/
 
 ### Auto-Mode Contract + Bookend Architecture (v4.6+)
 
-claude-tweaks pipelines have at most two stops in `auto` mode: a **Pipeline Config Manifesto** at the start (one structured numbered-options block collecting all policy levers in a single message) and a **Wrap-Up Review Console** at the end (one batch table consolidating everything auto-decided or staged). Everything in between is policy-driven automation logged to the auto-decision log.
+claude-tweaks pipelines have at most two stops in `auto` mode: a **Pipeline Config Manifesto** at the start (one structured numbered-options block collecting all policy levers in a single message) and a **Wrap-Up Review Console** at the end (one batch table consolidating everything auto-decided or staged). The two-stop ceiling isn't a floor: in default `auto`, the Manifesto renders as a **read-only FYI** (displays levers, doesn't gate), so the everyday run has effectively **one** user-facing stop — the end Review Console. Pass `confirm` (or `hybrid`) to turn the Manifesto into a real approval gate. Everything in between is policy-driven automation logged to the auto-decision log.
 
 **Single source of truth:** `plugin/skills/_shared/auto-mode-contract.md` — defines mode states, decision precedence (CLI arg > pipeline config > project policy > skill default), reversibility/confidence floors and a severity ceiling, the HARD-GATE exemption list, and what `auto` never silences (ledger resolve Phase 2, work-record creation — new backlog or parked records, governance gates) — except the narrow, explicit `autonomy` ceiling's bookkeeping capabilities (see `_shared/autonomy-ceiling.md`), which let floor-clearing ledger residue, queue writes, and ops-ack resolve without a click at `trusted`/`unattended`, and — at `unattended` only — let the Review Console's memory, queue-write, and upstream-filing approvals resolve with zero clicks under `consoleAutoResolve`.
 
@@ -118,7 +118,7 @@ diagram-suggestions: enabled
 
 Cloud sessions (claude.ai/code) and scheduled Routines run in fresh sandboxes with no access to this machine's local `~/.claude` config. Two things are required, and the declaration alone is not enough: this project's `.claude/settings.json#enabledPlugins` (paired with `extraKnownMarketplaces`) says what a sandbox may load, and the Setup script below is what actually installs it. The field is confirmed effective for interactive cloud sessions; it was measured not reaching scheduled Routine sandboxes (scope of affected sandbox types unknown) — the routine kernel's self-heal fallback (#260), not this field, is what guarantees a scheduled firing ends in a real result or a diagnosable failure `[IL-117]`.
 
-- **Setup script (required, not optional):** paste the canonical Setup-script line (see `scripts/claude-cloud-setup.sh`'s header) into this project's cloud environment's Setup script field (claude.ai/code environment settings, web UI only — no API/CLI can set this remotely). Installs every declared plugin/marketplace plus `agent-browser`. Regenerated by `/claude-tweaks:init` Step 14; don't hand-edit it. Without it, a declared plugin is simply absent. Confirmed for interactive cloud sessions; measured not reaching scheduled Routine sandboxes — see the paragraph above. This paste requirement applies per *environment*, not per repo — an environment selected in the session composer that has never had this pasted fails this way even for a fully-declared repo `[IL-113]`.
+- **Setup script (required, not optional):** paste the canonical Setup-script line (see `scripts/claude-cloud-setup.sh`'s header) into this project's cloud environment's Setup script field (claude.ai/code environment settings, web UI only — no API/CLI can set this remotely). Installs every declared plugin/marketplace. Regenerated by `/claude-tweaks:init` Step 14; don't hand-edit it. Without it, a declared plugin is simply absent. Confirmed for interactive cloud sessions; measured not reaching scheduled Routine sandboxes — see the paragraph above. This paste requirement applies per *environment*, not per repo — an environment selected in the session composer that has never had this pasted fails this way even for a fully-declared repo `[IL-113]`.
 - **Branch:** cloud sessions check out the environment's configured branch (typically `main` here) — declarations only take effect once merged there. Scheduled Routines are pinned independently: each audits the branch it was given at creation.
 - **First exposure:** if a skill is uninvocable in a cloud session, run `ls ~/.claude/plugins/` before waiting. Missing directory means nothing installed — the Setup script is absent or failed, and waiting won't fix it. Present and populated but still uninvocable is the transient case, observed once to clear a session later; re-check rather than assuming.
 - **MCP servers:** this project has no committed `.mcp.json` — a cloud or Routine session's MCP servers (e.g. `github`, `Claude_Code_Remote`) come from the hosting environment/account configuration, not a repo file. Servers configured only in `~/.claude.json` don't reach cloud, and are never auto-copied (they can carry credentials).
@@ -131,6 +131,8 @@ work-types: labels
 ## claude-tweaks Pipeline
 
 **Artifacts:** design doc (one file, phases = `## Phase N` sections) → spec (one per work unit, via `/claude-tweaks:specify`) → `/claude-tweaks:flow`. No multi-phase plan files (`*-P1.md`, `*-P2.md`, …); a single plan per spec via `/superpowers:writing-plans`, stopped before its execution-choice offer, is expected and normal.
+
+**Spec close-out:** `specs/` is a working directory, not a permanent historical index — once a spec ships and is verified, promote any durable reference content to `docs/reference/*.md` or a skill, repoint by-number citations elsewhere in the repo to the closing commit or PR, then delete the spec file. A permanent tracker file (e.g. `specs/INDEX.md`) is an anti-pattern here, not a convention to preserve.
 
 **Entry point:** `/claude-tweaks:specify` — accepts a topic (calls `/superpowers:brainstorming`), design-doc path, or a backlog work-record ref.
 

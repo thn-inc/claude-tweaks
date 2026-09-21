@@ -127,3 +127,75 @@ test('a backticked file path (not an identifier) is never mistaken for a symbol 
   assert.deepStrictEqual(grepCalls, [], 'a path-shaped token (contains "/") must never be treated as a grep-able identifier');
   assert.deepStrictEqual(result, []);
 });
+
+test('a short generic sibling title does not wrongly match as a substring of an unrelated word', () => {
+  const bodyA = '## Gotchas\n\n- The word prefix here mentions `helper()` but not the sibling by name.\n\n### Key Files\n\n- `a.js`\n';
+  const bodyB = '## Deliverables\n\nBuild it.\n\n### Key Files\n\n- `unrelated.js`\n';
+  const units = [
+    { title: 'Origin task', body: bodyA },
+    { title: 'Fix', body: bodyB },
+  ];
+  const grepCalls = [];
+  const grep = (ident) => { grepCalls.push(ident); return ['should-not-appear.js']; };
+
+  const result = crossReferenceKeyFiles(units, grep);
+
+  assert.deepStrictEqual(grepCalls, [], 'title "Fix" must not match as a substring inside "prefix"');
+  assert.deepStrictEqual(result, [], 'no cross-reference should be produced from a substring-only match');
+});
+
+test('extractSection is computed at most once per distinct sibling unit, not once per unit x other pair', () => {
+  const bodyOf = (n) => `## Gotchas\n\n- Mentions Sibling ${n} and \`helper${n}()\`.\n\n### Key Files\n\n- \`origin${n}.js\`\n`;
+  const units = [
+    { title: 'Sibling 1', body: bodyOf(1) },
+    { title: 'Sibling 2', body: bodyOf(2) },
+    { title: 'Sibling 3', body: bodyOf(3) },
+  ];
+  const grep = () => [];
+
+  // Count how many times each unit's `.body` is read (a getter-backed
+  // property) rather than measuring timing — a direct, deterministic proxy
+  // for whether `extractSection` runs once per `other` (hoisted) or once
+  // per unit x other pair (the current O(N^2) behavior).
+  let bodyReadCount = 0;
+  const countingUnits = units.map((u) => ({
+    title: u.title,
+    get body() {
+      bodyReadCount += 1;
+      return u.body;
+    },
+  }));
+
+  crossReferenceKeyFiles(countingUnits, grep);
+
+  // `.body` is read from two call sites: the hoisted section-extraction pass
+  // (2 reads per unit acting as `other` — Gotchas + Prerequisites — regardless
+  // of how many units reference it) and the per-unit `extractKeyFilesSection`
+  // call at the end of each outer iteration (1 read per unit acting as `unit`).
+  // For 3 units: hoisted-once gives 3 x 2 = 6, plus 3 x 1 = 3 for the
+  // existing-Key-Files read, for an expected total of 9 — never the
+  // un-hoisted 3 units x 2 valid others x 2 reads = 12 (plus the same 3 for
+  // existing-Key-Files = 15) the current code produces by recomputing
+  // `extractSection(other.body, ...)` inside the inner loop on every outer
+  // iteration.
+  assert.strictEqual(bodyReadCount, 9, `expected 9 body reads (hoisted once per unit, 2+1), got ${bodyReadCount}`);
+});
+
+test('grep is called at most once per distinct identifier across the whole batch, even when multiple units reference the same identifier', () => {
+  const bodyOf = (n) => `## Gotchas\n\n- Mentions Origin and \`shared()\` (unit ${n}).\n\n### Key Files\n\n- \`u${n}.js\`\n`;
+  const units = [
+    { title: 'Origin', body: '## Deliverables\n\nBuild it.\n\n### Key Files\n\n- `origin.js`\n' },
+    { title: 'Unit A', body: bodyOf('A') },
+    { title: 'Unit B', body: bodyOf('B') },
+  ];
+  const grepCalls = [];
+  const grep = (ident) => {
+    grepCalls.push(ident);
+    return ident === 'shared()' ? ['shared-module.js'] : [];
+  };
+
+  crossReferenceKeyFiles(units, grep);
+
+  const sharedCalls = grepCalls.filter((i) => i === 'shared()');
+  assert.strictEqual(sharedCalls.length, 1, `expected grep('shared()') exactly once, called ${sharedCalls.length} times`);
+});

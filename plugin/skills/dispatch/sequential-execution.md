@@ -19,9 +19,13 @@ Detect the shape up front — before attempting to enter group N's worktree at a
 
 A top-level dispatching session (the common case, and the one the rest of this file describes) never hits this — its own cwd is not pinned, so it enters each group's worktree directly and both Task calls inherit it, exactly as below.
 
+**Don't reach for `isolation: "worktree"` plus a joining `EnterWorktree(path=)` as a shortcut here.** A cwd-pinned dispatching session might be tempted to launch the first Task call with `Agent(isolation: "worktree")` to get it worktree-isolated on its own, then have the second call join that same worktree via `EnterWorktree(path: <first call's worktree>)` instead of adopting the `cd`-prefix mechanism above. This reported success while leaving the second call's actual Bash execution sandbox pinned to whatever worktree it inherited at its own launch, refusing every subsequent command (`docs/incident-log.md`'s `IL-155`, from #1875). `EnterWorktree`'s own current tool documentation describes `path`-based redirection working for a pinned agent, but that claim is unverified against this exact two-call shape — until a live dispatch confirms it, use the `cd {worktree-path} &&` mechanism above instead of this join pattern.
+
 ## The loop
 
 For group N, enter **one** fresh worktree, then run that group's whole dispatch sequence inside it: both of its Task calls (`build,test`, then — gated — `review,polish,wrap-up`; see `two-call-gate.md`) inherit that single cwd, and each reports its own terminal status line (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) plus an OUTCOME line. One worktree per group, entered once and torn down once — never one per call.
+
+**Mechanically verify the status line the moment each Task call returns — never infer compliance from how the reply reads.** Check the reply's last non-empty line against `^STATUS: (DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED)$`, exactly as `task-prompt.md`'s OUTPUT FORMAT requires it to appear. A reply where that line is missing, malformed, or not the last non-empty line is not a status to parse — a call that actually finished in-turn always ends with it, so its absence is direct evidence the dispatched agent backgrounded `/flow` or otherwise yielded outside the Foreground execution clause (`task-prompt.md`; #1965) rather than a report this loop can read. Treat a missing/malformed status line exactly like `BLOCKED` for gating purposes here (#2429): never dispatch the second call on it, never enter group N+1's worktree on it — route it through this group's own Settle procedure (`settle-and-merge.md`) the same as any other first-call failure. This is a per-group failure, not a firing-wide stop (`CLAUDE.md`'s Auto-Mode Contract: `auto` never gains a new mid-flow stop from this).
 
 Where that teardown falls depends on which call ends the group. A first call that fails or blocks its `build,test` gate *is* the group's terminal point — the second call is never dispatched, and teardown routes through the explicit `/claude-tweaks:flow {target} wrap-up` call `two-call-gate.md` section 5 specifies. A first call that clears the gate hands off to the second, whose own wrap-up performs the cleanup at its terminal OUTCOME. Either way the worktree comes down through wrap-up's cleanup route, never a raw removal (`[IL-116]`), and only THEN does the dispatching session enter a fresh worktree for group N+1. Never enter group N+1's worktree, and never dispatch any of its calls, while any of group N's is still running.
 
@@ -29,7 +33,39 @@ This is the same enter→dispatch→teardown→next sequence `bin/lib/issues/seq
 
 ## No per-group timeout, and the wall-clock trade-off
 
-There is no per-group timeout — nothing elsewhere in this codebase imposes one (existing parallel-Task dispatch sites, e.g. `/help`'s Stage 1-7, wait for all dispatched agents regardless of duration; this is the same "no timeout" posture, just applied to a sequential loop instead of a concurrent one).
+There is no per-group timeout — nothing elsewhere in this codebase imposes one (existing parallel-Task dispatch sites, e.g. `/help`'s Stage 1-7, wait for all dispatched agents regardless of duration; this is the same "no timeout" posture, just applied to a sequential loop instead of a concurrent one). A timeout would still leave the question this section answers unanswered — "is it stuck, or just slow?" — while actively killing legitimately slow but healthy work; the fix for that question is visibility, below, not a deadline.
+
+## Heartbeat: how a long-running group's progress becomes observable mid-flight (#2427)
+
+**Not from the dispatched Task call itself.** It cannot safely interrupt its own foreground turn to
+report progress without recreating the exact stall hazard the Foreground execution clause
+(`task-prompt.md`) exists to prevent (#1965) — no mid-turn check-in, no `run_in_background`, ever.
+**Not from the dispatching session either, while that Task call is in flight** — dispatching a
+Task call is this session's own turn; it has no opportunity to act on anything, including a
+user's "still waiting?" question, until the call returns.
+
+**The answer is passive, and needs no new mechanism: the group's own run directory is already
+being written to in real time, and anyone else can read it while the dispatching session's turn
+is still blocked.** Every `log-decision.js` call inside the dispatched agent's own execution
+(`_shared/auto-decision-log.md`) is a real, immediate filesystem write to `{group-run-dir}/decisions.md`
+— not buffered until the call returns — so its last line is genuine evidence of the most recent
+completed step, not a summary composed after the fact. A **bundle** group (2+ issues; `/flow`'s
+multi-spec mode) additionally writes a `phase`/`phases[]` transition log to
+`{group-run-dir}/manifest.yml` at every `/flow` step boundary (`flow/multi-spec.md`'s
+`multispec-progress-banner.md`) — coarser than `decisions.md` but a single field to check
+(`phase:`) rather than a tail. A **singleton** group (1 issue) has no `manifest.yml` — `/flow`'s
+own single-spec path narrates its step banner as free text with nothing to write it to
+(`flow/SKILL.md` Step 4's "no manifest.yml for a single-spec run" note) — so `decisions.md`'s own
+entries are the only available signal there; this is a real, documented granularity gap, not one
+this record closes, since giving singleton runs the same mechanism bundles already have is a
+change to `/flow`'s own step-announcement logic, out of this file's scope.
+
+**When a user asks whether a firing is still working:** tell them (or, if you are the dispatching
+session between groups rather than mid-call, check yourself) to read
+`{group-run-dir}/decisions.md`'s last line and, for a bundle, `{group-run-dir}/manifest.yml`'s
+current `phase:` — that names the actual last completed step and when it happened, rather than a
+guess. `{group-run-dir}` is `$GROUP_RUN_ID`, minted at Step 4 and known before the Task call is
+ever dispatched, so it is nameable even while that call is still running.
 
 A multi-group firing's wall-clock time now scales linearly with group count instead of being bounded by the slowest group — an accepted, documented trade-off (dispatch only fires on a schedule with nobody waiting synchronously), not a regression to flag at review time.
 

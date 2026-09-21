@@ -82,16 +82,20 @@ function signalsMatch(persisted, current) {
   return true;
 }
 
-// { computedAt, runId, freshnessSignal, groups, excluded } -> the exact blob
-// shape written to order.json. A thin composer, not a validator — callers
-// already have every field in the right shape; this exists so the field
-// list is stated once, matching claims.js's claimPayload/releasePayload
-// precedent for this codebase's blob-shape convention.
+// { computedAt, runId, freshnessSignal, groups, excluded, bundles } -> the
+// exact blob shape written to order.json. A thin composer, not a validator —
+// callers already have every field in the right shape; this exists so the
+// field list is stated once, matching claims.js's claimPayload/releasePayload
+// precedent for this codebase's blob-shape convention. `bundles` (#2066) is
+// optional and passed through as given — a caller reading a pre-upgrade blob
+// with no `bundles` field gets `undefined` back and applies its own `[]`
+// fallback (queue-pull-script.md's cache-hit path), never this module.
 function composeOrderBlob({
-  computedAt, runId, freshnessSignal, groups, excluded,
+  computedAt, runId, freshnessSignal, groups, excluded, bundles,
 }) {
   return {
     computedAt, runId, freshnessSignal, groups, excluded,
+    ...(bundles !== undefined ? { bundles } : {}),
   };
 }
 

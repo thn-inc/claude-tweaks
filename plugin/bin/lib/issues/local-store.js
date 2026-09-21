@@ -4,9 +4,9 @@
 // style bin/lib/policy.js uses — the plugin ships zero runtime npm deps, so there
 // is no YAML library here. `facets` is a superset of record.js's parseRecordFacets
 // shape (shared keys sourced from facet-shape.js's sharedFacetDefaults() — origin,
-// risk, size, ceremony, solutionUnjustified, priority, stage, grants{build,merge}, bot{inProgress,
+// risk, size, ceremony, solutionUnjustified, breaking, priority, stage, grants{build,merge}, bot{inProgress,
 // blocked}, acceptance, isParentIssue — plus type, parent, blockedBy, unsynced, closed,
-// closedAt, which are local-files-only); the github driver's callers get
+// closedAt, shipped, which are local-files-only); the github driver's callers get
 // type/parent/blockedBy from the issue JSON itself, not from labels. No network calls.
 'use strict';
 
@@ -52,6 +52,7 @@ function defaultFacets() {
     unsynced: false,
     closed: false,
     closedAt: null,
+    shipped: null,
   };
 }
 
@@ -126,10 +127,12 @@ function parseFrontmatterLines(fmLines) {
     if ((m = /^framing:\s*(true|false)$/.exec(line))) { legacyFramingFallback = m[1] === 'true'; continue; }
     if ((m = /^not-planned:\s*(true|false)$/.exec(line))) { facets.notPlanned = m[1] === 'true'; continue; }
     if ((m = /^needs-definition:\s*(true|false)$/.exec(line))) { facets.needsDefinition = m[1] === 'true'; continue; }
+    if ((m = /^breaking:\s*(true|false)$/.exec(line))) { facets.breaking = m[1] === 'true'; continue; }
     if ((m = /^priority:\s*(.+)$/.exec(line))) { facets.priority = m[1].trim(); continue; }
     if ((m = /^stage:\s*(.+)$/.exec(line))) { facets.stage = m[1].trim(); continue; }
     if ((m = /^closed:\s*(true|false)$/.exec(line))) { facets.closed = m[1] === 'true'; continue; }
     if ((m = /^closed-at:\s*(.+)$/.exec(line))) { facets.closedAt = m[1].trim(); continue; }
+    if ((m = /^shipped:\s*(\S+)$/.exec(line))) { facets.shipped = m[1]; continue; }
     if ((m = /^grants:\s*\[(.*)\]$/.exec(line))) {
       const names = parseBracketList(m[1]);
       facets.grants = { build: names.includes('build'), merge: names.includes('merge') };
@@ -207,12 +210,14 @@ function serializeFrontmatter(facets) {
   if (facets.size) lines.push(`size: ${facets.size}`);
   if (facets.ceremony) lines.push(`ceremony: ${facets.ceremony}`);
   if (facets.solutionUnjustified) lines.push('solution-unjustified: true');
+  if (facets.breaking) lines.push('breaking: true');
   if (facets.notPlanned) lines.push('not-planned: true');
   if (facets.needsDefinition) lines.push('needs-definition: true');
   if (facets.priority) lines.push(`priority: ${facets.priority}`);
   if (facets.stage && facets.stage !== 'backlog') lines.push(`stage: ${facets.stage}`);
   if (facets.closed) lines.push('closed: true');
   if (facets.closedAt) lines.push(`closed-at: ${facets.closedAt}`);
+  if (facets.shipped) lines.push(`shipped: ${facets.shipped}`);
 
   const grants = facets.grants || {};
   const grantNames = GRANT_KEYS.filter((key) => grants[key]);
@@ -250,16 +255,44 @@ function writeRecord(filePath, { title, body, facets } = {}) {
   fs.writeFileSync(filePath, composeRecordContent({ title, body, facets }), 'utf8');
 }
 
-// filePath -> void. Marks a record closed without deleting it — mirrors a GitHub
+// value -> void, or throws. The shipped facet serializes as a single `shipped: {value}`
+// frontmatter line, so whitespace or a control character in the value would split it into
+// a second line (or an unparseable one) and silently corrupt the fence. Both writers below
+// reject that at the boundary — defense in depth behind the caller-side validation
+// skills/release/execute.md's "Two versions" section performs at its reconciliation point.
+function assertShippedValue(value) {
+  if (typeof value !== 'string' || /[\s\x00-\x1f]/.test(value)) {
+    throw new TypeError(
+      `shipped facet must be a single-token string with no whitespace or control characters, got: ${JSON.stringify(value)}`,
+    );
+  }
+}
+
+// filePath, { shipped } -> void. Marks a record closed without deleting it — mirrors a GitHub
 // issue's closed (not deleted) state, so a completed local-files record stops
 // surfacing in default queryRecords results while remaining on disk as history.
-// Preserves every other facet and the record's title/body unchanged.
-function closeRecord(filePath) {
+// Preserves every other facet and the record's title/body unchanged. When shipped is provided,
+// sets the shipped facet as well (validated by assertShippedValue above).
+function closeRecord(filePath, { shipped = null } = {}) {
+  if (shipped) assertShippedValue(shipped);
   const record = readRecord(filePath);
   writeRecord(filePath, {
     title: record.title,
     body: record.body,
-    facets: { ...record.facets, closed: true, closedAt: new Date().toISOString() },
+    facets: { ...record.facets, closed: true, closedAt: new Date().toISOString(), ...(shipped ? { shipped } : {}) },
+  });
+}
+
+// filePath, version -> void. Sets the shipped facet on an open record (does not close it),
+// recording which version the work was shipped in. Preserves all other facets and
+// the record's title/body unchanged. The version is validated by assertShippedValue above.
+function markShipped(filePath, version) {
+  assertShippedValue(version);
+  const record = readRecord(filePath);
+  writeRecord(filePath, {
+    title: record.title,
+    body: record.body,
+    facets: { ...record.facets, shipped: version },
   });
 }
 
@@ -447,4 +480,4 @@ function queryRecords(dir = DEFAULT_DIR, facetFilter = {}) {
   return records;
 }
 
-module.exports = { DEFAULT_DIR, readRecord, writeRecord, allocateId, createRecord, queryRecords, closeRecord, deriveSlug, defaultFacets };
+module.exports = { DEFAULT_DIR, readRecord, writeRecord, allocateId, createRecord, queryRecords, closeRecord, markShipped, deriveSlug, defaultFacets };

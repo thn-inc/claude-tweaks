@@ -9,6 +9,7 @@
 
 const path = require('path');
 const { evaluateMaturation } = require('../issues/grant-maturation');
+const { resolveRecords } = require('../wrap-up/pack');
 
 // Section names exactly as the console renders them (console-template.md;
 // engine-render.js's SECTION_SPECS for the five curation sections).
@@ -48,7 +49,9 @@ const SECTION_MAP = [
   [/\.patch$/, SECTIONS.PENDING],
   [/^(polish-suggestion|visual-review|design-decision|build-deviation|simplify|deepen)-/, SECTIONS.PENDING],
   [/^wrap-up-skill(-|\b)/, SECTIONS.SKILL],
-  [/^(wrap-up-doc|release-backfill|tidy-doc)-/, SECTIONS.DOC],
+  // release-backfill- retired #2257 (git describe --contains replaced the
+  // staged-backfill mechanism entirely — nothing stages that prefix anymore).
+  [/^(wrap-up-doc|tidy-doc)-/, SECTIONS.DOC],
   [/^(wrap-up-journey|journeys)(-|\b)/, SECTIONS.JOURNEY],
   [/^(reflect|digest-promotion|leftover|ledger-record|upstream-unfiled|red-team|specify-overlap|specify-redteam|flaky-allowlist|tidy|plan-retention|feedback-drafts)(-|\b)/, SECTIONS.QUEUE],
   [/^wrap-up-memory-/, SECTIONS.MEMORY],
@@ -83,8 +86,37 @@ const SECTION_STANCES = {
 
 const ENGINE_ROW_SECTIONS = { skills: SECTIONS.SKILL, docs: SECTIONS.DOC, journeys: SECTIONS.JOURNEY, 'claude-md': SECTIONS.CONFIG, 'decision-records': SECTIONS.CONFIG, references: SECTIONS.REF };
 
-function classifyStagedItem(filename) {
-  for (const [re, section, reason] of SECTION_MAP) if (re.test(filename)) return reason ? { section, reason } : { section };
+// `**Category:** {value}` — the header line `reflect/SKILL.md` (and any other producer sharing
+// this convention) writes on a staged finding. `null` when the text carries no such line —
+// including every caller that passes no text at all (unknown by design; never routed off it).
+function parseCategory(text) {
+  if (!text) return null;
+  const m = /^\*\*Category:\*\*\s*(\S+)/m.exec(text);
+  return m ? m[1] : null;
+}
+
+// `text` is the staged file's own content, when the caller has it (readSnapshot loads it for
+// every `.md`/`.patch` staged item). Only the QUEUE bucket's un-reasoned row reads it: that
+// bucket's contract (`reflect/SKILL.md`'s Auto mode routing table) reserves an actual Queue
+// write (a `gh issue create` candidate, resolution `apply`) for `Category: tangential` findings
+// — `convention`/`observation` findings share the same filename prefix but carry no
+// `Title:`/`Type:`/`Labels:` header for record creation to read, so routing them into Queue
+// writes/`apply` the same as a tangential finding would attempt to file a malformed issue
+// (#2473). A `Category:` value other than `tangential` reroutes to Pending review via the
+// existing reason-forces-pending mechanism below; a file with no `Category:` line at all (every
+// other QUEUE-bucket producer — `digest-promotion-*`, `leftover-*`, etc. — none of which carry
+// this field) is unaffected and keeps today's Queue writes/`apply` classification.
+function classifyStagedItem(filename, text) {
+  for (const [re, section, reason] of SECTION_MAP) {
+    if (!re.test(filename)) continue;
+    if (section === SECTIONS.QUEUE && !reason) {
+      const category = parseCategory(text);
+      if (category && category.toLowerCase() !== 'tangential') {
+        return { section: SECTIONS.PENDING, reason: `non-tangential-category:${category}` };
+      }
+    }
+    return reason ? { section, reason } : { section };
+  }
   return { section: SECTIONS.PENDING, reason: 'unmapped-prefix' };
 }
 
@@ -99,20 +131,16 @@ function readJson(deps, file) {
 }
 
 // Members: the fact pack's resolved record list when a pack exists (#1930
-// gathers it before the console), else the run dir's materialized headers.
+// gathers it before the console), else pack.js's shared resolveRecords
+// ladder (run dir's own headers, the worktree mirror, a parent multi-spec
+// run's manifest.yml + spec-*/work/ headers — #2028).
 function readMembers(deps, runDir) {
   const pack = readJson(deps, path.join(runDir, 'wrap-up-pack.json'));
   const fromPack = pack && pack.inputs && Array.isArray(pack.inputs.records) ? pack.inputs.records.map(Number).filter(Number.isFinite) : [];
   if (fromPack.length) return fromPack;
-  const nums = [];
-  for (const name of deps.readdir(path.join(runDir, 'work'))) {
-    const m = /^(\d+)-spec\.md$/.exec(name);
-    if (!m) continue;
-    const text = readText(deps, path.join(runDir, 'work', name)) || '';
-    const rec = /^record:\s*(\d+)\s*$/m.exec(text);
-    nums.push(Number(rec ? rec[1] : m[1]));
-  }
-  return [...new Set(nums)].sort((a, b) => a - b);
+  const state = readJson(deps, path.join(runDir, 'run-state.json'));
+  const worktree = state && typeof state.worktree === 'string' ? state.worktree : null;
+  return resolveRecords(deps, runDir, worktree).records;
 }
 
 function parseInvariant(patchText) {
@@ -127,7 +155,7 @@ function readSnapshot({ runDir, deps }) {
   const staged = deps.readdir(stagedDir).filter((n) => !n.startsWith('.')).sort().map((name) => ({
     name,
     path: path.join(stagedDir, name),
-    text: name.endsWith('.patch') ? readText(deps, path.join(stagedDir, name)) : null,
+    text: (name.endsWith('.patch') || name.endsWith('.md')) ? readText(deps, path.join(stagedDir, name)) : null,
   }));
   const engineState = readJson(deps, path.join(runDir, 'engine-state.json'));
   const members = readMembers(deps, runDir);
@@ -165,9 +193,53 @@ function needsHumanVerdict(decisions) {
   return decisionLines(decisions).find((l) => /needs-human/i.test(l) && /merge-check|assess-agent-autonomy/i.test(l)) || null;
 }
 
+// The Auto-merge gate's own drain-PR-overlap hold (dispatch/drain-pr-overlap.md
+// Step 6, #1985) logs this line when this group's PR overlaps a still-open PR
+// opened earlier by the same drain firing. Unlike needsHumanVerdict's carve-out
+// (an assess-agent-autonomy verdict, permanent), this hold is explicitly NOT
+// persisted — drain-pr-overlap.md re-reads the overlapping PR's live state every
+// time the Auto-merge gate runs and self-heals once that PR merges or closes.
+// A historical decisions.md line alone is therefore not enough to resolve
+// leave-open forever after — mergeResolution re-verifies every named PR's
+// current state (below) before trusting it. A group can be held by more than
+// one hold line at once (drain-pr-overlap.md Step 6: "Any hit whose
+// overlapping drain PR is still open holds this group back") — e.g. two
+// distinct overlapping drain PRs, or the same group held more than once
+// across retries — so every distinct PR named across all hold lines is
+// returned; the group only clears once EVERY one of them is confirmed
+// merged/closed. The "held" keyword is the load-bearing discriminator against
+// Step 4's differently-worded advisory-only line (`STAGED … group [{issues}]
+// overlaps drain PR #{pr}`, no "held"), which must never match this regex.
+const DRAIN_OVERLAP_HOLD_RE = /held\s*[-—]\s*overlaps drain PR #(\d+)/i;
+
+function drainOverlapHoldPrs(decisions) {
+  const found = new Set();
+  for (const line of decisionLines(decisions)) {
+    const m = DRAIN_OVERLAP_HOLD_RE.exec(line);
+    if (m) found.add(Number(m[1]));
+  }
+  return [...found];
+}
+
 function mergeResolution(snapshot, deps) {
   const verdict = needsHumanVerdict(snapshot.decisions);
   if (verdict) return { resolution: 'leave-open', reason: `merge-check verdict needs-human takes precedence: ${verdict.replace(/^- /, '')}` };
+  for (const holdPr of drainOverlapHoldPrs(snapshot.decisions)) {
+    let state;
+    try {
+      state = deps.checkPrState(holdPr);
+    } catch (err) {
+      return { resolution: 'leave-open', reason: `drain-overlap hold: could not re-verify PR #${holdPr}'s current state (${err && err.message ? err.message : err}) — failing closed, same posture as grants-unreadable` };
+    }
+    // Fail closed on anything other than a confirmed MERGED/CLOSED — an
+    // unrecognized state (a future gh output shape, undefined, etc.) must
+    // never be treated as "hold cleared, proceed to merge."
+    if (state !== 'MERGED' && state !== 'CLOSED') {
+      const stateDesc = state === 'OPEN' ? 'still open' : `in an unrecognized state (${state === undefined ? 'undefined' : JSON.stringify(state)})`;
+      return { resolution: 'leave-open', reason: `drain-overlap hold: PR #${holdPr} is ${stateDesc} — merge order is a human call (re-checked live against current PR state, not a persisted hold — see dispatch/drain-pr-overlap.md Step 6)` };
+    }
+    // state is MERGED or CLOSED for this PR: self-healed — keep checking any other named hold PR.
+  }
   if (!snapshot.members.length) return { resolution: 'leave-open', reason: 'members-unresolved' };
   if (snapshot.grantsError) return { resolution: 'leave-open', reason: 'grants-unreadable' };
   for (const n of snapshot.members) {
@@ -191,7 +263,7 @@ function stagedItems(snapshot) {
   const refused = refusedStagedNames(snapshot.decisions);
   return snapshot.staged.map((s) => {
     if (refused.has(s.name)) return { id: s.name, section: SECTIONS.REFUSED, ...SECTION_STANCES[SECTIONS.REFUSED] };
-    const { section, reason } = classifyStagedItem(s.name);
+    const { section, reason } = classifyStagedItem(s.name, s.text);
     if (reason) return { id: s.name, section, resolution: 'pending', reason };
     const stance = SECTION_STANCES[section];
     if (s.name.endsWith('.patch')) {
@@ -301,4 +373,4 @@ function resolveAll({ runDir, policy, deps }) {
   return result;
 }
 
-module.exports = { SECTIONS, SECTION_MAP, SECTION_STANCES, classifyStagedItem, readSnapshot, resolveAll, renderTable, renderStoredTable };
+module.exports = { SECTIONS, SECTION_MAP, SECTION_STANCES, classifyStagedItem, readSnapshot, resolveAll, renderTable, renderStoredTable, drainOverlapHoldPrs };

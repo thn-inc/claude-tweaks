@@ -1,7 +1,7 @@
 // bin/lib/model-profiles/profiles.js
 //
 // Canonical work-profile data. The markdown table in
-// skills/_shared/subagent-output-contract.md §Model Selection is pinned to
+// skills/_shared/subagent-dispatch-core.md §Model Selection is pinned to
 // PROFILES by tests/bin-lib/model-profiles/table-pinning.test.js — change
 // them together or the suite goes red.
 //

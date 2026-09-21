@@ -4,7 +4,6 @@ description: Use for docs/** audits: Diátaxis drift, depth-mismatch, findabilit
 argument-hint: "[--target <id>] [--dir <path>] [--budget <n>] [--min-confidence low|med|high] [--dry-run] [--root <dir>]"
 allowed-tools: Read, Grep, Glob, Bash, AskUserQuestion
 ---
-> **Interaction style:** Single decisions → one `AskUserQuestion` call, one option marked Recommended. Multi-item → batch table with recommendations pre-filled, then one `AskUserQuestion` for apply-all/override. Never more than one call per decision; resolve each before the next. Terminal `## Next Actions` → plain markdown: paste-ready fully-qualified commands, recommended first and bold, one per line — `AskUserQuestion` there only for a documented machine-consumed decision, named inline.
 
 # Docs Health — Diátaxis Genre-Drift + Depth-Mismatch + Findability + Staleness Sweep for docs/**
 
@@ -46,7 +45,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/docs-health.js" next-target --root "${ROOT:-$PWD
 
 Without `--budget` (or `--budget 1`), prints `{ target: { kind, id, path, why } | null }` — a single target. With `--budget <n>` where `n > 1`, prints `{ targets: [{ kind, id, path, why }, ...] }` instead — up to `n` targets, each a different id.
 
-> **Parallel execution (conditional):** When `--budget n` (n > 1) is in effect, dispatch each target's Step 2 (READ) + Step 3 (JUDGE) as a parallel Task agent — each independently reads its own doc and returns that target's findings array (see the dispatch template below). Otherwise (the `--budget 1` default), run Steps 2-3 sequentially in the main thread. Dispatch shape: single-assistant-message rule (`_shared/subagent-output-contract.md`'s fan-out section) applies.
+> **Parallel execution (conditional):** When `--budget n` (n > 1) is in effect, dispatch each target's Step 2 (READ) + Step 3 (JUDGE) as a parallel Task agent — each independently reads its own doc and returns that target's findings array (see the dispatch template below). Otherwise (the `--budget 1` default), run Steps 2-3 sequentially in the main thread. Dispatch shape: single-assistant-message rule (`_shared/subagent-dispatch-core.md`'s fan-out section) applies.
 
 **Multi-target runs (`--budget > 1`):** treat each array entry as its own full sweep: run Steps 2-6 in their entirety for target 1 (including its own `validate-findings --target <id>` call in Step 5 and its own Step 6 filing), then repeat the full Steps 2-6 for target 2, and so on. Never collect findings from multiple targets into one shared `validate-findings` call — each target needs its own `--target` value so its audit cursor persists independently (`bin/docs-health.js`'s `validate-findings` hard-gates on `--target` being present for any non-dry-run call, since docs-health has no gap-scan-equivalent fallback for cursor advancement). A run that audits 3 targets makes 3 separate `validate-findings` invocations, not 1. Once every target has been swept, move on to Step 7 to summarize all of them together.
 
@@ -64,9 +63,9 @@ If the file is larger than 40,000 bytes, do not read it whole. Instead: read its
 <<< the body of judge-procedure.md, inlined verbatim and placeholder-substituted >>>
 
 OUTPUT FORMAT (required):
-First line: one of DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
-Then a JSON array of findings in exactly the shape shown in this prompt (empty array `[]` if none).
-Do not add narration before or after the status line and JSON array.
+A JSON array of findings in exactly the shape shown in this prompt (empty array `[]` if none).
+Status line (required): the last non-empty line of your reply must read exactly `STATUS: DONE` (or DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED), after the JSON array.
+Do not add narration before or after the JSON array and status line.
 
 [Use: Standard] (contract § Model Selection — multi-file judgment, format-sensitive output)
 ```

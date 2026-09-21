@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const sessionStart = require('../plugin/bin/lib/hooks/session-start');
 const deps = require('../plugin/bin/lib/deps');
+const { INTERACTION_STYLE_DIRECTIVE } = require('../plugin/bin/lib/hooks/interaction-style');
 
 function tmpProject() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-'));
@@ -25,6 +26,19 @@ function mkStagedFile(run, name, content) {
   fs.mkdirSync(stagedDir, { recursive: true });
   fs.writeFileSync(path.join(stagedDir, name), content || '{}');
 }
+
+// #1909: the Interaction-style directive moved out of 35+ verbatim per-SKILL.md
+// copies into this one hook injection point (plugin/bin/lib/hooks/interaction-style.js).
+// This is the retargeted pin — every session's additionalContext must carry it,
+// regardless of what else the hook finds to report, so this is asserted first and
+// unconditionally rather than folded into any one scenario test below.
+test('#1909: run() always includes the Interaction-style directive in additionalContext, even with nothing else to report', async () => {
+  const project = tmpProject();
+  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.ok(out.json, 'additionalContext must render even when every other check is silent');
+  assert.match(out.json.hookSpecificOutput.additionalContext, /^> \*\*Interaction style:\*\*/);
+  assert.ok(out.json.hookSpecificOutput.additionalContext.includes(INTERACTION_STYLE_DIRECTIVE));
+});
 
 test('deps.collect returns an array of strings and prints nothing', () => {
   const msgs = deps.collect();
@@ -129,6 +143,28 @@ test('#1494: a *-sweep-standalone* run with non-empty staged/ is listed exactly 
   assert.match(ctx, /\/claude-tweaks:tidy --approve/, 'the sweep-standalone run points at tidy --approve, same as a tidy-standalone run');
 });
 
+// #1738: the hand-rolled readdirSync/sort/run-state.json walk this scan used
+// to run lacked the shared iterator's archive-twin skip entirely — a clean
+// *-tidy-standalone* run whose archive/{name}/ twin is ITSELF already
+// status:'clean' (fully archived) would still have been listed by the old
+// hand-rolled walk. Now that this scan shares iterRunDirsWithState's
+// { status: 'clean' } filter, that twin is correctly recognized as "already
+// archived" and the run is not listed.
+test('#1738: a clean *-tidy-standalone* run with a fully-archived (clean) archive twin is not listed — the skip the hand-rolled walk lacked', async () => {
+  const project = tmpProject();
+  const runId = '2026-07-05T090000-tidy-standalone';
+  const standalone = mkRun(project, runId, { status: 'clean' });
+  mkStagedFile(standalone, 'stale-close-1.json', '{}');
+  mkRun(project, path.join('archive', runId), { status: 'clean' });
+  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  if (out.json) {
+    assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /tidy --approve/);
+    assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, new RegExp(runId));
+  } else {
+    assert.deepStrictEqual(out, {});
+  }
+});
+
 test('#1493: a cleanly-clean standalone run with EMPTY staged/ renders no tidy --approve line', async () => {
   const project = tmpProject();
   const standalone = mkRun(project, '2026-07-02T090000-tidy-standalone', { status: 'clean' });
@@ -164,6 +200,27 @@ test('close-run hint substitutes CLAUDE_PLUGIN_ROOT when set, else keeps the lit
     process.env.CLAUDE_PLUGIN_ROOT = '/opt/claude-tweaks';
     const withEnv = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
     assert.match(withEnv.json.hookSpecificOutput.additionalContext, /\/opt\/claude-tweaks\/bin\/hooks\.js/);
+  } finally {
+    if (orig === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
+    else process.env.CLAUDE_PLUGIN_ROOT = orig;
+  }
+});
+
+// #2070: a single process.env.CLAUDE_PLUGIN_ROOT read feeds both the
+// build-line message (resolveBuildLine) and the stale-runs report line's
+// fallback — set it once and confirm both derived values track that one
+// source, in the same run() call.
+test('#2070: the build line and the close-run hint derive from the same single CLAUDE_PLUGIN_ROOT read', async () => {
+  const root = tmpPluginRoot('6.120.0');
+  const project = tmpProject();
+  mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
+  const orig = process.env.CLAUDE_PLUGIN_ROOT;
+  try {
+    process.env.CLAUDE_PLUGIN_ROOT = root;
+    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const ctx = out.json.hookSpecificOutput.additionalContext;
+    assert.match(ctx, new RegExp(`claude-tweaks v6\\.120\\.0 @ ${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), 'build line uses the captured root');
+    assert.match(ctx, new RegExp(`${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/bin/hooks\\.js`), 'close-run hint uses the same captured root');
   } finally {
     if (orig === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
     else process.env.CLAUDE_PLUGIN_ROOT = orig;
@@ -999,6 +1056,54 @@ test('#1927: the SessionStart ports line omits CLAUDE_TWEAKS_LEASE from the pare
     const portsLine = lines.find((l) => l.startsWith('claude-tweaks: ports '));
     assert.match(portsLine, /^claude-tweaks: ports 20000-20009 \(PORT=20000 API_PORT=20001\)$/);
     assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /CLAUDE_TWEAKS_LEASE/);
+  } finally {
+    portsEnsureMod.ensure = original;
+  }
+});
+
+// #2027: a failed .env.local write is silent today — ensure() computes
+// envWriteError but session-start.js never reads it. AC1: the ports line is
+// followed by a warning naming the error; AC2 (the #1792 cases above) stays
+// unchanged when envWriteError is absent/null.
+test('#2027: an active result carrying envWriteError renders the ports line followed by an env-file-write warning', async () => {
+  const project = gitProject();
+  withPolicy(project, 'port-services: web,api\n');
+  const original = portsEnsureMod.ensure;
+  portsEnsureMod.ensure = async () => ({
+    active: true, base: 20000, ports: [20000, 20001, 20002, 20003, 20004, 20005, 20006, 20007, 20008, 20009],
+    vars: [['PORT', '20000'], ['API_PORT', '20001']], reallocated: null, envWriteError: 'EACCES: permission denied',
+  });
+  try {
+    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const lines = out.json.hookSpecificOutput.additionalContext.split('\n\n');
+    const portsLineIndex = lines.findIndex((l) => l.startsWith('claude-tweaks: ports 20000-20009'));
+    const warningLineIndex = lines.findIndex((l) => l.startsWith('claude-tweaks: ports — env file write failed'));
+    assert.notEqual(portsLineIndex, -1, 'the ports line still renders');
+    assert.notEqual(warningLineIndex, -1, 'the warning line renders');
+    assert.ok(warningLineIndex > portsLineIndex, 'the warning follows the ports line');
+    assert.match(
+      lines[warningLineIndex],
+      /^claude-tweaks: ports — env file write failed \(EACCES: permission denied\); the lease is recorded in the registry, re-run node ".*\/bin\/ports\.js" env after fixing the file$/,
+    );
+  } finally {
+    portsEnsureMod.ensure = original;
+  }
+});
+
+// #2027 AC1 (inactive branch guard): envWriteError must never render when
+// the result is not active — active gates the whole ports block already,
+// but this pins the guard explicitly against a stray active:false + stray
+// envWriteError combination.
+test('#2027: envWriteError on an inactive result never renders the warning', async () => {
+  const project = gitProject();
+  withPolicy(project, 'port-services: web\n');
+  const original = portsEnsureMod.ensure;
+  portsEnsureMod.ensure = async () => ({ active: false, envWriteError: 'should never be read' });
+  try {
+    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    if (out.json) {
+      assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /env file write failed/);
+    }
   } finally {
     portsEnsureMod.ensure = original;
   }

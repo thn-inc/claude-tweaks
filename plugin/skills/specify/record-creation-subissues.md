@@ -26,6 +26,8 @@ Deliverable-name-collisions section owns the check and the grep.
 
 **Scoring** — judge each sub-issue's `risk` and `size` (low/medium/high each) from its own Deliverables and Acceptance Criteria — blast radius and reversibility for `risk`, estimated size and file spread for `size` — per `_shared/work-record.md`'s Scoring axis, run once per sub-issue. The tiers become `$SUB_ISSUE_RISK`/`$SUB_ISSUE_SIZE` below.
 
+**Premise verification (#1769)** — run `_shared/premise-verification.md`'s check against this sub-issue's composed `## Current State`/`### Key Files` before Ceremony/Framing below: a contradicted claim is rewritten to what the tree shows now, before `gh issue create` / `writeRecord`; an unsettled or genuinely unverifiable one moves into a `## Gotchas` bullet carrying the literal `ASSUMPTION — verify at build:` prefix. Probes the checkout this decomposition is standing in, not `main`.
+
 **Ceremony** — invoke the canonical ceremony-check pattern (`_shared/ceremony-check-invocation.md`) against this sub-issue's own composed body — never a kept parent, which carries no `ceremony:*` label either. **This call site's delta:** per-leaf (once per sub-issue in the decomposition loop), without `#{n}` (no sub-issue number exists yet). The verdict becomes `$SUB_ISSUE_CEREMONY` below, written into the sub-issue's own create call — writeback happens via record creation itself, not a separate stamp.
 
 **Framing** — invoke `/claude-tweaks:challenge` in `framing-check` mode (`Skill(skill: "claude-tweaks:challenge", args: "framing-check")`) against this sub-issue's own composed body — never the parent, which carries no scoring labels either. On `FRAMING: solution-baked`, stamp `solution:unjustified` on the sub-issue and fold the RATIONALE's named assumptions into that sub-issue's `## Gotchas` bullets. On `FRAMING: open`, stamp nothing. The composed body — plus, under the origin-set carve-out above, the preserved `## Original request` block — is passed wrapped per `_shared/untrusted-record-content.md`.
@@ -75,44 +77,81 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/compose-record.js" "$SPECIFY_SUB_ISSUE_PAYLOAD" 
 
 Bootstrap the labels this run is about to apply before the first create (per `_shared/label-bootstrap.md`): `ready` plus every `risk:{tier}`/`size:{tier}`/`ceremony:{tier}` pair in use, plus `solution:unjustified` — and, under `work-types: labels`, the `type:{t}` pairs from `record.js`'s `TYPE_LABELS`, as with the parent.
 
+**Idempotency check-before-create (#2658)** — the same mechanical check the parent's own create call runs in `record-creation.md`, against this sub-issue's own fingerprint:
+
+```bash
+SPECIFY_SUB_ISSUE_EXISTING=$(node -e "
+  const { checkFingerprint } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+  const map = require('$SPECIFY_EXISTING_FINGERPRINTS');
+  const n = checkFingerprint(map, process.argv[1]);
+  console.log(n === null ? '' : n);
+" "${DESIGN_DOC_SLUG}:${UNIT_SLUG}")
+```
+
 **`work-backend: github-issues`** — same Type expression branch as the parent. The `recordPayload` call above never passes `solutionUnjustified`, so its `.labels` cover only `risk:{tier}`, `size:{tier}`, `ceremony:{tier}`, `ready`, and no `by:*` label — a decomposition is human-shaped work, not a health-skill filing. The `--label` flags below are exactly that set; `solution:unjustified` is added separately, below the create blocks, once the Framing verdict is known:
 
 ```bash
-SPECIFY_SUB_ISSUE_BODY=$(node -e "
-  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-  console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-sub-issue-body.md') || require('path').join(require('os').tmpdir(), 'specify-sub-issue-body.md'))
-")
-# work-types: native
-SUB_ISSUE_URL=$(gh issue create --title "$SUB_ISSUE_TITLE" --body-file "$SPECIFY_SUB_ISSUE_BODY" \
-  --type "$SUB_ISSUE_TYPE" \
-  --label "risk:$SUB_ISSUE_RISK" --label "size:$SUB_ISSUE_SIZE" --label "ceremony:$SUB_ISSUE_CEREMONY" --label ready)
+if [ -n "$SPECIFY_SUB_ISSUE_EXISTING" ]; then
+  SUB_ISSUE_NUM="$SPECIFY_SUB_ISSUE_EXISTING"
+  echo "Idempotency: #${SUB_ISSUE_NUM} already carries fingerprint ${DESIGN_DOC_SLUG}:${UNIT_SLUG} — skipping create." >&2
+else
+  SPECIFY_SUB_ISSUE_BODY=$(node -e "
+    const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
+    console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-sub-issue-body.md') || require('path').join(require('os').tmpdir(), 'specify-sub-issue-body.md'))
+  ")
+  # work-types: native
+  SUB_ISSUE_URL=$(gh issue create --title "$SUB_ISSUE_TITLE" --body-file "$SPECIFY_SUB_ISSUE_BODY" \
+    --type "$SUB_ISSUE_TYPE" \
+    --label "risk:$SUB_ISSUE_RISK" --label "size:$SUB_ISSUE_SIZE" --label "ceremony:$SUB_ISSUE_CEREMONY" --label ready)
 
-# work-types: labels
-SUB_ISSUE_URL=$(gh issue create --title "$SUB_ISSUE_TITLE" --body-file "$SPECIFY_SUB_ISSUE_BODY" \
-  --label "risk:$SUB_ISSUE_RISK" --label "size:$SUB_ISSUE_SIZE" --label "ceremony:$SUB_ISSUE_CEREMONY" --label ready \
-  --label "type:$SUB_ISSUE_TYPE")
+  # work-types: labels
+  SUB_ISSUE_URL=$(gh issue create --title "$SUB_ISSUE_TITLE" --body-file "$SPECIFY_SUB_ISSUE_BODY" \
+    --label "risk:$SUB_ISSUE_RISK" --label "size:$SUB_ISSUE_SIZE" --label "ceremony:$SUB_ISSUE_CEREMONY" --label ready \
+    --label "type:$SUB_ISSUE_TYPE")
 
-SUB_ISSUE_NUM=$(basename "$SUB_ISSUE_URL")
+  SUB_ISSUE_NUM=$(basename "$SUB_ISSUE_URL")
+
+  node -e "
+    const fs = require('fs');
+    const { recordFingerprint } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+    const map = require('$SPECIFY_EXISTING_FINGERPRINTS');
+    recordFingerprint(map, process.argv[1], Number(process.argv[2]));
+    fs.writeFileSync('$SPECIFY_EXISTING_FINGERPRINTS', JSON.stringify(map));
+  " "${DESIGN_DOC_SLUG}:${UNIT_SLUG}" "$SUB_ISSUE_NUM"
+fi
 ```
 
-When this sub-issue's Framing verdict (above) was `solution-baked`, add `--label "solution:unjustified"` to the create call; on `open` add nothing — the label is presence-only, and absence is the common case.
+When this sub-issue's Framing verdict (above) was `solution-baked`, add `--label "solution:unjustified"` to the create call; on `open` add nothing — the label is presence-only, and absence is the common case. Skip the label add entirely when the idempotency check above resolved to an existing number — its labels are already whatever the original create applied.
 
 **`work-backend: local-files`** — use `createRecord`, not `allocateId`+`writeRecord` separately, for the same concurrent-creation-race reason as the parent above. One call carries the same state as facets: `stage: 'ready'` instead of the `ready` label, `origin` omitted for the same no-`by:*` reason. `"$SPECIFY_SUB_ISSUE_BODY"` already carries the fingerprint marker, so the local write preserves it:
 
 ```bash
-SPECIFY_SUB_ISSUE_BODY=$(node -e "
-  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-  console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-sub-issue-body.md') || require('path').join(require('os').tmpdir(), 'specify-sub-issue-body.md'))
-")
-SUB_ISSUE_ID=$(node -e "const {createRecord}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
-  const body = require('fs').readFileSync(process.argv[7], 'utf8');
-  const record = createRecord('specs', {
-    slug: process.argv[1],
-    title: process.argv[2],
-    body,
-    facets: { type: process.argv[3], risk: process.argv[4], size: process.argv[5], ceremony: process.argv[6], stage: 'ready' }
-  });
-  console.log(record.id)" "$UNIT_SLUG" "$SUB_ISSUE_TITLE" "$SUB_ISSUE_TYPE" "$SUB_ISSUE_RISK" "$SUB_ISSUE_SIZE" "$SUB_ISSUE_CEREMONY" "$SPECIFY_SUB_ISSUE_BODY")
+if [ -n "$SPECIFY_SUB_ISSUE_EXISTING" ]; then
+  SUB_ISSUE_ID="$SPECIFY_SUB_ISSUE_EXISTING"
+  echo "Idempotency: record #${SUB_ISSUE_ID} already carries fingerprint ${DESIGN_DOC_SLUG}:${UNIT_SLUG} — skipping create." >&2
+else
+  SPECIFY_SUB_ISSUE_BODY=$(node -e "
+    const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
+    console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-sub-issue-body.md') || require('path').join(require('os').tmpdir(), 'specify-sub-issue-body.md'))
+  ")
+  SUB_ISSUE_ID=$(node -e "const {createRecord}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
+    const body = require('fs').readFileSync(process.argv[7], 'utf8');
+    const record = createRecord('specs', {
+      slug: process.argv[1],
+      title: process.argv[2],
+      body,
+      facets: { type: process.argv[3], risk: process.argv[4], size: process.argv[5], ceremony: process.argv[6], stage: 'ready' }
+    });
+    console.log(record.id)" "$UNIT_SLUG" "$SUB_ISSUE_TITLE" "$SUB_ISSUE_TYPE" "$SUB_ISSUE_RISK" "$SUB_ISSUE_SIZE" "$SUB_ISSUE_CEREMONY" "$SPECIFY_SUB_ISSUE_BODY")
+
+  node -e "
+    const fs = require('fs');
+    const { recordFingerprint } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+    const map = require('$SPECIFY_EXISTING_FINGERPRINTS');
+    recordFingerprint(map, process.argv[1], Number(process.argv[2]));
+    fs.writeFileSync('$SPECIFY_EXISTING_FINGERPRINTS', JSON.stringify(map));
+  " "${DESIGN_DOC_SLUG}:${UNIT_SLUG}" "$SUB_ISSUE_ID"
+fi
 ```
 
 Add a `facets.solutionUnjustified: true` key to the object above only when this sub-issue's Framing verdict (above) was `solution-baked`; omit the key entirely on `open` (absent, not null) — unlike `facets.ceremony`, which always gets a value the first time a record is shaped, `facets.solutionUnjustified` is genuinely absent on the common `open` case.

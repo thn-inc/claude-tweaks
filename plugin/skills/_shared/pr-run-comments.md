@@ -45,10 +45,14 @@ existing marker comment in place — it never appends a duplicate. A stale `verd
 above a fresh one would misinform a reader skimming the PR, so this is the one place in the
 plugin's PR-comment surface that edits rather than always-appends.
 
-1. **Find.** Resolve `{owner}/{repo}` once (`gh repo view --json nameWithOwner -q .nameWithOwner`), then:
+1. **Find.** Resolve `{host}`/`{owner}`/`{repo}` once (`gh repo view --json nameWithOwner,url` —
+   `{owner}/{repo}` from `nameWithOwner`, `{host}` from the returned `url`'s authority; a bare
+   `OWNER/REPO` handed to `--repo` is resolved by `gh` against its default host, `github.com`,
+   unless the value carries the host as `HOST/OWNER/REPO` — so every `--repo` below is the
+   host-qualified form), then:
 
    ```bash
-   gh pr view {pr-number} --repo {owner}/{repo} --json comments \
+   gh pr view {pr-number} --repo {host}/{owner}/{repo} --json comments \
      --jq '.comments[] | select(.body | startswith("<!-- run-comment: {kind} -->")) | .id'
    ```
 
@@ -62,17 +66,19 @@ plugin's PR-comment surface that edits rather than always-appends.
    anomaly; do not attempt to reconcile or delete the extra here.
 
 2. **Found → update in place**, preserving the comment's identity (same GraphQL id, no new
-   comment created, no reordering in the thread):
+   comment created, no reordering in the thread). `--hostname {host}` is required here even
+   though `--repo` is host-qualified elsewhere — the two flags are independent in `gh`, and
+   `gh api graphql` targets `github.com` unless `--hostname` is given:
 
    ```bash
-   gh api graphql -f query='mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}' \
+   gh api graphql --hostname {host} -f query='mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}' \
      -f id="{found-id}" -F body=@/tmp/{kind}-comment-{n}.md
    ```
 
 3. **Not found → create**, body file already carries the kind's marker as its first line:
 
    ```bash
-   gh pr comment {pr-number} --repo {owner}/{repo} --body-file /tmp/{kind}-comment-{n}.md
+   gh pr comment {pr-number} --repo {host}/{owner}/{repo} --body-file /tmp/{kind}-comment-{n}.md
    ```
 
 **On failure of either the find or the write** (network, auth, or a rate limit classified per `_shared/github-rate-limit.md`): log to `decisions.md`

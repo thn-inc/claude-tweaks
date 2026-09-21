@@ -1,4 +1,4 @@
-// bin/lib/hooks/post-tool-use.js — E2: commit breadcrumbs (log tier) + closing-keyword check (warn tier) + design-doc capture nudge (warn tier) + plugin-version-bump release-follow-up nudge (warn tier) + EnterWorktree staleness backstop (warn tier) + post-teardown re-anchor backstop (warn tier, see checkPostTeardownReanchor below) + ad-hoc-session run-dir stamping (log tier, see stampAdHocRunDir below) + skill-invocation ledger (log tier, see ./skill-invocation.js) + AskUserQuestion ledger (log tier, see logAskUserQuestion below).
+// bin/lib/hooks/post-tool-use.js — E2: commit breadcrumbs (log tier) + closing-keyword check (warn tier) + design-doc capture nudge (warn tier) + EnterWorktree staleness backstop (warn tier) + post-teardown re-anchor backstop (warn tier, see checkPostTeardownReanchor below) + ad-hoc-session run-dir stamping (log tier, see stampAdHocRunDir below) + skill-invocation ledger (log tier, see ./skill-invocation.js) + AskUserQuestion ledger (log tier, see logAskUserQuestion below).
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -16,7 +16,7 @@ const preToolUse = require('./pre-tool-use');
 // check" identically, so they read `.stdout` and ignore `.failure`. The
 // indeterminate/definitive distinction runGit now draws matters only where a
 // gate acts on the answer (worktree-detect -> pre-tool-use's worktree gate).
-const { runGit } = require('./git-exec');
+const { runGit, isIndeterminate } = require('./git-exec');
 const { ISSUE_REF_SOURCE } = require('../issue-branch-tracking');
 // Reused rather than reimplemented a third time (CLAUDE.md's don't-duplicate
 // rule) — `resolveIntegrationBranch`'s fallback profile (no explicit arg,
@@ -179,138 +179,6 @@ function checkDesignDocWrite(ctx) {
         "aren't tracked anywhere else, and will be lost once this conversation clears.",
     },
   };
-}
-
-// Release-follow-up nudge (warn tier). This repo's release convention
-// (CLAUDE.md's "Releasing (two repos)") hangs two steps off a plugin.json
-// version bump: a CHANGELOG.md entry, and mirroring the version into the
-// separate claude-tweaks-marketplace repo's marketplace.json. The mirror was
-// missed twice in practice before this check existed; the changelog was missed
-// 103 times out of 145 releases, because until the coverage gate in
-// tests/changelog-coverage.test.js nothing checked and the convention never
-// actually named the step.
-//
-// This nudge is the cheap half. It fires after the fact and can be ignored, so
-// it complements rather than replaces the gate — the gate is what makes an
-// omission fail. Fires unconditionally whenever a
-// commit touches the plugin manifest at all, without trying to
-// parse whether the change was actually a version bump (same "cheap false
-// positive, no smart detection" precedent checkClosingKeyword and
-// checkDesignDocWrite set above) — plugin.json changes for any other reason
-// are rare enough that a false-positive reminder costs nothing.
-//
-// Scoped to this specific project via the committed file's own `name` field
-// rather than the path alone: a `.claude-plugin/plugin.json` is the standard
-// manifest for ANY Claude Code plugin repo, so an unscoped check would
-// misfire with an irrelevant release-follow-up reminder in a completely
-// unrelated plugin repo that happens to have this plugin active.
-//
-// Both manifest spellings are in play: #418 moved this payload under `plugin/`,
-// and the parent-commit comparison below reaches back across that boundary.
-const { MANIFEST_PATHS, readManifestAtRef } = require('../manifest-path');
-const { RECORD_PATH: SHIPPED_RECORD_PATH } = require('../shipped-record');
-
-// Release-bypass check (#307). `bin/lib/release/compose.js` is the only
-// writer of the manifest's `version` field in code, reached only through
-// `bin/lib/release/run.js`'s own precheck/ancestry-check chain — a hand-edit
-// via Edit/Write bypasses both entirely, with no signal today. A commit that
-// actually went through `bin/release.js` always carries this exact shape
-// (CLAUDE.md's "Commit message style", applied to the release commit
-// specifically). Anything touching the version field without it skipped the
-// script.
-const RELEASE_COMMIT_MESSAGE_RE = /^Release v[\d.]+ — /;
-
-function checkPluginVersionBump(recentByDir) {
-  for (const [dir, commits] of recentByDir) {
-    for (const commit of commits) {
-      // Same freshness guard as checkClosingKeyword — don't judge a stale
-      // HEAD left over from a `git commit` that never actually landed.
-      if (commit.ts === null || Math.abs(Date.now() / 1000 - commit.ts) > COMMIT_FRESHNESS_WINDOW_SECONDS) continue;
-      if (!commit.hash) continue;
-      const { stdout: changedFiles } = runGit(['diff-tree', '--no-commit-id', '--name-only', '-r', commit.hash], dir);
-      if (changedFiles === null) continue;
-      const changedPaths = changedFiles.split('\n');
-      const touchedPath = MANIFEST_PATHS.find((p) => changedPaths.includes(p));
-      if (!touchedPath) continue;
-      const { stdout: manifestAtCommit } = runGit(['show', `${commit.hash}:${touchedPath}`], dir);
-      if (manifestAtCommit === null) continue;
-      let manifest;
-      try {
-        manifest = JSON.parse(manifestAtCommit);
-      } catch {
-        continue;
-      }
-      if (manifest.name !== 'claude-tweaks') continue;
-
-      // Name only what is actually outstanding. A blanket reminder that repeats
-      // three steps every time is the kind a reader learns to skim — and the
-      // changelog step was skimmed for 103 of 145 releases while a hook fired on
-      // this exact trigger (`[IL-94]`). Both same-commit obligations are
-      // readable from the commit itself, so check them instead of listing them.
-      const version = typeof manifest.version === 'string' ? manifest.version : null;
-      const outstanding = [];
-
-      const { stdout: changelogAtCommit } = runGit(['show', `${commit.hash}:CHANGELOG.md`], dir);
-      if (version && (changelogAtCommit === null || !changelogAtCommit.includes(`## v${version} — `))) {
-        outstanding.push(`CHANGELOG.md needs a "## v${version} — {summary}" entry directly under the "# Changelog" header`);
-      }
-
-      const { stdout: recordAtCommit } = runGit(['show', `${commit.hash}:${SHIPPED_RECORD_PATH}`], dir);
-      if (version && (recordAtCommit === null || !new RegExp(`^${version.replace(/\./g, '\\.')}\t`, 'm').test(recordAtCommit))) {
-        outstanding.push(`${SHIPPED_RECORD_PATH} needs a "${version}\t{YYYY-MM-DD}\trelease" line`);
-      }
-
-      // Release-bypass check (#307): compare against the PARENT commit's
-      // manifest, JSON-parsed the same way as the current commit — not a
-      // textual/staged-hunk heuristic, and not index/staged state (this
-      // handler runs PostToolUse, after the commit already landed). Skip
-      // merge commits: a legitimate merge carrying a concurrent release's
-      // version bump must not read as a bypass. `commit.hash^` resolves to
-      // the first parent; for a root commit (no parent) `git show` fails,
-      // `parentManifestRaw` stays null, and no comparison is made — fails
-      // open rather than misreading "no prior version" as a bypass.
-      if (version) {
-        const { stdout: parentsRaw } = runGit(['show', '-s', '--format=%P', commit.hash], dir);
-        const parentHashes = parentsRaw === null ? [] : parentsRaw.trim().split(/\s+/).filter(Boolean);
-        if (parentHashes.length <= 1) {
-          // Both spellings: on the cutover commit itself the parent still carries
-          // the manifest at the old path, and reading only the new one there would
-          // fail open on exactly the commit most likely to be hand-edited.
-          const { text: parentManifestRaw } = readManifestAtRef(
-            (p) => runGit(['show', `${commit.hash}^:${p}`], dir).stdout,
-          );
-          let parentVersion = null;
-          if (parentManifestRaw !== null) {
-            try {
-              const parentManifest = JSON.parse(parentManifestRaw);
-              parentVersion = typeof parentManifest.version === 'string' ? parentManifest.version : null;
-            } catch { /* unparseable parent manifest -> no comparison, fail open */ }
-          }
-          if (parentVersion !== null && parentVersion !== version && !RELEASE_COMMIT_MESSAGE_RE.test(commit.message)) {
-            outstanding.push('`plugin/bin/release.js` appears to have been bypassed for this version change');
-          }
-        }
-      }
-
-      // Unverifiable from here — it lives in a separate repository. Since #418 the
-      // catalog entry is a git-subdir source pinned by commit sha and carries no
-      // `version` field at all, so the step is a re-pin, not a version copy.
-      outstanding.push(
-        "re-pin claude-tweaks-marketplace's marketplace.json at this release commit " +
-        '(plugins[].source.sha — the entry carries no version field)',
-      );
-
-      return {
-        json: {
-          systemMessage:
-            `claude-tweaks: this commit touched ${touchedPath}${version ? ` (now ${version})` : ''}. ` +
-            `Outstanding from CLAUDE.md's "Releasing (two repos)": ${outstanding.join('; ')}. ` +
-            'The first two belong in this commit — amend rather than following up, or the suite goes red.',
-        },
-      };
-    }
-  }
-  return null;
 }
 
 // EnterWorktree staleness backstop (#307, warn tier). `skills/_shared/
@@ -491,6 +359,66 @@ function logWorktreeStalenessEvent(ctx, data) {
   const ownedRun = ctx.ownedRun || {};
   if (!ownedRun.dir) return;
   ctxLib.appendEvent(ownedRun.dir, 'worktree-staleness', data, ownedRun.attribution);
+}
+
+// Windows `core.longpaths` proactive nudge (#1782, warn tier). `_shared/
+// worktree-setup.md`'s Post-creation catch-up documents the `Filename too
+// long` failure mode and its `core.longpaths` fix reactively, i.e. only
+// after a fetch/merge has already failed that way. This hook nudges
+// proactively, right after worktree creation — win32 only, since neither the
+// setting nor the failure mode exists on any other platform, and this hook
+// fires on every PostToolUse event across every session in the harness, so a
+// `git config` spawn on a non-Windows platform would be pure waste for a
+// check that is meaningless there. Warn only, matching the sibling
+// staleness check's own #307 Non-Goals: this hook never sets the config
+// itself, only reads it and reports.
+function logWindowsLongpathsEvent(ctx, data) {
+  const ownedRun = ctx.ownedRun || {};
+  if (!ownedRun.dir) return;
+  ctxLib.appendEvent(ownedRun.dir, 'windows-longpaths', data, ownedRun.attribution);
+}
+
+function checkWindowsLongpaths(ctx) {
+  if (ctx.input.tool_name !== 'EnterWorktree') return null;
+  const platform = ctx.platform || process.platform;
+  if (platform !== 'win32') return null;
+  try {
+    const worktreePath = resolveCreatedWorktreePath(ctx);
+    if (!worktreePath) return null; // couldn't resolve where we landed — nothing to check, fail open
+
+    // Read-only: `--get` never writes. A non-zero exit (key unset) and an
+    // explicit `false` are both treated as "not enabled" — only a literal
+    // `true` skips the nudge.
+    const result = runGit(['config', '--get', 'core.longpaths'], worktreePath);
+    // An unset key is a definitive answer from git itself (`config --get`
+    // exits 1 with no output) — classified 'git-error', not indeterminate.
+    // Only a real check failure (timeout/spawn/no-git — the question was
+    // never actually answered) skips the "not enabled" assertion; a
+    // definitive non-'true' answer still falls through to the 'unset'
+    // branch below, unchanged.
+    if (isIndeterminate(result.failure)) {
+      logWindowsLongpathsEvent(ctx, { worktree: worktreePath, result: 'check-failed', reason: result.failure });
+      return null;
+    }
+    if (result.stdout === 'true') {
+      logWindowsLongpathsEvent(ctx, { worktree: worktreePath, result: 'enabled' });
+      return null;
+    }
+
+    logWindowsLongpathsEvent(ctx, { worktree: worktreePath, result: 'unset', value: result.stdout });
+    return {
+      json: {
+        systemMessage:
+          'claude-tweaks: core.longpaths is not enabled on this Windows checkout. A fetch/merge ' +
+          'against a deeply nested pipeline path (.claude-tweaks/pipelines/**/spec-*/work/*.md) can ' +
+          'fail with "Filename too long" — see skills/_shared/worktree-setup.md\'s Post-creation ' +
+          'catch-up ("Windows: `Filename too long`") for the fix (`git config core.longpaths true`) ' +
+          'and the recovery steps if a merge already failed this way.',
+      },
+    };
+  } catch {
+    return null; // never break a session over a nudge
+  }
 }
 
 function checkWorktreeStaleness(ctx) {
@@ -731,12 +659,6 @@ function run(ctx) {
   const designDocNudge = checkDesignDocWrite(ctx);
   if (designDocNudge) return designDocNudge;
 
-  // Plugin-version-bump release-follow-up nudge (warn tier) — deliberately NOT gated on ctx.runDir.
-  if (hasCommand) {
-    const versionBumpNudge = checkPluginVersionBump(recentByDir);
-    if (versionBumpNudge) return versionBumpNudge;
-  }
-
   // Ad-hoc-session run-dir stamping (log tier, side effect only — no
   // message). Runs before the staleness check below so a formal pipeline's
   // own record-worktree call (should one race this same EnterWorktree
@@ -744,6 +666,11 @@ function run(ctx) {
   // compete, since stampAdHocRunDir no-ops the instant ctx.ownedRun.dir is
   // already set.
   stampAdHocRunDir(ctx);
+
+  // Windows core.longpaths proactive nudge (#1782, warn tier) — before the
+  // staleness fetch below, win32 only; non-Windows sessions pay nothing.
+  const longpathsNudge = checkWindowsLongpaths(ctx);
+  if (longpathsNudge) return longpathsNudge;
 
   // EnterWorktree staleness backstop (warn tier) — deliberately NOT gated on
   // ctx.runDir (matches this file's other nudges); its own log-tier

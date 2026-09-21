@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   recordPayload, TYPE_LABELS, CLASSIFICATION_SCORING, LABELS, DEFER_REASONS,
-  extractFingerprint, extractVerifiedAsOf, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
+  extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
   buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, buildNativeSubIssuesQuery,
   buildNativeParentQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
@@ -184,6 +184,48 @@ test('extractFingerprint prefers the new work-fingerprint marker when both are p
   );
 });
 
+// (#2658) checkFingerprint/recordFingerprint — the mechanical replacement
+// for record-creation.md's prose-only "re-check the fingerprint map before
+// each create" idempotency instruction.
+test('checkFingerprint: returns the existing number for a fingerprint already in the map', () => {
+  assert.strictEqual(checkFingerprint({ 'doc:parent': 42 }, 'doc:parent'), 42);
+});
+
+test('checkFingerprint: returns null for a fingerprint not in the map (genuinely new, simulating a fresh fingerprint)', () => {
+  assert.strictEqual(checkFingerprint({ 'doc:parent': 42 }, 'doc:unit-a'), null);
+});
+
+test('checkFingerprint: returns null (never throws) on a missing/empty/non-object map or a malformed fingerprint', () => {
+  assert.strictEqual(checkFingerprint(null, 'doc:parent'), null);
+  assert.strictEqual(checkFingerprint(undefined, 'doc:parent'), null);
+  assert.strictEqual(checkFingerprint({}, 'doc:parent'), null);
+  assert.strictEqual(checkFingerprint({ 'doc:parent': 42 }, ''), null);
+  assert.strictEqual(checkFingerprint({ 'doc:parent': 42 }, undefined), null);
+});
+
+test('checkFingerprint: does not false-positive on Object.prototype properties (hasOwnProperty guard)', () => {
+  assert.strictEqual(checkFingerprint({ 'doc:parent': 42 }, 'toString'), null);
+  assert.strictEqual(checkFingerprint({ 'doc:parent': 42 }, 'constructor'), null);
+});
+
+test('recordFingerprint: mutates the map in place, so a caller re-checking the SAME map object sees the update immediately (same-run collision detection, simulating a resumed run)', () => {
+  const map = { 'doc:parent': 1 };
+  recordFingerprint(map, 'doc:unit-a', 2);
+  assert.deepStrictEqual(map, { 'doc:parent': 1, 'doc:unit-a': 2 });
+  // Simulating a resumed decomposition run against this same map: a second
+  // lookup of the just-recorded fingerprint now resolves without a create.
+  assert.strictEqual(checkFingerprint(map, 'doc:unit-a'), 2);
+});
+
+test('recordFingerprint: rejects a malformed map, fingerprint, or number rather than silently writing a corrupt entry', () => {
+  assert.throws(() => recordFingerprint(null, 'doc:parent', 1), TypeError);
+  assert.throws(() => recordFingerprint({}, '', 1), TypeError);
+  assert.throws(() => recordFingerprint({}, 'doc:parent', 0), TypeError);
+  assert.throws(() => recordFingerprint({}, 'doc:parent', -1), TypeError);
+  assert.throws(() => recordFingerprint({}, 'doc:parent', 'not-a-number'), TypeError);
+  assert.throws(() => recordFingerprint({}, 'doc:parent', 1.5), TypeError);
+});
+
 test('extractFingerprint reads the legacy harness-health-fingerprint marker', () => {
   assert.strictEqual(extractFingerprint('x\n<!-- harness-health-fingerprint: hh:1 -->'), 'hh:1');
 });
@@ -220,8 +262,8 @@ test('extractFingerprint returns null for null, undefined, and empty-string bodi
 
 test('parseRecordFacets: by:capture + parked', () => {
   assert.deepStrictEqual(parseRecordFacets(['by:capture', 'parked']), {
-    origin: 'capture', risk: null, size: null, ceremony: null, solutionUnjustified: false, needsDefinition: false, priority: null, stage: 'parked',
-    grants: { build: false, merge: false }, bot: { inProgress: false, blocked: false },
+    origin: 'capture', risk: null, size: null, ceremony: null, solutionUnjustified: false, breaking: false, needsDefinition: false, priority: null, stage: 'parked',
+    grants: { build: false, merge: false }, bot: { inProgress: false, blocked: false, parked: false },
     acceptance: null, isParentIssue: false, notPlanned: false, shapedHeadless: false,
   });
 });
@@ -230,7 +272,7 @@ test('parseRecordFacets: ready + auto:build + bot:in-progress', () => {
   const result = parseRecordFacets(['ready', 'auto:build', 'bot:in-progress']);
   assert.strictEqual(result.stage, 'ready');
   assert.deepStrictEqual(result.grants, { build: true, merge: false });
-  assert.deepStrictEqual(result.bot, { inProgress: true, blocked: false });
+  assert.deepStrictEqual(result.bot, { inProgress: true, blocked: false, parked: false });
   assert.strictEqual(result.origin, null);
 });
 
@@ -239,15 +281,20 @@ test('parseRecordFacets: auto:build + auto:merge grants both build and merge', (
   assert.deepStrictEqual(result.grants, { build: true, merge: true });
 });
 
-test('parseRecordFacets: bot:blocked sets bot.blocked without bot.inProgress', () => {
+test('parseRecordFacets: bot:blocked sets bot.blocked without bot.inProgress or bot.parked', () => {
   const result = parseRecordFacets(['bot:blocked']);
-  assert.deepStrictEqual(result.bot, { inProgress: false, blocked: true });
+  assert.deepStrictEqual(result.bot, { inProgress: false, blocked: true, parked: false });
+});
+
+test('parseRecordFacets: bot:parked sets bot.parked without bot.inProgress or bot.blocked', () => {
+  const result = parseRecordFacets(['bot:parked']);
+  assert.deepStrictEqual(result.bot, { inProgress: false, blocked: false, parked: true });
 });
 
 test('parseRecordFacets: empty label list', () => {
   assert.deepStrictEqual(parseRecordFacets([]), {
-    origin: null, risk: null, size: null, ceremony: null, solutionUnjustified: false, needsDefinition: false, priority: null, stage: 'backlog',
-    grants: { build: false, merge: false }, bot: { inProgress: false, blocked: false },
+    origin: null, risk: null, size: null, ceremony: null, solutionUnjustified: false, breaking: false, needsDefinition: false, priority: null, stage: 'backlog',
+    grants: { build: false, merge: false }, bot: { inProgress: false, blocked: false, parked: false },
     acceptance: null, isParentIssue: false, notPlanned: false, shapedHeadless: false,
   });
 });
@@ -551,6 +598,13 @@ test('buildLinkedPRQuery aliases each number and requests closedByPullRequestsRe
   assert.match(q, /repository\(owner:\$owner,name:\$repo\)/);
 });
 
+test('buildLinkedPRQuery also requests the cross-reference timeline, same-repo PR sources only (#1984)', () => {
+  const q = buildLinkedPRQuery([1224]);
+  assert.match(q, /timelineItems\(itemTypes:\[CROSS_REFERENCED_EVENT\], first:20\)/);
+  assert.match(q, /\.\.\. on CrossReferencedEvent \{ source \{ \.\.\. on PullRequest/);
+  assert.match(q, /merged mergedAt repository \{ nameWithOwner \}/);
+});
+
 test('buildLinkedPRQuery returns null for an empty array', () => {
   assert.strictEqual(buildLinkedPRQuery([]), null);
 });
@@ -658,6 +712,7 @@ test('specShapedBody composes the gate-verified skeleton with string sections', 
     currentState: 'the state',
     deliverables: 'the work',
     acceptanceCriteria: 'the proof',
+    releaseNote: 'the note',
     filedBy: '/claude-tweaks:harness-health',
   });
   assert.strictEqual(body, [
@@ -668,6 +723,8 @@ test('specShapedBody composes the gate-verified skeleton with string sections', 
     'the work',
     '## Acceptance Criteria',
     'the proof',
+    '## Release Note',
+    'the note',
     '_Filed by `/claude-tweaks:harness-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._',
   ].join('\n\n'));
 });
@@ -678,15 +735,31 @@ test('specShapedBody renders array sections as blank-line-separated blocks', () 
     currentState: ['block one', 'block two'],
     deliverables: 'd',
     acceptanceCriteria: 'a',
+    releaseNote: 'r',
     filedBy: '/claude-tweaks:code-health',
   });
   assert.ok(body.includes('## Current State\n\nblock one\n\nblock two\n\n## Deliverables'));
 });
 
 test('specShapedBody throws on a missing or empty section', () => {
-  assert.throws(() => specShapedBody({ header: 'h', currentState: '', deliverables: 'd', acceptanceCriteria: 'a', filedBy: 'f' }), /currentState/);
-  assert.throws(() => specShapedBody({ header: 'h', currentState: 'c', deliverables: 'd', acceptanceCriteria: 'a' }), /filedBy/);
-  assert.throws(() => specShapedBody({ header: 'h', currentState: [], deliverables: 'd', acceptanceCriteria: 'a', filedBy: 'f' }), /currentState/);
+  assert.throws(() => specShapedBody({ header: 'h', currentState: '', deliverables: 'd', acceptanceCriteria: 'a', releaseNote: 'r', filedBy: 'f' }), /currentState/);
+  assert.throws(() => specShapedBody({ header: 'h', currentState: 'c', deliverables: 'd', acceptanceCriteria: 'a', releaseNote: 'r' }), /filedBy/);
+  assert.throws(() => specShapedBody({ header: 'h', currentState: [], deliverables: 'd', acceptanceCriteria: 'a', releaseNote: 'r', filedBy: 'f' }), /currentState/);
+});
+
+test('specShapedBody throws when releaseNote is missing or empty, naming the section', () => {
+  assert.throws(() => specShapedBody({ header: 'h', currentState: 'c', deliverables: 'd', acceptanceCriteria: 'a', filedBy: 'f' }), /releaseNote/);
+  assert.throws(() => specShapedBody({ header: 'h', currentState: 'c', deliverables: 'd', acceptanceCriteria: 'a', releaseNote: '', filedBy: 'f' }), /releaseNote/);
+});
+
+test('specShapedBody renders the Release Note section, including a plain "no user-visible change" phrasing', () => {
+  const body = specShapedBody({
+    header: 'h', currentState: 'c', deliverables: 'd', acceptanceCriteria: 'a', filedBy: 'f',
+    releaseNote: 'No user-visible change — internal code-quality fix.',
+  });
+  assert.ok(body.includes('## Release Note\n\nNo user-visible change — internal code-quality fix.'));
+  // Release Note renders after Acceptance Criteria and before the footer.
+  assert.ok(/## Acceptance Criteria\n\na\n\n## Release Note/.test(body));
 });
 
 test('parseSubIssues reads a parent task list', () => {
@@ -830,12 +903,14 @@ test('recordPayload writes both the HTML-comment marker and the plain-text compa
 
 // --- specShapedBody provenance / footer / openQuestion (#623) ---
 
-const BASE = { currentState: 'c', deliverables: 'd', filedBy: 'x' };
+const BASE = {
+  currentState: 'c', deliverables: 'd', filedBy: 'x', releaseNote: 'r',
+};
 
 test('specShapedBody: no new args is byte-identical to the pre-change composition (health parity)', () => {
   const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a' });
   assert.strictEqual(body, [
-    'H', '## Current State', 'c', '## Deliverables', 'd', '## Acceptance Criteria', 'a',
+    'H', '## Current State', 'c', '## Deliverables', 'd', '## Acceptance Criteria', 'a', '## Release Note', 'r',
     '_Filed by `x`. Close to resolve; label `wontfix` to suppress future reports of this finding._',
   ].join('\n\n'));
 });
@@ -865,7 +940,7 @@ test('specShapedBody: custom footer replaces the default; null omits it entirely
   assert.ok(custom.endsWith('via specShapedBody._'));
   assert.ok(!custom.includes('wontfix'));
   const none = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', footer: null });
-  assert.ok(none.endsWith('\n\na'));
+  assert.ok(none.endsWith('\n\nr'));
 });
 
 test('specShapedBody: openQuestion renders in place of Acceptance Criteria; empty header renders nothing', () => {
@@ -881,8 +956,8 @@ test('specShapedBody: acceptanceCriteria and openQuestion are mutually exclusive
 });
 
 test('specShapedBody: the required sections still throw when empty, naming the section', () => {
-  assert.throws(() => specShapedBody({ header: 'H', currentState: '', deliverables: 'd', acceptanceCriteria: 'a', filedBy: 'x' }), /currentState/);
-  assert.throws(() => specShapedBody({ header: 'H', currentState: 'c', deliverables: 'd', acceptanceCriteria: 'a' }), /filedBy/);
+  assert.throws(() => specShapedBody({ header: 'H', currentState: '', deliverables: 'd', acceptanceCriteria: 'a', releaseNote: 'r', filedBy: 'x' }), /currentState/);
+  assert.throws(() => specShapedBody({ header: 'H', currentState: 'c', deliverables: 'd', acceptanceCriteria: 'a', releaseNote: 'r' }), /filedBy/);
   assert.throws(() => specShapedBody({ header: 'H', currentState: 'c', deliverables: 'd', openQuestion: '' , filedBy: 'x'}), /exactly one|openQuestion/);
 });
 
@@ -896,7 +971,7 @@ test('specShapedBody: header plus Trigger line renders first, before provenance'
 test('specShapedBody: omitting verifiedAsOf is byte-identical to the pre-change composition', () => {
   const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a' });
   assert.strictEqual(body, [
-    'H', '## Current State', 'c', '## Deliverables', 'd', '## Acceptance Criteria', 'a',
+    'H', '## Current State', 'c', '## Deliverables', 'd', '## Acceptance Criteria', 'a', '## Release Note', 'r',
     '_Filed by `x`. Close to resolve; label `wontfix` to suppress future reports of this finding._',
   ].join('\n\n'));
 });
@@ -944,4 +1019,62 @@ test('extractVerifiedAsOf: null when absent, when body is empty, and for non-str
 test('extractVerifiedAsOf: is line-anchored — prose mentioning a commit elsewhere does not match', () => {
   const body = 'See commit abc1234 for background.\n\n## Current State\nx';
   assert.strictEqual(extractVerifiedAsOf(body), null);
+});
+
+// --- specShapedBody / extractPremiseCheck (#1829) ---
+
+test('specShapedBody: omitting premiseCheck is byte-identical to the pre-change composition', () => {
+  const body = specShapedBody({
+    header: 'H', ...BASE, acceptanceCriteria: 'a', verifiedAsOf: 'abcdef1',
+  });
+  assert.ok(!body.includes('Premise-check:'));
+});
+
+test('specShapedBody: premiseCheck renders right after Verified-as-of, before Origin', () => {
+  const body = specShapedBody({
+    header: 'H', ...BASE, acceptanceCriteria: 'a', verifiedAsOf: 'abcdef1', premiseCheck: 'test $(wc -l < CLAUDE.md) -gt 150', provenance: { origin: 'o' },
+  });
+  assert.ok(body.startsWith('H\n\nVerified-as-of: abcdef1\n\nPremise-check: test $(wc -l < CLAUDE.md) -gt 150\n\nOrigin: o\n\n## Current State'));
+});
+
+test('specShapedBody: premiseCheck alone (no verifiedAsOf) renders with no stray blanks', () => {
+  const body = specShapedBody({ ...BASE, acceptanceCriteria: 'a', premiseCheck: 'test 1 -gt 0' });
+  assert.ok(body.startsWith('Premise-check: test 1 -gt 0\n\n## Current State'));
+});
+
+test('specShapedBody: premiseCheck rejects a multi-line command', () => {
+  assert.throws(
+    () => specShapedBody({
+      ...BASE, acceptanceCriteria: 'a', premiseCheck: 'line one\nline two',
+    }),
+    /premiseCheck must be a single-line command/,
+  );
+});
+
+test('extractPremiseCheck: reads the command back off a composed body', () => {
+  const body = specShapedBody({
+    header: 'H', ...BASE, acceptanceCriteria: 'a', premiseCheck: 'test $(wc -l < CLAUDE.md) -gt 150',
+  });
+  assert.strictEqual(extractPremiseCheck(body), 'test $(wc -l < CLAUDE.md) -gt 150');
+});
+
+test('extractPremiseCheck: null when absent, when body is empty, and for non-string input', () => {
+  assert.strictEqual(extractPremiseCheck('## Current State\nno premise check here'), null);
+  assert.strictEqual(extractPremiseCheck(''), null);
+  assert.strictEqual(extractPremiseCheck(null), null);
+  assert.strictEqual(extractPremiseCheck(undefined), null);
+});
+
+test('parseRecordFacets: breaking label sets facets.breaking to true (presence-only Compatibility axis, #2251)', () => {
+  assert.strictEqual(parseRecordFacets(['breaking']).breaking, true);
+  assert.strictEqual(parseRecordFacets([{ name: 'breaking' }]).breaking, true);
+});
+
+test('parseRecordFacets: facets.breaking defaults to false, never undefined', () => {
+  assert.strictEqual(parseRecordFacets([]).breaking, false);
+  assert.strictEqual(parseRecordFacets(['ready', 'type:feature']).breaking, false);
+});
+
+test('LABELS.BREAKING is exported and matches the canonical bootstrap row', () => {
+  assert.strictEqual(LABELS.BREAKING, 'breaking');
 });

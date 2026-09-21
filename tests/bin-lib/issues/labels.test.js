@@ -62,6 +62,16 @@ test('parent-issue is exported as a LABELS constant matching the canonical boots
   );
 });
 
+test('breaking is bootstrappable with a description within the cap and exported as LABELS.BREAKING (#2251)', () => {
+  const row = canonicalLabelsFromBootstrapDoc().find(([name]) => name === 'breaking');
+  assert.ok(row, 'label-bootstrap.md must carry breaking in LABELS_JSON');
+  const [, description] = row;
+  const payload = ensureLabelPayload('breaking', description);
+  assert.strictEqual(payload.name, 'breaking');
+  assert.ok(payload.description.length <= 100);
+  assert.strictEqual(LABELS.BREAKING, 'breaking');
+});
+
 // Reads skills/_shared/label-bootstrap.md's own "Canonical LABELS_JSON" fence live, so this
 // test can never silently drift from the descriptions every real `gh label create` bootstrap
 // flow actually uses (see the [reuse] finding this replaces — 7 of these rows used to be

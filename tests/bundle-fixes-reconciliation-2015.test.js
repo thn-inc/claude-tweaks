@@ -4,9 +4,11 @@
 // reconciled against manifest.yml outcomes before merge, never left as the
 // draft-time "every spec assumed to complete" list:
 //
-// - plugin/skills/_shared/pr-early-run-lifecycle.md — the "Pre-merge
-//   title/description refresh" section's new Fixes-block rewrite step, and
-//   the Step 3 template's fixes-start/fixes-end delimiter markers.
+// - plugin/skills/_shared/pr-early-run-lifecycle.md — the Step 3 template's
+//   fixes-start/fixes-end delimiter markers.
+// - plugin/skills/_shared/pr-checklist-refresh.md — the "Pre-merge
+//   title/description refresh" section's new Fixes-block rewrite step (#2002
+//   split this section out of pr-early-run-lifecycle.md into its own file).
 // - plugin/skills/flow/multispec-review-console.md — Shared teardown step 2,
 //   which must derive `{issue-list}` from the manifest's `complete` specs
 //   only, never the full `specs[].id` list.
@@ -32,6 +34,7 @@ const path = require('node:path');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const PR_EARLY_PATH = path.join(REPO_ROOT, 'plugin', 'skills', '_shared', 'pr-early-run-lifecycle.md');
+const PR_CHECKLIST_REFRESH_PATH = path.join(REPO_ROOT, 'plugin', 'skills', '_shared', 'pr-checklist-refresh.md');
 const REVIEW_CONSOLE_PATH = path.join(REPO_ROOT, 'plugin', 'skills', 'flow', 'multispec-review-console.md');
 const PR_FIRST_MERGE_PATH = path.join(REPO_ROOT, 'plugin', 'skills', '_shared', 'pr-first-merge.md');
 
@@ -48,8 +51,8 @@ test('#2015: pr-early-run-lifecycle.md Step 3 template wraps Fixes in fixes-star
     'the Dual-marker scheme table must list the fixes-block end marker pair');
 });
 
-test('#2015: pr-early-run-lifecycle.md Pre-merge refresh rewrites the Fixes block from manifest.yml outcomes', () => {
-  const text = norm(read(PR_EARLY_PATH));
+test('#2015: pr-checklist-refresh.md Pre-merge refresh rewrites the Fixes block from manifest.yml outcomes', () => {
+  const text = norm(read(PR_CHECKLIST_REFRESH_PATH));
   const section = text.split('## Pre-merge title/description refresh')[1];
   assert.ok(section, 'the Pre-merge title/description refresh section must exist');
   assert.match(section, /Rewrite the .Fixes. block from .manifest\.yml. outcomes/,

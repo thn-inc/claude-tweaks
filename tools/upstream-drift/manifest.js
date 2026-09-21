@@ -446,7 +446,7 @@ function validateManifest(obj) {
           }
         });
       }
-      for (const key of ['installed-probe', 'pinned', 'contract-paths', 'assertions', 'fixtures']) {
+      for (const key of ['installed-probe', 'pinned', 'version-mode', 'contract-paths', 'assertions', 'fixtures']) {
         if (hasKey(dep, key)) {
           errors.push(`Dependency ${label}: '${key}' is not part of the 'versioning: none' entry class — nothing would ever read it`);
         }
@@ -486,6 +486,13 @@ function validateManifest(obj) {
 
     if (!isNonEmptyString(dep.pinned)) {
       errors.push(`Dependency ${label}: missing or empty required key 'pinned'`);
+    }
+
+    // Optional — defaults to 'exact' (checks.js's checkVersion) when absent.
+    // 'floor' accepts any installed version >= 'pinned' instead of requiring
+    // an exact match; see the impeccable-cli entry for why that exists.
+    if (hasKey(dep, 'version-mode') && dep['version-mode'] !== 'exact' && dep['version-mode'] !== 'floor') {
+      errors.push(`Dependency ${label}: 'version-mode' must be 'exact' or 'floor' (got '${dep['version-mode']}')`);
     }
 
     if (!isPlainObject(dep.upstream)) {

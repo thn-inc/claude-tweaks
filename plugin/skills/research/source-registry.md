@@ -142,7 +142,7 @@ file-disjoint their reads look.
 
 Model profile: [Use: Fast] for `codebase`, `repo-prose`, `tests`, and `history` — these are grep-and-read
 lookups against a named target. [Use: Standard] for `runtime`, `telemetry`, `deps`, and `web`, where the
-agent has to judge whether what it found actually settles the claim. Resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" {fast|standard}` (contract § Model Selection).
+agent has to judge whether what it found actually settles the claim. Resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" {fast|standard}` (`_shared/subagent-dispatch-core.md` § Model Selection).
 
 Inline this block verbatim in every dispatch prompt. It is a define-in-prompt format rather than
 Template A, per `skills/_shared/subagent-output-contract.md`'s "Not every consumer uses A/B/C" — a
@@ -150,11 +150,8 @@ source agent returns a verdict, and Template A's severity/path/finding columns c
 The contract's input discipline, four-value status line, and model profile selection all still apply.
 
 ```
-Report one of these as your FIRST line, alone:
-DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
-
 OUTPUT FORMAT (required):
-Then return ONLY these six lines, no preamble and no narration:
+Return ONLY these six lines, no preamble and no narration:
 
 claim:      {the specific proposition you checked, stated so it can be true or false}
 outcome:    verified | falsified | unverified
@@ -162,6 +159,9 @@ source:     {the one source you were assigned}
 confidence: high | medium
 provenance: {file:line, or command + exit status, or URL, or record ref}
 checked-at: {output of `git rev-parse HEAD`}
+
+Report one of these as the last non-empty line of your reply, alone, labeled `STATUS: {WORD}`:
+STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 
 If your source returns nothing, that is an answer, not a failure — but map it
 to the outcome your claim actually takes. If your claim asserted something is

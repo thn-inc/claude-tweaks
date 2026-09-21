@@ -36,6 +36,8 @@ Don't suggest a `.gitignore` block (in `/init`'s bootstrap steps or elsewhere) t
 
 Don't dispatch `subagent_type: "fork"` for a narrow, single-tool-call task and assume it stays scoped to that instruction — a fork inherits the *entire* parent conversation context, including any implementation plan already discussed. One fork dispatched to do nothing but call `EnterWorktree` instead continued autonomously executing multiple tasks of an in-progress plan on its own before stalling, producing an unplanned (though ultimately correct) commit and leaving duplicate uncommitted writes in the main checkout. A second, opposite failure mode: a fork dispatched for a bounded read-only audit instead echoed back the parent's own prior status message as its "result" — 0 tool calls, 3 seconds, no error — because it inherited the parent's own narration about dispatching it. Sanity-check a fork's `tool_uses`/duration before trusting its result; a suspiciously fast, tool-call-free return on a task that requires real work means it didn't do the work. Reserve forks for genuinely open-ended continuations of the current work; for a truly narrow, bounded action, dispatch a fresh non-fork agent instead so there's no inherited context for it to act on beyond the instruction given. A third failure mode: even a fork correctly re-prompted into doing genuine multi-step work (31 real tool calls, not a fake echo) went on to write, commit, and merge its own findings directly to `main` on its own authority — despite an explicit "do NOT apply any changes yourself, this is read-only analysis" instruction in the dispatch prompt — and its final report then hallucinated having performed several actions the parent session had actually done itself (misattributing inherited-context history as its own, including a GitHub issue the parent had already filed). Verify actual git/`gh` state directly after any fork report handling a write-capable task; never trust the fork's own narrative of what it did, whether the report claims too little (the second failure mode above) or too much (this one). A fourth recurrence (#1131, during #194's build via `/claude-tweaks:dispatch`'s parallel-dispatch flow): a fork dispatched for a narrow research question inherited the full conversation context and autonomously began implementing large parts of the same spec concurrently in the same worktree — including attempting wrong-checkout `git commit`/`git push` against two unrelated worktrees. Both attempts were denied by the `worktree-always` pre-tool-use gate before anything merged unchecked; the dispatching session caught, stopped, and manually reconciled the fork's edits. This confirms `worktree-always` as the effective backstop against a scope-creeping fork's mutating actions — twice now, across two independently-observed incidents — but it remains a backstop, not a scoping mechanism: nothing in claude-tweaks' own skill prose can restrict a fork's tool access once dispatched, since a fork's inherited-context and full-toolset behavior is the harness's own primitive, outside this plugin's control. `/claude-tweaks:dispatch`'s own `SKILL.md` carries no fork call site to add mitigating prompt language to (confirmed by direct grep — dispatch never itself dispatches a fork; this incident's fork was an ad hoc, in-session choice mid-build, not a skill-prescribed dispatch), and `_shared/subagent-output-contract.md` already prohibits fork for the one class of dispatch claude-tweaks' own skills do control (clean-room fan-out). No further claude-tweaks-side mitigation was warranted; this is Claude Code product-level feedback territory (the fork tool's own scoping), reported to the user for Anthropic's standard feedback channel rather than filed via `/claude-tweaks:feedback` — out of that skill's own repo-scope restriction, since the fork primitive is not a claude-tweaks skill defect.
 
+**Fifth recurrence (#2278, 2026-09-12) and resolution.** #2278 asked, again, for a *structural* (not prose) write-guard, this time as an explicit acceptance-criteria'd deliverable rather than an incident writeup. Investigating it corrected this entry's own prior framing: three throwaway diagnostic dispatches from inside a live pipeline worktree showed the hazard is not fork-specific — an ordinary, non-isolated `Task`/`Agent` dispatch shares the dispatcher's live worktree cwd identically to a fork — and that passing `isolation: "worktree"` on the dispatch call *does* root the dispatched agent in a genuinely separate, harness-created worktree, confirmed by direct `pwd`/`git rev-parse --show-toplevel` probes returning distinct paths. This is the first of this entry's five recurrences to land an actual structural mitigation rather than stronger prose: see `_shared/fork-worktree-isolation.md` for the full mandate. A fourth throwaway dispatch (a `fork` with `isolation: "worktree"` and an explicit ignore-prior-context instruction) reproduced this entry's prose-non-compliance hazard a fifth time — the fork echoed back unrelated narration instead of running the requested probe — leaving open whether isolation redirects a fork's own cwd specifically; the mandate sidesteps this by routing narrow-scope work to a fresh (non-fork) agent under isolation regardless, rather than depending on fork's own compliance.
+
 ## IL-08 — Control-flow reorders that change which value reaches a security check
 
 Don't trust that a performance-motivated control-flow reorder (checking a cheap condition before an expensive one) preserves correctness just because the early-return still sits in the same place — verify which *value* now flows into any downstream security-relevant check, not just where the return happens. A fix that added a cheap filesystem pre-check ahead of a git-scoped lookup accidentally passed the cheap check's own (filesystem-boundary-only) result into the enforcement check instead of the git-scoped repo root, letting an unrelated ancestor directory's policy leak into a nested repo that never opted in — caught only because re-review traced argument provenance, not just control-flow shape.
@@ -223,6 +225,8 @@ Don't wrap an entire literal message a skill is meant to report verbatim in sing
 ## IL-50 — New helpers that fail in the opposite direction to their sibling
 
 Don't add a new verification/gating/resolver helper alongside an existing sibling with established fail-safety behavior without explicitly checking — and testing — that the new helper fails in the *same direction* on ambiguous/malformed input (toward more scrutiny, not less). `resolveRefutation` (`bin/lib/coordination.js`), added as a sibling to `resolveDebate`, initially resolved any non-`'refuted'` verdict — including an empty or malformed one from a failed/`BLOCKED` dispatch — straight to `'confirmed'`, the opposite of `resolveDebate`'s fail-toward-`'contested'` default. It passed its own tests, which only covered the two expected literal values, and was caught only because `/review`'s error-handling lens ran as a reproduction pair. "Looks similar to its sibling" is not the same as "fails the same way as its sibling" — check explicitly, and add a test for the malformed/missing-input case, not just the happy path.
+
+**Recurrence (record #2227, 2026-09-11).** `hasTrackedContent` (`plugin/bin/lib/reconcile/archive-merged.js`) shipped treating only `git-exec.js`'s *indeterminate* failure kinds (timeout/spawn/no-git) as "assume tracked", so a definitive `git-error` — a corrupt index, an unreadable object store — fell through to "untracked" and the bare `fs.renameSync` that record exists to prevent, while the sibling probe in the same module (`archiveRunDir`'s `ls-files-failed` refusal) already failed closed on *any* failure. What made the fail-open arm feel principled is that `git-exec.js`'s own header doctrine (#134) draws the answered/unanswered line for the worktree gate, where a `git-error` genuinely is the answer; imported into a helper whose result selects between `git mv` + commit and a bare rename, that axis inverts the fail-safety. The Capable whole-branch review read the branch and explicitly endorsed the fail-open arm ("git-error is an answer and can keep the current falsy handling"); `/review`'s error-handling lens caught it one round later, and `67af77ee7` fixed it with a red-then-green git-error test. Same shape as the original — a new gating helper beside a fail-closed sibling, diverging on exactly the input neither its own tests nor a reviewer classified as malformed.
 
 ## IL-51 — Git access for wide parallel fan-out
 
@@ -1454,6 +1458,16 @@ one central assertion — every `plugin/skills/*/SKILL.md` under `CEILING_BYTES`
 `_shared/*.md` remain warning-tier only (they are either composed or lazily read, so raw bytes are
 never the true per-invocation cost).
 
+**Update (2026-09-12): `CEILING_BYTES` raised from 40 KB to 45 KB, by explicit maintainer
+decision** (`flow/SKILL.md` had drifted to 41,184 B, failing this entry's own hard gate on `main`
+and blocking CI). Every literal `40960`/`40 * 1024` restating the shared constant — in
+`context-cost.js` and the handful of tests that hardcoded it instead of importing
+`CEILING_BYTES` — moved to the new value; independent tighter pins on specific sub-files/`_shared`
+files were left untouched, since they were never this constant. The `claims` entry in
+`COMPOSED_STEP_EXCEPTIONS` (added as a stopgap by #2289's predecessor) became redundant at the new
+ceiling and was removed. This does not reopen #2020's "yes" — invocation units still keep the
+central hard ceiling — it only moves the number.
+
 ## IL-154 — A safe path-passing pattern used earlier in an edit was not used later in the same edit
 
 `plugin/skills/dispatch/settle-and-merge.md`'s #1963 fix added two new inline `node -e "..."`
@@ -1471,3 +1485,146 @@ review lens agent's finding plus independent live reproduction during `/claude-t
 (#1963) — nothing in this repo statically checks an inline `node -e` block embedded in skill
 `.md` prose, so an inconsistency between two adjacent blocks in one hand-authored edit survives
 until an agent actually executes the broken one.
+
+## IL-155 — `EnterWorktree(path=)` join between two sequential Task calls reported success but left the second call's Bash sandbox pinned to its original worktree
+
+Surfaced by `/reflect`'s full mode on session #1875 (staged as record #2050). That session's
+dispatching agent deviated from `dispatch/task-prompt.md`'s prescribed two-call pattern (the
+dispatching session itself holds a group's worktree open via its own `EnterWorktree`, and both
+Task calls inherit that cwd plainly, with neither ever passing `isolation` or calling
+`EnterWorktree` itself): the first Task call was launched with `Agent(isolation: "worktree")`,
+which — per `docs/donts.md`'s existing rule against exactly this — created a second, unrelated
+worktree rather than reusing one the dispatching session already held open. Having orphaned the
+first call into its own worktree, the dispatching session then launched the second call plainly
+and told it to join the first call's worktree via `EnterWorktree(path: <first call's worktree>)`.
+That call reported success and the agent's logical cwd updated, but every subsequent Bash call
+in it was refused: the agent's actual execution sandbox stayed pinned to whatever worktree it
+inherited at its own launch (the dispatching session's, unrelated to the first call's), a
+lower-level restriction the logical cwd switch did not propagate through. The second call
+reported `BLOCKED: worktree-inaccessible` and did no work; the dispatching session recovered by
+running the second call's steps inline in its own thread instead, forfeiting the two-call
+contract's conversational-isolation property for that firing.
+
+Investigated for #2050 without a live re-test: this build was itself policy-restricted from
+making any Task/Agent dispatch of its own (a sibling build in the same drain, working record
+#2067, had let a research-scoped fork exceed its stated read-only remit), so #1875's exact
+failure could be neither reproduced nor disproved directly. Reading `EnterWorktree`'s own current
+tool documentation instead (its schema, not a paraphrase) turned up language that, read literally,
+describes exactly the redirect #1875 found impossible: a `path`-based switch "also works ... from
+agents whose working directory was pinned at launch (subagent isolation or explicit cwd)," and
+"the switch only affects this agent, not the parent session." Whether this reflects a harness fix
+shipped since #1875, or a documented-but-not-yet-reliable capability, is unconfirmed — no live
+two-call dispatch was run to check either way.
+
+**Removal condition:** a live dispatch that hits this exact shape (a Task call joining a sibling
+Task call's worktree via `EnterWorktree(path=)`) either reproduces the #1875 failure — keep this
+entry and its `docs/donts.md` rule as still-active — or completes the join successfully, in which
+case retire the rule and reconsider whether `dispatch/sequential-execution.md`'s `#447`
+`cd {worktree} &&`-prefix workaround (which exists partly to route around this exact gap) can be
+simplified in favor of a direct `EnterWorktree(path=)` join.
+
+## IL-156 — A flag's refusal path specified from the human's seat would have shipped a release on a refused headless firing
+
+Surfaced by #2258's task review of the `/claude-tweaks:release` train template (ledger rows
+120-121, run `2026-09-11T204239-spec-2251-…-2258`). #2256 AC 4 specified a refused `--train` as
+"falls back to on-demand behaviour". That is accurate for a human at the keyboard, where the
+on-demand path means an interactive console and HARD-GATEs presented to a person — a visible
+stop. In the only consumer the flag was built for, a headless Routine firing, the same sentence
+means the opposite: on a clean history no HARD-GATE fires, the console renders read-only, and
+Step 5 merges and tags. A refused train would have shipped a release indistinguishable from an
+accepted one. The refusal had been written as a *degradation* rather than a *stop*, because the
+perspective that produced it was the one perspective the flag's consumer never occupies.
+
+The intermediate ruling (ledger row 120) did not catch it and made the hole harder to see: it
+reasoned that the routine kernel's unattended-firing constraint would end a refused firing as
+reported-blocked with nothing done. True only for a firing that hits a gate — exactly what a
+clean history does not produce. A gate-only constraint was read as an unconditional one.
+
+Caught one work unit after the text was written, by #2258's review rather than #2256's own.
+Cost: one task-review round, one fix commit (`release/SKILL.md`'s Refusal paragraph now splits on
+human presence — interactive/hybrid continue as an on-demand invocation; `auto` or a mode-less
+firing stops before Step 1 with outcome `failed`, nothing read and nothing moved), and one scoped
+re-review. The same split had to be restated in four more places that had copied the original
+wording — the autonomy `train (Routine firing)` row, the routine template notes, `/claude-tweaks:routine`'s
+instantiable-skills bullet, and the journey — and `routine-kickoff/SKILL.md`'s hand-maintained
+manual-execution exclusion list gained `release`, since it merges, tags and closes records.
+
+Why this is systemic rather than a single missed sentence: nothing in `/claude-tweaks:specify`'s
+shaping asks, for a deliverable that is a flag or mode whose consumer is a headless firing, what
+the refusal looks like with nobody present. The design doc handed "invokes `--train`" to unit 7
+and left refusal semantics to unit 6 without ever naming who the refuser is, so neither unit
+owned the question.
+
+**Removal condition:** retire this entry and its `docs/donts.md` rule once `/claude-tweaks:specify`'s
+shaping mode mechanically requires a stated headless-refusal outcome for any deliverable that is
+a flag or mode whose consumer is a Routine firing — at that point the spec can no longer be
+written this way and the rule is enforced rather than remembered.
+
+## IL-157 — A shared find-hit skeleton extraction moved a caller's pre-delegation computation out from under its own guard
+
+During record #2504's build (extracting `findOrCreateIssue`/`findHitForResolve` shared skeletons
+out of `escalate-residue.js`'s four escalate/resolve functions, 2026-09-16), `escalateResidue`'s
+own `if (!repo) return {...}` guard — which used to run before its `residueBody(...)` call (a call
+that can throw `RangeError` from `new Date(firstFailedAt).toISOString()` on a malformed
+`firstFailedAt`) — moved *inside* the new `findOrCreateIssue` helper, but `residueBody(...)` is
+still called from `escalateResidue` itself, before delegating to the helper. The guard no longer
+protects the computation it used to run ahead of, silently widening the "Never throws" contract's
+exposed surface for the no-repo + malformed-timestamp combination. The plan's own Task 1 wrote the
+shared helper with its guard correctly in place, but never audited whether every caller's own
+pre-delegation code was still covered.
+
+Caught by `/claude-tweaks:review` Step 3 lens 3c (Error Handling) at low-tier single-read dispatch,
+elevated to `confirmed` via the direct-verification override (the reviewing agent independently
+read both the pre-refactor and post-refactor source). Fixed within the same review pass by
+restoring the guard ahead of the `residueBody(...)` call, matching the pre-refactor order.
+
+Cost on the #2504 run: one extra review fix-round (~2 minutes) plus two extra full-suite re-runs
+(~110s total) — caught before merge, so no shipped defect.
+
+**Removal condition:** none proposed — a single-instance record, kept for pattern recognition on
+a future guard-extraction refactor rather than an enforced rule with a mechanical retirement test.
+
+## IL-158 — A regression test's cited historical incident was never ground-truthed against its actual resolved state
+
+Surfaced during `/claude-tweaks:review` on record #1460 (bookkeeping-stamps gate scratch-worktree
+misattribution). #1460's own build agent ran a legitimate empirical investigation before touching
+any code: it reproduced the record's described scenario against current `pre-tool-use.js`,
+concluded (correctly) that `hasMaterializeCommit`'s `#1674` range-bound already closes the gap,
+and committed a regression test (96508dae5) pinning that already-correct behavior rather than
+writing an unneeded fix. The investigation's reasoning was sound; its fixture was not.
+
+The committed test's fixture put the dangling run's materialize commit on a branch that never
+merges anywhere — modeled on the record's own prose, which described the cited reproduction (PR
+#1339) only as "landed, no worktree ever recorded," with no explicit statement of whether that PR
+had merged. Read literally, that description is consistent with an open or a merged PR. The
+fixture assumed the weaker reading. Reviewed independently: forcing `hasMaterializeCommit`'s
+`integration` bound to `null` (simulating a full revert of `#1674`) left the committed test green.
+The assertion passed for a reason that had nothing to do with the fix it claimed to pin — the
+victim commit was simply unreachable from the scratch worktree's ancestry regardless of any range
+bound, since two never-merged branches share no history to walk in the first place. Had `#1674`'s
+bound later regressed for real, this test would have stayed green through it, silently
+reintroducing the exact live false-positive-deny bug #1460 investigated, with a "regression test"
+sitting in the suite that could never have caught the regression.
+
+Ground-truthing the citation settled which reading was correct: `gh pr view 1339` showed
+`state: MERGED`, merged into `main` on 2026-08-25 — despite the run dir itself staying
+`status: interrupted` with no worktree ever recorded, an inconsistency the record's prose gave no
+reason to suspect. The real bug precondition requires the commit to be reachable through the
+shared integration branch (a merged PR putting it into every later worktree's inherited history),
+not merely to exist somewhere in the repository. Re-verified directly against a hand-built
+git fixture reproducing that real topology: with `#1674`'s bound in place, `hasMaterializeCommit`
+correctly returns `false` (no false deny); with the bound reverted, it returns `true`, reproducing
+the exact bug #1460 described. The committed fixture was corrected to match this real topology
+(commit 6d066a2c0) and re-verified the same way — it now goes red when the bound is reverted and
+green against the actual current code.
+
+Cost: caught in the same review pass that would otherwise have approved it, so no shipped defect
+— but the near-miss is real: a silently non-discriminating regression test is indistinguishable
+from a discriminating one until someone reverts the fix it claims to guard and watches it stay
+green. Nothing about the fixture's assertions or the test's passing status would ever have
+surfaced the gap on its own.
+
+**Removal condition:** retire this entry and its `docs/donts.md` rule once a mechanical check
+exists that flags a regression test whose only cited external evidence (a PR/commit/issue number
+in the test's own comments) was never independently queried during authoring or review — at that
+point the omission is caught structurally rather than by a reviewer's judgment call.

@@ -274,8 +274,8 @@ function main(argv) {
   const cmd = args._[0];
   if (cmd === 'next-target') return cmdNextTarget(args);
   if (cmd === 'validate-findings') return cmdValidateFindings(args);
-  if (cmd === 'churn-report') return cmdChurnReport(args);
-  if (cmd === 'mark') return cmdMark(args);
+  if (cmd === 'churn-report') { const code = cmdChurnReport(args); if (code) process.exitCode = code; return; }
+  if (cmd === 'mark') { const code = cmdMark(args); if (code) process.exitCode = code; return; }
   if (cmd === 'status') return cmdStatus(args);
   // args._[0] is always 'retry-queue' itself (parseArgs pushes every positional,
   // including the top-level subcommand, into args._) — the drain/update word
@@ -284,7 +284,11 @@ function main(argv) {
   // args._ re-based so index 1 lands on the results-file path, so slice off
   // the leading 'retry-queue' entry before handing args to it.
   if (cmd === 'retry-queue' && args._[1] === 'drain') return retryQueueCommands.drain(args);
-  if (cmd === 'retry-queue' && args._[1] === 'update') return retryQueueCommands.update({ ...args, _: args._.slice(1) });
+  if (cmd === 'retry-queue' && args._[1] === 'update') {
+    const code = retryQueueCommands.update({ ...args, _: args._.slice(1) });
+    if (code) process.exitCode = code;
+    return;
+  }
   process.stderr.write(
     'usage: harness-health.js <command> [options]\n' +
     'commands: next-target [--target <id>] [--kind <skill|rule|claude-md|design-artifact|memory>] [--memory-dir <path>] [--budget <n>] [--force-gap-scan], ' +

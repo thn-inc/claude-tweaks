@@ -52,6 +52,7 @@ const POLICY_KEYS = [
   // interactive-human-only auto:* invariant depends on; see
   // _shared/auto-mode-contract.md's Bookend Architecture section.
   { key: 'merge-authorization', type: 'enum', values: ['ask', 'pre-authorized'], default: 'ask', policySourceExcluded: true, summary: "Lets a human pre-authorize, at Manifesto time, that this run merges itself once every HARD-GATE is green — never a standing default.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'design-ceremony', type: 'enum', values: ['fast-lane', 'standard'], default: 'standard', summary: "Trims /specify's brainstorming handoff to fewer per-section approval stops once the design approach is chosen.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'dispatch-retry-ceiling', type: 'integer', default: 3, summary: "Sets how many consecutive autonomous build failures a record tolerates before it is flagged blocked and pulled from auto-pilot.", category: 'merge-safety', tier: 'advanced' },
   { key: 'dispatch-batch-size', type: 'integer', default: 3, summary: "Caps how many queued records one dispatch run works through in sequence before leaving the rest for next time.", category: 'merge-safety', tier: 'advanced' },
   // Deprecated alias for dispatch-batch-size (renamed in #295 — the value is a
@@ -93,6 +94,11 @@ const POLICY_KEYS = [
   { key: 'overlap', type: 'enum', values: ['companion', 'extend', 'skip', 'replace'], default: 'companion', summary: "Decides how a new spec is treated when it duplicates an existing one: run beside it, extend it, skip it, or replace it.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'design-intent', type: 'enum', values: ['none', 'bold', 'quiet', 'minimal', 'delightful', 'onboarding'], default: 'none', summary: "Sets the visual and UX ambition a build aims for — bold, quiet, minimal, delightful, onboarding-focused, or none at all.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'ui-stack', type: 'string', summary: "Names the UI component library / styling approach a frontend build should use, or an explicit no-preference answer.", category: 'pipeline-behavior', tier: 'advanced' },
+  // #2540: Step 2.5b-ii's variant-exploration tournament/live offers were
+  // mandatory ceremony with no off-switch, and `explore` silently skips on
+  // any current Impeccable pin anyway. Default 'off' formalizes the
+  // already-observed no-op behavior rather than removing a working feature.
+  { key: 'design-variant-exploration', type: 'enum', values: ['off', 'offer'], default: 'off', summary: "Turns specify's layout-tournament and scaffold-live variant-exploration offers on or off before decomposition.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'design-critique', type: 'enum', values: ['off', 'auto', 'full'], default: 'auto', summary: "Sets whether project-local design critics run at review time: never, when the project shows design investment or the record asks, or always.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'leftover-default', type: 'enum', values: ['defer', 'backlog', 'drop'], default: 'defer', summary: "Decides what happens to loose ends found at the end of a run: leave them for later, file them as backlog, or drop them.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'auto-fix-threshold', type: 'enum', values: ['lint-only', 'lint+type', 'lint+type+test'], default: 'lint+type', summary: "Sets how much a test pass auto-fixes before stopping — lint alone, lint and types, or lint, types, and tests.", category: 'pipeline-behavior', tier: 'advanced' },
@@ -106,6 +112,15 @@ const POLICY_KEYS = [
   // fresh before a consumer (backlog/capture/specify/trust-table/help/tidy/visualize) re-fetches
   // instead of reading the cached snapshot. See _shared/record-queue-fetch.md.
   { key: 'record-snapshot-ttl-seconds', type: 'integer', default: 300, summary: "Sets how many seconds the session-scoped record snapshot stays fresh before a consumer re-fetches instead of reading the cache.", category: 'housekeeping', tier: 'advanced' },
+  // #2567: the `gh` subprocess timeout shared by every direct execFileSync/
+  // execFile('gh', ...) call routed through bin/lib/shared-primitives.js's
+  // GH_TIMEOUT_MS export. Bounded 1s-60s: below 1s no real `gh` call could
+  // ever complete (every value under that is effectively "always fail"), and
+  // above 60s a single hung call would stall a pipeline step for a minute
+  // before its one automatic retry even starts. CLAUDE_TWEAKS_GH_TIMEOUT_MS
+  // (an env var, not a policy key) takes precedence over this when both are
+  // set — see shared-primitives.js's resolution order.
+  { key: 'gh-timeout-ms', type: 'integer', min: 1000, max: 60000, default: 5000, summary: "Bounds how long a single `gh` subprocess call may run before it is killed and retried once.", category: 'housekeeping', tier: 'advanced' },
   { key: 'depth-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt asking whether recently changed code deserves a deeper architectural pass.", category: 'housekeeping', tier: 'advanced' },
   { key: 'creative-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt suggesting creative or UX improvement ideas for what was just built.", category: 'housekeeping', tier: 'advanced' },
   { key: 'scope-keywords-required', type: 'boolean', default: false, summary: "When on, a build refuses to start over files outside its plan unless the plan names its intended scope; otherwise it is only a warning.", category: 'pipeline-behavior', tier: 'advanced' },
@@ -181,6 +196,17 @@ const POLICY_KEYS = [
   // reversibility/confidence-floor entry (it writes .env.local, not code or
   // history). It IS a POLICY_KEYS row (this one) and a policy-schema.md row.
   { key: 'port-services', type: 'list', default: [], summary: "Names the services that get a port from this checkout's leased block; empty keeps port isolation off.", category: 'pipeline-behavior', tier: 'advanced' },
+  // release-hook / release-train (#2253, unit 3 of #2250): schema scaffolding
+  // only — /claude-tweaks:init Step 21 seeds both as commented-out rows;
+  // bin/release-local.js (unit 4) reads release-hook, /claude-tweaks:release
+  // --train (unit 6) reads release-train. Neither is a Manifesto lever, so
+  // _shared/auto-mode-contract.md's five-site checklist does not apply.
+  // Non-core by design: promoting either would widen what the Manifesto
+  // surfaces by default (tests/policy-schema-metadata.test.js pins it).
+  // release-hook is a shell command and may contain spaces, so it opts out
+  // of the string type's whitespace rule via allowWhitespace.
+  { key: 'release-hook', type: 'string', allowWhitespace: true, summary: "Names the command the local release engine runs once its tag lands — publish, mirror, or deploy; ignored under pr-first.", category: 'housekeeping', tier: 'advanced' },
+  { key: 'release-train', type: 'boolean', default: false, summary: "Lets the unattended release train cut minor and patch releases on its own; honored only when autonomy resolves unattended.", category: 'housekeeping', tier: 'advanced' },
 ];
 
 const SCHEMA_BY_KEY = new Map(POLICY_KEYS.map((entry) => [entry.key, entry]));
@@ -326,11 +352,14 @@ function isValidValue(schemaEntry, value) {
     case 'enum':
       return schemaEntry.values.includes(value);
     case 'string':
-      // Non-empty and whitespace-free. Enough to catch a mistyped branch name
-      // ("dev branch") without reimplementing git check-ref-format's full rules
-      // — a name git itself would reject is worth flagging, but this validator
-      // has no repo to resolve the name against.
-      return value.length > 0 && !/\s/.test(value);
+      // Non-blank (trimmed); whitespace-free by default. Enough to catch a
+      // mistyped branch name ("dev branch") without reimplementing git
+      // check-ref-format's full rules — a name git itself would reject is
+      // worth flagging, but this validator has no repo to resolve the name
+      // against. allowWhitespace: true opts a command-shaped key (e.g.
+      // release-hook) out of the whitespace-free rule, but not out of the
+      // non-blank rule — a whitespace-only value is still invalid.
+      return value.trim().length > 0 && (schemaEntry.allowWhitespace === true || !/\s/.test(value));
     case 'list':
     case 'opaque':
       return true;
@@ -354,15 +383,31 @@ function isValidValue(schemaEntry, value) {
 // programmatic (non-audit) reader — a caller with a raw policy.yml string
 // (or nothing at all) calls this once and trusts what comes back without
 // re-validating it itself.
+// Strips exactly one matched pair of surrounding quotes ("…" or '…') — an
+// unmatched leading quote (a typo, e.g. an unterminated `"foo`) is left
+// alone rather than silently dropped.
+function stripMatchedQuotes(value) {
+  if (value.length >= 2) {
+    const first = value[0];
+    const last = value[value.length - 1];
+    if ((first === '"' || first === "'") && first === last) return value.slice(1, -1);
+  }
+  return value;
+}
+
 function resolveValue(key, rawValue) {
   const entry = SCHEMA_BY_KEY.get(key);
   if (!entry) return rawValue;
   if (rawValue === undefined || rawValue === null || rawValue === '') return entry.default;
-  const strValue = String(rawValue);
+  let strValue = String(rawValue);
+  // allowWhitespace entries (a shell command, e.g. release-hook) may be
+  // quoted for readability in policy.yml — strip one matched pair before
+  // validating, so a quoted command validates and resolves unquoted.
+  if (entry.allowWhitespace === true) strValue = stripMatchedQuotes(strValue.trim());
   if (!isValidValue(entry, strValue)) return entry.default;
   if (entry.type === 'integer') return parseInt(strValue, 10);
   if (entry.type === 'boolean') return strValue === 'true';
-  return rawValue;
+  return entry.allowWhitespace === true ? strValue : rawValue;
 }
 
 function hasOwn(obj, key) {

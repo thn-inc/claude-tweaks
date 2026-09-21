@@ -213,6 +213,38 @@ test('AC3: Bash `git worktree remove <abs-path>` on an active run\'s worktree is
   assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
 });
 
+// #2351: previously this deny logged nothing at all, regardless of whether
+// the caller owned a run dir — checkTeardownGate's deny branch never called
+// appendEvent. A standalone main-checkout session (e.g. /claude-tweaks:wrap-up
+// doing post-dispatch cleanup, no worktree of its own) denied here lost the
+// event entirely, even though the friction genuinely occurred. The deny now
+// logs a `wd-deny` event to the CALLER's own run dir (stamped ad-hoc via
+// context.js's stampAdHocRunDirForDenial when the caller owns none yet) —
+// never to the unrelated TARGET run (`wt`'s own run dir) being torn down.
+test('#2351: Bash `git worktree remove <abs-path>` from the main checkout with no owned run dir logs a wd-deny event to a newly stamped ad-hoc run', () => {
+  const root = fixtureRoot();
+  const wt = addWorktree(root);
+  const targetRunDir = makeRun(root, JSON.stringify({ status: 'active', worktree: wt }));
+  const payload = JSON.stringify({
+    tool_name: 'Bash', tool_input: { command: `git worktree remove ${wt}` }, cwd: root, session_id: 'wrap-up-caller',
+  });
+  const r = runHook(['pre-tool-use'], { input: payload, cwd: root });
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
+
+  const pipelinesDir = path.join(root, '.claude-tweaks', 'pipelines');
+  const runDirs = fs.readdirSync(pipelinesDir).map((n) => path.join(pipelinesDir, n));
+  const stampedRun = runDirs.find((d) => d !== targetRunDir);
+  assert.ok(stampedRun, 'an ad-hoc run dir distinct from the target worktree\'s own run must be minted');
+  const events = fs.readFileSync(path.join(stampedRun, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.strictEqual(events.length, 1);
+  assert.strictEqual(events[0].type, 'wd-deny');
+  assert.strictEqual(events[0].path, wt);
+  // The target run's own events.jsonl must stay untouched — this is the
+  // caller's friction, not the target run's.
+  assert.strictEqual(fs.existsSync(path.join(targetRunDir, 'events.jsonl')), false);
+});
+
 test('AC3: Bash `git worktree remove <relative-path>` resolving to the same worktree is denied', () => {
   const root = fixtureRoot();
   const wt = addWorktree(root);
@@ -654,4 +686,62 @@ test('#693: ExitWorktree removing the session\'s own cwd is unaffected by the ow
   const payload = JSON.stringify({ tool_name: 'ExitWorktree', tool_input: { action: 'remove' }, cwd: wt, session_id: 'caller-1' });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: wt });
   assert.strictEqual(r.stdout.trim(), '');
+});
+
+// #2282: the own-cwd deny above previously left no friction-event trace at
+// all. `session_id` is required for stampAdHocRunDirForDenial (context.js)
+// to mint a run dir to log into — the AC2/#693 tests above omit it
+// deliberately (appendEvent(null, ...) is then a documented no-op).
+test('#2282: own-cwd `git worktree remove` deny logs a wd-guard-refusal event (reason: own-cwd-removal)', () => {
+  const root = fixtureRoot();
+  const wt = addWorktree(root);
+  const payload = JSON.stringify({
+    tool_name: 'Bash', tool_input: { command: `git worktree remove ${wt}` }, cwd: wt, session_id: 'sess-2282-owncwd',
+  });
+  const r = runHook(['pre-tool-use'], { input: payload, cwd: wt });
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
+  const pipelinesDir = path.join(root, '.claude-tweaks', 'pipelines');
+  const adhocDirs = fs.readdirSync(pipelinesDir).filter((d) => d.endsWith('-adhoc-standalone'));
+  assert.strictEqual(adhocDirs.length, 1, 'expected exactly one stamped ad-hoc run dir');
+  const events = fs.readFileSync(path.join(pipelinesDir, adhocDirs[0], 'events.jsonl'), 'utf8')
+    .trim().split('\n').map((l) => JSON.parse(l));
+  const hit = events.find((e) => e.type === 'wd-guard-refusal');
+  assert.ok(hit, 'expected a wd-guard-refusal event, got: ' + JSON.stringify(events));
+  assert.strictEqual(hit.reason, 'own-cwd-removal');
+});
+
+test('#2282: CT_HOOKS_TEST_MODE tags the own-cwd wd-guard-refusal event, excluded from friction-events.js aggregation', () => {
+  const root = fixtureRoot();
+  const wt = addWorktree(root);
+  const payload = JSON.stringify({
+    tool_name: 'Bash', tool_input: { command: `git worktree remove ${wt}` }, cwd: wt, session_id: 'sess-2282-testmode',
+  });
+  const r = runHook(['pre-tool-use'], { input: payload, cwd: wt, env: { CT_HOOKS_TEST_MODE: '1' } });
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
+  const pipelinesDir = path.join(root, '.claude-tweaks', 'pipelines');
+  const adhocDirs = fs.readdirSync(pipelinesDir).filter((d) => d.endsWith('-adhoc-standalone'));
+  assert.strictEqual(adhocDirs.length, 1);
+  const runDir = path.join(pipelinesDir, adhocDirs[0]);
+  const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const hit = events.find((e) => e.type === 'wd-guard-refusal');
+  assert.ok(hit, 'expected the raw event to still be written (write side is unaffected by the test tag)');
+  assert.strictEqual(hit.test, true);
+
+  const frictionEvents = require('../plugin/bin/friction-events');
+  let captured = '';
+  frictionEvents.run(['--run', runDir], {
+    isDirectory: () => true,
+    cwd: () => wt,
+    readEvents: frictionEvents.readEvents,
+    findRunsByWorktreePath: () => [],
+    stdout: (s) => { captured += s; },
+    stderr: () => {},
+  });
+  const filtered = JSON.parse(captured);
+  assert.strictEqual(
+    filtered.some((e) => e.type === 'wd-guard-refusal'), false,
+    'a test-tagged wd-guard-refusal event must be excluded from friction-events.js aggregation, mirroring gate-denial',
+  );
 });

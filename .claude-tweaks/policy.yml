@@ -6,3 +6,7 @@ autonomy: unattended
 grant-origination-enabled: true
 fleet-daily-grant-cap: 3
 integration-model: pr-first
+housekeeping-auto-merge: true
+project-maturity: established
+# release-hook: <command run after the local engine tags a release — local-merge only; under pr-first the release: published workflow is the hook — it needs a PAT, GITHUB_TOKEN-created releases do not trigger it>
+# release-train: false

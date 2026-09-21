@@ -11,7 +11,11 @@ Resolution order — stop at the first that applies:
 
 2. **Record risk/size labels.** Applies only when Input resolution resolved a spec/record number (rules 1-2) — file-path and no-argument reviews (rules 3, 7) have no record to read and go straight to step 3 below. Fetch the record's `risk:*`/`size:*` labels with a fresh, minimal read — independent of whether Step 1 ran (Step 1 is skipped under `ceremony-profile: fast-lane`, so this cannot assume a Step 1 fetch happened), per `work-backend`:
 
-   **`github-issues`:** First mint the review's scratch dir if Step 3 hasn't yet — `node "${CLAUDE_PLUGIN_ROOT}/bin/build-review-context.js" mint` (append `--run "$PIPELINE_RUN_DIR"` when a run directory exists); it prints `{dir}` once and the same `{ctx-dir}` is reused by Step 3's `build --dir {ctx-dir}` call. Never a fixed shared `/tmp` name — concurrent sessions reviewing the same record would clobber it. Then:
+   **`github-issues`:** First mint the review's scratch dir if Step 3 hasn't yet. By default `mint` prints a one-line JSON object, `{"dir": "…"}` — take the `--print-dir` flag instead so the shell variable holds a bare path, reused as `{ctx-dir}` by Step 3's `build --dir {ctx-dir}` call:
+   ```bash
+   CTX_DIR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/build-review-context.js" mint --print-dir --run "$PIPELINE_RUN_DIR")
+   ```
+   (append `--run "$PIPELINE_RUN_DIR"` when a run directory exists — as above; omit it otherwise). Never a fixed shared `/tmp` name — concurrent sessions reviewing the same record would clobber it. Against a build that predates the `--print-dir` flag, extract the path from the default JSON output instead: `CTX_DIR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/build-review-context.js" mint --run "$PIPELINE_RUN_DIR" | node -e "console.log(JSON.parse(require('fs').readFileSync(0)).dir)")`. Then, with `{ctx-dir}` meaning `$CTX_DIR`:
    ```bash
    gh issue view {n} --json labels > {ctx-dir}/record-{n}.json
    ```

@@ -18,10 +18,11 @@ const path = require('path');
 const { runGit } = require('../hooks/git-exec');
 const { mainCheckoutRoot, safeReal } = require('../hooks/worktree-detect');
 const { parseWorktreeList, isWorktreeLocked, HARNESS_WORKTREE_DIR, QUIET_SKIP_REASONS } = require('../hooks/worktree-reap');
+const { isPathContained } = require('../shared-primitives');
 const { resolvePrState } = require('./pr-state');
 const { findRunByWorktreePath, appendEvent } = require('../hooks/context');
 const { release: releasePortsDefault } = require('../ports/registry');
-const { trackResidue } = require('./cache');
+const { trackResidue, beginCacheBatch, commitCacheBatch } = require('./cache');
 const { escalateResidue } = require('./escalate-residue');
 const { repoSlugOf } = require('./release-merged');
 
@@ -72,9 +73,11 @@ function decideReap(prState) {
 // both now call cache.js's shared `trackResidue` helper (#1233) rather than
 // duplicating the success/fail branch. `escalate` stays injectable so a test
 // can assert escalation fired (and how many times) without touching real
-// `gh`.
-function trackReapResidue(root, repoSlug, real, { failed, lastError }, { escalate = escalateResidue } = {}) {
-  trackResidue(root, repoSlug, 'removal-failed', real, { failed, lastError }, { escalate });
+// `gh`. `cacheTarget` is either a plain root string (single-call behavior,
+// unchanged) or a `beginCacheBatch` handle (#1235 — batched across
+// `reapMerged`'s item loop); see cache.js's own comment on the two shapes.
+function trackReapResidue(cacheTarget, repoSlug, real, { failed, lastError }, { escalate = escalateResidue, runner } = {}) {
+  trackResidue(cacheTarget, repoSlug, 'removal-failed', real, { failed, lastError }, { escalate, runner });
 }
 
 // A candidate worktree the CALLING process is standing inside (or under),
@@ -86,10 +89,10 @@ function trackReapResidue(root, repoSlug, real, { failed, lastError }, { escalat
 // `here` as "compare against nothing matches" via the guard at the call site.
 function isOwnCwd(here, real) {
   if (!here || !real) return false;
-  return here === real || here.startsWith(real + path.sep);
+  return isPathContained(here, real, { orEqual: true });
 }
 
-function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault } = {}) {
+function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault, runner } = {}) {
   const reaped = [];
   const skipped = [];
   // See worktree-reap.js's reapWorktrees for the shape rationale: only ever
@@ -104,11 +107,15 @@ function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault } 
   const list = runGit(['worktree', 'list', '--porcelain'], root);
   if (list.failure) return { reaped, skipped, portsRelease, failure: list.failure };
 
+  // #1235: one read before the loop, one write after — instead of one
+  // read-modify-write per reaped/failed candidate. See cache.js's
+  // `beginCacheBatch` for the atomicity tradeoff this accepts.
+  const cacheBatch = beginCacheBatch(root);
   const domain = safeReal(path.join(root, HARNESS_WORKTREE_DIR)) || path.join(root, HARNESS_WORKTREE_DIR);
   for (const wt of parseWorktreeList(list.stdout)) {
     const real = safeReal(wt.path);
     if (!real || real === root || wt.bare) continue; // never the main checkout
-    if (!real.startsWith(domain + path.sep)) continue; // out of harness domain — not this check's concern
+    if (!isPathContained(real, domain)) continue; // out of harness domain — not this check's concern
 
     if (!wt.branch) { skipped.push({ path: real, reason: 'no-branch' }); continue; }
     // Regardless of PR state, lock state, or anything else below — a
@@ -141,13 +148,13 @@ function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault } 
       // #1341 — carry git's real stderr as lastError, falling back to the
       // bare category only when git produced no stderr at all (e.g. an
       // indeterminate timeout/spawn failure with nothing to say).
-      trackReapResidue(root, repoSlug, real, { failed: true, lastError: rm.stderr || rm.failure });
+      trackReapResidue(cacheBatch, repoSlug, real, { failed: true, lastError: rm.stderr || rm.failure }, { runner });
       continue;
     }
     // A path that just succeeded has no more residue to track (#644) — clear
     // any streak so a later failure on this same path (re-created worktree,
     // reused path) starts counting fresh rather than resuming a stale one.
-    trackReapResidue(root, repoSlug, real, { failed: false });
+    trackReapResidue(cacheBatch, repoSlug, real, { failed: false }, { runner });
     logReapEvent(owningRunDir, 'worktree-reaped', { prNumber: prState.number });
     reaped.push(real);
     try {
@@ -156,6 +163,7 @@ function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault } 
       portsRelease.push({ path: real, note: `failed: ${(err && err.message) || err}` });
     }
   }
+  commitCacheBatch(cacheBatch);
   return { reaped, skipped, portsRelease };
 }
 

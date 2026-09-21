@@ -4,7 +4,7 @@
 // CLI wrapper around bin/lib/model-profiles — owns ALL I/O (policy read,
 // frontier tally read/append, session-scoped model-failure blacklist
 // read/write). resolve() itself stays pure. Contract cited by dispatch
-// sites: skills/_shared/subagent-output-contract.md §Model Selection.
+// sites: skills/_shared/subagent-dispatch-core.md §Model Selection.
 //
 // Session-failure blacklist (#763): every normal `<profile>` resolution
 // reads the CLAUDE_CODE_SESSION_ID-keyed blacklist

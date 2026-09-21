@@ -111,6 +111,25 @@ test('releasePayload without link has no link key and an unchanged human line', 
   assert.ok(p.commentBody.endsWith('merged: spec 12.'));
 });
 
+// #2090: sweptFrom is a passthrough field for a /tidy sweep releasing a claim
+// it does not own — the tombstone's own runId stays the caller's (the sweep
+// run), sweptFrom names the original holder separately.
+test('releasePayload: sweptFrom lands in the tombstone JSON and the runId stays the caller\'s own', () => {
+  const p = releasePayload({
+    issueNumber: 5, runId: 'tidy-run', reason: 'swept: stale claim', sweptFrom: 'original-run', now: T0,
+  });
+  const tombstone = JSON.parse(p.tombstoneContent);
+  assert.strictEqual(tombstone.runId, 'tidy-run', 'the tombstone is written under the SWEEP run\'s own identity');
+  assert.strictEqual(tombstone.sweptFrom, 'original-run');
+  assert.ok(p.commentBody.includes('"sweptFrom":"original-run"'));
+});
+
+test('releasePayload without sweptFrom has no sweptFrom key', () => {
+  const p = releasePayload({ issueNumber: 5, runId: 'r', reason: 'merged: spec 12', now: T0 });
+  const tombstone = JSON.parse(p.tombstoneContent);
+  assert.strictEqual('sweptFrom' in tombstone, false);
+});
+
 test('malformed (non-number, non-missing) ttlHours falls back to the 72h default', () => {
   const claimWithStringTtl = { runId: 'r1', claimedAt: new Date(T0).toISOString(), ttlHours: 'not-a-number' };
   assert.strictEqual(isStale(claimWithStringTtl, T0 + 72 * H - 1), false);

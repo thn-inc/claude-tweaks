@@ -397,13 +397,13 @@ test('the corpus-wide description total stays under budget', () => {
 // decomposition's call sites (the function's own comment says so).
 
 test('parseComposeCallLine: the production merge call parses to step + two plugin-root sources', () => {
-  // Copied verbatim from plugin/skills/wrap-up/auto-merge-short-circuit.md line 154.
-  const line = '`issue-list` this one record, `summary` the record\'s own title. Read that procedure as one composed bundle: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step merge "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-first-merge.md" "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-early-run-lifecycle.md"`, then read `$PIPELINE_RUN_DIR/context/merge.md`; if the compose command is unavailable or exits non-zero, read the named source files directly. No checkout is needed — `gh pr';
+  // Copied verbatim from plugin/skills/wrap-up/auto-merge-short-circuit.md line 156.
+  const line = '`issue-list` this one record, `summary` the record\'s own title. Read that procedure as one composed bundle: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step merge "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-first-merge.md" "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-checklist-refresh.md"`, then read `$PIPELINE_RUN_DIR/context/merge.md`; if the compose command is unavailable or exits non-zero, read the named source files directly. No checkout is needed — `gh pr';
   assert.deepStrictEqual(parseComposeCallLine(line, '/r'), {
     step: 'merge',
     sources: [
       '/r/skills/_shared/pr-first-merge.md',
-      '/r/skills/_shared/pr-early-run-lifecycle.md',
+      '/r/skills/_shared/pr-checklist-refresh.md',
     ],
   });
 });

@@ -21,7 +21,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { writeJsonAtomic } = require('./atomic-write');
+const { writeFileAtomic } = require('../atomic-write');
 
 const STAMP_JSON_NAME = 'claude-tweaks-verify-pass.json';
 const STAMP_LEGACY_NAME = 'claude-tweaks-verify-pass';
@@ -52,7 +52,19 @@ function writeStamp(gitDir, stamp, deps = {}) {
   const legacy = deps.legacy === undefined ? true : deps.legacy;
   const jsonPath = path.join(gitDir, STAMP_JSON_NAME);
   const legacyPath = path.join(gitDir, STAMP_LEGACY_NAME);
-  writeJsonAtomic(jsonPath, stamp, fsImpl);
+  // Migrated off the narrower lib/verify/atomic-write.js's plain-`.tmp`
+  // writeJsonAtomic onto this codebase's dominant pid-suffixed primitive
+  // (#2004) -- adapted at this call site (fsImpl's bare writeFileSync/
+  // renameSync shape -> writeFileAtomic's {writeFile, rename, unlink}
+  // options object) so writeStamp's existing fsImpl-shaped test fixtures
+  // keep working unchanged. The legacy bare-SHA twin write just below is
+  // untouched (Non-Goals) -- independently transitional, unrelated to this
+  // migration's collision-safety concern.
+  writeFileAtomic(jsonPath, `${JSON.stringify(stamp, null, 2)}\n`, {
+    writeFile: fsImpl.writeFileSync,
+    rename: fsImpl.renameSync,
+    unlink: fsImpl.unlinkSync || (() => {}),
+  });
   if (legacy) {
     const tmp = `${legacyPath}.tmp`;
     fsImpl.writeFileSync(tmp, `${stamp.sha}\n`);

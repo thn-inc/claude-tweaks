@@ -39,7 +39,7 @@ disagreeing with) that authoritative list. This step's commit is an ordinary com
 
 **Phase exit (`worktree` mode, `integration-model: pr-first`):** push this commit and flip
 wrap-up's PR checklist row — `_shared/git-discipline.md`'s Phase-exit push section and
-`_shared/pr-early-run-lifecycle.md`'s Phase-checklist update section. This is the last phase-exit
+`_shared/pr-checklist-refresh.md`'s Phase-checklist update section. This is the last phase-exit
 push of the run; it does not mark the PR ready for merge or touch its draft state — that
 transition belongs to the merge-path sub-issue, not this one (Non-Goals). A no-op under
 `local-merge` or `current-branch` mode.

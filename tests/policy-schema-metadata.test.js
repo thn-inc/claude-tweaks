@@ -54,3 +54,27 @@ test('no summary string is duplicated verbatim into policy-schema.md', () => {
 // retired by #1997 — the per-file tier is a warning since #1990 and these
 // files have no compose call site; removal condition in
 // docs/incident-log.md [IL-153].
+
+// #2253 (unit 3 of #2250): release-hook / release-train are schema
+// scaffolding — consumed by the local engine (unit 4) and /claude-tweaks:release
+// (unit 6). Both non-core by design; AC 4's check is RELATIVE to the schema's
+// existing core set, never a hardcoded absolute count.
+test('release-hook and release-train are registered as non-core scaffolding keys with the spec shape', () => {
+  const byKey = new Map(POLICY_KEYS.map((row) => [row.key, row]));
+  const hook = byKey.get('release-hook');
+  const train = byKey.get('release-train');
+  assert.ok(hook, 'release-hook missing from POLICY_KEYS');
+  assert.ok(train, 'release-train missing from POLICY_KEYS');
+  assert.strictEqual(hook.type, 'string');
+  assert.strictEqual(hook.default, undefined);
+  assert.strictEqual(train.type, 'boolean');
+  assert.strictEqual(train.default, false);
+  for (const row of [hook, train]) {
+    assert.strictEqual(row.tier, 'advanced', `${row.key} must be non-core`);
+    assert.strictEqual(row.category, 'housekeeping');
+    assert.ok(row.summary.trim().length > 0, `${row.key}: summary empty`);
+  }
+  const core = POLICY_KEYS.filter((row) => row.tier === 'core').map((row) => row.key);
+  const coreWithoutRelease = core.filter((key) => key !== 'release-hook' && key !== 'release-train');
+  assert.deepStrictEqual(core, coreWithoutRelease, 'this unit adds no core-tier key');
+});

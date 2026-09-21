@@ -96,7 +96,14 @@ test('_shared/record-batch-input.md\'s canonical --budget section is cited from 
 test('next-mode.md states the eligibility predicate: ready, any needs:*-prefixed label, parked, parent-issue, bot:in-progress', () => {
   assert.ok(NEXT_MODE_FLAT.includes('carrying none of `ready`, any `needs:*`-prefixed label'), 'eligibility predicate must exclude ready and any needs:*-prefixed label');
   assert.ok(NEXT_MODE_FLAT.includes("`_shared/work-record.md`'s worklist rule"), 'eligibility predicate must cite the shared worklist rule rather than restate it');
-  assert.ok(NEXT_MODE_FLAT.includes('`parked`, `parent-issue`, and `bot:in-progress`'), 'eligibility predicate must still exclude parked, parent-issue, and bot:in-progress');
+  assert.ok(NEXT_MODE_FLAT.includes('`parked`, `parent-issue`, `digest`, and `bot:in-progress`'), 'eligibility predicate must still exclude parked, parent-issue, digest, and bot:in-progress');
+});
+
+test('next-mode.md eligibility EXCLUDE set and prose exclude digest-labeled container issues (refs #2218)', () => {
+  assert.ok(NEXT_MODE_FLAT.includes("new Set(['ready', 'parked', 'parent-issue', 'bot:in-progress', 'digest'])"), 'EXCLUDE Set must include digest so the materiality-floor container is never claimed by bare drain');
+  assert.ok(NEXT_MODE_FLAT.includes('`parked`, `parent-issue`, `digest`, and `bot:in-progress`'), 'eligibility predicate prose must also list digest, before bot:in-progress so "The last" still refers to bot:in-progress');
+  assert.ok(NEXT_MODE_FLAT.includes("`_shared/materiality-floor.md`"), 'digest exclusion rationale must cite materiality-floor.md');
+  assert.ok(NEXT_MODE_FLAT.includes('`parked`, `parent-issue`, `digest`, or `bot:in-progress`'), 'Claim-step re-read predicate must also list digest');
 });
 
 test('next-mode.md states priority-then-age single selection', () => {
@@ -228,7 +235,7 @@ test('next-mode.md eligibility predicate still excludes needs:definition, now vi
 });
 
 test('next-mode.md Claim-step re-read excludes any needs:*-prefixed label, not just needs:definition', () => {
-  assert.ok(NEXT_MODE_FLAT.includes('now carries `ready`, any `needs:*`-prefixed label, `parked`, `parent-issue`, or `bot:in-progress`'), 'Claim-step re-read must generalize to any needs:*-prefixed label');
+  assert.ok(NEXT_MODE_FLAT.includes('now carries `ready`, any `needs:*`-prefixed label, `parked`, `parent-issue`, `digest`, or `bot:in-progress`'), 'Claim-step re-read must generalize to any needs:*-prefixed label');
 });
 
 test('next-mode.md Framing Guard cites the needsDecisionMarker capability retroactively', () => {

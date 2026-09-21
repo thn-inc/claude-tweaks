@@ -2,6 +2,11 @@
   "worktree": {
     "baseRef": "head"
   },
+  "permissions": {
+    "allow": [
+      "Read(node_modules/**)"
+    ]
+  },
   "enabledPlugins": {
     "claude-tweaks@claude-tweaks-marketplace": true,
     "superpowers@claude-plugins-official": true,

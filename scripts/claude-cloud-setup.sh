@@ -70,7 +70,7 @@ done
 # rule) defensively, in case the script is ever re-run inside a live session that does export
 # CLAUDE_CODE_SESSION_ID, rather than because a collision has ever been observed here.
 CC_TMP_DIR="${TMPDIR:-/tmp}"
-if [ -n "$CLAUDE_CODE_SESSION_ID" ]; then
+if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
   CC_TMP_DIR="$CC_TMP_DIR/ct-session-$CLAUDE_CODE_SESSION_ID"
   mkdir -p "$CC_TMP_DIR"
 fi
@@ -118,14 +118,28 @@ for spec in $PLUGIN_SPECS; do
     // nothing to compare (claude-tweaks #860, which used to make claude-tweaks drift permanently
     // unverifiable via this comparison).
     if (!expected && declared && declared.source && declared.source.source === "git-subdir" && declared.source.sha && declared.source.url) {
-      try {
-        const rawBase = declared.source.url.replace(/^https:\/\/github\.com\//, "https://raw.githubusercontent.com/");
-        const rawUrl = rawBase + "/" + declared.source.sha + "/" + declared.source.path + "/.claude-plugin/plugin.json";
-        const atSha = JSON.parse(require("child_process").execFileSync("curl", ["-fsSL", rawUrl], { encoding: "utf8", timeout: 10000 }));
-        if (atSha && atSha.version) expected = atSha.version;
-      } catch {
-        // Network failure, missing manifest at that path, or unexpected shape: fall through to
-        // "unversioned" below, the same fail-open posture as an unresolvable catalog entry.
+      // Announce every fallback path with the console.error-to-stderr style this script uses
+      // for its other degrades (its output passes through the surrounding $(...) capture into
+      // the setup log) -- a silent "unversioned" here used to make the one plugin this block
+      // exists to protect (claude-tweaks itself, a git-subdir source) read "ok" on a fetch failure.
+      if (declared.source.url.startsWith("https://github.com/")) {
+        try {
+          const rawBase = declared.source.url.replace(/^https:\/\/github\.com\//, "https://raw.githubusercontent.com/");
+          const rawUrl = rawBase + "/" + declared.source.sha + "/" + declared.source.path + "/.claude-plugin/plugin.json";
+          const atSha = JSON.parse(require("child_process").execFileSync("curl", ["-fsSL", rawUrl], { encoding: "utf8", timeout: 10000 }));
+          if (atSha && atSha.version) expected = atSha.version;
+        } catch (e) {
+          // Network failure, missing manifest at that path, or unexpected shape: fall through to
+          // "unversioned" below, the same fail-open posture as an unresolvable catalog entry --
+          // but announce it instead of swallowing it silently.
+          console.error("[claude-cloud-setup] WARNING: could not resolve the pinned version of " + spec + " at " + declared.source.sha + " (" + e.message + ") — freshness unverified.");
+        }
+      } else {
+        // The github.com -> raw.githubusercontent.com rewrite above only makes sense for a
+        // github.com source url; fetching an unrewritten url for any other host would be
+        // meaningless (low severity -- the catalog is already the trust boundary), so skip the
+        // fetch entirely rather than invoke curl against a URL that was never rewritten for this.
+        console.error("[claude-cloud-setup] WARNING: could not resolve the pinned version of " + spec + " at " + declared.source.sha + " (non-github.com source url) — freshness unverified.");
       }
     }
     expected = expected || "unversioned";
@@ -134,8 +148,7 @@ for spec in $PLUGIN_SPECS; do
     console.log([installed, expected, drift ? "DRIFT" : "ok", (entry && entry.installPath) || "-"].join("\t"));
   ' "$spec" "$CC_INSTALLED" "$CC_MARKETPLACES" || true)
   # `|| true` inside the substitution, because this loop is diagnostic-and-repair, not a
-  # prerequisite: under `set -e` an unreadable manifest would otherwise abort the script
-  # here and take the agent-browser/Chrome install below down with it.
+  # prerequisite: under `set -e` an unreadable manifest would otherwise abort the script here.
   if [ -z "$VERDICT" ]; then
     echo "[claude-cloud-setup] WARNING: could not resolve an installed version for $spec — freshness unverified."
     continue
@@ -154,60 +167,12 @@ for spec in $PLUGIN_SPECS; do
   fi
 done
 
-# agent-browser — required in the cloud sandbox for /browse-dependent skills
+# playwright-cli — required in the cloud sandbox for /browse-dependent skills
 # (/stories, /visual-review, /review, qa-agent, /flow) to work in cloud sessions.
-npm install -g agent-browser
+npm install -g @playwright/cli
 
-# Chrome, so agent-browser can actually launch a browser (the CLI alone can't render a
-# page). Unmodified `agent-browser install --with-deps` doesn't work in a cloud sandbox:
-#  - it shells out to `sudo apt-get ...` for Chrome's runtime libraries; cloud sandboxes
-#    commonly run this whole script as root with no `sudo` binary at all, so that call
-#    fails silently and Chrome downloads but can't launch (missing shared libs) — install
-#    the libraries directly instead, with no `sudo` prefix.
-#  - its own Chrome download can fail `invalid peer certificate: UnknownIssuer` behind a
-#    TLS-inspecting sandbox proxy (its bundled HTTP client doesn't trust the sandbox's CA
-#    store) — fetch Chrome for Testing directly via `curl` instead, which honors the
-#    system CA store, and place it where agent-browser's own cache expects it.
-CHROME_LIBS="libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
-  libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \
-  libpango-1.0-0 libcairo2 libatspi2.0-0 libxshmfence1"
-# Populate the local apt cache BEFORE resolving package names against it — a fresh
-# sandbox's cache is empty until `update` runs, which would otherwise make every
-# `apt-cache policy` lookup below (including the t64 fallback) report no candidate.
-apt-get update -qq
-RESOLVED_LIBS=""
-for pkg in $CHROME_LIBS; do
-  # Capture apt-cache policy's own output into a variable first, rather than piping it
-  # straight into `grep -q` — under this script's `set -o pipefail`, `grep -q` closing its
-  # stdin the instant it finds a match can SIGPIPE the still-writing producer, and
-  # pipefail then reports that SIGPIPE (141) as the pipeline's exit status instead of
-  # grep's real success: a false negative on a genuine match.
-  POLICY_OUT="$(apt-cache policy "$pkg" 2>/dev/null || true)"
-  if echo "$POLICY_OUT" | grep -qE "Candidate: [^(]"; then
-    RESOLVED_LIBS="$RESOLVED_LIBS $pkg"
-  else
-    # The sandbox's Debian base may have undergone the 64-bit time_t transition, which
-    # renamed some packages with a `t64` suffix (e.g. libasound2 -> libasound2t64).
-    POLICY_OUT_T64="$(apt-cache policy "${pkg}t64" 2>/dev/null || true)"
-    if echo "$POLICY_OUT_T64" | grep -qE "Candidate: [^(]"; then
-      RESOLVED_LIBS="$RESOLVED_LIBS ${pkg}t64"
-    fi
-  fi
-done
-# $RESOLVED_LIBS is an intentionally unquoted, space-separated word list. `unzip` isn't
-# subject to the t64 rename dance (its package name doesn't vary) but a minimal sandbox
-# image may not ship it, and the Chrome-for-Testing zip below needs it.
-apt-get install -y -qq unzip $RESOLVED_LIBS
-
-AB_BROWSERS_DIR="${HOME}/.agent-browser/browsers"
-mkdir -p "$AB_BROWSERS_DIR"
-CFT_JSON="$(curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json)"
-read -r CHROME_VERSION CHROME_URL <<<"$(echo "$CFT_JSON" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);const s=j.channels.Stable;console.log(s.version, s.downloads.chrome.find(x=>x.platform==='linux64').url)})")"
-CHROME_DIR="${AB_BROWSERS_DIR}/chrome-${CHROME_VERSION}"
-if [ ! -d "$CHROME_DIR" ]; then
-  mkdir -p "$CHROME_DIR"
-  curl -fsSL "$CHROME_URL" -o /tmp/chrome-for-testing.zip
-  unzip -q -o /tmp/chrome-for-testing.zip -d "$CHROME_DIR"
-  rm -f /tmp/chrome-for-testing.zip
-fi
-chmod +x "${CHROME_DIR}/chrome-linux64/chrome"
+# Chromium + its OS-level shared libraries. Unlike agent-browser's old workaround,
+# Playwright's own install-deps detects root (process.getuid() === 0, the common
+# cloud-sandbox case) and skips sudo entirely rather than failing silently when no
+# sudo binary exists — no hand-rolled apt-cache/t64 fallback needed.
+npx --yes playwright install --with-deps chromium

@@ -1,8 +1,10 @@
 // plugin/bin/lib/verify/report.js — report.json composition (#892). The write
-// itself is atomic-write.js's writeJsonAtomic, called by bin/verify.js: a
-// crashed run must never leave a half-written report.json a downstream gate
-// reads as pass evidence (#892 AC3). gitInfo fails toward null — sha alone is
-// not proof on a dirty tree, which is why dirty rides alongside it.
+// itself is writeReportAtomic below, wrapping the codebase's dominant
+// pid-suffixed atomic-write primitive (../atomic-write.js's writeFileAtomic,
+// #2004) and called directly by bin/verify.js: a crashed run must never
+// leave a half-written report.json a downstream gate reads as pass evidence
+// (#892 AC3). gitInfo fails toward null — sha alone is not proof on a dirty
+// tree, which is why dirty rides alongside it.
 'use strict';
 
 const { execFileSync } = require('child_process');

@@ -138,6 +138,66 @@ test('the allowlist names exactly the two reviewed exceptions, and each still ac
   }
 });
 
+// #2053: a narrower, unconditional rule -- no file under
+// `plugin/bin/lib/health-core/**` may call `process.exit()` anywhere, not
+// just inside an entry-point guard. These files are library functions
+// invoked from deep inside one of the four health-suite CLIs' own
+// (correctly-guarded) `main()`, outside any guard the test above can see --
+// #1903's guard-scoped scan by design never follows a guard's call graph
+// into a library function it invokes. A flat per-file text scan (same
+// mechanism style as `findDirectProcessExit` above), not a call-graph walk:
+// disproportionate for a bug class with three known instances (churn-report.js,
+// mark.js, retry-cli.js, all fixed by this same record). Never widen this
+// scope to all of `plugin/bin/lib/**` -- `statusline-wrapper-source.js`'s own
+// `process.exit()` calls are a different case (a guard-less whole-script
+// file, not a library function invoked from another file's guard) already
+// covered by the test above's own ALLOWLIST.
+function getHealthCoreFiles() {
+  const dir = path.join(ROOT, 'plugin', 'bin', 'lib', 'health-core');
+  return fs.readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith('.js'))
+    .map((e) => path.join('plugin', 'bin', 'lib', 'health-core', e.name));
+}
+
+test('no plugin/bin/lib/health-core/*.js file calls process.exit() directly', () => {
+  const files = getHealthCoreFiles();
+  assert.ok(files.length > 5, 'sanity check: expected plugin/bin/lib/health-core/*.js to contain several files');
+  const violations = [];
+  for (const rel of files) {
+    const content = stripComments(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
+    const hits = findDirectProcessExit(content);
+    if (hits.length > 0) {
+      violations.push(`${rel}: ${hits.length} direct process.exit() call(s)`);
+    }
+  }
+  assert.deepStrictEqual(
+    violations,
+    [],
+    'plugin/bin/lib/health-core files call process.exit() directly instead of returning a value for ' +
+    `their CLI caller's own main() to set process.exitCode from (see gh-api-module-pattern SKILL.md):\n${violations.join('\n')}`,
+  );
+});
+
+test('the health-core scoped rule actually detects a synthetic violation (discrimination check, #2053 AC3)', () => {
+  const tmpFile = path.join(ROOT, 'plugin', 'bin', 'lib', 'health-core', '__synthetic-violation.tmp.js');
+  const dirty = "'use strict';\nfunction cmdSomething() {\n  process.exit(1);\n}\nmodule.exports = { cmdSomething };\n";
+  fs.writeFileSync(tmpFile, dirty);
+  try {
+    const files = getHealthCoreFiles();
+    const rel = path.join('plugin', 'bin', 'lib', 'health-core', '__synthetic-violation.tmp.js');
+    assert.ok(files.includes(rel), 'synthetic file should be picked up by the directory sweep');
+    const hits = findDirectProcessExit(stripComments(fs.readFileSync(tmpFile, 'utf8')));
+    assert.strictEqual(hits.length, 1, 'the synthetic health-core file must fail the check');
+  } finally {
+    fs.unlinkSync(tmpFile);
+  }
+  // The real (post-fix) directory, with the synthetic file removed, passes clean.
+  for (const rel of getHealthCoreFiles()) {
+    const content = stripComments(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
+    assert.strictEqual(findDirectProcessExit(content).length, 0, `${rel} should have no direct process.exit() calls`);
+  }
+});
+
 test('the scanner actually detects a deliberately reintroduced violation (discrimination check)', () => {
   const clean = 'if (require.main === module) process.exitCode = run(process.argv.slice(2));';
   const dirtyBlock = 'if (require.main === module) { main(process.argv).then((code) => process.exit(code)); }';

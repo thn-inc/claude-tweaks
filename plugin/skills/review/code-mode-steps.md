@@ -21,6 +21,8 @@ the runnable invocation lives in that hatch, refs #1376) — unchanged. Full rat
 Skip this step entirely under `ceremony-profile: fast-lane` (roster tag `review-step-1`,
 `_shared/ceremony-profile.md`) — proceed directly to Step 1.5.
 
+Skip it too on a `base:{ref}` scope (Input rule 9): no spec exists to verify — proceed to Step 1.5 with "no spec — base-ref scope" in Step 7's summary.
+
 If a spec number was provided, read the spec file and verify the implementation meets it:
 
 > **Parallel execution:** Use parallel tool calls aggressively — all Grep/Glob/Read operations searching the codebase for each deliverable's implementation and each criterion's verifiability are independent and should run concurrently.
@@ -56,6 +58,8 @@ If blocked, skip the rest of the review. Present the gap analysis so the user kn
 
 Verify that `/claude-tweaks:test` has passed before proceeding to analytical review. Reviewing code quality on code that doesn't work is wasted effort.
 
+**Under a `base:{ref}` scope the tree this gate verifies must be `origin/{integration-branch}`** — the gate runs from a checkout already standing at that tip (the caller asserts it before invoking), never from a feature-branch worktree's HEAD, whose stamp would verify a tree the reviewed range does not contain.
+
 `PASS_WITH_CAVEATS` counts as passed — caveats are informational observations (e.g., minor UX roughness, non-blocking warnings) and do not block review. QA caveats are included in the findings table (Step 3 Routing) for visibility but have status `observation`, not `open`.
 
 ### In `/claude-tweaks:flow` pipeline:
@@ -75,7 +79,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status
 
 ### QA Ledger Check
 
-After confirming `TEST_PASSED`, read the open items ledger (`docs/plans/*-ledger.md`) and filter for entries with phase `test/qa`:
+After confirming `TEST_PASSED`, read the open items ledger (`docs/plans/*-ledger.md`, or the run-dir-scoped alternate per `_shared/ledger-format.md`'s Location section) and filter for entries with phase `test/qa`:
 
 - If any QA ledger entries have status `open` (failures that were not resolved), include them in the test gate report alongside the `TEST_PASSED` status. These represent QA failures that `/claude-tweaks:test` surfaced and that still need resolution.
 - If all QA entries have status `observation` or `fixed`, note: "QA observations present — see findings table in Step 3 Routing."
@@ -105,6 +109,8 @@ read `cross-spec-promise-check.md` in this skill's directory.
 
 **Resolving `{base}`:** never trust a bare local branch name for `{base}` — a long-lived worktree's local tracking branch (commonly `main`) routinely drifts behind its remote. Resolve it via `git fetch origin {base}` then use `origin/{base}` in every command below, or otherwise confirm `git log -1 {base}` matches `git log -1 origin/{base}` before trusting the diff scope.
 
+On a `base:{ref}` scope, `{base}` is the given ref and `{branch}` is `origin/{integration-branch}`. **This paragraph overrides the `origin/{base}` rule above it**: a `base:{ref}` ref is a tag (`v6.48.0`) or a sha, neither of which has an `origin/` form, so it is used exactly as given — after `git fetch --tags origin`, so the tag resolves locally. Only `{branch}` takes the `origin/` prefix on this scope. The change set is `git log --first-parent {base}..{branch}` / `git diff {base}..{branch}` — the first-parent line of the integration branch, so each squash-merged PR is one commit and a `--no-ff` merge counts once.
+
 ### Merge-Provenance Check
 
 Before analyzing the diff, detect whether the base branch was merged into this branch mid-history — content that arrived that way is not work this branch introduced and must not be reviewed as such. `{base}`/`{branch}` reuse whatever base-branch resolution the rest of this step already uses.
@@ -117,6 +123,20 @@ git log --merges {base}..{branch} --oneline                                     
 - **Merge commits detected** — read `merge-provenance-check.md` in this skill's directory: the own-work file-set computation, how to report the excluded files, and the own-work scope that replaces the raw `git diff` scope for Steps 3, 3.5, and 5.
 
 Not to be confused with "Reusing a Prior Whole-Branch Review" below — that handles a *later spec's* review citing an *earlier spec's already-completed* whole-branch review in a multi-spec batch; this check handles what's *in the diff at all* for a single review, independent of whether any prior review exists.
+
+### Cherry-Pick Provenance Check
+
+The Merge-Provenance Check above fires only on `git log --merges`. A cherry-pick, a manual port, or any other whole-hunk reuse of *another record's* branch leaves no merge commit at all, so that gate is a no-op and the reused content is reviewed as this branch's own work. On record (#1821): a build cherry-picked `1893db5b7` from `origin/worktree-record-1224`, whose still-open PR #1852 already carried a byte-identical, already-review-passed fix — two open PRs, one implementation. Step 3's lenses (3a-3f) all passed; none of them asks whether this work is already in flight elsewhere, so the duplication surfaced only through an off-lens manual cross-reference.
+
+Run alongside the merge detect above, unconditionally:
+
+```bash
+git log {base}..{branch} --no-merges --format='%H %s'                            # this branch's own commits
+gh pr list --state open --json number,url,headRefName,title                      # live open PRs
+```
+
+- **A commit carries a `(cherry picked from commit ...)` trailer, or its `git patch-id` matches a commit reachable from an open PR's head** — report it before Step 3's lens dispatch: `#{sha} duplicates open PR #{pr} ({url}) — the same fix already exists unmerged elsewhere.` This is a **merge-coordination finding, not a code defect**: the diff can be entirely correct and still need a human to decide which PR survives, so route it to the ledger as needs-human rather than to a lens.
+- **No match, or the `gh` lookup fails** — no-op, fail open, the same posture as the merge check's common case above and as `dispatch/cross-pr-overlap-report.md`'s own AC2 fallback.
 
 Analyze the diff's **shape** — scoped to the own-work file set above when merge commits were detected — to understand the scope. Read `--stat` and `--name-only`, **not** the full diff:
 
@@ -329,7 +349,7 @@ At the end of the summary, include a `### Key Learnings` section with 1-3 insigh
 
 If no notable learnings emerged, state: "No key learnings — straightforward review."
 
-**Phase exit (`worktree` mode, `integration-model: pr-first` — `_shared/integration-model.md`):** push the branch and flip this phase's PR checklist row — `_shared/git-discipline.md`'s Phase-exit push section and `_shared/pr-early-run-lifecycle.md`'s Phase-checklist update section. A no-op under `local-merge` or `current-branch` mode.
+**Phase exit (`worktree` mode, `integration-model: pr-first` — `_shared/integration-model.md`):** push the branch and flip this phase's PR checklist row — `_shared/git-discipline.md`'s Phase-exit push section and `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. A no-op under `local-merge` or `current-branch` mode.
 
 ## Important Notes
 

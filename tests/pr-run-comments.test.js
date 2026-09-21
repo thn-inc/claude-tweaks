@@ -39,13 +39,20 @@ test('all three comment kinds carry a distinct marker as the first line', () => 
 });
 
 test('the post-or-update procedure finds by marker via GraphQL node id, never a REST numeric id', () => {
-  assert.match(COMMENTS, /gh pr view \{pr-number\} --repo \{owner\}\/\{repo\} --json comments/);
+  assert.match(COMMENTS, /gh pr view \{pr-number\} --repo \{host\}\/\{owner\}\/\{repo\} --json comments/);
   assert.match(COMMENTS, /updateIssueComment\(input:\{id:\$id,body:\$body\}\)/);
   assert.match(
     COMMENTS,
     /not a REST numeric ID/,
     'this is the reason the update step is a GraphQL mutation instead of a REST PATCH to issues/comments/{id}',
   );
+});
+
+test('the find/update/create steps are host-qualified — --repo carries {host} and the GraphQL update passes --hostname (#2021)', () => {
+  assert.match(COMMENTS, /gh repo view --json nameWithOwner,url/);
+  assert.match(COMMENTS, /gh pr view \{pr-number\} --repo \{host\}\/\{owner\}\/\{repo\} --json comments/);
+  assert.match(COMMENTS, /gh api graphql --hostname \{host\} -f query=/);
+  assert.match(COMMENTS, /gh pr comment \{pr-number\} --repo \{host\}\/\{owner\}\/\{repo\} --body-file/);
 });
 
 test('one comment per kind per run — re-runs edit in place, never append a duplicate', () => {
@@ -61,7 +68,7 @@ test('retry-ceiling counting is called out as merging the issue with every linke
 });
 
 test('pr-early-run-lifecycle.md reopens a closed-unmerged PR on retry before falling back to recreate', () => {
-  assert.match(LIFECYCLE, /gh pr reopen \{number\} --repo \{owner\}\/\{repo\}/);
+  assert.match(LIFECYCLE, /gh pr reopen \{number\} --repo \{host\}\/\{owner\}\/\{repo\}/);
   assert.match(LIFECYCLE, /Reopen fails.*fall through to creation below/s);
   assert.match(
     LIFECYCLE,

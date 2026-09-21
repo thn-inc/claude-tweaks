@@ -172,7 +172,7 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
      `tombstoneInFlightPr` uses), read that PR's state via `mcp__github__pull_request_read`
      (`get` method) — the one documented PR-read exception to `_shared/github-write-transport.md`'s
      "Pull requests are not covered by this mapping" note, already used the same way by
-     `_shared/pr-early-run-lifecycle.md`'s Phase-checklist update section. A still-`OPEN` state
+     `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. A still-`OPEN` state
      means a build for this issue already exists and reclaiming would race it — stop here, do not
      write, and report it the same way `flow/claim-targets.md`'s in-flight card does. Any other
      state (closed, merged) or a failed read falls through to the write below unchanged. Otherwise,
@@ -212,6 +212,19 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
   self-resolve the way a live holder's claim eventually expires; do not retry-and-wait on `5` the
   way `4` permits) / `1` failed / `2` malformed or `gh` absent. The MCP path stays the manual
   read-classify-write above.
+
+  **`--sweep` (#2090)** narrows the ownership check above for a caller that is, by construction,
+  never the holder — `/tidy`'s hygiene pass, whose `--run` basename is the tidy run, not the
+  crashed dispatcher's `runId`. With `--sweep`, the CLI resolves the issue's own open/closed state
+  (`gh issue view <n> --json state`) and passes it through: the release proceeds when the blob
+  classifies `'stale'` (unconditionally — a live run can legitimately outlive its TTL, but the
+  sweep runs only after a human has already approved this specific row at Step 6, so the flag makes
+  an approved release executable, never autonomous) or `'live'` **and** the issue reads closed; a
+  `'live'` claim on an OPEN issue still exits `4` (`skipped-not-owner`) regardless of the flag. A
+  failed issue-state read aborts the release rather than assuming closed. `--reason` must start
+  with `swept:`, validated before any `gh` call. The resulting tombstone's own `runId` is still the
+  sweep run (never a fake owner) — `sweptFrom` is the separate field naming the original holder,
+  and both the CLI's JSON envelope and its `decisions.md` line carry it.
 - **List all claims:** list the `claims/` directory on `CLAIMS_BRANCH`.
 <!-- when: transport=gh -->
   - **gh CLI:** `gh api "repos/{owner}/{repo}/contents/claims?ref=${CLAIMS_BRANCH}" -q '.[].name'`
@@ -268,6 +281,18 @@ whole group this firing. Group membership is computed over *unclaimed* records o
 racing dispatchers converge: exactly one wins each contested member, and the loser backs off
 group-wide.
 
+**Post-write verification (#2073).** A write the claim store reports `ok: true` on has not yet
+been confirmed to have actually landed — `bin/lib/claim-targets/claim-targets.js` re-reads every
+claimed blob immediately after its own write (chained off the just-written git-CAS tip when
+available, so this costs no extra fetch) and confirms it classifies `'live'` with `runId` equal
+to this run's own. A mismatch or an absent/unreadable read-back is `claim-unverified` — exit `5`
+(JSON `{unverified: [{issue}], ...}`), handled exactly like a contest: all-or-abort by default
+(releasing every other target this invocation did confirm), downgraded to a per-target skip under
+`--keep-going`. The unverified target itself is never included in that release — a write this run
+cannot confirm might still be its own valid, if slow-to-replicate, claim, and blindly tombstoning
+it risks breaking a claim that is in fact live; it is instead surfaced for `/tidy`'s sweep or human
+judgment, the same posture `'unreadable'` already has.
+
 ## The mirror (human visibility only — never identity)
 
 Identity and lock are now **one write** — the blob's own content, per "The lock" above. The
@@ -299,6 +324,15 @@ content itself carries, so the comment is a legible copy of the blob, not a seco
 <!-- agent-claim-release: {"runId":"...","reason":"...","releasedAt":"<ISO>"} -->
 ```
 
+A sweep release (`release-claim.js --sweep`, #2090) adds one field to both the blob and the
+comment marker: `sweptFrom` — the original holder's `runId`. `runId` in the marker is still the
+releasing (sweep) run's own identity, never the holder's; `sweptFrom` is what distinguishes "I
+released my own claim" from "I swept someone else's":
+
+```
+<!-- agent-claim-release: {"runId":"<sweep-run>","reason":"swept: stale claim","releasedAt":"<ISO>","sweptFrom":"<original-run>"} -->
+```
+
 Identity: `runId` is the pipeline run directory id (`{ISO-timestamp}-{spec-slug}`) — for a
 directly-run or human-resumed `/flow`, the run directory it creates or adopts itself
 (`basename($PIPELINE_RUN_DIR)`); for a `/claude-tweaks:dispatch`-originated claim, the
@@ -307,7 +341,7 @@ keyed to the group's representative record — see `dispatch/SKILL.md` Step 4) a
 both of that group's Task calls as `PIPELINE_RUN_DIR`. One identity either way: the directory
 the claim was written under is always the same directory the pipeline itself resolves as
 `$PIPELINE_RUN_DIR`, so no separate variable threads the two together. Dispatch's own
-firing-level standalone-auto run dir (`_shared/pipeline-run-dir.md`, e.g.
+firing-level standalone-auto run dir (`_shared/run-dir-resolution.md`, e.g.
 `{ISO-timestamp}-dispatch-standalone`) is a different thing entirely — it holds that firing's
 own `decisions.md` (queue pull, selection, per-group minting log), never a claim's `runId`.
 `sessionId` is `CLAUDE_CODE_SESSION_ID` — the same
@@ -389,7 +423,7 @@ and let `/tidy`'s sweep surface it for human judgment.
 | Interactive `/flow` run stops at a gate, user chooses not to resume | `/flow` failure card (offered, not automatic) | `failed: {gate}` |
 | Handed-off issue-mode run fails a HARD-GATE (headless `dispatch`, no human present) | `/claude-tweaks:dispatch` settle step (automatic, unconditional) | `failed: {gate}` |
 | Headless bare `specify` drain (or its deprecated `next` alias) shapes the claimed record (success), routes it to `needs:definition` (success), or fails during shaping | `specify/next-mode-shape.md` Release step (#1346's split of `next-mode.md`; automatic, unconditional, always before that path's self-report) | `shaped: #{n}` / `routed: needs:definition #{n}` / `failed: shaping` |
-| Stale or orphaned claim in hygiene pass | `/tidy` Step 4.7 (after batch approval) | `swept: stale claim` / `swept: issue closed` |
+| Stale or orphaned claim in hygiene pass | `/tidy` Step 4.7 (after batch approval), via `release-claim.js --sweep` (#2090) | `swept: stale claim` / `swept: issue closed` |
 | Grant removal (`auto:build`/`auto:merge`) after a `merged:`/`pr-opened:` release | Console dispatch-label step (multi-spec) / `/wrap-up`'s `cleanup-procedures-execution.md` Section E step 6 (single-spec) | — (label edit, not a claim release) |
 | Interrupted session | nobody — TTL ages it out; `/tidy` sweeps it | — |
 

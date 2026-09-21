@@ -465,6 +465,55 @@ test('worktree-required: policy on allows "git push" from inside a linked worktr
   assert.deepStrictEqual(out, {});
 });
 
+// #2542: the ff-integration-branch push exemption. `cloneWithOrigin` gives the
+// clone a real `origin` remote (and populated `refs/remotes/origin/HEAD` +
+// `refs/remotes/origin/{branch}`), so `resolveIntegrationBranch` succeeds via
+// its origin/HEAD probe with no `integration-branch:` policy key needed —
+// deliberately branch-name-agnostic, since `init.defaultBranch` varies by
+// host git config.
+function cloneWithOrigin() {
+  const origin = gitRepoWithCommit();
+  const local = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-clone-'));
+  execFileSync('git', ['clone', '-q', origin, local]);
+  const branch = execFileSync('git', ['-C', local, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
+  return { local: fs.realpathSync(local), branch };
+}
+
+test('ff-integration-branch push exemption: a provable fast-forward push of the integration branch is allowed from the main checkout', () => {
+  const { local, branch } = cloneWithOrigin();
+  withPolicy(local, 'worktree-always: true\n');
+  execFileSync('git', ['-C', local, 'commit', '--allow-empty', '-m', 'local advance', '-q']);
+  const out = pre.run({ input: bashInput(`git push origin ${branch}`, local), runDir: null, runState: null, cwd: local });
+  assert.deepStrictEqual(out, {}, 'a pure fast-forward of the integration branch must be exempt');
+});
+
+test('ff-integration-branch push exemption: a diverged (non-fast-forward) push of the integration branch stays denied', () => {
+  const { local, branch } = cloneWithOrigin();
+  withPolicy(local, 'worktree-always: true\n');
+  // Diverge: rewrite local HEAD instead of advancing it, so origin/{branch}
+  // is no longer an ancestor.
+  execFileSync('git', ['-C', local, 'commit', '--amend', '--allow-empty', '-m', 'diverged', '-q']);
+  const out = pre.run({ input: bashInput(`git push origin ${branch}`, local), runDir: null, runState: null, cwd: local });
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny', 'a diverged push must not be exempt');
+});
+
+test('ff-integration-branch push exemption: a --force push of an otherwise-fast-forward integration branch stays denied', () => {
+  const { local, branch } = cloneWithOrigin();
+  withPolicy(local, 'worktree-always: true\n');
+  execFileSync('git', ['-C', local, 'commit', '--allow-empty', '-m', 'local advance', '-q']);
+  const out = pre.run({ input: bashInput(`git push origin ${branch} --force`, local), runDir: null, runState: null, cwd: local });
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny', 'the exemption grammar admits no flags at all, --force included');
+});
+
+test('ff-integration-branch push exemption: a fast-forward push of a NON-integration branch stays denied', () => {
+  const { local } = cloneWithOrigin();
+  withPolicy(local, 'worktree-always: true\n');
+  execFileSync('git', ['-C', local, 'checkout', '-q', '-b', 'feature-branch']);
+  execFileSync('git', ['-C', local, 'commit', '--allow-empty', '-m', 'feature work', '-q']);
+  const out = pre.run({ input: bashInput('git push origin feature-branch', local), runDir: null, runState: null, cwd: local });
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny', 'only the resolved integration branch itself qualifies');
+});
+
 test('worktree-required: policy is read from the EDIT TARGET\'s own repo, not the session cwd', () => {
   const policyRepo = gitRepoWithCommit();
   withPolicy(policyRepo, 'worktree-always: true\n');
@@ -1124,54 +1173,13 @@ test('hasMaterializeCommit: #1688 AC2 regression guard — the local default-bra
     'the local default-branch probe must not disarm the gate for a worktree\'s own genuinely-unmerged materialize commit');
 });
 
-// #1501: the #989 exemption's repro-resistant failure needs a byte-for-byte
-// diff between a real hook invocation and a synthetic replay to pin down —
-// this is the debug-capture instrumentation added for that, not a fix for
-// the failure itself (unreproducible from static analysis; see the record's
-// Investigation Findings).
-test('CT_HOOKS_DEBUG_CAPTURE: unset by default, no file is written', () => {
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-capture-'));
-  const captureFile = path.join(scratch, 'capture.jsonl');
-  delete process.env.CT_HOOKS_DEBUG_CAPTURE;
-  pre.run({ input: bashInput('ls', scratch), cwd: scratch });
-  assert.strictEqual(fs.existsSync(captureFile), false, 'no CT_HOOKS_DEBUG_CAPTURE set -> no capture file written');
-});
-
-test('CT_HOOKS_DEBUG_CAPTURE: when set, appends one JSON line per call with input/cwd/runDir/runState/ownedRun', () => {
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-capture-'));
-  const captureFile = path.join(scratch, 'capture.jsonl');
-  const { run, state } = mkRun(scratch, 'sess-1');
-  process.env.CT_HOOKS_DEBUG_CAPTURE = captureFile;
-  try {
-    pre.run({
-      input: bashInput('git push origin feature-x', scratch), cwd: scratch, runDir: run, runState: state, ownedRun: { dir: run },
-    });
-    pre.run({ input: bashInput('ls', scratch), cwd: scratch });
-  } finally {
-    delete process.env.CT_HOOKS_DEBUG_CAPTURE;
-  }
-  const lines = fs.readFileSync(captureFile, 'utf8').trim().split('\n');
-  assert.strictEqual(lines.length, 2, 'one capture line per pre.run() call, including calls with no runDir');
-  const first = JSON.parse(lines[0]);
-  assert.strictEqual(first.input.tool_name, 'Bash');
-  assert.match(first.input.tool_input.command, /git push origin feature-x/);
-  assert.strictEqual(first.cwd, scratch);
-  assert.strictEqual(first.runDir, run);
-  assert.strictEqual(first.runState.sessionId, 'sess-1');
-  assert.deepStrictEqual(first.ownedRun, { dir: run });
-  assert.ok(first.at, 'each line carries a capture timestamp');
-  const second = JSON.parse(lines[1]);
-  assert.strictEqual(second.runDir, undefined, 'a call with no runDir captures it as absent, not fabricated');
-});
-
-test('CT_HOOKS_DEBUG_CAPTURE: an unwritable target never breaks the real gate call', () => {
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-capture-'));
-  process.env.CT_HOOKS_DEBUG_CAPTURE = path.join(scratch, 'no-such-parent-dir', 'capture.jsonl');
-  try {
-    assert.doesNotThrow(() => pre.run({ input: bashInput('ls', scratch), cwd: scratch }));
-  } finally {
-    delete process.env.CT_HOOKS_DEBUG_CAPTURE;
-  }
+test('resolveRunPinnedIntegrationModel: exported for reuse by the phase-boundary precondition check (#2472)', () => {
+  const repo = gitRepoWithCommit();
+  const runDir = runDirForId('2026-09-17T000000-spec-2472');
+  assert.strictEqual(typeof pre.resolveRunPinnedIntegrationModel, 'function');
+  // No policy.yml, no remote configured -> detectIntegrationModel falls back
+  // to local-merge (no forge to be pr-first against).
+  assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, runDir), 'local-merge');
 });
 
 // #1967: git-stash worktree-hazard warn — the stash stack is repository-wide,
@@ -1209,4 +1217,31 @@ test('#1967: read-only `git stash list`/`git stash show` from a linked worktree 
 test('#1967: an unrelated git command from a linked worktree is silent', () => {
   const { wt } = mainAndWorktree();
   assert.deepStrictEqual(pre.run({ input: bashInput('git status', wt), runDir: null, runState: null, cwd: wt }), {});
+});
+
+// #2065: the guard widened to every explicit stack-mutating spelling, not
+// just bare `stash`/`stash pop` — `stash push` (with or without `-u`/`-m`),
+// the flag-first bare forms, and `stash save` all push onto the same
+// repository-wide stack the bare form does.
+test('#2065: `git stash push -m "wip"` and `git stash push -u` from a linked worktree emit the same warning bare `git stash` produces', () => {
+  const { wt } = mainAndWorktree();
+  const bare = pre.run({ input: bashInput('git stash', wt), runDir: null, runState: null, cwd: wt });
+  const pushM = pre.run({ input: bashInput('git stash push -m "wip"', wt), runDir: null, runState: null, cwd: wt });
+  const pushU = pre.run({ input: bashInput('git stash push -u', wt), runDir: null, runState: null, cwd: wt });
+  assert.strictEqual(pushM.json.systemMessage, bare.json.systemMessage);
+  assert.strictEqual(pushU.json.systemMessage, bare.json.systemMessage);
+});
+
+test('#2065: `git stash -u`, `git stash -m "wip"`, and `git stash save wip` from a linked worktree also warn', () => {
+  const { wt } = mainAndWorktree();
+  for (const cmd of ['git stash -u', 'git stash -m "wip"', 'git stash save wip']) {
+    const out = pre.run({ input: bashInput(cmd, wt), runDir: null, runState: null, cwd: wt });
+    assert.match(out.json.systemMessage, /git stash is repository-wide/, `expected a warning for: ${cmd}`);
+  }
+});
+
+test('#2065: `git stash apply` and `git stash drop` from a linked worktree stay silent', () => {
+  const { wt } = mainAndWorktree();
+  assert.deepStrictEqual(pre.run({ input: bashInput('git stash apply', wt), runDir: null, runState: null, cwd: wt }), {});
+  assert.deepStrictEqual(pre.run({ input: bashInput('git stash drop', wt), runDir: null, runState: null, cwd: wt }), {});
 });

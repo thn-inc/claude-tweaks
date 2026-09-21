@@ -141,10 +141,11 @@ function run(argv, deps = realDeps) {
 
   let owner = null;
   let repo = null;
+  let host = null;
   if (workLinks === 'native') {
     let remote = null;
     if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-    const repoSpec = parseRepo(opts.repo ? `github.com/${opts.repo}` : remote);
+    const repoSpec = parseRepo(opts.repo ? (opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : remote);
     if (!repoSpec) { deps.stderr('backlog-grant-gate.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
     // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'
     // (#1153 review finding). resolveSubIssueNumbers's REST fallback (lib/backlog-grant-gate/
@@ -157,7 +158,7 @@ function run(argv, deps = realDeps) {
       deps.stderr('backlog-grant-gate.js: invalid --repo value — owner/repo cannot be "." or ".."\n');
       return 2;
     }
-    owner = repoSpec.owner; repo = repoSpec.repo;
+    owner = repoSpec.owner; repo = repoSpec.repo; host = repoSpec.host;
   }
 
   let integrationBranch = resolved['integration-branch'].value;
@@ -181,6 +182,7 @@ function run(argv, deps = realDeps) {
       integrationBranch,
       owner,
       repo,
+      host,
       runner: deps.runner,
       gitRunner: deps.gitRunner,
       sessionId: process.env.CLAUDE_CODE_SESSION_ID,

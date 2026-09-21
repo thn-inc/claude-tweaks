@@ -21,11 +21,13 @@
 // `--worktree` defaults to process.cwd() — the caller (reflect, running
 // inside the worktree it's evaluating) does not usually need to pass it
 // explicitly.
-// Output: one JSON array on stdout, filtered to the five event types
+// Output: one JSON array on stdout, filtered to the event types
 // skills/reflect/full-mode.md's friction-lens-vocab block declares the
 // Friction Lens reads (`wd-deny`, `gate-denial`, `bookkeeping-stamp-deny`,
-// `contract-violation`, `ask-user-question` — bin/lib/friction-lens-vocab.js
-// is the shared source of truth for that list, #2016). Every other event
+// `contract-violation`, `ask-user-question`, `wd-guard-refusal` (#2282),
+// `zero-tool-use-verdict` (#2345) —
+// bin/lib/friction-lens-vocab.js is the shared source of truth for that
+// list, #2016). Every other event
 // type the run logged (`commit`, `push`, `pre-compact`, `session-end`,
 // `skill_invoked`, …) is dropped here rather than left for each lens run to
 // re-filter. Each surviving element is the parsed events.jsonl entry plus
@@ -63,12 +65,13 @@ function parseArgs(argv) {
 // than aborting the whole read (matches appendEvent's own best-effort
 // posture — one bad line must never hide every good one).
 //
-// #1337: a gate-denial event written by the test suite's own exercise of
-// pre-tool-use.js's deny logic (CT_HOOKS_TEST_MODE — see that file's
-// appendEvent call) carries `test: true`. Those are dropped here rather than
-// at the write site, so the underlying test that asserts the event IS
-// written still sees it — only this aggregation-facing read excludes it,
-// keeping a real operator denial (never tagged) unaffected.
+// #1337 (widened #2282): a gate-denial or wd-guard-refusal event written by
+// the test suite's own exercise of pre-tool-use.js's deny logic
+// (CT_HOOKS_TEST_MODE — see that file's appendEvent calls) carries
+// `test: true`. Those are dropped here rather than at the write site, so the
+// underlying test that asserts the event IS written still sees it — only
+// this aggregation-facing read excludes it, keeping a real operator denial
+// (never tagged) unaffected.
 //
 // #1402: a `primary`-sourced event carrying `attribution: 'fallback'` is
 // evidence context.js's own appendEvent doc comment says a reader "may [need
@@ -81,6 +84,25 @@ function parseArgs(argv) {
 // this run's own evidence only, and ambiguous-provenance noise is worse for
 // that than an undercount. `adhoc`-sourced events are unaffected — those
 // already passed a worktree-binding check via findRunsByWorktreePath.
+//
+// #2350: a `contract-violation` event carrying `variant: 'lenient'` is, by
+// subagent-stop.js's own two-tier design, a COMPLIANT reply (a dispatch
+// template still using the pre-#2265 status-line shape) — logged only so a
+// stale dispatch site stays visible for migration, never a real breach. The
+// Friction lens counted every `contract-violation`-typed event identically,
+// so a clean run using an old-shape template (e.g. superpowers'
+// subagent-driven-development bullet) accumulated dozens of false friction
+// hits. Dropped here, at the same read boundary as the #1337/#1402 filters
+// above, rather than at the vocabulary filter in run() below, since this is
+// about event fidelity (is this actually friction?), not event type.
+//
+// #2344: `variant: 'foreign-contract'` is the same shape of false positive —
+// a reply belonging to ANOTHER dispatch site's own declared verdict
+// vocabulary (APPROVED/NEEDS_FIXES/ADDRESSED/VERIFIED), not a real Subagent
+// Contract breach. Dropped here on the identical precedent, so the aggregate
+// `contract-violation` count the Friction lens judges is left holding only
+// genuine (`variant: 'violation'`, or legacy events with no variant field at
+// all) breaches.
 function readEvents(runDir, source) {
   let raw;
   try { raw = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'); } catch { return []; }
@@ -90,8 +112,9 @@ function readEvents(runDir, source) {
     try {
       const parsed = JSON.parse(line);
       if (!parsed || typeof parsed !== 'object') continue;
-      if (parsed.type === 'gate-denial' && parsed.test === true) continue;
+      if ((parsed.type === 'gate-denial' || parsed.type === 'wd-guard-refusal') && parsed.test === true) continue;
       if (source === 'primary' && parsed.attribution === 'fallback') continue;
+      if (parsed.type === 'contract-violation' && (parsed.variant === 'lenient' || parsed.variant === 'foreign-contract')) continue;
       out.push({ ...parsed, _source: source, _runDir: runDir });
     } catch { /* skip malformed line, keep reading */ }
   }

@@ -51,6 +51,15 @@ const TRIGGER_EXTENSIONS = new Set([
 ]);
 const TRIGGER_PATH_SEGMENTS = ['components', 'pages', 'app', 'routes', 'views', 'ui'];
 
+// Next.js API route handlers render nothing, but they live under the same
+// `app/`/`pages/` segments the trigger-path table above matches for
+// app-router `page.ts`/`layout.ts` files (#1786). Excluded here, before the
+// segment scan, so the `app`/`pages` segment rule never fires for
+// `app/api/**/route.ts` or `pages/api/**` — an extension match (e.g. a
+// `.tsx` file that happens to sit under `app/api/`) still wins, since this
+// only gates the segment fallback, not TRIGGER_EXTENSIONS.
+const API_ROUTE_SEGMENTS = /(^|\/)(app|pages)\/api\//;
+
 function modeLayers(mode) {
   const entry = MODE_LAYERS[mode];
   if (!entry) throw new Error(`design-detect: unknown mode "${mode}"`);
@@ -156,6 +165,7 @@ function fileMatchesFrontendPredicate(filePath) {
   const normalized = filePath.replace(/\\/g, '/');
   const ext = path.extname(normalized).toLowerCase();
   if (TRIGGER_EXTENSIONS.has(ext)) return true;
+  if (API_ROUTE_SEGMENTS.test(normalized.toLowerCase())) return false;
   const segments = normalized.split('/').filter(Boolean);
   return segments.some((seg) => TRIGGER_PATH_SEGMENTS.includes(seg.toLowerCase()));
 }

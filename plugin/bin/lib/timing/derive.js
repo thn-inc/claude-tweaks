@@ -12,7 +12,8 @@
 // (an unrecognized skill gets its own attributed span rather than silently
 // nesting into an unrelated phase). A maintainer adding a new nested-skill
 // call site inside review/wrap-up/build must add its name here, or every
-// run will grow a spurious top-level phase.
+// run will grow a spurious top-level phase — tests/timing-nested-parent-roster.test.js
+// pins this against the corpus.
 'use strict';
 
 const PHASES = ['call-1', 'call-2', 'build', 'plan', 'tasks', 'test', 'review', 'polish', 'wrap-up', 'merge'];
@@ -20,7 +21,8 @@ const PHASES = ['call-1', 'call-2', 'build', 'plan', 'tasks', 'test', 'review', 
 const NESTED_PARENT = Object.freeze({
   simplify: 'enclosing', reflect: 'enclosing', 'visual-review': 'enclosing', capture: 'enclosing',
   'design-wrapper': 'enclosing', challenge: 'enclosing', 'assess-agent-autonomy': 'enclosing',
-  ledger: 'enclosing', journeys: 'enclosing',
+  ledger: 'enclosing', journeys: 'enclosing', stories: 'enclosing', deepen: 'enclosing',
+  feedback: 'enclosing',
 });
 
 const TERMINAL_TYPES = new Set(['session-end', 'close-run', 'worktree-reaped']);

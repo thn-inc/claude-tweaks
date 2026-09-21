@@ -50,11 +50,17 @@ test('toIssuePayload body starts directly with the header line', () => {
   assert.ok(payload.body.startsWith('**Doc:**'), `expected body to start with the header line, got: ${payload.body.slice(0, 40)}`);
 });
 
-test('toIssuePayload body always includes Current State, Deliverables, and Acceptance Criteria sections', () => {
+test('toIssuePayload body always includes Current State, Deliverables, Acceptance Criteria, and Release Note sections', () => {
   const payload = toIssuePayload(finding());
   assert.ok(payload.body.includes('## Current State'));
   assert.ok(payload.body.includes('## Deliverables'));
   assert.ok(payload.body.includes('## Acceptance Criteria'));
+  assert.ok(payload.body.includes('## Release Note'));
+});
+
+test('toIssuePayload body Release Note is a plain "no user-visible change" phrasing (#2660)', () => {
+  const payload = toIssuePayload(finding());
+  assert.ok(payload.body.includes('No user-visible change — documentation accuracy fix.'));
 });
 
 test('toIssuePayload carries structured decision fields matching the input finding', () => {
