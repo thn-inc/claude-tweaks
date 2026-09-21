@@ -170,3 +170,9 @@ done
 # playwright-cli — required in the cloud sandbox for /browse-dependent skills
 # (/stories, /visual-review, /review, qa-agent, /flow) to work in cloud sessions.
 npm install -g @playwright/cli
+
+# Chromium + its OS-level shared libraries. Unlike agent-browser's old workaround,
+# Playwright's own install-deps detects root (process.getuid() === 0, the common
+# cloud-sandbox case) and skips sudo entirely rather than failing silently when no
+# sudo binary exists — no hand-rolled apt-cache/t64 fallback needed.
+npx --yes playwright install --with-deps chromium
