@@ -76,7 +76,7 @@ A long-running branch has to be realigned with `main` before it merges (`[IL-20]
 
 The second form is not wrong as history — nothing is lost, and `git log` still shows every commit. What it destroys is any tool that reads `--first-parent` as "what `main` reported over time", and it destroys it retroactively and invisibly: the same query answers differently before and after, and versions *leave* the reconstructed set as later merges land (#144, `[IL-95]`). Two releases were written up as never-shipped on that evidence.
 
-`docs/shipped-versions.tsv` now records the release history directly, so a single inverted merge no longer loses a version. Prefer the first form anyway — the record survives it, but nothing else that reads first-parent history does, and the inversion is invisible in review.
+Git tags (created by release-please under `pr-first`, by `bin/release-local.js` under `local-merge`, or — for this repo's own pre-migration history — the one-time retro-tag backfill, #2259) now record the release history directly — a version's tag is anchored to its commit, immune to first-parent inversion entirely. Prefer the first form anyway — nothing else that reads first-parent history is immune, and the inversion is invisible in review.
 
 ## Merge conflict resolution
 

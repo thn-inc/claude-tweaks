@@ -1,18 +1,10 @@
 'use strict';
-const { compareVersions } = require('../changelog.js');
-const { nextVersion } = require('./compose.js');
+const { compareVersions, nextVersion } = require('../changelog.js');
 const { manifestVersionAtRef, NOT_FOUND_ERROR_RE } = require('../manifest-path.js');
 
 const VERSION_IN_TEXT = /\bv?(\d+\.\d+\.\d+)\b/g;
 
-// keySource: 'tsv' — this repo's own release.js path (docs/shipped-versions.tsv
-// tombstones raise the base, manifest reads at plugin/.claude-plugin/plugin.json);
-// 'tags' — release-local.js (#2254): the highest strict-semver v* tag raises
-// the base instead, manifest reads go through the caller's versionAtRef, and
-// hasOrigin:false skips the fetch and the origin read. One keySource per call —
-// never both in one check (spec Gotchas).
-// Highest strict-semver token across a set of lines, via `extractVersion` —
-// shared by the tag tip (`tag -l v*`) and the shipped-versions tsv tip below.
+// Highest strict-semver token across a set of lines, via extractVersion.
 function highestVersion(lines, extractVersion) {
   let tip = null;
   for (const line of lines) {
@@ -26,28 +18,16 @@ function highestTag(deps) {
   return highestVersion(deps.git(['tag', '-l', 'v*']).split('\n'), (line) => line.trim().replace(/^v/, ''));
 }
 
-function tsvTip(deps) {
-  // The tsv's own tip participates in the base: a version can be documented
-  // (a wip-never-shipped tombstone line) without the manifest ever reaching it,
-  // and deriving the candidate from the manifest alone then lands exactly on
-  // the burned number — compose's duplicate-heading guard aborts, and no
-  // renumber suggestion ever fires because the tombstone is not a "claim".
-  // Observed live releasing after 6.75.0's reverted premature bump. A missing
-  // tsv (a repo predating it) contributes nothing rather than aborting.
-  try {
-    const tsv = deps.git(['show', 'main:docs/shipped-versions.tsv']);
-    return highestVersion(tsv.split('\n'), (line) => line.split('\t')[0]);
-  } catch (err) {
-    if (!NOT_FOUND_ERROR_RE.test(String(err.message))) {
-      throw new Error(`pre-check could not read docs/shipped-versions.tsv: ${err.message}`);
-    }
-    return null;
-  }
-}
-
+// keySource: 'tags' — the only remaining path (release-local.js, #2254): the
+// highest strict-semver v* tag raises the base, manifest reads go through the
+// caller's versionAtRef, and hasOrigin:false skips the fetch and the origin
+// read. #2259 retired this repo's own hand-rolled release.js and the
+// docs/shipped-versions.tsv-backed 'tsv' keySource that went with it — 'tags'
+// used to be one of two paths; now it's the only one, and the option stays
+// only because release-local.js still passes it explicitly.
 function collectClaims(deps, opts = {}) {
-  const { keySource = 'tsv', branch = 'main', hasOrigin = true, versionAtRef = (ref) => manifestVersionAtRef(deps, ref) } = opts;
-  if (keySource !== 'tsv' && keySource !== 'tags') throw new Error(`unknown keySource: ${keySource}`);
+  const { keySource = 'tags', branch = 'main', hasOrigin = true, versionAtRef = (ref) => manifestVersionAtRef(deps, ref) } = opts;
+  if (keySource !== 'tags') throw new Error(`unknown keySource: ${keySource}`);
   const localMain = versionAtRef(branch);
   const originMain = hasOrigin ? versionAtRef(`origin/${branch}`) : localMain;
 
@@ -70,8 +50,7 @@ function collectClaims(deps, opts = {}) {
     if (version !== null && version !== localMain) worktreeBranches.push({ branch: m[1], version });
   }
 
-  const highestTagVersion = keySource === 'tags' ? highestTag(deps) : null;
-  const shippedTsvTip = keySource === 'tsv' ? tsvTip(deps) : null;
+  const highestTagVersion = highestTag(deps);
   // Same-major only: a plan naming v20.12.0 in a repo at 6.x is citing a
   // dependency's version, not claiming a future plugin number.
   const reference = originMain || localMain || highestTagVersion || '0.0.0';
@@ -86,7 +65,7 @@ function collectClaims(deps, opts = {}) {
     }
   }
 
-  return { originMain, localMain, worktreeBranches, planClaims, tsvTip: shippedTsvTip, tagTip: highestTagVersion };
+  return { originMain, localMain, worktreeBranches, planClaims, tagTip: highestTagVersion };
 }
 
 function checkCollisions(candidate, claims, part) {
@@ -113,7 +92,7 @@ function precheck(deps, part, opts = {}) {
   const branch = opts.branch || 'main';
   if (opts.hasOrigin !== false) deps.git(['fetch', 'origin', branch]);
   const claims = collectClaims(deps, opts);
-  const known = [claims.localMain, claims.originMain, claims.tsvTip, claims.tagTip].filter(Boolean);
+  const known = [claims.localMain, claims.originMain, claims.tagTip].filter(Boolean);
   const base = known.length ? known.sort(compareVersions).pop() : '0.0.0';
   const candidate = nextVersion(base, part);
   return { candidate, claims, result: checkCollisions(candidate, claims, part) };
