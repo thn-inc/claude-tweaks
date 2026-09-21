@@ -3,9 +3,10 @@
 Every version this plugin has shipped, newest first, plus a handful of numbers
 this repo documented but never shipped — the tag-coverage note below explains
 which. "Shipped" means a value the `version` field in `.claude-plugin/plugin.json`
-held at the tip of `main` — the marketplace `source` is an unpinned git URL, so
-an install tracks that tip, and every distinct value it reported is a build
-someone could be running.
+held at the tip of `main` — the marketplace catalog entry is `sha`-pinned to a
+release commit at install time and never moves after that (`docs/decisions/0015-*`),
+so every distinct value the plugin ever reported is a build someone installed
+back when the catalog pointed there and could still be running today.
 
 Which versions those are is now **recorded as annotated git tags**, not a tracked
 file. `## v6.128.0` and every entry below it predate the migration to
