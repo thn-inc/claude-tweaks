@@ -28,7 +28,7 @@ REPO_DIR=$(find "$SEARCH_ROOT" -maxdepth 2 \( -type d -o -type f \) -name .git 2
 # a plugin is current by comparing version strings against THIS local catalog and nothing
 # else, so a catalog that failed to refresh makes every "already at the latest version"
 # below true of a stale snapshot and false of reality.
-claude plugin marketplace add thomasholknielsen/claude-tweaks-marketplace 2>/dev/null || true
+claude plugin marketplace add thn-inc/claude-tweaks-marketplace 2>/dev/null || true
 claude plugin marketplace update claude-tweaks-marketplace \
   || echo "[claude-cloud-setup] WARNING: catalog refresh failed for claude-tweaks-marketplace — version checks below are measured against whatever catalog this sandbox already had."
 # `claude-plugins-official` (Anthropic's own marketplace) still needs an explicit `add` here:
