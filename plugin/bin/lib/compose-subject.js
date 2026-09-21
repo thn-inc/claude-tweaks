@@ -48,15 +48,17 @@ const { parseRecordFacets, normalizeLabelNames } = require('./issues/record');
 const {
   parseRepo, ghAvailable, remoteUrl, repoSlug,
 } = require('./repo-resolve');
+const { GH_TIMEOUT_MS } = require('./shared-primitives');
 
 const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--shell] [--help]\n';
 // Decision (#2319): kept at the single-call convention, not widened. Each
 // `gh issue view` call below fetches exactly one record — unlike
 // fetch-sub-issues.js's 30000ms bound, which covers a single batched
 // 50-alias GraphQL call, this CLI issues N genuinely separate single-record
-// REST calls, so the 5000ms single-call convention (gh-api-module-pattern's
-// "Bound every remote-contacting call") applies unchanged to each one.
-const GH_TIMEOUT_MS = 5000;
+// REST calls, so the single-call convention (gh-api-module-pattern's "Bound
+// every remote-contacting call") applies unchanged to each one. #2567:
+// shared, not a local re-derivation of the same 5000 default — see
+// shared-primitives.js.
 const RECOGNIZED_TYPES = Object.keys(TYPE_PREFIX);
 // Bundle Type aggregation precedence — highest-impact type wins so a lowest-numbered
 // type:task record can never hide a type:feature (or type:bug) sibling behind a `chore:`

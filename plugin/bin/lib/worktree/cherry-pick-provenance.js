@@ -19,12 +19,13 @@
 'use strict';
 
 const { execFileSync } = require('child_process');
+const { GH_TIMEOUT_MS } = require('../shared-primitives');
 
 // Bound per gh-api-module-pattern: gh pr list is a network call. `git branch
 // -r --contains` is a local-only read of already-fetched remote-tracking
 // refs (no network round trip), so it is intentionally left unbounded, same
-// as that skill's `branch -r --merged` example.
-const GH_TIMEOUT_MS = 5000;
+// as that skill's `branch -r --merged` example. #2567: shared, not a local
+// re-derivation of the same 5000 default — see shared-primitives.js.
 
 const TRAILER_RE = /\(cherry picked from commit ([0-9a-f]{7,40})\)/i;
 

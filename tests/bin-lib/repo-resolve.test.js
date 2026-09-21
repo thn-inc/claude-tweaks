@@ -108,5 +108,7 @@ test("'--version' appears in plugin/bin only inside repo-resolve.js's ghAvailabl
     }
   };
   walk(binDir);
-  assert.deepEqual(hits, [`lib${pathModule.sep}repo-resolve.js:36`]);
+  // #2567 shifted this line by 2 (a shared-primitives require + its updated
+  // comment above GH_TIMEOUT_MS's own former definition).
+  assert.deepEqual(hits, [`lib${pathModule.sep}repo-resolve.js:38`]);
 });
