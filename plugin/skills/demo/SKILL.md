@@ -209,7 +209,7 @@ own thing outside /claude-tweaks:demo?"`, `header`: `"Scope fork"`, `multiSelect
 - Option 2 — `label`: `"Build it now"`, `description`: `"Build it now as its own thing, outside /claude-tweaks:demo"`
 
 "Capture it" routes through the same follow-up-record mechanism Step 3's Request-changes branch
-already uses, with one difference: the body's `Origin:` line reads `Origin: demo scope-fork from
+already uses (`follow-up-record.md` in this skill's directory), with one difference: the body's `Origin:` line reads `Origin: demo scope-fork from
 #{n}` (or `from session recall` for a session-recall entry) instead of the changes-requested
 variant — a scope-fork capture isn't a changes-requested verdict, so it needs its own provenance
 marker. If the human picks "Build it now," don't re-ask for further closely-related work in this
@@ -251,32 +251,10 @@ as single-record-backed — the safer default, since promoting an unlabeled hist
 - **Approve** — `gh issue edit {n} --remove-label demo:pending --add-label demo:approved` — for a batch-sourced verdict (per the Provenance signal note above), add `--add-label demo:approved-batch` to the same invocation. `work-backend: local-files`: set `facets.acceptance = 'approved'` via `writeRecord` — no equivalent provenance facet on this driver (see the Provenance signal note above). One command covers both entry shapes: `--remove-label` on a label the record does not carry is a silent no-op — verified on this repo, exit 0, and `--add-label` in the same invocation still lands — so a closing-commit reconstruction, which never had `demo:pending`, needs no variant. For a decomposition parent — `parent-issue` in its labels (`work-backend: github-issues`) or `facets.isParentIssue === true` (`work-backend: local-files`) — close it too: nothing else in the system ever closes a parent, so without this the parent stays open forever and the acceptance label is the only trace the parent issue was ever accepted. `work-backend: github-issues`: `gh issue close {n} --reason completed`. `work-backend: local-files`: `closeRecord(path)` (`bin/lib/issues/local-store.js`), run **after** the `writeRecord` call above — `closeRecord` does its own fresh read of the file, so calling it second means it preserves the `acceptance: 'approved'` facet just written rather than racing it.
 - **Request changes** — prompt for a short reason inline, then:
   1. **`work-backend: github-issues`:** `gh issue edit {n} --remove-label demo:pending --add-label demo:changes-requested`. **`work-backend: local-files`:** set `facets.acceptance = 'changes-requested'` via `writeRecord`. For a decomposition parent — `parent-issue` in its labels (`work-backend: github-issues`) or `facets.isParentIssue === true` (`work-backend: local-files`), the same two-driver test the Approve branch above uses — nothing further follows this: the parent stays open, since a changes-requested verdict means the parent issue's work is not done.
-  2. File a linked follow-up record: backlog stage (no `ready` — a one-line reason isn't
-     spec-shaped), Type `bug` by default (override to `feature`/`task` when the reason clearly
-     describes new scope, not a defect), no `by:*` label — instead a body line
-     `Origin: demo changes-requested from #{n}` per `_shared/work-record.md`'s side-effect-record
-     convention — plus the reason and a link back to the original. `work-backend: github-issues`:
-     use the same `recordPayload` composition `/claude-tweaks:capture` uses
-     (`bin/lib/issues/record.js`), just without invoking `/claude-tweaks:capture` itself —
-     and, unlike `/claude-tweaks:capture`'s own call, **omit the `origin` field entirely** rather than passing
-     `origin:'demo'`: `record.js`'s `ORIGINS` enum has no `'demo'` entry, so passing it throws;
-     omitting `origin` is also what keeps this follow-up label-free, consistent with the
-     "no `by:*` label" requirement above (`recordPayload` only pushes a `by:*` label when
-     `origin` is set).
-     `work-backend: local-files`: use `createRecord(dir, { slug, title, body, facets })` from
-     `bin/lib/issues/local-store.js` — `title` is the reason text just collected, `body` is the
-     reason plus the link back to the original plus the `Origin:` line above, `facets: { type,
-     stage: 'backlog' }` (`type` being `bug` or the overridden type). Compute `slug` via that
-     same module's `deriveSlug(title, existingSlugs)`. Never `allocateId`+`writeRecord`
-     separately — same allocateId+writeRecord race `capture/SKILL.md`'s Backend Selection
-     section documents (two near-simultaneous filings, e.g. two `/claude-tweaks:demo` "Request changes"
-     verdicts landing in the same run, or `/claude-tweaks:demo` racing a `/claude-tweaks:capture`/`/claude-tweaks:specify` decomposition,
-     can silently share one numeric id); see that section for the full call shape to mirror.
-  3. Note the bidirectional link back on the original record. `work-backend: github-issues`:
-     comment on the original issue with the new follow-up's issue number. `work-backend:
-     local-files`: there is no comment mechanism (same constraint `verification-brief.md` and
-     `_shared/work-record.md` already document) — append a short note with the follow-up's id to
-     the original record's body instead, via the same `readRecord`/`writeRecord` round trip.
+  2. File a linked follow-up record and note the bidirectional link back on the original — read
+     `follow-up-record.md` in this skill's directory and follow its items 2 and 3 (both drivers:
+     `recordPayload` under `work-backend: github-issues`, `createRecord`+`deriveSlug` under
+     `local-files`, the `Origin: demo changes-requested from #{n}` provenance line).
 - **Skip for now** — no label change.
 
 **Session-recall entries** (Step 1's no-arguments path) — no record exists, so nothing here ever
@@ -287,7 +265,7 @@ bootstraps a label or writes to GitHub/local-files for Approve or Skip:
   reappear in a future `/claude-tweaks:demo` run — a different session has no memory of this conversation to
   recall from. This is the accepted tradeoff of not persisting anything, not a bug.
 - **Request changes** — the exact same follow-up-filing procedure as the label-backed path's
-  Request changes above (step 2), reusing `recordPayload` (`work-backend: github-issues`) or
+  Request changes above (step 2) (`follow-up-record.md` in this skill's directory), reusing `recordPayload` (`work-backend: github-issues`) or
   `createRecord`+`deriveSlug` (`work-backend: local-files`) directly — the only difference is
   there is no original record to relabel or comment a link back onto, or reference within the
   follow-up's own body — the `Origin:` line is the sole provenance marker for a session-recall
