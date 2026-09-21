@@ -92,3 +92,25 @@ test('the footer notes the empty-commits case only when other actor arrays are n
   const withCommits = render(facts(), narratives([])).markdown;
   assert.equal(withCommits.includes('no commits were matched'), false);
 });
+
+test('newlines and link brackets in item text are neutralized so they cannot forge a section or an unvalidated link', () => {
+  const evilText = 'Shipped X\n\n## Fake Section\n- Uncited ([acme/widgets#1](http://evil))';
+  const { markdown, warnings } = render(facts(), narratives([{ text: evilText, refs: [] }]));
+  assert.equal(markdown.includes('\n## Fake Section'), false);
+  assert.ok(markdown.includes('- Shipped X ## Fake Section - Uncited (\\[acme/widgets#1\\](http://evil))'));
+  assert.deepEqual(warnings, []);
+});
+
+test('a heading containing newlines and #-prefixed lines is collapsed to one inline heading', () => {
+  const { markdown } = render(facts(), { schemaVersion: 1, register: 'retro', sections: [{ heading: '# Evil\n## Nested', items: [{ text: 't', refs: [] }] }] });
+  assert.ok(markdown.includes('\n## Evil ## Nested\n'));
+});
+
+test('a fully failed gather is never treated as an empty period', () => {
+  const f = facts({ merged_prs: [], commits: [], failures: [{ query: 'merged_prs', repo: R, error: 'HTTP 503' }] });
+  const { markdown } = render(f, { schemaVersion: 1, register: 'retro', sections: [] });
+  assert.equal(markdown.includes('No activity found'), false);
+  assert.ok(markdown.includes('\n## Partial gather\n'));
+  assert.ok(markdown.includes('- merged_prs on acme/widgets: HTTP 503'));
+  assert.ok(markdown.includes('\n## Notes\n'));
+});

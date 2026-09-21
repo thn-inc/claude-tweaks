@@ -2,14 +2,24 @@
 // Trusts facts.json (which only gh wrote) and never the narrative: every refs[] entry is
 // validated against the citable set derived from the facts and dropped with a warning when
 // absent or ambiguous. Refs come ONLY from refs[] — a `#123` typed inside an item's text is
-// prose, not a citation, and is left exactly as written. Both inputs must carry
-// schemaVersion: 1; anything else is rejected (never guessed across versions).
+// prose, not a citation, and is left exactly as written. Text and headings are prose only:
+// newlines are collapsed to spaces and markdown link brackets are escaped before insertion
+// (see inline()), so a citation-shaped string embedded in narrative text can never forge a
+// section heading or a link that skipped resolveRef. Both inputs must carry schemaVersion: 1;
+// anything else is rejected (never guessed across versions). A period counts as empty only
+// when there is no activity AND no gather failures — a fully failed gather always renders
+// normally (Partial gather + Notes), never the one-line empty report.
 'use strict';
 
 const NUMBERED = ['merged_prs', 'closed_issues', 'issues_raised', 'reviews_given', 'in_flight'];
 const REGISTERS = ['retro', 'standup', 'manager'];
 const NUMBER_REF_RE = /^([^\s/#@]+\/[^\s/#@]+)#(\d+)$/;
 const COMMIT_REF_RE = /^([^\s/#@]+\/[^\s/#@]+)@([0-9a-fA-F]{7,40})$/;
+
+// prose (item text or a section heading) -> single-line, link-bracket-safe prose
+function inline(s) {
+  return s.replace(/\s*[\r\n]+\s*/g, ' ').trim().replace(/[\[\]]/g, '\\$&');
+}
 
 class SchemaError extends Error {
   constructor(errors) {
@@ -66,28 +76,34 @@ function citableRefs(facts) {
   return { numbers, commits };
 }
 
+// dropped ref -> the standard "not present" warning
+function dropped(ref) {
+  return { warning: `warning: dropped citation ${ref} — not present in facts.json` };
+}
+
 // ref string + citable set -> { link } | { warning }
 function resolveRef(ref, citable) {
   let m = NUMBER_REF_RE.exec(ref);
   if (m) {
-    const url = citable.numbers.get(m[1]) && citable.numbers.get(m[1]).get(Number(m[2]));
-    return url ? { link: `[${m[1]}#${m[2]}](${url})` } : { warning: `warning: dropped citation ${ref} — not present in facts.json` };
+    const repoMap = citable.numbers.get(m[1]);
+    const num = Number(m[2]);
+    return repoMap && repoMap.has(num) ? { link: `[${m[1]}#${m[2]}](${repoMap.get(num)})` } : dropped(ref);
   }
   m = COMMIT_REF_RE.exec(ref);
   if (m) {
     const prefix = m[2].toLowerCase();
     const hits = (citable.commits.get(m[1]) || []).filter((c) => c.sha.toLowerCase().startsWith(prefix));
     if (hits.length === 1) return { link: `[${m[1]}@${prefix.slice(0, 7)}](${hits[0].url})` };
-    if (hits.length === 0) return { warning: `warning: dropped citation ${ref} — not present in facts.json` };
+    if (hits.length === 0) return dropped(ref);
     return { warning: `warning: ambiguous citation ${m[1]}@${m[2]} — matches ${hits.length} commits` };
   }
-  return { warning: `warning: dropped citation ${ref} — not present in facts.json` };
+  return dropped(ref);
 }
 
 function isEmptyPeriod(facts, narratives) {
   const noFacts = [...NUMBERED, 'commits'].every((k) => facts[k].length === 0);
   const noItems = narratives.sections.every((s) => s.items.length === 0);
-  return noFacts && noItems;
+  return noFacts && noItems && facts.failures.length === 0;
 }
 
 function render(facts, narratives) {
@@ -107,14 +123,16 @@ function render(facts, narratives) {
   const lines = [title, ''];
   for (const section of narratives.sections) {
     if (section.items.length === 0) continue;
-    lines.push(`## ${section.heading}`, '');
+    const heading = inline(section.heading).replace(/^#+\s*/, '');
+    lines.push(`## ${heading}`, '');
     for (const item of section.items) {
+      const text = inline(item.text);
       const links = [];
       for (const ref of item.refs) {
         const r = resolveRef(ref, citable);
         if (r.link) links.push(r.link); else warnings.push(r.warning);
       }
-      lines.push(links.length ? `- ${item.text} (${links.join(', ')})` : `- ${item.text}`);
+      lines.push(links.length ? `- ${text} (${links.join(', ')})` : `- ${text}`);
     }
     lines.push('');
   }
@@ -134,4 +152,4 @@ function render(facts, narratives) {
   return { markdown: lines.join('\n'), warnings };
 }
 
-module.exports = { render, validateFacts, validateNarratives, citableRefs, SchemaError, REGISTERS, NUMBER_REF_RE, COMMIT_REF_RE };
+module.exports = { render, validateFacts, validateNarratives, citableRefs, SchemaError, REGISTERS };
