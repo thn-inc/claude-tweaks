@@ -316,9 +316,10 @@ repository is outward-facing and effectively irreversible.
 
 **`--pre-confirmed`:** read `pre-confirmed.md` in this skill's directory and follow its Step 7
 section — an unconditional Step 6 scrub rerun on the on-disk staged content, then a byte-for-byte
-drift check against the caller's approved snapshot, which decides whether this item's
-`AskUserQuestion` is skipped (no mismatch) or falls back to a normal per-item confirm (drift, or
-the staged file already gone = already filed). Never read on a direct invocation.
+drift check against the caller's approved snapshot, with three outcomes: no mismatch → skip this
+item's `AskUserQuestion` and file the post-scrub content directly; a mismatch → fall back to a
+normal per-item confirm showing the post-scrub content; the staged file already gone → already
+filed, skip the item without re-filing or erroring. Never read on a direct invocation.
 
 **`--dry-run`:** render every draft, state the classified destination and kind, then **stop here**
 — no `AskUserQuestion` call of any kind, and nothing filed. This holds whether or not
