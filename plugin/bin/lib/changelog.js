@@ -51,12 +51,22 @@ function extractChangelogRange(changelogText, oldVersion, newVersion) {
   );
 }
 
-// Any line that LOOKS like a version heading, however malformed. Deliberately
-// looser than HEADER_RE: its whole job is to find headings HEADER_RE rejects.
-// A rejected heading is not a parse error anyone sees — it is silently absent
-// from parseChangelogVersions, so /init's version notice skips that release
-// without a word. `## v4.1` (no title) and `## v4.2 — Token Saver` (two-component
-// version) both shipped for months in exactly that state.
+// Any line that LOOKS like a `## v...` version heading, however malformed —
+// deliberately looser than HEADER_RE's first alternative, to catch headings
+// that alternative rejects. A rejected heading is not a parse error anyone
+// sees — it is silently absent from parseChangelogVersions, so /init's
+// version notice skips that release without a word. `## v4.1` (no title) and
+// `## v4.2 — Token Saver` (two-component version) both shipped for months in
+// exactly that state.
+//
+// Covers only the `## v...` family, not HEADER_RE's release-please
+// alternatives (`## [X.Y.Z](...)`, `## X.Y.Z (date)`) — a malformed
+// release-please heading (e.g. a two-component `## 6.12 (date)`) is
+// currently invisible to both HEADER_RE and this detector. Left uncovered
+// deliberately: release-please generates these headings mechanically, so the
+// human-typo failure mode this pair exists to catch can't occur in that
+// family. Revisit if that assumption stops holding (e.g. a hand-edited
+// release-please entry).
 const LOOSE_HEADING_RE = /^## v(\S+)(.*)$/gm;
 const STRICT_HEADING_RE = /^## v(\d+\.\d+\.\d+) — (.+)$/;
 
