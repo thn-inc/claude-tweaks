@@ -311,6 +311,114 @@ test('bookkeeping-stamps gate (#2526): a multi-record run — every record needs
   assert.doesNotMatch(reason, /#991/, 'must not name the already-claimed record');
 });
 
+// (#2636) The claim-log branch sat AFTER the function's own
+// `runState.worktree && (runState.pr || runState.prExempt)` short-circuit —
+// both of which are stamped early in any real run, well before the claim-log
+// branch's own `hasMaterializeCommit` precondition can ever be true. Once
+// both were set, that short-circuit returned `{}` on every subsequent call
+// and the claim-log branch became unreachable dead code. This is the real
+// post-stamp steady state (AC1): worktree AND pr already set.
+test('bookkeeping-stamps gate (#2636): worktree+pr already stamped (real post-stamp steady state) + a genuinely missing claim -> still denied, not short-circuited away', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  const out = pre.run({
+    input: editInput(path.join(wt, 'src', 'x.js')),
+    runDir: run,
+    runState: { status: 'active', worktree: wt, pr: { number: 1, url: 'https://x' } },
+    cwd: wt,
+  });
+  assert.ok(out.json, 'expected a deny result — the claim-log branch must still be reachable');
+  const spec = out.json.hookSpecificOutput;
+  assert.strictEqual(spec.permissionDecision, 'deny');
+  assert.match(spec.permissionDecisionReason, /Step 2\.8/);
+  assert.match(spec.permissionDecisionReason, /#991/);
+  assert.ok(readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'));
+});
+
+// Same post-stamp steady state, but via `prExempt` (a local-merge run) rather
+// than a real `pr` object — the short-circuit's other allowed path to the
+// PR half of its condition must be gated on `claimExempt` too.
+test('bookkeeping-stamps gate (#2636): worktree stamped + prExempt (local-merge steady state) + a genuinely missing claim -> still denied', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  const out = pre.run({
+    input: editInput(path.join(wt, 'src', 'x.js')),
+    runDir: run,
+    runState: { status: 'active', worktree: wt, prExempt: true },
+    cwd: wt,
+  });
+  assert.ok(out.json, 'expected a deny result — the claim-log branch must still be reachable');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.ok(readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'));
+});
+
+// AC1's positive control: once claimExempt IS set (a prior call already
+// resolved the claim branch cleanly), the short-circuit correctly skips
+// straight past every stamp check with no deny at all.
+test('bookkeeping-stamps gate (#2636): worktree+pr+claimExempt all set -> short-circuits to allow, no deny of any kind', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  const out = pre.run({
+    input: editInput(path.join(wt, 'src', 'x.js')),
+    runDir: run,
+    runState: {
+      status: 'active', worktree: wt, pr: { number: 1, url: 'https://x' }, claimExempt: true,
+    },
+    cwd: wt,
+  });
+  assert.ok(!out.json || !out.json.hookSpecificOutput, 'fully-stamped run must allow with no deny');
+});
+
+// (#2636) hasLoggedClaim's regex only matched a single-target
+// "Step 2.8: claimed #{n}" line. A real multi-record `/flow` run's actual
+// Step 2.8 log line is a batch summary instead — confirmed against
+// pipeline run 2026-09-20T002426-record-1235's own decisions.md — with no
+// per-number substring at all, so every record in a multi-record run would
+// misclassify as missing-claim even when the batch call genuinely claimed
+// all of them (AC2).
+test('bookkeeping-stamps gate (#2636): a multi-record run whose decisions.md carries only the real batch-claim line -> every target recognized as claimed, no deny', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('spec-991-995', 'work', '991-spec.md'));
+  const dir995 = path.join(wt, '.claude-tweaks', 'pipelines', RUN_ID, 'spec-991-995', 'work');
+  fs.mkdirSync(dir995, { recursive: true });
+  fs.writeFileSync(path.join(dir995, '995-spec.md'), '---\nrecord: 995\n---\nbody\n');
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  fs.writeFileSync(
+    path.join(run, 'decisions.md'),
+    `- AUTO 02:30:28 — Step 2.8: Claimed all 2 targets under run ${RUN_ID} (claim-targets.js exit 0). Reversibility: high.\n`,
+  );
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result — but from the NEXT check (worktree stamp), not the claim branch');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
+  assert.ok(!readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'), 'the batch line must satisfy every record number — no claim-log deny');
+});
+
+test('bookkeeping-stamps gate (#2636): the batch-claim line alone does not satisfy an UNRELATED run\'s claim check (still scoped to this run\'s own decisions.md, no cross-run false-satisfy)', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  // No decisions.md at all for THIS run -- hasLoggedClaim must fail closed
+  // (missing file -> false), not accidentally match some other run's batch line.
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /Step 2\.8/);
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /#991/);
+});
+
 test('bookkeeping-stamps gate: main checkout (not a linked worktree) -> allow regardless of stamps', () => {
   const main = gitRepo();
   commitMaterializedSpec(main, path.join('work', '991-spec.md'));
@@ -1182,17 +1290,22 @@ test('bookkeeping-stamps gate (I5): both stamps present adds no repo-inspection 
   const baseline = withSpawnCount(() => pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: null, runState: null, cwd: wt }));
   assert.deepStrictEqual(baseline.out, {});
 
-  const { run } = mkRunDir(project, wt, undefined, { pr: { number: 1 } });
+  // (#2636) All three stamps (worktree, pr, claimExempt) must be present for
+  // the fast path to apply — worktree+pr alone is no longer sufficient once
+  // the claim-log branch is reachable in this steady state too.
+  const { run } = mkRunDir(project, wt, undefined, { pr: { number: 1 }, claimExempt: true });
   const shortCircuit = withSpawnCount(() => pre.run({
     input: editInput(path.join(wt, 'src', 'x.js')),
     runDir: run,
-    runState: { status: 'active', worktree: wt, pr: { number: 1 } },
+    runState: {
+      status: 'active', worktree: wt, pr: { number: 1 }, claimExempt: true,
+    },
     cwd: wt,
   }));
   assert.deepStrictEqual(shortCircuit.out, {});
   assert.strictEqual(
     shortCircuit.calls, baseline.calls,
-    'both stamps present must add zero repo-inspection spawns beyond pre.run()\'s own baseline dispatch',
+    'all three stamps present must add zero repo-inspection spawns beyond pre.run()\'s own baseline dispatch',
   );
 
   // Control: worktree stamped but PR missing forces real inspection
@@ -1259,16 +1372,22 @@ test('bookkeeping-stamps gate (#1258): local-merge steady state — first resolu
   );
   const persisted = JSON.parse(fs.readFileSync(path.join(run, 'run-state.json'), 'utf8'));
   assert.strictEqual(persisted.prExempt, true, 'first resolution must persist prExempt onto run-state.json');
+  // (#2636) No CLAUDE.md at all in this fixture -> the claim-log branch's
+  // work-backend read resolves null (unconfigured), which is exempt
+  // unconditionally -> this same first call also persists claimExempt.
+  assert.strictEqual(persisted.claimExempt, true, 'first resolution must also persist claimExempt (unconfigured work-backend is exempt)');
 
-  // Steady state: a later call reads the persisted prExempt (as production
-  // code would, via ctx.runState freshly loaded from run-state.json on each
-  // fresh hook process) and must add zero spawns beyond pre.run()'s own
-  // baseline dispatch — the exact guarantee the AC requires: no worse than a
-  // fully-stamped pr-first run's steady state.
+  // Steady state: a later call reads the persisted prExempt/claimExempt (as
+  // production code would, via ctx.runState freshly loaded from
+  // run-state.json on each fresh hook process) and must add zero spawns
+  // beyond pre.run()'s own baseline dispatch — the exact guarantee the AC
+  // requires: no worse than a fully-stamped pr-first run's steady state.
   const steadyState = withSpawnCount(() => pre.run({
     input: editInput(path.join(wt, 'src', 'x.js')),
     runDir: run,
-    runState: { status: 'active', worktree: wt, prExempt: true },
+    runState: {
+      status: 'active', worktree: wt, prExempt: true, claimExempt: true,
+    },
     cwd: wt,
   }));
   assert.deepStrictEqual(steadyState.out, {});
