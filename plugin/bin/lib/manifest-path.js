@@ -48,8 +48,7 @@ function readManifestAtRef(read) {
 // A git error meaning "this path/ref genuinely does not exist" — as opposed to a
 // git resolution failure (bad ref, corrupt object) that must not be misread as
 // absence. Shared by every reader of a readManifestAtRef-driven git error: the
-// release pre-check's worktree-branch and shipped-versions-tsv absence checks,
-// and the release status walk's root-commit check.
+// release pre-check's worktree-branch absence check.
 const NOT_FOUND_ERROR_RE = /does not exist|exists on disk, but not in|invalid object name/i;
 
 // Version at an arbitrary ref, trying both manifest spellings there — every

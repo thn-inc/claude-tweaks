@@ -4,13 +4,7 @@ const { manifestVersionAtRef, NOT_FOUND_ERROR_RE } = require('../manifest-path.j
 
 const VERSION_IN_TEXT = /\bv?(\d+\.\d+\.\d+)\b/g;
 
-// keySource: 'tags' — the only remaining path (release-local.js, #2254): the
-// highest strict-semver v* tag raises the base, manifest reads go through the
-// caller's versionAtRef, and hasOrigin:false skips the fetch and the origin
-// read. #2259 retired this repo's own hand-rolled release.js and the
-// docs/shipped-versions.tsv-backed 'tsv' keySource that went with it — 'tags'
-// used to be one of two paths; now it's the only one, and the option stays
-// only because release-local.js still passes it explicitly.
+// Highest strict-semver token across a set of lines, via extractVersion.
 function highestVersion(lines, extractVersion) {
   let tip = null;
   for (const line of lines) {
@@ -24,6 +18,13 @@ function highestTag(deps) {
   return highestVersion(deps.git(['tag', '-l', 'v*']).split('\n'), (line) => line.trim().replace(/^v/, ''));
 }
 
+// keySource: 'tags' — the only remaining path (release-local.js, #2254): the
+// highest strict-semver v* tag raises the base, manifest reads go through the
+// caller's versionAtRef, and hasOrigin:false skips the fetch and the origin
+// read. #2259 retired this repo's own hand-rolled release.js and the
+// docs/shipped-versions.tsv-backed 'tsv' keySource that went with it — 'tags'
+// used to be one of two paths; now it's the only one, and the option stays
+// only because release-local.js still passes it explicitly.
 function collectClaims(deps, opts = {}) {
   const { keySource = 'tags', branch = 'main', hasOrigin = true, versionAtRef = (ref) => manifestVersionAtRef(deps, ref) } = opts;
   if (keySource !== 'tags') throw new Error(`unknown keySource: ${keySource}`);
