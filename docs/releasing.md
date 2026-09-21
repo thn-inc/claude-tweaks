@@ -10,6 +10,10 @@ This repo dogfoods the same release engine every consumer project uses: `/claude
 
 **The marketplace mirror** is now `.github/workflows/mirror-marketplace.yml`, triggered on `release: published` — the same catalog write `plugin/bin/lib/release/mirror.js` used to perform by hand, preserving its two invariants: the catalog entry is pinned by `sha` (never `ref`), and carries no `version` field (the payload's own `plugin/.claude-plugin/plugin.json` is the single version authority).
 
+## Manual Steps
+
+**`MARKETPLACE_TOKEN`** — a GitHub secret on this repo, consumed by `mirror-marketplace.yml` as `GH_TOKEN` for its `gh api` calls. It needs write access to `thomasholknielsen/claude-tweaks-marketplace`'s contents (the mirror reads then `PUT`s `.claude-plugin/marketplace.json` there), which the default per-repo `GITHUB_TOKEN` cannot grant since that repo isn't the one the workflow runs in. Set it once: a fine-grained personal access token scoped to `thomasholknielsen/claude-tweaks-marketplace` with Contents: Read and write, added as a repository secret named `MARKETPLACE_TOKEN` on `thomasholknielsen/claude-tweaks`. If the mirror ever fails with "MARKETPLACE_TOKEN secret is missing or empty," the token was never set or has expired — re-issue it and update the secret; nothing else in the pipeline needs to change.
+
 ## After the merge: which release carried it
 
 Unchanged — `_shared/pr-first-merge-post-merge.md` Step 4.1 answers this from tag ancestry alone:

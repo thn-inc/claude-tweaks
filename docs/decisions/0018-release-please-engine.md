@@ -94,11 +94,11 @@ entry is a claim about what was documented at the time it was written, and 103 o
 145 releases went undocumented (`[IL-94]`) — restating those reconstructions in
 release-please's grammar would present them as contemporaneous machine-generated release
 notes, which is exactly what they are not. The two grammars are therefore both correct, each
-for its own era, and the file is to carry a comment marking the boundary between them rather
-than a uniformity that would have to lie about the older half. That marker is not yet in
-`CHANGELOG.md`: where release-please inserts a generated entry relative to a leading HTML
-comment is not observable until the first real release-please entry lands, and a marker whose
-stated orientation ("above" vs. "below") is wrong is worse than none at all.
+for its own era, and the file carries a comment marking the boundary between them rather
+than a uniformity that would have to lie about the older half: everything below the marker
+(`## v6.128.0` and every older entry) is pre-migration and keeps its own grammar; everything
+release-please generates lands above it, since release-please prepends each new entry rather
+than appending one.
 
 ## Alternatives considered
 

@@ -4,16 +4,21 @@ Every version this plugin has shipped, newest first. "Shipped" means a value the
 `version` field in `.claude-plugin/plugin.json` held at the tip of `main` — the
 marketplace `source` is an unpinned git URL, so an install tracks that tip, and
 every distinct value it reported is a build someone could be running.
-`tests/changelog-coverage.test.js` fails the suite if any of them is missing here.
 
-Which versions those are is **recorded, not inferred** — `docs/shipped-versions.tsv`
-is appended in the same commit as each version bump. It replaced a
-`git rev-list --first-parent` reconstruction that turned out to be unstable rather
-than merely lossy: a branch that merges `main` into itself and is then pushed as
-`main` moves everything `main` carried since the fork point onto the merge's second
-parent, where the walk never looks, so versions *left* the reconstructed set as
-later merges landed (#144). Two releases were written up as never-shipped on that
-evidence before anyone checked it against a source outside this repo's topology.
+Which versions those are is now **recorded as annotated git tags**, not a tracked
+file. Below the boundary comment, every entry has a matching `v{version}` tag
+created by the one-time retro-tag backfill that ran against this repo's
+pre-migration history (`docs/decisions/0018-release-please-engine.md`) — those
+entries keep their pre-migration `## vX.Y.Z — {summary}` heading form unchanged.
+Above the boundary comment, entries are release-please-generated as this repo
+ships new versions through it, each with its own release-please-created tag. A
+`git rev-list --first-parent` reconstruction of this history was tried before the
+tag-based approach and found unstable, not merely lossy — a branch that merges
+`main` into itself and is then pushed as `main` moves everything `main` carried
+since the fork point onto the merge's second parent, where the walk never looks,
+so versions *left* the reconstructed set as later merges landed (#144, `[IL-95]`).
+A tag doesn't have this failure mode: it's anchored directly to its commit and
+needs no walk at all.
 
 Three conventions follow from how this repo works, and all are visible below:
 
@@ -38,6 +43,8 @@ Three conventions follow from how this repo works, and all are visible below:
   releases went undocumented (`[IL-94]`). They are summaries of what each version
   contained, not contemporaneous release notes, and they are thinner than the
   entries written since.
+
+<!-- release-please boundary: entries below this line predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; entries above are release-please-generated. -->
 
 ## v6.128.0 — Sibling-PR premise-disproof dedup check for dispatch/materialize (#2590); browser automation migrated from agent-browser to Playwright CLI across qa-agent, stories, visual-review, demo/test, and install/detect plumbing (#2645-#2649); shallow-clone git-show guard fix across 5 test files (#2532); check-pr-bookkeeping.js multi-spec Step-0-gate fix (#2571); skill-prose-conformance-tests Anti-Patterns addition (#2605); record-worktree bookkeeping-stamp-deny recovery investigation (#2585); doc staleness fix for the record-1892 ledger (#2587)
 
