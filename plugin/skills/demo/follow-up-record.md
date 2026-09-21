@@ -6,8 +6,14 @@ Request-changes verdict was given or a scope-fork capture was chosen — an Appr
 never reads this file. Step 3's Request-changes items 2 and 3, verbatim (item 1, the label swap,
 stays in `SKILL.md`); a session-recall entry runs the same procedure with no original record to
 relabel, comment on, or reference, and its `Origin:` line reads `Origin: demo changes-requested
-from session recall`; a scope-fork capture's `Origin:` line reads `Origin: demo scope-fork from
-#{n}` (or `from session recall`).
+from session recall`. Step 2's Scope-fork checkpoint text reads: "Capture it" routes through the
+same follow-up-record mechanism Step 3's Request-changes branch
+already uses, with one difference: the body's `Origin:` line reads `Origin: demo scope-fork from
+#{n}` (or `from session recall` for a session-recall entry) instead of the changes-requested
+variant. The session-recall Request-changes branch text reads: the exact same follow-up-filing
+procedure as the label-backed path's
+  Request changes above (step 2), reusing `recordPayload` (`work-backend: github-issues`) or
+`createRecord`+`deriveSlug` (`work-backend: local-files`) directly.
 
   2. File a linked follow-up record: backlog stage (no `ready` — a one-line reason isn't
      spec-shaped), Type `bug` by default (override to `feature`/`task` when the reason clearly
