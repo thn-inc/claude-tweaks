@@ -75,10 +75,18 @@ function probeRelease({ scope, run } = {}) {
     .map((t) => t.replace(/^v/, ''))
     .filter((v) => /^\d+\.\d+\.\d+$/.test(v) && versionGte(v, anchor));
 
-  const headingRe = /^## v(\d+\.\d+\.\d+) — /gm;
+  // Both heading grammars a post-bootstrap CHANGELOG can hold, since the very
+  // entries this probe checks straddle the boundary: the pre-migration
+  // `## vX.Y.Z — {summary}` form, and release-please's own
+  // `## [X.Y.Z](compare-url) (date)` / `## X.Y.Z (date)` pair (the latter when
+  // no repo URL is available) — the same two forms
+  // bin/lib/release-local/changelog.js renders and recognizes. Matching only
+  // the legacy form would report every real release-please release as a tag
+  // with no CHANGELOG entry, permanently.
+  const headingRe = /^## (?:v(\d+\.\d+\.\d+) — |\[(\d+\.\d+\.\d+)\]\(\S+\) \(|(\d+\.\d+\.\d+) \()/gm;
   const headings = [];
   let m;
-  while ((m = headingRe.exec(changelog))) headings.push(m[1]);
+  while ((m = headingRe.exec(changelog))) headings.push(m[1] || m[2] || m[3]);
   const headingsAtOrAfterAnchor = headings.filter((v) => versionGte(v, anchor));
 
   const tagSet = new Set(tags);
@@ -89,7 +97,7 @@ function probeRelease({ scope, run } = {}) {
     if (!headingSet.has(v)) {
       findings.push(makeFinding({
         kind: 'release', scope: 'blast-radius', subject: `CHANGELOG entry for v${v}`, remedy: 'auto',
-        evidence: `tag v${v} exists (at or after bootstrap v${anchor}) but CHANGELOG.md at HEAD has no "## v${v} — {summary}" heading`,
+        evidence: `tag v${v} exists (at or after bootstrap v${anchor}) but CHANGELOG.md at HEAD has no version heading for ${v} in either grammar`,
       }));
     }
   }
@@ -97,7 +105,7 @@ function probeRelease({ scope, run } = {}) {
     if (!tagSet.has(v)) {
       findings.push(makeFinding({
         kind: 'release', scope: 'blast-radius', subject: `tag for CHANGELOG entry v${v}`, remedy: 'auto',
-        evidence: `CHANGELOG.md has a "## v${v} — {summary}" heading (at or after bootstrap v${anchor}) but no matching v${v} tag exists`,
+        evidence: `CHANGELOG.md has a version heading for ${v} (at or after bootstrap v${anchor}) but no matching v${v} tag exists`,
       }));
     }
   }

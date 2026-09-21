@@ -148,3 +148,79 @@ test('findCoverageGaps reports nothing missing when every shipped version is doc
     orphans: [],
   });
 });
+
+// A repo that bootstrapped release-please mid-life holds both grammars in one file:
+// release-please's machine-generated headings above the boundary, this repo's
+// hand-written `## vX.Y.Z — {title}` below it. An entry HEADER_RE rejects is not an
+// error anyone sees — it is silently absent from parseChangelogVersions, so /init's
+// upgrade notice would skip that release without a word.
+const MIXED_GRAMMAR_CHANGELOG = `# Changelog
+
+## [3.4.0](https://github.com/acme/widget/compare/v3.3.0...v3.4.0) (2026-09-22)
+
+### Features
+
+* linked-form body line.
+
+## 3.3.0 (2026-09-21)
+
+### Bug Fixes
+
+* bare-form body line.
+
+## v3.2.0 — Third entry
+
+Third entry body line one.
+Third entry body line two.
+
+## v3.1.0 — Second entry
+
+Second entry body.
+
+## v3.0.0 — First entry
+
+First entry body.
+`;
+
+test('parseChangelogVersions reads release-please headings in both the linked and bare forms', () => {
+  const entries = parseChangelogVersions(MIXED_GRAMMAR_CHANGELOG);
+  assert.deepStrictEqual(
+    entries.map((e) => e.version),
+    ['3.4.0', '3.3.0', '3.2.0', '3.1.0', '3.0.0'],
+  );
+});
+
+test('a release-please entry carries an empty title, because that grammar has no free-text title', () => {
+  const entries = parseChangelogVersions(MIXED_GRAMMAR_CHANGELOG);
+  assert.strictEqual(entries[0].title, '');
+  assert.strictEqual(entries[1].title, '');
+  assert.strictEqual(entries[2].title, 'Third entry', 'the legacy grammar keeps its title');
+});
+
+test('a release-please entry body is sliced between headings, exactly as a legacy entry body is', () => {
+  const entries = parseChangelogVersions(MIXED_GRAMMAR_CHANGELOG);
+  assert.strictEqual(entries[0].body, '### Features\n\n* linked-form body line.');
+  assert.strictEqual(entries[1].body, '### Bug Fixes\n\n* bare-form body line.');
+  assert.strictEqual(entries[2].body, 'Third entry body line one.\nThird entry body line two.');
+});
+
+test('extractChangelogRange filters by semver across a mix of old- and new-grammar entries', () => {
+  const range = extractChangelogRange(MIXED_GRAMMAR_CHANGELOG, '3.1.0', '3.4.0');
+  assert.deepStrictEqual(
+    range.map((e) => e.version),
+    ['3.4.0', '3.3.0', '3.2.0'],
+  );
+  const narrower = extractChangelogRange(MIXED_GRAMMAR_CHANGELOG, '3.2.0', '3.3.0');
+  assert.deepStrictEqual(
+    narrower.map((e) => e.version),
+    ['3.3.0'],
+  );
+});
+
+test('findHeadingDefects is clean on a mixed-grammar changelog', () => {
+  // The loose/strict defect pair scans only the `## v…` family — the hand-written
+  // grammar whose typos it exists to catch. A release-please heading starts with
+  // `## [` or `## <digit>`, so it is outside that family and must not be reported
+  // as unparseable now that HEADER_RE accepts it.
+  assert.deepStrictEqual(findHeadingDefects(MIXED_GRAMMAR_CHANGELOG), { unparseable: [], duplicates: [] });
+});

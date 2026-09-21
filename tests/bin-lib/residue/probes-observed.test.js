@@ -128,3 +128,62 @@ test('a complete tag/CHANGELOG set at or after the anchor produces no findings',
   const { findings } = probeRelease({ scope: SCOPE, run });
   assert.deepStrictEqual(findings, []);
 });
+
+// A bootstrapped repo's CHANGELOG straddles two grammars: the pre-migration
+// `## vX.Y.Z — {summary}` entries below the boundary, and release-please's
+// `## [X.Y.Z](compare-url) (date)` / `## X.Y.Z (date)` above it. Recognizing only
+// the legacy form would report every real release-please release as a tag with no
+// CHANGELOG entry, permanently, starting with the first post-migration release.
+test('a release-please-generated heading counts as this tag\'s CHANGELOG entry, in both URL and no-URL forms', () => {
+  const run = mockRun({
+    manifestAtBootstrap: '{".": "1.0.0"}',
+    changelog: [
+      '# Changelog',
+      '',
+      '## [1.2.0](https://github.com/acme/widget/compare/v1.1.0...v1.2.0) (2026-09-22)',
+      '',
+      '### Features',
+      '',
+      '* something ([abc1234](https://github.com/acme/widget/commit/abc1234))',
+      '',
+      '## 1.1.0 (2026-09-21)',
+      '',
+      '### Bug Fixes',
+      '',
+      '* something else',
+      '',
+      '## v1.0.0 — legacy grammar, pre-migration',
+      '',
+    ].join('\n'),
+    tags: 'v1.0.0\nv1.1.0\nv1.2.0\n',
+  });
+  const { ran, findings } = probeRelease({ scope: SCOPE, run });
+  assert.strictEqual(ran, true);
+  assert.deepStrictEqual(findings, [], 'release-please headings must satisfy their tags, not read as missing entries');
+});
+
+test('a release-please-generated heading with no tag is reported, in both URL and no-URL forms', () => {
+  const run = mockRun({
+    manifestAtBootstrap: '{".": "1.0.0"}',
+    changelog: [
+      '# Changelog',
+      '',
+      '## [1.2.0](https://github.com/acme/widget/compare/v1.1.0...v1.2.0) (2026-09-22)',
+      '',
+      '## 1.1.0 (2026-09-21)',
+      '',
+      '## v1.0.0 — legacy grammar, pre-migration',
+      '',
+    ].join('\n'),
+    tags: 'v1.0.0\n',
+  });
+  const { findings } = probeRelease({ scope: SCOPE, run });
+  assert.ok(
+    findings.some((f) => f.evidence.includes('no matching v1.2.0 tag')),
+    `the untagged linked-form heading must be named, got ${JSON.stringify(findings.map((f) => f.evidence))}`,
+  );
+  assert.ok(
+    findings.some((f) => f.evidence.includes('no matching v1.1.0 tag')),
+    `the untagged bare-form heading must be named, got ${JSON.stringify(findings.map((f) => f.evidence))}`,
+  );
+});

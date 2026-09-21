@@ -21,6 +21,14 @@ jobs:
           CURRENT=$(gh api repos/thomasholknielsen/claude-tweaks-marketplace/contents/.claude-plugin/marketplace.json)
           BLOB_SHA=$(echo "$CURRENT" | jq -r '.sha')
           CONTENT=$(echo "$CURRENT" | jq -r '.content' | base64 -d)
+          # jq's `|=` on a no-match selection is a silent no-op that exits 0, so without
+          # this guard a renamed or removed catalog entry would PUT the catalog back
+          # unchanged and report success — mirroring would stop forever with no error
+          # anywhere. The deleted plugin/bin/lib/release/mirror.js threw on exactly this.
+          if [ "$(echo "$CONTENT" | jq '[.plugins[]? | select(.name == "claude-tweaks")] | length')" -ne 1 ]; then
+            echo "::error::marketplace.json has no single \"claude-tweaks\" entry under .plugins[] — refusing to PUT an unchanged catalog. Check whether the entry was renamed or removed." >&2
+            exit 1
+          fi
           NEW_CONTENT=$(echo "$CONTENT" | jq --arg sha "$RESOLVED_SHA" '
             (.plugins[] | select(.name == "claude-tweaks")) |= (
               del(.version) | .source = {source: "git-subdir", url: "https://github.com/thomasholknielsen/claude-tweaks", path: "plugin", sha: $sha}

@@ -56,8 +56,8 @@ non-strict-semver `4.5.0-phase*` strings with no CHANGELOG heading of their own,
 tip.
 
 The resolver's first design picked the chronologically later commit whenever two commits set
-the same version. A hand cross-check against CHANGELOG headings found that rule wrong in at
-least 4 of 11 collisions — the later candidate is routinely a subsequent worktree's bare
+the same version. A hand cross-check against CHANGELOG headings found that rule wrong in
+6 of 11 collisions — the later candidate is routinely a subsequent worktree's bare
 "merge origin/main" commit that inherited an already-published number. The heuristic was
 dropped entirely in favour of **10 explicit per-version overrides**, each carrying its own
 cited evidence (a verbatim CHANGELOG-heading match, or a reconciling merge whose message
@@ -76,9 +76,10 @@ fetch → ancestry re-check → push ordering). Both are real dependencies of
 not going away. Deleting them because their *other* caller died would have been a retirement
 sweep that broke a shipped consumer. `precheck.js`'s now-dead `keySource: 'tsv'` branch was
 removed with the tsv itself; the module keeps only the `'tags'` path it is actually called
-with. `nextVersion` was relocated out of the deleted `changelog-git.js` into
-`plugin/bin/lib/changelog.js` for the same reason — one surviving consumer, so the function
-moves rather than dies.
+with. `nextVersion` was relocated out of the deleted `plugin/bin/lib/release/compose.js` into
+`plugin/bin/lib/changelog.js` for the same reason — two surviving consumers
+(`plugin/bin/lib/release/precheck.js` and `plugin/bin/lib/release-preflight/pack.js`), so the
+function moves rather than dies.
 
 ### The CHANGELOG keeps its pre-migration grammar
 

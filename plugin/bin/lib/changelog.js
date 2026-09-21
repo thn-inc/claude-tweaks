@@ -17,9 +17,18 @@ function compareVersions(a, b) {
   return 0;
 }
 
+// Two heading grammars, one file. Alternative 1 is this repo's pre-migration form
+// (`## vX.Y.Z — {title}`, every entry from v6.128.0 downward); alternatives 2 and 3 are
+// release-please's (`## [X.Y.Z](compare-url) (date)`, and `## X.Y.Z (date)` when no repo URL
+// is available) — the same pair bin/lib/release-local/changelog.js renders, so both engines
+// produce headings this parser can see. A release-please heading carries no free-text title,
+// so `title` is '' for those entries; that is an honest value, not a placeholder —
+// skills/init/bootstrap/version-check.md synthesizes its notice from {version, title, body}
+// and does not require a non-empty title.
+//
 // Declared once and reused via matchAll (not exec/test in a loop) — matchAll operates on an
 // internal clone and never mutates this regex's lastIndex, so reuse across calls is safe.
-const HEADER_RE = /^## v(\d+\.\d+\.\d+) — (.+)$/gm;
+const HEADER_RE = /^## (?:v(\d+\.\d+\.\d+) — (.+)|\[(\d+\.\d+\.\d+)\]\(\S+\) \(\d{4}-\d{2}-\d{2}\)|(\d+\.\d+\.\d+) \(\d{4}-\d{2}-\d{2}\))$/gm;
 
 function parseChangelogVersions(changelogText) {
   const matches = [...changelogText.matchAll(HEADER_RE)];
@@ -27,8 +36,8 @@ function parseChangelogVersions(changelogText) {
     const start = match.index + match[0].length;
     const end = i + 1 < matches.length ? matches[i + 1].index : changelogText.length;
     return {
-      version: match[1],
-      title: match[2].trim(),
+      version: match[1] || match[3] || match[4],
+      title: match[1] ? match[2].trim() : '',
       body: changelogText.slice(start, end).trim(),
     };
   });
