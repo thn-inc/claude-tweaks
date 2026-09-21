@@ -96,7 +96,7 @@ release-please's grammar would present them as contemporaneous machine-generated
 notes, which is exactly what they are not. The two grammars are therefore both correct, each
 for its own era, and the file carries a comment marking the boundary between them rather
 than a uniformity that would have to lie about the older half: `## v6.128.0` and every entry
-below it is pre-migration and keeps its own grammar. Release-please's updater splices each new
+below it are pre-migration and keep their own grammar. Release-please's updater splices each new
 entry in immediately before the first version heading it finds (`src/updaters/changelog.ts`),
 so every entry it generates lands directly below the comment and above `## v6.128.0` — the
 comment's own position never moves, but the gap between it and `## v6.128.0` grows by one entry

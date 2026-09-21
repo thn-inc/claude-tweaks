@@ -12,7 +12,7 @@ This repo dogfoods the same release engine every consumer project uses: `/claude
 
 ## Manual Steps
 
-Two PATs, both required — without either, the mirror silently never runs (no error, nothing in the console; the release still ships, its catalog entry just doesn't update):
+Two PATs, both required — their failure modes differ. Without `RELEASE_PLEASE_TOKEN` the mirror silently never runs at all (no workflow run, no error — the release still ships, its catalog entry just doesn't update). Without `MARKETPLACE_TOKEN` it runs and fails loudly, with the explicit error named below.
 
 **`RELEASE_PLEASE_TOKEN`** — a GitHub secret consumed by `.github/workflows/release-please.yml`'s `token:` input (currently commented out there, with the reasoning inline). A release-please-created GitHub Release made with the default `GITHUB_TOKEN` does not trigger other workflows — `release: published` stays silent, so `mirror-marketplace.yml` never fires — a documented GitHub Actions restriction, also recorded independently in `.claude-tweaks/policy.yml`'s `release-hook` comment. Set it once: a fine-grained or classic PAT with `contents: write` + `pull requests: write` on `thomasholknielsen/claude-tweaks` itself, added as a repository secret named `RELEASE_PLEASE_TOKEN`, then uncomment the `token:` line in `release-please.yml` to use it.
 
