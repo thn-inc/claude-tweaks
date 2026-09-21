@@ -368,12 +368,37 @@ function readConsoleState(runDir) {
 // true = merge commit is in local history; false = definitively not (safe to
 // retry next pass); null = oid unavailable/malformed — treated by the caller
 // as not-yet-verifiable, same skip-and-retry.
-function localHasMerge(root, mergeCommit) {
+//
+// #2565: `HEAD` is whatever happens to be checked out in the main checkout —
+// not necessarily the integration branch. A checkout parked on some other
+// local branch (one tracking `origin/{integration}` under another name, or
+// mid-investigation of something unrelated) never advances HEAD to include
+// the merge, so this check permanently reported `local-behind-merge` no
+// matter how long ago the PR actually merged. `integration`, when the
+// caller has it (reconcile/index.js's own policy-resolved branch name),
+// targets the local integration-branch ref instead of HEAD, falling back to
+// `origin/{integration}` (kept current by mirror-ff.js's own fetch even
+// when that branch isn't checked out) when the local ref doesn't have it —
+// covering both "not merged yet" and "local ref doesn't exist at all".
+// `integration` is optional: omitting it (a standalone caller with no
+// branch-name context) keeps checking HEAD exactly as before this fix, and
+// a main checkout actually ON the integration branch is unaffected either
+// way, since HEAD and `refs/heads/{integration}` then name the same commit.
+function localHasMerge(root, mergeCommit, integration) {
   const oid = mergeCommit && typeof mergeCommit.oid === 'string' && /^[0-9a-f]{40}$/.test(mergeCommit.oid)
     ? mergeCommit.oid : null;
   if (!oid) return null;
-  const r = runGit(['merge-base', '--is-ancestor', oid, 'HEAD'], root);
-  return !r.failure;
+  if (!integration) {
+    const r = runGit(['merge-base', '--is-ancestor', oid, 'HEAD'], root);
+    return !r.failure;
+  }
+  const local = runGit(['merge-base', '--is-ancestor', oid, `refs/heads/${integration}`], root);
+  if (!local.failure) return true;
+  // Local ref missing the merge (or missing entirely) — fall back to
+  // origin/{integration}, which reconcile's own mirror/fetch step keeps
+  // current independent of what's checked out here.
+  const upstream = runGit(['merge-base', '--is-ancestor', oid, `origin/${integration}`], root);
+  return !upstream.failure;
 }
 
 // Moves-first, close-last ordering (the reverse of cleanup-procedures.md
@@ -1322,7 +1347,7 @@ function finishArchiveAttempt(cacheTarget, repoSlug, dir, dryRun, runner, archiv
 // visibility); the clean loop does not (see this file's clean-loop comment
 // for why that asymmetry is intentional, not a gap to "fix").
 function archiveMergedRun({
-  root, repoSlug, dir, branch, dryRun, onSkip, runner, cacheTarget = root,
+  root, repoSlug, dir, branch, dryRun, onSkip, runner, cacheTarget = root, integration,
 }) {
   const prState = resolvePrState(root, branch);
   const consoleState = readConsoleState(dir);
@@ -1332,7 +1357,7 @@ function archiveMergedRun({
     return { outcome: 'skipped', reason: decision.reason };
   }
 
-  const hasMerge = localHasMerge(root, prState.mergeCommit);
+  const hasMerge = localHasMerge(root, prState.mergeCommit, integration);
   if (hasMerge !== true) {
     return { outcome: 'skipped', reason: hasMerge === false ? 'local-behind-merge' : 'merge-commit-unknown' };
   }
@@ -1345,7 +1370,7 @@ function archiveMergedRun({
 }
 
 function archiveMerged({
-  cwd, dryRun = false, sessionId = process.env.CLAUDE_CODE_SESSION_ID || null, runner,
+  cwd, dryRun = false, sessionId = process.env.CLAUDE_CODE_SESSION_ID || null, runner, integration,
 } = {}) {
   const archived = [];
   const skipped = [];
@@ -1565,7 +1590,7 @@ function archiveMerged({
         const byNumber = resolvePrStateByNumber(root, state.pr.number);
         if (byNumber && typeof byNumber === 'object' && (byNumber.state === 'CLOSED' || byNumber.state === 'MERGED')) {
           if (byNumber.state === 'MERGED') {
-            const hasMerge = localHasMerge(root, byNumber.mergeCommit);
+            const hasMerge = localHasMerge(root, byNumber.mergeCommit, integration);
             if (hasMerge !== true) {
               skipped.push({ runDir: dir, reason: hasMerge === false ? 'local-behind-merge' : 'merge-commit-unknown' });
               continue;
@@ -1603,7 +1628,7 @@ function archiveMerged({
     }
 
     const runResult = archiveMergedRun({
-      root, repoSlug, dir, branch, dryRun, runner, cacheTarget: cacheBatch,
+      root, repoSlug, dir, branch, dryRun, runner, cacheTarget: cacheBatch, integration,
       onSkip: (reason) => trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner }),
     });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }
@@ -1624,7 +1649,7 @@ function archiveMerged({
     if (!branch) { skipped.push({ runDir: dir, reason: 'no-branch' }); continue; }
 
     const runResult = archiveMergedRun({
-      root, repoSlug, dir, branch, dryRun, runner, cacheTarget: cacheBatch,
+      root, repoSlug, dir, branch, dryRun, runner, cacheTarget: cacheBatch, integration,
     });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }
     skipped.push({ runDir: dir, reason: runResult.reason });

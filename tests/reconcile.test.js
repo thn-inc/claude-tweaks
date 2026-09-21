@@ -196,25 +196,98 @@ test('mirrorFastForward: idempotent — a second run after an ff produces zero f
   assert.strictEqual(git(['rev-parse', 'HEAD'], mainDir).trim(), afterFirst);
 });
 
-test('mirrorFastForward: a concurrent session on a different branch is never merged into — skipped, not silently ff-ed', () => {
+// #2565: a concurrent session on a different branch must never have its
+// working tree touched — but the local integration-branch REF can and
+// should still advance, via a plain `git fetch origin {b}:{b}` (a local ref
+// update, not a merge). This is what closes the "permanently stuck at
+// local-behind-merge" bug: without it, archive-merged.js's localHasMerge
+// had no path to ever see the local ref catch up when the main checkout
+// stayed off the integration branch.
+test('mirrorFastForward: a concurrent session on a different branch — working tree untouched, but the local ref fast-forwards via fetch', () => {
   const { seedDir, mainDir } = pairedFixture();
   fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
   git(['add', 'b.txt'], seedDir);
   git(['commit', '-q', '-m', 'second'], seedDir);
   git(['push', '-q', 'origin', 'main'], seedDir);
+  const originMain = git(['rev-parse', 'origin/main'], seedDir).trim();
 
   // classifyMirror's rev-list comparison is ref-to-ref and reports 'behind'
   // regardless of what's checked out — the guard has to catch it downstream,
   // at the write itself, not by changing the classification.
   git(['checkout', '-q', '-b', 'someone-elses-work'], mainDir);
   const before = git(['rev-parse', 'HEAD'], mainDir).trim();
+  const localMainBefore = git(['rev-parse', 'main'], mainDir).trim();
+  assert.notStrictEqual(localMainBefore, originMain, 'sanity: local main must start genuinely behind');
+
+  const r = mirrorFastForward(mainDir, 'main');
+  assert.strictEqual(r.state, 'behind');
+  assert.strictEqual(r.action, 'fast-forwarded');
+  // The working tree — checked-out branch and HEAD — is never touched: only
+  // the non-checked-out `main` ref moves.
+  assert.strictEqual(git(['branch', '--show-current'], mainDir).trim(), 'someone-elses-work');
+  assert.strictEqual(git(['rev-parse', 'HEAD'], mainDir).trim(), before);
+  // The local `main` ref itself did advance to match origin.
+  assert.strictEqual(git(['rev-parse', 'main'], mainDir).trim(), originMain);
+});
+
+// AC5's negative control, at the git primitive mirror-ff.js's fetch-based
+// path actually relies on: `git fetch origin {b}:{b}` must refuse — loudly,
+// leaving the local ref untouched — when updating it would NOT be a
+// fast-forward, the same guarantee `--ff-only` gives the checked-out path.
+// (classifyMirror's own rev-list gate means mirrorFastForward's 'behind'
+// branch is only ever reached when the local ref genuinely IS a strict
+// ancestor of origin's — so this exact non-ff rejection is unreachable
+// through mirrorFastForward itself under non-racing conditions; it is
+// exactly the guard against the race that gate leaves open between
+// classification and this write.)
+test("git fetch origin {b}:{b} refuses a non-fast-forward local ref update (the safety mirrorFastForward's fetch path relies on)", () => {
+  const { seedDir, mainDir } = pairedFixture();
+
+  // Diverge the LOCAL `main` ref from origin's: `main` gains a commit origin
+  // never sees, via a throwaway worktree (so the checked-out branch is
+  // untouched), while origin also advances independently.
+  git(['checkout', '-q', '-b', 'someone-elses-work'], mainDir);
+  const scratchWorktree = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-scratch-'));
+  git(['worktree', 'add', '-q', scratchWorktree, 'main'], mainDir);
+  fs.writeFileSync(path.join(scratchWorktree, 'c.txt'), 'local-only\n');
+  git(['add', 'c.txt'], scratchWorktree);
+  git(['commit', '-q', '-m', 'local-only divergent commit'], scratchWorktree);
+  git(['worktree', 'remove', '--force', scratchWorktree], mainDir);
+  const localMainBefore = git(['rev-parse', 'main'], mainDir).trim();
+
+  fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
+  git(['add', 'b.txt'], seedDir);
+  git(['commit', '-q', '-m', 'origin-only divergent commit'], seedDir);
+  git(['push', '-q', 'origin', 'main'], seedDir);
+
+  assert.throws(() => git(['fetch', 'origin', 'main:main'], mainDir));
+  // Refusal is loud and leaves the local ref exactly where it was — never a
+  // silent rewrite.
+  assert.strictEqual(git(['rev-parse', 'main'], mainDir).trim(), localMainBefore);
+  assert.strictEqual(git(['branch', '--show-current'], mainDir).trim(), 'someone-elses-work');
+});
+
+// AC6: the fetch-based update path isn't viable for every case — a
+// concurrent session with the integration branch checked out in ANOTHER
+// linked worktree of the same repo makes git itself refuse
+// `fetch origin {b}:{b}` ("refusing to fetch into branch ... checked out
+// at ...") — and the original wrong-branch skip must still be there to
+// catch that residual case, exactly as before this fix.
+test('mirrorFastForward: fetch-based update not viable (branch checked out in another worktree) falls back to the original wrong-branch skip', () => {
+  const { seedDir, mainDir } = pairedFixture();
+  git(['checkout', '-q', '-b', 'someone-elses-work'], mainDir);
+  const otherWorktree = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-otherwt-'));
+  git(['worktree', 'add', '-q', otherWorktree, 'main'], mainDir);
+
+  fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
+  git(['add', 'b.txt'], seedDir);
+  git(['commit', '-q', '-m', 'second'], seedDir);
+  git(['push', '-q', 'origin', 'main'], seedDir);
 
   const r = mirrorFastForward(mainDir, 'main');
   assert.strictEqual(r.state, 'behind');
   assert.strictEqual(r.action, 'skipped');
   assert.match(r.reason, /wrong-branch/);
-  assert.strictEqual(git(['branch', '--show-current'], mainDir).trim(), 'someone-elses-work');
-  assert.strictEqual(git(['rev-parse', 'HEAD'], mainDir).trim(), before);
 });
 
 // --- decision tables: pure functions, zero I/O ---
@@ -321,6 +394,54 @@ test('localHasMerge: merge commit not in local history -> false; present -> true
   assert.strictEqual(localHasMerge(root, { oid: 'f'.repeat(40) }), false);
   assert.strictEqual(localHasMerge(root, null), null);
   assert.strictEqual(localHasMerge(root, {}), null);
+});
+
+// #2565 AC1/AC2: with `integration` supplied, a main checkout NOT on that
+// branch must not report `false` forever just because HEAD never advanced.
+test('localHasMerge: with integration supplied, a merge absent from HEAD but present on origin/{integration} still reports true', () => {
+  const { seedDir, mainDir } = pairedFixture();
+  fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
+  git(['add', 'b.txt'], seedDir);
+  git(['commit', '-q', '-m', 'merge commit'], seedDir);
+  git(['push', '-q', 'origin', 'main'], seedDir);
+  const mergeOid = git(['rev-parse', 'main'], seedDir).trim();
+
+  git(['checkout', '-q', '-b', 'someone-elses-work'], mainDir);
+  // Local `main` ref stays behind; only the remote-tracking ref catches up
+  // (the caller's own mirror/fetch step keeps this current independent of
+  // what's checked out — mirrorFastForward's own fetch above is one path).
+  git(['fetch', '-q', 'origin', 'main'], mainDir);
+
+  assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }), false, 'sanity: HEAD-only check must still miss it');
+  assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }, 'main'), true);
+});
+
+// Once the local integration-branch ref itself has been updated (e.g. by
+// mirrorFastForward's fetch-based path above), the FIRST check
+// (refs/heads/{integration}) already satisfies it — the origin/{integration}
+// fallback is a fallback, not the only path.
+test('localHasMerge: with integration supplied, a merge present on the local (non-checked-out) integration ref reports true', () => {
+  const { seedDir, mainDir } = pairedFixture();
+  fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
+  git(['add', 'b.txt'], seedDir);
+  git(['commit', '-q', '-m', 'merge commit'], seedDir);
+  git(['push', '-q', 'origin', 'main'], seedDir);
+  const mergeOid = git(['rev-parse', 'main'], seedDir).trim();
+
+  git(['checkout', '-q', '-b', 'someone-elses-work'], mainDir);
+  git(['fetch', '-q', 'origin', 'main:main'], mainDir); // local ref update, no checkout
+
+  assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }, 'main'), true);
+});
+
+// AC4: a main checkout actually ON the integration branch is unaffected —
+// HEAD and refs/heads/{integration} name the same commit either way.
+test('localHasMerge: checked out ON the integration branch — passing integration changes nothing', () => {
+  const root = gitRepo();
+  const head = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const branch = execFileSync('git', ['-C', root, 'branch', '--show-current'], { encoding: 'utf8' }).trim();
+  assert.strictEqual(localHasMerge(root, { oid: head }, branch), localHasMerge(root, { oid: head }));
+  assert.strictEqual(localHasMerge(root, { oid: 'f'.repeat(40) }, branch), localHasMerge(root, { oid: 'f'.repeat(40) }));
 });
 
 // --- archiveRunDir: real git fixture — the actual move/commit I/O, not just the pure decision table ---
