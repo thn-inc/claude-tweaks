@@ -369,8 +369,9 @@ the result:
 
 Reached only once Step 3 above confirms outcome `merged` — `armed`/`pending-review` never reach
 this point. Read `pr-first-merge-post-merge.md` in this skill's directory and follow it in full:
-Step 4's post-merge reconcile (release-carrier tracking via `bin/release.js`, then
-`bin/hooks.js reconcile`) and Step 5's remote-branch delete (cited separately from
+Step 4's post-merge reconcile (release-carrier tracking (tag ancestry, per
+`pr-first-merge-post-merge.md` Step 4.1), then `bin/hooks.js reconcile`) and Step 5's
+remote-branch delete (cited separately from
 `wrap-up/cleanup-procedures-execution.md` Section C, after worktree teardown).
 
 ## Conflict path

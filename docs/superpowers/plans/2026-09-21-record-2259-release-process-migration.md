@@ -745,6 +745,9 @@ git commit -m "Retire plugin/bin/release.js and its single-use siblings; keep ru
 - Modify: `docs/plugin-structure.md` (CLI list)
 - Modify: `CHANGELOG.md` (preamble + one boundary comment)
 - Create: `docs/decisions/0018-release-please-engine.md`
+- Modify: `docs/REGISTRY.md:30` (the `docs/releasing.md` row's auto-detect path list — added during Task 5 execution, see Step 3.5: Task 5's AC6 sweep found this row still names the deleted `plugin/bin/release.js`)
+- Delete: `docs/journeys/release-a-plugin-version.md` (added during Task 5 execution — the journey for the now-deleted `plugin/bin/release.js` invocation; entirely obsolete, not merely stale)
+- Modify: `docs/journeys/release-a-version.md` (Origin section, line 53 — added during Task 5 execution; corrects the stale forward-reference to #2259 now that it has shipped)
 
 **Interfaces:** none — documentation only.
 
@@ -786,6 +789,34 @@ In the commit-message-style bullet, append: "on `main`, release commits are rele
 
 Remove the `plugin/bin/release.js` row from the CLI list. Add rows for `plugin/bin/release-local.js` and `plugin/bin/release-preflight.js` if either is missing from that list already (check first — `#2253`-`#2256` may have already added them).
 
+- [ ] **Step 3.5: Doc drift Task 5's AC6 sweep surfaced (`docs/REGISTRY.md`, `docs/journeys/`)**
+
+Task 5's AC6 grep sweep (`plugin/bin/release\.js\|...`) found three more files still naming the retired mechanism, none in this plan's original Files lists. Ruling (controller, Task 5 fix round): fold into this task rather than defer — Task 6 already owns "docs describing the post-retirement state," and these are the same class of drift. `docs/decisions/0015-*` and `docs/plans/2026-09-11-release-skill-ledger.md` (the other two AC6 hits) are deliberately **excluded** — an ADR and a historical build ledger are permanent historical record, per this repo's own incident-log convention (never rewritten to reflect later changes).
+
+In `docs/REGISTRY.md:30`, change:
+```
+| docs/releasing.md | Release procedure + judgment calls | `plugin/bin/release.js`, `plugin/bin/release-*.js`, `plugin/bin/lib/release/**`, `plugin/bin/lib/release-preflight/**`, `plugin/bin/lib/release-local/**` |
+```
+to:
+```
+| docs/releasing.md | Release procedure + judgment calls | `plugin/bin/release-*.js`, `plugin/bin/lib/release/**`, `plugin/bin/lib/release-preflight/**`, `plugin/bin/lib/release-local/**`, `plugin/skills/release/**` |
+```
+(drops the literal `plugin/bin/release.js` entry — deleted in Task 5 — and adds `plugin/skills/release/**`, since `docs/releasing.md` now primarily describes that skill; the `plugin/bin/release-*.js` glob already covers the two still-real scripts, `release-local.js` and `release-preflight.js`.)
+
+Delete `docs/journeys/release-a-plugin-version.md` in full via `git rm` — confirmed via `grep -rln "release-a-plugin-version" . --include="*.md" --include="*.js"` that its only other reference repo-wide is an archived pipeline spec under `.claude-tweaks/pipelines/` (historical, not touched) and `docs/journeys/release-a-version.md`'s own Origin note (edited below).
+
+In `docs/journeys/release-a-version.md`, replace line 53 (the Origin section's third bullet):
+```
+- Renamed from `release-a-version-2256.md` by #2257 (lifecycle wiring) — this is the payload's own release journey, for any consuming project using `/claude-tweaks:release`. It does **not** replace `release-a-plugin-version.md`: this repo's own release still runs through `plugin/bin/release.js <minor|patch>` (a genuinely different, still-active mechanism — `docs/releasing.md` — until this repo migrates onto the shipped path, #2259, a deliberate future decision, not a default). An earlier draft of this note assumed that file would retire here; empirically it does not.
+```
+with:
+```
+- Renamed from `release-a-version-2256.md` by #2257 (lifecycle wiring) — this is the payload's own release journey, for any consuming project using `/claude-tweaks:release`. It originally did **not** replace `release-a-plugin-version.md`: this repo's own release ran through a separate `plugin/bin/release.js <minor|patch>` mechanism until #2259 migrated this repo onto the shipped path. `release-a-plugin-version.md` was retired as part of that migration; this journey now covers this repo's own releases too.
+```
+
+Run: `grep -rln "release-a-plugin-version" . --include="*.md" --include="*.js" --exclude-dir=.git --exclude-dir=node_modules`
+Expected: zero matches outside `.claude-tweaks/pipelines/` (archived/historical pipeline run state, never edited).
+
 - [ ] **Step 4: `CHANGELOG.md`**
 
 Replace the current preamble (lines 1-9, from `# Changelog` through the `docs/shipped-versions.tsv` sentence) with:
@@ -821,9 +852,10 @@ Create `docs/decisions/0018-release-please-engine.md` recording: (1) this repo n
 Run: `npm test` (confirms no prose-conformance test pins text this task just changed in a way that breaks it — if one does, update that test's expectation, since it was pinning the pre-migration prose by design)
 
 ```bash
-git add docs/releasing.md CLAUDE.md docs/plugin-structure.md CHANGELOG.md docs/decisions/0018-release-please-engine.md
+git add docs/releasing.md CLAUDE.md docs/plugin-structure.md CHANGELOG.md docs/decisions/0018-release-please-engine.md docs/REGISTRY.md docs/journeys/release-a-version.md
 git commit -m "Rewrite release docs around /claude-tweaks:release; add ADR 0018"
 ```
+(`docs/journeys/release-a-plugin-version.md`'s removal is already staged from Step 3.5's `git rm` — `git add -A` would also pick it up, but the explicit list above is deliberate so this commit never silently absorbs unrelated working-tree changes.)
 
 ---
 
