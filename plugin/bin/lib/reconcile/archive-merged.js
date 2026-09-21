@@ -135,6 +135,28 @@ function isOrphanedMint(dir, now = Date.now()) {
   return classifyRunDir({ dir, kinds: ['orphaned-mint'] }, now).kind === 'orphaned-mint';
 }
 
+// #1982: one constructor for every `{ ok: false, reason }` refusal this file
+// returns, so each carries a `hint` key (string or `null`) beside its
+// reason — co-locating the recovery story with the detector rather than
+// leaving it to a dispatcher-side `if (reason === '…')` string match that
+// drifts the moment a reason code is renamed. `hooks.js`'s `archive-run`
+// verb reads only `ok`/`reason`/`hint`/`movedEntries` off the result; it no
+// longer special-cases any specific reason string.
+// Hints stay `null` for the codes whose one-line reason already says what
+// happened — writing prose for all fourteen-odd reason codes here would be
+// speculative work this file doesn't need. Only `audit-untracked` (hint
+// built where `untrackedAuditFiles` is computed, below) and the
+// `move-failed`/`git-mv-failed`/`git-mv-failed-partial-revert` refusals
+// (hint set from `lastError` when present) carry one today.
+// Not used by `decideArchive`'s pure `{ action: 'skip', reason }` skip path
+// (`gh-absent`/`network-failure`/`console-unresolved`/`console-never-rendered*`,
+// further down this file) — a different shape, consumed inside the
+// reconcile loop rather than by `hooks.js`'s `archive-run` verb; left alone
+// deliberately.
+function refusal(reason, { hint = null, ...extra } = {}) {
+  return { ok: false, reason, hint, ...extra };
+}
+
 // An orphaned mint that reaches this function has nothing to git-mv and
 // nothing to finalize as terminal (no run-state.json, since record-worktree
 // never ran on it) — moving each top-level entry into its archive twin is
@@ -158,13 +180,13 @@ function archiveOrphanedMint(root, dir) {
   try {
     fs.mkdirSync(archiveDir, { recursive: true });
   } catch (err) {
-    return { ok: false, reason: 'move-failed', lastError: err && err.message };
+    return refusal('move-failed', { lastError: err && err.message, hint: (err && err.message) || null });
   }
   let entries;
   try {
     entries = fs.readdirSync(dir);
   } catch (err) {
-    return { ok: false, reason: 'move-failed', lastError: err && err.message };
+    return refusal('move-failed', { lastError: err && err.message, hint: (err && err.message) || null });
   }
   const movedThisPass = [];
   for (const name of entries) {
@@ -175,11 +197,11 @@ function archiveOrphanedMint(root, dir) {
       fs.renameSync(src, dest);
     } catch (err) {
       const fullyReverted = revertPlainMoves(movedThisPass);
-      return {
-        ok: false,
-        reason: fullyReverted ? 'move-failed' : 'move-failed-partial-revert',
+      const reason = fullyReverted ? 'move-failed' : 'move-failed-partial-revert';
+      return refusal(reason, {
         lastError: err && err.message,
-      };
+        hint: reason === 'move-failed' ? ((err && err.message) || null) : null,
+      });
     }
     movedThisPass.push([src, dest]);
   }
@@ -527,11 +549,11 @@ function resolveIdenticalWorkTwin(root, srcDir, destDir) {
     const destFile = path.join(destDir, rel);
     if (isTracked(root, destFile)) {
       const rm = runGit(['rm', '-q', '--', srcFile], root);
-      if (rm.failure) return { ok: false, reason: 'work-twin-resolve-failed', lastError: rm.stderr, resolved };
+      if (rm.failure) return refusal('work-twin-resolve-failed', { lastError: rm.stderr, resolved });
       resolved.push({ kind: 'twin-rm', srcFile, destFile });
     } else {
       const mv = runGit(['mv', '-f', srcFile, destFile], root);
-      if (mv.failure) return { ok: false, reason: 'work-twin-resolve-failed', lastError: mv.stderr, resolved };
+      if (mv.failure) return refusal('work-twin-resolve-failed', { lastError: mv.stderr, resolved });
       resolved.push({ kind: 'twin-mv', srcFile, destFile });
     }
   }
@@ -675,7 +697,7 @@ function archiveRunDir(root, runDir) {
   try {
     fs.mkdirSync(archiveDir, { recursive: true });
   } catch {
-    return { ok: false, reason: 'mkdir-failed' };
+    return refusal('mkdir-failed');
   }
   // #1103 follow-up: mkdirSync above is the earliest point a second,
   // concurrent, UNLOCKED `reconcile` invocation (dispatch/tidy's own
@@ -734,11 +756,9 @@ function archiveRunDir(root, runDir) {
     if (path.resolve(topWork) !== path.resolve(topWorkDest) && fs.existsSync(topWorkDest)) {
       const twin = compareWorkTwin(root, topWork, topWorkDest);
       if (!twin.identical) {
-        return {
-          ok: false,
-          reason: 'work-twin-conflict',
+        return refusal('work-twin-conflict', {
           conflict: { src: topWork, dest: topWorkDest, differing: twin.differing },
-        };
+        });
       }
       twinPlan.push([topWork, topWorkDest]);
     } else {
@@ -796,7 +816,14 @@ function archiveRunDir(root, runDir) {
   // unpulled — exactly what happened in practice, #1494's follow-up), or
   // recognize the content never made it into any commit and needs re-filing.
   if (untrackedAuditFiles.length) {
-    return { ok: false, reason: 'audit-untracked', untrackedAuditFiles };
+    return refusal('audit-untracked', {
+      untrackedAuditFiles,
+      hint: `(${untrackedAuditFiles.join(', ')} exist here but are not tracked by this checkout's git index). `
+        + 'A pr-first standalone run\'s decisions.md/report.md/staged only become tracked once their worktree '
+        + 'copy has merged AND this checkout has pulled that merge — sync this checkout with origin (git pull, '
+        + 'or reconcile\'s own mirror-ff) and retry. If no such merge exists (the content was never committed '
+        + 'anywhere), it is not recoverable from git history — re-run whatever produced it.',
+    });
   }
   for (const specName of specDirs) {
     const specWork = path.join(runDir, specName, 'work');
@@ -805,18 +832,16 @@ function archiveRunDir(root, runDir) {
     try {
       fs.mkdirSync(specArchiveDir, { recursive: true });
     } catch {
-      return { ok: false, reason: 'mkdir-failed' };
+      return refusal('mkdir-failed');
     }
     const specWorkDest = path.join(specArchiveDir, 'work');
     // #1323: same same-path guard as topWork above.
     if (path.resolve(specWork) !== path.resolve(specWorkDest) && fs.existsSync(specWorkDest)) {
       const twin = compareWorkTwin(root, specWork, specWorkDest);
       if (!twin.identical) {
-        return {
-          ok: false,
-          reason: 'work-twin-conflict',
+        return refusal('work-twin-conflict', {
           conflict: { src: specWork, dest: specWorkDest, differing: twin.differing },
-        };
+        });
       }
       twinPlan.push([specWork, specWorkDest]);
     } else {
@@ -835,11 +860,9 @@ function archiveRunDir(root, runDir) {
       stagedOps.push(...result.resolved);
       if (!result.ok) {
         const fullyReverted = revertStagedOps(root, stagedOps);
-        return {
-          ok: false,
-          reason: fullyReverted ? result.reason : 'work-twin-resolve-failed-partial-revert',
+        return refusal(fullyReverted ? result.reason : 'work-twin-resolve-failed-partial-revert', {
           lastError: result.lastError,
-        };
+        });
       }
       // `resolveIdenticalWorkTwin` already removed every file under `src`
       // (via `git rm`/`git mv -f`) — the directory itself is not a git
@@ -860,7 +883,8 @@ function archiveRunDir(root, runDir) {
       const mv = runGit(['mv', src, dest], root);
       if (mv.failure) {
         const fullyReverted = revertStagedOps(root, stagedOps);
-        return { ok: false, reason: fullyReverted ? 'git-mv-failed' : 'git-mv-failed-partial-revert' };
+        const reason = fullyReverted ? 'git-mv-failed' : 'git-mv-failed-partial-revert';
+        return refusal(reason, { lastError: mv.stderr, hint: mv.stderr || null });
       }
       stagedOps.push({ kind: 'mv', src, dest });
       movedEntries.push(path.relative(runDir, src));
@@ -886,7 +910,7 @@ function archiveRunDir(root, runDir) {
       // callers/logs rather than collapsing both into the same reason
       // string.
       const fullyReverted = revertStagedOps(root, stagedOps);
-      return { ok: false, reason: fullyReverted ? 'commit-failed' : 'commit-failed-partial-revert' };
+      return refusal(fullyReverted ? 'commit-failed' : 'commit-failed-partial-revert');
     }
   }
 
@@ -901,14 +925,14 @@ function archiveRunDir(root, runDir) {
   // tidy-standalone run or any other — still refuses exactly as before.
   if (fs.existsSync(runDir)) {
     const lsFiles = runGit(['ls-files', runDir], root);
-    if (lsFiles.failure) return { ok: false, reason: 'ls-files-failed' };
+    if (lsFiles.failure) return refusal('ls-files-failed');
     const trackedOutsideWork = (lsFiles.stdout || '')
       .split('\n')
       .filter(Boolean)
       .map((p) => path.relative(runDir, path.join(root, p)))
       .filter((rel) => rel && !rel.startsWith('work' + path.sep) && rel !== 'work');
     if (trackedOutsideWork.length > 0) {
-      return { ok: false, reason: 'tracked-entry' };
+      return refusal('tracked-entry');
     }
 
     // TOCTOU: runDir could be deleted between the fs.existsSync(runDir) guard
@@ -920,7 +944,7 @@ function archiveRunDir(root, runDir) {
     try {
       entries = fs.readdirSync(runDir);
     } catch {
-      return { ok: false, reason: 'readdir-failed' };
+      return refusal('readdir-failed');
     }
     // spec-{N}/ dirs are excluded here — their archive twins may already
     // exist (created by the workMoves batch above), so a whole-dir rename
@@ -935,11 +959,11 @@ function archiveRunDir(root, runDir) {
         fs.renameSync(src, dest);
       } catch (err) {
         const fullyReverted = revertPlainMoves(movedThisPass);
-        return {
-          ok: false,
-          reason: fullyReverted ? 'move-failed' : 'move-failed-partial-revert',
+        const reason = fullyReverted ? 'move-failed' : 'move-failed-partial-revert';
+        return refusal(reason, {
           lastError: err && err.message,
-        };
+          hint: reason === 'move-failed' ? ((err && err.message) || null) : null,
+        });
       }
       movedThisPass.push([src, dest]);
       movedEntries.push(name);
@@ -962,7 +986,7 @@ function archiveRunDir(root, runDir) {
     try {
       specEntries = fs.readdirSync(specDir);
     } catch {
-      return { ok: false, reason: 'readdir-failed' };
+      return refusal('readdir-failed');
     }
     const specRemaining = specEntries.filter((n) => n !== 'work');
     if (specRemaining.length) {
@@ -973,7 +997,7 @@ function archiveRunDir(root, runDir) {
       try {
         fs.mkdirSync(specArchiveDir, { recursive: true });
       } catch (err) {
-        return { ok: false, reason: 'move-failed', lastError: err && err.message };
+        return refusal('move-failed', { lastError: err && err.message, hint: (err && err.message) || null });
       }
     }
     const specMovedThisPass = [];
@@ -985,11 +1009,11 @@ function archiveRunDir(root, runDir) {
         fs.renameSync(src, dest);
       } catch (err) {
         const fullyReverted = revertPlainMoves(specMovedThisPass);
-        return {
-          ok: false,
-          reason: fullyReverted ? 'move-failed' : 'move-failed-partial-revert',
+        const reason = fullyReverted ? 'move-failed' : 'move-failed-partial-revert';
+        return refusal(reason, {
           lastError: err && err.message,
-        };
+          hint: reason === 'move-failed' ? ((err && err.message) || null) : null,
+        });
       }
       specMovedThisPass.push([src, dest]);
       movedEntries.push(path.join(specName, name));
@@ -1005,7 +1029,7 @@ function archiveRunDir(root, runDir) {
   // (archived) location, not the original runDir — writeRunState reads and
   // preserves whatever state already moved there.
   const result = writeRunState(archiveDir, { status: 'clean', worktree: null });
-  if (!result) return { ok: false, reason: 'close-failed' };
+  if (!result) return refusal('close-failed');
 
   // Late-write guard (#990 — reproduced live during #893's own wrap-up even
   // with #902's dynamic enumeration already in place): the top-level
@@ -1627,4 +1651,5 @@ module.exports = {
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand,
   compareWorkTwin, resolveIdenticalWorkTwin, listFilesRecursive,
   isClosedSlugStuck, recordNumbersFromSlug,
+  refusal,
 };
