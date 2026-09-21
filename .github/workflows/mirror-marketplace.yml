@@ -12,13 +12,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.MARKETPLACE_TOKEN }}
           TAG: ${{ github.event.release.tag_name }}
-          SHA: ${{ github.event.release.target_commitish }}
+          RESOLVED_SHA: ${{ github.sha }}
         run: |
           if [ -z "${GH_TOKEN}" ]; then
             echo "::error::MARKETPLACE_TOKEN secret is missing or empty — cannot write to thomasholknielsen/claude-tweaks-marketplace. See docs/releasing.md's Manual Steps." >&2
             exit 1
           fi
-          RESOLVED_SHA=$(git rev-parse "${SHA}")
           CURRENT=$(gh api repos/thomasholknielsen/claude-tweaks-marketplace/contents/.claude-plugin/marketplace.json)
           BLOB_SHA=$(echo "$CURRENT" | jq -r '.sha')
           CONTENT=$(echo "$CURRENT" | jq -r '.content' | base64 -d)
