@@ -171,9 +171,8 @@ test('--resolve-retries: a failing REST retry call exits 3, names the parent, an
 // #2240: parseRepo now returns { host, owner, repo } for a GitHub Enterprise Server
 // remote (not just github.com), and the REST retry call threads --hostname when
 // host !== 'github.com' -- mirroring #2021's fix for _shared/pr-run-comments.md's
-// `gh api graphql` calls. `--repo` still hard-wraps as `github.com/${opts.repo}` (a
-// separate, pre-existing gap outside this record's scope), so this exercises the
-// remote-URL fallback path, which already preserves the real host.
+// `gh api graphql` calls. This exercises the remote-URL fallback path, which
+// already preserves the real host; #2444 below covers the explicit --repo flag.
 test('#2240: --resolve-retries on a GitHub Enterprise Server remote threads --hostname into the REST retry call', () => {
   const d = deps({
     remoteUrl: () => 'git@ghe.example.com:acme/widget.git',
@@ -210,6 +209,46 @@ test('--help output documents --resolve-retries', () => {
   });
   assert.strictEqual(run(['--help'], d), 0);
   assert.match(d.out.join(''), /--resolve-retries/);
+});
+
+// #2444 review fix: a caller-supplied --repo can itself already be a
+// host-qualified `host/owner/repo` slug (repoSlug()'s GHE output) — before
+// this fix, --repo was always prefixed with `github.com/` regardless of
+// shape, producing an unparseable 4-segment string for a slug like this.
+test('#2444 fix: --resolve-retries with a host-qualified --repo slug threads --hostname into the REST retry call', () => {
+  const d = deps({
+    remoteUrl: () => { throw new Error('remoteUrl should not be called — --repo was given'); },
+    runner(args) {
+      d.calls.push(args);
+      const q = args.find((a) => a.startsWith('query='));
+      if (q && q.includes('__type')) return probeOk;
+      if (q) {
+        return JSON.stringify({ data: { repository: { i5: { number: 5, subIssues: { nodes: [{ number: 6 }], pageInfo: { hasNextPage: true } } } } } });
+      }
+      assert.deepStrictEqual(args, ['api', '--paginate', 'repos/acme/widget/issues/5/sub_issues', '--jq', '.[].number', '--hostname', 'ghe.example.com']);
+      return '6\n9\n';
+    },
+  });
+  assert.strictEqual(run(['5', '--repo', 'ghe.example.com/acme/widget', '--resolve-retries'], d), 0);
+  assert.deepStrictEqual(JSON.parse(d.out.join('')), { byParent: { 5: [6, 9] }, retry: [] });
+});
+
+test('#2444 fix: a bare --repo owner/repo still resolves to github.com (unchanged, no --hostname)', () => {
+  const d = deps({
+    remoteUrl: () => { throw new Error('remoteUrl should not be called — --repo was given'); },
+    runner(args) {
+      d.calls.push(args);
+      const q = args.find((a) => a.startsWith('query='));
+      if (q && q.includes('__type')) return probeOk;
+      if (q) {
+        return JSON.stringify({ data: { repository: { i5: { number: 5, subIssues: { nodes: [{ number: 6 }], pageInfo: { hasNextPage: true } } } } } });
+      }
+      assert.deepStrictEqual(args, ['api', '--paginate', 'repos/o/r/issues/5/sub_issues', '--jq', '.[].number']);
+      return '6\n9\n';
+    },
+  });
+  assert.strictEqual(run(['5', '--repo', 'o/r', '--resolve-retries'], d), 0);
+  assert.deepStrictEqual(JSON.parse(d.out.join('')), { byParent: { 5: [6, 9] }, retry: [] });
 });
 
 test('--repo owner/.. is rejected before any gh call (review finding: parseRepo accepts ".." segments)', () => {

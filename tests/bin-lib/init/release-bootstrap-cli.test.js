@@ -93,11 +93,11 @@ test('CLI: --release-type simple --extra-file <path> overrides detection and see
   assert.equal(out.version, '6.121.0');
 });
 
-test('CLI: an unrecognized --release-type is a usage error naming the flag', () => {
+test('CLI: an unrecognized --release-type is a usage error naming the flag (pairing satisfied, so the vocabulary check itself fires)', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
-  const r = run(['--root', root, '--integration-model', 'local-merge', '--release-type', 'bogus']);
+  const r = run(['--root', root, '--integration-model', 'local-merge', '--release-type', 'bogus', '--extra-file', 'x.json']);
   assert.equal(r.status, 2);
-  assert.match(r.stderr, /--release-type/);
+  assert.match(r.stderr, /invalid --release-type: bogus/);
 });
 
 test('CLI: --extra-file without --release-type is a usage error naming both flags', () => {

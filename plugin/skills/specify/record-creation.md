@@ -60,6 +60,8 @@ node -e "
 
 Then, immediately before **each individual create** — a kept parent included, and not just once against the batch list above — re-check that record's fingerprint against the map. A match means the record already exists (a prior partial run, or a concurrent one): skip the create and use the mapped number instead — the parent's number for the sub-issues to link to, a sub-issue's number for Step 4's linking pass. On every successful create, add the new record's fingerprint and number to the in-memory map before moving on — this catches a same-run collision (two units that happen to slugify to the same name) exactly the way it catches a prior-run resume, since the map stays live for the whole loop rather than being a snapshot trusted for its duration.
 
+**Hardened to a mechanical check (#2658).** This paragraph used to be the entire enforcement mechanism — no literal conditional at either create call site actually implemented it, so an agent under time pressure or distracted mid-loop (e.g. by a red-team pass between two creates) could skip the re-check without violating any coded rule. `#2626`/`#2627` (created 9 seconds apart from the same decomposition run) confirmed this as one live mechanism for a duplicate, alongside the still-open possibility of a genuinely concurrent sibling session — this hardening closes the first, not the second. Every create call site below (this file's Parent record section, and each sub-issue's in `record-creation-subissues.md`) now calls `bin/lib/issues/record.js`'s `checkFingerprint(map, fingerprint)` before create and `recordFingerprint(map, fingerprint, number)` immediately after a successful one, rather than relying on this paragraph alone.
+
 ### Parent record
 
 Skip this whole section entirely when Step 2.6 (`decomposition-mode.md`) decided to collapse — no parent record, no `{design-doc-slug}:parent` fingerprint is ever minted, and Step 3 proceeds straight to Sub-issues below with no `$PARENT_NUM`/`$PARENT_ID` for them to link to. Otherwise, unchanged from before collapse existed: a parent record is minted once per decomposition run (or per `phase-N`, when scoped — see Step 7's phase table). Type is always `feature` — the parent is a summary record, not agent-sized work: **parents never get `ready`**, and they carry no `risk:*`/`size:*` scoring at all.
@@ -104,38 +106,77 @@ comes from `record.js`'s `TYPE_LABELS`:
 ]
 ```
 
-**`work-backend: github-issues`** — the Type expression branch (`_shared/work-record-config.md`, the config-key table's canonical home; read `work-types` once, never re-probe mid-flow):
+**Idempotency check-before-create (#2658).** Every create call site below — this one and each sub-issue's in `record-creation-subissues.md` — runs this exact conditional first, never skipping straight to `gh issue create`/`gh issue edit`. This is the mechanical form of the prose the Idempotency section above already specifies; there is no separate opt-out:
 
 ```bash
-SPECIFY_PARENT_BODY=$(node -e "
-  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-  console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-parent-body.md') || require('path').join(require('os').tmpdir(), 'specify-parent-body.md'))
-")
-# work-types: native
-PARENT_URL=$(gh issue create --title "$PARENT_TITLE" --body-file "$SPECIFY_PARENT_BODY" --type feature --label parent-issue)
-# work-types: labels
-PARENT_URL=$(gh issue create --title "$PARENT_TITLE" --body-file "$SPECIFY_PARENT_BODY" --label type:feature --label parent-issue)
+SPECIFY_PARENT_EXISTING=$(node -e "
+  const { checkFingerprint } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+  const map = require('$SPECIFY_EXISTING_FINGERPRINTS');
+  const n = checkFingerprint(map, process.argv[1]);
+  console.log(n === null ? '' : n);
+" "${DESIGN_DOC_SLUG}:parent")
+```
 
-PARENT_NUM=$(basename "$PARENT_URL")
+`work-backend: github-issues` — the Type expression branch (`_shared/work-record-config.md`, the config-key table's canonical home; read `work-types` once, never re-probe mid-flow):
+
+```bash
+if [ -n "$SPECIFY_PARENT_EXISTING" ]; then
+  PARENT_NUM="$SPECIFY_PARENT_EXISTING"
+  echo "Idempotency: #${PARENT_NUM} already carries fingerprint ${DESIGN_DOC_SLUG}:parent — skipping create." >&2
+else
+  SPECIFY_PARENT_BODY=$(node -e "
+    const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
+    console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-parent-body.md') || require('path').join(require('os').tmpdir(), 'specify-parent-body.md'))
+  ")
+  # work-types: native
+  PARENT_URL=$(gh issue create --title "$PARENT_TITLE" --body-file "$SPECIFY_PARENT_BODY" --type feature --label parent-issue)
+  # work-types: labels
+  PARENT_URL=$(gh issue create --title "$PARENT_TITLE" --body-file "$SPECIFY_PARENT_BODY" --label type:feature --label parent-issue)
+
+  PARENT_NUM=$(basename "$PARENT_URL")
+
+  # Update the map immediately (#2658) — catches a same-run collision the
+  # same way it catches a prior-run resume, per the Idempotency section above.
+  node -e "
+    const fs = require('fs');
+    const { recordFingerprint } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+    const map = require('$SPECIFY_EXISTING_FINGERPRINTS');
+    recordFingerprint(map, process.argv[1], Number(process.argv[2]));
+    fs.writeFileSync('$SPECIFY_EXISTING_FINGERPRINTS', JSON.stringify(map));
+  " "${DESIGN_DOC_SLUG}:parent" "$PARENT_NUM"
+fi
 ```
 
 **`work-backend: local-files`:** use `createRecord`, not `allocateId`+`writeRecord` separately — two near-simultaneous runs calling those two separately can both compute the same next id and both succeed under different slugs, silently sharing one numeric id and corrupting any later `facets.parent`/`facets.blockedBy` reference that assumes id uniqueness. `createRecord` closes that race by allocating the id and writing the file as one atomic step (`bin/lib/issues/local-store.js`'s header comments; the same fix `capture/SKILL.md`'s local-files branch already applies). The slug is `deriveSlug(title, existingSlugs)` from that same module — not a hand-derived slugification:
 
 ```bash
-SPECIFY_PARENT_BODY=$(node -e "
-  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-  console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-parent-body.md') || require('path').join(require('os').tmpdir(), 'specify-parent-body.md'))
-")
-PARENT_ID=$(node -e "const fs=require('fs');
-  const {createRecord, deriveSlug}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
-  const dir='specs';
-  const existingSlugs=fs.existsSync(dir)
-    ? fs.readdirSync(dir).map((n)=>/^\d+-(.+)\.md$/.exec(n)).filter(Boolean).map((m)=>m[1])
-    : [];
-  const slug=deriveSlug(process.argv[1], existingSlugs);
-  const body=fs.readFileSync(process.argv[2], 'utf8');
-  const record=createRecord(dir, { slug, title: process.argv[1], body, facets: { type: 'feature', isParentIssue: true } });
-  console.log(record.id)" "$PARENT_TITLE" "$SPECIFY_PARENT_BODY")
+if [ -n "$SPECIFY_PARENT_EXISTING" ]; then
+  PARENT_ID="$SPECIFY_PARENT_EXISTING"
+  echo "Idempotency: record #${PARENT_ID} already carries fingerprint ${DESIGN_DOC_SLUG}:parent — skipping create." >&2
+else
+  SPECIFY_PARENT_BODY=$(node -e "
+    const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
+    console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-parent-body.md') || require('path').join(require('os').tmpdir(), 'specify-parent-body.md'))
+  ")
+  PARENT_ID=$(node -e "const fs=require('fs');
+    const {createRecord, deriveSlug}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
+    const dir='specs';
+    const existingSlugs=fs.existsSync(dir)
+      ? fs.readdirSync(dir).map((n)=>/^\d+-(.+)\.md$/.exec(n)).filter(Boolean).map((m)=>m[1])
+      : [];
+    const slug=deriveSlug(process.argv[1], existingSlugs);
+    const body=fs.readFileSync(process.argv[2], 'utf8');
+    const record=createRecord(dir, { slug, title: process.argv[1], body, facets: { type: 'feature', isParentIssue: true } });
+    console.log(record.id)" "$PARENT_TITLE" "$SPECIFY_PARENT_BODY")
+
+  node -e "
+    const fs = require('fs');
+    const { recordFingerprint } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+    const map = require('$SPECIFY_EXISTING_FINGERPRINTS');
+    recordFingerprint(map, process.argv[1], Number(process.argv[2]));
+    fs.writeFileSync('$SPECIFY_EXISTING_FINGERPRINTS', JSON.stringify(map));
+  " "${DESIGN_DOC_SLUG}:parent" "$PARENT_ID"
+fi
 ```
 
 `isParentIssue: true` is the local-files parity for the `parent-issue` label above — the same

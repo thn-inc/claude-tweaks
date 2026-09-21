@@ -29,6 +29,20 @@
 // could each read the same pre-write store and the second write would silently drop the first's
 // entry (review finding). Best-effort/fail-open, same posture as writeRunState: a write that
 // can't acquire the lock in time still proceeds unlocked rather than hang the caller.
+//
+// Risk-tolerance decision (#1400, review of #1033's Security lens): `subject` is agent-authored,
+// not raw user input — an indirect channel, since a human never types it directly. The mitigation
+// chosen is storage-time length capping here (MAX_SUBJECT_LENGTH below) plus render-time
+// delimiting in transcript-judge/watermark.js's formatOffsetClause (the two call sites review
+// flagged), not "accept and document" alone — both are cheap, mechanical, and additive with no
+// behavior change for a well-formed subject. This fix is scoped to declined-learning only; it does
+// NOT generalize to the wider ledger-entry/decisions.md/staged-proposal pattern of recirculating
+// agent-authored prose into future prompts — that pattern is pervasive, already shipped, and
+// carries a different risk profile (much of it passes through the Review Console before reaching
+// another prompt), so generalizing it needs its own separately-scoped decision, not a bundle-in
+// here. Full reasoning: docs/superpowers/plans/2026-09-18-declined-learning-subject-sanitization.md's
+// "Decision" section (this plan is deleted once #1400 ships and closes, per this repo's specs/
+// close-out convention — this comment is the durable copy).
 'use strict';
 
 const fs = require('fs');
@@ -47,6 +61,28 @@ const LOCK_PATH = path.join('.claude-tweaks', 'declined-learning', '.store.lock'
 // would need its own eviction-order policy (oldest-first? — reintroducing the same "stale entry
 // suppresses a live finding" risk this file's header already documents) for no added benefit.
 const DEFAULT_PRUNE_MAX_AGE_DAYS = 180;
+
+// Storage-time bound on `subject` (#1400 — review of #1033's Security lens flagged this field as
+// unbounded free text). 300 characters is generous for a "human-legible summary a consumer already
+// has on hand" (this file's header) — a sentence or two — while bounding how much of an adversarial
+// blob any single decline can carry forward into a future rendered prompt (watermark.js's
+// formatOffsetClause, the render-time half of this same fix). Independent of and complementary to
+// that render-time delimiting: this cap bounds volume; the delimiter in watermark.js bounds whether
+// the content can be read as instructions rather than data. See "Decision" in
+// docs/superpowers/plans/2026-09-18-declined-learning-subject-sanitization.md for the full
+// risk-tolerance decision and why this fix stays scoped to this store.
+const MAX_SUBJECT_LENGTH = 300;
+const TRUNCATION_MARKER = '… [truncated]';
+
+// Pure — bounds `subject`'s stored length. A subject at or under the cap round-trips unchanged
+// (the common case: every subject written before this cap existed, and every well-formed one
+// going forward, is untouched). Only a subject that itself exceeds the cap loses its tail, with a
+// marker that makes the truncation visible to any human or agent reading the entry back — never a
+// silent cut.
+function truncateSubject(subject) {
+  if (typeof subject !== 'string' || subject.length <= MAX_SUBJECT_LENGTH) return subject;
+  return `${subject.slice(0, MAX_SUBJECT_LENGTH)}${TRUNCATION_MARKER}`;
+}
 
 // Pure — the store has exactly one on-disk location; no per-transcript/per-consumer derivation.
 function storePath() {
@@ -84,7 +120,7 @@ function recordDecline(fingerprint, {
   return withLock(LOCK_PATH, () => {
     const current = readStore(deps);
     const entry = { declinedAt, reason, source };
-    if (subject !== undefined) entry.subject = subject;
+    if (subject !== undefined) entry.subject = truncateSubject(subject);
     current[fingerprint] = entry;
     writeStore(current, deps);
     return entry;
@@ -176,4 +212,5 @@ module.exports = {
   clearDecline,
   pruneDeclines,
   DEFAULT_PRUNE_MAX_AGE_DAYS,
+  MAX_SUBJECT_LENGTH,
 };

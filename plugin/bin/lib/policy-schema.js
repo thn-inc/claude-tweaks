@@ -94,6 +94,11 @@ const POLICY_KEYS = [
   { key: 'overlap', type: 'enum', values: ['companion', 'extend', 'skip', 'replace'], default: 'companion', summary: "Decides how a new spec is treated when it duplicates an existing one: run beside it, extend it, skip it, or replace it.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'design-intent', type: 'enum', values: ['none', 'bold', 'quiet', 'minimal', 'delightful', 'onboarding'], default: 'none', summary: "Sets the visual and UX ambition a build aims for — bold, quiet, minimal, delightful, onboarding-focused, or none at all.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'ui-stack', type: 'string', summary: "Names the UI component library / styling approach a frontend build should use, or an explicit no-preference answer.", category: 'pipeline-behavior', tier: 'advanced' },
+  // #2540: Step 2.5b-ii's variant-exploration tournament/live offers were
+  // mandatory ceremony with no off-switch, and `explore` silently skips on
+  // any current Impeccable pin anyway. Default 'off' formalizes the
+  // already-observed no-op behavior rather than removing a working feature.
+  { key: 'design-variant-exploration', type: 'enum', values: ['off', 'offer'], default: 'off', summary: "Turns specify's layout-tournament and scaffold-live variant-exploration offers on or off before decomposition.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'design-critique', type: 'enum', values: ['off', 'auto', 'full'], default: 'auto', summary: "Sets whether project-local design critics run at review time: never, when the project shows design investment or the record asks, or always.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'leftover-default', type: 'enum', values: ['defer', 'backlog', 'drop'], default: 'defer', summary: "Decides what happens to loose ends found at the end of a run: leave them for later, file them as backlog, or drop them.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'auto-fix-threshold', type: 'enum', values: ['lint-only', 'lint+type', 'lint+type+test'], default: 'lint+type', summary: "Sets how much a test pass auto-fixes before stopping — lint alone, lint and types, or lint, types, and tests.", category: 'pipeline-behavior', tier: 'advanced' },
@@ -107,6 +112,15 @@ const POLICY_KEYS = [
   // fresh before a consumer (backlog/capture/specify/trust-table/help/tidy/visualize) re-fetches
   // instead of reading the cached snapshot. See _shared/record-queue-fetch.md.
   { key: 'record-snapshot-ttl-seconds', type: 'integer', default: 300, summary: "Sets how many seconds the session-scoped record snapshot stays fresh before a consumer re-fetches instead of reading the cache.", category: 'housekeeping', tier: 'advanced' },
+  // #2567: the `gh` subprocess timeout shared by every direct execFileSync/
+  // execFile('gh', ...) call routed through bin/lib/shared-primitives.js's
+  // GH_TIMEOUT_MS export. Bounded 1s-60s: below 1s no real `gh` call could
+  // ever complete (every value under that is effectively "always fail"), and
+  // above 60s a single hung call would stall a pipeline step for a minute
+  // before its one automatic retry even starts. CLAUDE_TWEAKS_GH_TIMEOUT_MS
+  // (an env var, not a policy key) takes precedence over this when both are
+  // set — see shared-primitives.js's resolution order.
+  { key: 'gh-timeout-ms', type: 'integer', min: 1000, max: 60000, default: 5000, summary: "Bounds how long a single `gh` subprocess call may run before it is killed and retried once.", category: 'housekeeping', tier: 'advanced' },
   { key: 'depth-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt asking whether recently changed code deserves a deeper architectural pass.", category: 'housekeeping', tier: 'advanced' },
   { key: 'creative-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt suggesting creative or UX improvement ideas for what was just built.", category: 'housekeeping', tier: 'advanced' },
   { key: 'scope-keywords-required', type: 'boolean', default: false, summary: "When on, a build refuses to start over files outside its plan unless the plan names its intended scope; otherwise it is only a warning.", category: 'pipeline-behavior', tier: 'advanced' },

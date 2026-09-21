@@ -20,7 +20,7 @@ Contextual pre-analysis for the visual review. Runs as Step 0 (before Step 1 Hea
 
 ## Phase 1: Browse and Capture
 
-Snapshot and screenshot at each scroll position act on the same live `agent-browser` session — they are not independent in the Form-A sense and must not run as concurrent tool calls (see SKILL.md's Anti-Patterns table: "Per-step agent-browser invocations during journey walks"). Bundle the scroll + snapshot + screenshot sequence for all three positions into a single `agent-browser batch` invocation instead — one process, one session lifecycle, fewer tokens and less latency, and no risk of racing the daemon's session state.
+Snapshot and screenshot at each scroll position act on the same live `playwright-cli` session — they are not independent in the Form-A sense and must not run as concurrent tool calls (see SKILL.md's Anti-Patterns table: "Per-step invocations during journey walks"). <!-- playwright-cli: no equivalent found for agent-browser batch — see issue Gotchas --> Run the scroll + snapshot + screenshot sequence for all three positions as separate sequential commands against the same session instead — Playwright CLI has no `batch` equivalent to bundle them into one invocation (`playwright-cli-reference.md`'s Operation vocabulary table) — one session lifecycle, no risk of racing another session's process state.
 
 Capture the full page state before classifying. Three scroll positions maximum — this must be fast.
 

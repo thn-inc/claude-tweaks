@@ -155,8 +155,8 @@ point does not respond afterward (connection refused or HTTP 404), fall back to
 plan's own Entry point verbatim.
 
 **Validate** — URL surfaces (`rendered-page`/`app-route`) only; `cli`/`flow`/`diff` plans skip
-straight to Show. Run whenever browser tools are available (agent-browser is headless-capable, so
-this never needs a visible window): open a quick `agent-browser` session at the plan's exact deep
+straight to Show. Run whenever browser tools are available (playwright-cli is headless-capable, so
+this never needs a visible window): open a quick `playwright-cli` session at the plan's exact deep
 link, confirm it actually renders (not just an HTTP 200), attempt Auth Vault login when
 credentials resolve (the same source `/claude-tweaks:stories` uses; no configured credentials →
 skip the login check, reachability/render alone is still worth confirming), then close the

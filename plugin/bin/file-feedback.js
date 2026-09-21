@@ -109,7 +109,7 @@ function run(argv, deps = realDeps) {
 
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo ? parseRepo(`github.com/${opts.repo}`) : parseRepo(remote);
+  const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
   if (!repoSpec) { deps.stderr('file-feedback.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
   // #2240: repoSlug host-qualifies a non-github.com host (`{host}/{owner}/{repo}`) for
   // gh's `-R/--repo` flag, which accepts that form directly — a bare `owner/repo` here

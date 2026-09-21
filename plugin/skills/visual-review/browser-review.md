@@ -8,9 +8,9 @@ directory — so a run loads only the mode it resolved to.
 
 ## Prerequisites
 
-`agent-browser` must be installed. The daemon auto-starts on port 4848 with the first command. If `agent-browser` is unavailable, **stop** and report the missing dependency per `SKILL.md` Step 1 (Browser Prerequisites). Recovery on crash: `agent-browser doctor`.
+`playwright-cli` must be installed. There is no persistent background daemon — each `open`/`attach` call starts or reuses a named browser process directly, and `list`/`close-all`/`kill-all` operate on that set of processes this CLI invocation tree manages, not on a daemon (`_shared/browser-detection.md`'s Session/process lifecycle section). If `playwright-cli` is unavailable, **stop** and report the missing dependency per `SKILL.md` Step 1 (Browser Prerequisites). <!-- playwright-cli: no equivalent found for agent-browser doctor — see issue Gotchas --> Recovery from a stuck session: there is no diagnostic command; run `playwright-cli close-all` (or `kill-all` if that doesn't clear it) to reset the process set, then re-open the session.
 
-Use the `/claude-tweaks:browse` skill's operation vocabulary and conventions for all browser operations throughout this document. Concrete commands live in `agent-browser-reference.md` in that skill's directory; `browse` is the single source of truth for the operation table.
+Use the `/claude-tweaks:browse` skill's operation vocabulary and conventions for all browser operations throughout this document. Concrete commands live in `playwright-cli-reference.md` in that skill's directory; `browse` is the single source of truth for the operation table.
 
 ### Session naming
 
@@ -24,7 +24,9 @@ All screenshots in this skill are annotated and written to:
 .claude-tweaks/artifacts/screenshots/browse/<session>/<NN>_<description>.png
 ```
 
-`<NN>` is a zero-padded sequence number per session (`01_landing`, `02_pricing`, ...). Annotated screenshots overlay numbered markers tied to the most recent `snapshot` refs — write findings using those overlay numbers, never spatial language like "the button on the right."
+`<NN>` is a zero-padded sequence number per session (`01_landing`, `02_pricing`, ...).
+
+**Overlay-numbering gap (Playwright CLI migration):** `playwright-cli screenshot` has no `--annotate`-style flag — there is no bounding-box/numbered-marker overlay on the captured image (confirmed during #2645's migration, `playwright-cli-reference.md`'s Screenshot row). Every instruction below that says "reference overlay numbers" describes the pre-migration convention; until a replacement element-referencing convention is designed, reference elements by clear description (e.g., "the primary CTA button") or by the `eN` ref from the most recent `snapshot` instead of a bracketed overlay number like "[3]".
 
 ## Mode Resolution
 
@@ -35,7 +37,7 @@ browser or reading this file. The browser-opening modes this file serves:
 | Mode | Input | What happens |
 |------|-------|-------------|
 | **Page mode** | URL or description | Review a single page or flow. Full creative framework applies. Vitals captured for the page. |
-| **Journey mode** | `journey:{name}` | Walk a documented journey via a single `agent-browser batch` invocation. Each step is reviewed against its "should feel" / "red flags." Vitals captured per page. Overall arc assessed. |
+| **Journey mode** | `journey:{name}` | Walk a documented journey via a sequence of `playwright-cli` commands against one session (no `batch` equivalent — see `journey-mode.md`). Each step is reviewed against its "should feel" / "red flags." Vitals captured per page. Overall arc assessed. |
 | **Discover mode** | `discover` | Explore the running app to identify and document undocumented user journeys. Codebase scan + browser walkthrough. Vitals captured per discovered page. |
 
 Page mode is for quick checks or pages that aren't part of a defined journey yet. Journey mode is the richer review — it has defined personas, goals, and experiential expectations at every step. Discover mode is for brownfield projects that need journey coverage bootstrapped.
@@ -102,7 +104,7 @@ Carry the Review Brief through all subsequent steps. Each step consults the brie
 
 ## Journey Mode
 
-When the resolved mode is `journey:{name}`, read `journey-mode.md` in this skill's directory for the full Journey Mode procedure (load journey → batch invocation → per-step review → arc assessment → journey-mode report → journey-file updates → trace-on-failure).
+When the resolved mode is `journey:{name}`, read `journey-mode.md` in this skill's directory for the full Journey Mode procedure (load journey → command sequence → per-step review → arc assessment → journey-mode report → journey-file updates → trace-on-failure).
 
 ---
 
@@ -129,6 +131,9 @@ and 6; journey and discover mode cite them directly. They live here rather than 
 `page-mode.md` so a journey or discover run never loads the page-mode procedure to get them.
 
 ### Vitals interpretation (Step 1)
+
+<!-- playwright-cli: no equivalent found for agent-browser vitals — see issue Gotchas -->
+**Capability gap (Playwright CLI migration):** `playwright-cli` has no `vitals` command or equivalent — no built-in surface captures LCP/CLS/INP/TTFB/FCP (confirmed against the CLI's own published documentation during #2647's migration; `playwright-cli-reference.md`'s Operation vocabulary table). This is a real capability loss, not a minor translation note: Web Vitals capture was this skill's first-class Performance finding category. Until a replacement is designed (a hand-written `eval` script against `PerformanceObserver`/the `web-vitals` library is a possible manual workaround but is not a documented capability of this CLI, so it is not prescribed here), Performance findings sourced from vitals cannot be produced — omit the Performance line from the Step 6 report header rather than fabricate values. The thresholds table below is retained as interpretation guidance for whenever a capture mechanism becomes available.
 
 Read the vitals output captured during warm-up (or per-step in journey mode). Flag findings against these thresholds — they flow into the Step 6 findings table with **Source = Performance**:
 
@@ -294,16 +299,16 @@ Address fixes first, then re-run this review — when "fix now" items exist
 
 ## Important Notes
 
-- This review requires `agent-browser` — install with `npm install -g agent-browser` if missing
-- Snapshots are ephemeral; annotated screenshots and traces are persistent — findings reference overlay numbers and screenshot/trace paths
-- Every reviewed page produces vitals — Web Vitals are a first-class finding category, never skip the `vitals` op
-- Always use annotated screenshots — bare screenshots lose the overlay numbering that makes findings precise
-- Journey walks use a single `batch` invocation per session lifecycle slice — never spread a journey across many one-off invocations
-- When a step fails, save the trace first (`trace stop <path>` — recording must have been started at session open via `trace start`), then `close` — failure reports without a trace path are not actionable
+- This review requires `playwright-cli` — install with `npm install -g @playwright/cli` if missing
+- Snapshots are ephemeral; screenshots and traces are persistent — findings reference screenshot/trace paths (screenshots carry no overlay-number markers — see the Screenshot path convention section's capability-gap note)
+- <!-- playwright-cli: no equivalent found for agent-browser vitals — see issue Gotchas --> Web Vitals capture has no Playwright CLI equivalent (see "Vitals interpretation (Step 1)" above) — this was previously a first-class finding category; omit Performance findings until a replacement capture mechanism is designed, rather than skip silently without noting the gap
+- Always capture a screenshot per state — bare page states with no screenshot leave findings unverifiable
+- <!-- playwright-cli: no equivalent found for agent-browser batch — see issue Gotchas --> Journey walks run as a sequence of individual commands against one session for the lifecycle slice (no `batch` equivalent) — never spread a journey across many separately-opened sessions
+- When a step fails, stop the trace first (`tracing-stop` — recording must have been started at session open via `tracing-start`, then relocated from `.playwright-cli/traces/` to an absolute path per `playwright-cli-reference.md`'s caution), then `close` — failure reports without a trace path are not actionable
 - The review is scoped to the current work — don't review the entire application (except in journey mode, where the full journey is in scope, and discover mode, which scans the whole app)
 - Journey mode auto-detects when invoked with no arguments by checking `docs/journeys/` against recent changes
 - Journey files are living documents — update them when visual review reveals gaps or inaccuracies
 - Console errors and network failures are often the fastest signal — check them in the snapshot output during health check
-- Resize testing is optional and should be skipped unless layout changes are in scope; use `set viewport` rather than env vars
+- Resize testing is optional and should be skipped unless layout changes are in scope; use `resize` rather than env vars
 - The step order matters: reconnaissance → reaction → experience → analysis → imagination. Don't rearrange.
 - Reconnaissance (Step 0) is a fast pre-step — it classifies and moves on. The review steps are where depth happens. If reconnaissance takes more than 60 seconds, something is wrong.

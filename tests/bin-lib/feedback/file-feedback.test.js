@@ -349,6 +349,52 @@ test('#2240: a GitHub Enterprise Server remote passes the host-qualified --repo 
   for (const r of repos) assert.equal(r, 'ghe.example.com/acme/w');
 });
 
+// #2444 review fix: a caller-supplied --repo can itself already be a
+// host-qualified `host/owner/repo` slug (repoSlug()'s GHE output), not just
+// the bare `owner/repo` form the #2240 test above exercises via the git
+// remote path. Before this fix, --repo was always prefixed with
+// `github.com/` regardless of shape, producing an unparseable 4-segment
+// string for a slug like this.
+test('#2444 fix: a host-qualified --repo flag value passes through to every gh call', () => {
+  const draft = makeDraft();
+  const fp = feedback.computeFingerprint(draft);
+  const marker = `<!-- fingerprint: ${fp} -->`;
+  const repos = [];
+  const runner = (args) => {
+    repos.push(flagValue(args, '--repo'));
+    if (isList(args)) return JSON.stringify([]);
+    if (isCreate(args)) return 'https://ghe.example.com/acme/w/issues/900\n';
+    if (isView(args)) return JSON.stringify({ title: draft.title, body: `body\n${marker}\n` });
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out } = cliDeps({ runner, readDraftsFile: () => [draft] });
+  const code = run(['--drafts', 'drafts.json', '--repo', 'ghe.example.com/acme/w'], deps);
+  assert.equal(code, 0);
+  assert.deepEqual(out.join('').trim().split('\n'), ['filed #900']);
+  assert.ok(repos.length > 0);
+  for (const r of repos) assert.equal(r, 'ghe.example.com/acme/w');
+});
+
+test('#2444 fix: a bare --repo owner/repo flag value still resolves to github.com (unchanged)', () => {
+  const draft = makeDraft();
+  const fp = feedback.computeFingerprint(draft);
+  const marker = `<!-- fingerprint: ${fp} -->`;
+  const repos = [];
+  const runner = (args) => {
+    repos.push(flagValue(args, '--repo'));
+    if (isList(args)) return JSON.stringify([]);
+    if (isCreate(args)) return 'https://github.com/acme/w/issues/901\n';
+    if (isView(args)) return JSON.stringify({ title: draft.title, body: `body\n${marker}\n` });
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out } = cliDeps({ runner, readDraftsFile: () => [draft] });
+  const code = run(['--drafts', 'drafts.json', '--repo', 'acme/w'], deps);
+  assert.equal(code, 0);
+  assert.deepEqual(out.join('').trim().split('\n'), ['filed #901']);
+  assert.ok(repos.length > 0);
+  for (const r of repos) assert.equal(r, 'acme/w');
+});
+
 test('CLI: a read-back mismatch in one draft exits 1 but still reports the sibling clean draft', () => {
   const draftA = makeDraft({ title: 'Draft A: will mismatch', fingerprintBasis: { component: 'skills/a', summary: 'mismatch finding' } });
   const draftB = makeDraft({ title: 'Draft B: files cleanly', fingerprintBasis: { component: 'skills/b', summary: 'clean finding' } });

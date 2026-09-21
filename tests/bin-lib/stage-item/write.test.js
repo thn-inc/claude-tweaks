@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { resolveTarget, sanitizeId, writeStagedItem } = require('../../../plugin/bin/lib/stage-item/write');
+const { resolveTarget, sanitizeId, writeStagedItem, writeStagedSidecar } = require('../../../plugin/bin/lib/stage-item/write');
 
 test('sanitizeId: accepts kind-n shapes and safe stems, rejects path traversal and separators', () => {
   assert.equal(sanitizeId('review-2'), 'review-2');
@@ -39,6 +39,13 @@ test('writeStagedItem: creates staged/ and writes <id><ext> from the source exte
   const r = writeStagedItem({ runDir, id: 'review-2', sourcePath: '/tmp/whatever.patch', content: 'diff --git a b\n' });
   assert.equal(r.file, path.join(runDir, 'staged', 'review-2.patch'));
   assert.equal(fs.readFileSync(r.file, 'utf8'), 'diff --git a b\n');
+});
+
+test('writeStagedSidecar: creates staged/ and writes <id>.json regardless of the sibling item extension', () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'si-sidecar-'));
+  const r = writeStagedSidecar({ runDir, id: 'tidy-claim-releases-1', content: '[{"tag":"claim"}]' });
+  assert.equal(r.file, path.join(runDir, 'staged', 'tidy-claim-releases-1.json'));
+  assert.equal(fs.readFileSync(r.file, 'utf8'), '[{"tag":"claim"}]');
 });
 
 test('writeStagedItem: no extension on source writes id with no extension; overwrite replaces content', () => {

@@ -9,6 +9,9 @@ const { runClassified, runClassifiedAsync } = require('../shared-primitives');
 
 const execFileAsync = promisify(execFile);
 
+// #2567: this bound is deliberately its own, smaller value — not GH_TIMEOUT_MS
+// — so a single retry-on-timeout (opted into below) still costs at most 4s
+// worst case, well under a real check's 5-10s cold-call latency.
 const PREFLIGHT_TIMEOUT_MS = 2000;
 
 function defaultRunner(args, timeoutMs) {
@@ -46,6 +49,7 @@ function ghHealthCheck(opts = {}) {
   return runClassified(
     () => { runner(['api', 'rate_limit', '-q', '.rate.remaining']); return buildSuccess(); },
     buildFailure,
+    { retryOnTimeout: true },
   );
 }
 
@@ -61,6 +65,7 @@ async function ghHealthCheckAsync(opts = {}) {
   return runClassifiedAsync(
     async () => { await runner(['api', 'rate_limit', '-q', '.rate.remaining']); return buildSuccess(); },
     buildFailure,
+    { retryOnTimeout: true },
   );
 }
 

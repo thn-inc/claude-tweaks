@@ -273,7 +273,7 @@ Two worked examples:
 
 What `ready` asserts and the gate re-verifies. **Deliberately structural-plus-minimal:**
 
-- The sections `Current State`, `Deliverables`, and `Acceptance Criteria` are present.
+- The sections `Current State`, `Deliverables`, `Acceptance Criteria`, and `Release Note` are present.
 - Each of those sections is non-empty.
 - No unresolved placeholder markers (`TBD`, `TODO`, `<!-- ambiguity:`) anywhere in the body **outside the verbatim-preserved `## Original request` section** — everything from that heading to end of body is exempt: shaping-mode's preservation rule mandates that copy byte-exact, so a marker inherited there is the original capture's own text, not an unresolved authored placeholder (#1240).
 
@@ -294,7 +294,11 @@ prerequisite-check grep as the only backstop.
 Health-skill records (`by:code-health`, `by:harness-health`, `by:journey-health`,
 `by:docs-health`) are
 agent-sized and spec-shaped **by construction** — their builders emit Current State /
-Deliverables / Acceptance Criteria bodies with scoring. They therefore file with `ready`
+Deliverables / Acceptance Criteria / Release Note bodies with scoring (`releaseNote` is a
+required `specShapedBody` parameter, #2660 — each producer passes a plain-language sentence,
+generically phrased "no user-visible change" where the finding is internal maintenance, or
+naming the fixed user-facing defect for journey-health's regression-suspected category).
+They therefore file with `ready`
 already applied and appear directly in the gate's worklist, skipping maturation. Captured
 and human-filed records start in backlog state and reach `ready` through `/specify`.
 
@@ -309,7 +313,8 @@ captured record.
 
 Records composed via `specShapedBody` by `/wrap-up`, `/reflect`, or `/review` — the
 `side-effect:*` trust classes — are born-ready **by construction**, exactly as health-skill
-records are: the composer emits the three sections with a `Defer-reason:` and a
+records are: the composer emits the four sections (including the required `releaseNote`,
+#2660) with a `Defer-reason:` and a
 `via specShapedBody` footer, and the producer scores per the Scoring axis. A producer that
 cannot honestly write Acceptance Criteria uses the composer's `openQuestion` variant and files
 `needs:definition` with no `ready` and no scoring — the two landing states, stated once here.

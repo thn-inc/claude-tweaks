@@ -104,9 +104,66 @@ test('resolveInputs marks a missing source unavailable and still resolves the re
   const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps({ resolvePolicy: policyFake({}) }) });
   assert.strictEqual(inputs.pr, null);
   assert.strictEqual(inputs.sources.pr, 'unavailable');
+  // No integration-branch policy key: okDeps' git fake answers the offline
+  // origin/HEAD lookup, so this resolves via the git-default ladder rank
+  // (#2385), not the bare 'main' literal the pre-fix code reported as 'default'.
+  assert.strictEqual(inputs.integrationBranch, 'main');
+  assert.strictEqual(inputs.sources.integrationBranch, 'git-default');
+  assert.strictEqual(inputs.base, 'abc123');
+});
+
+test('resolveInputs resolves integrationBranch via the git-default ladder rank when no policy key is set, even when the real default branch is not "main" (#2385)', () => {
+  const runDir = fixtureRunDir({ withPr: false });
+  const deps = okDeps({
+    resolvePolicy: policyFake({}),
+    git: (args, opts) => {
+      if (args[0] === 'rev-parse' && args[1] === '--symbolic-full-name') return 'refs/remotes/origin/master\n';
+      if (args[0] === 'merge-base') return 'abc123\n';
+      return '';
+    },
+  });
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps });
+  assert.strictEqual(inputs.integrationBranch, 'master');
+  assert.strictEqual(inputs.sources.integrationBranch, 'git-default');
+  // The residue/state/blastRadius probes' merge-base call succeeds against
+  // the resolved non-"main" branch instead of failing on an unresolved base.
+  assert.strictEqual(inputs.base, 'abc123');
+});
+
+test('resolveInputs falls back to gh repo view for the default branch when the offline git pointer is unavailable, no policy key set (#2385)', () => {
+  const runDir = fixtureRunDir({ withPr: false });
+  const deps = okDeps({
+    resolvePolicy: policyFake({}),
+    git: (args) => { if (args[0] === 'rev-parse') throw new Error('no such ref'); return args[0] === 'merge-base' ? 'abc123\n' : ''; },
+    ghSync: (args) => (args[0] === 'repo' ? 'trunk\n' : ''),
+  });
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps });
+  assert.strictEqual(inputs.integrationBranch, 'trunk');
+  assert.strictEqual(inputs.sources.integrationBranch, 'gh-default');
+});
+
+test('resolveInputs falls back to the literal "main" only when neither policy, git, nor gh resolve anything (#2385)', () => {
+  const runDir = fixtureRunDir({ withPr: false });
+  const deps = okDeps({
+    resolvePolicy: policyFake({}),
+    git: (args) => { if (args[0] === 'rev-parse') throw new Error('no such ref'); return args[0] === 'merge-base' ? 'abc123\n' : ''; },
+    ghSync: () => { throw new Error('gh: not found'); },
+  });
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps });
   assert.strictEqual(inputs.integrationBranch, 'main');
   assert.strictEqual(inputs.sources.integrationBranch, 'default');
-  assert.strictEqual(inputs.base, 'abc123');
+});
+
+test('resolveInputs: an explicit integration-branch policy value always wins outright, never consulting git or gh (#2385)', () => {
+  const runDir = fixtureRunDir({ withPr: false });
+  let gitCalledWithRevParse = false;
+  const deps = okDeps({
+    git: (args) => { if (args[0] === 'rev-parse') gitCalledWithRevParse = true; return args[0] === 'merge-base' ? 'abc123\n' : ''; },
+  });
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps });
+  assert.strictEqual(inputs.integrationBranch, 'main');
+  assert.strictEqual(inputs.sources.integrationBranch, 'policy');
+  assert.strictEqual(gitCalledWithRevParse, false, 'policy short-circuits before the git rank is ever consulted');
 });
 
 test('resolveInputs resolves the policy levers ONCE, not once per probe (#1930 review I8)', async () => {
@@ -191,6 +248,46 @@ test('resolveInputs (c): a parent multi-spec run dir resolves records from manif
   assert.strictEqual(inputs.sources.records, 'manifest');
 });
 
+test('resolveRecords rung (c) worktree-mirrors spec-*/work headers when the main-checkout run dir has neither work/ nor spec-* entries (#2391)', () => {
+  // The real /claude-tweaks:dispatch file-overlap group shape: materialize.md
+  // commits each record's header to {run-dir}/spec-{n}/work/{n}-spec.md on the
+  // feature branch, so it exists only inside the worktree's own working tree —
+  // never in the main-checkout run dir --run anchors to. Observed live on
+  // run 2026-09-14T000308-record-2283-2338 (#2391's Current State).
+  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-rungc-main-'));
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-rungc-tree-'));
+  const rel = path.join('.claude-tweaks', 'pipelines', '2026-09-14T000308-record-2283-2338');
+  const runDir = path.join(main, rel);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: tree, status: 'active', pr: { number: 1901 } }));
+  const mirrorRunDir = path.join(tree, rel);
+  fs.mkdirSync(path.join(mirrorRunDir, 'spec-2283', 'work'), { recursive: true });
+  fs.mkdirSync(path.join(mirrorRunDir, 'spec-2338', 'work'), { recursive: true });
+  fs.writeFileSync(path.join(mirrorRunDir, 'spec-2283', 'work', '2283-spec.md'), '---\nrecord: 2283\n---\n');
+  fs.writeFileSync(path.join(mirrorRunDir, 'spec-2338', 'work', '2338-spec.md'), '---\nrecord: 2338\n---\n');
+  const deps = { readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
+  const { records, source } = resolveRecords(deps, runDir, tree);
+  assert.deepStrictEqual(records, [2283, 2338]);
+  assert.strictEqual(source, 'worktree-manifest');
+
+  // resolveInputs surfaces the same resolution end-to-end, and the four
+  // probes that gate on `recordsOrThrow()` no longer see an empty list.
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'ceremony-profile: standard\n');
+  const inputs = resolveInputs({ runDir, cwd: tree, deps: okDeps({ readdir: deps.readdir, readFile: (p) => (path.basename(p) === 'CLAUDE.md' ? '# Fixture\n\nwork-backend: github-issues\n' : deps.readFile(p)) }) });
+  assert.deepStrictEqual(inputs.records, [2283, 2338]);
+  assert.strictEqual(inputs.sources.records, 'worktree-manifest');
+});
+
+test('resolveRecords rung (c): the main-checkout run dir\'s own spec-*/work headers still win over the worktree mirror (#2391 — preserves the existing single-record/no-worktree case)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-rungc-own-'));
+  fs.mkdirSync(path.join(dir, 'spec-1', 'work'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'spec-1', 'work', '1-spec.md'), '---\nrecord: 1\n---\n');
+  const deps = { readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
+  const { records, source } = resolveRecords(deps, dir, null);
+  assert.deepStrictEqual(records, [1]);
+  assert.strictEqual(source, 'manifest', 'no worktree given — the direct runDir read wins, mirror never consulted');
+});
+
 test('pack.js exports resolveRecords (and headerRecords) so console/resolve.js can share the ladder instead of copying it (#2028)', () => {
   assert.strictEqual(typeof resolveRecords, 'function');
   assert.strictEqual(typeof headerRecords, 'function');
@@ -245,6 +342,61 @@ test('gatherPack: every probe ok → eight envelopes with ok:true, plus inputs/g
   assert.ok(!('mergeSize' in pack), 'the mergeSize probe was removed (#1930 fix round 4)');
 });
 
+// #2332: recordLabels' Promise.all fan-out is deliberately all-or-nothing —
+// this probe is an audit-only snapshot (auto-merge-short-circuit.md /
+// review-console.md never substitute it for a live label read, and both
+// treat `ok:false` as "omit the snapshot line entirely"), so a mid-list `gh`
+// failure degrading the WHOLE field rather than silently returning a partial
+// label set is the intended, documented behavior — not a bug to paper over.
+test('recordLabels: a mid-list gh failure fails the whole probe field, not just that record (#2332)', async () => {
+  const records = [100, 200, 300, 400, 500];
+  const seen = [];
+  const deps = okDeps({
+    execFile: async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') {
+        const n = Number(args[2]);
+        seen.push(n);
+        if (n === 300) throw new Error('gh issue view 300 failed: rate limited');
+        return { stdout: JSON.stringify({ labels: [{ name: `label-${n}` }] }), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir({ records }), cwd: '/w/tree', only: ['recordLabels'], deps });
+  assert.strictEqual(pack.recordLabels.ok, false, 'a single failing record fails the whole field');
+  assert.match(pack.recordLabels.error, /rate limited/, 'the underlying gh failure surfaces, not a swallowed/generic message');
+  assert.ok(seen.includes(300), 'the failing record was actually attempted');
+  // Every other record was still attempted (in-flight calls are not aborted
+  // just because one rejected) — proves this is Promise.all-style
+  // all-or-nothing propagation, not a swallow of the whole batch.
+  for (const n of records) assert.ok(seen.includes(n), `record ${n} should still have been attempted`);
+});
+
+// #2332: an unbounded Promise.all fan-out fires every record's `gh issue
+// view` simultaneously — a large multi-spec record list risks gh's own rate
+// limiting. Assert peak concurrency is capped rather than unbounded.
+test('recordLabels: gh issue view calls are concurrency-capped, not fired all at once (#2332)', async () => {
+  const records = Array.from({ length: 12 }, (_, i) => 1000 + i);
+  let inFlight = 0;
+  let peak = 0;
+  const deps = okDeps({
+    execFile: async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 10));
+        inFlight -= 1;
+        return { stdout: JSON.stringify({ labels: [] }), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir({ records }), cwd: '/w/tree', only: ['recordLabels'], deps });
+  assert.strictEqual(pack.recordLabels.ok, true);
+  assert.ok(peak < records.length, `peak concurrency (${peak}) should be bounded below the full record count (${records.length})`);
+  assert.ok(peak > 0, 'sanity: calls actually happened');
+});
+
 test('#2425: unblocked (work-links: native) passes --repo, resolved from `origin`, to resolve-blockers.js — including on a GitHub Enterprise remote', async () => {
   const calls = [];
   const deps = okDeps({
@@ -287,6 +439,60 @@ test('#2425 AC 2: on a plain github.com remote, --repo is still passed (additive
   assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
   const repoIdx = calls[0].indexOf('--repo');
   assert.strictEqual(calls[0][repoIdx + 1], 'acme/widgets');
+});
+
+// #2538: before this fix, ONLY the resolve-blockers.js child spawn got
+// --repo — this probe's own two direct `gh issue list` calls (open-state,
+// and body-text mode's second all-state pass) never did, so a GitHub
+// Enterprise remote's issue-list fetch had no repo context threaded at all.
+test('#2538: unblocked (work-links: native) also passes --repo to its own direct `gh issue list` call, not just the resolve-blockers.js spawn', async () => {
+  const listCalls = [];
+  const deps = okDeps({
+    git: (args) => (args[0] === 'remote' ? 'git@ghe.example.com:acme/widgets.git\n' : okDeps().git(args)),
+    execFile: async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list') {
+        listCalls.push(args);
+        return { stdout: JSON.stringify([{ number: 1600, title: 'Dependent', body: '' }]), stderr: '' };
+      }
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) {
+        return { stdout: JSON.stringify({ 1600: { blockedBy: [1535], openBlocker: false } }), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.strictEqual(listCalls.length, 1);
+  const repoIdx = listCalls[0].indexOf('--repo');
+  assert.notStrictEqual(repoIdx, -1, `gh issue list must be called with --repo on a GHE remote: ${JSON.stringify(listCalls[0])}`);
+  assert.strictEqual(listCalls[0][repoIdx + 1], 'ghe.example.com/acme/widgets');
+});
+
+test('#2538: unblocked (work-links: body-text) passes --repo to BOTH of its direct `gh issue list` calls on a GitHub Enterprise remote', async () => {
+  const listCalls = [];
+  const deps = okDeps({
+    git: (args) => (args[0] === 'remote' ? 'git@ghe.example.com:acme/widgets.git\n' : okDeps().git(args)),
+    resolvePolicy: policyFake({ 'integration-branch': 'main', 'work-links': 'body-text' }),
+    execFile: async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list' && args.includes('open')) {
+        listCalls.push(args);
+        return { stdout: JSON.stringify([{ number: 1600, title: 'Dependent', body: 'Blocked by #1535\n' }]), stderr: '' };
+      }
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list' && args.includes('all')) {
+        listCalls.push(args);
+        return { stdout: JSON.stringify([{ number: 1535, state: 'CLOSED' }]), stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.strictEqual(listCalls.length, 2, `expected both the open-state and all-state gh issue list calls: ${JSON.stringify(listCalls)}`);
+  for (const call of listCalls) {
+    const repoIdx = call.indexOf('--repo');
+    assert.notStrictEqual(repoIdx, -1, `every gh issue list call must carry --repo on a GHE remote: ${JSON.stringify(call)}`);
+    assert.strictEqual(call[repoIdx + 1], 'ghe.example.com/acme/widgets');
+  }
 });
 
 test('#2425: no resolvable `origin` remote falls back to calling resolve-blockers.js without --repo (additive, never a hard failure)', async () => {
@@ -375,7 +581,58 @@ test('gatherPack: the ledger probe counts rows by status and phase from the work
   state.worktree = tree;
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(state));
   const pack = await gatherPack({ runDir, cwd: tree, only: ['ledger'], deps: okDeps() });
-  assert.deepStrictEqual(pack.ledger.value, { open: 1, total: 3, byPhase: { review: { open: 1, total: 2 }, build: { open: 0, total: 1 } }, files: ['docs/plans/2026-09-05-spec-1535-ledger.md'] });
+  assert.deepStrictEqual(pack.ledger.value, {
+    open: 1,
+    total: 3,
+    byPhase: { review: { open: 1, total: 2, unrecognized: 0 }, build: { open: 0, total: 1, unrecognized: 0 } },
+    files: ['docs/plans/2026-09-05-spec-1535-ledger.md'],
+    unrecognized: 0,
+    unrecognizedValues: [],
+  });
+});
+
+// #2080: an out-of-enum Status cell (a typo, a retired synonym like `staged`/
+// `resolved`) must be counted as `unrecognized` — distinguishable from both
+// `open` (blocking) and a legitimate terminal status — never silently folded
+// into "terminal" the way it was before this fix.
+test('gatherPack: the ledger probe counts an out-of-enum status as unrecognized, not silently terminal (#2080)', async () => {
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
+  fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-spec-1535-ledger.md'), [
+    '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
+    '| 1 | review | a | open | — |',
+    '| 2 | review | b | fixed | x |',
+    '| 3 | build | c | staged | parent staged/x.md |',
+    '| 4 | build | d | resolved | n/a |',
+  ].join('\n'));
+  const runDir = fixtureRunDir();
+  const state = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+  state.worktree = tree;
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(state));
+  const pack = await gatherPack({ runDir, cwd: tree, only: ['ledger'], deps: okDeps() });
+  assert.strictEqual(pack.ledger.value.unrecognized, 2);
+  assert.deepStrictEqual(pack.ledger.value.unrecognizedValues.sort(), ['resolved', 'staged']);
+  assert.strictEqual(pack.ledger.value.byPhase.build.unrecognized, 2);
+  assert.strictEqual(pack.ledger.value.byPhase.review.unrecognized, 0);
+  // Unrecognized rows were never `open` and must not become blocking now.
+  assert.strictEqual(pack.ledger.value.open, 1);
+  assert.strictEqual(pack.ledger.value.total, 4);
+});
+
+test('gatherPack: the ledger probe reports zero unrecognized rows when every status is in the closed enum (#2080)', async () => {
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
+  fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-spec-1535-ledger.md'), [
+    '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
+    '| 1 | review | a | open | — |', '| 2 | review | b | fixed | x |',
+  ].join('\n'));
+  const runDir = fixtureRunDir();
+  const state = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+  state.worktree = tree;
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(state));
+  const pack = await gatherPack({ runDir, cwd: tree, only: ['ledger'], deps: okDeps() });
+  assert.strictEqual(pack.ledger.value.unrecognized, 0);
+  assert.deepStrictEqual(pack.ledger.value.unrecognizedValues, []);
 });
 
 test('gatherPack: a ledger whose DATE prefix contains the record number is not this record\'s ledger (#1930 review M5)', async () => {
@@ -392,6 +649,50 @@ test('gatherPack: a ledger whose DATE prefix contains the record number is not t
   const pack = await gatherPack({ runDir, cwd: tree, only: ['ledger'], deps: okDeps() });
   assert.deepStrictEqual(pack.ledger.value.files, ['docs/plans/2025-01-02-spec-26-ledger.md']);
   assert.strictEqual(pack.ledger.value.total, 1);
+});
+
+// #2563: _shared/ledger-format.md's Location section defines the canonical
+// filename as embedding the plan/spec TOPIC slug, not the record number —
+// `namesRecord` never matches this shape at all, so a bare record-number
+// filter silently excluded it and reported 0 items even though the file held
+// genuinely open rows.
+test('gatherPack: the ledger probe locates a topic-slug-named ledger with no record number in the filename (#2563 AC1)', async () => {
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
+  fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-ledger-probe-slug-fix-ledger.md'), [
+    '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
+    '| 1 | review | a | open | — |', '| 2 | build | b | open | — |', '| 3 | build | c | fixed | x |',
+  ].join('\n'));
+  const runDir = fixtureRunDir({ records: [1535] });
+  const state = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+  state.worktree = tree;
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(state));
+  const pack = await gatherPack({ runDir, cwd: tree, only: ['ledger'], deps: okDeps() });
+  assert.deepStrictEqual(pack.ledger.value.files, ['docs/plans/2026-09-05-ledger-probe-slug-fix-ledger.md']);
+  assert.strictEqual(pack.ledger.value.open, 2);
+  assert.strictEqual(pack.ledger.value.total, 3);
+});
+
+// #2563 AC4: _shared/ledger-format.md's resolution rule — when {run-dir}/
+// ledger.md exists (the gated no-worktree case), that file is authoritative
+// and the docs/plans/ glob is never consulted, even when a stray docs/plans
+// ledger is also present.
+test('gatherPack: {run-dir}/ledger.md is authoritative over the docs/plans/ glob when it exists (#2563 AC4)', async () => {
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
+  fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-spec-1535-ledger.md'), '| # | Phase | Item | Status | Resolution |\n| 1 | review | a | open | — |');
+  const runDir = fixtureRunDir({ records: [1535] });
+  const state = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+  state.worktree = tree;
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(state));
+  fs.writeFileSync(path.join(runDir, 'ledger.md'), [
+    '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
+    '| 1 | build | a | open | — |', '| 2 | build | b | open | — |', '| 3 | build | c | open | — |',
+  ].join('\n'));
+  const pack = await gatherPack({ runDir, cwd: tree, only: ['ledger'], deps: okDeps() });
+  assert.deepStrictEqual(pack.ledger.value.files, ['ledger.md']);
+  assert.strictEqual(pack.ledger.value.open, 3);
+  assert.strictEqual(pack.ledger.value.total, 3);
 });
 
 test('gatherPack: a missing gh binary degrades pr/recordLabels/unblocked to error gh-absent, nothing else (#1930 Gotchas)', async () => {

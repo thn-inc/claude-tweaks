@@ -16,8 +16,9 @@ const { sessionTmpPath } = require('../plugin/bin/lib/session-tmp');
 // the very next iteration of the *same* firing re-ranks the identical group
 // back to the top and reproduces the identical stop. This test extracts and
 // runs the actual `next-ranking.md` script (not a reimplementation) against
-// synthetic group data, proving the new `dispatch-firing-excluded.json`
-// input is read and actually changes the pick.
+// synthetic group data, proving a `reason: 'firing'` entry in the unified
+// `dispatch-exclusions.json` (#1752; formerly its own dispatch-firing-
+// excluded.json file) is read and actually changes the pick.
 
 const ROOT = path.join(__dirname, '..');
 const NEXT_RANKING = fs.readFileSync(
@@ -40,13 +41,19 @@ function group(number, { priority = null, createdAt = '2026-01-01T00:00:00Z' } =
 // Runs the real next-ranking.md snippet against a fresh session-scoped temp
 // root (so concurrent test runs never collide), writing the given fixture
 // inputs first. Returns the parsed dispatch-next-pick.json content.
+//
+// #1752: oversizedExcluded/firingExcluded are still this test's own fixture
+// vocabulary (unchanged from before the unification) -- only how they reach
+// the snippet changed, from two separate files to one dispatch-exclusions.json
+// composed of {reason, records, detail} entries.
 function runRanking({ groups, oversizedExcluded = [], firingExcluded, priorityFilter = '' }) {
   const sessionId = `dispatch-firing-excl-test-${crypto.randomBytes(6).toString('hex')}`;
   fs.writeFileSync(sessionTmpPath(sessionId, 'dispatch-groups.json'), JSON.stringify(groups));
-  fs.writeFileSync(sessionTmpPath(sessionId, 'dispatch-oversized-excluded.json'), JSON.stringify(oversizedExcluded));
+  const entries = oversizedExcluded.map((o) => ({ reason: 'oversized', records: o.records, detail: { size: o.size, threshold: o.threshold } }));
   if (firingExcluded !== undefined) {
-    fs.writeFileSync(sessionTmpPath(sessionId, 'dispatch-firing-excluded.json'), JSON.stringify(firingExcluded));
+    entries.push(...firingExcluded.map((n) => ({ reason: 'firing', records: [n], detail: null })));
   }
+  fs.writeFileSync(sessionTmpPath(sessionId, 'dispatch-exclusions.json'), JSON.stringify(entries));
   execFileSync('bash', ['-c', SNIPPET], {
     env: {
       ...process.env,
@@ -60,7 +67,7 @@ function runRanking({ groups, oversizedExcluded = [], firingExcluded, priorityFi
   return JSON.parse(fs.readFileSync(pickPath, 'utf8'));
 }
 
-test('no dispatch-firing-excluded.json (absent) ranks normally -- backward compatible', () => {
+test('no firing-reason exclusions present ranks normally -- backward compatible', () => {
   const pick = runRanking({
     groups: [group(100, { priority: 'high' }), group(300, { priority: 'low' })],
   });
@@ -68,7 +75,7 @@ test('no dispatch-firing-excluded.json (absent) ranks normally -- backward compa
   assert.strictEqual(pick[0].number, 100);
 });
 
-test('a group on dispatch-firing-excluded.json is skipped in favor of the next-ranked candidate', () => {
+test('a group with a reason:\'firing\' exclusion entry is skipped in favor of the next-ranked candidate', () => {
   const pick = runRanking({
     groups: [
       group(100, { priority: 'high', createdAt: '2026-01-01T00:00:00Z' }),

@@ -39,7 +39,7 @@ Under this driver, a local record's storage location *is* `specs/{n}-{slug}.md`.
 
 ## Materialization hard gate
 
-Before composing anything, check the fetched body against `_shared/work-record.md`'s spec-shaped body definition: the sections `## Current State`, `## Deliverables`, and `## Acceptance Criteria` are present and each non-empty, and no unresolved placeholder marker (`TBD`, `TODO`, `<!-- ambiguity:`) remains anywhere outside the verbatim-preserved `## Original request` section (that heading to end of body is exempt — see that definition's #1240 clause).
+Before composing anything, check the fetched body against `_shared/work-record.md`'s spec-shaped body definition: the sections `## Current State`, `## Deliverables`, `## Acceptance Criteria`, and `## Release Note` are present and each non-empty, and no unresolved placeholder marker (`TBD`, `TODO`, `<!-- ambiguity:`) remains anywhere outside the verbatim-preserved `## Original request` section (that heading to end of body is exempt — see that definition's #1240 clause). As of #2603 this matches `_shared/work-record.md`'s "Spec-shaped body" section exactly (#2580) — a record missing only `## Release Note` is stopped here, at materialize time, the same way a missing `## Current State` already is, rather than only being caught later at merge time by `compose-subject.js`'s unconditional gate.
 
 - **Passes** — proceed to header composition.
 - **Fails** — STOP before any worktree or run-dir work happens: "Record #{n} is not spec-shaped ({missing/empty section list}) — run `/claude-tweaks:specify #{n}` first." For a multi-record run, gate every record before proceeding with any of them — report every failing record's gap in one message, not just the first one encountered.

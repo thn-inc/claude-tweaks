@@ -3,8 +3,10 @@
 Referenced by `skills/dispatch/SKILL.md` Step 3, cited immediately after the Blocked-exclusion
 report (refs #1228).
 
-Read `dispatch-oversized-excluded.json` (`queue-pull-script.md`'s output, `{records, size,
-threshold}[]`). Non-empty: render one line before the rest of Step 3:
+Read this run's session-scoped `dispatch-exclusions.json` (`queue-pull-script.md`'s output,
+`bin/lib/dispatch/exclusions.js`'s `readExclusions`), filtered to `reason: 'oversized'` entries
+(`records: number[], detail: {size, threshold}` each). Non-empty: render one line before the rest
+of Step 3:
 
 `{n} group(s) over the size guard (threshold {threshold}): #{a},#{b},... (size {size})`
 

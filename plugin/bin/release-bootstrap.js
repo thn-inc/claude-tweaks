@@ -39,15 +39,18 @@ function parseArgs(argv) {
     return { error: `invalid --integration-model: ${opts.integrationModel}` };
   }
   if (!opts.help && !isValidBranchName(opts.branch)) return { error: `invalid --branch: ${opts.branch}` };
-  if (!opts.help && opts.releaseType !== undefined && !RELEASE_TYPE_VALUES.has(opts.releaseType)) {
-    return { error: `invalid --release-type: ${opts.releaseType}` };
-  }
+  // Pairing before vocabulary — matches resolveReleaseType's order in
+  // lib/init/release-bootstrap.js, so an invalid --release-type is rejected
+  // the same way here regardless of whether --extra-file is also missing.
   if (!opts.help && (opts.releaseType !== undefined || opts.extraFile !== undefined)) {
     const hasReleaseType = opts.releaseType !== undefined;
     const hasExtraFile = opts.extraFile !== undefined;
     if (hasReleaseType !== hasExtraFile) {
       return { error: '--release-type and --extra-file must be given together' };
     }
+  }
+  if (!opts.help && opts.releaseType !== undefined && !RELEASE_TYPE_VALUES.has(opts.releaseType)) {
+    return { error: `invalid --release-type: ${opts.releaseType}` };
   }
   return opts;
 }

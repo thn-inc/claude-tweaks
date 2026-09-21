@@ -70,7 +70,7 @@ test('full-mode.md declares a non-empty friction-lens-vocab block', () => {
   assert.ok(vocabBlock().trim().length > 0);
 });
 
-test('the friction-lens-vocab block declares exactly the five event types bin/friction-events.js filters to', () => {
+test('the friction-lens-vocab block declares exactly the event types bin/friction-events.js filters to', () => {
   const declared = parseVocab(vocabBlock());
   assert.deepStrictEqual(Object.keys(declared).sort(), [...EVENT_TYPES].sort(),
     'full-mode.md\'s friction-lens-vocab block and bin/lib/friction-lens-vocab.js\'s FRICTION_EVENT_TYPES (the CLI\'s own filter list) have diverged');

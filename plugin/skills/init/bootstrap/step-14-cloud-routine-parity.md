@@ -194,8 +194,7 @@ for spec in $PLUGIN_SPECS; do
     console.log([installed, expected, drift ? "DRIFT" : "ok", (entry && entry.installPath) || "-"].join("\t"));
   ' "$spec" "$CC_INSTALLED" "$CC_MARKETPLACES" || true)
   # `|| true` inside the substitution, because this loop is diagnostic-and-repair, not a
-  # prerequisite: under `set -e` an unreadable manifest would otherwise abort the script
-  # here and take the agent-browser/Chrome install below down with it.
+  # prerequisite: under `set -e` an unreadable manifest would otherwise abort the script here.
   if [ -z "$VERDICT" ]; then
     echo "[claude-cloud-setup] WARNING: could not resolve an installed version for $spec — freshness unverified."
     continue
@@ -214,74 +213,18 @@ for spec in $PLUGIN_SPECS; do
   fi
 done
 
-# agent-browser — required in the cloud sandbox for /browse-dependent skills
+# playwright-cli — required in the cloud sandbox for /browse-dependent skills
 # (/stories, /visual-review, /review, qa-agent, /flow) to work in cloud sessions.
-npm install -g agent-browser
-
-# Chrome, so agent-browser can actually launch a browser (the CLI alone can't render a
-# page). Unmodified `agent-browser install --with-deps` doesn't work in a cloud sandbox:
-#  - it shells out to `sudo apt-get ...` for Chrome's runtime libraries; cloud sandboxes
-#    commonly run this whole script as root with no `sudo` binary at all, so that call
-#    fails silently and Chrome downloads but can't launch (missing shared libs) — install
-#    the libraries directly instead, with no `sudo` prefix.
-#  - its own Chrome download can fail `invalid peer certificate: UnknownIssuer` behind a
-#    TLS-inspecting sandbox proxy (its bundled HTTP client doesn't trust the sandbox's CA
-#    store) — fetch Chrome for Testing directly via `curl` instead, which honors the
-#    system CA store, and place it where agent-browser's own cache expects it.
-CHROME_LIBS="libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
-  libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \
-  libpango-1.0-0 libcairo2 libatspi2.0-0 libxshmfence1"
-# Populate the local apt cache BEFORE resolving package names against it — a fresh
-# sandbox's cache is empty until `update` runs, which would otherwise make every
-# `apt-cache policy` lookup below (including the t64 fallback) report no candidate.
-apt-get update -qq
-RESOLVED_LIBS=""
-for pkg in $CHROME_LIBS; do
-  # Capture apt-cache policy's own output into a variable first, rather than piping it
-  # straight into `grep -q` — under this script's `set -o pipefail`, `grep -q` closing its
-  # stdin the instant it finds a match can SIGPIPE the still-writing producer, and
-  # pipefail then reports that SIGPIPE (141) as the pipeline's exit status instead of
-  # grep's real success: a false negative on a genuine match.
-  POLICY_OUT="$(apt-cache policy "$pkg" 2>/dev/null || true)"
-  if echo "$POLICY_OUT" | grep -qE "Candidate: [^(]"; then
-    RESOLVED_LIBS="$RESOLVED_LIBS $pkg"
-  else
-    # The sandbox's Debian base may have undergone the 64-bit time_t transition, which
-    # renamed some packages with a `t64` suffix (e.g. libasound2 -> libasound2t64).
-    POLICY_OUT_T64="$(apt-cache policy "${pkg}t64" 2>/dev/null || true)"
-    if echo "$POLICY_OUT_T64" | grep -qE "Candidate: [^(]"; then
-      RESOLVED_LIBS="$RESOLVED_LIBS ${pkg}t64"
-    fi
-  fi
-done
-# $RESOLVED_LIBS is an intentionally unquoted, space-separated word list. `unzip` isn't
-# subject to the t64 rename dance (its package name doesn't vary) but a minimal sandbox
-# image may not ship it, and the Chrome-for-Testing zip below needs it.
-apt-get install -y -qq unzip $RESOLVED_LIBS
-
-AB_BROWSERS_DIR="${HOME}/.agent-browser/browsers"
-mkdir -p "$AB_BROWSERS_DIR"
-CFT_JSON="$(curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json)"
-read -r CHROME_VERSION CHROME_URL <<<"$(echo "$CFT_JSON" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);const s=j.channels.Stable;console.log(s.version, s.downloads.chrome.find(x=>x.platform==='linux64').url)})")"
-CHROME_DIR="${AB_BROWSERS_DIR}/chrome-${CHROME_VERSION}"
-if [ ! -d "$CHROME_DIR" ]; then
-  mkdir -p "$CHROME_DIR"
-  curl -fsSL "$CHROME_URL" -o /tmp/chrome-for-testing.zip
-  unzip -q -o /tmp/chrome-for-testing.zip -d "$CHROME_DIR"
-  rm -f /tmp/chrome-for-testing.zip
-fi
-chmod +x "${CHROME_DIR}/chrome-linux64/chrome"
+npm install -g @playwright/cli
 ```
 
-Write this to `scripts/claude-cloud-setup.sh` in the project root, creating the `scripts/` directory if it doesn't exist. `2>/dev/null || true` on every marketplace-**add** line — a duplicate add is the expected no-op on a re-run. Marketplace-**update** lines are not silenced: they fall through to a `WARNING` echo instead, because a failed catalog refresh is not a harmless no-op here but the precondition that makes the version comparison downstream measure the sandbox against itself. The plugin install-or-update branch and the `npm install -g agent-browser`/Chrome-install lines are left unguarded so a real failure surfaces loudly within the Setup script's own ~5-minute budget, rather than being silently swallowed.
+Write this to `scripts/claude-cloud-setup.sh` in the project root, creating the `scripts/` directory if it doesn't exist. `2>/dev/null || true` on every marketplace-**add** line — a duplicate add is the expected no-op on a re-run. Marketplace-**update** lines are not silenced: they fall through to a `WARNING` echo instead, because a failed catalog refresh is not a harmless no-op here but the precondition that makes the version comparison downstream measure the sandbox against itself. The plugin install-or-update branch and the `npm install -g @playwright/cli` line are left unguarded so a real failure surfaces loudly within the Setup script's own ~5-minute budget, rather than being silently swallowed.
 
 **The dedicated-environment offer is deferred to Step 15, not asked here.** Writing the script is not what makes it run — an environment has to reference it — but whether a *dedicated* environment is worth creating right now depends on whether this same `/init` pass ends up selecting any Routine (Step 15): an interactive cloud session doesn't need a dedicated environment the same way a scheduled Routine does, and asking here — before Step 15 has even run — risks steering the user toward creating one for a reason (Routines) they're about to decline. Rather than calling `AskUserQuestion` at this position, this step's file/settings.json writes above are its complete output; the "apply the Setup script to a dedicated environment now via browser" offer itself is issued from Step 15 instead, once its routine picklist selection is fully known — see `step-15-routine-installation.md`'s "Apply the Setup script to a dedicated environment (deferred from Step 14)" section for the full procedure, its two outcome branches (one or more routines selected: same offer, options, and Recommended default as before — no behavior change; zero selected: no offer is asked, falling straight through to the manual instruction line), and the `REPO_SLUG`/`environment_name`/reporting details this paragraph used to own. Step 15 still runs after this step in a normal `/init` pass (see this step's own header) — that ordering is unchanged and is what lets Step 15's deferred offer, on success, resolve to the same environment every routine it goes on to create then reuses. When Step 15 itself is skipped entirely (no routine templates shipped, or every candidate already has a record), the deferred offer never fires either — the `## Cloud parity` CLAUDE.md section below still documents the manual Setup-script line permanently, so nothing about cloud parity is lost, only the proactive browser-automation offer.
 
 **Why the verify loop exists (#129).** `claude plugin update` is a version-string comparison against the local catalog, not a content check — confirmed live by emptying a cached plugin directory of its files and re-running `update`, which reported `already at the latest version` and exit 0 while repairing nothing. Three separate conditions therefore produce an identical, successful-looking log: a catalog that failed to refresh, a plugin directory restored from an older snapshot, and a genuinely current install. The verify loop separates the second from the third, and the un-silenced marketplace `update` separates the first. What none of it covers is the case where this script never runs at all in a given sandbox — that one is caught from the other side, by the resolved-build line every routine prompt now prints at startup (`_shared/routine-template-schema.md`'s standard prompt kernel). The two together are what make a stale sandbox self-identifying instead of merely suspected.
 
 Deliberately **not** added to the generated `## Cloud parity` CLAUDE.md section below: that section is already a large always-loaded block in consuming projects, and the failure it would describe is now announced by the script and the routine themselves, at the moment it happens, to whoever is actually reading the log.
-
-**Residual verification note (#75):** the Chrome-for-Testing download path (`~/.agent-browser/browsers/chrome-{version}/chrome-linux64/chrome`) was derived from `agent-browser doctor`'s confirmed macOS cache layout (`~/.agent-browser/browsers/chrome-{version}/Google Chrome for Testing.app/...`) plus Chrome for Testing's own zip-internal folder naming convention — it has not been exercised against a real Linux cloud sandbox. Verify this path on an actual claude.ai/code sandbox (same repro steps as issue #75) before treating this as fully confirmed; adjust the path if agent-browser's Linux cache layout differs.
 
 **Write/update the `## Cloud parity` CLAUDE.md section** — add near the other project-level config sections (same "add or update a section" idiom Step 11 uses for `## Design integration`):
 
@@ -301,7 +244,7 @@ firing ends in a real result or a diagnosable failure.
 - **Setup script (required, not optional):** paste the canonical Setup-script line (see
   `scripts/claude-cloud-setup.sh`'s header) into this project's cloud environment's Setup script
   field (claude.ai/code environment settings, web UI only — no API/CLI can set this remotely).
-  Installs every declared plugin/marketplace plus `agent-browser`. Regenerated by
+  Installs every declared plugin/marketplace. Regenerated by
   `/claude-tweaks:init`; don't hand-edit it. Without it, a declared plugin is simply absent:
   measured on a live session whose clone carried the declaration, with network access Full,
   `~/.claude/plugins/` did not exist at all and every plugin command returned `Unknown command`.

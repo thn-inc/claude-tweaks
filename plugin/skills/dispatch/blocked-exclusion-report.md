@@ -3,11 +3,12 @@
 Referenced by `skills/dispatch/SKILL.md` Step 3, cited immediately after the zero-eligible-groups
 case (refs #1101).
 
-Read this run's session-scoped `dispatch-blocked-excluded.json` (`queue-pull-script.md`'s own
-output, `{number, blockedBy: [ids]}[]`) — every otherwise-`auto:build`-eligible candidate the
-queue pull dropped for an open blocked-by dependency, whether via a body-text `Blocked by #N`
-line or (`work-links: native`) a native `blockedBy` link. When non-empty, render one line before
-the rest of this step's own output:
+Read this run's session-scoped `dispatch-exclusions.json` (`queue-pull-script.md`'s own output,
+`bin/lib/dispatch/exclusions.js`'s `readExclusions`), filtered to `reason: 'blocked'` entries
+(`records: [number], detail: {blockedBy: [ids]}` each) — every otherwise-`auto:build`-eligible
+candidate the queue pull dropped for an open blocked-by dependency, whether via a body-text
+`Blocked by #N` line or (`work-links: native`) a native `blockedBy` link. When non-empty, render
+one line before the rest of this step's own output:
 
 `{n} excluded — blocked by an open dependency: #{a} (blocked by #{x}), #{b} (blocked by #{y}, #{z})`
 

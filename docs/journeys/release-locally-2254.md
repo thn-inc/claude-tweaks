@@ -5,6 +5,7 @@ files:
   - plugin/bin/lib/release-local/bump.js
   - plugin/bin/lib/release-local/manifest.js
   - plugin/bin/lib/release-local/changelog.js
+  - plugin/bin/lib/release-notes.js
   - plugin/bin/lib/release/precheck.js
   - plugin/bin/lib/release/run.js
 ---
@@ -20,7 +21,7 @@ files:
 
 ### 1. Preview the release — `--dry-run`
 - **URL:** `node plugin/bin/release-local.js --dry-run`
-- **Action:** Runs the branch and clean-tree guard, reads first-parent commits since the last `v*` tag, derives the bump, runs the collision pre-check against sibling worktrees and plan documents, and prints the plan: the proposed version and part, counts of feat/fix/breaking, the hook that will run, the manifest files that will change, any `unconventional` subjects, and the exact CHANGELOG section.
+- **Action:** Runs the branch and clean-tree guard, reads first-parent commits since the last `v*` tag, derives the bump, runs the collision pre-check against sibling worktrees and plan documents, and prints the plan: the proposed version and part, counts of feat/fix/breaking, the hook that will run, the manifest files that will change, any `unconventional` subjects, and the exact CHANGELOG section — including a `### Highlights` block, right after any `### ⚠ BREAKING CHANGES` block, collecting each commit's `Release-Note:` trailer as a flat bullet list (#2581); a release with no commit carrying a non-empty `Release-Note:` renders no Highlights block at all, not an empty one.
 - **Should feel:** Trustworthy — what is printed is what a live run writes, byte for byte, and nothing on disk moved.
 - **Should understand:** `--first-parent` means a `--no-ff` merge counts once, with the composer-written subject; branch-internal commits never reach the changelog. An `unconventional` line is a signal that someone bypassed the merge-time composer, not a formatting nit.
 - **Red flags:** A plan that silently omits a commit; a "manifest: none" line on a repo that has a stack manifest; the preview and the later live output differing.
@@ -29,8 +30,8 @@ files:
 - **URL:** the same command on a history of only `chore:`/`docs:` commits
 - **Action:** The engine reports `nothing to release: N commit(s) since vX.Y.Z, none feat/fix/breaking` and exits `3` without touching a file.
 - **Should feel:** Calm — a non-event, not an error; the shell script wrapping it can branch on `3` and move on.
-- **Should understand:** Precedence is breaking → major, feat → minor, fix → patch; anything else never bumps, on a first release too.
-- **Red flags:** A `0.0.1` bump from a `chore:`-only history; a manifest edit left behind.
+- **Should understand:** Precedence is breaking → major, feat → minor, fix → patch; anything else never bumps, on a first release too. On a `0.x` line, a breaking commit bumps the minor instead of the major by default (`bump-minor-pre-major` in `release-please-config.json`, default `true`) — matching release-please's own pre-1.0 behavior; set it `false` in the config to force the plain major bump.
+- **Red flags:** A `0.0.1` bump from a `chore:`-only history; a manifest edit left behind; a `1.0.0` bump on a `0.x` line from a breaking commit with no `bump-minor-pre-major: false` in the config.
 
 ### 3. Land it — the live run
 - **URL:** `node plugin/bin/release-local.js`
@@ -50,3 +51,5 @@ files:
 - Created during build of #2254 (record: The local engine `bin/release-local.js`)
 - Steps 1-4 built in this session
 - Related specs: #2253 (Step 21 bootstrap writes the config this engine reads), #2255 (the `/claude-tweaks:release` skill that fronts this CLI), #2250 (design)
+- Step 2's bump precedence updated during build of #2327 (0.x pre-major bump softening)
+- Steps 1 and 3 updated during build of #2581 (`### Highlights` block, sourced from each commit's `Release-Note:` trailer via the new shared `plugin/bin/lib/release-notes.js`)

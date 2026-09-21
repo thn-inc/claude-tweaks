@@ -36,7 +36,7 @@ pre-flight check:
 1. Resolve a working dev server via `dev-url-detection.md`'s existing procedure — already
    project-agnostic (port probing, `CLAUDE.md`/`package.json` command detection, worktree
    awareness) and already auto-starts an ephemeral server on a free port when nothing is running.
-2. Open a quick `agent-browser` session at the resolved entry point (following
+2. Open a quick `playwright-cli` session at the resolved entry point (following
    `/claude-tweaks:browse`'s conventions directly — the same relationship
    `/claude-tweaks:visual-review` already has with `/claude-tweaks:browse`) and confirm the target
    page actually renders, not just an HTTP 200. If the page requires auth and credentials are
@@ -54,7 +54,7 @@ live, or get the steps to check it yourself?"`, `header`: `"How to check"`, `mul
 - Option 1 — `label`: `"Show me live"`, `description`: `"Open a live browser session now"`
 - Option 2 — `label`: `"Give me the steps"`, `description`: `"I'll run it myself"`
 
-**"Show me live" (sub-choice):** open a fresh `agent-browser` session at the already-verified
+**"Show me live" (sub-choice):** open a fresh `playwright-cli` session at the already-verified
 entry point (or reuse the pre-flight's own session if still open). After the human finishes
 looking, close the session (leaked sessions consume resources — same discipline
 `/claude-tweaks:browse`'s own Anti-Patterns table requires), then re-ask the Verdict question

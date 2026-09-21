@@ -7,7 +7,7 @@ allowed-tools: Read, Grep, Glob, Bash, AskUserQuestion
 
 # Harness Health — Keep Skills, Rules, and CLAUDE.md Honest
 
-A recurring health check for `.claude/skills/*.md`, `.claude/rules/*.md`, and CLAUDE.md: picks one target to audit against the codebase (or the next new-skill gap to check for), judges it via the shared `_shared/harness-health-analysis.md` procedure, and files a `by:harness-health`-labelled, born-`ready` GitHub issue. Never edits code — only harness documentation.
+A recurring health check for `.claude/skills/*.md`, `.claude/rules/*.md`, and CLAUDE.md: picks one target to audit against the codebase (or the next new-skill gap to check for), judges it via the shared `_shared/harness-health-analysis.md` procedure, and files a `by:harness-health`-labelled, born-`ready` GitHub issue. Never edits code — only harness documentation. Its judged dimensions include a model-generation-fit check (`_shared/harness-health-analysis.md`'s dimension 10, #2656) — flags scaffolding plausibly written for an older Claude generation's quirks (verbose defensive repetition, a workaround for a since-fixed limitation) as a consolidation candidate, never an automatic edit. Not wired into this skill's own churn/staleness rotation as an automatic trigger; re-run by hand whenever a new model generation ships, the same triggering event `#2644` (model-version prompting-delta tracking for skill-authoring guidance) tracks — see that dimension's own write-up for why the two stay coordinated rather than drifting into separate processes.
 
 ```
               [ /claude-tweaks:harness-health ] <- utility (no fixed lifecycle position)

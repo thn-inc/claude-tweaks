@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   recordPayload, TYPE_LABELS, CLASSIFICATION_SCORING, LABELS, DEFER_REASONS,
-  extractFingerprint, extractVerifiedAsOf, extractPremiseCheck, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
+  extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
   buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, buildNativeSubIssuesQuery,
   buildNativeParentQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
@@ -182,6 +182,48 @@ test('extractFingerprint prefers the new work-fingerprint marker when both are p
     extractFingerprint('<!-- code-health-fingerprint: old:1 -->\n<!-- work-fingerprint: new:2 -->'),
     'new:2'
   );
+});
+
+// (#2658) checkFingerprint/recordFingerprint — the mechanical replacement
+// for record-creation.md's prose-only "re-check the fingerprint map before
+// each create" idempotency instruction.
+test('checkFingerprint: returns the existing number for a fingerprint already in the map', () => {
+  assert.strictEqual(checkFingerprint({ 'doc:parent': 42 }, 'doc:parent'), 42);
+});
+
+test('checkFingerprint: returns null for a fingerprint not in the map (genuinely new, simulating a fresh fingerprint)', () => {
+  assert.strictEqual(checkFingerprint({ 'doc:parent': 42 }, 'doc:unit-a'), null);
+});
+
+test('checkFingerprint: returns null (never throws) on a missing/empty/non-object map or a malformed fingerprint', () => {
+  assert.strictEqual(checkFingerprint(null, 'doc:parent'), null);
+  assert.strictEqual(checkFingerprint(undefined, 'doc:parent'), null);
+  assert.strictEqual(checkFingerprint({}, 'doc:parent'), null);
+  assert.strictEqual(checkFingerprint({ 'doc:parent': 42 }, ''), null);
+  assert.strictEqual(checkFingerprint({ 'doc:parent': 42 }, undefined), null);
+});
+
+test('checkFingerprint: does not false-positive on Object.prototype properties (hasOwnProperty guard)', () => {
+  assert.strictEqual(checkFingerprint({ 'doc:parent': 42 }, 'toString'), null);
+  assert.strictEqual(checkFingerprint({ 'doc:parent': 42 }, 'constructor'), null);
+});
+
+test('recordFingerprint: mutates the map in place, so a caller re-checking the SAME map object sees the update immediately (same-run collision detection, simulating a resumed run)', () => {
+  const map = { 'doc:parent': 1 };
+  recordFingerprint(map, 'doc:unit-a', 2);
+  assert.deepStrictEqual(map, { 'doc:parent': 1, 'doc:unit-a': 2 });
+  // Simulating a resumed decomposition run against this same map: a second
+  // lookup of the just-recorded fingerprint now resolves without a create.
+  assert.strictEqual(checkFingerprint(map, 'doc:unit-a'), 2);
+});
+
+test('recordFingerprint: rejects a malformed map, fingerprint, or number rather than silently writing a corrupt entry', () => {
+  assert.throws(() => recordFingerprint(null, 'doc:parent', 1), TypeError);
+  assert.throws(() => recordFingerprint({}, '', 1), TypeError);
+  assert.throws(() => recordFingerprint({}, 'doc:parent', 0), TypeError);
+  assert.throws(() => recordFingerprint({}, 'doc:parent', -1), TypeError);
+  assert.throws(() => recordFingerprint({}, 'doc:parent', 'not-a-number'), TypeError);
+  assert.throws(() => recordFingerprint({}, 'doc:parent', 1.5), TypeError);
 });
 
 test('extractFingerprint reads the legacy harness-health-fingerprint marker', () => {
@@ -670,6 +712,7 @@ test('specShapedBody composes the gate-verified skeleton with string sections', 
     currentState: 'the state',
     deliverables: 'the work',
     acceptanceCriteria: 'the proof',
+    releaseNote: 'the note',
     filedBy: '/claude-tweaks:harness-health',
   });
   assert.strictEqual(body, [
@@ -680,6 +723,8 @@ test('specShapedBody composes the gate-verified skeleton with string sections', 
     'the work',
     '## Acceptance Criteria',
     'the proof',
+    '## Release Note',
+    'the note',
     '_Filed by `/claude-tweaks:harness-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._',
   ].join('\n\n'));
 });
@@ -690,15 +735,31 @@ test('specShapedBody renders array sections as blank-line-separated blocks', () 
     currentState: ['block one', 'block two'],
     deliverables: 'd',
     acceptanceCriteria: 'a',
+    releaseNote: 'r',
     filedBy: '/claude-tweaks:code-health',
   });
   assert.ok(body.includes('## Current State\n\nblock one\n\nblock two\n\n## Deliverables'));
 });
 
 test('specShapedBody throws on a missing or empty section', () => {
-  assert.throws(() => specShapedBody({ header: 'h', currentState: '', deliverables: 'd', acceptanceCriteria: 'a', filedBy: 'f' }), /currentState/);
-  assert.throws(() => specShapedBody({ header: 'h', currentState: 'c', deliverables: 'd', acceptanceCriteria: 'a' }), /filedBy/);
-  assert.throws(() => specShapedBody({ header: 'h', currentState: [], deliverables: 'd', acceptanceCriteria: 'a', filedBy: 'f' }), /currentState/);
+  assert.throws(() => specShapedBody({ header: 'h', currentState: '', deliverables: 'd', acceptanceCriteria: 'a', releaseNote: 'r', filedBy: 'f' }), /currentState/);
+  assert.throws(() => specShapedBody({ header: 'h', currentState: 'c', deliverables: 'd', acceptanceCriteria: 'a', releaseNote: 'r' }), /filedBy/);
+  assert.throws(() => specShapedBody({ header: 'h', currentState: [], deliverables: 'd', acceptanceCriteria: 'a', releaseNote: 'r', filedBy: 'f' }), /currentState/);
+});
+
+test('specShapedBody throws when releaseNote is missing or empty, naming the section', () => {
+  assert.throws(() => specShapedBody({ header: 'h', currentState: 'c', deliverables: 'd', acceptanceCriteria: 'a', filedBy: 'f' }), /releaseNote/);
+  assert.throws(() => specShapedBody({ header: 'h', currentState: 'c', deliverables: 'd', acceptanceCriteria: 'a', releaseNote: '', filedBy: 'f' }), /releaseNote/);
+});
+
+test('specShapedBody renders the Release Note section, including a plain "no user-visible change" phrasing', () => {
+  const body = specShapedBody({
+    header: 'h', currentState: 'c', deliverables: 'd', acceptanceCriteria: 'a', filedBy: 'f',
+    releaseNote: 'No user-visible change — internal code-quality fix.',
+  });
+  assert.ok(body.includes('## Release Note\n\nNo user-visible change — internal code-quality fix.'));
+  // Release Note renders after Acceptance Criteria and before the footer.
+  assert.ok(/## Acceptance Criteria\n\na\n\n## Release Note/.test(body));
 });
 
 test('parseSubIssues reads a parent task list', () => {
@@ -842,12 +903,14 @@ test('recordPayload writes both the HTML-comment marker and the plain-text compa
 
 // --- specShapedBody provenance / footer / openQuestion (#623) ---
 
-const BASE = { currentState: 'c', deliverables: 'd', filedBy: 'x' };
+const BASE = {
+  currentState: 'c', deliverables: 'd', filedBy: 'x', releaseNote: 'r',
+};
 
 test('specShapedBody: no new args is byte-identical to the pre-change composition (health parity)', () => {
   const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a' });
   assert.strictEqual(body, [
-    'H', '## Current State', 'c', '## Deliverables', 'd', '## Acceptance Criteria', 'a',
+    'H', '## Current State', 'c', '## Deliverables', 'd', '## Acceptance Criteria', 'a', '## Release Note', 'r',
     '_Filed by `x`. Close to resolve; label `wontfix` to suppress future reports of this finding._',
   ].join('\n\n'));
 });
@@ -877,7 +940,7 @@ test('specShapedBody: custom footer replaces the default; null omits it entirely
   assert.ok(custom.endsWith('via specShapedBody._'));
   assert.ok(!custom.includes('wontfix'));
   const none = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', footer: null });
-  assert.ok(none.endsWith('\n\na'));
+  assert.ok(none.endsWith('\n\nr'));
 });
 
 test('specShapedBody: openQuestion renders in place of Acceptance Criteria; empty header renders nothing', () => {
@@ -893,8 +956,8 @@ test('specShapedBody: acceptanceCriteria and openQuestion are mutually exclusive
 });
 
 test('specShapedBody: the required sections still throw when empty, naming the section', () => {
-  assert.throws(() => specShapedBody({ header: 'H', currentState: '', deliverables: 'd', acceptanceCriteria: 'a', filedBy: 'x' }), /currentState/);
-  assert.throws(() => specShapedBody({ header: 'H', currentState: 'c', deliverables: 'd', acceptanceCriteria: 'a' }), /filedBy/);
+  assert.throws(() => specShapedBody({ header: 'H', currentState: '', deliverables: 'd', acceptanceCriteria: 'a', releaseNote: 'r', filedBy: 'x' }), /currentState/);
+  assert.throws(() => specShapedBody({ header: 'H', currentState: 'c', deliverables: 'd', acceptanceCriteria: 'a', releaseNote: 'r' }), /filedBy/);
   assert.throws(() => specShapedBody({ header: 'H', currentState: 'c', deliverables: 'd', openQuestion: '' , filedBy: 'x'}), /exactly one|openQuestion/);
 });
 
@@ -908,7 +971,7 @@ test('specShapedBody: header plus Trigger line renders first, before provenance'
 test('specShapedBody: omitting verifiedAsOf is byte-identical to the pre-change composition', () => {
   const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a' });
   assert.strictEqual(body, [
-    'H', '## Current State', 'c', '## Deliverables', 'd', '## Acceptance Criteria', 'a',
+    'H', '## Current State', 'c', '## Deliverables', 'd', '## Acceptance Criteria', 'a', '## Release Note', 'r',
     '_Filed by `x`. Close to resolve; label `wontfix` to suppress future reports of this finding._',
   ].join('\n\n'));
 });

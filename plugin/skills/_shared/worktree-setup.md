@@ -58,6 +58,11 @@ name for anything downstream that reports or acts on it — never assume its own
 the branch, since a rename could break an already-open PR on a worktree left over from unrelated
 prior work in the same session.
 
+**Dependency freshness check (adopt path only).** Read `_shared/worktree-adopt-freshness.md`
+in full and follow it now, **after** Post-creation catch-up's fetch+merge above (its lockfile read
+must see that merge's final state) — extracted to stay under the composed-bytes ceiling;
+unconditional on the adopt branch, read every time this gate is reached.
+
 **Not isolated:** create normally — proceed to Pre-creation reconcile and Post-creation catch-up
 below, unchanged (`EnterWorktree(name=...)`).
 
@@ -91,6 +96,15 @@ unconditional backstop regardless of whether this step ran, or ran successfully.
 checkout` or `git pull` in the shared checkout to accomplish this fast-forward — `reconcile`'s
 mirror-ff is the sanctioned, worktree-safe mechanism (it never merges, runs strict
 `--ff-only`, and needs no worktree guard).
+
+**Pushing the other direction.** When the main checkout's own `{integration-branch}` ends up
+*ahead* of `origin/{integration-branch}` (a local merge that combined a fetched update with
+local-only commits — this repo's own reconcile-archive commits are the recurring example), a
+plain `git push origin {integration-branch}` from the main checkout no longer needs a
+workaround: the worktree-always gate exempts a push of the integration branch when it is a
+provable fast-forward (no `--force`, no divergent history) — `#2542`'s fix. Anything short of a
+clean fast-forward — a force push, or a push the gate cannot prove is one — still denies and
+still needs a worktree.
 
 ## Post-creation catch-up
 

@@ -53,6 +53,13 @@ function toIssuePayload(finding, verifiedAsOf) {
     currentState: [...relatedBlocks, finding.reason],
     deliverables,
     acceptanceCriteria: finding.description,
+    // harness-health audits this repo's own agent-harness assets (skills,
+    // rules, CLAUDE.md, design context, memory) — never a shipped
+    // end-user-facing feature — so every finding, new-skill candidates
+    // included, gets the same plain "no user-visible change" phrasing
+    // (#2660) rather than a per-finding derivation the judge output doesn't
+    // carry data for.
+    releaseNote: 'No user-visible change — agent harness reliability fix.',
     filedBy: '/claude-tweaks:harness-health',
     verifiedAsOf,
   });

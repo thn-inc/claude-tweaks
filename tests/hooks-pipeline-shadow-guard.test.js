@@ -105,6 +105,30 @@ test('a cp write shape creating a new pipelines run dir file inside a linked wor
   assertDenied(out);
 });
 
+// --- #2282: this deny previously left no friction-event trace at all. A
+// `session_id` on the input is required for stampAdHocRunDirForDenial to
+// mint a run dir to log into (bin/lib/hooks/context.js) — the other tests
+// above omit it deliberately (appendEvent(null, ...) is then a documented
+// no-op), so these two are the only ones in this file that need it.
+
+test('#2282: a denied mkdir logs a wd-guard-refusal event (reason: shadow-run-dir) to a stamped ad-hoc run dir', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', 'x');
+  const input = { ...bashInput(`mkdir -p "${target}"`, wt), session_id: 'sess-2282-shadow' };
+  const out = pre.run({ input, runDir: null, runState: null, cwd: wt });
+  assertDenied(out);
+  const pipelinesDir = path.join(main, '.claude-tweaks', 'pipelines');
+  const adhocDirs = fs.readdirSync(pipelinesDir).filter((d) => d.endsWith('-adhoc-standalone'));
+  assert.strictEqual(adhocDirs.length, 1, 'expected exactly one stamped ad-hoc run dir');
+  const events = fs.readFileSync(path.join(pipelinesDir, adhocDirs[0], 'events.jsonl'), 'utf8')
+    .trim().split('\n').map((l) => JSON.parse(l));
+  const hit = events.find((e) => e.type === 'wd-guard-refusal');
+  assert.ok(hit, 'expected a wd-guard-refusal event, got: ' + JSON.stringify(events));
+  assert.strictEqual(hit.reason, 'shadow-run-dir');
+  assert.strictEqual(path.resolve(hit.path), path.resolve(target));
+});
+
 test('an unrelated Write inside a linked worktree (outside .claude-tweaks/pipelines/) is unaffected', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
@@ -162,6 +186,84 @@ test('#959 negative control: a NEW run dir file elsewhere (decisions.md) is stil
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-record-959d', 'decisions.md');
+  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  assertDenied(out);
+});
+
+// #1493/#1494: the second documented worktree-local exception — a
+// `*-tidy-standalone*`/`*-sweep-standalone*` run's decisions.md/report.md/
+// staged/** must be reachable via a normal Write/Bash mkdir/cp even though
+// the run-id directory does not exist yet in the worktree, mirroring
+// tidy/step-7-5-worktree-always.md's pr-first mirror-then-commit procedure.
+
+test('#1778 AC: mkdir -p of {id}-sweep-standalone/staged, run dir absent, is allowed', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-sweep-standalone', 'staged');
+  const out = pre.run({ input: bashInput(`mkdir -p "${target}"`, wt), runDir: null, runState: null, cwd: wt });
+  assertAllowed(out);
+});
+
+test('#1778 AC: mkdir -p of {id}-tidy-standalone/staged, run dir absent, is allowed', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-tidy-standalone', 'staged');
+  const out = pre.run({ input: bashInput(`mkdir -p "${target}"`, wt), runDir: null, runState: null, cwd: wt });
+  assertAllowed(out);
+});
+
+test('#1778 AC: a Write of {id}-sweep-standalone/decisions.md, run dir absent, is allowed', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-sweep-standalone', 'decisions.md');
+  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  assertAllowed(out);
+});
+
+test('#1778 AC: a cp of report.md into {id}-sweep-standalone, run dir absent, is allowed', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-sweep-standalone', 'report.md');
+  const out = pre.run({ input: bashInput(`cp source.md "${target}"`, wt), runDir: null, runState: null, cwd: wt });
+  assertAllowed(out);
+});
+
+test('#1778 AC: a Write under staged/ ({id}-tidy-standalone/staged/tidy-close-issue-1.md), run dir absent, is allowed', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-tidy-standalone', 'staged', 'tidy-close-issue-1.md');
+  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  assertAllowed(out);
+});
+
+test('#1778 negative control: config.yml inside a NEW {id}-sweep-standalone run dir is still denied', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-sweep-standalone', 'config.yml');
+  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  assertDenied(out);
+});
+
+test('#1778 negative control: context/records.json inside a NEW {id}-sweep-standalone run dir is still denied', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-sweep-standalone', 'context', 'records.json');
+  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  assertDenied(out);
+});
+
+test('#1778 negative control: decisions.md under a plain non-standalone run dir name is still denied', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-record-42', 'decisions.md');
+  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  assertDenied(out);
+});
+
+test('#1778 negative control: a standalone-named directory nested under spec-*/ is still denied', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-multi', 'spec-1-sweep-standalone', 'decisions.md');
   const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
   assertDenied(out);
 });

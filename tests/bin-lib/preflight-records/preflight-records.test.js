@@ -30,6 +30,42 @@ test('fetchIssues: one gh issue view per number, ok Map keyed by number', () => 
   assert.equal(ok.get(721).title, 'B');
 });
 
+// #2538: on a GitHub Enterprise remote, gh issue view has no repo context to
+// resolve unless --repo is threaded explicitly.
+test('fetchIssues: threads --repo {host/}owner/repo onto every call when owner/repo are given', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    return JSON.stringify(issue({ number: 720, title: 'A' }));
+  };
+  fetchIssues({
+    numbers: [720], owner: 'acme', repo: 'widgets', host: 'ghe.example.com', runner,
+  });
+  assert.deepEqual(calls[0], ['issue', 'view', '720', '--json', 'number,title,body,labels', '--repo', 'ghe.example.com/acme/widgets']);
+});
+
+test('fetchIssues: a github.com owner/repo resolves to the bare slug, not host-qualified', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    return JSON.stringify(issue({ number: 720, title: 'A' }));
+  };
+  fetchIssues({
+    numbers: [720], owner: 'acme', repo: 'widgets', host: 'github.com', runner,
+  });
+  assert.deepEqual(calls[0], ['issue', 'view', '720', '--json', 'number,title,body,labels', '--repo', 'acme/widgets']);
+});
+
+test('fetchIssues: no owner/repo given omits --repo entirely — unchanged legacy shape', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    return JSON.stringify(issue({ number: 720, title: 'A' }));
+  };
+  fetchIssues({ numbers: [720], runner });
+  assert.deepEqual(calls[0], ['issue', 'view', '720', '--json', 'number,title,body,labels']);
+});
+
 test('fetchIssues: a failing record never aborts the batch — all-at-once reporting', () => {
   const runner = (args) => {
     if (isIssueView(args, 720)) return JSON.stringify(issue({ number: 720, title: 'A' }));
@@ -262,6 +298,78 @@ test('(b) CLI native mode: one batched graphql call, blockedBy + openBlocker map
   assert.equal(env.records['720'].openBlocker, true);
   assert.deepEqual(env.records['721'].blockedBy, []);
   assert.equal(env.records['721'].openBlocker, false);
+});
+
+// #2538: previously, repo/host resolution only ran under work-links: native
+// (AFTER fetchIssues already made its unqualified gh issue view calls) — a
+// GitHub Enterprise remote's body-text mode never got any --repo threaded
+// at all. Now resolution runs once, before fetchIssues, in every mode.
+test('#2538: body-text mode on a GitHub Enterprise remote threads --repo onto every gh issue view call', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isIssueView(args, 720)) return JSON.stringify(issue({ number: 720, title: 'A', body: specBody(['a.js']) }));
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, err } = cliDeps({ runner, workLinks: 'body-text', remoteUrl: 'https://ghe.example.com/acme/widgets.git' });
+  const code = run(['720'], deps);
+  assert.equal(code, 0);
+  assert.deepEqual(calls[0], ['issue', 'view', '720', '--json', 'number,title,body,labels', '--repo', 'ghe.example.com/acme/widgets']);
+  assert.match(err.join(''), /resolved repo ghe\.example\.com\/acme\/widgets \(host: ghe\.example\.com\)/, 'a resolved non-github.com host is visible on stderr');
+});
+
+test('#2538: a plain github.com remote prints nothing on stderr (success path stays silent)', () => {
+  const runner = (args) => {
+    if (isIssueView(args, 720)) return JSON.stringify(issue({ number: 720, title: 'A', body: specBody(['a.js']) }));
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, err } = cliDeps({ runner, workLinks: 'body-text' });
+  const code = run(['720'], deps);
+  assert.equal(code, 0);
+  assert.equal(err.length, 0, 'the ordinary github.com case must stay silent on stderr');
+});
+
+// #2444 review fix: a caller-supplied --repo can itself already be a
+// host-qualified `host/owner/repo` slug (repoSlug()'s GHE output) — before
+// this fix, --repo was always prefixed with `github.com/` regardless of
+// shape, producing an unparseable 4-segment string for a slug like this.
+// Only native-mode's GraphQL call actually consults owner/repo/host.
+test('#2444 fix: native mode with a host-qualified --repo slug threads --hostname onto the graphql call', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isIssueView(args, 720)) return JSON.stringify(issue({ number: 720, title: 'A', body: specBody(['a.js']) }));
+    if (isGraphQL(args)) {
+      return JSON.stringify({ data: { repository: { i720: { number: 720, blockedBy: { nodes: [] } } } } });
+    }
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out } = cliDeps({ runner, workLinks: 'native', remoteUrl: () => { throw new Error('remoteUrl should not be called when --repo is passed'); } });
+  const code = run(['720', '--repo', 'ghe.example.com/acme/widgets'], deps);
+  assert.equal(code, 0);
+  const q = calls.find(isGraphQL).join(' ');
+  assert.match(q, /-f owner=acme -f repo=widgets/);
+  assert.match(q, /--hostname ghe\.example\.com/);
+  const env = JSON.parse(out.join(''));
+  assert.equal(env.workLinks, 'native');
+});
+
+test('#2444 fix: native mode with a bare --repo owner/repo still resolves to github.com (unchanged)', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isIssueView(args, 720)) return JSON.stringify(issue({ number: 720, title: 'A', body: specBody(['a.js']) }));
+    if (isGraphQL(args)) {
+      return JSON.stringify({ data: { repository: { i720: { number: 720, blockedBy: { nodes: [] } } } } });
+    }
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out } = cliDeps({ runner, workLinks: 'native', remoteUrl: () => { throw new Error('remoteUrl should not be called when --repo is passed'); } });
+  const code = run(['720', '--repo', 'acme/widgets'], deps);
+  assert.equal(code, 0);
+  const q = calls.find(isGraphQL).join(' ');
+  assert.match(q, /-f owner=acme -f repo=widgets/);
+  assert.doesNotMatch(q, /--hostname/);
 });
 
 test('(c) CLI overlapGroups: shared keyFiles union across three records', () => {

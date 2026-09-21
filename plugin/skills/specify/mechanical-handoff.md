@@ -65,10 +65,22 @@ Modified, Artifacts Removed, Diagram suggestions when present, Actions Performed
 paraphrase, so the caller can relay it without having watched the work happen.
 
 Status line (required): after the summary above, on its own trailing line — the last non-empty
-line of your reply — write exactly one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
+line of your reply — must read exactly `STATUS: DONE` (or DONE_WITH_CONCERNS / NEEDS_CONTEXT /
+BLOCKED).
 ```
 
 `[Use: Standard]` — resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard`.
 This is a whole-procedure execution dispatch (record creation through commit), not a lightweight
 fan-out, so it warrants Standard rather than Fast; it is a single dispatch, not a fan-out, so the
 Subagent Contract's per-fan-out Frontier restriction doesn't apply either way.
+
+**Custom instructions beyond this template's required inputs.** A caller running this dispatch
+from inside a larger context (e.g. an outer sweep or multi-record run keeping its own shared
+`decisions.md`, distinct from the `PIPELINE_RUN_DIR` this template's own auto-mode logging
+targets) may add an instruction beyond the required-inputs table above — "also log each action to
+run X's decisions.md," say. That instruction sits outside this template's own contract, so the
+Subagent Contract's ordinary reliability bar applies at a lower margin than it does for the
+required inputs above: verify the extra instruction actually landed after the dispatch returns
+(a grep or a direct read), rather than trusting the returned summary alone — a subagent
+prioritizing the composed required inputs over an appended ad hoc ask is a real, observed failure
+mode, not a hypothetical one.

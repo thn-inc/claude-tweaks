@@ -121,8 +121,15 @@ test('POLICY_KEYS entries are unique', () => {
   // pr-first; release-train — opt-in for the unattended release train,
   // honored only at autonomy: unattended. Both non-core scaffolding seeded
   // commented-out by /claude-tweaks:init Step 21; consumers land in units 4 and 6.
-  assert.strictEqual(POLICY_KEYS.length, 69);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 69);
+  // 69 -> 70, #2540 (variant-exploration off-switch): design-variant-exploration
+  // — off|offer, default off — gates /specify's Step 2.5b-ii layout-tournament
+  // and scaffold-live offers, which previously had no policy lever at all.
+  // 70 -> 71, #2567 (configurable gh timeout): gh-timeout-ms — bounds
+  // (1000-60000) how long a shared-primitives.js `gh` subprocess call may
+  // run before it is killed and retried once; env var
+  // CLAUDE_TWEAKS_GH_TIMEOUT_MS takes precedence over this when both are set.
+  assert.strictEqual(POLICY_KEYS.length, 71);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 71);
 });
 
 test('dispatch-batch-size is registered alongside its deprecated alias', () => {
@@ -857,6 +864,31 @@ test('specify-budget is registered as an integer defaulting to 5, sibling of dis
   const result = auditPolicy(bad);
   assert.strictEqual(result.invalidValues.length, 1, 'a non-integer value must be flagged');
   assert.strictEqual(result.invalidValues[0].key, 'specify-budget');
+});
+
+test('design-variant-exploration is registered as an enum off|offer defaulting to off (#2540)', () => {
+  const lever = POLICY_KEYS.find((k) => k.key === 'design-variant-exploration');
+  assert.ok(lever, 'design-variant-exploration missing from POLICY_KEYS');
+  assert.strictEqual(lever.type, 'enum');
+  assert.deepStrictEqual(lever.values, ['off', 'offer']);
+  assert.strictEqual(lever.default, 'off');
+  assert.strictEqual(lever.category, 'pipeline-behavior');
+  assert.strictEqual(lever.tier, 'advanced');
+
+  const repo = tmpRepo();
+  writePolicy(repo, 'design-variant-exploration: offer\n');
+  const ok = auditPolicy(repo);
+  assert.deepStrictEqual(ok.invalidValues, []);
+  assert.deepStrictEqual(ok.unrecognizedKeys, []);
+
+  const bad = tmpRepo();
+  writePolicy(bad, 'design-variant-exploration: always\n');
+  const result = auditPolicy(bad);
+  assert.strictEqual(result.invalidValues.length, 1, 'a value outside the enum must be flagged');
+  assert.strictEqual(result.invalidValues[0].key, 'design-variant-exploration');
+
+  assert.strictEqual(resolveValue('design-variant-exploration', undefined), 'off');
+  assert.strictEqual(resolveValue('design-variant-exploration', 'offer'), 'offer');
 });
 
 test('design-critique is registered as an enum off|auto|full defaulting to auto (#595)', () => {

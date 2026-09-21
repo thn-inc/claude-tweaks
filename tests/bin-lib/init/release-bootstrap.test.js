@@ -30,6 +30,26 @@ test('detectReleaseProcess: semantic-release, changesets, goreleaser markers -> 
   assert.equal(rb.detectReleaseProcess(d).tool, 'goreleaser');
 });
 
+test('detectReleaseProcess: bare goreleaser.yaml/.yml, package.json release key, .versionrc* -> conflict naming the tool (#2323)', () => {
+  const a = tmp(); write(a, 'goreleaser.yaml', 'builds: []');
+  assert.deepEqual(rb.detectReleaseProcess(a), { verdict: 'conflict', tool: 'goreleaser', evidence: 'goreleaser.yaml' });
+  const b = tmp(); write(b, 'goreleaser.yml', 'builds: []');
+  assert.equal(rb.detectReleaseProcess(b).tool, 'goreleaser');
+  const c = tmp(); write(c, 'package.json', JSON.stringify({ name: 'x', release: { branches: ['main'] } }));
+  assert.deepEqual(rb.detectReleaseProcess(c), { verdict: 'conflict', tool: 'semantic-release', evidence: 'package.json' });
+  const d = tmp(); write(d, '.versionrc.json', '{}');
+  assert.deepEqual(rb.detectReleaseProcess(d), { verdict: 'conflict', tool: 'standard-version', evidence: '.versionrc.json' });
+  const e = tmp(); write(e, '.versionrc', '{}');
+  assert.equal(rb.detectReleaseProcess(e).tool, 'standard-version');
+});
+
+test('detectReleaseProcess: package.json with no release key, or a non-object release value, stays fresh (#2323)', () => {
+  const a = tmp(); write(a, 'package.json', JSON.stringify({ name: 'x', version: '1.0.0' }));
+  assert.deepEqual(rb.detectReleaseProcess(a), { verdict: 'fresh' });
+  const b = tmp(); write(b, 'package.json', JSON.stringify({ name: 'x', release: 'v1' }));
+  assert.deepEqual(rb.detectReleaseProcess(b), { verdict: 'fresh' });
+});
+
 test('detectReleaseProcess: a foreign release-please config -> conflict; the bootstrap shape -> already-bootstrapped', () => {
   const a = tmp(); write(a, 'release-please-config.json', JSON.stringify({ 'release-type': 'node' }));
   assert.deepEqual(rb.detectReleaseProcess(a), { verdict: 'conflict', tool: 'release-please (foreign config)', evidence: 'release-please-config.json' });
@@ -75,15 +95,9 @@ test('resolveReleaseType: override releaseType + extraFile bypasses the stack sc
   assert.deepEqual(r, { releaseType: 'simple', extraFiles: [{ type: 'json', path: 'plugin/.claude-plugin/plugin.json', jsonpath: '$.version' }] });
 });
 
-test('resolveReleaseType: override releaseType without extraFile throws (both must be given together)', () => {
-  const root = tmp();
-  write(root, 'go.mod', 'module x'); // would otherwise resolve to go
-  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'node' }), /--release-type and --extra-file must be given together/);
-});
-
 test('resolveReleaseType: an unrecognized override releaseType throws after validating both flags are given', () => {
   const root = tmp();
-  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'bogus', extraFile: 'x.json' }), /invalid release-type/);
+  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'bogus', extraFile: 'x.json' }), /invalid releaseType override: bogus/);
 });
 
 test('resolveReleaseType: override with extraFile pointing to nonexistent file throws, naming the file as missing', () => {
@@ -144,13 +158,13 @@ test('resolveReleaseType: override with extraFile but no releaseType throws', ()
   const root = tmp();
   write(root, 'package.json', '{"version":"1.0.0"}');
   write(root, 'custom.json', '{"version":"9.9.9"}');
-  assert.throws(() => rb.resolveReleaseType(root, { extraFile: 'custom.json' }), /--release-type and --extra-file must be given together/);
+  assert.throws(() => rb.resolveReleaseType(root, { extraFile: 'custom.json' }), /releaseType and extraFile must be given together/);
 });
 
 test('resolveReleaseType: override with releaseType but no extraFile throws', () => {
   const root = tmp();
   write(root, 'package.json', '{"version":"1.0.0"}');
-  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'simple' }), /--release-type and --extra-file must be given together/);
+  assert.throws(() => rb.resolveReleaseType(root, { releaseType: 'simple' }), /releaseType and extraFile must be given together/);
 });
 
 test('readStackManifestVersion: node/php read JSON version, python/rust read the TOML version line, others null', () => {
@@ -530,4 +544,13 @@ test('bootstrapRelease: without the override, the same fixture still resolves no
   const r = rb.bootstrapRelease({ root, integrationModel: 'local-merge', listTags: () => [] });
   assert.equal(r.releaseType, 'node');
   assert.equal(r.version, '1.0.0');
+});
+
+test('bootstrapRelease: no override, auto-detected simple with a found manifest seeds from that manifest\'s real version, not the 0.1.0/tag fallback (item 5)', () => {
+  const root = tmp();
+  write(root, 'plugin/.claude-plugin/plugin.json', '{"version":"6.121.0"}');
+  const r = rb.bootstrapRelease({ root, integrationModel: 'local-merge', listTags: () => [] });
+  assert.equal(r.releaseType, 'simple');
+  assert.equal(r.version, '6.121.0');
+  assert.deepEqual(JSON.parse(read(root, '.release-please-manifest.json')), { '.': '6.121.0' });
 });
