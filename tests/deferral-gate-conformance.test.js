@@ -268,6 +268,7 @@ test('a born-ready leftover payload composes with all contract elements and pass
   const body = ssb({
     header: '', currentState: 'The retry helper exists; cleanup path unfinished (src/retry.js).',
     deliverables: '- [ ] finish the cleanup path', acceptanceCriteria: 'node --test test/retry.test.js passes',
+    releaseNote: 'No user-visible change — internal retry-cleanup fix.',
     filedBy: 'wrap-up leftover routing',
     provenance: { origin: 'wrap-up leftover from #42', deferReason: 'genuinely-larger' },
     footer: '_Filed by `wrap-up leftover routing` via specShapedBody._',
@@ -286,6 +287,7 @@ test('a needs-you leftover payload composes Open Question with no ready and no s
   const body = ssb({
     header: '', currentState: 'Two mutually exclusive designs are on the table.',
     deliverables: '- [ ] settle the choice', openQuestion: 'open choice: project-local skill vs docs subsection',
+    releaseNote: 'No user-visible change yet — pending definition.',
     filedBy: 'wrap-up leftover routing',
     provenance: { origin: 'wrap-up leftover from #42', deferReason: 'needs-human-decision' },
     footer: '_Filed by `wrap-up leftover routing` via specShapedBody._',
@@ -335,7 +337,7 @@ test('no Capture pass-through still defers to a not-yet-landed #625 flag', () =>
 test('a shaped-branch born-ready filing composes the exact labels and body AC 1 names', () => {
   const { specShapedBody: ssb, recordPayload: rp } = require('../plugin/bin/lib/issues/record.js');
   const body = ssb({
-    header: '', currentState: 'c', deliverables: 'd', acceptanceCriteria: 'a',
+    header: '', currentState: 'c', deliverables: 'd', acceptanceCriteria: 'a', releaseNote: 'r',
     filedBy: 'capture', provenance: { deferReason: 'tangential' },
     footer: '_Filed by `capture` via specShapedBody._',
   });

@@ -112,6 +112,15 @@ const POLICY_KEYS = [
   // fresh before a consumer (backlog/capture/specify/trust-table/help/tidy/visualize) re-fetches
   // instead of reading the cached snapshot. See _shared/record-queue-fetch.md.
   { key: 'record-snapshot-ttl-seconds', type: 'integer', default: 300, summary: "Sets how many seconds the session-scoped record snapshot stays fresh before a consumer re-fetches instead of reading the cache.", category: 'housekeeping', tier: 'advanced' },
+  // #2567: the `gh` subprocess timeout shared by every direct execFileSync/
+  // execFile('gh', ...) call routed through bin/lib/shared-primitives.js's
+  // GH_TIMEOUT_MS export. Bounded 1s-60s: below 1s no real `gh` call could
+  // ever complete (every value under that is effectively "always fail"), and
+  // above 60s a single hung call would stall a pipeline step for a minute
+  // before its one automatic retry even starts. CLAUDE_TWEAKS_GH_TIMEOUT_MS
+  // (an env var, not a policy key) takes precedence over this when both are
+  // set — see shared-primitives.js's resolution order.
+  { key: 'gh-timeout-ms', type: 'integer', min: 1000, max: 60000, default: 5000, summary: "Bounds how long a single `gh` subprocess call may run before it is killed and retried once.", category: 'housekeeping', tier: 'advanced' },
   { key: 'depth-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt asking whether recently changed code deserves a deeper architectural pass.", category: 'housekeeping', tier: 'advanced' },
   { key: 'creative-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt suggesting creative or UX improvement ideas for what was just built.", category: 'housekeeping', tier: 'advanced' },
   { key: 'scope-keywords-required', type: 'boolean', default: false, summary: "When on, a build refuses to start over files outside its plan unless the plan names its intended scope; otherwise it is only a warning.", category: 'pipeline-behavior', tier: 'advanced' },

@@ -37,6 +37,13 @@ function classifyExecError(e) {
 const FETCH_TIMEOUT_MS = 5000;
 const PR_LIST_ARGS = ['pr', 'list', '--state', 'all', '--json', 'number,state,mergedAt,updatedAt,mergeCommit'];
 
+// #2567: every runClassified/runClassifiedAsync call below opts in to
+// retryOnTimeout — a single slow cold `gh` call is retried once, at this
+// same FETCH_TIMEOUT_MS bound, before classifyExecError ever sees it.
+// resolvePrStatesBulk below does NOT use runClassified at all (its own
+// sequential chunk loop already has its own short-circuit-on-failure
+// contract, per its header) and stays unaffected.
+
 // Pure: the parsed `gh pr list` JSON array -> the one governing PR. Shared by
 // both the sync and async resolvers below so the tie-break logic (and any
 // future fix to it) lives in exactly one place (#820 review).
@@ -100,6 +107,7 @@ function resolvePrState(repoRoot, branch, opts) {
       return buildSuccess(JSON.parse(stdout), opts);
     },
     classifyExecError,
+    { retryOnTimeout: true },
   );
 }
 
@@ -129,6 +137,7 @@ function resolvePrStateByNumber(repoRoot, number) {
       return JSON.parse(stdout);
     },
     classifyExecError,
+    { retryOnTimeout: true },
   );
 }
 
@@ -153,6 +162,7 @@ function resolveIssueStateByNumber(repoRoot, number) {
       return JSON.parse(stdout);
     },
     classifyExecError,
+    { retryOnTimeout: true },
   );
 }
 
@@ -176,6 +186,7 @@ async function resolvePrStateAsync(repoRoot, branch) {
       return buildSuccess(JSON.parse(stdout));
     },
     classifyExecError,
+    { retryOnTimeout: true },
   );
 }
 

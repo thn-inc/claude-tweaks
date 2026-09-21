@@ -48,15 +48,17 @@ const { parseRecordFacets, normalizeLabelNames } = require('./issues/record');
 const {
   parseRepo, ghAvailable, remoteUrl, repoSlug,
 } = require('./repo-resolve');
+const { GH_TIMEOUT_MS } = require('./shared-primitives');
 
 const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--shell] [--help]\n';
 // Decision (#2319): kept at the single-call convention, not widened. Each
 // `gh issue view` call below fetches exactly one record — unlike
 // fetch-sub-issues.js's 30000ms bound, which covers a single batched
 // 50-alias GraphQL call, this CLI issues N genuinely separate single-record
-// REST calls, so the 5000ms single-call convention (gh-api-module-pattern's
-// "Bound every remote-contacting call") applies unchanged to each one.
-const GH_TIMEOUT_MS = 5000;
+// REST calls, so the single-call convention (gh-api-module-pattern's "Bound
+// every remote-contacting call") applies unchanged to each one. #2567:
+// shared, not a local re-derivation of the same 5000 default — see
+// shared-primitives.js.
 const RECOGNIZED_TYPES = Object.keys(TYPE_PREFIX);
 // Bundle Type aggregation precedence — highest-impact type wins so a lowest-numbered
 // type:task record can never hide a type:feature (or type:bug) sibling behind a `chore:`
@@ -141,6 +143,50 @@ function firstSentence(text) {
   return firstPara;
 }
 
+// (#2561) A GitHub Enterprise Server host running an older `gh` (observed:
+// 2.92.0) can reject the REST `--json issueType` field outright —
+// `Unknown JSON field: "issueType"`, exit 3 — before this CLI's own type
+// derivation ever runs. Detected narrowly on that literal message text
+// (checked against both `.message` and `.stderr`, since which one carries
+// the text depends on the runner) so a genuine auth/not-found/network
+// failure still propagates as fatal (AC 1/6's negative control).
+function isUnknownIssueTypeField(err) {
+  const text = [err && err.message, err && err.stderr].filter(Boolean).map(String).join(' ');
+  return /Unknown JSON field:\s*"issueType"/i.test(text);
+}
+
+// (repoSpec, n, runner) -> {name: string}|null via one `gh api graphql`
+// call — the fallback when the REST `issueType` field itself is rejected by
+// the host and the record carries no `type:*` label. Best-effort: any
+// failure here (network, host also rejects the GraphQL shape, unparseable
+// response) degrades to "no native type" rather than throwing — typeOf/
+// aggregateType already tolerate a null issueType and fall through to
+// label-based or no-type composition (Deliverable 4).
+function fetchIssueTypeGraphQL(runner, repoSpec, n) {
+  try {
+    const args = ['api', 'graphql'];
+    if (repoSpec.host && repoSpec.host !== 'github.com') args.push('--hostname', repoSpec.host);
+    // owner/repo are bound as GraphQL variables (-f, never string-interpolated
+    // into the query text) per gh-api-module-pattern's established shape —
+    // see bin/lib/issues/native-dependencies.js's fetchNativeDependencies.
+    // `n` is embedded directly: it's already validated as a positive number
+    // by parseArgs' isPos check before reaching here, matching
+    // buildNativeParentQuery's own numeric-alias convention.
+    args.push(
+      '-f', `query=query($owner:String!,$repo:String!){ repository(owner:$owner,name:$repo){ issue(number: ${n}) { issueType { name } } } }`,
+      '-f', `owner=${repoSpec.owner}`,
+      '-f', `repo=${repoSpec.repo}`,
+    );
+    const raw = runner(args);
+    const parsed = JSON.parse(raw);
+    const name = parsed && parsed.data && parsed.data.repository && parsed.data.repository.issue
+      && parsed.data.repository.issue.issueType && parsed.data.repository.issue.issueType.name;
+    return typeof name === 'string' ? { name } : null;
+  } catch {
+    return null;
+  }
+}
+
 function typeOf(record) {
   const native = record.issueType;
   if (native && typeof native === 'object' && typeof native.name === 'string') {
@@ -166,6 +212,7 @@ const realDeps = {
   ghAvailable,
   remoteUrl,
   runner: (args) => execFileSync('gh', args, { encoding: 'utf8', timeout: GH_TIMEOUT_MS }),
+  fetchIssueType: fetchIssueTypeGraphQL,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -185,17 +232,42 @@ function run(argv, deps = realDeps) {
 
   const records = [];
   for (const n of opts.numbers) {
+    const viewArgs = (fields) => ['issue', 'view', String(n), '--repo', slug, '--json', fields];
     let raw;
+    let issueTypeFieldRejected = false;
     try {
-      raw = deps.runner(['issue', 'view', String(n), '--repo', slug, '--json', 'number,title,body,labels,issueType']);
+      raw = deps.runner(viewArgs('number,title,body,labels,issueType'));
     } catch (err) {
-      deps.stderr(`compose-subject.js: gh issue view ${n} failed: ${errMessage(err)}\n`);
-      return 3;
+      if (!isUnknownIssueTypeField(err)) {
+        deps.stderr(`compose-subject.js: gh issue view ${n} failed: ${errMessage(err)}\n`);
+        return 3;
+      }
+      // (#2561) The host rejects the REST `issueType` field outright — retry
+      // without it rather than failing the whole compose. A genuine
+      // auth/not-found/network failure on THIS retry is still fatal.
+      issueTypeFieldRejected = true;
+      try {
+        raw = deps.runner(viewArgs('number,title,body,labels'));
+      } catch (err2) {
+        deps.stderr(`compose-subject.js: gh issue view ${n} failed: ${errMessage(err2)}\n`);
+        return 3;
+      }
     }
     let record;
     try { record = JSON.parse(raw); } catch {
       deps.stderr(`compose-subject.js: gh issue view ${n} returned unparseable JSON\n`);
       return 3;
+    }
+    // (#2561) The REST field was unavailable — fall back to the native type
+    // only when no `type:*` label already answers it (label-based first, no
+    // extra request); a GraphQL fetch when one is still wanted. Best-effort:
+    // `fetchIssueType`'s own failure degrades to "no native type" (Deliverable 4).
+    // `typeOf` answers the label question here rather than a restated label
+    // scan: on this path the record carries no `issueType` field at all, so
+    // `typeOf` falls straight through to its own `type:*` label lookup.
+    if (issueTypeFieldRejected) {
+      const labelType = typeOf(record);
+      record.issueType = labelType ? null : deps.fetchIssueType(deps.runner, repoSpec, n);
     }
     records.push(record);
   }
@@ -243,4 +315,16 @@ function run(argv, deps = realDeps) {
   return 0;
 }
 
-module.exports = { run, parseArgs, shellQuote, extractSection, firstSentence, typeOf, aggregateType, USAGE, realDeps };
+module.exports = {
+  run,
+  parseArgs,
+  shellQuote,
+  extractSection,
+  firstSentence,
+  typeOf,
+  aggregateType,
+  isUnknownIssueTypeField,
+  fetchIssueTypeGraphQL,
+  USAGE,
+  realDeps,
+};

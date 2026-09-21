@@ -80,6 +80,11 @@ function shouldSkipClaimRead(entry, cachedSha) {
 // classifyGhApiError (already imported below as `claimStore`) rather than a
 // third copy of the same ENOENT-vs-everything-else classification pr-state.js
 // and preflight.js also needed (review finding: 5 near-identical copies).
+// #2567: ghApi/ghApiAsync below opt in to runClassified/runClassifiedAsync's
+// retryOnTimeout — this, and therefore the 'network-failure' classification
+// below, is only ever reached AFTER that single retry has also failed (see
+// shared-primitives.js). A call that times out once but succeeds on retry
+// never reaches this function at all.
 function classifyGhExecError(e) {
   return claimStore.classifyGhApiError(e).failure === 'gh-absent' ? 'gh-absent' : 'network-failure';
 }
@@ -102,6 +107,7 @@ function ghApi(args) {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GH_TIMEOUT_MS, windowsHide: true,
     })),
     buildFailure,
+    { retryOnTimeout: true },
   );
 }
 
@@ -152,6 +158,7 @@ async function ghApiAsync(args) {
       return buildSuccess(stdout);
     },
     buildFailure,
+    { retryOnTimeout: true },
   );
 }
 
