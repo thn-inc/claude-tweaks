@@ -789,6 +789,8 @@ In the commit-message-style bullet, append: "on `main`, release commits are rele
 
 Remove the `plugin/bin/release.js` row from the CLI list. Add rows for `plugin/bin/release-local.js` and `plugin/bin/release-preflight.js` if either is missing from that list already (check first — `#2253`-`#2256` may have already added them).
 
+Also remove the `docs/shipped-versions.tsv` directory-tree row entirely (currently: `docs/shipped-versions.tsv         → Every version that reached main's tip, appended in the same commit as each bump. The authority for "what shipped" — reconstructing it from a git walk is unstable, not merely lossy (\`[IL-95]\`). Read by plugin/bin/lib/shipped-record.js and tests/changelog-coverage.test.js`) — the file, both readers it names, and the tsv itself are all deleted by Task 5; there is nothing at that path to document (added during Task 5's fix-round re-review, which found this row still describing the deleted file).
+
 - [ ] **Step 3.5: Doc drift Task 5's AC6 sweep surfaced (`docs/REGISTRY.md`, `docs/journeys/`)**
 
 Task 5's AC6 grep sweep (`plugin/bin/release\.js\|...`) found three more files still naming the retired mechanism, none in this plan's original Files lists. Ruling (controller, Task 5 fix round): fold into this task rather than defer — Task 6 already owns "docs describing the post-retirement state," and these are the same class of drift. `docs/decisions/0015-*` and `docs/plans/2026-09-11-release-skill-ledger.md` (the other two AC6 hits) are deliberately **excluded** — an ADR and a historical build ledger are permanent historical record, per this repo's own incident-log convention (never rewritten to reflect later changes).
