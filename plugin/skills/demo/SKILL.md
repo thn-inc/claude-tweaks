@@ -209,7 +209,8 @@ own thing outside /claude-tweaks:demo?"`, `header`: `"Scope fork"`, `multiSelect
 - Option 2 — `label`: `"Build it now"`, `description`: `"Build it now as its own thing, outside /claude-tweaks:demo"`
 
 "Capture it" routes through the same follow-up-record mechanism Step 3's Request-changes branch
-already uses (`follow-up-record.md` in this skill's directory), with one difference: the body's `Origin:` line reads `Origin: demo scope-fork from
+already uses (`follow-up-record.md` in this skill's directory),
+with one difference: the body's `Origin:` line reads `Origin: demo scope-fork from
 #{n}` (or `from session recall` for a session-recall entry) instead of the changes-requested
 variant — a scope-fork capture isn't a changes-requested verdict, so it needs its own provenance
 marker. If the human picks "Build it now," don't re-ask for further closely-related work in this
@@ -265,7 +266,8 @@ bootstraps a label or writes to GitHub/local-files for Approve or Skip:
   reappear in a future `/claude-tweaks:demo` run — a different session has no memory of this conversation to
   recall from. This is the accepted tradeoff of not persisting anything, not a bug.
 - **Request changes** — the exact same follow-up-filing procedure as the label-backed path's
-  Request changes above (step 2) (`follow-up-record.md` in this skill's directory), reusing `recordPayload` (`work-backend: github-issues`) or
+  Request changes above (step 2, `follow-up-record.md` in this skill's directory), reusing
+  `recordPayload` (`work-backend: github-issues`) or
   `createRecord`+`deriveSlug` (`work-backend: local-files`) directly — the only difference is
   there is no original record to relabel or comment a link back onto, or reference within the
   follow-up's own body — the `Origin:` line is the sole provenance marker for a session-recall

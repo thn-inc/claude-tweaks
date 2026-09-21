@@ -3,6 +3,9 @@ files:
   - plugin/skills/demo/SKILL.md
   - plugin/skills/demo/entry-paths.md
   - plugin/skills/demo/legacy-brief-compatibility.md
+  - plugin/skills/demo/browser-verdict.md
+  - plugin/skills/demo/design-contract-section.md
+  - plugin/skills/demo/follow-up-record.md
   - plugin/skills/wrap-up/verification-brief.md
   - plugin/skills/_shared/observation-plan.md
 ---

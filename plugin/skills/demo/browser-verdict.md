@@ -3,8 +3,9 @@
 Referenced by `skills/demo/SKILL.md` Step 2's `### Verdict` subsection. Read only when this
 record's Observation plan is a `rendered-page`/`app-route` surface **and** browser tools resolve
 — a `cli`/`flow`/`diff` plan, or a run with no browser tools, goes straight to `SKILL.md`'s
-terminal question and never reads this file. Follows `_shared/visual-decision.md`'s contract —
-cited here, never restated.
+terminal question and never reads this file. In the body below, "the terminal question below" and
+"Validate above" refer to `SKILL.md`'s `### Verdict` fallback `AskUserQuestion` and its Show-first
+walkthrough's **Validate** step.
 
 **Browser verdict (optional, `rendered-page`/`app-route` only):** applies only to the URL surfaces
 Validate above already gates on — `cli`/`flow`/`diff` plans go straight to the terminal question

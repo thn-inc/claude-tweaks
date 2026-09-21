@@ -11,12 +11,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
 
 // Byte ceiling both routing stubs must stay under after the split. Pre-split they were
-// 35,407 (demo) and 35,525 (feedback) bytes; the five extractions remove ~8-10 KB each.
-// 30 KB is a regression guard against the bodies silently drifting back inline, not a
-// tuned budget — the per-file warning tier is 40 KB (docs/skill-authoring.md).
+// 35,407 (demo) and 35,525 (feedback) bytes; the five extractions remove 6.7 KB (demo:
+// 35,407 → 28,676, three extractions) and 5.9 KB (feedback: 35,525 → 29,624, two
+// extractions). 30 KB is a regression guard against the bodies silently drifting back
+// inline, not a tuned budget — the per-file warning tier is 40 KB (docs/skill-authoring.md).
 const STUB_CEILING_BYTES = 30 * 1024;
 
 const SPLITS = [

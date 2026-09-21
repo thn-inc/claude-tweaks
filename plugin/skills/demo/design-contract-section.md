@@ -3,17 +3,15 @@
 Referenced by `skills/demo/SKILL.md` Step 2's `### The design contract this was built against`
 subsection. Read only after `../_shared/design-contract.md`'s locate-and-parse procedure has run
 over Step 1's changed-path list **and** it resolved a contract or reported one malformed — when
-nothing resolves, `SKILL.md` renders nothing and never reads this file.
+nothing resolves, `SKILL.md` renders nothing and never reads this file. In the body below, "this
+heading" means `SKILL.md`'s `### The design contract this was built against`, and `### What
+shipped` is the brief section `SKILL.md` Step 2 already rendered.
 
 Design work built through Impeccable carries a **direction contract** in the opening comment of the
 artifact it produced — five blocks, written *before* the code. That is the one thing an acceptance
 gate cannot reconstruct afterward: once the artifact exists, the intent behind it is only inferable
 from the result, which is circular. Surfacing it here is what lets a human answer "is this what it
 was trying to be?" instead of only "does this look fine?".
-
-Run the locate-and-parse procedure in `../_shared/design-contract.md` over the changed-path list
-Step 1 already produced — the closing commit's `--name-only` list, the label-backed brief's paths,
-or session recall's own list. Do not go looking for files beyond it.
 
 **When a contract resolves,** render this section under exactly this heading, above the verdict
 question, with the five blocks reproduced **verbatim** — never summarized, re-worded, or reordered.
@@ -28,10 +26,6 @@ artifact. If both exist and disagree, render the artifact's and say in one line 
 differs, which means the artifact was rebuilt on a different roll after the record was stamped.
 Omit the line entirely when neither source has one — upstream carries a seed key only *"when the
 seed dealt stagings,"* so a contract without one is complete, not truncated.
-
-**When no contract resolves,** render nothing — no heading, no empty section, no "not found" note.
-Most records have no design contract and never will; a placeholder on every one of them would be
-noise.
 
 **The malformed case is the one exception, and only barely.** The section is still omitted entirely
 — never a heading with only the blocks that parsed, since a half-rendered contract reads as complete
