@@ -1,0 +1,35 @@
+name: mirror-marketplace
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mirror the release into the marketplace catalog
+        env:
+          GH_TOKEN: ${{ secrets.MARKETPLACE_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+          SHA: ${{ github.event.release.target_commitish }}
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::error::MARKETPLACE_TOKEN secret is missing or empty — cannot write to thomasholknielsen/claude-tweaks-marketplace. See docs/releasing.md's Manual Steps." >&2
+            exit 1
+          fi
+          RESOLVED_SHA=$(git rev-parse "${SHA}")
+          CURRENT=$(gh api repos/thomasholknielsen/claude-tweaks-marketplace/contents/.claude-plugin/marketplace.json)
+          BLOB_SHA=$(echo "$CURRENT" | jq -r '.sha')
+          CONTENT=$(echo "$CURRENT" | jq -r '.content' | base64 -d)
+          NEW_CONTENT=$(echo "$CONTENT" | jq --arg sha "$RESOLVED_SHA" '
+            (.plugins[] | select(.name == "claude-tweaks")) |= (
+              del(.version) | .source = {source: "git-subdir", url: "https://github.com/thomasholknielsen/claude-tweaks", path: "plugin", sha: $sha}
+            )
+          ')
+          ENCODED=$(echo "$NEW_CONTENT" | base64 -w0)
+          gh api -X PUT repos/thomasholknielsen/claude-tweaks-marketplace/contents/.claude-plugin/marketplace.json \
+            -f "message=Mirror claude-tweaks ${TAG}" \
+            -f "content=${ENCODED}" \
+            -f "sha=${BLOB_SHA}" \
+            -f "branch=main"
