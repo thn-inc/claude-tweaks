@@ -16,8 +16,9 @@ jobs:
       - uses: googleapis/release-please-action@v4
         with:
           # Releases created with the default GITHUB_TOKEN do not trigger other
-          # workflows (a `release: published` publish/deploy hook stays silent) — set a PAT:
-          # token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          # workflows (a `release: published` publish/deploy hook stays silent) — a PAT
+          # is required for mirror-marketplace.yml to actually fire.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           target-branch: main
