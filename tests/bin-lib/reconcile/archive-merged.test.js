@@ -1289,6 +1289,37 @@ test('trackArchiveResult: only tracks move-failed — a different failure reason
   assert.deepEqual(listResidueFailures(root), []);
 });
 
+// #2330 — work-twin-conflict/work-twin-resolve-failed[-partial-revert] must
+// escalate to residue tracking the same way move-failed does, instead of
+// being silently dropped by the reason guard every pass.
+test('trackArchiveResult: work-twin-conflict escalates via the same residue streak as move-failed', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-track-twin-'));
+  const calls = [];
+  const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-twin');
+
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    trackArchiveResult(root, 'o/r', dir, { ok: false, reason: 'work-twin-conflict' }, { escalate });
+  }
+  assert.equal(calls.length, 1, `expected exactly one escalation call, got ${calls.length}`);
+  assert.equal(calls[0].reason, 'work-twin-conflict');
+  assert.equal(calls[0].targetPath, dir);
+  assert.equal(calls[0].count, RESIDUE_ESCALATE_THRESHOLD);
+});
+
+// A `work-twin-resolve-failed-partial-revert` is a worse state than a clean
+// `work-twin-conflict` — it must escalate under its own distinct reason key,
+// not be folded into `work-twin-conflict`'s or `move-failed`'s streak.
+test('trackArchiveResult: work-twin-resolve-failed-partial-revert tracks under its own distinct reason key', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-track-twin-partial-'));
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-twin-partial');
+  trackArchiveResult(root, 'o/r', dir, { ok: false, reason: 'work-twin-resolve-failed-partial-revert' });
+  const entries = listResidueFailures(root);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].reason, 'work-twin-resolve-failed-partial-revert');
+  assert.equal(entries[0].path, dir);
+});
+
 test('trackArchiveResult: a success clears a prior failure streak for the same dir', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-track3-'));
   const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-recovered');

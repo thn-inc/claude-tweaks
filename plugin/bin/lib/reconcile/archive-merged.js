@@ -1226,11 +1226,23 @@ function trackArchiveResult(cacheTarget, repoSlug, dir, result, { escalate = esc
   // Archive-specific vocabulary — not part of the shared branching cache.js's
   // trackResidue dedups (#1233) — so it stays here, ahead of the shared
   // call, rather than moving inside it.
-  if (result.reason !== 'move-failed') return;
+  // #2330: a genuinely diverged work twin (`work-twin-conflict` and its
+  // resolve-failed variants) is exactly as structurally stuck as
+  // `move-failed` — route it into the same residue-escalation streak instead
+  // of dropping it silently on every pass. Each reason keeps its own bucket
+  // (passed through as `result.reason` rather than folded into the literal
+  // `'move-failed'` string) so a filed escalation issue names the actual
+  // failure — a `work-twin-resolve-failed-partial-revert` is a worse state
+  // than a clean `work-twin-conflict` and a human resolving the escalation
+  // needs to tell them apart.
+  if (result.reason !== 'move-failed'
+    && result.reason !== 'work-twin-conflict'
+    && result.reason !== 'work-twin-resolve-failed'
+    && result.reason !== 'work-twin-resolve-failed-partial-revert') return;
   // Mirrors reap-merged.js's trackReapResidue: forward the underlying error
   // (now captured at each move-failed catch site above) into the shared
   // residue-tracking/escalation choke point.
-  trackResidue(cacheTarget, repoSlug, 'move-failed', dir, { failed: true, lastError: result.lastError }, { escalate, runner });
+  trackResidue(cacheTarget, repoSlug, result.reason, dir, { failed: true, lastError: result.lastError }, { escalate, runner });
 }
 
 // #1544: `iterRunDirsWithState` (context.js) excludes every `status:
