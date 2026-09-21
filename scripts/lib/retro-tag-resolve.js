@@ -14,6 +14,16 @@ function resolveRetroTags(deps, { tsvLines, overrides = {} }) {
   const unresolved = [];
 
   for (const line of tsvLines) {
+    if (!SEMVER_RE.test(line.version)) {
+      excluded.push({ version: line.version, reason: `non-standard version string "${line.version}" (not strict X.Y.Z) — not independently taggable under this project's vX.Y.Z convention` });
+      continue;
+    }
+
+    if (line.source === 'wip-never-shipped') {
+      excluded.push({ version: line.version, reason: `tsv source is wip-never-shipped — documented as never having reached main's tip, regardless of any candidate commit found` });
+      continue;
+    }
+
     const override = overrides[line.version];
     if (override) {
       if (override.action === 'use') {
@@ -23,16 +33,6 @@ function resolveRetroTags(deps, { tsvLines, overrides = {} }) {
       } else {
         throw new Error(`unknown override action for ${line.version}: ${override.action}`);
       }
-      continue;
-    }
-
-    if (!SEMVER_RE.test(line.version)) {
-      excluded.push({ version: line.version, reason: `non-standard version string "${line.version}" (not strict X.Y.Z) — not independently taggable under this project's vX.Y.Z convention` });
-      continue;
-    }
-
-    if (line.source === 'wip-never-shipped') {
-      excluded.push({ version: line.version, reason: `tsv source is wip-never-shipped — documented as never having reached main's tip, regardless of any candidate commit found` });
       continue;
     }
 

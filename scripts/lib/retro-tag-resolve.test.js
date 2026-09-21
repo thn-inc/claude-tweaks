@@ -75,6 +75,17 @@ test('a non-strict-semver version string is excluded as not independently taggab
   assert.match(out.excluded[0].reason, /non-standard version string/);
 });
 
+test('exclusion checks run before override lookup — a "use" override cannot bypass wip-never-shipped or non-semver exclusion', () => {
+  const deps = makeDeps({ bumps: [{ sha: 'a1', version: '6.64.3' }], allSearchHits: {} });
+  const out = resolveRetroTags(deps, {
+    tsvLines: [{ version: '6.64.3', date: '2026-08-08', source: 'wip-never-shipped' }],
+    overrides: { '6.64.3': { action: 'use', sha: 'a1', reason: 'attempted override — should not win' } },
+  });
+  assert.equal(out.resolved.length, 0);
+  assert.equal(out.excluded.length, 1);
+  assert.match(out.excluded[0].reason, /wip-never-shipped/);
+});
+
 test('three or more candidates with no override is unresolved', () => {
   const deps = makeDeps({ bumps: [{ sha: 'b1', version: '2.0.0' }, { sha: 'b2', version: '2.0.0' }, { sha: 'b3', version: '2.0.0' }], allSearchHits: {} });
   const out = resolveRetroTags(deps, { tsvLines: [{ version: '2.0.0', date: '2026-02-01', source: 'release' }] });
