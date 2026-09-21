@@ -8,6 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const { runGit } = require('../hooks/git-exec');
+const { withIndexLockRetry } = require('../git-retry');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const {
@@ -156,6 +157,12 @@ function isOrphanedMint(dir, now = Date.now()) {
 function refusal(reason, { hint = null, ...extra } = {}) {
   return { ok: false, reason, hint, ...extra };
 }
+
+// #2346: the one commit this file's archival path makes, wrapped so a
+// transient `index.lock` collision (a sibling agent's git call or a
+// PostToolUse hook holding the lock in the same shared main checkout) is
+// retried rather than surfacing as a hard `commit-failed` refusal.
+const commitGit = withIndexLockRetry(runGit);
 
 // An orphaned mint that reaches this function has nothing to git-mv and
 // nothing to finalize as terminal (no run-state.json, since record-worktree
@@ -900,7 +907,7 @@ function archiveRunDir(root, runDir) {
     // rather than sweeping whatever else a human or sibling session happens
     // to have staged in this shared main checkout at the same moment.
     const commitPaths = workMoves.flatMap(([src, dest]) => [src, dest]);
-    const commit = runGit(['commit', '-m', `[reconcile] archive run ${runId}`, '--', ...commitPaths], root);
+    const commit = commitGit(['commit', '-m', `[reconcile] archive run ${runId}`, '--', ...commitPaths], root);
     if (commit.failure) {
       // A partial revert (some ops' `git reset`/`git checkout` or disk move
       // failed) is a distinct outcome from a clean one: the retry guard
