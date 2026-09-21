@@ -117,16 +117,19 @@ test('isIndexLockFailure: matches both documented signatures, rejects an unrelat
   assert.equal(isIndexLockFailure({ stderr: 'fatal: not a git repository (or any of the parent directories)' }), false);
 });
 
-// AC4 — each of the three named commit call sites routes through the
-// helper; a grep-shaped source scan proves no direct ['commit', …] call
-// bypasses it.
+// AC4 — each of the two remaining named commit call sites routes through
+// the helper; a grep-shaped source scan proves no direct ['commit', …] call
+// bypasses it. `plugin/bin/lib/release/run.js`'s own commit call site
+// (originally the third) was removed along with `runRelease` itself when
+// this repo's internal release engine was replaced by release-please
+// (docs/decisions/0018-release-please-engine.md) — that file no longer
+// issues a commit call at all, so it has nothing left to conform here.
 test('conformance: every named commit call site routes through withIndexLockRetry', () => {
   const fs = require('fs');
   const path = require('path');
   const root = path.join(__dirname, '..', '..', 'plugin');
   const sites = [
     path.join(root, 'bin', 'lib', 'reconcile', 'archive-merged.js'),
-    path.join(root, 'bin', 'lib', 'release', 'run.js'),
     path.join(root, 'bin', 'release-local.js'),
   ];
   for (const file of sites) {
