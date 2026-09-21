@@ -36,6 +36,16 @@ class PeriodError extends Error {
 
 const isoDate = (d) => d.toISOString().slice(0, 10);
 
+// A calendar-date string is valid only if it round-trips through Date.UTC — this rejects
+// rollovers like `2026-02-30` (which Date.parse silently normalizes to March 2) and
+// `2026-13-01` (month 13), which DATE_RE's shape check alone lets through.
+function isCalendarDate(str) {
+  if (!DATE_RE.test(str)) return false;
+  const [y, mo, day] = str.split('-').map(Number);
+  const d = new Date(Date.UTC(y, mo - 1, day));
+  return d.getUTCFullYear() === y && d.getUTCMonth() === mo - 1 && d.getUTCDate() === day;
+}
+
 function resolvePeriod(spec, now = new Date()) {
   const s = String(spec ?? '').trim();
   if (Object.prototype.hasOwnProperty.call(PRESETS, s)) {
@@ -46,7 +56,7 @@ function resolvePeriod(spec, now = new Date()) {
   const m = /^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/.exec(s);
   if (m) {
     const [, from, to] = m;
-    if (Number.isNaN(Date.parse(from)) || Number.isNaN(Date.parse(to))) throw new PeriodError(`invalid date in period "${s}" — accepted forms: ${ACCEPTED_FORMS}`);
+    if (!isCalendarDate(from) || !isCalendarDate(to)) throw new PeriodError(`invalid date in period "${s}" — accepted forms: ${ACCEPTED_FORMS}`);
     if (from > to) throw new PeriodError(`period "${s}": <from> must be on or before <to> — accepted forms: ${ACCEPTED_FORMS}`);
     return { from, to, preset: null };
   }

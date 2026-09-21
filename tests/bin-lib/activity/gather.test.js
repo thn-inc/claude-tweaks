@@ -30,6 +30,12 @@ test('resolvePeriod: rejects unknown forms with a PeriodError naming the accepte
   assert.throws(() => resolvePeriod('2026-09-14..2026-09-01', NOW), (err) => err instanceof PeriodError && /before/.test(err.message));
 });
 
+test('resolvePeriod: rejects rollover and out-of-range calendar dates, accepts a real leap day', () => {
+  assert.throws(() => resolvePeriod('2026-02-30..2026-03-05', NOW), (err) => err instanceof PeriodError && /invalid date/.test(err.message));
+  assert.throws(() => resolvePeriod('2026-13-01..2026-13-02', NOW), (err) => err instanceof PeriodError);
+  assert.deepEqual(resolvePeriod('2028-02-29..2028-03-01', NOW), { from: '2028-02-29', to: '2028-03-01', preset: null });
+});
+
 test('buildQueries: six queries, exact argv pinned to the Task 0 live probe', () => {
   const q = buildQueries({ login: LOGIN, slug: SLUG, from: '2026-09-15', to: '2026-09-22' });
   assert.deepEqual(q.map((x) => x.key), QUERY_KEYS);
@@ -134,4 +140,12 @@ test('gather: runs the query set once per repo, tagging each entry with its repo
   const facts = gather({ period: '7d', repos: [SLUG, 'acme/gadgets'], actor: LOGIN }, { runner: happyRunner(calls), now: NOW });
   assert.equal(calls.length, 12);
   assert.deepEqual(facts.merged_prs.map((x) => x.repo), [SLUG, 'acme/gadgets']);
+});
+
+test('gather: a non-array JSON runner reply is a failure for that query only', () => {
+  const runner = (args, opts) => (args[0] === 'search' ? '{"not":"an array"}' : happyRunner([])(args, opts));
+  const facts = gather({ period: '7d', repos: [SLUG], actor: LOGIN }, { runner, now: NOW });
+  assert.equal(facts.failures.length, 1);
+  assert.equal(facts.failures[0].query, 'reviews_given');
+  assert.match(facts.failures[0].error, /expected a JSON array/);
 });
