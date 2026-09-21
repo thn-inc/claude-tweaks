@@ -24,6 +24,30 @@ test('ghHealthCheck: calls `gh api rate_limit`, not a repo-scoped endpoint', () 
   assert.ok(seen.includes('rate_limit'), `expected rate_limit in ${JSON.stringify(seen)}`);
 });
 
+// #2567: ghHealthCheck now opts in to shared-primitives.js's retryOnTimeout —
+// a timeout-shaped first failure (killed + SIGTERM, the shape a real
+// execFileSync timeout kill produces — NOT the 'github-unreachable' test
+// above, whose synthetic error carries neither and so never engages the
+// retry branch at all) is retried once and, on a successful retry, returns
+// healthy rather than surfacing 'github-unreachable'.
+test('ghHealthCheck: a timeout-shaped first call is retried once and returns healthy on a successful retry', () => {
+  let calls = 0;
+  const r = ghHealthCheck({
+    runner: () => {
+      calls += 1;
+      if (calls === 1) {
+        const e = new Error('timeout');
+        e.killed = true;
+        e.signal = 'SIGTERM';
+        throw e;
+      }
+      return '5000\n';
+    },
+  });
+  assert.deepEqual(r, { ok: true, reason: null });
+  assert.strictEqual(calls, 2, 'runner must be called exactly twice: the original attempt plus one retry');
+});
+
 // Async twin (#872) — same contract as ghHealthCheck above, just awaited.
 // Mirrors the sync suite's exact scenarios rather than a subset, so the two
 // implementations can't silently drift on classification.
@@ -49,6 +73,25 @@ test('ghHealthCheckAsync: calls `gh api rate_limit`, not a repo-scoped endpoint'
   let seen = null;
   await ghHealthCheckAsync({ runner: async (args) => { seen = args; return '5000\n'; } });
   assert.ok(seen.includes('rate_limit'), `expected rate_limit in ${JSON.stringify(seen)}`);
+});
+
+// #2567 async twin — see the sync version above for the full rationale.
+test('ghHealthCheckAsync: a timeout-shaped first call is retried once and returns healthy on a successful retry', async () => {
+  let calls = 0;
+  const r = await ghHealthCheckAsync({
+    runner: async () => {
+      calls += 1;
+      if (calls === 1) {
+        const e = new Error('timeout');
+        e.killed = true;
+        e.signal = 'SIGTERM';
+        throw e;
+      }
+      return '5000\n';
+    },
+  });
+  assert.deepEqual(r, { ok: true, reason: null });
+  assert.strictEqual(calls, 2, 'runner must be called exactly twice: the original attempt plus one retry');
 });
 
 test('ghHealthCheckAsync: does not block the event loop (real concurrency, not execFileSync in disguise)', async () => {

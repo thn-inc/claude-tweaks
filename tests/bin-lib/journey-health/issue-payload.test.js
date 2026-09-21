@@ -99,9 +99,24 @@ test('toIssuePayload body carries the spec-shaped sections, not the retired ones
   assert.ok(payload.body.includes('## Current State'));
   assert.ok(payload.body.includes('## Deliverables'));
   assert.ok(payload.body.includes('## Acceptance Criteria'));
+  assert.ok(payload.body.includes('## Release Note'));
   assert.ok(!payload.body.includes('## Description'));
   assert.ok(!payload.body.includes('## Evidence'));
   assert.ok(!payload.body.includes('## Recommended Action'));
+});
+
+// ── Release Note (#2660) ────────────────────────────────────────────────────
+
+test('toIssuePayload Release Note names the fixed journey for a regression-suspected (bug) finding', () => {
+  const payload = toIssuePayload(finding({ category: 'regression-suspected', section: 'live-check' }));
+  assert.ok(payload.body.includes('## Release Note\n\nFixed a broken user journey: checkout-flow.'));
+});
+
+test('toIssuePayload Release Note is a plain "no user-visible change" phrasing for drift/coverage (task) findings', () => {
+  const drift = toIssuePayload(finding({ category: 'drift' }));
+  assert.ok(drift.body.includes('No user-visible change — journey documentation/coverage maintenance.'));
+  const coverage = toIssuePayload(finding({ category: 'coverage', section: 'coverage' }));
+  assert.ok(coverage.body.includes('No user-visible change — journey documentation/coverage maintenance.'));
 });
 
 test('toIssuePayload includes description and reason under Current State, recommendation under Deliverables, in order', () => {

@@ -17,9 +17,18 @@ function compareVersions(a, b) {
   return 0;
 }
 
+// Two heading grammars, one file. Alternative 1 is this repo's pre-migration form
+// (`## vX.Y.Z — {title}`, every entry from v6.128.0 downward); alternatives 2 and 3 are
+// release-please's (`## [X.Y.Z](compare-url) (date)`, and `## X.Y.Z (date)` when no repo URL
+// is available) — the same pair bin/lib/release-local/changelog.js renders, so both engines
+// produce headings this parser can see. A release-please heading carries no free-text title,
+// so `title` is '' for those entries; that is an honest value, not a placeholder —
+// skills/init/bootstrap/version-check.md synthesizes its notice from {version, title, body}
+// and does not require a non-empty title.
+//
 // Declared once and reused via matchAll (not exec/test in a loop) — matchAll operates on an
 // internal clone and never mutates this regex's lastIndex, so reuse across calls is safe.
-const HEADER_RE = /^## v(\d+\.\d+\.\d+) — (.+)$/gm;
+const HEADER_RE = /^## (?:v(\d+\.\d+\.\d+) — (.+)|\[(\d+\.\d+\.\d+)\]\(\S+\) \(\d{4}-\d{2}-\d{2}\)|(\d+\.\d+\.\d+) \(\d{4}-\d{2}-\d{2}\))$/gm;
 
 function parseChangelogVersions(changelogText) {
   const matches = [...changelogText.matchAll(HEADER_RE)];
@@ -27,8 +36,8 @@ function parseChangelogVersions(changelogText) {
     const start = match.index + match[0].length;
     const end = i + 1 < matches.length ? matches[i + 1].index : changelogText.length;
     return {
-      version: match[1],
-      title: match[2].trim(),
+      version: match[1] || match[3] || match[4],
+      title: match[1] ? match[2].trim() : '',
       body: changelogText.slice(start, end).trim(),
     };
   });
@@ -42,12 +51,22 @@ function extractChangelogRange(changelogText, oldVersion, newVersion) {
   );
 }
 
-// Any line that LOOKS like a version heading, however malformed. Deliberately
-// looser than HEADER_RE: its whole job is to find headings HEADER_RE rejects.
-// A rejected heading is not a parse error anyone sees — it is silently absent
-// from parseChangelogVersions, so /init's version notice skips that release
-// without a word. `## v4.1` (no title) and `## v4.2 — Token Saver` (two-component
-// version) both shipped for months in exactly that state.
+// Any line that LOOKS like a `## v...` version heading, however malformed —
+// deliberately looser than HEADER_RE's first alternative, to catch headings
+// that alternative rejects. A rejected heading is not a parse error anyone
+// sees — it is silently absent from parseChangelogVersions, so /init's
+// version notice skips that release without a word. `## v4.1` (no title) and
+// `## v4.2 — Token Saver` (two-component version) both shipped for months in
+// exactly that state.
+//
+// Covers only the `## v...` family, not HEADER_RE's release-please
+// alternatives (`## [X.Y.Z](...)`, `## X.Y.Z (date)`) — a malformed
+// release-please heading (e.g. a two-component `## 6.12 (date)`) is
+// currently invisible to both HEADER_RE and this detector. Left uncovered
+// deliberately: release-please generates these headings mechanically, so the
+// human-typo failure mode this pair exists to catch can't occur in that
+// family. Revisit if that assumption stops holding (e.g. a hand-edited
+// release-please entry).
 const LOOSE_HEADING_RE = /^## v(\S+)(.*)$/gm;
 const STRICT_HEADING_RE = /^## v(\d+\.\d+\.\d+) — (.+)$/;
 
@@ -88,10 +107,21 @@ function findCoverageGaps(shippedVersions, changelogText) {
   };
 }
 
+function nextVersion(current, part) {
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(current).trim());
+  if (!m) throw new Error(`Invalid semver version: "${current}"`);
+  const [major, minor, patch] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (part === 'major') return `${major + 1}.0.0`;
+  if (part === 'minor') return `${major}.${minor + 1}.0`;
+  if (part === 'patch') return `${major}.${minor}.${patch + 1}`;
+  throw new Error(`part must be "major", "minor" or "patch", got "${part}"`);
+}
+
 module.exports = {
   compareVersions,
   parseChangelogVersions,
   extractChangelogRange,
   findHeadingDefects,
   findCoverageGaps,
+  nextVersion,
 };

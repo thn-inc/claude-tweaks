@@ -1211,10 +1211,25 @@ function getMaterializedRecordNumbers(worktreeRoot, runDir) {
 // best-effort, a missing/unreadable decisions.md resolves to false (not
 // logged), never a throw. The trailing word boundary keeps "#7" from
 // false-matching a longer number sharing the same prefix ("claimed #700").
+//
+// #2636: `flow/claim-targets.md`'s "Log the claim (mandatory, #2492)"
+// section documents one `Step 2.8: claimed #{n}` line per target, but a real
+// multi-record run's own Step 2.8 log line is a single batch summary
+// instead — `Step 2.8: Claimed all {N} targets under run {run-id} ...` —
+// with no per-number "claimed #{n}" substring at all (confirmed against
+// `2026-09-20T002426-record-1235`'s actual `decisions.md`). The single-target
+// form is checked first since it names the exact number; the batch form is
+// checked as a fallback, and — once present at all — covers EVERY record
+// number in the run, never just the one `n` happens to be: `claim-targets.js`'s
+// own group-claim contract is all-or-abort (`_shared/issue-claims.md`'s
+// "Claim every named target, all-or-abort"), so a single exit-0 call either
+// claims every named target together or the run never reaches this log line
+// at all — there is no partial-batch state for this line to misrepresent.
 function hasLoggedClaim(runDir, n) {
   try {
     const body = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
-    return new RegExp(`Step 2\\.8: claimed #${n}\\b`).test(body);
+    if (new RegExp(`Step 2\\.8: claimed #${n}\\b`).test(body)) return true;
+    return /Step 2\.8: Claimed all \d+ targets under run\b/.test(body);
   } catch {
     return false;
   }
@@ -1502,23 +1517,36 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   // not no-op here.
   const runState = ctx.runState || {};
   if (runState.status === 'clean') return {};
-  // Both stamps already recorded, OR the worktree stamp is recorded and the
-  // PR stamp is durably exempt (`prExempt`, memoized by the PR-stamp branch
-  // below the first time it proves no further denial is possible): neither
-  // deny branch below can fire, so reach the same `{}` here instead of
-  // paying for repoInfo's git spawn, hasMaterializeCommit's git spawn, and
-  // (on the PR branch) a possible network-touching `gh` call — on EVERY
-  // covered tool call of the run, including a `local-merge` run's steady
-  // state, which never sets `runState.pr` and previously never reached this
-  // short-circuit at all. Purely an optimization; it changes no deny/allow
-  // outcome. Safe to leave `claimExempt` out of this condition (#2526): the
-  // claim-stamp branch below runs strictly BEFORE the worktree-stamp branch
-  // in source order, so by the time `runState.worktree` is ever set at all,
-  // `claimExempt` must already have been memoized (or the run would have
-  // been denied at the claim branch first, on an earlier covered call,
-  // before worktree stamping could ever happen) — this short-circuit can
-  // never fire while a claim-stamp denial is still pending.
-  if (runState.worktree && (runState.pr || runState.prExempt)) return {};
+  // All three stamps already recorded, OR the worktree+claim stamps are
+  // recorded and the PR stamp is durably exempt (`prExempt`, memoized by the
+  // PR-stamp branch below the first time it proves no further denial is
+  // possible): neither deny branch below can fire, so reach the same `{}`
+  // here instead of paying for repoInfo's git spawn, hasMaterializeCommit's
+  // git spawn, and (on the PR branch) a possible network-touching `gh` call —
+  // on EVERY covered tool call of the run, including a `local-merge` run's
+  // steady state, which never sets `runState.pr` and previously never
+  // reached this short-circuit at all. Purely an optimization; it changes no
+  // deny/allow outcome.
+  //
+  // `runState.claimExempt` MUST be part of this condition (#2636) — a prior
+  // version of this comment argued it was safe to omit because "the
+  // claim-stamp branch runs strictly BEFORE the worktree-stamp branch in
+  // source order, so by the time runState.worktree is ever set at all,
+  // claimExempt must already have been memoized." That invariant does not
+  // hold: `runState.worktree` and `runState.pr` are stamped by Common
+  // Step 1/6, both well BEFORE this run's materialize commit ever lands —
+  // and the claim-log branch below is gated on `hasMaterializeCommit`, so it
+  // cannot run (and therefore cannot memoize `claimExempt`) until AFTER
+  // worktree+pr are already set. Without `claimExempt` here, this
+  // short-circuit fired on every covered call from that point on and the
+  // claim-log branch became unreachable dead code — confirmed against a
+  // real 13-record run (`2026-09-20T002426-record-1235`): zero `claim-log`
+  // `bookkeeping-stamp-deny`/`wd-foreign-session` events across 43 commits
+  // made after the branch landed, even though a direct replay of
+  // `hasLoggedClaim()` against that run's own `decisions.md` shows every one
+  // of its 13 record numbers would have classified as "missing claim" had
+  // the branch ever executed.
+  if (runState.worktree && (runState.pr || runState.prExempt) && runState.claimExempt) return {};
 
   const { repoRoot: wtRoot, isLinkedWorktree, indeterminate } = wtDetect.repoInfo(ctx.cwd || process.cwd());
   if (indeterminate || !wtRoot || !isLinkedWorktree) return {};

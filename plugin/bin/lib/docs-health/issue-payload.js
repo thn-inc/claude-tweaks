@@ -46,6 +46,11 @@ function toIssuePayload(finding, verifiedAsOf) {
     currentState: [...relatedBlocks, finding.reason],
     deliverables,
     acceptanceCriteria: finding.description,
+    // docs-health audits this repo's own documentation accuracy — never a
+    // shipped end-user-facing feature — so every finding gets the same plain
+    // "no user-visible change" phrasing (#2660) rather than a per-finding
+    // derivation the judge output doesn't carry data for.
+    releaseNote: 'No user-visible change — documentation accuracy fix.',
     filedBy: '/claude-tweaks:docs-health',
     verifiedAsOf,
   });

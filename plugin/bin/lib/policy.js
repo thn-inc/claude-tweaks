@@ -10,7 +10,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { parseFlatLines, RENAMED_KEYS } = require('./policy-schema');
+const { parseFlatLines, RENAMED_KEYS, resolveValue } = require('./policy-schema');
 
 function readPolicyFile(repoRoot) {
   try {
@@ -94,6 +94,17 @@ function readListKey(repoRoot, key) {
   return value.split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+// `gh-timeout-ms` (#2567) — the one integer-typed lever bin/lib/shared-
+// primitives.js reads through this module rather than re-implementing
+// policy-schema.js's own validation/default logic. resolveValue already
+// does everything a bespoke reader here would: absent/blank -> the schema's
+// default (5000), an out-of-[min,max]-range or non-integer value -> the
+// same default, a valid value -> the parsed integer. No alias to migrate —
+// this key has no prior name.
+function readGhTimeoutMs(repoRoot) {
+  return resolveValue('gh-timeout-ms', parsePolicy(repoRoot)['gh-timeout-ms']);
+}
+
 const SERVICE_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
 // `port-services` (#1792): the list-key convention above, plus per-entry
@@ -130,5 +141,5 @@ function resolvePortServices(repoRoot) {
 }
 
 module.exports = {
-  isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, resolvePortServices,
+  isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, resolvePortServices, readGhTimeoutMs,
 };

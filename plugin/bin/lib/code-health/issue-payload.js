@@ -61,6 +61,12 @@ function toIssuePayloadV2(finding, verifiedAsOf) {
     currentState: [`Anchor: \`${finding.anchor}\``, ...relatedBlocks, finding.evidence],
     deliverables: finding.suggestedApproach,
     acceptanceCriteria: finding.acceptance,
+    // Code-health findings are internal code-quality/maintainability issues in
+    // this repo's own source, never a shipped end-user-facing feature — so
+    // every finding gets the same plain "no user-visible change" phrasing
+    // (#2660) rather than a per-finding derivation the judge output doesn't
+    // carry data for.
+    releaseNote: 'No user-visible change — internal code-quality fix.',
     filedBy: '/claude-tweaks:code-health',
     verifiedAsOf,
   });

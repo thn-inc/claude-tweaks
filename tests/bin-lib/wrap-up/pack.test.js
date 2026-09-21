@@ -651,6 +651,50 @@ test('gatherPack: a ledger whose DATE prefix contains the record number is not t
   assert.strictEqual(pack.ledger.value.total, 1);
 });
 
+// #2563: _shared/ledger-format.md's Location section defines the canonical
+// filename as embedding the plan/spec TOPIC slug, not the record number —
+// `namesRecord` never matches this shape at all, so a bare record-number
+// filter silently excluded it and reported 0 items even though the file held
+// genuinely open rows.
+test('gatherPack: the ledger probe locates a topic-slug-named ledger with no record number in the filename (#2563 AC1)', async () => {
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
+  fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-ledger-probe-slug-fix-ledger.md'), [
+    '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
+    '| 1 | review | a | open | — |', '| 2 | build | b | open | — |', '| 3 | build | c | fixed | x |',
+  ].join('\n'));
+  const runDir = fixtureRunDir({ records: [1535] });
+  const state = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+  state.worktree = tree;
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(state));
+  const pack = await gatherPack({ runDir, cwd: tree, only: ['ledger'], deps: okDeps() });
+  assert.deepStrictEqual(pack.ledger.value.files, ['docs/plans/2026-09-05-ledger-probe-slug-fix-ledger.md']);
+  assert.strictEqual(pack.ledger.value.open, 2);
+  assert.strictEqual(pack.ledger.value.total, 3);
+});
+
+// #2563 AC4: _shared/ledger-format.md's resolution rule — when {run-dir}/
+// ledger.md exists (the gated no-worktree case), that file is authoritative
+// and the docs/plans/ glob is never consulted, even when a stray docs/plans
+// ledger is also present.
+test('gatherPack: {run-dir}/ledger.md is authoritative over the docs/plans/ glob when it exists (#2563 AC4)', async () => {
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
+  fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-spec-1535-ledger.md'), '| # | Phase | Item | Status | Resolution |\n| 1 | review | a | open | — |');
+  const runDir = fixtureRunDir({ records: [1535] });
+  const state = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+  state.worktree = tree;
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(state));
+  fs.writeFileSync(path.join(runDir, 'ledger.md'), [
+    '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
+    '| 1 | build | a | open | — |', '| 2 | build | b | open | — |', '| 3 | build | c | open | — |',
+  ].join('\n'));
+  const pack = await gatherPack({ runDir, cwd: tree, only: ['ledger'], deps: okDeps() });
+  assert.deepStrictEqual(pack.ledger.value.files, ['ledger.md']);
+  assert.strictEqual(pack.ledger.value.open, 3);
+  assert.strictEqual(pack.ledger.value.total, 3);
+});
+
 test('gatherPack: a missing gh binary degrades pr/recordLabels/unblocked to error gh-absent, nothing else (#1930 Gotchas)', async () => {
   const deps = okDeps({ execFile: async (cmd, args) => { if (cmd === 'gh') { const e = new Error('spawn gh ENOENT'); e.code = 'ENOENT'; throw e; } return okDeps().execFile(cmd, args); } });
   const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', deps });

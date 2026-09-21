@@ -31,11 +31,21 @@ function toIssuePayload(finding, verifiedAsOf) {
   // sections each emit at most one finding per violation and have nothing to bundle.
   const relatedBlocks = buildRelatedBlocks(finding.relatedSections);
 
+  // Release-note rule mirrors the type rule below (#2660): a
+  // regression-suspected finding names a real broken user-facing journey —
+  // the release note says so, generically (the judge output has no clean
+  // per-finding user-facing phrasing to lift). drift/coverage findings are
+  // documentation/coverage maintenance with nothing that shipped to change.
+  const releaseNote = finding.category === 'regression-suspected'
+    ? `Fixed a broken user journey: ${finding.journey}.`
+    : 'No user-visible change — journey documentation/coverage maintenance.';
+
   const body = specShapedBody({
     header: `**Journey:** ${finding.journey} | **Section:** ${finding.section} | **Category:** ${finding.category} | **Severity:** ${finding.severity} | **Confidence:** ${finding.confidence}`,
     currentState: [...relatedBlocks, finding.description, finding.reason],
     deliverables: finding.recommendation,
     acceptanceCriteria: `The condition described above is resolved: a fresh \`/claude-tweaks:journey-health\` audit of journey '${finding.journey}' files no finding with this fingerprint.`,
+    releaseNote,
     filedBy: '/claude-tweaks:journey-health',
     verifiedAsOf,
   });

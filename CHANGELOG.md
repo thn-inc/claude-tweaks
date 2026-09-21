@@ -1,19 +1,31 @@
 # Changelog
 
-Every version this plugin has shipped, newest first. "Shipped" means a value the
-`version` field in `.claude-plugin/plugin.json` held at the tip of `main` — the
-marketplace `source` is an unpinned git URL, so an install tracks that tip, and
-every distinct value it reported is a build someone could be running.
-`tests/changelog-coverage.test.js` fails the suite if any of them is missing here.
+Every version this plugin has shipped, newest first, plus a handful of numbers
+this repo documented but never shipped — the tag-coverage note below explains
+which. "Shipped" means a value the `version` field in `.claude-plugin/plugin.json`
+held at the tip of `main` — the marketplace catalog entry is `sha`-pinned and
+re-pinned to a new release commit on every release (`docs/decisions/0015-*`),
+but a resolved install is a per-version cached snapshot that never moves once
+made, so every distinct value the plugin ever reported is a build someone
+installed back when the catalog pointed there and could still be running today.
 
-Which versions those are is **recorded, not inferred** — `docs/shipped-versions.tsv`
-is appended in the same commit as each version bump. It replaced a
-`git rev-list --first-parent` reconstruction that turned out to be unstable rather
-than merely lossy: a branch that merges `main` into itself and is then pushed as
-`main` moves everything `main` carried since the fork point onto the merge's second
-parent, where the walk never looks, so versions *left* the reconstructed set as
-later merges landed (#144). Two releases were written up as never-shipped on that
-evidence before anyone checked it against a source outside this repo's topology.
+Which versions those are is now **recorded as annotated git tags**, not a tracked
+file. `## v6.128.0` and every entry below it predate the migration to
+release-please and keep their pre-migration `## vX.Y.Z — {summary}` heading form
+unchanged. Nearly every one of them has a matching `v{version}` tag from the
+one-time retro-tag backfill that ran against this repo's pre-migration history
+(`docs/decisions/0018-release-please-engine.md`) — the 15 exceptions are entries
+that never actually shipped: 13 documented-but-never-committed version
+reservations and 2 builds their own heading says never reached `main`'s tip, all
+excluded rather than tagged. Entries release-please generates are inserted above
+`## v6.128.0`, each with its own release-please-created tag. A
+`git rev-list --first-parent` reconstruction of this history was tried before the
+tag-based approach and found unstable, not merely lossy — a branch that merges
+`main` into itself and is then pushed as `main` moves everything `main` carried
+since the fork point onto the merge's second parent, where the walk never looks,
+so versions *left* the reconstructed set as later merges landed (#144, `[IL-95]`).
+A tag doesn't have this failure mode: it's anchored directly to its commit and
+needs no walk at all.
 
 Three conventions follow from how this repo works, and all are visible below:
 
@@ -38,6 +50,21 @@ Three conventions follow from how this repo works, and all are visible below:
   releases went undocumented (`[IL-94]`). They are summaries of what each version
   contained, not contemporaneous release notes, and they are thinner than the
   entries written since.
+
+<!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
+
+## [6.129.0](https://github.com/thomasholknielsen/claude-tweaks/compare/v6.128.0...v6.129.0) (2026-09-21)
+
+
+### Features
+
+* dispatch: build,test call's claim/materialize/PR-open… ([#1728](https://github.com/thomasholknielsen/claude-tweaks/issues/1728)) ([5a024da](https://github.com/thomasholknielsen/claude-tweaks/commit/5a024dad4e5b146d434af822949c00c656aa6a84)), closes [#1996](https://github.com/thomasholknielsen/claude-tweaks/issues/1996) [#2268](https://github.com/thomasholknielsen/claude-tweaks/issues/2268) [#2561](https://github.com/thomasholknielsen/claude-tweaks/issues/2561) [#2562](https://github.com/thomasholknielsen/claude-tweaks/issues/2562) [#2636](https://github.com/thomasholknielsen/claude-tweaks/issues/2636) [#2656](https://github.com/thomasholknielsen/claude-tweaks/issues/2656) [#2658](https://github.com/thomasholknielsen/claude-tweaks/issues/2658) [#2660](https://github.com/thomasholknielsen/claude-tweaks/issues/2660)
+* shared-primitives: the fixed 5 s GH_TIMEOUT_MS makes the… ([#2567](https://github.com/thomasholknielsen/claude-tweaks/issues/2567)) ([a4f3ea5](https://github.com/thomasholknielsen/claude-tweaks/commit/a4f3ea5999552dd6ed817c53b3346686b0ce8c0b))
+
+
+### Bug Fixes
+
+* wrap-up-pack.js: ledger probe reports 0 items for a… ([#2563](https://github.com/thomasholknielsen/claude-tweaks/issues/2563)) ([b65daed](https://github.com/thomasholknielsen/claude-tweaks/commit/b65daed3d4c1e3de2f769223450aa0a009b60fd4))
 
 ## v6.128.0 — Sibling-PR premise-disproof dedup check for dispatch/materialize (#2590); browser automation migrated from agent-browser to Playwright CLI across qa-agent, stories, visual-review, demo/test, and install/detect plumbing (#2645-#2649); shallow-clone git-show guard fix across 5 test files (#2532); check-pr-bookkeeping.js multi-spec Step-0-gate fix (#2571); skill-prose-conformance-tests Anti-Patterns addition (#2605); record-worktree bookkeeping-stamp-deny recovery investigation (#2585); doc staleness fix for the record-1892 ledger (#2587)
 
