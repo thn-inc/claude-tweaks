@@ -96,3 +96,39 @@ test('--actor and --repo overrides skip the user probe and origin read', () => {
   assert.equal(facts.actor, 'hubot');
   assert.deepEqual(facts.repos, ['acme/a', 'acme/b']);
 });
+
+test('exit-code precedence: a bad period is rejected before any gh probe', () => {
+  const { d, out } = deps({ ghAvailable: () => false });
+  assert.equal(run(['--period', 'yesterday', '--out', 'f.json'], d), 1);
+  assert.match(out.stderr.join(''), /1d\|7d\|14d\|month\|quarter\|<from>\.\.<to>/);
+});
+
+test('exit 2: a non-github.com origin is rejected rather than silently mis-slugged', () => {
+  const { d, out } = deps({ remoteUrl: () => 'git@ghe.example.com:acme/widgets.git\n' });
+  assert.equal(run(['--period', '7d', '--out', 'f.json'], d), 2);
+  assert.match(out.stderr.join(''), /ghe\.example\.com/);
+});
+
+test('exit 1: --repo "" is a usage error, not a silent origin fallback', () => {
+  const { d, out } = deps({ remoteUrl: () => { throw new Error('must not read origin'); } });
+  assert.equal(run(['--period', '7d', '--out', 'f.json', '--repo', ''], d), 1);
+  assert.ok(out.stderr.join('').length > 0);
+});
+
+test('per-repo total failure: all 6 queries failing on one of two repos is still a partial (exit 0); failing on both is exit 3', () => {
+  const partial = deps({ runner: (args) => {
+    if (args[0] === 'api' && args[1] === 'user') return 'octocat\n';
+    if (args.some((a) => a.includes('acme/a'))) throw new Error('boom');
+    if (args[0] === 'api') return '[[]]';
+    return '[]';
+  } });
+  assert.equal(run(['--period', '7d', '--out', 'f.json', '--repo', 'acme/a,acme/b'], partial.d), 0);
+  const facts = JSON.parse(partial.out.written['f.json']);
+  assert.equal(facts.failures.length, 6);
+
+  const total = deps({ runner: (args) => {
+    if (args[0] === 'api' && args[1] === 'user') return 'octocat\n';
+    throw new Error('boom');
+  } });
+  assert.equal(run(['--period', '7d', '--out', 'f.json', '--repo', 'acme/a,acme/b'], total.d), 3);
+});
