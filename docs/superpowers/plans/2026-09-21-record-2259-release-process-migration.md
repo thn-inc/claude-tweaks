@@ -556,13 +556,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.MARKETPLACE_TOKEN }}
           TAG: ${{ github.event.release.tag_name }}
-          SHA: ${{ github.event.release.target_commitish }}
+          RESOLVED_SHA: ${{ github.sha }}
         run: |
           if [ -z "${GH_TOKEN}" ]; then
             echo "::error::MARKETPLACE_TOKEN secret is missing or empty — cannot write to thomasholknielsen/claude-tweaks-marketplace. See docs/releasing.md's Manual Steps." >&2
             exit 1
           fi
-          RESOLVED_SHA=$(git rev-parse "${SHA}")
           CURRENT=$(gh api repos/thomasholknielsen/claude-tweaks-marketplace/contents/.claude-plugin/marketplace.json)
           BLOB_SHA=$(echo "$CURRENT" | jq -r '.sha')
           CONTENT=$(echo "$CURRENT" | jq -r '.content' | base64 -d)
@@ -578,6 +577,8 @@ jobs:
             -f "sha=${BLOB_SHA}" \
             -f "branch=main"
 ```
+
+**Fix applied before first review completed:** the original draft resolved the release commit via `git rev-parse "${SHA}"` against `github.event.release.target_commitish` — but this job has no `actions/checkout` step, so no `.git` directory exists on the runner and that command would fail 100% of the time. Fixed by using the `github.sha` context directly (GitHub's own resolved commit SHA for the event that triggered this workflow) — this needs no checkout and no local git resolution at all, and is more precise than `target_commitish` (which for a release event is typically a branch name, not the exact release commit).
 
 - [ ] **Step 2: Lint the workflow YAML**
 
@@ -606,6 +607,7 @@ git commit -m "Add mirror-marketplace workflow, triggered on release: published 
 - Delete: `plugin/bin/release.js`
 - Delete: `plugin/bin/lib/release/compose.js`, `plugin/bin/lib/release/mirror.js`, `plugin/bin/lib/release/status.js`, `plugin/bin/lib/release/unnamed-records.js`
 - Delete: `plugin/bin/lib/shipped-record.js`
+- Delete: `plugin/bin/lib/changelog-git.js` (added during Task 5 execution — a 4th real consumer of `shipped-record.js`, not caught by this plan's original two-more-found-during-planning note; its own only caller repo-wide was `tests/changelog-coverage.test.js`, itself deleted below, so once that test is gone this file has zero callers left anywhere — confirmed via `grep -rn "changelog-git" plugin/ tests/ docs/ scripts/` (no hits) and the repo-wide sweep `grep -rn "changelog-git" . --include="*.js" --include="*.md"` (one hit: a historical prose mention in `CHANGELOG.md`, never edited per this repo's convention). It has no dedicated test file (`find tests -iname "*changelog-git*"` → no results).)
 - Delete: `docs/shipped-versions.tsv`
 - Delete: `tests/bin-lib/release/compose.test.js`, `mirror.test.js`, `status.test.js`, `status-cli.test.js`, `unnamed-records.test.js`, `install-message.test.js`
 - Delete: `tests/changelog-coverage.test.js`, `tests/shipped-record.test.js`
@@ -710,6 +712,7 @@ Expected: PASS, with the removed check's tests gone and every other test in the 
 git rm plugin/bin/release.js
 git rm plugin/bin/lib/release/compose.js plugin/bin/lib/release/mirror.js plugin/bin/lib/release/status.js plugin/bin/lib/release/unnamed-records.js
 git rm plugin/bin/lib/shipped-record.js
+git rm plugin/bin/lib/changelog-git.js
 git rm docs/shipped-versions.tsv
 git rm tests/bin-lib/release/compose.test.js tests/bin-lib/release/mirror.test.js tests/bin-lib/release/status.test.js tests/bin-lib/release/status-cli.test.js tests/bin-lib/release/unnamed-records.test.js tests/bin-lib/release/install-message.test.js
 git rm tests/changelog-coverage.test.js tests/shipped-record.test.js
@@ -722,7 +725,7 @@ Expected: green, with the retired suites gone and no new failures. (Pre-existing
 
 - [ ] **Step 8: Sweep for lingering references (AC6)**
 
-Run: `grep -rn "plugin/bin/release\.js\|release/compose\.js\|release/mirror\.js\|release/status\.js\|release/unnamed-records\.js\|lib/shipped-record" plugin/ docs/ tests/`
+Run: `grep -rn "plugin/bin/release\.js\|release/compose\.js\|release/mirror\.js\|release/status\.js\|release/unnamed-records\.js\|lib/shipped-record\|lib/changelog-git" plugin/ docs/ tests/`
 Expected: zero matches outside `docs/decisions/0018-release-please-engine.md` (written in Task 6, describing the retirement historically) and `docs/incident-log.md` (pre-existing citations of past incidents, never edited by this migration). If Task 6 has not yet run, expect zero matches at all — Task 6's own ADR is the only place these names are allowed to survive as prose, and running this sweep now (before Task 6 writes it) makes that boundary visible.
 
 - [ ] **Step 9: Commit**

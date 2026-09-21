@@ -1,6 +1,5 @@
 'use strict';
-const { compareVersions } = require('../changelog.js');
-const { nextVersion } = require('./compose.js');
+const { compareVersions, nextVersion } = require('../changelog.js');
 const { manifestVersionAtRef, NOT_FOUND_ERROR_RE } = require('../manifest-path.js');
 
 const VERSION_IN_TEXT = /\bv?(\d+\.\d+\.\d+)\b/g;

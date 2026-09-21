@@ -8,6 +8,7 @@ const {
   extractChangelogRange,
   findHeadingDefects,
   findCoverageGaps,
+  nextVersion,
 } = require('../plugin/bin/lib/changelog.js');
 
 const SAMPLE_CHANGELOG = `# Changelog
@@ -47,6 +48,17 @@ test('compareVersions compares numerically, not lexicographically', () => {
 
 test('compareVersions throws a clear error on a non-semver input', () => {
   assert.throws(() => compareVersions('abc', '1.0.0'), /Invalid semver version/);
+});
+
+test('nextVersion bumps minor and patch', () => {
+  assert.strictEqual(nextVersion('6.70.1', 'minor'), '6.71.0');
+  assert.strictEqual(nextVersion('6.70.1', 'patch'), '6.70.2');
+  assert.throws(() => nextVersion('not-semver', 'patch'), /Invalid semver/);
+});
+
+test('nextVersion: major resets minor and patch', () => {
+  assert.strictEqual(nextVersion('6.70.1', 'major'), '7.0.0');
+  assert.throws(() => nextVersion('6.70.1', 'huge'), /part must be/);
 });
 
 test('parseChangelogVersions extracts every entry in file order with trimmed bodies', () => {

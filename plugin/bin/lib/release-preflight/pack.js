@@ -12,9 +12,8 @@ const { execFile: execFileCb, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const { conventionalHistory } = require('../release-local/commits.js');
 const { bumpPart } = require('../release-local/bump.js');
-const { nextVersion } = require('../release/compose.js');
 const { readConfig, readBumpFlags, resolveTargets, versionAtRef, MANIFEST_FILE } = require('../release-local/manifest.js');
-const { compareVersions } = require('../changelog.js');
+const { compareVersions, nextVersion } = require('../changelog.js');
 const { resolvePolicyConfig } = require('../policy-schema.js');
 const { wrapProbe, withTimeout } = require('../wrap-up/pack.js');
 
