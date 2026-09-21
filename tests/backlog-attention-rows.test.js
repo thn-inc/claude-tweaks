@@ -87,6 +87,27 @@ test('attention-mode.md: render collapses to the three launchers (specify/challe
   );
 });
 
+// --- #2328: bot:parked joins bot:blocked as a needs-attention type ---
+
+test('attention-mode.md: bot:parked gets its own fetch, merge, and rendered row alongside bot:blocked', () => {
+  const source = read(SKILL_DIR, 'attention-mode.md');
+
+  assert.ok(
+    source.includes("const botParkedRecords = records.filter((r) => r.labels.some((l) => l.name === 'bot:parked'));"),
+    'expected botParkedRecords to be filtered from the session-scoped snapshot alongside botBlockedRecords',
+  );
+  assert.ok(
+    source.includes('const { needsRecords, botBlockedRecords, botParkedRecords } = require'),
+    'expected the merge script to destructure botParkedRecords from the filtered snapshot',
+  );
+  assert.ok(
+    source.includes(
+      '| #{n} | bot:parked | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} to review the parked PR — grants are intact; resume once its checks are green |',
+    ),
+    'expected the bot:parked row with its own (non-re-authorize) refine launcher',
+  );
+});
+
 test('attention-mode.md: breaker banner (fail-open + launcher) and tidy row (anchored glob + launcher)', () => {
   const source = read(SKILL_DIR, 'attention-mode.md');
 
@@ -114,11 +135,12 @@ test('attention-mode.md: breaker banner (fail-open + launcher) and tidy row (anc
 test('attention-mode.md: AC5 empty-state widening and the dedupe Anti-Patterns row', () => {
   const source = read(SKILL_DIR, 'attention-mode.md');
 
+  // record #2328 widened this string once more to also name bot:parked.
   assert.ok(
     source.includes(
-      'Nothing needs attention — no open record carries a\nneeds:* marker, solution:unjustified, an ungranted shaped:headless spec, or bot:blocked.',
+      'Nothing needs attention — no open record carries a\nneeds:* marker, solution:unjustified, an ungranted shaped:headless spec, bot:blocked, or\nbot:parked.',
     ),
-    'expected the widened empty-state string naming needs:*/solution:unjustified/shaped:headless/bot:blocked',
+    'expected the widened empty-state string naming needs:*/solution:unjustified/shaped:headless/bot:blocked/bot:parked',
   );
 
   assert.ok(
@@ -160,13 +182,14 @@ test('attention-mode.md: Batch launchers heading exists between the table and Pi
   assert.ok(headingIdx > 0 && pickUpNextIdx > headingIdx, 'Batch launchers must sit between the table and Pick up next');
 });
 
-test('attention-mode.md: needs:decision/bot:blocked/needs:* catch-all batch into one backlog refine line', () => {
+test('attention-mode.md: needs:decision/bot:blocked/bot:parked/needs:* catch-all batch into one backlog refine line', () => {
   const source = read(SKILL_DIR, 'attention-mode.md');
   assert.ok(
     source.includes('/claude-tweaks:backlog refine #{a},#{b},…'),
     'expected the batchable-target closing line naming a comma list',
   );
-  assert.match(source, /`needs:decision`, `bot:blocked`,\s*\n?\s*and any other `needs:\*` catch-all/);
+  // record #2328 inserted `bot:parked` into this list, alongside bot:blocked.
+  assert.match(source, /`needs:decision`, `bot:blocked`,\s*\n?\s*`bot:parked`, and any other `needs:\*` catch-all/);
 });
 
 test('attention-mode.md: shaped:headless (no grant) rows key on the ref-less bare refine line, a distinct group from the batchable one', () => {

@@ -129,7 +129,7 @@ or standalone:
 ## Artifact Lifecycle
 
 ```
-Backlog record → Design Doc → Ready record(s) → Code → Stories → TEST_PASSED → Review → Polish (frontend) → Done
+Backlog record → Design Doc → Ready record(s) → Code → Stories → TEST_PASSED → Review → Polish (frontend) → Done → Tag + Release
 ```
 
 | Skill | Creates | Deletes |
@@ -144,6 +144,7 @@ Backlog record → Design Doc → Ready record(s) → Code → Stories → TEST_
 | `/claude-tweaks:test` | TEST_PASSED flag | — |
 | `/claude-tweaks:review` | Review summary | — |
 | `/claude-tweaks:wrap-up` | Learnings (CLAUDE.md), Verification Brief | Spec, plans, ledger |
+| `/claude-tweaks:release` | Tag + Release (or a staged `release-held.md` on a HARD-GATE) | — |
 | `/claude-tweaks:demo` | Follow-up record (on changes-requested) | — |
 
 Consumed artifacts are deleted — specs and code are the durable outputs.

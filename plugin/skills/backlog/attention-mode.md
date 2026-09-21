@@ -2,7 +2,7 @@
 
 Read-only, like `overview` mode — no writes, no grants. Unifies discovery of every open record
 carrying any `needs:*` label, `solution:unjustified`, `ready` + `shaped:headless` with no
-`auto:build` grant, or `bot:blocked` into one ranked list with a per-row, type-differentiated
+`auto:build` grant, `bot:blocked`, or `bot:parked` into one ranked list with a per-row, type-differentiated
 recommended action, plus two non-record rows — a merge-lane circuit-breaker banner and a
 tidy-residue row, rendered above the ranked table independently of it. This is the "what does the
 backlog need from me today"
@@ -11,16 +11,17 @@ not) and Acceptance Queue (awaiting sign-off), which cover different concerns.
 
 ## Step 1: Fetch
 
-The `needs:*` family and `bot:blocked` are read from the session-scoped record snapshot
-(`_shared/record-queue-fetch.md`'s Session-scoped record snapshot section) rather than a
+The `needs:*` family, `bot:blocked`, and `bot:parked` are read from the session-scoped record
+snapshot (`_shared/record-queue-fetch.md`'s Session-scoped record snapshot section) rather than a
 dedicated `gh issue list --label` call: resolve `snapshotPath($CLAUDE_CODE_SESSION_ID)` and reuse
 it when fresh, falling through to one plain `gh issue list --state open --json {UNION_FIELDS}
 --limit 200` refresh when stale or absent, adapted from that contract's plain-fetch fallback. The resulting
-open-record set is then filtered to two sets: records whose labels include any name starting with
-`needs:`, and records whose labels include `bot:blocked` — a record can land in both.
+open-record set is then filtered to three sets: records whose labels include any name starting
+with `needs:`, records whose labels include `bot:blocked`, and records whose labels include
+`bot:parked` — a record can land in more than one.
 
-Two `gh issue list` calls remain direct label-based fetches (`needs:*` and `bot:blocked` now come
-from the session-scoped snapshot above, not from a `--label` call). `--label` ANDs multiple values
+Two `gh issue list` calls remain direct label-based fetches (`needs:*`, `bot:blocked`, and
+`bot:parked` now come from the session-scoped snapshot above, not from a `--label` call). `--label` ANDs multiple values
 passed to the same flag, which cuts both ways here, so the two shapes below are deliberate and
 must not be normalized into each other:
 
@@ -67,7 +68,8 @@ node -e "
   const records = require('$ST_BACKLOG_ATTENTION_SNAPSHOT_RAW').filter((r) => !r.state || r.state === 'OPEN');
   const needsRecords = records.filter((r) => r.labels.some((l) => l.name.startsWith('needs:')));
   const botBlockedRecords = records.filter((r) => r.labels.some((l) => l.name === 'bot:blocked'));
-  console.log(JSON.stringify({ needsRecords, botBlockedRecords }));
+  const botParkedRecords = records.filter((r) => r.labels.some((l) => l.name === 'bot:parked'));
+  console.log(JSON.stringify({ needsRecords, botBlockedRecords, botParkedRecords }));
 " > "$ST_BACKLOG_ATTENTION_SNAPSHOT_FILTERED"
 gh issue list --state open --label solution:unjustified --json number,title,createdAt,labels --limit 200 > "$ST_BACKLOG_ATTENTION_SOLUTION_UNJUSTIFIED"
 gh issue list --state open --label ready --label shaped:headless --json number,title,createdAt,labels --limit 200 > "$ST_BACKLOG_ATTENTION_SHAPED_HEADLESS"
@@ -96,10 +98,11 @@ number appears in more than one, render **one row** for it: `Type` joins the mat
 `Recommended action` concatenates each matched type's remedy in that same order,
 semicolon-separated. A record can in principle carry every classification at once — e.g.
 `needs:definition` + `needs:decision` + `solution:unjustified` + `shaped:headless (no grant)` +
-`bot:blocked` — the same one-row-per-number, concatenated-action convention applies regardless of
-how many match; `types` is always rendered in fetch order (the matched `needs:*` label name(s)
-first, in the order they appear on the record's own `labels` array, then `solution:unjustified`,
-then `shaped:headless (no grant)`, then `bot:blocked`) for a deterministic Type column.
+`bot:blocked` + `bot:parked` — the same one-row-per-number, concatenated-action convention applies
+regardless of how many match; `types` is always rendered in fetch order (the matched `needs:*`
+label name(s) first, in the order they appear on the record's own `labels` array, then
+`solution:unjustified`, then `shaped:headless (no grant)`, then `bot:blocked`, then `bot:parked`)
+for a deterministic Type column.
 
 A record whose types include `needs:decision` also needs the live proposal text for Step 4: read
 its newest comment matching `<!-- needs-decision:` with no `**Resolved:**` line anywhere in its
@@ -128,7 +131,7 @@ eval "$(node -e "
 ")"
 node -e "
   const { execFileSync } = require('child_process');
-  const { needsRecords, botBlockedRecords } = require('$ST_BACKLOG_ATTENTION_SNAPSHOT_FILTERED');
+  const { needsRecords, botBlockedRecords, botParkedRecords } = require('$ST_BACKLOG_ATTENTION_SNAPSHOT_FILTERED');
   const solutionUnjustified = require('$ST_BACKLOG_ATTENTION_SOLUTION_UNJUSTIFIED');
   const shapedHeadless = require('$ST_BACKLOG_ATTENTION_SHAPED_HEADLESS')
     .filter((r) => !r.labels.some((l) => l.name === 'auto:build'));
@@ -151,6 +154,11 @@ node -e "
     const existing = byNumber.get(r.number);
     if (existing) existing.types.push('bot:blocked');
     else byNumber.set(r.number, { ...r, types: ['bot:blocked'] });
+  }
+  for (const r of botParkedRecords) {
+    const existing = byNumber.get(r.number);
+    if (existing) existing.types.push('bot:parked');
+    else byNumber.set(r.number, { ...r, types: ['bot:parked'] });
   }
   function getComments(r) {
     if (Array.isArray(r.comments)) return r.comments;
@@ -282,6 +290,7 @@ omitted when its own condition doesn't hold; the ranked table follows:
 | #{n} | solution:unjustified | {createdAt, relative} | run /claude-tweaks:challenge #{n} for the evidence-or-accept-risk verdict on the flag |
 | #{n} | shaped:headless (no grant) | {createdAt, relative} | run /claude-tweaks:backlog refine to grant via the sweep's Grant lane (spec was headlessly shaped — no human has reviewed it) |
 | #{n} | bot:blocked | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} to re-authorize after the failure |
+| #{n} | bot:parked | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} to review the parked PR — grants are intact; resume once its checks are green |
 | #{n} | needs:definition + solution:unjustified | {createdAt, relative} | run /claude-tweaks:specify #{n} to route through brainstorming; run /claude-tweaks:challenge #{n} for the evidence-or-accept-risk verdict on the flag |
 
 ### Batch launchers
@@ -315,7 +324,10 @@ Since #1887, `refine #{n}` *would* also grant it — `#N` now filters `refine-mo
 sweep, Grant lane included, so a `#{n}`-filtered run reaches the same Grant-lane check restricted
 to that one record — this row still recommends the bare form because it covers every ungranted
 `shaped:headless` record in one batch-confirm rather than one command per record; `bot:blocked` says `run
-/claude-tweaks:backlog refine #{n} to re-authorize after the failure`. This `refine #{n}` catch-all is the **permanent default** for any future `needs:*`
+/claude-tweaks:backlog refine #{n} to re-authorize after the failure`; `bot:parked` says `run
+/claude-tweaks:backlog refine #{n} to review the parked PR — grants are intact; resume once its
+checks are green` — unlike `bot:blocked`, a merge-verification park never revokes `auto:*` grants
+(`_shared/work-record.md`), so this row is a status check, not a re-authorization. This `refine #{n}` catch-all is the **permanent default** for any future `needs:*`
 marker — a new marker earns a dedicated launcher only by a later record's own explicit decision,
 never by default. The trailing "Pick up next" line names the single oldest/highest-priority
 record across all types — the same shape `overview` mode's own "what to build next" recommendation
@@ -345,7 +357,7 @@ facts specific to attention's row types, on top of that shared rule:
   `/claude-tweaks:specify #{n}` line per record, never a comma-joined batch line.
   `solution:unjustified` rows key on `/claude-tweaks:challenge #{n}`, single-ref only by its
   `argument-hint` — same paste-block treatment. Every other type (`needs:decision`, `bot:blocked`,
-  and any other `needs:*` catch-all) keys on the targeted `/claude-tweaks:backlog refine` form,
+  `bot:parked`, and any other `needs:*` catch-all) keys on the targeted `/claude-tweaks:backlog refine` form,
   whose `argument-hint` accepts a comma list — that group closes with one batch line,
   `/claude-tweaks:backlog refine #{a},#{b},…`, naming every matched record.
 
@@ -355,8 +367,8 @@ paste block and the `challenge` paste block, never elided into one. Omit the who
 ranked table is empty (see below); a group with zero rows this render never appears.
 
 When the merged list is empty, render `Nothing needs attention — no open record carries a
-needs:* marker, solution:unjustified, an ungranted shaped:headless spec, or bot:blocked.` instead
-of an empty table, and omit both the Batch launchers block and the "Pick up next" line. The
+needs:* marker, solution:unjustified, an ungranted shaped:headless spec, bot:blocked, or
+bot:parked.` instead of an empty table, and omit both the Batch launchers block and the "Pick up next" line. The
 breaker banner and tidy row still render independently above this message when their own
 conditions hold — an empty table is not an empty mode output.
 

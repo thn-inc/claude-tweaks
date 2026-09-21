@@ -62,7 +62,7 @@ test('classifyStagedItem maps every known prefix to its console section and unkn
     'review-unconfirmed-3.md': 'Low-confidence findings', 'review-contested-4.md': 'Contested findings', 'review-debate-1.md': 'Contested findings',
     'polish-suggestion-1.md': 'Pending review', 'visual-review-skipped.md': 'Pending review', 'design-decision-2.md': 'Pending review', 'build-deviation-1.md': 'Pending review',
     'wrap-up-skill-1.md': 'Skill updates', 'wrap-up-skill-new-auth.md': 'Skill updates', 'wrap-up-skill-restructure.md': 'Skill updates',
-    'wrap-up-doc-1.md': 'Documentation updates', 'release-backfill-v6.md': 'Documentation updates', 'tidy-doc-1.md': 'Documentation updates',
+    'wrap-up-doc-1.md': 'Documentation updates', 'tidy-doc-1.md': 'Documentation updates',
     'wrap-up-journey-1.md': 'Journey updates', 'journeys-convention.md': 'Journey updates',
     'tidy-claude-md-rule-1.md': 'Queue writes',
     'reflect-1.md': 'Queue writes', 'digest-promotion-1.md': 'Queue writes', 'leftover-add-oauth.md': 'Queue writes', 'ledger-record-1.md': 'Queue writes',
@@ -75,6 +75,10 @@ test('classifyStagedItem maps every known prefix to its console section and unkn
     assert.strictEqual(classifyStagedItem(name).reason, undefined, `${name} is mapped`);
   }
   assert.deepStrictEqual(classifyStagedItem('mystery-9.md'), { section: 'Pending review', reason: 'unmapped-prefix' });
+  // release-backfill- retired #2257 (the staged-backfill mechanism is gone —
+  // nothing stages that prefix anymore) — a stray one now falls through to
+  // the generic unmapped-prefix path, same as any other unrecognized prefix.
+  assert.deepStrictEqual(classifyStagedItem('release-backfill-v6.md'), { section: 'Pending review', reason: 'unmapped-prefix' });
   assert.deepStrictEqual(classifyStagedItem('wrap-up-memory-1.md.shadow-dup'), { section: 'Pending review', reason: 'shadow-dup-collision' }, 'a sweep-shadow copy is never its original\'s section');
   assert.deepStrictEqual(classifyStagedItem('review-2.patch.shadow-dup-2'), { section: 'Pending review', reason: 'shadow-dup-collision' });
   assert.ok(Array.isArray(SECTION_MAP) && SECTION_MAP.length > 10);

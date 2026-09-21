@@ -277,10 +277,36 @@ test('funnelBuckets: every open record lands in exactly one bucket and sizes sum
 
 test('funnelBuckets: empty input yields empty buckets and overlay', () => {
   const b = funnelBuckets([]);
-  for (const key of ['captured', 'prioritized', 'specified', 'granted', 'dispatchable', 'inFlight', 'parked', 'notPlanned', 'parents']) {
+  for (const key of ['captured', 'prioritized', 'specified', 'granted', 'dispatchable', 'inFlight', 'botParked', 'parked', 'notPlanned', 'parents']) {
     assert.deepEqual(b[key], []);
   }
   assert.deepEqual(b.needsYou, []);
+});
+
+// --- bot:parked facet (record #2328) ---
+
+test('funnelBuckets: a bot:parked ready+granted record lands in botParked, never dispatchable', () => {
+  const b = funnelBuckets([
+    rec(1, { stage: 'ready', grants: { build: true, merge: false }, bot: { inProgress: false, blocked: false, parked: true } }),
+  ]);
+  assert.deepEqual(b.botParked.map((r) => r.number), [1]);
+  assert.deepEqual(b.dispatchable, []);
+  assert.deepEqual(b.granted, []);
+});
+
+test('funnelBuckets: bot:parked is distinct from the workflow-stage parked bucket', () => {
+  const b = funnelBuckets([
+    rec(1, { bot: { inProgress: false, blocked: false, parked: true } }),  // bot:parked
+    rec(2, { stage: 'parked' }),                                          // stage: parked
+  ]);
+  assert.deepEqual(b.botParked.map((r) => r.number), [1]);
+  assert.deepEqual(b.parked.map((r) => r.number), [2]);
+});
+
+test('funnelBuckets precedence: bot:in-progress wins over bot:parked when (hypothetically) both are true', () => {
+  const b = funnelBuckets([rec(1, { bot: { inProgress: true, blocked: false, parked: true } })]);
+  assert.deepEqual(b.inFlight.map((r) => r.number), [1]);
+  assert.deepEqual(b.botParked, []);
 });
 
 test('funnelBuckets: a parent record with risk/size labels lands in parents, not prioritized or captured', () => {

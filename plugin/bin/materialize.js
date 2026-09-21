@@ -41,7 +41,9 @@ const {
 const { shapeGate, liftMetadata, composeHeader, composeFile } = require('./lib/issues/materialize-format');
 const { findSiblingPremiseDisproof } = require('./lib/issues/sibling-premise');
 const wtDetect = require('./lib/hooks/worktree-detect');
-const { parseRepo, ghAvailable, repoSlug } = require('./lib/repo-resolve');
+const {
+  parseRepo, ghAvailable, repoSlug, repoResolutionNote,
+} = require('./lib/repo-resolve');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
 const { resolveTarget: resolveStageTarget, writeStagedItem } = require('./lib/stage-item/write');
 
@@ -338,6 +340,9 @@ function run(argv, deps = realDeps) {
     repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
     if (!repoSpec) { deps.stderr('materialize.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
     const { host, owner, repo } = repoSpec;
+    // #2538 Deliverable 3 — visible only for a resolved non-github.com host.
+    const repoNote = repoResolutionNote(repoSpec);
+    if (repoNote) deps.stderr(`materialize.js: ${repoNote}\n`);
 
     try {
       record = JSON.parse(deps.ghView(owner, repo, opts.n, host));

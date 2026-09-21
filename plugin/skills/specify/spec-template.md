@@ -108,6 +108,7 @@ When a deliverable documents a newly-discovered limitation or constraint of an e
 - {e.g., "The status enum values are exactly: draft, published, archived"}
 - {e.g., "This mutation needs a transaction — it modifies two tables atomically"}
 - {e.g., "Import shared types from the contracts package, don't redeclare inline"}
+- {`_shared/premise-verification.md` unsettled: `ASSUMPTION — verify at build: {claim} — via {what settles it}.`}
 
 ## Decision Rationale (optional)
 
@@ -160,6 +161,7 @@ Every spec section must contain content that `/superpowers:writing-plans` can ac
 - Types, models, endpoints, or files referenced anywhere in the spec that aren't defined in `Data / API Surface` or `Key Files`
 - Gotchas that say "be careful" without saying what to do (`"watch out for races"` ≠ `"use upsert, not delete+insert"`)
 - An AC asserting "styling/classes are unchanged" as literal string equality (`className === "flex p-4 text-sm"` ≠ class-*set* equivalence or a rendered/visual check) — a class-sorting formatter such as `prettier-plugin-tailwindcss` reorders class tokens on every commit, making literal-string equality structurally unenforceable
+- An existing-code fact with neither an inline evidence citation nor the `ASSUMPTION — verify at build:` marker (#1769)
 
 If you would need `/superpowers:writing-plans` to guess, the spec is incomplete — finish it before handing off. Vagueness here compounds into plan failures downstream.
 

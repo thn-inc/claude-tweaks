@@ -27,6 +27,16 @@
 // Exit codes: 0 conformant (no issues, nothing printed), 1 non-conformant
 // (issues printed to stdout, one per line), 2 malformed invocation (bad
 // args, unreadable path, bad --surface value, or no stdin available).
+//
+// Approve-section shape vs. bin/render-tidy-report.js (#2612): the Approve
+// block's three-line-per-item shape is now guaranteed by construction —
+// render-tidy-report.js renders it directly from staged/*.json sidecars, so
+// it cannot itself produce a non-conformant Approve section. None of the 13
+// rows below duplicate that guarantee (Titles/Width/One-record-per-row apply
+// report-wide, not to Approve specifically), so nothing here needed removing
+// or repointing when that renderer shipped — verified directly: a
+// renderer-produced Approve section embedded in a full report still passes
+// this linter unchanged (tests/bin-lib/render-tidy-report/cli.test.js).
 'use strict';
 
 const fs = require('node:fs');

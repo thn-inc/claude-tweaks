@@ -5,6 +5,9 @@ files:
   - plugin/skills/_shared/pr-early-run-lifecycle.md
   - plugin/bin/hooks.js
   - plugin/bin/log-decision.js
+  - plugin/bin/check-pr-bookkeeping.js
+  - plugin/bin/lib/pr-bookkeeping/precondition.js
+  - plugin/skills/test/SKILL.md
 ---
 
 # Recover from a Bookkeeping-Stamp Deny
@@ -51,7 +54,16 @@ files:
 - **Should understand:** the gate re-checks `run-state.json` fresh on every call, so the fix from Step 4 is picked up immediately, no restart needed.
 - **Red flags:** the retry still denying after the remediation genuinely ran from the owning session (a real gap, not documented behavior — worth its own report).
 
+## A second, independent entry point (#2472)
+
+Since #2472, the identical missing-stamp story can also surface at `/claude-tweaks:test`'s own entry (a new "Step 0: PR-Bookkeeping Precondition Check", `plugin/skills/test/SKILL.md`) rather than at an arbitrary covered tool call — a defense-in-depth companion to the gate above, for the case where this run's `ctx.runDir` never resolved during build (so the PreToolUse gate above never armed at all) but `/test` still runs with a known `$PIPELINE_RUN_DIR`. The recovery mechanics are the same commands as Step 4 above (`record-worktree`, or `log-decision.js`'s PR-early degrade line) — only the entry point and the failure shape differ:
+
+- **Entry point:** running `/claude-tweaks:test` (standalone, or via `/claude-tweaks:flow`) against a run whose materialize commit landed with a missing worktree stamp, or (under `integration-model: pr-first`) a missing PR stamp with no logged degrade — checked via `node "${CLAUDE_PLUGIN_ROOT}/bin/check-pr-bookkeeping.js" --run "$PIPELINE_RUN_DIR"`.
+- **Failure shape:** the CLI exits 4 and the pipeline renders a HARD-GATE failure card (not a tool-call permission denial) — the failure surfaces once, at the phase boundary, rather than on every subsequent covered call.
+- **One documented exception the tool-call gate does not share:** a `git-strategy: current-branch` run legitimately never records a worktree stamp at all (`record-worktree` is skipped entirely in that mode) — the CLI fails open on that shape (`isLinkedWorktree` false) rather than denying, so a `current-branch` run never hits this check on the worktree-stamp path; only the PR-stamp path (independent of git-strategy) can still deny it.
+
 ## Origin
 - Created during build of #991 — the mechanical backstop for IL-131's recurring gap (a build agent's own "already satisfied by prior work" judgment silently skipping the `record-worktree` and PR-early stamps despite existing bolded prose in `build/SKILL.md`).
 - Updated during build of #1678 — the gate's file-tool branch previously denied a covered Write/Edit/NotebookEdit whose own target was entirely outside this run's repo (e.g. a session scratchpad), since it scoped only on the calling session's cwd, never on the write's own target path. Narrowed to mirror the gate's existing Bash-branch "Foreign repos" scoping rule; Step 1's Red Flags updated accordingly.
 - Related records: #991, #118, #893, #778 (a related-but-distinct fix for a structural dispatch-created-worktree skip path, not the same trigger as this journey), #1678.
+- Updated during build of #2472 — added the second, independent phase-boundary entry point at `/claude-tweaks:test`'s Step 0 (a HARD-GATE CLI check, `plugin/bin/check-pr-bookkeeping.js`), for the case where this run's `ctx.runDir` never resolved during build and the PreToolUse gate above never armed at all. Also fixed a false-positive the new check initially had on `current-branch` git-strategy runs, where a missing worktree stamp is correct by design, not a gap.

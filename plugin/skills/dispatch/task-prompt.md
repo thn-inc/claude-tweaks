@@ -11,8 +11,9 @@ Input Discipline) — so every `${CLAUDE_PLUGIN_ROOT}`-style env-var reference e
 in a template resolves to nothing inside the dispatched agent's own shell, forcing it to
 rediscover the value from scratch (`--help` probes, `find` searches, trial-and-error against CLI
 argument enums — the exact rediscovery this section eliminates). The dispatching session already
-resolved these facts earlier in the same firing (Steps 1-4); it resolves them **once
-more here, as literals**, before composing either call:
+resolved six of these facts earlier in the same firing (Steps 1-4); it resolves them **once
+more here, as literals**, before composing either call — plus one standing instruction (item 7)
+that needs no resolution, only inclusion:
 
 1. **`{plugin-root}`** — this session's own already-resolved `$CLAUDE_PLUGIN_ROOT` value,
    substituted as a literal absolute path everywhere this file used to embed the env-var
@@ -35,6 +36,18 @@ more here, as literals**, before composing either call:
    every citation of them in the templates below carries its own fallback to the source file.
 
 6. **Worktree shell constraint** — the Claude Code harness enforces limits on Bash commands in a single call, independent of filesystem effect (see `_shared/scratch-worktree.md` §7 ("Shell constraint") for the full boundary description, if that bundle is absent, read `_shared/scratch-worktree.md` directly). Avoid these shapes: quoted JSON containing `git`; a `for`/`while` loop variable; a glob argument; a `gh api` call inside an `if RAW=$(...)`; `sed -i` on a variable path; `cat "$P/…"` or `sed -n 'a,bp' "$P/…"` where `$P` is a runtime-computed path variable. Use `Write`/`Edit`/`Read` tools instead of equivalent shell commands, separate commands instead of loops or compound constructs, and literal file paths instead of variables. One plain command per Bash call is the general pattern.
+
+7. **Async-wait discipline** — you are a subagent, not a top-level session: nothing wakes you
+   automatically when a backgrounded command or a nested dispatch of your own completes, the way
+   a top-level session's task-notification does. Never end your turn to "wait for" a
+   background-task or nested-agent notification — it will never arrive, and the run stalls until
+   the dispatching session notices and resumes you (observed repeatedly in live firings: a full
+   test suite backgrounded then waited-on, and a nested review-lens/SDD dispatch waited-on the
+   same way one level deeper). Run a long command (e.g. the full test suite) as a normal
+   foreground call with a large explicit timeout, or poll for it synchronously within one tool
+   call. If you yourself dispatch nested subagents (via `superpowers:subagent-driven-development`,
+   a review-lens fan-out, or any other Task/Agent call), give them this same instruction — the
+   identical trap recurs one level deeper otherwise.
 
 Substitute this whole block, filled in with this firing's actual resolved values, as
 `{context-pack}` immediately after each call's opening `Task scope:` paragraph below. This is
