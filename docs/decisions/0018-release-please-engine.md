@@ -95,10 +95,12 @@ entry is a claim about what was documented at the time it was written, and 103 o
 release-please's grammar would present them as contemporaneous machine-generated release
 notes, which is exactly what they are not. The two grammars are therefore both correct, each
 for its own era, and the file carries a comment marking the boundary between them rather
-than a uniformity that would have to lie about the older half: everything below the marker
-(`## v6.128.0` and every older entry) is pre-migration and keeps its own grammar; everything
-release-please generates lands above it, since release-please prepends each new entry rather
-than appending one.
+than a uniformity that would have to lie about the older half: `## v6.128.0` and every entry
+below it is pre-migration and keeps its own grammar. Release-please's updater splices each new
+entry in immediately before the first version heading it finds (`src/updaters/changelog.ts`),
+so every entry it generates lands directly below the comment and above `## v6.128.0` — the
+comment's own position never moves, but the gap between it and `## v6.128.0` grows by one entry
+per release, and `## v6.128.0` itself is what stays the permanent, unambiguous boundary.
 
 ## Alternatives considered
 

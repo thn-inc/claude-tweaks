@@ -38,7 +38,7 @@ SKILL.md structure, Interaction patterns (incl. the canonical CSC template), Fro
 
 ### Releasing (two repos)
 
-Invocation: `/claude-tweaks:release` (no arguments) — this repo dogfoods the same shipped path every consumer project uses (#2259), driving release-please under `pr-first`. The whole-branch review gates the bump — run it before the version bump, not as a later task in the same plan. Full procedure and judgment calls: `docs/releasing.md`.
+Invocation: `/claude-tweaks:release` (no arguments) — this repo dogfoods the same shipped path every consumer project uses (#2259), driving release-please under `pr-first`. The whole-branch review gates the bump — run it before the version bump, not as a later task in the same plan. Full procedure: `docs/releasing.md`.
 
 ### Cross-references
 

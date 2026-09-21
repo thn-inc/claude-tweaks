@@ -6,12 +6,15 @@ marketplace `source` is an unpinned git URL, so an install tracks that tip, and
 every distinct value it reported is a build someone could be running.
 
 Which versions those are is now **recorded as annotated git tags**, not a tracked
-file. Below the boundary comment, every entry has a matching `v{version}` tag
-created by the one-time retro-tag backfill that ran against this repo's
-pre-migration history (`docs/decisions/0018-release-please-engine.md`) — those
-entries keep their pre-migration `## vX.Y.Z — {summary}` heading form unchanged.
-Above the boundary comment, entries are release-please-generated as this repo
-ships new versions through it, each with its own release-please-created tag. A
+file. `## v6.128.0` and every entry below it predate the migration to
+release-please and keep their pre-migration `## vX.Y.Z — {summary}` heading form
+unchanged. Nearly every one of them has a matching `v{version}` tag from the
+one-time retro-tag backfill that ran against this repo's pre-migration history
+(`docs/decisions/0018-release-please-engine.md`) — the 15 exceptions are entries
+that never actually shipped: 13 documented-but-never-committed version
+reservations and 2 builds their own heading says never reached `main`'s tip, all
+excluded rather than tagged. Entries release-please generates are inserted above
+`## v6.128.0`, each with its own release-please-created tag. A
 `git rev-list --first-parent` reconstruction of this history was tried before the
 tag-based approach and found unstable, not merely lossy — a branch that merges
 `main` into itself and is then pushed as `main` moves everything `main` carried
@@ -44,7 +47,7 @@ Three conventions follow from how this repo works, and all are visible below:
   contained, not contemporaneous release notes, and they are thinner than the
   entries written since.
 
-<!-- release-please boundary: entries below this line predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; entries above are release-please-generated. -->
+<!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
 ## v6.128.0 — Sibling-PR premise-disproof dedup check for dispatch/materialize (#2590); browser automation migrated from agent-browser to Playwright CLI across qa-agent, stories, visual-review, demo/test, and install/detect plumbing (#2645-#2649); shallow-clone git-show guard fix across 5 test files (#2532); check-pr-bookkeeping.js multi-spec Step-0-gate fix (#2571); skill-prose-conformance-tests Anti-Patterns addition (#2605); record-worktree bookkeeping-stamp-deny recovery investigation (#2585); doc staleness fix for the record-1892 ledger (#2587)
 
