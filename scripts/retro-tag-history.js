@@ -78,7 +78,9 @@ function main(argv) {
     if (!dryRun) {
       execFileSync('git', ['tag', '-a', tagName, t.sha, '-m', `${tagName} — ${summary}`], {
         cwd: repoRoot,
-        env: { ...process.env, GIT_COMMITTER_DATE: date },
+        // GIT_COMMITTER_DATE rejects a bare YYYY-MM-DD (the tsv's own format) — it needs a
+        // time component. Noon is arbitrary but harmless: the tsv never recorded a time.
+        env: { ...process.env, GIT_COMMITTER_DATE: `${date} 12:00:00` },
       });
     }
   }
