@@ -1399,7 +1399,7 @@ Expected: FAIL — `Cannot find module '../../../plugin/bin/walkthrough-encode'`
 
 const fs = require('fs');
 const path = require('path');
-const { encodeWalkthrough, FrameMismatchError, BudgetExceededError } = require('./lib/walkthrough/encode');
+const { planFrames, encodeWalkthrough, FrameMismatchError, BudgetExceededError } = require('./lib/walkthrough/encode');
 const { writeFileAtomic } = require('./lib/atomic-write');
 
 const USAGE = 'usage: walkthrough-encode.js --frames <dir-or-comma-list> --out <gif path> [--delay-ms <n>] [--last-hold-ms <n>] [--width <px>] [--budget-mb <n=8>] [--help]\n';
@@ -1429,14 +1429,10 @@ const realDeps = {
   stderr: (s) => process.stderr.write(s),
 };
 
-// planFrames lives in encode.js; the CLI derives per-frame delays itself (delay-ms/last-hold-ms
-// are CLI-level concerns, framePaths come from --frames) rather than importing planFrames, since
-// the CLI never receives a step count — only a path list whose length stands in for it.
-function delaysFor(count, delayMs, lastHoldMs) {
-  const out = [];
-  for (let i = 0; i < count; i++) out.push(Math.round((i === count - 1 ? lastHoldMs : delayMs) / 10));
-  return out;
-}
+// Per-frame delays reuse encode.js's own planFrames rather than re-deriving the same rule here:
+// the CLI never receives a step count directly, but the resolved frame-path list's length IS
+// that count (one screenshot per step, per the skill's Step 3), so planFrames(framePaths.length)
+// is the correct call, not a coincidence.
 
 function run(argv, deps = realDeps) {
   const o = parseArgs(argv);
@@ -1466,7 +1462,7 @@ function run(argv, deps = realDeps) {
     return 2;
   }
 
-  const delays = delaysFor(framePaths.length, o.delayMs, o.lastHoldMs);
+  const delays = planFrames(framePaths.length, { delayMs: o.delayMs, lastHoldMs: o.lastHoldMs }).map((f) => f.delayCs);
   const budgetBytes = Math.round(o.budgetMb * 1024 * 1024);
 
   let result;
