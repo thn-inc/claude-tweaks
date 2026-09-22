@@ -113,14 +113,14 @@ test('bare-invocation.md Gather 2 paragraph points to the Skip check before desc
 test('SKILL.md frontmatter argument-hint includes --full', () => {
   assert.match(
     SKILL,
-    /^argument-hint: "\[<learning text>\] \[--kind=defect\|gap\] \[--dry-run\] \[--queue\] \[--full\] \[--pre-confirmed\]"$/m,
+    /^argument-hint: "\[<learning text>\] \[--kind=defect\|gap\] \[--upstream <owner\/name>\] \[--dry-run\] \[--queue\] \[--full\] \[--pre-confirmed\]"$/m,
   );
 });
 
 test('SKILL.md "$ARGUMENTS is parsed as" intro line includes --full', () => {
   assert.match(
     SKILL,
-    /`\$ARGUMENTS` is parsed as `\[<learning text>\] \[--kind=<value>\] \[--dry-run\] \[--queue\] \[--full\] \[--pre-confirmed\]`:/,
+    /`\$ARGUMENTS` is parsed as `\[<learning text>\] \[--kind=<value>\] \[--upstream <owner\/name>\] \[--dry-run\] \[--queue\] \[--full\] \[--pre-confirmed\]`:/,
   );
 });
 
