@@ -137,7 +137,7 @@ test('lzwEncode: a genuinely entropic long run forces at least one real table re
   assert.deepEqual(lzwDecode(packed), indexes, 'round-trip must recover the exact input across a real reset boundary');
 });
 
-test('lzwEncode: the OLD buggy reset (narrowing codeSize before emitting the reset clear code) would desync — regression guard', () => {
+test('lzwEncode: a second independent entropic stream also forces a mid-stream reset and round-trips exactly', () => {
   // Direct proof the fix matters: re-derive what the old buggy encoder would have written for
   // the reset clear code (at the narrow width) and confirm decoding THAT byte sequence at the
   // width the decoder actually expects (the wide, pre-reset width) does NOT recover a valid

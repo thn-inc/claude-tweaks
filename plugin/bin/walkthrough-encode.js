@@ -45,7 +45,7 @@ function parseArgs(argv) {
     else if (a === '--out') { o.out = next(); if (o.out === null) return { error: '--out requires a value' }; }
     else if (a === '--delay-ms') { const v = next(); if (v === null) return { error: '--delay-ms requires a value' }; const n = Number(v); if (!Number.isFinite(n) || n <= 0) return { error: `--delay-ms must be a positive number, got "${v}"` }; o.delayMs = n; }
     else if (a === '--last-hold-ms') { const v = next(); if (v === null) return { error: '--last-hold-ms requires a value' }; const n = Number(v); if (!Number.isFinite(n) || n <= 0) return { error: `--last-hold-ms must be a positive number, got "${v}"` }; o.lastHoldMs = n; }
-    else if (a === '--width') { const v = next(); if (v === null) return { error: '--width requires a value' }; const n = Number(v); if (!Number.isFinite(n) || n <= 0) return { error: `--width must be a positive number, got "${v}"` }; o.width = n; }
+    else if (a === '--width') { const v = next(); if (v === null) return { error: '--width requires a value' }; const n = Number(v); if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return { error: `--width must be a positive integer, got "${v}"` }; o.width = n; }
     else if (a === '--budget-mb') { const v = next(); if (v === null) return { error: '--budget-mb requires a value' }; const n = Number(v); if (!Number.isFinite(n) || n <= 0) return { error: `--budget-mb must be a positive number, got "${v}"` }; o.budgetMb = n; }
     else if (a === '--steps-json') { o.stepsJson = next(); if (o.stepsJson === null) return { error: '--steps-json requires a value' }; }
     else if (a === '--captions') { o.captions = next(); if (o.captions === null) return { error: '--captions requires a value' }; }
@@ -124,6 +124,10 @@ function run(argv, deps = realDeps) {
       steps = JSON.parse(deps.readFile(o.stepsJson).toString());
     } catch (err) {
       deps.stderr(`walkthrough-encode.js: could not parse --steps-json ${o.stepsJson}: ${err && err.message}\n`);
+      return 1;
+    }
+    if (!Array.isArray(steps)) {
+      deps.stderr(`walkthrough-encode.js: --steps-json ${o.stepsJson} must contain a JSON array of step objects, got ${typeof steps}\n`);
       return 1;
     }
     const rendered = (o.captionTitle ? `# ${o.captionTitle}\n\n` : '') + captionList(steps);

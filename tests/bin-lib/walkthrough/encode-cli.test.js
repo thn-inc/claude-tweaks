@@ -97,6 +97,13 @@ test('exit 1: non-numeric --budget-mb, --width, or --delay-ms are rejected, neve
   }
 });
 
+test('exit 1: a non-integer --width is rejected — GIF pixel dimensions must be whole numbers', () => {
+  const png = fixturePng(8, 6);
+  const { d, out } = deps({ 'a.png': png });
+  assert.equal(run(['--frames', 'a.png', '--out', 'o.gif', '--width', '640.5'], d), 1);
+  assert.deepEqual(out.written, {}, 'must write nothing on a non-integer --width');
+});
+
 test('--steps-json and --captions together produce the caption file and include captions in the stdout JSON', () => {
   const png = fixturePng(8, 6);
   const steps = JSON.stringify([{ action: 'click', locator: { role: 'button', name: 'Go' } }]);
@@ -130,4 +137,18 @@ test('exit 1: malformed --steps-json content names the offending file, writes no
   assert.equal(run(['--frames', 'a.png', '--out', 'o.gif', '--steps-json', 'steps.json', '--captions', 'o.md'], d), 1);
   assert.match(out.stderr.join(''), /steps\.json/);
   assert.deepEqual(out.written, {});
+});
+
+test('exit 1: --steps-json containing a JSON object (not an array) is rejected, never an uncaught crash', () => {
+  const png = fixturePng(8, 6);
+  const { d, out } = deps({ 'a.png': png, 'steps.json': JSON.stringify({ not: 'an array' }) });
+  assert.equal(run(['--frames', 'a.png', '--out', 'o.gif', '--steps-json', 'steps.json', '--captions', 'c.md'], d), 1);
+  assert.deepEqual(out.written, {}, 'must write nothing on a malformed --steps-json shape');
+});
+
+test('exit 1: --steps-json containing JSON null is rejected, never an uncaught crash', () => {
+  const png = fixturePng(8, 6);
+  const { d, out } = deps({ 'a.png': png, 'steps.json': 'null' });
+  assert.equal(run(['--frames', 'a.png', '--out', 'o.gif', '--steps-json', 'steps.json', '--captions', 'c.md'], d), 1);
+  assert.deepEqual(out.written, {}, 'must write nothing on a malformed --steps-json shape');
 });
