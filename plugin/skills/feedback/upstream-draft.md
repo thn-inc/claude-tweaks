@@ -54,14 +54,21 @@ continues, with exactly three differences, stated once here:
 - **U2.** Step B's dedup search is skipped, with a one-line note saying why.
 - **U3.** Step D's header comment records `target: unresolved ({the raw value})`.
 
-**One question, only when a human is present.** Before Step D persists anything, ask exactly one
-`AskUserQuestion`: `question: "Which GitHub repository owns \`{the raw value}\`?"`,
-`header: "Upstream"`, `multiSelect: false`, options `I don't know — keep the placeholder
-(Recommended)` plus `Other`, where the human types an `owner/name` slug. A typed slug re-enters
-the normalization above, self-target check included. A headless invocation — a scheduled Routine
-or a `claude -p` run, resolved from session state, never a hard-coded literal — skips the question
-and keeps the placeholder. This is the path's only question: there is no confirm gate here,
-because there is nothing to confirm.
+**One question, only in `interactive` mode.** Before Step D persists anything, resolve mode per
+`_shared/auto-mode-contract.md`. **`interactive`** (the default for a standalone invocation with no
+pipeline mode signal): ask exactly one `AskUserQuestion`: `question: "Which GitHub repository owns
+\`{the raw value}\`?"`, `header: "Upstream"`, `multiSelect: false`, options `I don't know — keep
+the placeholder (Recommended)` plus `Other`, where the human types an `owner/name` slug. A typed
+slug re-enters the normalization above, self-target check included. This is the path's only
+question: there is no confirm gate here, because there is nothing to confirm.
+
+**`auto`/`confirm`/`hybrid`, and any headless invocation** (a scheduled Routine or a `claude -p`
+run, resolved from session state, never a hard-coded literal): this is not a HARD-GATE and carries
+no row in the contract's "does NOT silence" list, so its strict rule applies — skip the question
+and keep the placeholder instead of asking. When `$PIPELINE_RUN_DIR` is set, additionally log one
+`STAGED` entry per `auto-mode-contract.md`'s Skill integration pattern (stage path:
+`staged/upstream-draft-{N}.md`) so the unresolved target surfaces at the Review Console rather than
+vanishing silently.
 
 ## Step B: Dedup — retargeted, read-only, advisory
 
@@ -146,8 +153,10 @@ persisting: no file is written, and the hand-off leaves `<absolute path>` as a p
 node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir
 ```
 
-- **Exit 0 — a run directory resolved.** Write the scrubbed body to a scratch file, then stage it
-  as `staged/upstream-draft-{N}.md` through the sanctioned writer:
+- **Exit 0 — a run directory resolved.** Write the scrubbed body to a scratch file whose name ends
+  in `.md` — `stage-item.js` derives the persisted file's extension from the scratch file's own
+  extension, never from `--id` — then stage it as `staged/upstream-draft-{N}.md` through the
+  sanctioned writer:
 
   ```bash
   node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "<the resolved run dir>" --id upstream-draft-{N} --file <scratch path>

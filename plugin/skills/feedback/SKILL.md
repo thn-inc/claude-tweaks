@@ -37,8 +37,8 @@ publishes nothing — see `upstream-draft.md` in this skill's directory, and
 | Free-text learning | The substance of the report. When absent, gather it from the conversation or ask. |
 | `--kind=defect` | The plugin does something wrong. Skips Step 2's inference. |
 | `--kind=gap` | The plugin has no opinion where it should. Skips Step 2's inference. |
-| `--upstream <owner/name>` | Draft-only path for a learning owned by a third-party dependency: Steps 1, 2, 4 (retargeted), 5 (adapted), and 6 run; 3 collapses to the self-target guard; 7 is skipped because nothing is published; 8 never runs. Persists the scrubbed draft and hands the human a paste-ready command. Read `upstream-draft.md`. |
-| `--dry-run` | Run Steps 1-7 (classification, self-reference, dedup, drafting, scrub, and the confirm gate's dry-run branch), then render the draft and **stop** — Step 8 (label resolution and `gh issue create`) never runs. Step 4's dedup search is a real, read-only `gh issue list` call; no `gh` call ever creates, labels, or files anything. When `--pre-confirmed` is also passed, `--dry-run` wins — see Step 7. |
+| `--upstream <owner/name>` | Draft-only path for a learning owned by a third-party dependency: Steps 1, 2, 4 (retargeted), 5 (adapted), and 6 run; 3 collapses to the self-target guard; 7 is skipped because nothing is published; 8 never runs. Persists the scrubbed draft and hands the human a paste-ready command — or, with `--dry-run`, renders it without persisting (`upstream-draft.md` Step D). Read `upstream-draft.md`. |
+| `--dry-run` | Run Steps 1-7 (classification, self-reference, dedup, drafting, scrub, and the confirm gate's dry-run branch), then render the draft and **stop** — Step 8 (label resolution and `gh issue create`) never runs. With `--upstream` also passed, Steps 3-8 never run — `upstream-draft.md`'s Steps A-D run instead, where `--dry-run` means render without persisting (Step D). Step 4's dedup search is a real, read-only `gh issue list` call; no `gh` call ever creates, labels, or files anything. When `--pre-confirmed` is also passed, `--dry-run` wins — see Step 7. |
 | `--queue` | Explicit bare-invocation mode (see Step 0) even when free-text is also present — process this project's own `upstream-candidate` backlog instead of (or in addition to) the free-text learning. |
 | `--full` | Presence-only, meaningful only for bare/`--queue` invocation (Step 0's session-evaluation gather): ignore any existing watermark for the resolved transcript, dispatch the full un-scoped judge (no offset clause), then overwrite the watermark with the fresh result exactly as a first-ever evaluation would. This is also what bypasses `session-evaluation.md`'s Skip check (Step 0's Gather 2): that check reads the same watermark, so ignoring it always resolves to dispatch. A no-op combined with free-text-only invocation — free-text invocation without `--queue` runs no session evaluation at all (Step 0's rule). |
 | `--pre-confirmed` | Presence-only like `--dry-run`; the caller passes the item's staged-file path and the approved snapshot body alongside it. Skip Step 7's `AskUserQuestion` for this item when the caller-supplied approved snapshot is diffed against the current staged file with no mismatch (drift check); Step 6's scrub always reruns as a separate safety net regardless. On drift, falls back to a normal per-item confirm (see Step 7). Legitimate only from `/claude-tweaks:wrap-up`'s Review Console or `/claude-tweaks:flow`'s consolidated multi-spec console (see Component-Skill Contract). |
@@ -84,10 +84,16 @@ once; Step 6's scrub reruns unconditionally as the standing safety net regardles
 
 ### Step 2: Classify the kind
 
-Read `_shared/learning-routing.md` and confirm the learning is D5 at all.
+Read `_shared/learning-routing.md` and confirm the learning's destination.
 
-**If it is not D5, stop.** Report the destination the contract actually returned
-and hand the learning back to the caller. This skill files D5 learnings and
+**`--upstream` routing.** When `--upstream` is present, continue in `upstream-draft.md` in this
+skill's directory once the kind below is determined; its self-target guard returns here, at Step
+3, when the value names claude-tweaks itself. Steps 3-9 below never run for any other `--upstream`
+value. Per `_shared/learning-routing.md`'s "Non-claude-tweaks upstream" rule this is explicitly not
+D5 — expected, not a routing failure.
+
+**If it is not D5 and `--upstream` was not given, stop.** Report the destination the contract
+actually returned and hand the learning back to the caller. This skill files D5 learnings and
 nothing else — a misrouted learning filed here becomes an off-topic public issue.
 
 Otherwise:
@@ -100,10 +106,6 @@ tone. If `--kind=` was passed, use that and skip the inference.
 
 A defect and a gap differ in triage, urgency, and what a maintainer does with
 them. They must not arrive looking identical.
-
-**`--upstream` routing.** When `--upstream` is present, continue in `upstream-draft.md` in this
-skill's directory; its self-target guard returns here, at Step 3, when the value names
-claude-tweaks itself. Steps 3 through 9 below never run for any other `--upstream` value.
 
 ### Step 3: Self-reference check
 
