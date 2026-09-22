@@ -1,16 +1,17 @@
 'use strict';
 // tests/feedback-upstream-draft-conformance.test.js — #2759: /claude-tweaks:feedback's
-// draft-only `--upstream <owner/name>` path. Five live-corpus pins, read fresh from the
+// draft-only `--upstream <owner/name>` path. Six live-corpus pins, read fresh from the
 // working tree rather than frozen into fixtures: this is just-shipped skill prose that is
 // expected to keep evolving in place, and a fixture copy would pin the fixture, not the
 // shipped instruction the model actually follows.
 //
-// Discrimination proof (skill-prose-conformance-tests): all five were RUN red before any
-// implementation landed. (1) and (2) failed on content — learning-routing.md still ended
-// its third-party rule in "and stop", and the Anti-Patterns row was not yet scoped to
-// *filing*. (3), (4), and (5) failed because plugin/skills/feedback/upstream-draft.md did
-// not exist. Each test reads its own files lazily so a missing file fails exactly one test
-// instead of crashing the module at load.
+// Discrimination proof (skill-prose-conformance-tests): (1) through (5) were all RUN red
+// before any implementation landed. (1) and (2) failed on content — learning-routing.md
+// still ended its third-party rule in "and stop", and the Anti-Patterns row was not yet
+// scoped to *filing*. (3), (4), and (5) failed because plugin/skills/feedback/
+// upstream-draft.md did not exist. (6) landed later in the fix wave and carries its own
+// proof at its site below. Each test reads its own files lazily so a missing file fails
+// exactly one test instead of crashing the module at load.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -41,8 +42,8 @@ test('(1) the third-party rule routes to --upstream and no longer dead-ends in "
 
 test('(2) feedback/SKILL.md still forbids FILING against a non-claude-tweaks repo', () => {
   const skill = read(SKILL_PATH);
-  const table = skill.slice(skill.indexOf('## Anti-Patterns'));
-  const rows = table.split('\n').filter((l) => l.startsWith('|') && l.includes('other than `thomasholknielsen/claude-tweaks`'));
+  const antiPatterns = skill.slice(skill.indexOf('## Anti-Patterns'));
+  const rows = antiPatterns.split('\n').filter((l) => l.startsWith('|') && l.includes('other than `thomasholknielsen/claude-tweaks`'));
   assert.equal(rows.length, 1, 'exactly one Anti-Patterns row may forbid a non-claude-tweaks target — rewrite it, never add a second');
   assert.ok(rows[0].includes('**Filing**'), 'the row must scope the prohibition to *filing*, since drafting is now sanctioned');
   assert.ok(rows[0].includes('--upstream'), 'the row must name --upstream as the sanctioned alternative');
@@ -55,11 +56,12 @@ test('(3) upstream-draft.md never names the filing CLI', () => {
 
 test('(4) the persisted draft sits outside the consoles\' glob and the path never pre-confirms', () => {
   const draft = read(DRAFT_PATH);
-  const m = draft.match(/`staged\/([a-z0-9-]+-\{N\}\.md)`/);
-  assert.ok(m, 'upstream-draft.md must name its persisted staged/ filename as a backticked literal');
-  assert.equal(m[1], 'upstream-draft-{N}.md', `persisted filename is ${m[1]}`);
-  assert.equal(/wrap-up-upstream-.*\.md/.test(m[1]), false,
-    `${m[1]} must not match the staged/wrap-up-upstream-*.md aggregation glob the wrap-up and multi-spec consoles scan`);
+  const match = draft.match(/`staged\/([a-z0-9-]+-\{N\}\.md)`/);
+  assert.ok(match, 'upstream-draft.md must name its persisted staged/ filename as a backticked literal');
+  // Pinned to the exact literal: any drift is a drift into the staged/wrap-up-upstream-*.md
+  // aggregation glob the wrap-up and multi-spec consoles scan.
+  assert.equal(match[1], 'upstream-draft-{N}.md',
+    `persisted filename is ${match[1]}, which must stay outside the staged/wrap-up-upstream-*.md aggregation glob`);
   assert.equal(draft.includes('--pre-confirmed'), false, 'nothing is published on this path, so nothing is pre-confirmed');
 });
 
