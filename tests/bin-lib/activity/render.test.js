@@ -119,3 +119,10 @@ test('a fully failed gather is never treated as an empty period', () => {
   assert.ok(markdown.includes('- merged_prs on acme/widgets: HTTP 503'));
   assert.ok(markdown.includes('\n## Notes\n'));
 });
+
+test('a ref containing whitespace (e.g. a trailing newline) is rejected at validation, not left to leak into a warning string', () => {
+  const bad = validateNarratives({ schemaVersion: 1, register: 'retro', sections: [{ heading: 'S', items: [{ text: 't', refs: ['acme/widgets#10\n'] }] }] });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.errors[0].path, 'sections[0].items[0].refs[0]');
+  assert.match(bad.errors[0].message, /whitespace/);
+});

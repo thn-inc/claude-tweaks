@@ -6,7 +6,8 @@
 // Usage: activity-render.js --facts <path> --narratives <path> --out <report.md path> [--help]
 // Exit codes:
 //   0 rendered (warnings on stderr, one per line — exact forms in render.js)
-//   1 malformed invocation (missing --facts/--narratives/--out, unknown flag)
+//   1 malformed invocation (missing --facts/--narratives/--out, unknown flag, or an
+//     unwritable --out path)
 //   2 facts or narratives file unreadable, not JSON, or failing schema validation (a
 //     missing/unrecognized schemaVersion in either file, a refs entry that is not a string —
 //     every failing path is named on stderr)

@@ -22,7 +22,8 @@ const ARGS = ['--facts', 'f.json', '--narratives', 'n.json', '--out', 'r.md'];
 
 test('--help exits 0; missing flags and unknown flags exit 1', () => {
   assert.equal(run(['--help'], deps({}).d), 0);
-  for (const argv of [['--facts', 'f.json'], ['--facts', 'f.json', '--narratives', 'n.json'], [...ARGS, '--bogus']]) {
+  for (const argv of [['--facts', 'f.json'], ['--facts', 'f.json', '--narratives', 'n.json'], [...ARGS, '--bogus'],
+    ['--facts', '', '--narratives', 'n.json', '--out', 'r.md'], [...ARGS.slice(0, 4), '--out', '']]) {
     const { d } = deps({});
     assert.equal(run(argv, d), 1, argv.join(' '));
   }

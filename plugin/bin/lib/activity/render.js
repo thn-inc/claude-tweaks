@@ -53,7 +53,10 @@ function validateNarratives(n) {
     s.items.forEach((it, j) => {
       if (!it || typeof it.text !== 'string') errors.push({ path: `sections[${i}].items[${j}].text`, message: 'must be a string' });
       if (!it || !Array.isArray(it.refs)) { errors.push({ path: `sections[${i}].items[${j}].refs`, message: 'must be an array of strings' }); return; }
-      it.refs.forEach((r, k) => { if (typeof r !== 'string') errors.push({ path: `sections[${i}].items[${j}].refs[${k}]`, message: 'must be a string' }); });
+      it.refs.forEach((r, k) => {
+        if (typeof r !== 'string') errors.push({ path: `sections[${i}].items[${j}].refs[${k}]`, message: 'must be a string' });
+        else if (/\s/.test(r)) errors.push({ path: `sections[${i}].items[${j}].refs[${k}]`, message: 'must not contain whitespace' });
+      });
     });
   });
   return { ok: errors.length === 0, errors };
