@@ -123,7 +123,7 @@ function render(facts, narratives) {
   const lines = [title, ''];
   for (const section of narratives.sections) {
     if (section.items.length === 0) continue;
-    const heading = inline(section.heading).replace(/^#+\s*/, '');
+    const heading = inline(section.heading).replace(/^#+(?=\s|$)\s*/, '');
     lines.push(`## ${heading}`, '');
     for (const item of section.items) {
       const text = inline(item.text);
