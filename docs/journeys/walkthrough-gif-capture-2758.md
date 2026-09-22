@@ -9,6 +9,7 @@ files:
   - plugin/bin/lib/gif/lzw.js
   - plugin/bin/lib/gif/png-decode.js
   - plugin/agents/qa-agent.md
+  - plugin/skills/stories/SKILL.md
 ---
 
 # Capture a Shareable Walkthrough GIF via /walkthrough
@@ -38,7 +39,7 @@ files:
 - **URL:** *(no command — `walkthrough-encode.js` runs)*
 - **Action:** Nothing. The CLI decodes every PNG frame, downscales to `--width` if given, quantizes to one global palette, LZW-encodes, and writes the GIF; when the skill passes `--steps-json`/`--captions`, it also renders and writes the ordered caption list in the same call.
 - **Should feel:** Fast and predictable — encoding a handful of 1280x720 frames takes a couple of seconds, not a wait.
-- **Should understand:** An over-budget result relays the lever list in order (`fewer steps`, then `lower --width`) for the developer to choose — the skill never auto-shrinks and retries with a guessed width. A frame-dimension mismatch or an undecodable frame stops the run and names the offending path instead of padding, cropping, or skipping it.
+- **Should understand:** An over-budget result relays the lever list in order (`fewer steps`, then `lower --width`) for the developer to choose — the skill never auto-shrinks and retries with a guessed width. A frame-dimension mismatch or an undecodable frame stops the run and names the offending path instead of padding, cropping, or skipping it. The caption lines come from each story step's own optional `caption:` field — an expand-only schema-v2 addition (`plugin/skills/stories/SKILL.md`) that QA execution never reads — falling back to `{action} {locator}` for a step without one, and the CLI writes them; the model never re-derives the list per run. Writing captions worth sharing therefore means editing the story, not this run.
 - **Red flags:** A silent retry with a smaller width after a budget-exceeded exit; frames deleted after a failed encode (they should be left in place for diagnosis, with the path reported).
 
 ### 4. Choose where it lands
