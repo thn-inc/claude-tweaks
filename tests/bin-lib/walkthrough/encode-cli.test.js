@@ -87,3 +87,47 @@ test('--delay-ms / --last-hold-ms / --width are threaded through to the encode c
   assert.equal(parsed.width, 64);
   assert.equal(parsed.height, 32);
 });
+
+test('exit 1: non-numeric --budget-mb, --width, or --delay-ms are rejected, never silently NaN-ed', () => {
+  const png = fixturePng(8, 6);
+  for (const argv of [['--frames', 'a.png', '--out', 'o.gif', '--budget-mb', 'eight'], ['--frames', 'a.png', '--out', 'o.gif', '--width', 'half'], ['--frames', 'a.png', '--out', 'o.gif', '--delay-ms', 'fast']]) {
+    const { d, out } = deps({ 'a.png': png });
+    assert.equal(run(argv, d), 1, argv.join(' '));
+    assert.deepEqual(out.written, {}, 'must write nothing on a malformed numeric flag');
+  }
+});
+
+test('--steps-json and --captions together produce the caption file and include captions in the stdout JSON', () => {
+  const png = fixturePng(8, 6);
+  const steps = JSON.stringify([{ action: 'click', locator: { role: 'button', name: 'Go' } }]);
+  const { d, out } = deps({ 'a.png': png, 'steps.json': Buffer.from(steps) });
+  assert.equal(run(['--frames', 'a.png', '--out', 'o.gif', '--steps-json', 'steps.json', '--captions', 'o.md'], d), 0);
+  const parsed = JSON.parse(out.stdout.join(''));
+  assert.equal(parsed.captions, 'o.md');
+  assert.match(out.written['o.md'], /^1\. click role=button "Go"$/m);
+});
+
+test('--caption-title prepends a "# {title}" line above the rendered list', () => {
+  const png = fixturePng(8, 6);
+  const steps = JSON.stringify([{ action: 'click', locator: { role: 'button', name: 'Go' } }]);
+  const { d, out } = deps({ 'a.png': png, 'steps.json': Buffer.from(steps) });
+  assert.equal(run(['--frames', 'a.png', '--out', 'o.gif', '--steps-json', 'steps.json', '--captions', 'o.md', '--caption-title', 'My Story'], d), 0);
+  assert.match(out.written['o.md'], /^# My Story\n\n1\. click role=button "Go"$/m);
+});
+
+test('exit 1: only one of --steps-json/--captions given', () => {
+  const png = fixturePng(8, 6);
+  for (const argv of [['--frames', 'a.png', '--out', 'o.gif', '--steps-json', 'steps.json'], ['--frames', 'a.png', '--out', 'o.gif', '--captions', 'o.md']]) {
+    const { d, out } = deps({ 'a.png': png });
+    assert.equal(run(argv, d), 1, argv.join(' '));
+    assert.deepEqual(out.written, {});
+  }
+});
+
+test('exit 1: malformed --steps-json content names the offending file, writes nothing', () => {
+  const png = fixturePng(8, 6);
+  const { d, out } = deps({ 'a.png': png, 'steps.json': Buffer.from('not json') });
+  assert.equal(run(['--frames', 'a.png', '--out', 'o.gif', '--steps-json', 'steps.json', '--captions', 'o.md'], d), 1);
+  assert.match(out.stderr.join(''), /steps\.json/);
+  assert.deepEqual(out.written, {});
+});

@@ -48,8 +48,13 @@ test('encodeGif: starts with GIF89a, contains NETSCAPE2.0, one image descriptor 
   const buf = encodeGif({ width, height, frames, palette, loop: 0 });
   assert.equal(buf.subarray(0, 6).toString('ascii'), 'GIF89a');
   assert.ok(buf.includes(Buffer.from('NETSCAPE2.0', 'ascii')));
+  // Scan only after the global color table: a raw whole-buffer scan for 0x2c can coincidentally
+  // match an LZW payload byte, over- or under-counting image descriptors (mirrors the round-trip
+  // test's own gctEnd calculation below).
+  const gctEnd = 6 + 7 + palette.length;
+  const tail = buf.subarray(gctEnd);
   let imageDescriptors = 0;
-  for (let i = 0; i < buf.length; i++) if (buf[i] === 0x2c) imageDescriptors++;
+  for (let i = 0; i < tail.length; i++) if (tail[i] === 0x2c) imageDescriptors++;
   assert.equal(imageDescriptors, 3);
   assert.equal(buf[buf.length - 1], 0x3b); // trailer
 });
@@ -93,9 +98,17 @@ test('encodeGif: graphic control extension carries each frame\'s own delayCs (li
   assert.deepEqual(delays, [12345 % 65536, 77]);
 });
 
+test('encodeGif: a frame whose indexes array length does not match width*height throws', () => {
+  const palette = new Uint8Array([1, 2, 3, 4, 5, 6]);
+  assert.throws(
+    () => encodeGif({ width: 3, height: 2, frames: [{ indexes: new Uint8Array(4), delayCs: 10 }], palette }),
+    /frame index array length 4 does not match width\*height 6/,
+  );
+});
+
 test('encodeGif: logical screen descriptor carries the given width/height (little-endian)', () => {
   const palette = new Uint8Array([1, 2, 3]);
-  const buf = encodeGif({ width: 300, height: 150, frames: [{ indexes: new Uint8Array(1), delayCs: 10 }], palette });
+  const buf = encodeGif({ width: 300, height: 150, frames: [{ indexes: new Uint8Array(300 * 150), delayCs: 10 }], palette });
   const w = buf[6] | (buf[7] << 8);
   const h = buf[8] | (buf[9] << 8);
   assert.equal(w, 300); assert.equal(h, 150);

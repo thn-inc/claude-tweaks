@@ -80,9 +80,12 @@ function encodeWalkthrough({ framePaths, delays, width, budgetBytes }, deps = {}
   return { buffer, bytes: buffer.length, width: targetW, height: targetH, downscaled };
 }
 
-// A story-step locator -> its display form for the fallback caption line (no caption field).
+// A story-step locator -> its display form for the fallback caption line when a locator exists
+// but the step carries no `caption` field. 'locator=?' is reserved for a genuinely unparseable
+// locator object (present but naming none of the five known keys) — never a stand-in for "this
+// action has no locator at all" (see stepDisplay below, which handles that case correctly).
 function locatorDisplay(locator) {
-  if (locator.role) return `role=${locator.role} "${locator.name}"`;
+  if (locator.role) return locator.name ? `role=${locator.role} "${locator.name}"` : `role=${locator.role}`;
   if (locator.testid) return `testid="${locator.testid}"`;
   if (locator.text) return `text="${locator.text}"`;
   if (locator.label) return `label="${locator.label}"`;
@@ -90,9 +93,23 @@ function locatorDisplay(locator) {
   return 'locator=?';
 }
 
+// A story step -> its caption-line display text when the step carries no `caption` field.
+// `navigate` and `press` steps never carry a `locator` (per qa-agent.md Section 4's own
+// mapping) — falling through to locatorDisplay({}) for them would always render the
+// unparseable-locator sentinel for an action that simply has a different kind of target, which
+// is the wrong signal. Prefer, in order: a real locator (the common case — click/fill/etc.);
+// else a navigate step's `target` URL; else a press step's `value` (the key/combo); else the
+// bare action name.
+function stepDisplay(step) {
+  if (step.locator) return `${step.action} ${locatorDisplay(step.locator)}`;
+  if (step.target !== undefined) return `${step.action} ${step.target}`;
+  if (step.value !== undefined) return `${step.action} "${step.value}"`;
+  return step.action;
+}
+
 function captionList(steps) {
   const lines = steps.map((step, i) => {
-    const text = step.caption ? step.caption : `${step.action} ${locatorDisplay(step.locator || {})}`;
+    const text = step.caption ? step.caption : stepDisplay(step);
     return `${i + 1}. ${text}`;
   });
   return lines.join('\n') + '\n';

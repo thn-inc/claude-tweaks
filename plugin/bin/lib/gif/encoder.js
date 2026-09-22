@@ -47,8 +47,10 @@ function encodeGif({ width, height, frames, palette, loop = 0 }) {
   const minCodeSize = Math.max(2, Math.ceil(Math.log2(Math.max(paletteSize, 2))));
 
   for (const frame of frames) {
+    if (frame.indexes.length !== width * height) throw new Error(`frame index array length ${frame.indexes.length} does not match width*height ${width * height}`);
+
     // Graphic Control Extension: 0x21 0xF9 blockSize(1)=4 packed(1) delay(2) transparentIdx(1) terminator(0)
-    const packedGce = 0; // no transparency, no disposal method specified
+    const packedGce = 0x04; // disposal method 1 ("do not dispose") — no transparency
     parts.push(Buffer.from([0x21, 0xf9, 0x04, packedGce, ...le16(frame.delayCs & 0xffff), 0x00, 0x00]));
 
     // Image Descriptor: 0x2C left(2) top(2) width(2) height(2) packed(1)

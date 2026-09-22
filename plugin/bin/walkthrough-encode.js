@@ -5,10 +5,18 @@
 // the filesystem.
 //
 // Usage: walkthrough-encode.js --frames <dir-or-comma-list> --out <gif path>
-//        [--delay-ms <n>] [--last-hold-ms <n>] [--width <px>] [--budget-mb <n=8>] [--help]
+//        [--delay-ms <n>] [--last-hold-ms <n>] [--width <px>] [--budget-mb <n=8>]
+//        [--steps-json <path> --captions <path> [--caption-title <text>]] [--help]
+//
+// --steps-json/--captions are optional but must be given together (either both or neither) —
+// when both are present, --steps-json is read as a JSON array of story steps, rendered through
+// captionList(), and written to --captions (after a successful GIF encode). --caption-title, if
+// given, prepends a `# {text}` title line above the rendered list; omitted, the file is just the
+// list (backward-compatible with a captions file written before this flag existed).
 // Exit codes (Split-1/2, the resolve-blockers.js / fetch-sub-issues.js vocabulary):
-//   0 encoded — prints {bytes, frames, width, height, out, downscaled} JSON
-//   1 malformed invocation (missing --frames/--out, unknown flag)
+//   0 encoded — prints {bytes, frames, width, height, out, downscaled, captions} JSON
+//   1 malformed invocation (missing --frames/--out, unknown flag, non-numeric/non-positive
+//     numeric flag, only one of --steps-json/--captions given, malformed --steps-json content)
 //   2 a frame is unreadable, undecodable, or dimension-mismatched (the underlying error's
 //     message is relayed, naming the offending path)
 //   3 the encoded GIF is over budget — prints {bytes, budgetBytes, levers, out: null} JSON;
@@ -19,23 +27,29 @@
 
 const fs = require('fs');
 const path = require('path');
-const { planFrames, encodeWalkthrough, FrameMismatchError, BudgetExceededError } = require('./lib/walkthrough/encode');
+const { planFrames, encodeWalkthrough, captionList, FrameMismatchError, BudgetExceededError } = require('./lib/walkthrough/encode');
 const { writeFileAtomic } = require('./lib/atomic-write');
 
-const USAGE = 'usage: walkthrough-encode.js --frames <dir-or-comma-list> --out <gif path> [--delay-ms <n>] [--last-hold-ms <n>] [--width <px>] [--budget-mb <n=8>] [--help]\n';
+const USAGE = 'usage: walkthrough-encode.js --frames <dir-or-comma-list> --out <gif path> [--delay-ms <n>] [--last-hold-ms <n>] [--width <px>] [--budget-mb <n=8>] [--steps-json <path> --captions <path> [--caption-title <text>]] [--help]\n';
 
 function parseArgs(argv) {
-  const o = { frames: null, out: null, delayMs: 2000, lastHoldMs: 4000, width: null, budgetMb: 8, help: false };
+  const o = {
+    frames: null, out: null, delayMs: 2000, lastHoldMs: 4000, width: null, budgetMb: 8,
+    stepsJson: null, captions: null, captionTitle: null, help: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => { const v = argv[i + 1]; if (v === undefined || v === '' || v.startsWith('--')) return null; i += 1; return v; };
     if (a === '--help' || a === '-h') o.help = true;
     else if (a === '--frames') { o.frames = next(); if (o.frames === null) return { error: '--frames requires a value' }; }
     else if (a === '--out') { o.out = next(); if (o.out === null) return { error: '--out requires a value' }; }
-    else if (a === '--delay-ms') { const v = next(); if (v === null) return { error: '--delay-ms requires a value' }; o.delayMs = Number(v); }
-    else if (a === '--last-hold-ms') { const v = next(); if (v === null) return { error: '--last-hold-ms requires a value' }; o.lastHoldMs = Number(v); }
-    else if (a === '--width') { const v = next(); if (v === null) return { error: '--width requires a value' }; o.width = Number(v); }
-    else if (a === '--budget-mb') { const v = next(); if (v === null) return { error: '--budget-mb requires a value' }; o.budgetMb = Number(v); }
+    else if (a === '--delay-ms') { const v = next(); if (v === null) return { error: '--delay-ms requires a value' }; const n = Number(v); if (!Number.isFinite(n) || n <= 0) return { error: `--delay-ms must be a positive number, got "${v}"` }; o.delayMs = n; }
+    else if (a === '--last-hold-ms') { const v = next(); if (v === null) return { error: '--last-hold-ms requires a value' }; const n = Number(v); if (!Number.isFinite(n) || n <= 0) return { error: `--last-hold-ms must be a positive number, got "${v}"` }; o.lastHoldMs = n; }
+    else if (a === '--width') { const v = next(); if (v === null) return { error: '--width requires a value' }; const n = Number(v); if (!Number.isFinite(n) || n <= 0) return { error: `--width must be a positive number, got "${v}"` }; o.width = n; }
+    else if (a === '--budget-mb') { const v = next(); if (v === null) return { error: '--budget-mb requires a value' }; const n = Number(v); if (!Number.isFinite(n) || n <= 0) return { error: `--budget-mb must be a positive number, got "${v}"` }; o.budgetMb = n; }
+    else if (a === '--steps-json') { o.stepsJson = next(); if (o.stepsJson === null) return { error: '--steps-json requires a value' }; }
+    else if (a === '--captions') { o.captions = next(); if (o.captions === null) return { error: '--captions requires a value' }; }
+    else if (a === '--caption-title') { o.captionTitle = next(); if (o.captionTitle === null) return { error: '--caption-title requires a value' }; }
     else return { error: `unknown argument: ${a}` };
   }
   return o;
@@ -61,10 +75,12 @@ function run(argv, deps = realDeps) {
   if (o.help) { deps.stdout(USAGE); return 0; }
   if (!o.frames) return usageError('--frames is required');
   if (!o.out) return usageError('--out is required');
+  if ((o.stepsJson && !o.captions) || (o.captions && !o.stepsJson)) {
+    return usageError('--steps-json and --captions must be given together');
+  }
 
   let framePaths;
   try {
-    const stat = fs.existsSync && deps.readdir ? null : null; // no-op placeholder for clarity
     if (o.frames.includes(',')) {
       framePaths = o.frames.split(',').map((s) => s.trim()).filter(Boolean);
     } else {
@@ -102,8 +118,20 @@ function run(argv, deps = realDeps) {
     return 2;
   }
 
+  if (o.stepsJson && o.captions) {
+    let steps;
+    try {
+      steps = JSON.parse(deps.readFile(o.stepsJson).toString());
+    } catch (err) {
+      deps.stderr(`walkthrough-encode.js: could not parse --steps-json ${o.stepsJson}: ${err && err.message}\n`);
+      return 1;
+    }
+    const rendered = (o.captionTitle ? `# ${o.captionTitle}\n\n` : '') + captionList(steps);
+    deps.writeFileAtomic(o.captions, rendered);
+  }
+
   deps.writeFileAtomic(o.out, result.buffer);
-  deps.stdout(JSON.stringify({ out: o.out, bytes: result.bytes, frames: framePaths.length, width: result.width, height: result.height, downscaled: result.downscaled }) + '\n');
+  deps.stdout(JSON.stringify({ out: o.out, bytes: result.bytes, frames: framePaths.length, width: result.width, height: result.height, downscaled: result.downscaled, captions: o.captions || null }) + '\n');
   return 0;
 }
 

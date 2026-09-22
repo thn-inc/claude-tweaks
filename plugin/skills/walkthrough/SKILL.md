@@ -66,22 +66,24 @@ On a locator miss, report the step number and stop — **never loosen a locator 
 
 ## Step 4: Encode
 
+Write the story's steps to a JSON file at `{steps-json-path}` first, then:
+
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/walkthrough-encode.js" --frames {frame-dir} --out {gif-path} --delay-ms {delay-ms} --budget-mb {budget-mb}
+node "${CLAUDE_PLUGIN_ROOT}/bin/walkthrough-encode.js" --frames {frame-dir} --out {gif-path} --delay-ms {delay-ms} --budget-mb {budget-mb} --steps-json {steps-json-path} --captions {name}.md --caption-title "{story description}"
 ```
 
-Add `--width {width}` when given. Branch on the exit code: `0` → the GIF is written; proceed to Step 5. `1` → malformed invocation — relay the message and stop (should not occur; this skill builds the argv itself). `2` → an unreadable, undecodable, or dimension-mismatched frame — relay the message (it names the offending path) and stop; a dimension mismatch means the viewport changed mid-run, which Step 2's explicit `resize` is meant to prevent. `3` → over budget — relay the printed lever list (`fewer steps`, then `lower --width`) and stop; do not retry with a guessed width without the user's input.
+Add `--width {width}` when given. Branch on the exit code: `0` → the GIF and caption list are both written; proceed to Step 5. `1` → malformed invocation — relay the message and stop (should not occur; this skill builds the argv itself). `2` → an unreadable, undecodable, or dimension-mismatched frame — relay the message (it names the offending path) and stop; a dimension mismatch means the viewport changed mid-run, which Step 2's explicit `resize` is meant to prevent. `3` → over budget — relay the printed lever list (`fewer steps`, then `lower --width`) and stop; do not retry with a guessed width without the user's input.
 
 On success, delete the frame directory — frames are intermediate, the GIF is the artifact. On any failure above, leave the frames in place for diagnosis and report their path.
 
-## Step 5: Write the caption list and choose a destination
+## Step 5: Choose a destination
 
-Write `{name}.md` beside the GIF — one ordered line per step, from the story's own `caption` fields (falling back to `{action} {locator}` for steps without one, exactly as `captionList` renders it). Then ask the output location with one `AskUserQuestion`:
+The GIF and `{name}.md` caption list — one ordered line per step, from the story's own `caption` fields, falling back to `{action} {locator}` for steps without one, opening with a `# {story description}` title line above the ordered list — are already written by Step 4's CLI call, produced by the CLI's `captionList`, not re-derived by the model each run. Ask the output location with one `AskUserQuestion`:
 
 - `question`: `"Where should the walkthrough go?"`, `header`: `"Save walkthrough"`, `multiSelect`: `false`
 - Option 1 — `label`: `"Archive path (Recommended)"`, `description`: `"Write to docs/walkthroughs/{story-id}.gif and .md (creates docs/walkthroughs/ if absent)"`
 - Option 2 — `label`: `"Current directory"`, `description`: `"Write to ./{story-id}.gif and .md"`
-- Option 3 — `label`: `"Don't save"`, `description`: `"Keep the frame directory description in this conversation only — nothing written"`
+- Option 3 — `label`: `"Don't save"`, `description`: `"Keep the GIF and caption list in this conversation only — nothing written"`
 
 An explicit path comes through `Other`. The GIF and caption list are copied together with the Write tool. Nothing is written into the repository without this choice, and nothing is ever committed on the user's behalf — the walkthrough exists to be kept, so it never defaults to `.claude-tweaks/artifacts/`, which `/claude-tweaks:tidy` prunes after 30 days.
 

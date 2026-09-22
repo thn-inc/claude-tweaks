@@ -71,6 +71,24 @@ test('captionList: a role locator renders as {action} role={role} "{name}"', () 
   assert.match(out, /^1\. click role=button "Add to cart"$/m);
 });
 
+test('captionList: an uncaptioned navigate step renders "{action} {target}", never the locator=? sentinel', () => {
+  const out = captionList([{ action: 'navigate', target: 'https://example.com/page2' }]);
+  assert.match(out, /^1\. navigate https:\/\/example\.com\/page2$/m);
+  assert.equal(/locator=\?/.test(out), false);
+});
+
+test('captionList: an uncaptioned press step renders "{action} \\"{value}\\"", never the locator=? sentinel', () => {
+  const out = captionList([{ action: 'press', value: 'Alt+ArrowLeft' }]);
+  assert.match(out, /^1\. press "Alt\+ArrowLeft"$/m);
+  assert.equal(/locator=\?/.test(out), false);
+});
+
+test('captionList: a role locator with no name renders "role={role}" without the literal "undefined"', () => {
+  const out = captionList([{ action: 'click', locator: { role: 'button' } }]);
+  assert.match(out, /^1\. click role=button$/m);
+  assert.equal(/undefined/.test(out), false);
+});
+
 test('encodeWalkthrough: three identical-size fixtures encode to a valid GIF, prints frames:3', async () => {
   const png = buildPng(8, 6, (x, y) => [x * 10, y * 10, 50]);
   const readFile = (p) => png; // every path returns the same fixture bytes

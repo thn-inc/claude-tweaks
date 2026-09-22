@@ -107,6 +107,8 @@ function decodePng(buffer) {
   const idat = Buffer.concat(chunks.filter((c) => c.type === 'IDAT').map((c) => c.data));
   const raw = zlib.inflateSync(idat);
   const bpp = CHANNELS[colorType];
+  const expectedLen = height * (width * bpp + 1);
+  if (raw.length < expectedLen) throw new PngDecodeError(`truncated pixel data: expected at least ${expectedLen} bytes after inflate, got ${raw.length}`);
   const unfiltered = unfilter(raw, width, height, bpp);
   const rgba = expandToRgba(unfiltered, width, height, colorType);
   return { width, height, rgba };

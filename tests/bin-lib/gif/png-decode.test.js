@@ -144,6 +144,17 @@ test('decodePng: bad signature throws PngDecodeError', () => {
   assert.throws(() => decodePng(Buffer.from('not a png')), (err) => err instanceof PngDecodeError);
 });
 
+test('decodePng: IDAT that inflates to fewer bytes than IHDR promises throws PngDecodeError naming "truncated"', () => {
+  const width = 4, height = 4; // color type 2 (RGB): expects height * (width*3 + 1) = 4 * 13 = 52 bytes
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; ihdr[9] = 2; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+  const shortRaw = Buffer.alloc(10); // far fewer than the 52 bytes the header promises
+  const idat = zlib.deflateSync(shortRaw);
+  const png = Buffer.concat([SIG, chunk('IHDR', ihdr), chunk('IDAT', idat), chunk('IEND', Buffer.alloc(0))]);
+  assert.throws(() => decodePng(png), (err) => err instanceof PngDecodeError && /truncated/i.test(err.message));
+});
+
 test('decodePng: filter types 2 (Up), 3 (Average), 4 (Paeth) each round-trip on a 3x3 RGB fixture', () => {
   const width = 3, height = 3;
   // Build the unfiltered target first, then derive each filtered row from it by hand so the

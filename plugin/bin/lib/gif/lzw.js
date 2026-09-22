@@ -2,10 +2,18 @@
 // Implements the GIF87a/89a variable-code-size LZW variant: a clear code and end-of-information
 // code reserved at (1<<minCodeSize) and +1, code size starts at minCodeSize+1 and grows by one
 // bit each time the table's next index would overflow the current code width, up to 12 bits,
-// with a full table reset (and a fresh clear code emitted) at 4096 entries. Output is packed
-// into GIF sub-blocks: a leading minCodeSize byte, then each ≤255-byte run of packed bits
-// prefixed with its own length byte, terminated by a zero-length block — the shape a real GIF
-// image-data block is bit-for-bit.
+// with a full table reset at 4096 entries. Output is packed into GIF sub-blocks: a leading
+// minCodeSize byte, then each ≤255-byte run of packed bits prefixed with its own length byte,
+// terminated by a zero-length block — the shape a real GIF image-data block is bit-for-bit.
+//
+// The mid-stream reset's clear code MUST be written at the code width still in effect just
+// before the reset (up to 12 bits), never at the post-reset narrow width — the decoder is still
+// reading at the old width until it decodes that specific code as a clear code, at which point
+// IT ALSO narrows for what follows. Writing the clear code narrow (a bug this file shipped with
+// once, caught by a whole-branch review that decoded a real corrupted GIF) desyncs the
+// bitstream irrecoverably from that point on. `initTable()` below only rebuilds dictionary state
+// — it writes nothing; every call site decides separately, and correctly, at what width to emit
+// the clear code that precedes a table's use.
 'use strict';
 
 const MAX_CODE_BITS = 12;
@@ -43,15 +51,17 @@ function lzwEncode(indexStream, minCodeSize) {
   const writer = makeBitWriter();
   let codeSize, table, nextCode;
 
-  const resetTable = () => {
+  // Rebuilds the dictionary/nextCode/codeSize to their post-reset state. Writes nothing — the
+  // caller writes the clear code itself, at whatever width was in effect at the call site.
+  const initTable = () => {
     table = new Map();
     for (let i = 0; i < clearCode; i++) table.set(String(i), i);
     nextCode = clearCode + 2;
     codeSize = minCodeSize + 1;
-    writer.writeCode(clearCode, codeSize);
   };
 
-  resetTable();
+  initTable();
+  writer.writeCode(clearCode, codeSize); // initial clear code, at the starting (narrow) width
   let w = '';
   for (let i = 0; i < indexStream.length; i++) {
     const k = String(indexStream[i]);
@@ -63,7 +73,10 @@ function lzwEncode(indexStream, minCodeSize) {
       table.set(wk, nextCode);
       nextCode++;
       if (nextCode > (1 << codeSize) && codeSize < MAX_CODE_BITS) codeSize++;
-      if (nextCode >= MAX_TABLE_SIZE) resetTable();
+      if (nextCode >= MAX_TABLE_SIZE) {
+        writer.writeCode(clearCode, codeSize); // emit at the CURRENT (still-wide) width first
+        initTable(); // then rebuild — codeSize narrows to minCodeSize+1 for what follows
+      }
       w = k;
     }
   }
