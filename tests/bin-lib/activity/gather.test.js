@@ -56,6 +56,12 @@ test('buildQueries: six queries, exact argv pinned to the Task 0 live probe', ()
     '--limit', '100', '--json', 'number,title,url,isDraft,updatedAt']);
 });
 
+test('buildQueries: the login in the commits REST query string is percent-encoded', () => {
+  const q = buildQueries({ login: 'a&b', slug: SLUG, from: '2026-09-15', to: '2026-09-22' });
+  const commits = q.find((x) => x.key === 'commits');
+  assert.ok(commits.args[1].includes('author=a%26b'), commits.args[1]);
+});
+
 // One fake runner answering every query with a small, realistic payload.
 function happyRunner(calls) {
   return (args, opts) => {
@@ -148,4 +154,40 @@ test('gather: a non-array JSON runner reply is a failure for that query only', (
   assert.equal(facts.failures.length, 1);
   assert.equal(facts.failures[0].query, 'reviews_given');
   assert.match(facts.failures[0].error, /expected a JSON array/);
+});
+
+test('commits shaper: a commit lacking commit.author gets date: null (not undefined), and keeps a fixed key set', () => {
+  const runner = (args, opts) => (args[0] === 'api' ? JSON.stringify([[
+    { sha: 'deadbeef1234567890deadbeef1234567890dead', html_url: 'https://x/commit/deadbeef', commit: { message: 'No author date' } },
+  ], []]) : happyRunner([])(args, opts));
+  const facts = gather({ period: '7d', repos: [SLUG], actor: LOGIN }, { runner, now: NOW });
+  assert.equal(facts.commits.length, 1);
+  const row = facts.commits[0];
+  assert.equal(row.date, null);
+  assert.deepEqual(Object.keys(row).sort(), ['date', 'repo', 'sha', 'subject', 'url'].sort());
+});
+
+test('merged_prs shaper: string-shaped labels pass through labelNames unchanged', () => {
+  const runner = (args, opts) => (args[0] === 'pr' && args.includes('merged') ? JSON.stringify([
+    { number: 10, title: 'Merged one', url: 'https://x/pull/10', mergedAt: '2026-09-20T00:00:00Z', additions: 3, deletions: 1, labels: ['bug'] },
+  ]) : happyRunner([])(args, opts));
+  const facts = gather({ period: '7d', repos: [SLUG], actor: LOGIN }, { runner, now: NOW });
+  assert.deepEqual(facts.merged_prs[0].labels, ['bug']);
+});
+
+test('gather: a query returning exactly its row cap is recorded in facts.truncated[]; one under the cap is not', () => {
+  const rowsOf = (n) => Array.from({ length: n }, (_, i) => ({ number: i + 1, title: 't', url: 'https://x/pull/' + i, mergedAt: '', additions: 0, deletions: 0, labels: [] }));
+  const cappedRunner = (args, opts) => (args[0] === 'pr' && args.includes('merged') ? JSON.stringify(rowsOf(200)) : happyRunner([])(args, opts));
+  const capped = gather({ period: '7d', repos: [SLUG], actor: LOGIN }, { runner: cappedRunner, now: NOW });
+  assert.deepEqual(capped.truncated, [{ query: 'merged_prs', repo: SLUG, limit: 200 }]);
+
+  const underRunner = (args, opts) => (args[0] === 'pr' && args.includes('merged') ? JSON.stringify(rowsOf(199)) : happyRunner([])(args, opts));
+  const under = gather({ period: '7d', repos: [SLUG], actor: LOGIN }, { runner: underRunner, now: NOW });
+  assert.deepEqual(under.truncated, []);
+});
+
+test('errorText: when err.stderr is non-empty it is used alone (trimmed), never doubled with err.message', () => {
+  const runner = () => { const e = new Error('Command failed: gh pr list\ngh: boom\n'); e.stderr = 'gh: boom\n'; throw e; };
+  const facts = gather({ period: '7d', repos: [SLUG], actor: LOGIN }, { runner, now: NOW });
+  assert.equal(facts.failures[0].error, 'gh: boom');
 });

@@ -9,9 +9,10 @@
 //   0 success — including a PARTIAL gather (some queries failed; facts.failures[] names them)
 //   1 malformed invocation (missing --period/--out, unknown flag, unrecognized period form,
 //     a host-qualified --repo entry — every entry must live on gh's default github.com host —
-//     or an unwritable --out path)
+//     a --actor value not shaped like a GitHub login, or an unwritable --out path)
 //   2 missing dependency or unresolvable owner/repo (gh absent, `gh auth status` failing —
-//     gh's own stderr relayed verbatim — or no --repo and no readable/parsable origin remote)
+//     gh's own stderr relayed verbatim — no --repo and no readable/parsable origin remote, or
+//     an origin remote on a host other than github.com)
 //   3 the remote calls themselves failed — EVERY query, across every repo
 // Actor defaults to `gh api user -q .login`; repo defaults to the origin remote via
 // bin/lib/repo-resolve.js. Every gh call passes an explicit 15 s timeout (gather.js states why).
@@ -29,6 +30,14 @@ const { parseRepo, ghAvailable, remoteUrl, repoSlug } = require('./lib/repo-reso
 
 const USAGE = 'usage: activity-gather.js --period <1d|7d|14d|month|quarter|<from>..<to>> [--repo <owner/name>[,<owner/name>...]] [--actor <login>] --out <facts.json path> [--help]\n';
 
+// GitHub login shape: alnum, internal hyphens only, no leading/trailing/double hyphen enforced
+// loosely (a single run of hyphens is allowed; GitHub itself is the source of truth) — this is a
+// sanity gate against shell-injection-shaped or whitespace-bearing values, not a full validator.
+const ACTOR_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/;
+// owner/name only: no host prefix (rejects a colon-host form like ghe.example.com:acme/widgets),
+// no leading hyphen on the owner, no third `/`-separated segment.
+const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9._-]+$/;
+
 function parseArgs(argv) {
   const o = { period: null, repo: null, actor: null, out: null, help: false };
   for (let i = 0; i < argv.length; i++) {
@@ -37,7 +46,11 @@ function parseArgs(argv) {
     if (a === '--help' || a === '-h') o.help = true;
     else if (a === '--period') { o.period = next(); if (o.period === null) return { error: '--period requires a value' }; }
     else if (a === '--repo') { o.repo = next(); if (o.repo === null) return { error: '--repo requires a value' }; }
-    else if (a === '--actor') { o.actor = next(); if (o.actor === null) return { error: '--actor requires a value' }; o.actor = o.actor.trim(); if (!o.actor) return { error: '--actor requires a value' }; }
+    else if (a === '--actor') {
+      o.actor = next(); if (o.actor === null) return { error: '--actor requires a value' };
+      o.actor = o.actor.trim(); if (!o.actor) return { error: '--actor requires a value' };
+      if (!ACTOR_RE.test(o.actor)) return { error: `--actor "${o.actor}" must be a GitHub login (letters, digits, hyphens; no spaces)` };
+    }
     else if (a === '--out') { o.out = next(); if (o.out === null) return { error: '--out requires a value' }; }
     else return { error: `unknown argument: ${a}` };
   }
@@ -45,12 +58,14 @@ function parseArgs(argv) {
 }
 
 function errorText(err) {
-  const parts = [err && err.message, err && err.stderr, err && err.stdout].filter((p) => p && String(p).trim());
+  const stderr = err && err.stderr && String(err.stderr).trim();
+  if (stderr) return stderr;
+  const parts = [err && err.message, err && err.stdout].filter((p) => p && String(p).trim());
   return parts.length ? parts.map((p) => String(p).trim()).join('\n') : String(err);
 }
 
 const realDeps = {
-  runner: (args, opts) => execFileSync('gh', args, { encoding: 'utf8', ...opts }),
+  runner: (args, opts) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts }),
   ghAvailable: () => ghAvailable(),
   ghAuthOk: () => execFileSync('gh', ['auth', 'status'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: ACTIVITY_GH_TIMEOUT_MS }),
   remoteUrl: () => remoteUrl(),
@@ -73,8 +88,7 @@ function run(argv, deps = realDeps) {
   if (o.repo) {
     repos = o.repo.split(',').map((s) => s.trim()).filter(Boolean);
     for (const r of repos) {
-      const parts = r.split('/');
-      if (parts.length !== 2 || !parts[0] || !parts[1]) return usageError(`--repo entry "${r}" must be owner/name on gh's default host (github.com) — a host-qualified name is not supported`);
+      if (!REPO_RE.test(r)) return usageError(`--repo entry "${r}" must be owner/name on gh's default host (github.com) — a host-qualified name is not supported; expected owner/name`);
     }
   }
 

@@ -14,7 +14,10 @@ function deps(overrides = {}) {
       if (args[0] === 'repo' && args[1] === 'view') return args[2] + '\n';
       if (args[0] === 'api' && args[1] === 'user') return 'octocat\n';
       if (args[0] === 'api') return '[[]]';
-      return '[]';
+      if (args[0] === 'pr' && args[1] === 'list') return '[]';
+      if (args[0] === 'issue' && args[1] === 'list') return '[]';
+      if (args[0] === 'search' && args[1] === 'prs') return '[]';
+      throw new Error('unexpected ' + args.join(' '));
     },
     ghAvailable: () => true,
     ghAuthOk: () => true,
@@ -56,6 +59,20 @@ test('exit 1: missing --out, missing --period, unknown flag, bad period, host-qu
   assert.match(out.stderr.join(''), /1d\|7d\|14d\|month\|quarter\|<from>\.\.<to>/);
 });
 
+test('exit 1: a colon-host --repo entry and a leading-hyphen --repo entry are both rejected', () => {
+  for (const repo of ['ghe.example.com:acme/widgets', '-evil/x']) {
+    const { d, out } = deps();
+    assert.equal(run(['--period', '7d', '--out', 'f.json', '--repo', repo], d), 1, repo);
+    assert.match(out.stderr.join(''), /expected owner\/name/);
+  }
+});
+
+test('exit 1: a --actor value that is not GitHub-login-shaped is rejected', () => {
+  const { d, out } = deps();
+  assert.equal(run(['--period', '7d', '--out', 'f.json', '--actor', 'a b'], d), 1);
+  assert.match(out.stderr.join(''), /must be a GitHub login/);
+});
+
 test('exit 2: gh absent relays the probe message; gh auth failure relays stderr verbatim', () => {
   const a = deps({ ghAvailable: () => false });
   assert.equal(run(['--period', '7d', '--out', 'f.json'], a.d), 2);
@@ -84,7 +101,10 @@ test('exit 3 only when every query failed; a partial gather exits 0 with failure
     if (args[0] === 'api' && args[1] === 'user') return 'octocat';
     if (args[0] === 'pr' && args.includes('merged')) throw new Error('HTTP 503');
     if (args[0] === 'api') return '[[]]';
-    return '[]';
+    if (args[0] === 'pr' && args[1] === 'list') return '[]';
+    if (args[0] === 'issue' && args[1] === 'list') return '[]';
+    if (args[0] === 'search' && args[1] === 'prs') return '[]';
+    throw new Error('unexpected ' + args.join(' '));
   } });
   assert.equal(run(['--period', '7d', '--out', 'f.json'], partial.d), 0);
   const facts = JSON.parse(partial.out.written['f.json']);
@@ -96,7 +116,10 @@ test('--actor and --repo overrides skip the user probe and origin read', () => {
     if (args[0] === 'repo' && args[1] === 'view') return args[2] + '\n';
     if (args[0] === 'api' && args[1] === 'user') throw new Error('must not probe user');
     if (args[0] === 'api') return '[[]]';
-    return '[]';
+    if (args[0] === 'pr' && args[1] === 'list') return '[]';
+    if (args[0] === 'issue' && args[1] === 'list') return '[]';
+    if (args[0] === 'search' && args[1] === 'prs') return '[]';
+    throw new Error('unexpected ' + args.join(' '));
   } });
   assert.equal(run(['--period', '2026-09-01..2026-09-14', '--out', 'f.json', '--actor', 'hubot', '--repo', 'acme/a,acme/b'], d), 0);
   const facts = JSON.parse(out.written['f.json']);
@@ -128,7 +151,10 @@ test('per-repo total failure: all 6 queries failing on one of two repos is still
     if (args[0] === 'api' && args[1] === 'user') return 'octocat\n';
     if (args.some((a) => a.includes('acme/a'))) throw new Error('boom');
     if (args[0] === 'api') return '[[]]';
-    return '[]';
+    if (args[0] === 'pr' && args[1] === 'list') return '[]';
+    if (args[0] === 'issue' && args[1] === 'list') return '[]';
+    if (args[0] === 'search' && args[1] === 'prs') return '[]';
+    throw new Error('unexpected ' + args.join(' '));
   } });
   assert.equal(run(['--period', '7d', '--out', 'f.json', '--repo', 'acme/a,acme/b'], partial.d), 0);
   const facts = JSON.parse(partial.out.written['f.json']);
@@ -149,7 +175,10 @@ test('canonicalizes a renamed repo: search-backed queries run under the redirect
     if (args[0] === 'repo' && args[1] === 'view') return args[2] === 'acme/old' ? 'acme/new\n' : args[2] + '\n';
     if (args[0] === 'api' && args[1] === 'user') return 'octocat\n';
     if (args[0] === 'api') return '[[]]';
-    return '[]';
+    if (args[0] === 'pr' && args[1] === 'list') return '[]';
+    if (args[0] === 'issue' && args[1] === 'list') return '[]';
+    if (args[0] === 'search' && args[1] === 'prs') return '[]';
+    throw new Error('unexpected ' + args.join(' '));
   } });
   assert.equal(run(['--period', '7d', '--out', 'f.json', '--repo', 'acme/old'], d), 0);
   const facts = JSON.parse(out.written['f.json']);
@@ -178,7 +207,10 @@ test('--repo acme/old,acme/new both canonicalizing to acme/new de-duplicates to 
     calls.push(args);
     if (args[0] === 'repo' && args[1] === 'view') return 'acme/new\n';
     if (args[0] === 'api') return '[[]]';
-    return '[]';
+    if (args[0] === 'pr' && args[1] === 'list') return '[]';
+    if (args[0] === 'issue' && args[1] === 'list') return '[]';
+    if (args[0] === 'search' && args[1] === 'prs') return '[]';
+    throw new Error('unexpected ' + args.join(' '));
   } });
   assert.equal(run(['--period', '7d', '--out', 'f.json', '--repo', 'acme/old,acme/new', '--actor', 'hubot'], d), 0);
   const facts = JSON.parse(out.written['f.json']);

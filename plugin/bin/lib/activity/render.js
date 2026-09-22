@@ -1,14 +1,18 @@
 // plugin/bin/lib/activity/render.js — the renderer half of /claude-tweaks:activity (#2757).
 // Trusts facts.json (which only gh wrote) and never the narrative: every refs[] entry is
 // validated against the citable set derived from the facts and dropped with a warning when
-// absent or ambiguous. Refs come ONLY from refs[] — a `#123` typed inside an item's text is
-// prose, not a citation, and is left exactly as written. Text and headings are prose only:
-// newlines are collapsed to spaces and markdown link brackets are escaped before insertion
-// (see inline()), so a citation-shaped string embedded in narrative text can never forge a
-// section heading or a link that skipped resolveRef. Both inputs must carry schemaVersion: 1;
-// anything else is rejected (never guessed across versions). A period counts as empty only
-// when there is no activity AND no gather failures — a fully failed gather always renders
-// normally (Partial gather + Notes), never the one-line empty report.
+// absent, ambiguous, or unparseable. Refs come ONLY from refs[] — a `#123` typed inside an
+// item's text is prose, not a citation, and is left exactly as written. Text, headings, and
+// failure text (facts.failures[].error) are prose only: newlines are collapsed to spaces and
+// markdown link brackets are escaped before insertion (see inline()), so a citation-shaped
+// string embedded in narrative text or a gather failure message can never forge a section
+// heading or a link that skipped resolveRef. Three warning forms: `dropped citation` (a
+// well-formed ref not present in the facts), `ambiguous citation` (a commit prefix matching
+// more than one sha), and `unparseable citation` (a ref matching neither owner/name#N nor
+// owner/name@sha7+ shape). Both inputs must carry schemaVersion: 1; anything else is rejected
+// (never guessed across versions). A period counts as empty only when there is no activity
+// AND no gather failures — a fully failed gather always renders normally (Partial gather +
+// Notes), never the one-line empty report.
 'use strict';
 
 const NUMBERED = ['merged_prs', 'closed_issues', 'issues_raised', 'reviews_given', 'in_flight'];
@@ -38,6 +42,7 @@ function validateFacts(facts) {
   for (const key of [...NUMBERED, 'commits', 'failures']) {
     if (!Array.isArray(facts[key])) errors.push({ path: `facts.${key}`, message: 'must be an array' });
   }
+  if (facts.truncated !== undefined && !Array.isArray(facts.truncated)) errors.push({ path: 'facts.truncated', message: 'must be an array' });
   return { ok: errors.length === 0, errors };
 }
 
@@ -84,6 +89,11 @@ function dropped(ref) {
   return { warning: `warning: dropped citation ${ref} — not present in facts.json` };
 }
 
+// ref matching neither citation grammar -> the standard "wrong shape" warning
+function unparseable(ref) {
+  return { warning: `warning: unparseable citation ${ref} — expected owner/name#N or owner/name@sha7+` };
+}
+
 // ref string + citable set -> { link } | { warning }
 function resolveRef(ref, citable) {
   let m = NUMBER_REF_RE.exec(ref);
@@ -100,7 +110,7 @@ function resolveRef(ref, citable) {
     if (hits.length === 0) return dropped(ref);
     return { warning: `warning: ambiguous citation ${m[1]}@${m[2]} — matches ${hits.length} commits` };
   }
-  return dropped(ref);
+  return unparseable(ref);
 }
 
 function isEmptyPeriod(facts, narratives) {
@@ -141,11 +151,15 @@ function render(facts, narratives) {
   }
   if (facts.failures.length) {
     lines.push('## Partial gather', '');
-    for (const f of facts.failures) lines.push(`- ${f.query} on ${f.repo}: ${f.error}`);
+    for (const f of facts.failures) lines.push(`- ${f.query} on ${f.repo}: ${inline(f.error)}`);
     lines.push('');
   }
   const counts = [...NUMBERED, 'commits'].map((k) => `${k}: ${facts[k].length}`).join(', ');
-  lines.push('## Notes', '', `- Counts — ${counts}.`,
+  lines.push('## Notes', '', `- Counts — ${counts}.`);
+  if (Array.isArray(facts.truncated) && facts.truncated.length) {
+    for (const t of facts.truncated) lines.push(`- Truncated: ${t.query} on ${t.repo} hit the ${t.limit}-row cap — the period contains more than is reported.`);
+  }
+  lines.push(
     '- Search-index lag: `--search` and `search prs` ride GitHub\'s search index, which lags fresh writes by minutes.',
     '- `reviews_given` is a proxy: PRs the actor reviewed whose last update falls in the window; the review\'s own timestamp is not consulted, and own-authored PRs are excluded.',
     '- Commits are matched by linked GitHub login; a commit authored with an unlinked email never appears.');

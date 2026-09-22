@@ -126,3 +126,38 @@ test('a ref containing whitespace (e.g. a trailing newline) is rejected at valid
   assert.equal(bad.errors[0].path, 'sections[0].items[0].refs[0]');
   assert.match(bad.errors[0].message, /whitespace/);
 });
+
+test('a failures[] error containing newlines and a fake heading/link is neutralized to one bullet', () => {
+  const evilError = 'HTTP 503\n## Fake\n- forged ([acme/widgets#1](http://evil))';
+  const f = facts({ failures: [{ query: 'merged_prs', repo: R, error: evilError }] });
+  const { markdown } = render(f, narratives([]));
+  const bulletLines = markdown.split('\n').filter((l) => l.startsWith('- merged_prs on'));
+  assert.equal(bulletLines.length, 1);
+  assert.equal(markdown.includes('\n## Fake'), false);
+  assert.equal(markdown.includes('[acme/widgets#1]('), false);
+});
+
+test('a ref matching neither citation grammar produces the unparseable-citation warning, distinct from dropped/ambiguous', () => {
+  const { warnings } = render(facts(), narratives([{ text: 't', refs: ['#12', 'acme/widgets@xyz', 'not-a-ref'] }]));
+  assert.deepEqual(warnings, [
+    'warning: unparseable citation #12 — expected owner/name#N or owner/name@sha7+',
+    'warning: unparseable citation acme/widgets@xyz — expected owner/name#N or owner/name@sha7+',
+    'warning: unparseable citation not-a-ref — expected owner/name#N or owner/name@sha7+',
+  ]);
+  const stillDropped = render(facts(), narratives([{ text: 't', refs: ['acme/widgets#9999'] }])).warnings;
+  assert.deepEqual(stillDropped, ['warning: dropped citation acme/widgets#9999 — not present in facts.json']);
+});
+
+test('a non-empty facts.truncated renders one Truncated Notes line per entry after Counts; absent truncated renders none', () => {
+  const f = facts({ truncated: [{ query: 'issues_raised', repo: R, limit: 200 }] });
+  const { markdown } = render(f, narratives([]));
+  assert.ok(markdown.includes('- Counts — merged_prs: 1, closed_issues: 0, issues_raised: 0, reviews_given: 0, in_flight: 0, commits: 3.\n- Truncated: issues_raised on acme/widgets hit the 200-row cap — the period contains more than is reported.'));
+  const withoutTruncated = render(facts(), narratives([])).markdown;
+  assert.equal(withoutTruncated.includes('Truncated:'), false);
+});
+
+test('validateFacts rejects a non-array facts.truncated', () => {
+  const bad = validateFacts(facts({ truncated: 'x' }));
+  assert.equal(bad.ok, false);
+  assert.deepEqual(bad.errors.map((e) => e.path), ['facts.truncated']);
+});

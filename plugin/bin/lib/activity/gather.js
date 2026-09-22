@@ -20,6 +20,9 @@
 //    author wins); issues the actor closed during triage without either role are out of scope.
 //  - Rename redirects: the search API does not follow a repository rename, so callers must pass
 //    canonical `owner/name` slugs (activity-gather.js canonicalizes via `gh repo view`).
+//  - Row caps: list/search queries are bounded by --limit (200; in_flight 100); a query
+//    returning exactly its cap is recorded in facts.truncated[] and the renderer notes it —
+//    the period may contain more than is reported.
 'use strict';
 
 // Wider than the shared 5 s GH_TIMEOUT_MS (bin/lib/shared-primitives.js) because the commits
@@ -31,6 +34,8 @@ const PRESETS = { '1d': 1, '7d': 7, '14d': 14, month: 30, quarter: 90 };
 const ACCEPTED_FORMS = '1d|7d|14d|month|quarter|<from>..<to> (YYYY-MM-DD..YYYY-MM-DD)';
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const QUERY_KEYS = ['merged_prs', 'closed_issues', 'issues_raised', 'commits', 'reviews_given', 'in_flight'];
+// commits is paginated (`--paginate --slurp`), so it carries no row cap here.
+const QUERY_LIMITS = { merged_prs: 200, closed_issues: 200, issues_raised: 200, reviews_given: 200, in_flight: 100 };
 
 class PeriodError extends Error {
   constructor(message) { super(message); this.name = 'PeriodError'; }
@@ -70,7 +75,7 @@ function buildQueries({ login, slug, from, to }) {
     { key: 'merged_prs', args: ['pr', 'list', '--repo', slug, '--state', 'merged', '--search', `author:${login} merged:${from}..${to}`, '--limit', '200', '--json', 'number,title,url,mergedAt,additions,deletions,labels'] },
     { key: 'closed_issues', args: ['issue', 'list', '--repo', slug, '--state', 'closed', '--search', `closed:${from}..${to}`, '--limit', '200', '--json', 'number,title,url,closedAt,labels,author,assignees'] },
     { key: 'issues_raised', args: ['issue', 'list', '--repo', slug, '--state', 'all', '--search', `author:${login} created:${from}..${to}`, '--limit', '200', '--json', 'number,title,url,createdAt,state'] },
-    { key: 'commits', args: ['api', `repos/${slug}/commits?since=${from}T00:00:00Z&until=${to}T23:59:59Z&author=${login}&per_page=100`, '--paginate', '--slurp'] },
+    { key: 'commits', args: ['api', `repos/${slug}/commits?since=${from}T00:00:00Z&until=${to}T23:59:59Z&author=${encodeURIComponent(login)}&per_page=100`, '--paginate', '--slurp'] },
     { key: 'reviews_given', args: ['search', 'prs', '--repo', slug, '--reviewed-by', login, '--updated', `${from}..${to}`, '--limit', '200', '--json', 'number,title,url,updatedAt,author'] },
     { key: 'in_flight', args: ['pr', 'list', '--repo', slug, '--state', 'open', '--search', `author:${login}`, '--limit', '100', '--json', 'number,title,url,isDraft,updatedAt'] },
   ];
@@ -90,13 +95,15 @@ const SHAPERS = {
   }),
   issues_raised: (rows, { slug }) => rows.map((r) => ({ repo: slug, number: r.number, title: r.title, url: r.url, createdAt: r.createdAt, state: r.state })),
   // `--paginate --slurp` returns an array of pages; each page is an array of commit objects.
-  commits: (pages, { slug }) => pages.flat().map((c) => ({ repo: slug, sha: c.sha, subject: String((c.commit && c.commit.message) || '').split('\n')[0], date: c.commit && c.commit.author && c.commit.author.date, url: c.html_url })),
+  commits: (pages, { slug }) => pages.flat().map((c) => ({ repo: slug, sha: c.sha, subject: String((c.commit && c.commit.message) || '').split('\n')[0], date: (c.commit && c.commit.author && c.commit.author.date) ?? null, url: c.html_url })),
   reviews_given: (rows, { slug, login }) => rows.filter((r) => loginOf(r.author) !== login).map((r) => ({ repo: slug, number: r.number, title: r.title, url: r.url, updatedAt: r.updatedAt })),
   in_flight: (rows, { slug }) => rows.map((r) => ({ repo: slug, number: r.number, title: r.title, url: r.url, isDraft: r.isDraft, updatedAt: r.updatedAt })),
 };
 
 function errorText(err) {
-  const parts = [err && err.message, err && err.stderr, err && err.stdout].filter((p) => p && String(p).trim());
+  const stderr = err && err.stderr && String(err.stderr).trim();
+  if (stderr) return stderr;
+  const parts = [err && err.message, err && err.stdout].filter((p) => p && String(p).trim());
   return parts.length ? parts.map((p) => String(p).trim()).join(' | ') : String(err);
 }
 
@@ -113,6 +120,7 @@ function gather({ period, repos, actor }, deps) {
     repos: [...repos],
     merged_prs: [], closed_issues: [], issues_raised: [], commits: [], reviews_given: [], in_flight: [],
     failures: [],
+    truncated: [],
   };
   for (const slug of repos) {
     for (const { key, args } of buildQueries({ login: actor, slug, from: resolved.from, to: resolved.to })) {
@@ -120,6 +128,9 @@ function gather({ period, repos, actor }, deps) {
         const parsed = JSON.parse(deps.runner(args, { timeout: ACTIVITY_GH_TIMEOUT_MS }));
         if (!Array.isArray(parsed)) throw new Error(`expected a JSON array from gh ${args.slice(0, 2).join(' ')}`);
         facts[key].push(...SHAPERS[key](parsed, { slug, login: actor }));
+        if (QUERY_LIMITS[key] !== undefined && parsed.length >= QUERY_LIMITS[key]) {
+          facts.truncated.push({ query: key, repo: slug, limit: QUERY_LIMITS[key] });
+        }
       } catch (err) {
         facts.failures.push({ query: key, repo: slug, error: errorText(err) });
       }
@@ -128,4 +139,4 @@ function gather({ period, repos, actor }, deps) {
   return facts;
 }
 
-module.exports = { resolvePeriod, PeriodError, buildQueries, gather, ACTIVITY_GH_TIMEOUT_MS, QUERY_KEYS, PRESETS };
+module.exports = { resolvePeriod, PeriodError, buildQueries, gather, ACTIVITY_GH_TIMEOUT_MS, QUERY_KEYS };

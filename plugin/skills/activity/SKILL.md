@@ -13,7 +13,7 @@ gather (gh → facts.json)  →  narrate (this skill → narratives.json)  →  
         deterministic                 judgment                         deterministic, citation-validated
 ```
 
-Gathering and rendering are two separate programs, and the skill writes narration *between* them. The renderer never trusts the narrative; it trusts `facts.json`, which only `gh` wrote, and drops every citation it cannot find there — with a warning. A hallucinated issue number is structurally unpublishable.
+Gathering and rendering are two separate programs, and the skill writes narration *between* them. The renderer never trusts the narrative; it trusts `facts.json`, which only `gh` wrote, and drops every citation it cannot find there — with a warning. A hallucinated citation is structurally unpublishable — prose in `text` is never linked, only `refs[]` are.
 
 ## When to Use
 
@@ -30,7 +30,7 @@ Not for: reporting how the harness itself performed (`/claude-tweaks:feedback`'s
 | Argument | Default | Behavior |
 |---|---|---|
 | `--period` | `7d` | Presets are rolling day counts ending today (`1d`=1, `7d`=7, `14d`=14, `month`=30, `quarter`=90 — never calendar-aligned); `<from>..<to>` (`YYYY-MM-DD..YYYY-MM-DD`) is inclusive of both days. Any other form stops with the gather CLI's own message naming the accepted forms. |
-| `--register` | `retro` | Changes tone and detail, never facts: `retro` is terse and technical for the person who did the work; `standup` names mechanisms for teammates who know the codebase, refs on everything; `manager` is plain business language with no commit-speak. |
+| `--register` | `retro` | Changes tone and detail, never facts: `retro` is terse and technical for the person who did the work; `standup` names mechanisms for teammates who know the codebase, refs on everything; `manager` is plain business language with no commit-speak. Any other value stops at Step 3's schema validation (`narratives.register`). |
 | `--repo` | the `origin` remote | One or more `owner/name` slugs, comma-joined, all on `gh`'s default host; a host-qualified name stops with exit 1. |
 
 ## Step 1: Gather the facts
@@ -47,7 +47,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/activity-gather.js" --period {period} --out "$AC
 
 Add `--repo {owner/name}[,...]` when `--repo` was given. Branch on the exit code: `0` → read `$ACTIVITY_FACTS`; its `failures[]` is non-empty on a partial gather — carry on, the renderer prints them as a **Partial gather** section. `1` → relay the CLI's message (an unrecognized period, a host-qualified repo) and stop. `2` → `gh` is absent or unauthenticated, or no repo resolved: relay the CLI's stderr verbatim and stop — there is no MCP fallback for this skill. `3` → every query failed: relay the first error and stop.
 
-Read the facts file in full before narrating. Note the three standing caveats the file's producer documents (search-index lag; `reviews_given` is an updated-in-window proxy that also drops your own PRs; commits are matched by linked GitHub login) — the renderer restates them in the report footer, so you never have to.
+Read the facts file in full before narrating. Note the three standing caveats the file's producer documents (search-index lag; `reviews_given` is an updated-in-window proxy that also drops your own PRs; commits are matched by linked GitHub login) — the renderer restates them in the report footer, so you never have to. If `truncated[]` is non-empty a query hit its row cap; say so in the narrative rather than treating the count as the period's total — the renderer also notes it in the footer.
 
 ## Step 2: Narrate
 
@@ -79,7 +79,7 @@ Narration rules:
 node "${CLAUDE_PLUGIN_ROOT}/bin/activity-render.js" --facts "$ACTIVITY_FACTS" --narratives "$ACTIVITY_NARRATIVES" --out "$ACTIVITY_REPORT"
 ```
 
-The report shown to the user is always the renderer's output, never the skill's own prose — read `$ACTIVITY_REPORT` back and show it verbatim. Relay every `warning:` line the CLI printed on stderr, verbatim, above the report; each names a citation that was dropped (absent from the facts) or ambiguous (a commit prefix matching more than one sha). Exit `2` means the facts or narratives file failed schema validation (each failing path is named on stderr — a `facts.*` path means re-run Step 1, a `narratives.*` path means fix the narratives file); exit `1` is a malformed invocation to correct.
+The report shown to the user is always the renderer's output, never the skill's own prose — read `$ACTIVITY_REPORT` back and show it verbatim. Relay every `warning:` line the CLI printed on stderr, verbatim, above the report; each names a citation that was dropped (absent from the facts) or ambiguous (a commit prefix matching more than one sha). Three forms exist: `dropped citation` (well-formed, not in the facts — re-read the facts), `ambiguous citation` (commit prefix matches several — lengthen it), and `unparseable citation` (wrong shape — fix the ref syntax). Exit `2` means the facts or narratives file failed schema validation (each failing path is named on stderr — a `facts.*` path means re-run Step 1, a `narratives.*` path means fix the narratives file); exit `1` is a malformed invocation to correct.
 
 ## Step 4: Save location
 
