@@ -45,7 +45,7 @@ Split the dump into fragments: bullets, numbered lines, and blank-line-separated
 
 ## Step 3: Judge
 
-Judge every fragment against exactly these eight verdicts, in this order — **first match wins**:
+Judge every fragment against exactly these nine verdicts, in this order — **first match wins**:
 
 | Verdict | Meaning |
 |---|---|
@@ -53,6 +53,7 @@ Judge every fragment against exactly these eight verdicts, in this order — **f
 | `shipped` | Already done. |
 | `absorb:#N` | Belongs on one already-open record. |
 | `upstream` | A defect or gap in claude-tweaks itself, filed against its own repo — never when `$SELF_REPO` is `true` (see below). |
+| `upstream:<owner/name>` | A defect or gap in a **third-party** dependency — drafted for its owner, never filed by this repo. |
 | `remember` | A durable preference/fact about how to work, not a change to make. |
 | `file` | A new backlog stub. |
 | `nudge` | Relevant but too vague to sort without an answer. |
@@ -61,6 +62,7 @@ Judge every fragment against exactly these eight verdicts, in this order — **f
 - **`shipped`** — the fragment's subject matches the subject line of a merged commit in the recent-merge window (`_shared/health-recent-commit-check.md`'s matching discipline), or the title of a closed record in the snapshot. Cite the commit hash or `#N`.
 - **`absorb:#N`** — exactly one open record in the snapshot whose title or body names the fragment's subject (same component, same operation — topic-level, judged, not `/claude-tweaks:capture`'s file-path bar), after applying the absorb exclusions from `capture/routing.md` (closed / `parent-issue` carrier / `bot:in-progress` carrier). **Two or more qualifying candidates → `nudge`**, asking "absorb into #A or #B, or file fresh?" Zero candidates → fall through to the next verdict.
 - **`upstream`** — `_shared/learning-routing.md` rule 1 (a claude-tweaks defect). **When `$SELF_REPO` is `true`, this verdict is removed from the set for the whole run** and a rule-1 fragment continues down the order instead — it lands as `file` or `absorb`, since a fragment about the plugin's own behavior is relevant to the plugin's own repo when the plugin's own repo is where you're running this.
+- **`upstream:<owner/name>`** — `_shared/learning-routing.md`'s "Non-claude-tweaks upstream" rule: the fragment's subject is owned by a third-party dependency (superpowers, an MCP server, another plugin), not by claude-tweaks. Unlike `upstream`, `$SELF_REPO` never removes this verdict — it is about someone else's repository either way. When the classifier can name the dependency but not its repository, the parameter is that bare name, which the draft path handles as an unresolved target rather than rejecting.
 - **`remember`** — `_shared/learning-routing.md` rules 2–3.
 - **`file`** — relevant (names or implies a change to something this repo owns), actionable, and new. Always a plain stub: `Context:` carries `From intake {YYYY-MM-DD}` plus the hint, if any, plus a one-line why. Never spec-shaped — intake never composes a spec-shaped body. Over the cap → `nudge` toward `/superpowers:brainstorming` instead.
 - **`nudge`** — relevant but too vague to act on; ask one concrete question.
@@ -78,7 +80,7 @@ Render the batch table:
 
 Followed by exactly one `AskUserQuestion`: `question: "Apply these verdicts?"`, `header: "Intake"`, `multiSelect: false`, options `Apply all (Recommended)` / `Override rows`.
 
-**Override grammar.** One or more `F{n} {verdict}` pairs, comma-separated, a parameterized verdict carrying its parameter inline — e.g. `F1 file, F3 absorb:#573, F4 drop, F6 not-here`. A `nudge` row cannot be answered in an override — its answer belongs to Step 5. Re-render only the changed rows; no second question.
+**Override grammar.** One or more `F{n} {verdict}` pairs, comma-separated, a parameterized verdict carrying its parameter inline — e.g. `F1 file, F3 absorb:#573, F4 drop, F5 upstream:obra/superpowers, F6 not-here`. A `nudge` row cannot be answered in an override — its answer belongs to Step 5. Re-render only the changed rows; no second question.
 
 ## Step 5: Nudge round
 
@@ -91,6 +93,7 @@ One free-text prompt listing every `nudge` row's question. An answered row is re
 | `absorb:#N` | `Skill(skill: "claude-tweaks:capture", args: "<text> --route=absorb:N --source intake")` |
 | `file` | One batch call — see below |
 | `upstream` | `Skill(skill: "claude-tweaks:feedback", args: "<text>")` |
+| `upstream:<owner/name>` | `Skill(skill: "claude-tweaks:feedback", args: "<text> --upstream <owner/name>")` |
 | `remember` | `_shared/learning-routing.md`'s Memory write procedure (D4), run inline |
 | `shipped` / `drop` / `not-here` | Nothing written |
 
@@ -98,14 +101,14 @@ One free-text prompt listing every `nudge` row's question. An answered row is re
 
 1. Every `absorb:#N`, in fragment order, each its own `Skill(skill: "claude-tweaks:capture", args: "<text> --route=absorb:N --source intake")` call.
 2. The `file` batch: write `{title, body}` entries to a session-scoped JSON file resolved via `eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" INTAKE_BATCH=intake-batch.json)"`, then one `Skill(skill: "claude-tweaks:capture", args: "--batch $INTAKE_BATCH --route=keep --source intake")` call for the whole batch.
-3. Every `upstream`, in fragment order, each its own `Skill(skill: "claude-tweaks:feedback", args: "<text>")` call — `/claude-tweaks:feedback`'s own scrub and confirm gate still applies; no pre-approved fast-path flag is used here.
+3. Every `upstream` and `upstream:<owner/name>`, in fragment order, each its own `Skill(skill: "claude-tweaks:feedback", args: "<text>")` call — plus ` --upstream <owner/name>` for the parameterized form. `/claude-tweaks:feedback`'s own scrub gate applies to both; its confirm gate applies to `upstream` only, since the parameterized form publishes nothing to confirm. No pre-approved fast-path flag is used here.
 4. Every `remember`, via `_shared/learning-routing.md`'s D4 procedure, inline.
 
 **Failure semantics.** A failed per-fragment call records `Failed — {error}` for that fragment and the run continues with the next fragment — best-effort, never abort, mirroring `capture/batch-mode.md`'s own per-call fail-safe. Per-entry failures inside the batch call come back in `/claude-tweaks:capture`'s Batch Summary and are re-rendered the same way. Actions Performed rows (Step 7) are re-sorted by fragment index before rendering, so the report aligns row-for-row with Step 4's table regardless of processing order.
 
 ## Step 7: Report
 
-- `### Actions Performed` — `| Action | Detail | Ref |`, one row per non-`drop`/`shipped`/`not-here` fragment: `Filed #N`, `Absorbed into #N`, `Upstream #N`, `Remembered <file>`, or `Failed — {error}`.
+- `### Actions Performed` — `| Action | Detail | Ref |`, one row per non-`drop`/`shipped`/`not-here` fragment: `Filed #N`, `Absorbed into #N`, `Upstream #N`, `Upstream draft <absolute path>` (the `upstream:<owner/name>` verdict, which produces a draft and a hand-off command rather than an issue number), `Remembered <file>`, or `Failed — {error}`.
 - `### Dropped` — every `drop`/`shipped`/unanswered-`nudge` row, with its reason.
 - `### Carry-over` — every `not-here` fragment's verbatim text, in one fenced block, paste-ready for the next repo.
 - Then the `## Next Actions` block below.

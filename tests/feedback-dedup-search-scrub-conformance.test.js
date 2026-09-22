@@ -11,6 +11,11 @@ const path = require('node:path');
 const MD_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'feedback', 'SKILL.md');
 const md = fs.readFileSync(MD_PATH, 'utf8');
 
+// #2697 moved Step 0's batch-loop body (and its cross-reference to Step 4's fingerprint basis)
+// verbatim into bare-invocation.md; SKILL.md keeps only Step 0's trigger paragraph and pointer.
+const BARE_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'feedback', 'bare-invocation.md');
+const bare = fs.readFileSync(BARE_PATH, 'utf8');
+
 test('Step 4 derives the --search keywords from the component name only', () => {
   assert.ok(/component[^.\n]*only/i.test(md), 'Step 4 must state the search keywords derive from the component name only');
 });
@@ -27,6 +32,6 @@ test('Step 8 fingerprintBasis still consumes the full { component, summary } bas
     'must state the fingerprint basis stays full/unmodified');
 });
 
-test('Step 0 batch-loop cross-reference to the dedup fingerprint basis is still accurate', () => {
-  assert.ok(md.includes('dedup fingerprint basis'), 'Step 0 must still cross-reference the dedup fingerprint basis');
+test('Step 0 batch-loop cross-reference (now in bare-invocation.md) to the dedup fingerprint basis is still accurate', () => {
+  assert.ok(bare.includes('dedup fingerprint basis'), 'bare-invocation.md must still cross-reference the dedup fingerprint basis');
 });

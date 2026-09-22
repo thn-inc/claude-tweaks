@@ -96,46 +96,14 @@ content.
 
 ### The design contract this was built against
 
-Design work built through Impeccable carries a **direction contract** in the opening comment of the
-artifact it produced — five blocks, written *before* the code. That is the one thing an acceptance
-gate cannot reconstruct afterward: once the artifact exists, the intent behind it is only inferable
-from the result, which is circular. Surfacing it here is what lets a human answer "is this what it
-was trying to be?" instead of only "does this look fine?".
-
 Run the locate-and-parse procedure in `../_shared/design-contract.md` over the changed-path list
 Step 1 already produced — the closing commit's `--name-only` list, the label-backed brief's paths,
-or session recall's own list. Do not go looking for files beyond it.
-
-**When a contract resolves,** render this section under exactly this heading, above the verdict
-question, with the five blocks reproduced **verbatim** — never summarized, re-worded, or reordered.
-Introduce it as *what this was promising to be*, and make the direction of the check explicit: the
-human is comparing the result against a promise made beforehand, not reading a description of what
-shipped. `### What shipped` already covers the latter, and collapsing the two wastes the only
-section here that carries pre-build intent.
-
-Then a `Design-seed:` line, when there is one — the record body's own `Design-seed:` metadata line
-(fetched with the record in Step 1) if present, otherwise the seed the parse just read out of the
-artifact. If both exist and disagree, render the artifact's and say in one line that the record's
-differs, which means the artifact was rebuilt on a different roll after the record was stamped.
-Omit the line entirely when neither source has one — upstream carries a seed key only *"when the
-seed dealt stagings,"* so a contract without one is complete, not truncated.
-
-**When no contract resolves,** render nothing — no heading, no empty section, no "not found" note.
-Most records have no design contract and never will; a placeholder on every one of them would be
-noise.
-
-**The malformed case is the one exception, and only barely.** The section is still omitted entirely
-— never a heading with only the blocks that parsed, since a half-rendered contract reads as complete
-— but that procedure requires the downgrade leave a trace, and `/claude-tweaks:demo` is standalone-only, so there
-is no `$PIPELINE_RUN_DIR` and no `decisions.md` to write it to. Say it instead in **one plain line**
-above the verdict, naming the file and which labels were found. Without it, an upstream block rename
-is indistinguishable from a record that simply never had a contract — which is exactly the silent
-failure the drift assertions in `tools/upstream-drift/manifest.yml` exist to catch, and this line is
-what makes it visible to the one human already looking at this build.
-
-This section never becomes a reason to block, and it is never audited here. Whether the render
-actually honors the contract is `impeccable-finish-reviewer`'s job upstream — this skill puts the
-promise in front of a human and asks them.
+or session recall's own list. Do not go looking for files beyond it. **When no contract resolves,**
+render nothing — no heading, no empty section, no "not found" note. **When a contract resolves, or
+the parse reports one malformed,** read `design-contract-section.md` in this skill's directory and
+follow it: it renders the five blocks verbatim under this heading with the `Design-seed:` line, or
+— for the malformed case — omits the section and leaves the one plain-line trace above the verdict.
+This section never becomes a reason to block.
 
 ### Show-first walkthrough
 
@@ -200,46 +168,14 @@ with fresh Prepare/Validate.
 ### Verdict
 
 **Browser verdict (optional, `rendered-page`/`app-route` only):** applies only to the URL surfaces
-Validate above already gates on — `cli`/`flow`/`diff` plans go straight to the terminal question
-below; there is no browser session already in play for them, and opening one solely to click a
-button is pure overhead over just asking. Follows `_shared/visual-decision.md`'s contract —
-cited here, never restated.
-
-Available whenever browser tools resolve (the same gate Validate uses above — unavailable → skip
-straight to the terminal question below, no error). Compose a single-variant `layout`-scope
-manifest: one variant, whose one file is a small recap page (this record's title, an "Open {entry
-point}" link, and the `### Confirmed`/design-contract text already rendered above) — **not** a
-live embed of the entry point itself. Show already handed that to the human directly, and
-compare-shell's manifest schema requires a real local file per variant, never an arbitrary origin.
-Seed it live (`seed-compare.mjs --manifest <manifest.json> --mode live --out <demo-dir>/index.html`),
-start the server (`visual-decide.js start --dir <demo-dir> --state <demo-dir>/.vd-state`), present
-the keyed URL, and end the turn — the contract's turn loop takes over from here.
-
-On resume, read `{state}/events` and act on the last non-tweak event per the contract's Turn loop:
-
-- **Pick** (the round's only variant) — Approve, applied immediately via Step 3's Approve action.
-  The browser round **replaces** the terminal question for this outcome.
-- **Exit** — ambiguous between Request changes and Skip (the contract's vocabulary has no way to
-  say which) — **falls back** to the terminal question below, with the Approve option omitted
-  since the explicit exit signal already rules it out.
-- **Reroll / Steer** — not meaningful here: one built artifact, not N candidates to reroll or
-  steer toward another one. Falls back to the full terminal question below, unchanged.
-- **Tweak** — never a verdict, per the contract's Turn loop; the hue/spacing/corner-radius sliders
-  are compare-shell's fixed shared UI and preview against nothing meaningful on a recap page with
-  no design candidate in play. Trailing tweak events are ignored on resume exactly as the contract
-  specifies.
-- **Empty or absent events file, an unparsable-only file, or an ambiguous terminal-text/events-file
-  conflict** — the contract's own documented fallback: the terminal question below, unchanged.
-
-Stop the server (`visual-decide.js stop --state <demo-dir>/.vd-state`) before proceeding to Step
-3, on every exit path — pick, exit, or any error that aborts the round — per the contract's
-Lifecycle ownership; never rely on the idle timeout. This is a fresh server per verdict attempt,
-never reused across records or across a re-demo of the same one.
-
-**No auto-mode path reaches this.** `/claude-tweaks:demo` has no `$PIPELINE_RUN_DIR` to begin
-with — it is never invoked from within an `auto`-mode pipeline (`## Component-Skill Contract`
-below) — so this whole browser-verdict path is structurally unreachable from `auto`, the same
-constraint `_shared/visual-decision.md` requires of every consumer.
+Validate above already gates on, and only when browser tools resolve (the same gate Validate uses
+— unavailable → skip straight to the terminal question below, no error). When both hold, read
+`browser-verdict.md` in this skill's directory and follow it — it composes the recap-page manifest,
+runs the `_shared/visual-decision.md` turn loop, maps each event to a verdict outcome (a Pick
+**replaces** the terminal question; an Exit **falls back** to it with Approve omitted; everything
+else falls back unchanged), and stops the server on every exit path. A `cli`/`flow`/`diff` plan
+never reads it. No auto-mode path reaches this — `/claude-tweaks:demo` is standalone-only
+(`## Component-Skill Contract` below).
 
 **Fallback — terminal `AskUserQuestion`, reused every round (unchanged from before this
 adoption):** Call `AskUserQuestion` with `question`: `"Does {title} do what you asked
@@ -273,7 +209,8 @@ own thing outside /claude-tweaks:demo?"`, `header`: `"Scope fork"`, `multiSelect
 - Option 2 — `label`: `"Build it now"`, `description`: `"Build it now as its own thing, outside /claude-tweaks:demo"`
 
 "Capture it" routes through the same follow-up-record mechanism Step 3's Request-changes branch
-already uses, with one difference: the body's `Origin:` line reads `Origin: demo scope-fork from
+already uses (`follow-up-record.md` in this skill's directory),
+with one difference: the body's `Origin:` line reads `Origin: demo scope-fork from
 #{n}` (or `from session recall` for a session-recall entry) instead of the changes-requested
 variant — a scope-fork capture isn't a changes-requested verdict, so it needs its own provenance
 marker. If the human picks "Build it now," don't re-ask for further closely-related work in this
@@ -315,32 +252,10 @@ as single-record-backed — the safer default, since promoting an unlabeled hist
 - **Approve** — `gh issue edit {n} --remove-label demo:pending --add-label demo:approved` — for a batch-sourced verdict (per the Provenance signal note above), add `--add-label demo:approved-batch` to the same invocation. `work-backend: local-files`: set `facets.acceptance = 'approved'` via `writeRecord` — no equivalent provenance facet on this driver (see the Provenance signal note above). One command covers both entry shapes: `--remove-label` on a label the record does not carry is a silent no-op — verified on this repo, exit 0, and `--add-label` in the same invocation still lands — so a closing-commit reconstruction, which never had `demo:pending`, needs no variant. For a decomposition parent — `parent-issue` in its labels (`work-backend: github-issues`) or `facets.isParentIssue === true` (`work-backend: local-files`) — close it too: nothing else in the system ever closes a parent, so without this the parent stays open forever and the acceptance label is the only trace the parent issue was ever accepted. `work-backend: github-issues`: `gh issue close {n} --reason completed`. `work-backend: local-files`: `closeRecord(path)` (`bin/lib/issues/local-store.js`), run **after** the `writeRecord` call above — `closeRecord` does its own fresh read of the file, so calling it second means it preserves the `acceptance: 'approved'` facet just written rather than racing it.
 - **Request changes** — prompt for a short reason inline, then:
   1. **`work-backend: github-issues`:** `gh issue edit {n} --remove-label demo:pending --add-label demo:changes-requested`. **`work-backend: local-files`:** set `facets.acceptance = 'changes-requested'` via `writeRecord`. For a decomposition parent — `parent-issue` in its labels (`work-backend: github-issues`) or `facets.isParentIssue === true` (`work-backend: local-files`), the same two-driver test the Approve branch above uses — nothing further follows this: the parent stays open, since a changes-requested verdict means the parent issue's work is not done.
-  2. File a linked follow-up record: backlog stage (no `ready` — a one-line reason isn't
-     spec-shaped), Type `bug` by default (override to `feature`/`task` when the reason clearly
-     describes new scope, not a defect), no `by:*` label — instead a body line
-     `Origin: demo changes-requested from #{n}` per `_shared/work-record.md`'s side-effect-record
-     convention — plus the reason and a link back to the original. `work-backend: github-issues`:
-     use the same `recordPayload` composition `/claude-tweaks:capture` uses
-     (`bin/lib/issues/record.js`), just without invoking `/claude-tweaks:capture` itself —
-     and, unlike `/claude-tweaks:capture`'s own call, **omit the `origin` field entirely** rather than passing
-     `origin:'demo'`: `record.js`'s `ORIGINS` enum has no `'demo'` entry, so passing it throws;
-     omitting `origin` is also what keeps this follow-up label-free, consistent with the
-     "no `by:*` label" requirement above (`recordPayload` only pushes a `by:*` label when
-     `origin` is set).
-     `work-backend: local-files`: use `createRecord(dir, { slug, title, body, facets })` from
-     `bin/lib/issues/local-store.js` — `title` is the reason text just collected, `body` is the
-     reason plus the link back to the original plus the `Origin:` line above, `facets: { type,
-     stage: 'backlog' }` (`type` being `bug` or the overridden type). Compute `slug` via that
-     same module's `deriveSlug(title, existingSlugs)`. Never `allocateId`+`writeRecord`
-     separately — same allocateId+writeRecord race `capture/SKILL.md`'s Backend Selection
-     section documents (two near-simultaneous filings, e.g. two `/claude-tweaks:demo` "Request changes"
-     verdicts landing in the same run, or `/claude-tweaks:demo` racing a `/claude-tweaks:capture`/`/claude-tweaks:specify` decomposition,
-     can silently share one numeric id); see that section for the full call shape to mirror.
-  3. Note the bidirectional link back on the original record. `work-backend: github-issues`:
-     comment on the original issue with the new follow-up's issue number. `work-backend:
-     local-files`: there is no comment mechanism (same constraint `verification-brief.md` and
-     `_shared/work-record.md` already document) — append a short note with the follow-up's id to
-     the original record's body instead, via the same `readRecord`/`writeRecord` round trip.
+  2. File a linked follow-up record and note the bidirectional link back on the original — read
+     `follow-up-record.md` in this skill's directory and follow its items 2 and 3 (both drivers:
+     `recordPayload` under `work-backend: github-issues`, `createRecord`+`deriveSlug` under
+     `local-files`, the `Origin: demo changes-requested from #{n}` provenance line).
 - **Skip for now** — no label change.
 
 **Session-recall entries** (Step 1's no-arguments path) — no record exists, so nothing here ever
@@ -351,7 +266,8 @@ bootstraps a label or writes to GitHub/local-files for Approve or Skip:
   reappear in a future `/claude-tweaks:demo` run — a different session has no memory of this conversation to
   recall from. This is the accepted tradeoff of not persisting anything, not a bug.
 - **Request changes** — the exact same follow-up-filing procedure as the label-backed path's
-  Request changes above (step 2), reusing `recordPayload` (`work-backend: github-issues`) or
+  Request changes above (step 2, `follow-up-record.md` in this skill's directory), reusing
+  `recordPayload` (`work-backend: github-issues`) or
   `createRecord`+`deriveSlug` (`work-backend: local-files`) directly — the only difference is
   there is no original record to relabel or comment a link back onto, or reference within the
   follow-up's own body — the `Origin:` line is the sole provenance marker for a session-recall

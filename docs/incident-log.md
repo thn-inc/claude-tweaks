@@ -1628,3 +1628,76 @@ surfaced the gap on its own.
 exists that flags a regression test whose only cited external evidence (a PR/commit/issue number
 in the test's own comments) was never independently queried during authoring or review — at that
 point the omission is caught structurally rather than by a reviewer's judgment call.
+
+## IL-159 — Presence-pinning tests stayed green while the gated branches they nominally covered were dead
+
+During the #2697/#2757/#2758/#2759 multi-spec run (2026-09-21/22), two unrelated subsystems shipped
+a broken gated branch under a green suite, for the same reason: each test pinned the *existence* of
+the gated artifact without ever forcing the condition that activates it.
+
+`plugin/bin/lib/gif/lzw.js` (#2758) emitted its mid-stream table-reset clear code at the post-reset
+(narrow) code width instead of the pre-reset (wide) one, permanently desyncing the bitstream — every
+real 1280x720 walkthrough GIF was undecodable partway through. The test that claimed to cover the
+reset path peaked at table index 491 against the encoder's own 4096 threshold, so no reset ever
+happened inside the assertion. It surfaced only when the whole-branch reviewer wrote a from-scratch
+GIF89a decoder and decoded the build's own live-run output (ledger #15).
+
+`plugin/skills/feedback/SKILL.md` Step 2 (#2759) placed the new `--upstream` routing paragraph
+*after* an unconditional "if this is not an upstream learning, stop" clause, making the entire new
+dispatch path unreachable by the skill's own linear prose. Every conformance assertion stayed green:
+all of them pin the presence of literals, none their position relative to a control-flow clause that
+can short-circuit them. It surfaced only when a live probe agent walked the prose (ledger #22).
+
+This is not `[IL-143]` (a fixture whose *shape* is simpler than the one production always supplies)
+nor `[IL-122]` (a fake value too malformed to reach the branch at all): here the input's shape was
+right and the code under test was reached — the *gate inside it* was never crossed. It is also not
+`[IL-105]`, whose discrimination technique proves an assertion would have gone red before the
+change; both of these literals genuinely were absent before, so a pre-change SHA probe passes while
+the behavior still never fires. "The literal was added" is a strictly weaker claim than "the gated
+behavior runs."
+
+Both fixes were the same shape once found: force the gate. `41dc8424f` re-derived the LZW reset from
+real 1280x720 screenshots (4 mid-stream resets across two frames, decoded bit-exact,
+921,600/921,600 px); `d67caf6b5` added a discrimination-proven regression test pinning Step 2's
+paragraph *ordering* rather than its literals.
+
+Cost on this run: two Critical whole-branch-review findings, two fix waves per spec (`41dc8424f`,
+`f5d0b051c`; `af698b213`, `d67caf6b5`), and two independent from-scratch re-reviews, one of which
+required hand-writing a GIF89a decoder to obtain ground truth at all.
+
+**Removal condition:** retire this entry and its `docs/donts.md` rule once a mechanical check flags
+either shape — a test whose maximum observed value for a named threshold stays below that threshold,
+or an assertion pinning a literal's presence in a procedure file without pinning its position
+relative to that file's short-circuit clauses.
+
+## IL-160 — A newly-red test was attributed to the one commit that touched the same directory, without reading the failure
+
+During the #2697/#2757/#2758/#2759 multi-spec run (2026-09-22), #2758's Common Step 5 full-suite
+adjudication found `tests/demo-visual-decision-adoption.test.js` newly red, searched the branch for
+a plausible cause, found `b8fd015d9` ("Extract demo's browser-verdict path into browser-verdict.md"
+— #2697's mode split, the one commit on the branch touching `demo/`), and recorded that as the cause
+in ledger #18, carrying it to the run's final gate as a real un-fixed defect on the shared branch.
+
+The attribution was wrong, and the assertion's own failure message had already named the mechanism:
+``The input did not match the regular expression /`_shared\/visual-decision\.md`/. Input: ''`` — an
+*empty* input is a failed section extraction, not missing content. The real cause is inside the test
+itself: `skillGraph.indexOf('## demo\n')` returns -1 against `docs/skill-graph.md`'s CRLF bytes, and
+the slice built from that -1 yields the empty string. It reproduces on an unmodified checkout, and
+`b8fd015d9` never touched `docs/skill-graph.md` at all. (The CRLF defect itself is routed separately
+as a backlog record; this entry is about the attribution, not the bug.)
+
+The wrongness was invisible because the plausible commit really did touch the right directory. The
+run's own counter-example is on record two ledger rows later: #2759's gate compared failing **file
+sets** per file rather than totals, which is what surfaced a third `--upstream` mirror surface
+(ledger #20). Per-file comparison was necessary but not sufficient — the missing half is attributing
+each newly-red file by its own failure mechanism before calling it a regression at all.
+
+Cost on this run: one wrong root cause shipped into the run ledger and carried as an open item to
+the run's final gate, plus a second root-cause pass to undo it. The odds are structurally against
+proximity here: on a shared multi-spec branch the candidate-commit pool spans every sibling spec's
+work plus anything that arrived via a catch-up merge, so a directory-level coincidence is cheap,
+common, and reads as evidence.
+
+**Removal condition:** retire this entry and its `docs/donts.md` rule once the full-suite
+adjudication step mechanically requires the per-file assertion message alongside every attributed
+commit, so an attribution with no quoted failure cannot be recorded in the first place.

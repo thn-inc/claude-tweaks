@@ -19,11 +19,11 @@ const EXPECTED_PATH = path.join(REPO_ROOT, 'tests', 'fixtures', 'intake-sample-d
 const read = (p) => fs.readFileSync(p, 'utf8');
 const SKILL = read(SKILL_PATH);
 
-const VERDICT_ORDER = ['drop', 'shipped', 'absorb:#N', 'upstream', 'remember', 'file', 'nudge', 'not-here'];
+const VERDICT_ORDER = ['drop', 'shipped', 'absorb:#N', 'upstream', 'upstream:<owner/name>', 'remember', 'file', 'nudge', 'not-here'];
 
-// --- (a) verdict table: exactly eight rows, in the designed order ---
+// --- (a) verdict table: exactly nine rows, in the designed order ---
 
-test('the verdict table has exactly eight `| `verdict` |` rows in the designed order', () => {
+test('the verdict table has exactly nine `| `verdict` |` rows in the designed order', () => {
   const tableStart = SKILL.indexOf('| Verdict | Meaning |');
   const tableEnd = SKILL.indexOf('\n\n', tableStart);
   const table = SKILL.slice(tableStart, tableEnd);

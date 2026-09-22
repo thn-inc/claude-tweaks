@@ -3,6 +3,9 @@ files:
   - plugin/skills/demo/SKILL.md
   - plugin/skills/demo/entry-paths.md
   - plugin/skills/demo/legacy-brief-compatibility.md
+  - plugin/skills/demo/browser-verdict.md
+  - plugin/skills/demo/design-contract-section.md
+  - plugin/skills/demo/follow-up-record.md
   - plugin/skills/wrap-up/verification-brief.md
   - plugin/skills/_shared/observation-plan.md
 ---
@@ -27,14 +30,14 @@ files:
 - **URL:** *(no command — demo drives)*
 - **Action:** Nothing. Demo runs Prepare commands (`none` → skipped), silently validates URL surfaces with playwright-cli when available (session closed afterward), then Shows: opens the deep link in your browser (`open`/`xdg-open`), runs the `cli` command, walks `flow` Inspect pointers in order (regenerating missing artifacts, stating-and-continuing on failures), or renders the `diff`.
 - **Should feel:** Show-first — the work appears in front of you before any question is asked.
-- **Should understand:** A Prepare or Validate failure is *evidence for Request changes*, not a debugging detour — demo never fixes the application. A Parent-Gate parent brief (no plan section, walkthrough inline in `### Confirmed`) and a no-path-list session-recall entry legitimately skip straight to the verdict. When the plan carries a `Full verification:` block, it renders right after Show, before the verdict question — a pointer to the parent's eventual end-to-end check, not a substitute for it; the verdict you give still concerns only this slice.
+- **Should understand:** A Prepare or Validate failure is *evidence for Request changes*, not a debugging detour — demo never fixes the application. A Parent-Gate parent brief (no plan section, walkthrough inline in `### Confirmed`) and a no-path-list session-recall entry legitimately skip straight to the verdict. When the plan carries a `Full verification:` block, it renders right after Show, before the verdict question — a pointer to the parent's eventual end-to-end check, not a substitute for it; the verdict you give still concerns only this slice. When the changed artifacts carry an Impeccable direction contract, demo also renders `### The design contract this was built against` above the verdict — the five blocks verbatim plus a `Design-seed:` line, per `plugin/skills/demo/design-contract-section.md`; when nothing resolves there is no heading and no "not found" note, and a malformed contract leaves one plain trace line instead of a section.
 - **Red flags:** Demo asking which way you'd like to verify before showing anything; a browser validation session left open; a stale `flow` pointer blocking the walk instead of being stated and passed over; a `Full verification:` block silently missing on a parent-linked record after a failed parent or sibling lookup (a `gh` failure omits the block but must say so in one plain line above the verdict, naming which lookup failed).
 
 ### 3. Give the verdict — one question
 - **URL:** *(AskUserQuestion rendered by demo)*
 - **Action:** Pick Approve, Request changes (a one-line reason files a linked follow-up record), or Skip for now.
 - **Should feel:** One decision, fully informed — the only question the walkthrough asks.
-- **Should understand:** Approve swaps `demo:pending` → `demo:approved` (and closes a decomposition parent); a batch-sourced Approve (Step 1's `#N,#M` shape) additionally applies `demo:approved-batch` alongside it, so `bin/lib/issues/trust.js`'s coverage/verdict computation can tell a batch sign-off apart from this step's own per-record walkthrough — no extra question, nothing to decide here. Request changes ends this record's walkthrough — a later re-demo is a fresh invocation with fresh preparation.
+- **Should understand:** Approve swaps `demo:pending` → `demo:approved` (and closes a decomposition parent); a batch-sourced Approve (Step 1's `#N,#M` shape) additionally applies `demo:approved-batch` alongside it, so `bin/lib/issues/trust.js`'s coverage/verdict computation can tell a batch sign-off apart from this step's own per-record walkthrough — no extra question, nothing to decide here. Request changes ends this record's walkthrough — a later re-demo is a fresh invocation with fresh preparation. On a `rendered-page`/`app-route` plan with browser tools available, this question is asked in the browser first, on a single-variant recap page (`plugin/skills/demo/browser-verdict.md`): a pick *is* Approve, applied immediately; an exit falls back to the terminal question with Approve omitted; every other event falls back to it unchanged. A `cli`/`flow`/`diff` plan, or a run with no browser tools, goes straight to the terminal question.
 - **Red flags:** More than one question per record on the happy path; a verdict written for a session-recall entry (nothing is persisted for those except a Request-changes follow-up).
 
 ### 4. Next ref, same shape — `#N,#M` batches only

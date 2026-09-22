@@ -38,6 +38,7 @@ stories:
       - action: click
         locator: { text: "More" }
         verify: "Page 2 loads with a new set of posts"
+        caption: "Click More to load page two"
       - action: press
         value: "Alt+ArrowLeft"
         verify: "Page 1 loads again with the original posts"

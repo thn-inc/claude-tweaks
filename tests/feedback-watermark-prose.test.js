@@ -28,6 +28,8 @@ const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
 
 const SESSION_EVAL = read('plugin', 'skills', 'feedback', 'session-evaluation.md');
 const SKILL = read('plugin', 'skills', 'feedback', 'SKILL.md');
+// #2697 moved Step 0's Gather 2 paragraph verbatim into bare-invocation.md.
+const BARE_INVOCATION = read('plugin', 'skills', 'feedback', 'bare-invocation.md');
 const GITIGNORE = read('.gitignore');
 const STEP04 = read('plugin', 'skills', 'init', 'bootstrap', 'step-04-gitignore-suggestions.md');
 const PLUGIN_STRUCTURE = read('docs', 'plugin-structure.md');
@@ -102,8 +104,8 @@ test('session-evaluation.md watermark payload documents sessionId/findingsFiled/
   assert.match(SESSION_EVAL, /issueUrls,\s*\/\/ the URLs Step 8's `gh issue create` calls produced/);
 });
 
-test('SKILL.md Gather 2 paragraph points to the Skip check before describing dispatch', () => {
-  assert.match(SKILL, /its \*\*Skip check\*\* runs first/);
+test('bare-invocation.md Gather 2 paragraph points to the Skip check before describing dispatch', () => {
+  assert.match(BARE_INVOCATION, /its \*\*Skip check\*\* runs first/);
 });
 
 // --- 3. SKILL.md: --full at all three sites (table row, argument-hint frontmatter, $ARGUMENTS intro line) ---
@@ -111,14 +113,14 @@ test('SKILL.md Gather 2 paragraph points to the Skip check before describing dis
 test('SKILL.md frontmatter argument-hint includes --full', () => {
   assert.match(
     SKILL,
-    /^argument-hint: "\[<learning text>\] \[--kind=defect\|gap\] \[--dry-run\] \[--queue\] \[--full\] \[--pre-confirmed\]"$/m,
+    /^argument-hint: "\[<learning text>\] \[--kind=defect\|gap\] \[--upstream <owner\/name>\] \[--dry-run\] \[--queue\] \[--full\] \[--pre-confirmed\]"$/m,
   );
 });
 
 test('SKILL.md "$ARGUMENTS is parsed as" intro line includes --full', () => {
   assert.match(
     SKILL,
-    /`\$ARGUMENTS` is parsed as `\[<learning text>\] \[--kind=<value>\] \[--dry-run\] \[--queue\] \[--full\] \[--pre-confirmed\]`:/,
+    /`\$ARGUMENTS` is parsed as `\[<learning text>\] \[--kind=<value>\] \[--upstream <owner\/name>\] \[--dry-run\] \[--queue\] \[--full\] \[--pre-confirmed\]`:/,
   );
 });
 

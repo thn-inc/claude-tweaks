@@ -8,6 +8,7 @@ const CONTRACT = path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'visu
 const TEMPLATE = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'compare-shell', 'template.html');
 const EXPLORE = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'modes', 'explore.md');
 const DEMO = path.join(__dirname, '..', 'plugin', 'skills', 'demo', 'SKILL.md');
+const DEMO_BROWSER_VERDICT = path.join(__dirname, '..', 'plugin', 'skills', 'demo', 'browser-verdict.md');
 const BROWSER_REVIEW = path.join(__dirname, '..', 'plugin', 'skills', 'visual-review', 'browser-review.md');
 
 const EVENT_SHAPES = ['pick', 'reroll', 'steer', 'tweak', 'exit'];
@@ -87,7 +88,7 @@ test('AC5/AC1: modes/explore.md cites the contract and never restates the event 
   }
 });
 
-test('#1208 AC3: demo/SKILL.md cites the contract and never restates the event JSON shapes', () => {
+test('#1208 AC3: demo/SKILL.md and demo/browser-verdict.md cite the contract and never restate the event JSON shapes', () => {
   const demoText = readNonTombstone(DEMO);
   assert.match(demoText, /_shared\/visual-decision\.md/);
   for (const shape of EVENT_SHAPES) {
@@ -95,6 +96,15 @@ test('#1208 AC3: demo/SKILL.md cites the contract and never restates the event J
       demoText.includes(`"type":"${shape}"`),
       false,
       `demo/SKILL.md restates the "${shape}" event shape literal — it must only cite the contract`,
+    );
+  }
+  const browserVerdictText = readNonTombstone(DEMO_BROWSER_VERDICT);
+  assert.match(browserVerdictText, /_shared\/visual-decision\.md/);
+  for (const shape of EVENT_SHAPES) {
+    assert.equal(
+      browserVerdictText.includes(`"type":"${shape}"`),
+      false,
+      `demo/browser-verdict.md restates the "${shape}" event shape literal — it must only cite the contract`,
     );
   }
 });

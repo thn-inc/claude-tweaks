@@ -2,6 +2,7 @@
 files:
   - plugin/skills/feedback/SKILL.md
   - plugin/skills/feedback/session-evaluation.md
+  - plugin/skills/feedback/bare-invocation.md
   - plugin/skills/_shared/feedback-objectives.md
   - plugin/skills/_shared/upstream-feedback-batch.md
   - plugin/bin/lib/transcript-judge/watermark.js

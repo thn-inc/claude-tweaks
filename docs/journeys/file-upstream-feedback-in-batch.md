@@ -3,6 +3,7 @@ files:
   - plugin/skills/_shared/upstream-feedback-batch.md
   - plugin/skills/feedback/SKILL.md
   - plugin/skills/feedback/session-evaluation.md
+  - plugin/skills/feedback/pre-confirmed.md
   - plugin/skills/wrap-up/review-console.md
   - plugin/skills/wrap-up/upstream-feedback.md
   - plugin/bin/lib/declined-learning/store.js

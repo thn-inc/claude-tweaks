@@ -51,6 +51,7 @@ const NO_CSC = new Set(['init', 'ledger']);
 // Skills whose CSC section legitimately omits `$PIPELINE_RUN_DIR` -- each
 // entry's regex is the sentence in that skill's own file that justifies it.
 const PIPELINE_RUN_DIR_EXEMPT = {
+  activity: /no `PIPELINE_RUN_DIR` signal/,
   'assess-agent-autonomy': /is \*\*always\*\* a component skill/,
   flow: /no parent-vs-direct branch to detect/,
   browse: /no `PIPELINE_RUN_DIR` signal/,
@@ -60,6 +61,7 @@ const PIPELINE_RUN_DIR_EXEMPT = {
   'pipeline-smoke-test': /no `PIPELINE_RUN_DIR` signal/,
   'routine-kickoff': /no `PIPELINE_RUN_DIR` signal/,
   tidy: /no `PIPELINE_RUN_DIR` signal/,
+  walkthrough: /no `PIPELINE_RUN_DIR` signal/,
 };
 
 const COMPONENT_SKILLS = SKILLS.filter((n) => !NO_CSC.has(n));
