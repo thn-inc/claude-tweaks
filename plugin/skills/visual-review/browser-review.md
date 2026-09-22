@@ -18,7 +18,7 @@ Derive a kebab-case session name from the review target: `pricing-page-review`, 
 
 ### Screenshot path convention
 
-All screenshots in this skill are annotated and written to:
+All screenshots in this skill carry no overlay annotation (see the Element-reference convention below) and are written to:
 
 ```
 .claude-tweaks/artifacts/screenshots/browse/<session>/<NN>_<description>.png
@@ -26,7 +26,7 @@ All screenshots in this skill are annotated and written to:
 
 `<NN>` is a zero-padded sequence number per session (`01_landing`, `02_pricing`, ...).
 
-**Overlay-numbering gap (Playwright CLI migration):** `playwright-cli screenshot` has no `--annotate`-style flag — there is no bounding-box/numbered-marker overlay on the captured image (confirmed during #2645's migration, `playwright-cli-reference.md`'s Screenshot row). Every instruction below that says "reference overlay numbers" describes the pre-migration convention; until a replacement element-referencing convention is designed, reference elements by clear description (e.g., "the primary CTA button") or by the `eN` ref from the most recent `snapshot` instead of a bracketed overlay number like "[3]".
+**Element-reference convention (settled, #2671):** `playwright-cli screenshot` has no `--annotate`-style flag — captured screenshots carry no bounding-box/numbered-marker overlay (confirmed during #2645's migration, `playwright-cli-reference.md`'s Screenshot row), so the pre-migration "overlay number" convention (e.g. "element [3]") has no equivalent and is retired. Every instruction below that references a specific element does so by its `eN` ref from the most recent `snapshot`, paired with a short plain-language description captured at the same moment (e.g. `e12 (primary CTA button)`) — the pairing matters because `eN` refs are ephemeral and regenerate on every snapshot (`playwright-cli-reference.md`'s Cautions section), so capture the ref and its description together at the moment of finding, not after the fact, or a written report can reference a ref that no longer resolves to anything by the time it's read.
 
 ## Mode Resolution
 
@@ -133,7 +133,7 @@ and 6; journey and discover mode cite them directly. They live here rather than 
 ### Vitals interpretation (Step 1)
 
 <!-- playwright-cli: no equivalent found for agent-browser vitals — see issue Gotchas -->
-**Capability gap (Playwright CLI migration):** `playwright-cli` has no `vitals` command or equivalent — no built-in surface captures LCP/CLS/INP/TTFB/FCP (confirmed against the CLI's own published documentation during #2647's migration; `playwright-cli-reference.md`'s Operation vocabulary table). This is a real capability loss, not a minor translation note: Web Vitals capture was this skill's first-class Performance finding category. Until a replacement is designed (a hand-written `eval` script against `PerformanceObserver`/the `web-vitals` library is a possible manual workaround but is not a documented capability of this CLI, so it is not prescribed here), Performance findings sourced from vitals cannot be produced — omit the Performance line from the Step 6 report header rather than fabricate values. The thresholds table below is retained as interpretation guidance for whenever a capture mechanism becomes available.
+**Vitals unavailability accepted (settled, #2671):** `playwright-cli` has no `vitals` command or equivalent — no built-in surface captures LCP/CLS/INP/TTFB/FCP (confirmed against the CLI's own published documentation during #2647's migration; `playwright-cli-reference.md`'s Operation vocabulary table). A hand-written `eval` script against `PerformanceObserver`/the `web-vitals` library was evaluated as a workaround and rejected: it needs per-target bespoke script maintenance and async-callback plumbing with no first-class support from this CLI, a reliability and maintenance cost judged not worth carrying for a text-only wrapper skill. Web Vitals capture was previously this skill's first-class Performance finding category; that category is now unavailable until Playwright CLI (or `browse`) ships a first-class metric-capture command — omit the Performance line from the Step 6 report header entirely. This is settled behavior, not a pending gap to close. The thresholds table below is retained as interpretation guidance for whenever a capture mechanism becomes available.
 
 Read the vitals output captured during warm-up (or per-step in journey mode). Flag findings against these thresholds — they flow into the Step 6 findings table with **Source = Performance**:
 
@@ -158,7 +158,7 @@ This is the most important step. Before any structured analysis, just *look* and
 
 #### The 5-second test
 
-Look at the annotated screenshot for 5 seconds (no scrolling or extra clicking yet). Then answer:
+Look at the screenshot for 5 seconds (no scrolling or extra clicking yet). Then answer:
 
 - **What's the first thing your eye goes to?** Is that the right thing to notice first?
 - **What's the overall feeling?** Cluttered? Clean? Sparse? Overwhelming? Inviting? Cold?
@@ -166,7 +166,7 @@ Look at the annotated screenshot for 5 seconds (no scrolling or extra clicking y
 - **What's missing?** Not bugs — expectations. What did you expect to see that isn't there?
 - **If you had to describe this page in one sentence to a friend, what would you say?**
 
-Reference annotated overlay numbers when calling out specific elements (e.g., "element [7] dominates the visual weight even though it's a tertiary action").
+Reference `eN` refs (paired with a short description, per the Element-reference convention above) when calling out specific elements (e.g., "e7 (secondary badge) dominates the visual weight even though it's a tertiary action").
 
 #### Why this matters
 
@@ -204,12 +204,12 @@ Present findings from the review in a single structure that serves as both the r
 
 #### Findings & Ideas
 
-Present all findings and ideas in a single batch table. Findings reference annotated overlay numbers from the screenshots:
+Present all findings and ideas in a single batch table. Findings reference `eN` refs (paired with a short description) from the screenshots:
 
 ```
 | # | Finding | Type | Source | Severity/Impact | Recommended |
 |---|---------|------|--------|-----------------|-------------|
-| 1 | {description with overlay refs e.g. "element [3] competes with [5]"} | Issue | Health | Critical | Fix now |
+| 1 | {description with eN refs e.g. "e3 (primary CTA) competes with e5 (secondary link)"} | Issue | Health | Critical | Fix now |
 | 2 | LCP 3.1s exceeds 2.5s threshold | Issue | Performance | Major | Fix now |
 | 3 | CLS 0.18 — hero image lacks dimensions | Issue | Performance | Major | Fix now |
 | 4 | {description} | Issue | Analyze | Minor | Fix now |
@@ -231,7 +231,7 @@ The table renders as markdown, as above. Immediately below it, call `AskUserQues
 an N-row findings triage (Apply all / Override specific items), not a single-target accept/reject
 and not an N-variant comparison — the two shapes that contract's pick/reroll/steer/exit vocabulary
 is built for. There is no "candidate" here to render as a compare-shell frame: findings are text
-rows referencing overlay markers already shown inline in this report, not rendered variants
+rows referencing `eN` refs already shown inline in this report, not rendered variants
 competing for a pick. Unlike `/claude-tweaks:demo`'s Show step (which hands the browser to the
 human directly, making a browser-hosted verdict control a natural fit — see that skill's Verdict
 step), this report's findings are already fully rendered in the terminal conversation the human is
@@ -300,8 +300,8 @@ Address fixes first, then re-run this review — when "fix now" items exist
 ## Important Notes
 
 - This review requires `playwright-cli` — install with `npm install -g @playwright/cli` if missing
-- Snapshots are ephemeral; screenshots and traces are persistent — findings reference screenshot/trace paths (screenshots carry no overlay-number markers — see the Screenshot path convention section's capability-gap note)
-- <!-- playwright-cli: no equivalent found for agent-browser vitals — see issue Gotchas --> Web Vitals capture has no Playwright CLI equivalent (see "Vitals interpretation (Step 1)" above) — this was previously a first-class finding category; omit Performance findings until a replacement capture mechanism is designed, rather than skip silently without noting the gap
+- Snapshots are ephemeral; screenshots and traces are persistent — findings reference screenshot/trace paths plus the `eN` ref captured at finding time (screenshots carry no overlay-number markers — see the Element-reference convention note above)
+- <!-- playwright-cli: no equivalent found for agent-browser vitals — see issue Gotchas --> Web Vitals capture has no Playwright CLI equivalent (see "Vitals interpretation (Step 1)" above) — this was previously a first-class finding category; its unavailability is a settled decision (#2671), so omit Performance findings rather than fabricate or skip silently without noting the absence
 - Always capture a screenshot per state — bare page states with no screenshot leave findings unverifiable
 - <!-- playwright-cli: no equivalent found for agent-browser batch — see issue Gotchas --> Journey walks run as a sequence of individual commands against one session for the lifecycle slice (no `batch` equivalent) — never spread a journey across many separately-opened sessions
 - When a step fails, stop the trace first (`tracing-stop` — recording must have been started at session open via `tracing-start`, then relocated from `.playwright-cli/traces/` to an absolute path per `playwright-cli-reference.md`'s caution), then `close` — failure reports without a trace path are not actionable

@@ -46,11 +46,11 @@ Each command returns its own output: per-step snapshot trees (with `eN` element 
 For each step's block in the sequence's output:
 
 1. **Health check** — console errors, failed network requests, broken rendering visible in the snapshot. If the step is broken, capture a trace (see "Trace on failure" below) and continue to the next step.
-2. **Should-feel test** — the journey says this step should feel like "{should_feel}." Does the snapshot + annotated screenshot support that? Be honest and specific about gaps. This is the key per-step test.
+2. **Should-feel test** — the journey says this step should feel like "{should_feel}." Does the snapshot + screenshot support that? Be honest and specific about gaps. This is the key per-step test.
 3. **Red-flag check** — does the step exhibit any of the journey's documented red flags?
 4. **Vitals check** — compare the step's Web Vitals against the thresholds in `browser-review.md`'s Shared review contract, "Vitals interpretation (Step 1)" (LCP/CLS/INP/TTFB/FCP) — that table is canonical; this file doesn't restate the values. Vitals findings flow into the Step 6 table.
 
-Note transition quality between steps (jarring? smooth? lost momentum?) as a one-word annotation for the arc assessment. Reference annotated overlay numbers when describing visual issues — "primary CTA at element [3] competes visually with the secondary link at [5]" beats "the button on the right looks heavier than the link."
+Note transition quality between steps (jarring? smooth? lost momentum?) as a one-word annotation for the arc assessment. Reference `eN` refs (paired with a short description, per `browser-review.md`'s Element-reference convention) when describing visual issues — "primary CTA (e3) competes visually with the secondary link (e5)" beats "the button on the right looks heavier than the link."
 
 Do not perform full persona rotation, structured analysis, or reimagining at the per-step level — those are more valuable at the arc level where patterns across steps are visible.
 

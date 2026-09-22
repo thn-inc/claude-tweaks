@@ -45,3 +45,4 @@ require('./candidates-dead-code');
 require('./candidates-abstraction-police');
 require('./candidates-test-hygiene');
 require('./candidates-experiment-cleanup');
+require('./candidates-security-hardening');

@@ -70,7 +70,7 @@ SCOPE (required):
 - Constraints: preserve all behavior; never expand scope beyond the listed files. Do not run `git commit`, `git merge`, `git push`, or any other git mutation — edit the working tree only and return control; the caller commits (Step 4's "Note on committing").
 
 OUTPUT FORMAT (required):
-First reply line MUST be one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
+The reply's last non-empty line MUST read exactly `STATUS: DONE` (or DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED).
 
 Then return ONLY a markdown table, no preamble:
 

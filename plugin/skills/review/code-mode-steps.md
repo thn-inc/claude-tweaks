@@ -294,7 +294,7 @@ Invoke `/claude-tweaks:design-wrapper review <spec>` to run Impeccable's `critiq
 
 **Invocation:**
 
-Before invoking the wrapper, run `_shared/design-wrapper-handling.md`'s "Caller-side pre-check" with `--mode review`, `--files` from the diff scope this run already resolved (Step 2's own-work file list when merge commits were detected, otherwise the full `git diff --name-only` set), and `--surface` from this record's materialized `surface:` header field — so a non-frontend record, or a project with the design kill-switch off, never pays for loading `design-wrapper/SKILL.md` plus `modes/review.md`. On `decision: "skip"`, treat exactly like the wrapper's own `{skipped: ...}` return in the Result handling table below and skip straight to Step 6.7. On `decision: "proceed"`, pass the spec number (or paths) used for this review run — the wrapper resolves changed UI files via its own detection and runs `/impeccable:impeccable critique` + `/impeccable:impeccable audit`.
+Before invoking the wrapper, run `_shared/design-wrapper-handling.md`'s "Caller-side pre-check" with `--mode review`, `--files` from the diff scope this run already resolved (Step 2's own-work file list when merge commits were detected, otherwise the full `git diff --name-only` set), and `--surface` from this record's materialized `surface:` header field — so a non-frontend record, or a project with the design kill-switch off, never pays for loading `design-wrapper/SKILL.md` plus `modes/review.md`. On `decision: "skip"`, treat exactly like the wrapper's own `{skipped: ...}` return in the Result handling table below and proceed to Step 6.6. On `decision: "proceed"`, pass the spec number (or paths) used for this review run — the wrapper resolves changed UI files via its own detection and runs `/impeccable:impeccable critique` + `/impeccable:impeccable audit`.
 
 **Result handling:**
 
@@ -308,21 +308,44 @@ See `_shared/design-wrapper-handling.md` for the canonical return-shape contract
 
 **Why findings are advisory (review-specific):** Impeccable critiques are LLM-generated and opinionated. The user judges which findings to action. The wrapper's `review` mode is read-only — code-modifying behavior lives in `polish` (invoked separately). Surfacing findings is the value-add; the user routes them to fixes, deferrals, or accepted decisions through Step 6.7 if they choose.
 
-**Routing (optional):** actionable design findings the user wants to action inline route through Step 6.7 below, in one consolidated pass with Step 6's visual findings. When the user opts not to action them inline, they remain in the Design Quality summary section as informational.
+**Routing (optional):** actionable design findings the user wants to action inline route through Step 6.7 below, in one consolidated pass with Step 6's visual findings and Step 6.6's security-hardening findings. When the user opts not to action them inline, they remain in the Design Quality summary section as informational.
 
-## Step 6.7: Late Findings Routing (design + visual, consolidated)
+## Step 6.6: Security Hardening Pass (#2624)
 
-Runs **at most once** per review, after Steps 6 and 6.5 have both completed — and only when at least one of them produced actionable findings (Step 6 in full mode with actionable "UI / Visual" findings; Step 6.5 with `{result: "advisory", findings: [...]}`) AND the user opts to action findings inline. This replaces what were two sequential passes (a design-findings pass and a visual-findings pass), each with its own batch table and its own `AskUserQuestion` — one stop now covers both categories.
+Pre-check: skip this step entirely (no section in the summary) when this review's diff scope (Step 2's own-work file list, or the full `git diff --name-only` set) touches no file matching `bin/lib/code-health/candidates-security-hardening.js`'s `CLIENT_DIR_RE` or `ROUTE_DIR_RE` path heuristics — a review with no client-side or route/handler files in scope has nothing this pass could find.
 
-1. Render every actionable finding from both sources as a row in **one** batch table with a Category column, recommended actions pre-filled:
+Otherwise, invoke the `security-hardening` focus criterion as a component skill: run the generator directly against this repo's working tree —
+
+```bash
+node -e "const {scanSecurityHardening}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/code-health/candidates-security-hardening.js'); console.log(JSON.stringify(scanSecurityHardening(process.cwd())))"
+```
+
+— then judge each returned candidate against `_shared/criteria-security-hardening.md` (loaded via `getCriterion('security-hardening')`, `bin/lib/code-health/criteria.js`), scoped to the files this review's diff actually touches (a candidate outside the diff scope is noise for a per-review pass, even if the generator found it repo-wide — this is a lighter-weight invocation than a full `/claude-tweaks:code-health focus=security-hardening` sweep, which scans and files issues repo-wide on its own schedule; this step never files a GitHub issue itself).
+
+**Result handling:**
+
+| Outcome | Review behavior |
+|---|---|
+| One or more candidates judged as real findings | Include them in the summary as a "Security Hardening" section (kind, file:line, severity per the criteria fragment's calibration). Findings are advisory — same posture as Step 6.5's design findings. |
+| Candidates found but none survive judgment (false positives per the criteria fragment's "What NOT to flag") | Omit the section; note in the summary footer that the pass ran and found nothing actionable. |
+| Pre-check skipped (no client/route files in scope) | Omit the section entirely — no footer note, same as Step 6.5's non-frontend skip. |
+
+**Routing (optional):** actionable security-hardening findings the user wants to action inline route through Step 6.7 below, in the same consolidated pass as Step 6's visual findings and Step 6.5's design findings. When the user opts not to action them inline, they remain in the Security Hardening summary section as informational — a finding the user declines is a signal for a follow-up record, not proof the risk isn't real, per this repo's "no implicit deferrals" convention (CLAUDE.md).
+
+## Step 6.7: Late Findings Routing (design + visual + security, consolidated)
+
+Runs **at most once** per review, after Steps 6, 6.5, and 6.6 have all completed — and only when at least one of them produced actionable findings (Step 6 in full mode with actionable "UI / Visual" findings; Step 6.5 with `{result: "advisory", findings: [...]}`; Step 6.6 with one or more judged findings) AND the user opts to action findings inline. This replaces what were two sequential passes (a design-findings pass and a visual-findings pass), each with its own batch table and its own `AskUserQuestion` — one stop now covers all three categories.
+
+1. Render every actionable finding from all three sources as a row in **one** batch table with a Category column, recommended actions pre-filled:
 
 | Category | Severity source |
 |---|---|
 | `Design Quality` (from Step 6.5) | Wrapper output (`info` → low, `warning` → medium, `error` → high) |
 | `UI / Visual` (from Step 6) | `/claude-tweaks:visual-review`'s own report classification |
+| `Security Hardening` (from Step 6.6) | `criteria-security-hardening.md`'s Severity calibration section |
 
 2. Apply the routing rules from `step3-routing.md` to the combined table — severity-based auto routing when a pipeline run directory exists (low → AUTO, medium → STAGED, high → STAGED, critical → KEPT-PROMPT), or the interactive batch-table flow (one `AskUserQuestion` for apply-all/override) otherwise.
-3. After resolution, fold each finding back into its own Step 7 summary section ("Design Quality" / "Visual Review"), noting its final status (fixed / deferred / accepted).
+3. After resolution, fold each finding back into its own Step 7 summary section ("Design Quality" / "Visual Review" / "Security Hardening"), noting its final status (fixed / deferred / accepted).
 
 This pass never replays Step 3.5 (each source's findings have no peers to debate against) and never re-dispatches reproduction pairs — both sources' output is already filtered/classified before it reaches this routing. Step 3 Routing itself is untouched by this consolidation: code findings still resolve before Steps 4-5, because fixes must land before hindsight and simplification run.
 

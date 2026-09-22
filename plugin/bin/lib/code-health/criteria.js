@@ -137,6 +137,13 @@ const CRITERIA = [
   // gating); pinned directly by code-health's focus=experiment-cleanup
   // (skills/code-health/focus-mode.md), never selected via criteriaForArea.
   { id: 'experiment-cleanup', appliesTo: ['frontend', 'backend'], confidenceFloor: 'medium', fragment: 'criteria-experiment-cleanup.md' },
+  // Domain: security-hardening → pre-launch AI-app failure patterns (client
+  // secrets, missing per-user ownership checks, unguarded AI endpoints).
+  // Area-gated to the surfaces the three checks actually touch (frontend for
+  // client-bundle secrets; backend/cli/infra for routes/handlers); pinned
+  // directly by code-health's focus=security-hardening
+  // (skills/code-health/focus-mode.md), never selected via criteriaForArea.
+  { id: 'security-hardening', appliesTo: ['frontend', 'backend', 'cli', 'infra'], confidenceFloor: 'high', fragment: 'criteria-security-hardening.md' },
 ];
 
 // Build a lookup map once on load for O(1) getCriterion.

@@ -17,18 +17,18 @@ playwright-cli -s=<session> screenshot --filename=/absolute/path/to/repo/.claude
 ```
 
 <!-- playwright-cli: no equivalent found for agent-browser vitals — see issue Gotchas -->
-**Vitals capability gap:** Playwright CLI has no `vitals` command or equivalent (`browser-review.md`'s Shared review contract, "Vitals interpretation (Step 1)") — the pre-migration warm-up's `vitals` call after the screenshot has no translation. Performance findings cannot be produced for this page until a replacement capture mechanism is designed.
+**Vitals unavailability accepted (settled, #2671):** Playwright CLI has no `vitals` command or equivalent (`browser-review.md`'s Shared review contract, "Vitals interpretation (Step 1)") — the pre-migration warm-up's `vitals` call after the screenshot has no translation. Performance findings sourced from this walk's own browser session are not produced for this page; see the Performance subsection below for what to do instead.
 
 <!-- playwright-cli: no equivalent found for agent-browser batch — see issue Gotchas -->
 Playwright CLI has no `batch` equivalent (`playwright-cli-reference.md`'s Operation vocabulary table) — the four commands above run as separate sequential invocations against the same `-s=<session>` session; there is no single-invocation form.
 
 (`tracing-start` begins Playwright CLI trace recording — tracing is record-then-stop, so a later failure can only be saved if recording started here.)
 
-**Dispatcher column mapping (page-review use):** When assembling agent output into the Step 6 Report & Route table, map the agent's `| Severity | Path:Line | Finding | Evidence |` columns as follows: Severity = severity/impact (`critical` for broken page or failed health check, `high`/`medium` for major UX or perf issues, `low` for cosmetic, `info` for ideas), Path:Line = the page URL + overlay ref (`/pricing#[3]`, `/checkout#[7]`), Finding = the issue or idea (`Primary CTA at [3] competes visually with [5]` / `LCP 3.1s exceeds 2.5s threshold`), Evidence = the screenshot path + raw measurement (`.claude-tweaks/artifacts/screenshots/browse/pricing-review/02_above-fold.png; LCP 3.1s; persona: distracted mobile`). The dispatcher merges all agents' tables into the Step 6 Report & Route table, filling Source from the lens that produced each finding (Health / Performance / First Impression / Persona / Analyze / Reimagine).
+**Dispatcher column mapping (page-review use):** When assembling agent output into the Step 6 Report & Route table, map the agent's `| Severity | Path:Line | Finding | Evidence |` columns as follows: Severity = severity/impact (`critical` for broken page or failed health check, `high`/`medium` for major UX or perf issues, `low` for cosmetic, `info` for ideas), Path:Line = the page URL + `eN` ref (`/pricing#e3`, `/checkout#e7`), Finding = the issue or idea (`Primary CTA (e3) competes visually with e5` / `LCP 3.1s exceeds 2.5s threshold`), Evidence = the screenshot path + raw measurement (`.claude-tweaks/artifacts/screenshots/browse/pricing-review/02_above-fold.png; LCP 3.1s; persona: distracted mobile`). The dispatcher merges all agents' tables into the Step 6 Report & Route table, filling Source from the lens that produced each finding (Health / Performance / First Impression / Persona / Analyze / UX Heuristics / Reimagine).
 
 > **Parallel execution (conditional):** When the review covers 3+ independent pages (different URLs with no shared state or navigation dependency), dispatch page reviews as parallel Task agents. Each agent owns its own session, runs its own command sequence, and returns findings in the `| Severity | Path:Line | Finding | Evidence |` format (see the output template below). The dispatcher maps these rows into the Step 6 Report & Route table using the column mapping documented immediately above. When pages share state (form submission on page A affects page B) or there are fewer than 3 pages, review sequentially.
 >
-> **Contract:** Each agent follows `_shared/subagent-output-contract.md` — minimal input, status line first, output template inlined verbatim below. Dispatch shape: single-assistant-message rule (`_shared/subagent-dispatch-core.md`'s fan-out section) applies.
+> **Contract:** Each agent follows `_shared/subagent-output-contract.md` — minimal input, trailing status line, output template inlined verbatim below. Dispatch shape: single-assistant-message rule (`_shared/subagent-dispatch-core.md`'s fan-out section) applies.
 >
 > **Model profile:** [Use: Standard] — per-page review agents run Steps 1-5 (health, first impressions, persona walk, structured analysis, reimagine) which require integration across snapshot, screenshot, vitals, and source context. Upgrade to Capable only when the page's "reimagine" pass is the primary deliverable and creative synthesis dominates the work. Resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard` (contract § Model Selection).
 >
@@ -50,7 +50,7 @@ Playwright CLI has no `batch` equivalent (`playwright-cli-reference.md`'s Operat
 > Do not add narration, headers, or summaries before or after the table.
 > ```
 >
-> Each agent's first reply line must be one of `DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED`, then the table.
+> Each agent's reply must open with the table verbatim, then end with its last non-empty line reading exactly `STATUS: DONE` (or DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED).
 
 ---
 
@@ -115,7 +115,7 @@ Experience the page from at least two of these perspectives. Pick the most relev
 | **Error-prone user** | "I'll get this wrong" | Recovery paths, error messages, undo capability |
 | **Returning user** | "Where was that thing I used before?" | Navigation consistency, state persistence, discoverability |
 
-For each persona, actually walk through the flow. Don't just imagine it — click, type, navigate using the session's interactive ops. Note what each persona would struggle with. After each material interaction, take a fresh annotated screenshot so the report can reference the new state with overlay numbers.
+For each persona, actually walk through the flow. Don't just imagine it — click, type, navigate using the session's interactive ops. Note what each persona would struggle with. After each material interaction, take a fresh screenshot and snapshot so the report can reference the new state with `eN` refs.
 
 ### Interaction feel
 
@@ -131,7 +131,7 @@ Beyond "does it work," notice *how it feels*:
 
 - Exercise the primary flow (happy path)
 - Try at least one edge case from each persona's perspective (empty input, very long text, rapid clicks, back button)
-- Check what happens when things go wrong — error states, empty states, loading states. Capture an annotated screenshot of each notable state.
+- Check what happens when things go wrong — error states, empty states, loading states. Capture a screenshot of each notable state.
 - Watch the snapshot for JavaScript errors triggered by interactions
 
 ---
@@ -154,7 +154,7 @@ Now shift to structured inspection. This is the analytical pass — systematic w
 - Does content hierarchy make sense (headings, sections, groupings)?
 - Is the visual weight distributed intentionally (or does it feel lopsided)?
 
-Reference annotated overlay numbers when calling out specific elements.
+Reference `eN` refs (paired with a short description, per `browser-review.md`'s Element-reference convention) when calling out specific elements.
 
 #### Content & Microcopy
 - **Labels and headings** — Are they descriptive or generic? Would a new user understand them?
@@ -186,9 +186,12 @@ playwright-cli -s=<session> screenshot --filename=/absolute/path/to/repo/.claude
 Check for overflow, cramped layouts, or hidden content at each size. Only test responsive if the project is expected to support it — ask if unsure.
 
 #### Performance
-- Reference vitals captured in Step 1.
-- LCP > 2.5s, CLS > 0.1, INP > 200ms → flag as Major performance findings.
-- TTFB > 800ms, FCP > 1.8s → flag as Minor.
+- Vitals are unavailable from this walk's own browser session (Vitals unavailability note, Step 1) — omit this subsection's findings unless QA data supplies vitals separately (see "QA-informed reimagining" below).
+- If a vitals source is available (QA data): LCP > 2.5s, CLS > 0.1, INP > 200ms → flag as Major performance findings; TTFB > 800ms, FCP > 1.8s → flag as Minor.
+
+#### UX Heuristics (#2655)
+
+Apply the checklist in `ux-heuristics-lens.md` (this skill's directory) against the current screen. Report findings with `Source = UX Heuristics` in the Step 6 table, naming the specific heuristic and citing an `eN` ref or screenshot path as evidence — see that file's "Reporting a finding" section.
 
 #### Accessibility (quick check)
 - Can you tab through interactive elements in a logical order?
@@ -227,7 +230,7 @@ Think about well-known products that solve similar problems. What do they do wel
 For the most important finding from the reimagine exercise, sketch out 1-2 concrete alternatives:
 
 ```
-Current: {what it is now} (annotated overlay [N])
+Current: {what it is now} (eN ref)
 Alternative A: {a different approach} — {why it might be better}
 Alternative B: {another approach} — {the tradeoff}
 ```
