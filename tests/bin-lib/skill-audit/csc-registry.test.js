@@ -61,6 +61,7 @@ const PIPELINE_RUN_DIR_EXEMPT = {
   'pipeline-smoke-test': /no `PIPELINE_RUN_DIR` signal/,
   'routine-kickoff': /no `PIPELINE_RUN_DIR` signal/,
   tidy: /no `PIPELINE_RUN_DIR` signal/,
+  walkthrough: /no `PIPELINE_RUN_DIR` signal/,
 };
 
 const COMPONENT_SKILLS = SKILLS.filter((n) => !NO_CSC.has(n));

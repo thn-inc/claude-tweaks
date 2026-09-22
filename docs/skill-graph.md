@@ -590,6 +590,15 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | `/init` | Step 12 offers to enable diagram suggestions (writes `diagram-suggestions: enabled/disabled` to CLAUDE.md — no install step, this skill is native). |
 | `skills/_shared/record-queue-fetch.md` | `record-graph.md` Step A reuses this shared fetch-and-facet-parse procedure verbatim (with `body` added to `{EXTRA_FIELDS}`) — the same procedure `/help`, `/tidy`, and `/backlog` already consume. |
 
+## walkthrough
+
+| Target | Relationship |
+|---|---|
+| `/stories` | Consumes its YAML (`schema_version: 2`, `source_files:`, `journey:`) and adds one optional per-step field, `caption` — expand-only, QA-ignored. |
+| `/browse` | Shares session-naming and the temp-path convention; reuses `playwright-cli-reference.md`'s screenshot/resize/session syntax. |
+| `qa-agent` | Shares `qa-agent.md` Section 4's step-to-command mapping (snapshot → ref-based action) so a walkthrough's frames land on exactly what QA would have clicked. |
+| `/demo` | Name disambiguation only — `/demo` means human acceptance sign-off; this skill produces a shareable artifact. |
+
 ## wrap-up
 
 | Target | Relationship |

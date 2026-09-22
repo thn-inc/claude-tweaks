@@ -76,7 +76,15 @@ const DESCRIPTION_CEILING_CHARS = 260;
 // did I ship", "last week", "retro", "standup" — nothing spare to trim
 // without weakening skill selection). Bumped to 8400, not the bare 8380
 // minimum, for the same next-legitimate-addition headroom reason.
-const DESCRIPTION_TOTAL_CEILING_CHARS = 8400;
+//
+// 8400 -> 8700, #2758 (new `/claude-tweaks:walkthrough` skill, 248 chars).
+// Corpus was at 8616/8400 once this description was added — the same shape
+// as the five bumps above: an already-tight per-skill description (Keywords
+// tokens for a genuinely new trigger vocabulary — "walkthrough", "GIF",
+// "animated demo", "screen recording", "share", "caption" — nothing spare
+// to trim without weakening skill selection). Bumped to 8700, not the bare
+// 8616 minimum, for the same next-legitimate-addition headroom reason.
+const DESCRIPTION_TOTAL_CEILING_CHARS = 8700;
 
 function skillsDir(repoRoot) {
   return path.join(repoRoot, 'skills');

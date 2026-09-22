@@ -1,6 +1,6 @@
 ---
 name: walkthrough
-description: Use for producing a shareable animated GIF plus an ordered caption list from an executed user story — a walkthrough a second person can open, attach to a PR, or commit into docs, distinct from ephemeral QA screenshots. Keywords - walkthrough, GIF, animated demo, screen recording, share, caption.
+description: Produce a shareable animated GIF and caption list from an executed user story — a walkthrough for attaching to PRs, dropping in chat, or committing into docs. Keywords - walkthrough, GIF, animated demo, screen recording, share, caption.
 argument-hint: "[<story-path>|--story <name>|#N] --base <url> [--budget-mb <n>] [--width <px>] [--delay-ms <n>] [--settle-ms <n>]"
 ---
 
