@@ -68,7 +68,15 @@ const DESCRIPTION_CEILING_CHARS = 260;
 // "changelog", "release-please", "release train", "Release-As" — nothing
 // spare to trim without weakening skill selection). Bumped to 8200, not the
 // bare 8131 minimum, for the same next-legitimate-addition headroom reason.
-const DESCRIPTION_TOTAL_CEILING_CHARS = 8200;
+//
+// 8200 -> 8400, #2757 (new `/claude-tweaks:activity` skill, 246 chars).
+// Corpus was at 8380/8200 once this description was added -- the same shape
+// as the three bumps above: an already-tight per-skill description (Keywords
+// tokens for a genuinely new trigger vocabulary — "activity report", "what
+// did I ship", "last week", "retro", "standup" — nothing spare to trim
+// without weakening skill selection). Bumped to 8400, not the bare 8380
+// minimum, for the same next-legitimate-addition headroom reason.
+const DESCRIPTION_TOTAL_CEILING_CHARS = 8400;
 
 function skillsDir(repoRoot) {
   return path.join(repoRoot, 'skills');

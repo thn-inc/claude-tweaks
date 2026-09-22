@@ -1,6 +1,6 @@
 ---
 name: activity
-description: Use for a period-scoped "what shipped" markdown report — merged PRs, closed issues, commits, issues raised, reviews given, in flight — narrated for a retro, standup, or manager with citation-validated refs. Keywords - activity report, what did I ship, last week, retro, standup, accomplishments.
+description: Use for a period-scoped "what shipped" markdown report — merged PRs, issues, commits, reviews — narrated for retro, standup, or manager; citations validated against gh facts. Keywords - activity report, what did I ship, last week, retro, standup.
 argument-hint: "[--period <1d|7d|14d|month|quarter|<from>..<to>>] [--register <manager|standup|retro>] [--repo <owner/name>[,...]]"
 ---
 
@@ -71,6 +71,7 @@ Narration rules:
 - The register changes tone and detail, never facts. `manager` prose names outcomes, not commits; `standup` and `retro` name mechanisms and cite every item.
 - Group by the three headings above; drop a heading's items to `[]` when the period has nothing for it. Never pad an empty period — the renderer produces the honest one-line empty report on its own.
 - Refs live in `refs[]` only. A `#123` typed inside `text` is prose to the renderer and stays unlinked and unvalidated.
+- A ref is one token: `owner/name#123` or `owner/name@abc1234`, no spaces or newlines — a whitespace-bearing ref fails schema validation (exit 2). Newlines inside `text` or a heading are collapsed to single spaces by the renderer, so write each item as one line.
 
 ## Step 3: Render — mandatory
 
@@ -78,7 +79,7 @@ Narration rules:
 node "${CLAUDE_PLUGIN_ROOT}/bin/activity-render.js" --facts "$ACTIVITY_FACTS" --narratives "$ACTIVITY_NARRATIVES" --out "$ACTIVITY_REPORT"
 ```
 
-The report shown to the user is always the renderer's output, never the skill's own prose — read `$ACTIVITY_REPORT` back and show it verbatim. Relay every `warning:` line the CLI printed on stderr, verbatim, above the report; each names a citation that was dropped (absent from the facts) or ambiguous (a commit prefix matching more than one sha). Exit `2` means the narratives file failed schema validation (the path is named on stderr) — fix the narratives file and re-run this step; exit `1` is a malformed invocation to correct.
+The report shown to the user is always the renderer's output, never the skill's own prose — read `$ACTIVITY_REPORT` back and show it verbatim. Relay every `warning:` line the CLI printed on stderr, verbatim, above the report; each names a citation that was dropped (absent from the facts) or ambiguous (a commit prefix matching more than one sha). Exit `2` means the facts or narratives file failed schema validation (each failing path is named on stderr — a `facts.*` path means re-run Step 1, a `narratives.*` path means fix the narratives file); exit `1` is a malformed invocation to correct.
 
 ## Step 4: Save location
 

@@ -4,7 +4,8 @@
 // convention-enforcement row of .claude/skills/skill-prose-conformance-tests — read live,
 // never frozen, because a future edit weakening either is exactly what this must catch).
 // Go-red proof: the skill file did not exist at base 6d0f768a4, so every literal below was
-// absent there; each assertion is additionally proven against a hand-doctored copy.
+// absent there; the two prose pins are additionally proven against a hand-doctored copy; the
+// absence checks are plain substring/regex assertions.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -27,8 +28,12 @@ test('the never-invent sentence is present verbatim, once, in bold', () => {
 test('the render step is mandatory: the report shown is always the renderer output, never optional', () => {
   const flat = collapse(skill);
   assert.ok(/always the renderer's output, never the skill's own prose/.test(flat), 'mandatory-render sentence missing');
-  const renderStep = flat.slice(flat.indexOf('activity-render.js'));
-  assert.equal(/\b(optional|may skip|can skip|if desired)\b/i.test(renderStep.slice(0, 1200)), false, 'the render step must not be described as optional');
+  const renderStart = flat.indexOf('activity-render.js');
+  const step4Start = flat.indexOf('## Step 4');
+  assert.ok(renderStart > -1, 'activity-render.js not found in skill prose');
+  assert.ok(step4Start > -1, '## Step 4 heading not found in skill prose');
+  const renderStep = flat.slice(renderStart, step4Start);
+  assert.equal(/\b(optional|may skip|can skip|if desired)\b/i.test(renderStep), false, 'the render step must not be described as optional');
   const doctored = collapse(skill.replace('always the renderer\'s output', 'optionally the renderer\'s output'));
   assert.equal(/always the renderer's output, never the skill's own prose/.test(doctored), false, 'doctored control must fail (proves go-red)');
 });
