@@ -100,6 +100,7 @@ Otherwise:
 
 - Classifier **rule 1** fired → `defect`
 - Classifier **rule 7** fired → `gap`
+- Third-party `--upstream`: `learning-routing.md`'s third-party rule
 
 The kind comes from which rule fired. Never guess it, and never infer it from
 tone. If `--kind=` was passed, use that and skip the inference.

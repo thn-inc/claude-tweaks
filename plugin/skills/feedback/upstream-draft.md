@@ -5,9 +5,10 @@ Referenced by `skills/feedback/SKILL.md`'s routing paragraph after Step 2. Read 
 
 **This path drafts; it never publishes.** Step 7 (Confirm) and Step 8 (File) do not run here.
 Nothing is created, commented on, or labelled in any repository, and this skill's filing CLI is
-never invoked — the human is the filer. Being inside a pipeline changes none of that, and `auto`
-mode does not silence this path, the same stance `SKILL.md`'s Component-Skill Contract already
-takes on Steps 6 and 7.
+never invoked — the human is the filer. Being inside a pipeline changes none of that. `auto` mode
+never silences the *decision*: an unresolved target still gets staged and surfaces at the Review
+Console (Step A below), never silently dropped. It does skip the *interactive* `AskUserQuestion`
+prompt itself in auto/headless contexts — see Step A.
 
 Entered with Step 1's gathered material (summary, affected component, title, and either repro
 steps plus expected-vs-actual, or a use case) and Step 2's `defect`/`gap` kind already in hand.
@@ -66,9 +67,24 @@ question: there is no confirm gate here, because there is nothing to confirm.
 run, resolved from session state, never a hard-coded literal): this is not a HARD-GATE and carries
 no row in the contract's "does NOT silence" list, so its strict rule applies — skip the question
 and keep the placeholder instead of asking. When `$PIPELINE_RUN_DIR` is set, additionally log one
-`STAGED` entry per `auto-mode-contract.md`'s Skill integration pattern (stage path:
-`staged/upstream-draft-{N}.md`) so the unresolved target surfaces at the Review Console rather than
-vanishing silently.
+`STAGED` entry through the canonical appender — never a direct file Write/Edit to the run dir,
+which the worktree isolation gate refuses for a main-checkout path
+(`_shared/auto-mode-contract.md`'s Skill integration pattern; `_shared/auto-decision-log.md`'s
+Entry schema names `bin/log-decision.js` as the sole sanctioned writer):
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status STAGED \
+  --section "/feedback" --step "upstream-draft Step A" \
+  --text "Unresolved target: {the raw value}. Kept placeholder; no AskUserQuestion in {mode}." \
+  --reversibility high
+```
+
+so the unresolved target surfaces at the Review Console rather than vanishing silently. **Append a
+stage path to `--text` only when `--dry-run` was not also passed** — `... AskUserQuestion in
+{mode}. Stage path: staged/upstream-draft-{N}.md.` — since Step D's `--dry-run` branch never
+persists that file; a logged stage path pointing at a file that will never exist is exactly the
+mismatch the Review Console would flag. Under `--dry-run`, the invocation above (no stage path) is
+correct as written: the unresolved state still reaches the Review Console without naming a file.
 
 ## Step B: Dedup — retargeted, read-only, advisory
 

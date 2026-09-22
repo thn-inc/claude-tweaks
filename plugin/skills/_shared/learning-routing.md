@@ -80,6 +80,12 @@ report, writes it to disk, and hands the human a paste-ready command. That path
 publishes nothing: a bare name is treated as an unresolved target and drafted
 with a placeholder, and no repository is ever written to on the user's behalf.
 
+**Kind for a non-claude-tweaks upstream learning.** Neither rule 1 nor rule 7 fires here — both
+assign `kind` only for a claude-tweaks-owned learning, and this path is explicitly not D5. Assign
+`kind` the same way instead: the dependency behaves wrongly → `defect`; it has no capability or
+opinion where it should → `gap`. This is what `/claude-tweaks:feedback`'s Step 2 "Otherwise" list
+and `upstream-draft.md`'s Step C template consume.
+
 This does not conflict with rule 7. The two describe different targets for the
 same lesson: rule 7 files against **claude-tweaks**, asking it to carry guidance
 it currently lacks — including guidance about using a dependency it already

@@ -69,3 +69,25 @@ test('(5) upstream-draft.md renders the hand-off block and states the single-quo
     'the hand-off block must render verbatim, with the body via --body-file');
   assert.ok(draft.includes("'\\''"), "the escaping rule must name the four-character '\\'' form");
 });
+
+// C1 (the critical bug this fix wave closed): Step 2's `--upstream` routing paragraph must
+// precede the "stop" clause, or `--upstream` dispatch is unreachable — a learning that names
+// `--upstream` never gets past the stop before it can be routed into upstream-draft.md. This is
+// a pure prose-ordering defect: nothing else in the corpus goes red if the paragraphs are swapped
+// back, so this test exists purely to pin the order (skill-prose-conformance-tests' "prove it can
+// actually go red" discipline).
+test('(6) SKILL.md Step 2: the --upstream routing paragraph precedes the stop clause', () => {
+  const skill = read(SKILL_PATH);
+  const stepStart = skill.indexOf('### Step 2: Classify the kind');
+  assert.ok(stepStart >= 0, `${SKILL_PATH} must still carry Step 2`);
+  const stepEnd = skill.indexOf('### Step 3:', stepStart);
+  assert.ok(stepEnd > stepStart, `${SKILL_PATH} must still carry Step 3 after Step 2`);
+  const step2 = skill.slice(stepStart, stepEnd);
+
+  const routingIdx = step2.indexOf('**`--upstream` routing.**');
+  const stopIdx = step2.indexOf('**If it is not D5 and `--upstream` was not given, stop.**');
+  assert.ok(routingIdx >= 0, 'Step 2 must still carry the --upstream routing paragraph');
+  assert.ok(stopIdx >= 0, 'Step 2 must still carry the "stop" clause');
+  assert.ok(routingIdx < stopIdx,
+    'the --upstream routing paragraph must precede the stop clause, or --upstream dispatch is unreachable (C1)');
+});
