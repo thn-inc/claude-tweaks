@@ -1,7 +1,7 @@
 ---
 name: feedback
 description: Use when a learning belongs upstream in the claude-tweaks plugin rather than this project — a skill that behaves wrongly (defect) or has no opinion where it should (gap). Files a GitHub issue against claude-tweaks after an explicit scrub and confirmation.
-argument-hint: "[<learning text>] [--kind=defect|gap] [--dry-run] [--queue] [--full] [--pre-confirmed]"
+argument-hint: "[<learning text>] [--kind=defect|gap] [--upstream <owner/name>] [--dry-run] [--queue] [--full] [--pre-confirmed]"
 ---
 
 # Feedback — Route a learning upstream to the claude-tweaks plugin
@@ -23,20 +23,21 @@ Lifecycle: `/claude-tweaks:reflect` → **`/claude-tweaks:feedback`** → upstre
   and left for a human to forward — and to evaluate the session itself
   against the maintainer-objective rubric (see Step 0).
 
-Do **not** use this skill to file against any repository other than
-`thomasholknielsen/claude-tweaks`. A learning owned by a third-party dependency
-is reported to the user and stopped — see `_shared/learning-routing.md`,
-"Non-claude-tweaks upstream".
+This skill **files** against `thomasholknielsen/claude-tweaks` and nowhere else. A learning owned
+by a third-party dependency takes `--upstream <owner/name>`'s draft-only path instead, which
+publishes nothing — see `upstream-draft.md` in this skill's directory, and
+`_shared/learning-routing.md`, "Non-claude-tweaks upstream".
 
 ## Input
 
-`$ARGUMENTS` is parsed as `[<learning text>] [--kind=<value>] [--dry-run] [--queue] [--full] [--pre-confirmed]`:
+`$ARGUMENTS` is parsed as `[<learning text>] [--kind=<value>] [--upstream <owner/name>] [--dry-run] [--queue] [--full] [--pre-confirmed]`:
 
 | Argument | Behavior |
 |----------|----------|
 | Free-text learning | The substance of the report. When absent, gather it from the conversation or ask. |
 | `--kind=defect` | The plugin does something wrong. Skips Step 2's inference. |
 | `--kind=gap` | The plugin has no opinion where it should. Skips Step 2's inference. |
+| `--upstream <owner/name>` | Draft-only path for a learning owned by a third-party dependency: Steps 1, 2, 4 (retargeted), 5 (adapted), and 6 run; 3 collapses to the self-target guard; 7 is skipped because nothing is published; 8 never runs. Persists the scrubbed draft and hands the human a paste-ready command. Read `upstream-draft.md`. |
 | `--dry-run` | Run Steps 1-7 (classification, self-reference, dedup, drafting, scrub, and the confirm gate's dry-run branch), then render the draft and **stop** — Step 8 (label resolution and `gh issue create`) never runs. Step 4's dedup search is a real, read-only `gh issue list` call; no `gh` call ever creates, labels, or files anything. When `--pre-confirmed` is also passed, `--dry-run` wins — see Step 7. |
 | `--queue` | Explicit bare-invocation mode (see Step 0) even when free-text is also present — process this project's own `upstream-candidate` backlog instead of (or in addition to) the free-text learning. |
 | `--full` | Presence-only, meaningful only for bare/`--queue` invocation (Step 0's session-evaluation gather): ignore any existing watermark for the resolved transcript, dispatch the full un-scoped judge (no offset clause), then overwrite the watermark with the fresh result exactly as a first-ever evaluation would. This is also what bypasses `session-evaluation.md`'s Skip check (Step 0's Gather 2): that check reads the same watermark, so ignoring it always resolves to dispatch. A no-op combined with free-text-only invocation — free-text invocation without `--queue` runs no session evaluation at all (Step 0's rule). |
@@ -99,6 +100,10 @@ tone. If `--kind=` was passed, use that and skip the inference.
 
 A defect and a gap differ in triage, urgency, and what a maintainer does with
 them. They must not arrive looking identical.
+
+**`--upstream` routing.** When `--upstream` is present, continue in `upstream-draft.md` in this
+skill's directory; its self-target guard returns here, at Step 3, when the value names
+claude-tweaks itself. Steps 3 through 9 below never run for any other `--upstream` value.
 
 ### Step 3: Self-reference check
 
@@ -435,6 +440,9 @@ ambiguity exists (rare; `$PIPELINE_RUN_DIR` is the primary signal).
 Being inside a pipeline never relaxes Steps 6 and 7. `auto` mode does not
 silence this skill — see `_shared/auto-mode-card.md`.
 
+`/claude-tweaks:intake` and `/claude-tweaks:reflect` pass the owner their classifier already
+identified as `--upstream <owner/name>`, so the common third-party path needs no typing.
+
 **`--pre-confirmed` legitimacy is narrower than "inside a pipeline."** The only legitimate source
 of `--pre-confirmed` is `/claude-tweaks:wrap-up`'s Review Console, or the consolidated multi-spec
 console at `/claude-tweaks:flow`'s end-of-run, invoking this skill per checked `U#` item — not a
@@ -450,7 +458,7 @@ a precedent to extend the carve-out to.
 | Pattern | Why It Fails |
 |---------|--------------|
 | Filing without showing the scrubbed draft | Publishing to a public repo is outward-facing and irreversible; confirmation is the contract, not a formality |
-| Filing against a repo other than `thomasholknielsen/claude-tweaks` | Out of scope by design — a third-party owner has different consent requirements |
+| **Filing** against a repo other than `thomasholknielsen/claude-tweaks` | Out of scope by design: a third-party owner has different consent requirements. Drafting for one via `--upstream` is the sanctioned alternative; the draft path never invokes `bin/file-feedback.js` |
 | Inferring the kind from tone rather than from which classifier rule fired | Defect and gap differ in triage; a mislabelled report wastes a maintainer's time in both directions |
 | Applying a label `gh label list` did not confirm | Guessing risks importing the repo's internal automation taxonomy from outside its pipeline |
 | Skipping the scrub because the reporting project "looks fine" | The scrub is unconditional; the cost of one leak exceeds the cost of every scrub |
