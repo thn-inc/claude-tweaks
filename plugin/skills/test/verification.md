@@ -111,6 +111,20 @@ over free-text failure messages is not a substitute. When no file path can be ex
 nothing to isolate; "Flake handling"'s Whole-suite re-run path below is the fallback for that
 case.
 
+Once the by-file diff has isolated a genuinely new failing file, **attribute it by reproducing its
+failure mechanism, not by commit proximity.** Read the assertion's own message — the
+actual-vs-expected values — and reproduce the failure before naming a cause. A commit that touched
+the same directory is a hypothesis, not evidence; an assertion whose actual value is empty,
+`undefined`, or `-1` is reporting a broken *lookup*, not broken content, and almost never points at
+the commit that changed the content. On a shared multi-spec branch this matters twice over, because
+the candidate-commit pool includes every sibling spec's work plus anything that arrived by
+catch-up merge, so a plausible-looking commit is always available to blame. One multi-spec run
+recorded `tests/demo-visual-decision-adoption.test.js` as caused by the single commit on the branch
+that touched `demo/`; the real cause was a bare-LF `indexOf` in the test itself, reproducible on an
+unmodified checkout, and the assertion's own message (`Input: ''`) named the empty extraction
+immediately. A wrong attribution is worse than none — it closes the question and ships into the
+run ledger as a fact.
+
 ## Step 2.5: Verification pass stamp
 
 The runner stamps; agents never do (#1921). When `verify.js` exits 0 for the full resolved check set — every `--cmd` check ran, none was fail-fast skipped — it writes `{git-dir}/claude-tweaks-verify-pass.json` itself: `{sha, dirty, scope: "full", fullSha, base: null, changedFiles: [], suitesRun, flakyRetried: [], reportPath, at}`, bound to the `report.json` it summarizes, plus (for this release only — removal condition in `_shared/policy-deprecations.md`) the legacy bare-SHA twin `{git-dir}/claude-tweaks-verify-pass`. Under `--scope` the same fields carry the run's own mode, base, and changed set; only a `full` run sets `scope: "full"`, `base: null`, and rewrites the legacy twin. The stamp lives in the checkout's own git dir (per-worktree, never tracked, never shared across sessions).
