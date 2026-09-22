@@ -6,7 +6,7 @@ argument-hint: "[<story-path>|--story <name>|#N] --base <url> [--budget-mb <n>] 
 
 # Walkthrough — Shareable animated GIF from an executed story
 
-Executes an existing schema-v2 user story through Playwright CLI, captures one PNG frame per step, and encodes an animated GIF plus an ordered caption list — a walkthrough that survives being attached to a PR, dropped in chat, or committed into docs, unlike the QA screenshots every `/claude-tweaks:test qa` run already captures and discards to a scratch location.
+Executes an existing schema-v2 user story through Playwright CLI, captures one PNG frame per step, and encodes an animated GIF plus an ordered caption list — a walkthrough that survives being attached to a PR, dropped in chat, or committed into docs, unlike the QA screenshots every `/claude-tweaks:test qa` run already captures and discards under `.claude-tweaks/artifacts/`.
 
 Not `/claude-tweaks:demo` — that name means human acceptance sign-off on a built thing. This produces a shareable artifact, nothing more.
 
@@ -60,9 +60,9 @@ For each step, run the action exactly as `plugin/agents/qa-agent.md` Section 4 m
 playwright-cli -s=walkthrough-{story-id} screenshot --filename={frame-path}
 ```
 
-`{frame-path}` is `sessionTmpPath(sessionId, 'walkthrough-{story-id}/{NN}.png')` per `_shared/session-tmp-root.md` (under the OS temp dir, never under the repo's disposable artifacts scratch tree), `{NN}` zero-padded in step order.
+`{frame-path}` is `sessionTmpPath(sessionId, 'walkthrough-{story-id}/{NN}.png')` per `_shared/session-tmp-root.md` (under the OS temp dir, never under `.claude-tweaks/artifacts/`), `{NN}` zero-padded in step order.
 
-On a locator miss, report the step number and stop — **never degrade the locator to a raw CSS selector**; a walkthrough that needed one would break on the next markup change and is lying about being semantic.
+On a locator miss, report the step number and stop — **never loosen a locator to a CSS selector**; a walkthrough that needed one would break on the next markup change and is lying about being semantic.
 
 ## Step 4: Encode
 
@@ -83,7 +83,7 @@ Write `{name}.md` beside the GIF — one ordered line per step, from the story's
 - Option 2 — `label`: `"Current directory"`, `description`: `"Write to ./{story-id}.gif and .md"`
 - Option 3 — `label`: `"Don't save"`, `description`: `"Keep the frame directory description in this conversation only — nothing written"`
 
-An explicit path comes through `Other`. The GIF and caption list are copied together with the Write tool. Nothing is written into the repository without this choice, and nothing is ever committed on the user's behalf — the walkthrough exists to be kept, so it never defaults to the disposable artifacts scratch tree that `/claude-tweaks:tidy` prunes after 30 days.
+An explicit path comes through `Other`. The GIF and caption list are copied together with the Write tool. Nothing is written into the repository without this choice, and nothing is ever committed on the user's behalf — the walkthrough exists to be kept, so it never defaults to `.claude-tweaks/artifacts/`, which `/claude-tweaks:tidy` prunes after 30 days.
 
 Close the Playwright CLI session on every path — success, a Step 3 locator miss, or a Step 4 encode failure.
 
@@ -103,8 +103,8 @@ Render as plain markdown (docs/skill-authoring.md's Skill handoffs convention):
 
 | Pattern | Why It Fails |
 |---------|-------------|
-| Degrading a locator to CSS on a miss | A walkthrough built on a CSS selector breaks on the next markup change and is lying about being semantic — stop and report the step instead |
-| Writing the GIF into the repo's disposable artifacts scratch tree or committing it | That tree is disposable by declaration; nothing is committed on the user's behalf in any mode |
+| Loosening a locator to CSS on a miss | A walkthrough built on a CSS selector breaks on the next markup change and is lying about being semantic — stop and report the step instead |
+| Writing the GIF under `.claude-tweaks/artifacts/` or committing it | That tree is disposable by declaration; nothing is committed on the user's behalf in any mode |
 | Retrying with a guessed `--width` after a budget-exceeded exit | The lever list names the levers in order for a reason — relay it and let the user choose, never auto-shrink |
-| Selecting a non-`playwright-cli` browser backend here | Restricted to human ad-hoc use in `browse/SKILL.md`; this skill is the same kind of pipeline-adjacent consumer as `qa-agent`/`/stories` and stays `playwright-cli`-only |
+| Using `backend=chrome` here | Restricted to human ad-hoc use in `browse/SKILL.md`; this skill is the same kind of pipeline-adjacent consumer as `qa-agent`/`/stories` and stays `playwright-cli`-only |
 | Authoring a story when none matches | `/claude-tweaks:stories` owns story authoring — offer it and stop |
