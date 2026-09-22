@@ -55,6 +55,8 @@ stories:
 
 Locators are always semantic (one of: ARIA role, `data-testid`, visible text, form label, input placeholder) — never CSS, XPath, or `@eN`/ref values stored directly. At runtime, a locator and its step's action execute as a **two-step** sequence: `snapshot` first to resolve the locator to an `eN` ref, then a separate `click <eN>`/`fill <eN> "<text>"` (Playwright CLI's `find` is read-only and text-only, so it cannot resolve role/testid/css locators or perform an action in one call — it is never used as an existence probe or an action). Refs are NEVER stored in the YAML — they regenerate each snapshot. See `playwright-cli-reference.md` in the `/claude-tweaks:browse` skill directory for the full operation vocabulary.
 
+An optional per-step field, `caption: "<one line>"`, exists purely for `/claude-tweaks:walkthrough` — a one-line human-readable description shown beside that step's frame in a generated GIF's caption list. It is expand-only (no existing story's meaning changes) and is never read by QA execution: `qa-agent.md`'s step mapping does not reference it.
+
 See locator types and preference order in `story-examples.md`.
 
 A file may also carry file-level blocks alongside `stories`: `setup` (viewport, shared auth, pre-steps), `teardown` (post-run steps), and `target_env` (the Target Environment Guard's recorded classification — see Step 2). Complete worked examples of every block live in `story-examples.md`; this schema section is canonical for field semantics and is not restated elsewhere in this file.
