@@ -147,6 +147,12 @@ test('exit 2: a non-github.com origin is rejected rather than silently mis-slugg
   assert.match(out.stderr.join(''), /ghe\.example\.com/);
 });
 
+test('exit 2: an origin-derived slug with a leading-hyphen owner is rejected rather than reaching gh positionally', () => {
+  const { d, out } = deps({ remoteUrl: () => 'https://github.com/-evil/widgets.git\n' });
+  assert.equal(run(['--period', '7d', '--out', 'f.json'], d), 2);
+  assert.match(out.stderr.join(''), /pass --repo/);
+});
+
 test('exit 1: --repo "" is a usage error, not a silent origin fallback', () => {
   const { d, out } = deps({ remoteUrl: () => { throw new Error('must not read origin'); } });
   assert.equal(run(['--period', '7d', '--out', 'f.json', '--repo', ''], d), 1);

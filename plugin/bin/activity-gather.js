@@ -113,6 +113,13 @@ function run(argv, deps = realDeps) {
       return 2;
     }
     repos = [repoSlug({ owner: spec.owner, repo: spec.repo })];
+    // parseRepo's owner/name capture is deliberately loose ([^/]+); the same shape rule the
+    // --repo path enforces applies here before the slug is used as a positional argument to
+    // `gh repo view` (a leading `-` would otherwise read as a flag — gh-api-module-pattern).
+    if (!REPO_RE.test(repos[0])) {
+      deps.stderr(`activity-gather.js: origin remote resolves to an unusable owner/name "${repos[0]}" — pass --repo <owner/name> explicitly\n`);
+      return 2;
+    }
   }
 
   let actor = o.actor;
