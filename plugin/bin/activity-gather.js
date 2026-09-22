@@ -15,6 +15,11 @@
 //   3 the remote calls themselves failed — EVERY query, across every repo
 // Actor defaults to `gh api user -q .login`; repo defaults to the origin remote via
 // bin/lib/repo-resolve.js. Every gh call passes an explicit 15 s timeout (gather.js states why).
+// Every resolved slug (--repo or origin) is canonicalized via one `gh repo view` call each:
+// search-backed queries (gh search prs, --search) do not follow a repository rename/transfer
+// redirect, even though `gh api`/`gh repo view` do, so a stale origin or a pre-transfer --repo
+// would otherwise gather silently empty. `gh repo view` failing or returning an empty name is
+// also an exit-2 cause, alongside the others listed above.
 'use strict';
 
 const fs = require('fs');
@@ -95,6 +100,29 @@ function run(argv, deps = realDeps) {
     }
     if (!actor) { deps.stderr('activity-gather.js: gh api user returned an empty login\n'); return 2; }
   }
+
+  // Canonicalize every resolved slug: the search API does not follow a rename/transfer
+  // redirect, so gathering under a stale name silently returns nothing from those queries even
+  // though `gh repo view` itself resolves fine (see the header comment for why).
+  const canonicalRepos = [];
+  for (const slug of repos) {
+    let canonical;
+    try {
+      canonical = String(deps.runner(['repo', 'view', slug, '--json', 'nameWithOwner', '-q', '.nameWithOwner'], { timeout: ACTIVITY_GH_TIMEOUT_MS })).trim();
+    } catch (err) {
+      deps.stderr(`activity-gather.js: repository ${slug} not found or not accessible (gh repo view): ${errorText(err)}\n`);
+      return 2;
+    }
+    if (!canonical) {
+      deps.stderr(`activity-gather.js: repository ${slug} not found or not accessible (gh repo view): returned an empty name\n`);
+      return 2;
+    }
+    if (canonical !== slug) {
+      deps.stderr(`activity-gather.js: note — ${slug} redirects to ${canonical}; gathering under the canonical name\n`);
+    }
+    if (!canonicalRepos.includes(canonical)) canonicalRepos.push(canonical);
+  }
+  repos = canonicalRepos;
 
   let facts;
   try {

@@ -11,6 +11,7 @@ function deps(overrides = {}) {
   const out = { stdout: [], stderr: [], written: {} };
   const d = {
     runner: (args) => {
+      if (args[0] === 'repo' && args[1] === 'view') return args[2] + '\n';
       if (args[0] === 'api' && args[1] === 'user') return 'octocat\n';
       if (args[0] === 'api') return '[[]]';
       return '[]';
@@ -72,9 +73,14 @@ test('exit 2: no --repo and origin unreadable or unparsable', () => {
 });
 
 test('exit 3 only when every query failed; a partial gather exits 0 with failures[] populated', () => {
-  const allFail = deps({ runner: (args) => { if (args[0] === 'api' && args[1] === 'user') return 'octocat'; throw new Error('boom'); } });
+  const allFail = deps({ runner: (args) => {
+    if (args[0] === 'repo' && args[1] === 'view') return args[2] + '\n';
+    if (args[0] === 'api' && args[1] === 'user') return 'octocat';
+    throw new Error('boom');
+  } });
   assert.equal(run(['--period', '7d', '--out', 'f.json'], allFail.d), 3);
   const partial = deps({ runner: (args) => {
+    if (args[0] === 'repo' && args[1] === 'view') return args[2] + '\n';
     if (args[0] === 'api' && args[1] === 'user') return 'octocat';
     if (args[0] === 'pr' && args.includes('merged')) throw new Error('HTTP 503');
     if (args[0] === 'api') return '[[]]';
@@ -87,6 +93,7 @@ test('exit 3 only when every query failed; a partial gather exits 0 with failure
 
 test('--actor and --repo overrides skip the user probe and origin read', () => {
   const { d, out } = deps({ remoteUrl: () => { throw new Error('must not read origin'); }, runner: (args) => {
+    if (args[0] === 'repo' && args[1] === 'view') return args[2] + '\n';
     if (args[0] === 'api' && args[1] === 'user') throw new Error('must not probe user');
     if (args[0] === 'api') return '[[]]';
     return '[]';
@@ -117,6 +124,7 @@ test('exit 1: --repo "" is a usage error, not a silent origin fallback', () => {
 
 test('per-repo total failure: all 6 queries failing on one of two repos is still a partial (exit 0); failing on both is exit 3', () => {
   const partial = deps({ runner: (args) => {
+    if (args[0] === 'repo' && args[1] === 'view') return args[2] + '\n';
     if (args[0] === 'api' && args[1] === 'user') return 'octocat\n';
     if (args.some((a) => a.includes('acme/a'))) throw new Error('boom');
     if (args[0] === 'api') return '[[]]';
@@ -127,8 +135,54 @@ test('per-repo total failure: all 6 queries failing on one of two repos is still
   assert.equal(facts.failures.length, 6);
 
   const total = deps({ runner: (args) => {
+    if (args[0] === 'repo' && args[1] === 'view') return args[2] + '\n';
     if (args[0] === 'api' && args[1] === 'user') return 'octocat\n';
     throw new Error('boom');
   } });
   assert.equal(run(['--period', '7d', '--out', 'f.json', '--repo', 'acme/a,acme/b'], total.d), 3);
+});
+
+test('canonicalizes a renamed repo: search-backed queries run under the redirect target', () => {
+  const calls = [];
+  const { d, out } = deps({ runner: (args) => {
+    calls.push(args);
+    if (args[0] === 'repo' && args[1] === 'view') return args[2] === 'acme/old' ? 'acme/new\n' : args[2] + '\n';
+    if (args[0] === 'api' && args[1] === 'user') return 'octocat\n';
+    if (args[0] === 'api') return '[[]]';
+    return '[]';
+  } });
+  assert.equal(run(['--period', '7d', '--out', 'f.json', '--repo', 'acme/old'], d), 0);
+  const facts = JSON.parse(out.written['f.json']);
+  assert.deepEqual(facts.repos, ['acme/new']);
+  const nonViewCalls = calls.filter((a) => !(a[0] === 'repo' && a[1] === 'view'));
+  for (const a of nonViewCalls) {
+    for (const el of a) assert.ok(!String(el).includes('acme/old'), `argv element "${el}" must not carry acme/old`);
+  }
+  assert.match(out.stderr.join(''), /acme\/old redirects to acme\/new/);
+});
+
+test('canonicalization failure: gh repo view throwing exits 2', () => {
+  const { d, out } = deps({ runner: (args) => {
+    if (args[0] === 'repo' && args[1] === 'view') throw new Error('HTTP 404: Not Found');
+    if (args[0] === 'api' && args[1] === 'user') return 'octocat\n';
+    if (args[0] === 'api') return '[[]]';
+    return '[]';
+  } });
+  assert.equal(run(['--period', '7d', '--out', 'f.json'], d), 2);
+  assert.match(out.stderr.join(''), /not found or not accessible/);
+});
+
+test('--repo acme/old,acme/new both canonicalizing to acme/new de-duplicates to one repo', () => {
+  const calls = [];
+  const { d, out } = deps({ runner: (args) => {
+    calls.push(args);
+    if (args[0] === 'repo' && args[1] === 'view') return 'acme/new\n';
+    if (args[0] === 'api') return '[[]]';
+    return '[]';
+  } });
+  assert.equal(run(['--period', '7d', '--out', 'f.json', '--repo', 'acme/old,acme/new', '--actor', 'hubot'], d), 0);
+  const facts = JSON.parse(out.written['f.json']);
+  assert.deepEqual(facts.repos, ['acme/new']);
+  const nonViewCalls = calls.filter((a) => !(a[0] === 'repo' && a[1] === 'view'));
+  assert.equal(nonViewCalls.length, 6);
 });

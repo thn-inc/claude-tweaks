@@ -642,9 +642,10 @@ test('every shipped skill has a parseable Anti-Patterns table', () => {
   //
   //   412 -> 416, /claude-tweaks:activity (#2757). Four rows ADDED with the new
   //   plugin/skills/activity/SKILL.md, none evicted anywhere else. Evidence:
-  //   `git diff 6d0f768a4...HEAD -- 'plugin/skills/*/SKILL.md' | grep -E '^[-+]\|'`
-  //   lists exactly these four `+|` rows for activity/SKILL.md (demo's and feedback's
-  //   #2697 edits touched no Anti-Patterns row). Measured by running this parser, not
-  //   by adding 4.
+  //   `git diff 6d0f768a4...HEAD -- 'plugin/skills/*/SKILL.md' | grep -E '^[-+]\|'` —
+  //   the four `+|` rows under `## Anti-Patterns` are among its matches (the same
+  //   file's Input table adds five more `+|` lines, none of them Anti-Patterns rows;
+  //   demo's and feedback's #2697 edits touched no Anti-Patterns row). Measured by
+  //   running this parser, not by adding 4.
   assert.strictEqual(total, 416);
 });

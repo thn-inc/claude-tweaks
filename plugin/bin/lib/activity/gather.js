@@ -18,6 +18,8 @@
 //    `commits[]` beside non-empty actor arrays is a footer note, not a failure.
 //  - `closed_issues` = closed in the window with the actor as author or assignee (`role`,
 //    author wins); issues the actor closed during triage without either role are out of scope.
+//  - Rename redirects: the search API does not follow a repository rename, so callers must pass
+//    canonical `owner/name` slugs (activity-gather.js canonicalizes via `gh repo view`).
 'use strict';
 
 // Wider than the shared 5 s GH_TIMEOUT_MS (bin/lib/shared-primitives.js) because the commits
