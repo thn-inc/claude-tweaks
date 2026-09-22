@@ -67,6 +67,14 @@ test('exit 1: a colon-host --repo entry and a leading-hyphen --repo entry are bo
   }
 });
 
+test('exit 1: a --repo list with a blank entry or a ./.. name is rejected — never a silent drop or an uncaught throw', () => {
+  for (const repo of [',', 'acme/a,,acme/b', ' , ', 'acme/..', 'acme/.']) {
+    const { d, out } = deps();
+    assert.equal(run(['--period', '7d', '--out', 'f.json', '--repo', repo, '--actor', 'octocat'], d), 1, repo);
+    assert.match(out.stderr.join(''), /expected owner\/name/);
+  }
+});
+
 test('exit 1: a --actor value that is not GitHub-login-shaped is rejected', () => {
   const { d, out } = deps();
   assert.equal(run(['--period', '7d', '--out', 'f.json', '--actor', 'a b'], d), 1);

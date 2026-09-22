@@ -86,9 +86,17 @@ function run(argv, deps = realDeps) {
 
   let repos;
   if (o.repo) {
-    repos = o.repo.split(',').map((s) => s.trim()).filter(Boolean);
+    repos = o.repo.split(',').map((s) => s.trim());
     for (const r of repos) {
+      // A blank entry (a stray or doubled comma) is a malformed invocation, never silently
+      // dropped: dropping it could leave `repos` empty, and the exit-3 arithmetic below
+      // (`failures.length === attempted`) would then index `failures[0]` on an empty array.
+      if (!r) return usageError('--repo has an empty entry (a stray comma) — expected owner/name[,owner/name...]');
       if (!REPO_RE.test(r)) return usageError(`--repo entry "${r}" must be owner/name on gh's default host (github.com) — a host-qualified name is not supported; expected owner/name`);
+      // `.`/`..` pass REPO_RE's character class but would be interpolated into the commits REST
+      // path (`repos/{slug}/commits`) — the gh-api-module-pattern guard fetch-sub-issues.js carries.
+      const name = r.slice(r.indexOf('/') + 1);
+      if (name === '.' || name === '..') return usageError(`--repo entry "${r}" is not a repository name; expected owner/name`);
     }
   }
 
