@@ -30,8 +30,10 @@ function encodeGif({ width, height, frames, palette, loop = 0 }) {
 
   // Logical Screen Descriptor: width(2) height(2) packed(1) bgColorIndex(1) pixelAspect(1)
   const gctFlag = 1;
-  const colorRes = colorBits - 1; // spec: color resolution bits stored as (bits - 1)
-  const packedLsd = (gctFlag << 7) | (colorRes << 4) | (0 << 3) | (colorBits - 1);
+  const sortFlag = 0;
+  // Spec: both the color-resolution field and the GCT-size field store (bits - 1).
+  const sizeBits = colorBits - 1;
+  const packedLsd = (gctFlag << 7) | (sizeBits << 4) | (sortFlag << 3) | sizeBits;
   parts.push(Buffer.from([...le16(width), ...le16(height), packedLsd, 0, 0]));
 
   // Global Color Table

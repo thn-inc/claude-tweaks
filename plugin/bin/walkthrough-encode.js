@@ -32,6 +32,19 @@ const { writeFileAtomic } = require('./lib/atomic-write');
 
 const USAGE = 'usage: walkthrough-encode.js --frames <dir-or-comma-list> --out <gif path> [--delay-ms <n>] [--last-hold-ms <n>] [--width <px>] [--budget-mb <n=8>] [--steps-json <path> --captions <path> [--caption-title <text>]] [--help]\n';
 
+const isPositiveNumber = (n) => Number.isFinite(n) && n > 0;
+const isPositiveInteger = (n) => Number.isInteger(n) && n > 0;
+
+// The four numeric flags differ only in their predicate and the noun their error names; consuming
+// the value, rejecting a missing one, and parsing it are identical across all four. Returns
+// either { value } or an { error } the caller returns verbatim.
+function numericFlag(flag, raw, isValid, expected) {
+  if (raw === null) return { error: `${flag} requires a value` };
+  const n = Number(raw);
+  if (!isValid(n)) return { error: `${flag} must be a ${expected}, got "${raw}"` };
+  return { value: n };
+}
+
 function parseArgs(argv) {
   const o = {
     frames: null, out: null, delayMs: 2000, lastHoldMs: 4000, width: null, budgetMb: 8,
@@ -43,10 +56,10 @@ function parseArgs(argv) {
     if (a === '--help' || a === '-h') o.help = true;
     else if (a === '--frames') { o.frames = next(); if (o.frames === null) return { error: '--frames requires a value' }; }
     else if (a === '--out') { o.out = next(); if (o.out === null) return { error: '--out requires a value' }; }
-    else if (a === '--delay-ms') { const v = next(); if (v === null) return { error: '--delay-ms requires a value' }; const n = Number(v); if (!Number.isFinite(n) || n <= 0) return { error: `--delay-ms must be a positive number, got "${v}"` }; o.delayMs = n; }
-    else if (a === '--last-hold-ms') { const v = next(); if (v === null) return { error: '--last-hold-ms requires a value' }; const n = Number(v); if (!Number.isFinite(n) || n <= 0) return { error: `--last-hold-ms must be a positive number, got "${v}"` }; o.lastHoldMs = n; }
-    else if (a === '--width') { const v = next(); if (v === null) return { error: '--width requires a value' }; const n = Number(v); if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return { error: `--width must be a positive integer, got "${v}"` }; o.width = n; }
-    else if (a === '--budget-mb') { const v = next(); if (v === null) return { error: '--budget-mb requires a value' }; const n = Number(v); if (!Number.isFinite(n) || n <= 0) return { error: `--budget-mb must be a positive number, got "${v}"` }; o.budgetMb = n; }
+    else if (a === '--delay-ms') { const r = numericFlag(a, next(), isPositiveNumber, 'positive number'); if (r.error) return r; o.delayMs = r.value; }
+    else if (a === '--last-hold-ms') { const r = numericFlag(a, next(), isPositiveNumber, 'positive number'); if (r.error) return r; o.lastHoldMs = r.value; }
+    else if (a === '--width') { const r = numericFlag(a, next(), isPositiveInteger, 'positive integer'); if (r.error) return r; o.width = r.value; }
+    else if (a === '--budget-mb') { const r = numericFlag(a, next(), isPositiveNumber, 'positive number'); if (r.error) return r; o.budgetMb = r.value; }
     else if (a === '--steps-json') { o.stepsJson = next(); if (o.stepsJson === null) return { error: '--steps-json requires a value' }; }
     else if (a === '--captions') { o.captions = next(); if (o.captions === null) return { error: '--captions requires a value' }; }
     else if (a === '--caption-title') { o.captionTitle = next(); if (o.captionTitle === null) return { error: '--caption-title requires a value' }; }
@@ -62,11 +75,6 @@ const realDeps = {
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
-
-// Per-frame delays reuse encode.js's own planFrames rather than re-deriving the same rule here:
-// the CLI never receives a step count directly, but the resolved frame-path list's length IS
-// that count (one screenshot per step, per the skill's Step 3), so planFrames(framePaths.length)
-// is the correct call, not a coincidence.
 
 function run(argv, deps = realDeps) {
   const o = parseArgs(argv);
@@ -102,6 +110,10 @@ function run(argv, deps = realDeps) {
     return 2;
   }
 
+  // Per-frame delays reuse encode.js's own planFrames rather than re-deriving the same rule here:
+  // the CLI never receives a step count directly, but the resolved frame-path list's length IS
+  // that count (one screenshot per step, per the skill's Step 3), so planFrames(framePaths.length)
+  // is the correct call, not a coincidence.
   const delays = planFrames(framePaths.length, { delayMs: o.delayMs, lastHoldMs: o.lastHoldMs }).map((f) => f.delayCs);
   const budgetBytes = Math.round(o.budgetMb * 1024 * 1024);
 

@@ -108,11 +108,7 @@ function stepDisplay(step) {
 }
 
 function captionList(steps) {
-  const lines = steps.map((step, i) => {
-    const text = step.caption ? step.caption : stepDisplay(step);
-    return `${i + 1}. ${text}`;
-  });
-  return lines.join('\n') + '\n';
+  return steps.map((step, i) => `${i + 1}. ${step.caption || stepDisplay(step)}`).join('\n') + '\n';
 }
 
 module.exports = { planFrames, encodeWalkthrough, captionList, FrameMismatchError, BudgetExceededError };

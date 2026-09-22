@@ -3,6 +3,12 @@
 // YAML files itself and hands both in as plain data.
 'use strict';
 
+function matchedByLabel(bySourceFiles, byJourney) {
+  if (bySourceFiles && byJourney) return 'source_files+journey';
+  if (bySourceFiles) return 'source_files';
+  return 'journey';
+}
+
 function selectStories({ recordKeyFiles = [], recordJourneys = [], storyFiles }) {
   const keyFileSet = new Set(recordKeyFiles);
   const journeySet = new Set(recordJourneys);
@@ -12,8 +18,7 @@ function selectStories({ recordKeyFiles = [], recordJourneys = [], storyFiles })
       const bySourceFiles = Array.isArray(story.source_files) && story.source_files.some((f) => keyFileSet.has(f));
       const byJourney = story.journey && journeySet.has(story.journey);
       if (!bySourceFiles && !byJourney) continue;
-      const matchedBy = bySourceFiles && byJourney ? 'source_files+journey' : bySourceFiles ? 'source_files' : 'journey';
-      matches.push({ path: file.path, id: story.id, matchedBy });
+      matches.push({ path: file.path, id: story.id, matchedBy: matchedByLabel(bySourceFiles, byJourney) });
     }
   }
   return matches;

@@ -43,7 +43,7 @@ function collectDistinctColors(rgbaFrames) {
 // channel, ties broken by ascending index), no randomness.
 function medianCut(colors, counts, maxColors) {
   if (colors.length === 0) return [[0, 0, 0]];
-  let buckets = [colors.map((c, i) => ({ color: c, count: counts[i] }))];
+  const buckets = [colors.map((c, i) => ({ color: c, count: counts[i] }))];
   while (buckets.length < maxColors) {
     let widestIdx = -1, widestRange = -1, widestChannel = 0;
     for (let b = 0; b < buckets.length; b++) {
