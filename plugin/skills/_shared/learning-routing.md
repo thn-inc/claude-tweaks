@@ -72,8 +72,13 @@ outcome. The plugin never files issues against itself through this path.
 
 **Non-claude-tweaks upstream.** Filing an issue *against* a third-party
 dependency's own repository (superpowers, an MCP server, another plugin) is
-**not** a D5 filing and is out of this contract's scope. Report it to the user,
-name the owner, and stop.
+**not** a D5 filing and is out of this contract's scope. It is not a dead end
+either. Name the owner — `owner/name` when the dependency's documented source
+resolves to one, otherwise the dependency's bare name — and hand the learning to
+`/claude-tweaks:feedback --upstream <value>`, whose draft-only path scrubs the
+report, writes it to disk, and hands the human a paste-ready command. That path
+publishes nothing: a bare name is treated as an unresolved target and drafted
+with a placeholder, and no repository is ever written to on the user's behalf.
 
 This does not conflict with rule 7. The two describe different targets for the
 same lesson: rule 7 files against **claude-tweaks**, asking it to carry guidance
