@@ -157,7 +157,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir
   files, or `1` when there are none. `stage-item.js` creates a per-item path, so no lock is
   needed. It echoes the written absolute path on stdout; report **that** path, not the `--run`
   input string, which can differ from it after realpath resolution.
-- **Exit 3.** The run directory is missing, or it is a worktree-local shadow rather than an
+- **`stage-item.js` exits 3.** The run directory is missing, or it is a worktree-local shadow rather than an
   anchored main-checkout path (`_shared/pipeline-run-dir.md`'s Anchoring section, `[IL-127]`).
   Fall back to the scratch path below and report why. Never hand-write into a worktree-local
   shadow to work around this.
