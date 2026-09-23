@@ -193,6 +193,7 @@ unchanged.
 | `/claude-tweaks:wrap-up` | The CLAUDE.md & rules curation row classifies each candidate before collecting it (`claude-md-curation.md` Step 1); the Skills curation row classifies each ledger-entry seed before seeding it (`skill-curation.md` 7.1); the Memory and Upstream feedback rows own the D4/D5 stage-and-surface |
 | `/claude-tweaks:review` lens 3a | Records a `review/skill` ledger entry; does not classify itself — `/claude-tweaks:wrap-up`'s Skills curation row classifies it afterward |
 | `/claude-tweaks:build` Common Step 4.5 | Classifies architecture-alignment learnings |
+| `/claude-tweaks:specify` shaping-mode.md | Applies classifier rule 1 to a record's drafted Current State/Technical Approach before composing a Deliverable/AC that directs `/claude-tweaks:feedback` to file upstream — never emits one for a component the spec's own analysis already places outside the plugin (#2433) |
 | health sweeps | A finding whose subject is a claude-tweaks skill routes to D5 rather than a project issue |
 | `skills/_shared/causal-depth.md` | Routes a `systemic` verdict through this classifier by name on both the debugging-path and near-miss-path bindings. |
 | `_shared/reproduce-first-discipline.md` (step 3) | Reaches this classifier transitively via `causal-depth.md`, from every skill that cites the discipline (`/build`, `/test`, `/review`). |
