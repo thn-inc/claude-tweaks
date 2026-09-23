@@ -133,6 +133,29 @@ function verifyClaimLanded(deps, repoSlug, issue, runId, knownTip) {
   return !!(identity && identity.runId === runId);
 }
 
+// #2329: on the contents-API path (`knownTip === null`), `verifyClaimLanded`'s
+// read-back races GitHub's eventually-consistent contents API — a write that
+// just landed can still read back as the pre-write blob for a short window,
+// producing a spurious 'unverified' on a claim that actually succeeded. The
+// git-CAS path (`knownTip` a chainable commit sha) reads at that exact commit
+// and is already consistent, so it gets exactly one check — retrying there
+// would only slow down every claim for no correctness gain (the file's own
+// `knownTip` comment above `claimedThisRun` is the source of that guarantee).
+// Reuses claim-store.js's `casBackoffMs`/`defaultSleep` — the same
+// randomized, increasing backoff already used for git-CAS push retries —
+// rather than inventing a second backoff shape for what is the same
+// "proven-stale-so-far, worth one more look" wait.
+const VERIFY_MAX_ATTEMPTS = 3;
+
+function verifyClaimLandedWithRetry(deps, repoSlug, issue, runId, knownTip) {
+  for (let attempt = 1; attempt <= VERIFY_MAX_ATTEMPTS; attempt += 1) {
+    if (verifyClaimLanded(deps, repoSlug, issue, runId, knownTip)) return true;
+    if (knownTip !== null || attempt === VERIFY_MAX_ATTEMPTS) return false;
+    (deps.sleep || claimStore.defaultSleep)(claimStore.casBackoffMs(attempt));
+  }
+  return false;
+}
+
 // All-or-abort release of every target this invocation claimed, before a
 // contest or transient failure aborts the run (`issue-claims.md`'s "Group
 // claiming" — a partial group claim must not leave a member built alone).
@@ -219,29 +242,46 @@ function run(argv, deps) {
   let knownTip = null;
 
   // Every non---keep-going stop shares one shape: release everything this run
-  // claimed (all-or-abort), then report the stop alongside what was released
-  // and what could not be. Called only from `stopOrSkip()` below, which is
-  // in turn the single call site every stop below shares — so this cannot
-  // drift from any of them. `exitCode` is 3 for a `contested`/`inFlight`
-  // envelope, 4 for a `transient` one.
-  function abort(envelope, exitCode) {
-    const { released, releaseFailed } = releaseClaimedThisRun(deps, repoSlug, opts.runId, claimedThisRun);
+  // claimed (all-or-abort) plus, when the caller names one, a target this
+  // run's own write just landed but couldn't confirm (`extraToRelease` —
+  // #2329's claim-leak fix: `stopOrSkip`'s 'unverified' call site is the one
+  // caller that ever passes this, since only a write that reported `ok: true`
+  // needs releasing at all — a target that never reaches
+  // `claimedThisRun.push()` because its OWN verification failed would
+  // otherwise ride out its TTL unreleased and invisible, with no
+  // `bot:in-progress` marker pointing at it). `releaseClaimedThisRun`'s own
+  // fresh per-issue read either finds the write landed (releases it,
+  // reclaimable immediately) or still doesn't see it (reports it in
+  // `releaseFailed` — visible, not silently dropped). Then report the stop
+  // alongside what was released and what could not be. Called only from
+  // `stopOrSkip()` below, which is in turn the single call site every stop
+  // below shares — so this cannot drift from any of them. `exitCode` is 3 for
+  // a `contested`/`inFlight` envelope, 4 for a `transient` one, 5 for an
+  // `unverified` one.
+  function abort(envelope, exitCode, extraToRelease = []) {
+    const { released, releaseFailed } = releaseClaimedThisRun(
+      deps, repoSlug, opts.runId, [...claimedThisRun, ...extraToRelease],
+    );
     deps.stdout(JSON.stringify({ ...envelope, released, releaseFailed }));
     return exitCode;
   }
 
   // The one shape every stop site below shares: with `--keep-going`, record
   // `{issue, reason: skipReason, ...extra}` in `skipped` and keep looping
-  // (signaled by returning `null` — `abort()`'s exit codes are always 3 or 4,
-  // never null/0, so callers can tell the two outcomes apart with `!== null`);
-  // otherwise abort the whole run via the envelope `{[envelopeKey]: [{issue,
-  // ...extra}]}`. `extra` is exactly what differs between call sites (an
-  // `error`, a `link`, or a `holder`) and is identical between the skipped
-  // record and the envelope entry at every site — stated once here instead of
-  // 5 times so the sites cannot drift from each other (#977).
-  function stopOrSkip(issue, skipReason, envelopeKey, exitCode, extra) {
+  // (signaled by returning `null` — `abort()`'s exit codes are always 3, 4,
+  // or 5, never null/0, so callers can tell the two outcomes apart with
+  // `!== null`); otherwise abort the whole run via the envelope
+  // `{[envelopeKey]: [{issue, ...extra}]}`. `extra` is exactly what differs
+  // between call sites (an `error`, a `link`, or a `holder`) and is identical
+  // between the skipped record and the envelope entry at every site — stated
+  // once here instead of 5 times so the sites cannot drift from each other
+  // (#977). `releaseThisIssue` (#2329) is `true` only at the 'unverified'
+  // call site — the one case where THIS issue's own write reported success
+  // and so needs releasing on abort alongside `claimedThisRun`, not just
+  // recorded as never-claimed like every other stop reason.
+  function stopOrSkip(issue, skipReason, envelopeKey, exitCode, extra, releaseThisIssue = false) {
     if (opts.keepGoing) { skipped.push({ issue, reason: skipReason, ...extra }); return null; }
-    return abort({ [envelopeKey]: [{ issue, ...extra }] }, exitCode);
+    return abort({ [envelopeKey]: [{ issue, ...extra }] }, exitCode, releaseThisIssue ? [issue] : []);
   }
 
   // Per-`$LINK` memoization of `tombstoneInFlightPr`'s `gh pr view` call,
@@ -396,9 +436,14 @@ function run(argv, deps) {
     // is not yet a confirmed claim — re-read before trusting it. `knownTip`
     // is the tip this same write just produced (git-CAS success) or `null`
     // (contents-API success, nothing to chain), matching the read this loop
-    // would perform for the next target anyway.
-    if (!verifyClaimLanded(deps, repoSlug, issue, opts.runId, knownTip)) {
-      const stop = stopOrSkip(issue, 'unverified', 'unverified', 5, {});
+    // would perform for the next target anyway. `verifyClaimLandedWithRetry`
+    // (#2329) bounds a retry over this read specifically for the
+    // `knownTip === null` case — see its own doc comment. `releaseThisIssue:
+    // true` (the 6th arg to `stopOrSkip`) is what stops a write that landed
+    // but couldn't be confirmed from leaking past this run's own abort — see
+    // `abort()`'s doc comment.
+    if (!verifyClaimLandedWithRetry(deps, repoSlug, issue, opts.runId, knownTip)) {
+      const stop = stopOrSkip(issue, 'unverified', 'unverified', 5, {}, true);
       if (stop !== null) return stop;
       continue;
     }
