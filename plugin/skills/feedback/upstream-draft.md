@@ -33,14 +33,14 @@ then match the remainder against:
 |---|---|
 | `owner/name` | `vercel-labs/agent-browser` |
 | `github.com/owner/name` | `github.com/vercel-labs/agent-browser` |
-| `https://github.com/owner/name` | `https://github.com/thomasholknielsen/claude-tweaks` |
-| `git@github.com:owner/name` | `git@github.com:ThomasHolkNielsen/claude-tweaks` |
+| `https://github.com/owner/name` | `https://github.com/thn-inc/claude-tweaks` |
+| `git@github.com:owner/name` | `git@github.com:thn-inc/claude-tweaks` |
 
 `owner` and `name` are each exactly one segment of `[A-Za-z0-9._-]` characters. A value carrying a
 third path segment, a query string, or a fragment is **not** resolvable. Lower-case both segments;
 the normalized result is always `owner/name`.
 
-**Self-target.** When the normalized slug equals `thomasholknielsen/claude-tweaks`, this learning
+**Self-target.** When the normalized slug equals `thn-inc/claude-tweaks`, this learning
 is not third-party at all. Say so — "`--upstream {the raw value}` names claude-tweaks itself;
 filing normally" — and **return to `SKILL.md` Step 3**, which then runs unchanged through Step 9.
 Nothing below this line runs. This is neither an error nor a draft.
