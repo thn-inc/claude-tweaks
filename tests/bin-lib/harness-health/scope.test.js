@@ -8,7 +8,7 @@ const {
   listSkills, extractDomainPaths, domainChurn, selectTarget,
   listRules, parseRulePaths, listClaudeMd, listTargets,
   readDesignIntegrationFlag, listDesignArtifacts,
-  listMemory, selectMemoryTarget,
+  listMemory, selectMemoryTarget, resolveTargetPath,
 } = require('../../../plugin/bin/lib/harness-health/scope');
 const { STALE_DAYS } = require('../../../plugin/bin/lib/harness-health/score');
 
@@ -617,4 +617,51 @@ test('listTargets re-reads a rule after its content changes (cache correctly inv
   fs.writeFileSync(path.join(root, '.claude', 'rules', 'api-errors.md'), '---\npaths:\n  - src/api/**\n  - src/web/**\n---\n');
   const second = listTargets(root);
   assert.deepStrictEqual(second.find((t2) => t2.id === 'api-errors').pathGlobs, ['src/api/**', 'src/web/**']);
+});
+
+// ─── resolveTargetPath ───────────────────────────────────────────────────────
+
+test('resolveTargetPath resolves a skill id to its file path', (t) => {
+  const root = tmp(t);
+  fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth');
+  assert.strictEqual(
+    resolveTargetPath(root, 'skill', 'auth'),
+    path.join(root, '.claude', 'skills', 'auth.md'),
+  );
+});
+
+test('resolveTargetPath resolves a claude-md id to CLAUDE.md', (t) => {
+  const root = tmp(t);
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# CLAUDE');
+  assert.strictEqual(resolveTargetPath(root, 'claude-md', 'CLAUDE'), path.join(root, 'CLAUDE.md'));
+});
+
+test('resolveTargetPath resolves a memory id when memoryDir is given', (t) => {
+  const root = tmp(t);
+  const memoryDir = tmp(t);
+  fs.writeFileSync(path.join(memoryDir, 'MEMORY.md'), '- [Some Memory](some-memory.md) — hook\n');
+  assert.strictEqual(
+    resolveTargetPath(root, 'memory', 'some-memory', memoryDir),
+    path.join(memoryDir, 'some-memory.md'),
+  );
+});
+
+test('resolveTargetPath returns null for a memory id when memoryDir is omitted', (t) => {
+  const root = tmp(t);
+  assert.strictEqual(resolveTargetPath(root, 'memory', 'some-memory'), null);
+});
+
+test('resolveTargetPath returns null when no target matches kind+id', (t) => {
+  const root = tmp(t);
+  fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth');
+  assert.strictEqual(resolveTargetPath(root, 'skill', 'billing'), null);
+  assert.strictEqual(resolveTargetPath(root, 'rule', 'auth'), null, 'kind must also match, not just id');
+});
+
+test('resolveTargetPath returns null when kind or id is missing', (t) => {
+  const root = tmp(t);
+  assert.strictEqual(resolveTargetPath(root, null, 'auth'), null);
+  assert.strictEqual(resolveTargetPath(root, 'skill', null), null);
 });

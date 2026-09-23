@@ -301,9 +301,31 @@ function selectTarget(root, cursors, opts = {}) {
   });
 }
 
+// ─── resolveTargetPath ──────────────────────────────────────────────────────
+// Maps a finding's (assetType, target-id) pair — the only identity a filed
+// finding carries (judge-procedure.md's schema has no path field) — back to
+// the concrete file path harness-health scanned it from. issue-payload.js
+// uses this to anchor a Premise-check: command against the target's live
+// content (#2621). A findings batch always corresponds to one target
+// (judge-procedure.md: "Write the findings array to
+// /tmp/harness-health-findings-{target.id}.json"), so a caller with `root`
+// (and, for memory, `memoryDir`) in scope resolves it once per batch rather
+// than per finding. Returns null on any unresolved case — unknown kind/id,
+// or a memory kind with no memoryDir — never guesses.
+function resolveTargetPath(root, kind, id, memoryDir) {
+  if (!kind || !id) return null;
+  if (kind === 'memory') {
+    if (!memoryDir) return null;
+    const found = listMemory(memoryDir).find((t) => t.id === id);
+    return found ? found.path : null;
+  }
+  const found = listTargets(root).find((t) => t.kind === kind && t.id === id);
+  return found ? found.path : null;
+}
+
 module.exports = {
   listSkills, parseRulePaths, listRules, listClaudeMd, listTargets,
   extractDomainPaths, domainChurn, selectTarget,
   readDesignIntegrationFlag, listDesignArtifacts,
-  listMemory, selectMemoryTarget,
+  listMemory, selectMemoryTarget, resolveTargetPath,
 };
