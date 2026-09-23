@@ -79,7 +79,7 @@ function makeDeps(o = {}) {
 }
 
 test('parseArgs: flags, unknown argument, --root without value', () => {
-  assert.deepStrictEqual(parseArgs(['--dry-run', '--branch', 'develop']), { dryRun: false || true, branch: 'develop', root: null, help: false });
+  assert.deepStrictEqual(parseArgs(['--dry-run', '--branch', 'develop']), { dryRun: false || true, branch: 'develop', root: null, releaseAs: null, help: false });
   assert.match(parseArgs(['--bogus']).error, /unknown argument/);
   assert.match(parseArgs(['--root']).error, /requires a value/);
 });
@@ -301,6 +301,42 @@ test('origin exists but the branch was never pushed: no fetch, no ancestry check
   assert.ok(state.git.includes('push origin main v1.3.0'), state.git.join(' | '));
   assert.match(state.out, /^origin: main is not on origin yet — first push$/m);
   assert.match(state.out, /released v1\.3\.0/);
+});
+
+test('parseArgs: --release-as requires a strict-semver value', () => {
+  assert.deepStrictEqual(parseArgs(['--release-as', '7.0.0']), { dryRun: false, branch: null, root: null, releaseAs: '7.0.0', help: false });
+  assert.match(parseArgs(['--release-as']).error, /requires a value/);
+  assert.match(parseArgs(['--release-as', 'v7.0.0']).error, /strict semver/);
+  assert.match(parseArgs(['--release-as', '7.0']).error, /strict semver/);
+});
+
+test('AC 1 (#2326): --dry-run --release-as 7.0.0 on a minor-only history plans v7.0.0 and names the override', () => {
+  const { deps, state } = makeDeps();
+  assert.strictEqual(run(['--dry-run', '--release-as', '7.0.0'], deps), 0);
+  assert.match(state.out, /v7\.0\.0 \(minor — --release-as override\) from v1\.2\.0/);
+  assert.deepStrictEqual(state.writes, []);
+});
+
+test('AC 2 (#2326): --release-as 1.0.0 when the base is 1.2.0 exits 2 naming both versions', () => {
+  const { deps, state } = makeDeps();
+  assert.strictEqual(run(['--release-as', '1.0.0'], deps), 2);
+  assert.match(state.err, /--release-as 1\.0\.0 is not ahead of the current version 1\.2\.0/);
+  assert.match(state.err, /usage/);
+  assert.deepStrictEqual(state.writes, []);
+});
+
+test('#2326: --release-as ahead of base performs a live run at that exact version', () => {
+  const { deps, state } = makeDeps();
+  assert.strictEqual(run(['--release-as', '9.9.9'], deps), 0);
+  assert.strictEqual(state.files['package.json'], '{\n  "name": "x",\n  "version": "9.9.9"\n}\n');
+  assert.match(state.out, /released v9\.9\.9/);
+});
+
+test('#2326: --release-as colliding with a sibling worktree claim still exits 4', () => {
+  const { deps, state } = makeDeps({ worktrees: 'worktree /repo\nbranch refs/heads/main\n\nworktree /w\nbranch refs/heads/wt\n', files: {} });
+  deps.git = ((orig) => (args) => (args.join(' ') === 'show wt:.release-please-manifest.json' ? '{".": "9.9.9"}' : orig(args)))(deps.git);
+  assert.strictEqual(run(['--release-as', '9.9.9'], deps), 4);
+  assert.match(state.err, /collision on v9\.9\.9/);
 });
 
 test('integration-branch policy selects the branch; --branch overrides it', () => {
