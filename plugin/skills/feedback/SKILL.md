@@ -23,7 +23,7 @@ Lifecycle: `/claude-tweaks:reflect` → **`/claude-tweaks:feedback`** → upstre
   and left for a human to forward — and to evaluate the session itself
   against the maintainer-objective rubric (see Step 0).
 
-This skill **files** against `thomasholknielsen/claude-tweaks` and nowhere else. A learning owned
+This skill **files** against `thn-inc/claude-tweaks` and nowhere else. A learning owned
 by a third-party dependency takes `--upstream <owner/name>`'s draft-only path instead, which
 publishes nothing — see `upstream-draft.md` in this skill's directory, and
 `_shared/learning-routing.md`, "Non-claude-tweaks upstream".
@@ -159,7 +159,7 @@ draft-derived, potentially-private text from ever reaching the public search API
 gate runs:
 
 ```bash
-gh issue list --repo thomasholknielsen/claude-tweaks --search '<component>' --state all --limit 10 --json number,title,state,url
+gh issue list --repo thn-inc/claude-tweaks --search '<component>' --state all --limit 10 --json number,title,state,url
 ```
 
 **On a transient-looking failure** (the error text names a 5xx/server error, a timeout, or a
@@ -342,7 +342,7 @@ skill's own flow never reaches Step 8 while this gate holds.
 exist:
 
 ```bash
-gh label list --repo thomasholknielsen/claude-tweaks --limit 200
+gh label list --repo thn-inc/claude-tweaks --limit 200
 ```
 
 On a transient-looking failure (5xx/timeout/connection-reset signature — not a plain 403/429,
@@ -380,7 +380,7 @@ goes via `--body-file`.
 2. Invoke:
 
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/bin/file-feedback.js" --drafts <path> --repo thomasholknielsen/claude-tweaks
+   node "${CLAUDE_PLUGIN_ROOT}/bin/file-feedback.js" --drafts <path> --repo thn-inc/claude-tweaks
    ```
 
    `--repo` is explicit and hardcoded here, matching every other `gh` call in this step and Step
@@ -461,7 +461,7 @@ a precedent to extend the carve-out to.
 | Pattern | Why It Fails |
 |---------|--------------|
 | Filing without showing the scrubbed draft | Publishing to a public repo is outward-facing and irreversible; confirmation is the contract, not a formality |
-| **Filing** against a repo other than `thomasholknielsen/claude-tweaks` | Out of scope by design: a third-party owner has different consent requirements. Drafting for one via `--upstream` is the sanctioned alternative; the draft path never invokes `bin/file-feedback.js` |
+| **Filing** against a repo other than `thn-inc/claude-tweaks` | Out of scope by design: a third-party owner has different consent requirements. Drafting for one via `--upstream` is the sanctioned alternative; the draft path never invokes `bin/file-feedback.js` |
 | Inferring the kind from tone rather than from which classifier rule fired | Defect and gap differ in triage; a mislabelled report wastes a maintainer's time in both directions |
 | Applying a label `gh label list` did not confirm | Guessing risks importing the repo's internal automation taxonomy from outside its pipeline |
 | Skipping the scrub because the reporting project "looks fine" | The scrub is unconditional; the cost of one leak exceeds the cost of every scrub |

@@ -12,7 +12,7 @@ files:
 # File Upstream Feedback in Batch
 
 **Persona:** A claude-tweaks maintainer who just let a headless health-sweep Routine run overnight and now has several `upstream-candidate` issues waiting in this project's own backlog, plus a `/claude-tweaks:flow` run that surfaced a couple more D5 (upstream) learnings during wrap-up.
-**Goal:** Clear all the waiting upstream-feedback candidates — decide which get filed against `thomasholknielsen/claude-tweaks` and which get declined — without answering one confirmation prompt per candidate.
+**Goal:** Clear all the waiting upstream-feedback candidates — decide which get filed against `thn-inc/claude-tweaks` and which get declined — without answering one confirmation prompt per candidate.
 **Entry point:** A terminal with `/claude-tweaks:feedback --queue` run bare (no free-text learning), or the Wrap-Up Review Console rendered at the end of a `/claude-tweaks:flow`/`/claude-tweaks:wrap-up` run that staged `U#` items.
 **Success state:** Every candidate has an explicit disposition — filed (a real upstream issue URL) or declined (a comment on the local `upstream-candidate` issue, or a logged decline) — reached via one `multiSelect` confirmation per group of up to 4 on the `--queue` path, or via the Review Console's single terminal decision on the console path.
 

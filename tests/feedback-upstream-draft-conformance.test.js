@@ -43,7 +43,7 @@ test('(1) the third-party rule routes to --upstream and no longer dead-ends in "
 test('(2) feedback/SKILL.md still forbids FILING against a non-claude-tweaks repo', () => {
   const skill = read(SKILL_PATH);
   const antiPatterns = skill.slice(skill.indexOf('## Anti-Patterns'));
-  const rows = antiPatterns.split('\n').filter((l) => l.startsWith('|') && l.includes('other than `thomasholknielsen/claude-tweaks`'));
+  const rows = antiPatterns.split('\n').filter((l) => l.startsWith('|') && l.includes('other than `thn-inc/claude-tweaks`'));
   assert.equal(rows.length, 1, 'exactly one Anti-Patterns row may forbid a non-claude-tweaks target — rewrite it, never add a second');
   assert.ok(rows[0].includes('**Filing**'), 'the row must scope the prohibition to *filing*, since drafting is now sanctioned');
   assert.ok(rows[0].includes('--upstream'), 'the row must name --upstream as the sanctioned alternative');

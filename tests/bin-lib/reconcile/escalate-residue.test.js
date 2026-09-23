@@ -32,7 +32,7 @@ test('residueBody: attribution names the plugin and the fully-qualified upstream
   const { body, marker } = residueBody({
     reason: 'structurally-stuck', targetPath: '/x/run-1', count: 3, firstFailedAt: null, lastError: null,
   });
-  assert.match(body, /thomasholknielsen\/claude-tweaks#644/);
+  assert.match(body, /thn-inc\/claude-tweaks#644/);
   assert.ok(!body.includes('Filed automatically by `bin/lib/reconcile`'), 'must not contain the retired bare-path attribution line');
   // The fingerprint marker's basis is (reason, targetPath) only — unaffected
   // by the attribution rewrite — so it must still match a fresh computation
