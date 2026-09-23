@@ -20,7 +20,10 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 test('#2502: build/SKILL.md Spec Step 2 gains an Already-shipped assessment, distinct from the #1829 Premise-check routing', () => {
   const t = read('plugin/skills/build/SKILL.md');
   assert.match(t, /\*\*Already-shipped assessment \(#2502\)\.\*\*/);
-  const section = t.slice(t.indexOf('**Already-shipped assessment (#2502).**'));
+  // The full check and stop procedure live in a sub-file (#2020's 45 KB SKILL.md
+  // ceiling) -- SKILL.md keeps only the pointer.
+  assert.match(t, /Read `already-shipped-assessment\.md` in this skill's directory/);
+  const section = read('plugin/skills/build/already-shipped-assessment.md');
   assert.match(section, /zero implementation diff required/);
   assert.match(section, /Report `OUTCOME: already-shipped`/);
   assert.match(section, /do \*\*not\*\* invoke Settle/);
