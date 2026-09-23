@@ -656,10 +656,24 @@ function partitionByOpenNativeBlockers(candidates, repoData) {
 // which linked-prs.js's fetchLinkedPRs filters out; `repository{
 // nameWithOwner }` lets it filter to same-repo mentions only (a
 // CrossReferencedEvent's source can live in an unrelated repository).
+//
+// #2449: `timelineItems` paginates oldest-first, so `first:N` fetches the
+// OLDEST N cross-reference events — for a long-lived record that
+// accumulates many issue-to-issue mentions over its life (other bug
+// reports discussing the same subsystem, health-sweep dedup comments,
+// etc.), a PR's own mention can be pushed out of that window entirely by
+// older issue-based references, well before the classifier ever sees it.
+// Confirmed live against #1892/PR#2287 (merged, `refs #1892`, no closing
+// keyword): #1892 had accumulated 20+ issue-based cross-references before
+// #2287 ever merged, so `first:20` returned zero PR sources — every node
+// resolved to a non-PR (empty) source — even though `classifyShipped`
+// itself correctly scores the pair `strong` once given the mention. Fetch
+// the most recent N instead (`last:20`) — the freshest signal is what
+// matters for "is this already shipped," not the earliest.
 function buildLinkedPRQuery(numbers) {
   if (!Array.isArray(numbers) || numbers.length === 0) return null;
   const fields = numbers
-    .map((n) => `i${n}: issue(number:${n}){ number closedByPullRequestsReferences(first:10){ nodes{ number state } } timelineItems(itemTypes:[CROSS_REFERENCED_EVENT], first:20){ nodes{ ... on CrossReferencedEvent { source { ... on PullRequest { number title state merged mergedAt repository { nameWithOwner } } } } } } }`)
+    .map((n) => `i${n}: issue(number:${n}){ number closedByPullRequestsReferences(first:10){ nodes{ number state } } timelineItems(itemTypes:[CROSS_REFERENCED_EVENT], last:20){ nodes{ ... on CrossReferencedEvent { source { ... on PullRequest { number title state merged mergedAt repository { nameWithOwner } } } } } } }`)
     .join('\n      ');
   return `query($owner:String!,$repo:String!){\n  repository(owner:$owner,name:$repo){\n      ${fields}\n  }\n}`;
 }
