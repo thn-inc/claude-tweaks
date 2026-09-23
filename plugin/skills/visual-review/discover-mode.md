@@ -82,9 +82,9 @@ Without `--budget`, behavior is unchanged — proceed to walk all `{N}` candidat
 
 **Dispatcher column mapping (discover-mode use):** When assembling agent output for Phase 4 (journey file creation) and Phase 5 (coverage report), map the agent's `| Severity | Path:Line | Finding | Evidence |` columns as follows: Severity = recommendation urgency (`info` for documented page, `low` for nice-to-have journey, `medium` for canonical journey worth writing, `high` for broken/missing critical flow), Path:Line = the discovered route/page (`/checkout/payment`, `/admin/users/{id}`), Finding = the candidate journey + persona (`Returning user creates a new project`), Evidence = the screenshot path + key observations (`.claude-tweaks/artifacts/screenshots/browse/discover-public-pages/03_payment.png; LCP 1.8s; primary CTA at [3]`). The dispatcher merges all agents' tables into Phase 4 (journey file creation) and Phase 5 (coverage report).
 
-> **Parallel execution (conditional):** When multiple candidate journeys share no pages, dispatch each as a parallel Task agent — each agent runs its own session and `batch` invocation independently. Journeys that share state (login, form data) must remain sequential to avoid interference. A single journey's steps are always sequential within its batch.
+> **Parallel execution (conditional):** When multiple candidate journeys share no pages, dispatch each as a parallel Task agent — each agent runs its own session and its own sequence of `playwright-cli` commands independently. Journeys that share state (login, form data) must remain sequential to avoid interference. A single journey's steps are always sequential within its own command sequence.
 >
-> **Contract:** Each agent follows `_shared/subagent-output-contract.md` — minimal input, status line first, output template inlined verbatim below.
+> **Contract:** Each agent follows `_shared/subagent-output-contract.md` — minimal input, trailing status line, output template inlined verbatim below.
 >
 > **Model profile:** [Use: Standard] — discover-mode journey walkers do multi-step navigation, snapshot interpretation, and "should feel" inference from live experience. Upgrade to Capable only when the candidate journey hinges on subjective UX synthesis that Standard would flatten. Resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard` (contract § Model Selection).
 >
@@ -106,16 +106,20 @@ Without `--budget`, behavior is unchanged — proceed to walk all `{N}` candidat
 > Do not add narration, headers, or summaries before or after the table.
 > ```
 >
-> Each agent's first reply line must be one of `DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED`, then the table.
+> Each agent's reply must open with the table verbatim, then end with its last non-empty line reading exactly `STATUS: DONE` (or DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED).
 
-For each approved candidate, open a session and walk the candidate journey via a `batch` invocation that bundles `open`, `snapshot -i -c`, annotated `screenshot`, and `vitals` per page (same shape as the worked example in `journey-mode.md`). This is where the codebase skeleton gets filled with experiential details.
+<!-- playwright-cli: no equivalent found for agent-browser batch — see issue Gotchas -->
+For each approved candidate, open a session and walk the candidate journey via a sequence of individual `playwright-cli` commands (`open`/`goto`, `snapshot`, `screenshot`) against one named session — Playwright CLI has no `batch` equivalent, so what was previously one bundled invocation is now a script of separate commands run against the same `-s=<name>` session, following the exact pattern `journey-mode.md`'s "Assemble the sequence" section establishes (see its worked example). This is where the codebase skeleton gets filled with experiential details.
 
-For each step in the candidate journey (review the batched output):
+<!-- playwright-cli: no equivalent found for agent-browser vitals — see issue Gotchas -->
+**Vitals capability gap:** Playwright CLI has no `vitals` command or equivalent (`browser-review.md`'s Shared review contract, "Vitals interpretation (Step 1)"). Omit the `vitals` capture the pre-migration form issued after each screenshot — Performance findings cannot be produced for this walk until a replacement capture mechanism is designed.
 
-1. **Apply the First Impressions test** (`browser-review.md`'s Shared review contract, "First Impressions (Step 2)") — capture the raw "should feel" for this step from the annotated screenshot
-2. **Note interaction needs as the persona** — when the candidate requires actual interaction (form fill, click flow), perform those ops in the live session outside the batch; restart the batch for subsequent pages
-3. **Discover adjacent steps** — the codebase scan may have missed steps. If a page leads naturally to another page not in the candidate, add it to the next batch slice.
-4. **Write the "should feel" and "red flags"** — these come from actually experiencing the page (snapshot + annotated screenshot + vitals), not guessing from code
+For each step in the candidate journey (review the sequential command output):
+
+1. **Apply the First Impressions test** (`browser-review.md`'s Shared review contract, "First Impressions (Step 2)") — capture the raw "should feel" for this step from the screenshot
+2. **Note interaction needs as the persona** — when the candidate requires actual interaction (form fill, click flow), run those ops as additional individual commands against the same session, interleaved with the sequence wherever the step calls for them, then continue the sequence for subsequent pages
+3. **Discover adjacent steps** — the codebase scan may have missed steps. If a page leads naturally to another page not in the candidate, add it to the next slice of the command sequence.
+4. **Write the "should feel" and "red flags"** — these come from actually experiencing the page (snapshot + screenshot), not guessing from code — per the Vitals capability gap above, vitals data is not available for this write-up
 
 ## Phase 4: Write Journey Files
 

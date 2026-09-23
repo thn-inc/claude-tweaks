@@ -142,11 +142,11 @@ In interactive mode, only start the server with the user's consent (option 1). I
 
 ## Step 3: Run Visual Review
 
-Read `browser-review.md` in this skill's directory first — it holds what every mode needs: session lifecycle, annotated screenshots, dev-URL resolution, QA enrichment, Step 0 reconnaissance, and the **Shared review contract** (vitals thresholds, the First Impressions test, and the Report & Route structure all three modes report against).
+Read `browser-review.md` in this skill's directory first — it holds what every mode needs: session lifecycle, screenshots, dev-URL resolution, QA enrichment, Step 0 reconnaissance, and the **Shared review contract** (vitals thresholds, the First Impressions test, and the Report & Route structure all three modes report against).
 
 Then read the one file matching the resolved mode — each names a single file, so a run never loads another mode's procedure:
 
-- **Page mode** — read `page-mode.md` (warm-up, then Steps 1-6: health check, first impressions, use it, analyze, reimagine, report).
+- **Page mode** — read `page-mode.md` (warm-up, then Steps 1-6: health check, first impressions, use it, analyze, reimagine, report). Step 4's structured analysis applies the UX Heuristics checklist (`ux-heuristics-lens.md` in this skill's directory, #2655) — a ~20-item policy-row lens gated on `Surface: web/mobile/desktop`.
 - **Journey mode** — read `journey-mode.md` (loads the journey, assembles the batch, walks per-step, assesses the arc, then reports against the shared contract).
 - **Discover mode** — read `discover-mode.md` (Phases 1-6: codebase scan → candidates → browser walkthrough → write journey files → coverage report → handoff).
 
@@ -164,7 +164,7 @@ Pass `--source visual-review` on every call this skill makes into `/claude-tweak
 
 Pass:
 - The file list scoped to the review (from `git diff --name-only` or the spec's file list).
-- The annotated screenshot paths captured during review (`.claude-tweaks/artifacts/screenshots/browse/<session>/*.png`) — the wrapper analyzes each per the criteria table in `command-map.md`.
+- The screenshot paths captured during review (`.claude-tweaks/artifacts/screenshots/browse/<session>/*.png`) — the wrapper analyzes each per the criteria table in `command-map.md`.
 
 Handle the wrapper's return:
 
@@ -221,8 +221,8 @@ This skill is a **component skill** — invoked by `/claude-tweaks:review` (Step
 | Reusing a responding port without checking it serves *this* worktree | In a worktree run, :3000 is usually the main checkout — false confidence on the wrong code. Apply `dev-url-detection.md` Step 2.7 first |
 | Generic visual ideas ("improve the UX") | Ideas must be concrete and implementable in the current tech stack |
 | Running visual review without a running app | The browser can't inspect what isn't served — verify the URL responds first |
-| Describing elements by position instead of annotated overlay number | "The button on the right" is brittle; "element [3]" is precise — always reference annotated screenshot overlays |
-| Skipping `vitals` capture | Performance is a first-class finding — every reviewed page must produce LCP/CLS/INP/TTFB/FCP values |
+| Describing elements by position instead of an `eN` ref | "The button on the right" is brittle; "e3 (primary CTA)" is precise — always reference the `eN` ref plus a short description captured at finding time (Element-reference convention, `browser-review.md`) |
+| Treating vitals as available | Web Vitals capture has no Playwright CLI equivalent (settled, #2671) — omit the Performance line rather than fabricate LCP/CLS/INP/TTFB/FCP values |
 | Closing the session before saving a trace on failure | Failure reports without a trace path aren't actionable — `trace stop <path>` first, then `close` (and recording must have been started via `trace start` at session open — there is no retroactive capture) |
 | Per-step `agent-browser` invocations during journey walks | Use `batch` — one process, one session lifecycle, fewer tokens and less latency |
 | Batching across sessions | One `agent-browser batch` invocation owns a single session — never mix session names |
