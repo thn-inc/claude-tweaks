@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 
 const {
-  extractFileEntries, extractScopeKeywords, extractTaskBlocks,
+  extractFileEntries, extractScopeKeywords, extractPremiseRefs, extractTaskBlocks,
   extractStep2Verification, extractVerificationChecks, extractUnparseableStep2s, countTasks,
 } = require('../../../plugin/bin/lib/plan-audit/parser');
 
@@ -59,6 +59,18 @@ test('extractScopeKeywords parses a comma-separated list, trimmed and de-duplica
 
 test('extractScopeKeywords returns empty when the field is absent', () => {
   assert.deepStrictEqual(extractScopeKeywords('No such field here.'), []);
+});
+
+test('extractPremiseRefs parses a comma-separated list of paths/URLs, trimmed and de-duplicated', () => {
+  const text = 'Some prose.\nPremise-refs: db/migrations/001.sql, https://example.com/spec , db/migrations/001.sql\nMore prose.';
+  assert.deepStrictEqual(
+    extractPremiseRefs(text),
+    ['db/migrations/001.sql', 'https://example.com/spec'],
+  );
+});
+
+test('extractPremiseRefs returns empty when the field is absent', () => {
+  assert.deepStrictEqual(extractPremiseRefs('No such field here.'), []);
 });
 
 test('extractTaskBlocks splits on ### Task N: headings', () => {

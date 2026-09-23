@@ -69,6 +69,23 @@ function extractScopeKeywords(text) {
   )];
 }
 
+// "Premise-refs: path/to/migration.sql, https://example.com/spec" —
+// plan-authoring-checks.md's Upstream-schema premise check: paths or URLs a
+// plan claims to have read to prove a claimed semantic about a schema this
+// project does not own. Same comma-separated/trim/de-dup shape as
+// extractScopeKeywords above, line-anchored and case-insensitive — kept as
+// its own function rather than folded into extractScopeKeywords so that
+// function's existing array-shaped return value (and every current caller
+// and test built against it) is unchanged; the field is optional, so an
+// absent line returns empty, same as extractScopeKeywords does.
+function extractPremiseRefs(text) {
+  const match = text.match(/^Premise-refs:\s*(.+)$/im);
+  if (!match) return [];
+  return [...new Set(
+    match[1].split(',').map((k) => k.trim()).filter(Boolean),
+  )];
+}
+
 // Splits the plan into per-task blocks: { taskNumber, title, body }, one per
 // "### Task N: ..." heading, body running to the next such heading (or EOF).
 function extractTaskBlocks(text) {
@@ -218,6 +235,7 @@ function countTasks(text) {
 module.exports = {
   extractFileEntries,
   extractScopeKeywords,
+  extractPremiseRefs,
   extractTaskBlocks,
   extractStep1Text,
   extractStep2Verification,

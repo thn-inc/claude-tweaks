@@ -20,6 +20,8 @@ For each deviation, the three valid classifications are:
 | **Fix now** | The deviation contradicts the spec's intent | Spec unchanged | Revert/fix the implementation to match the spec |
 | **Update the spec** | The spec was wrong or incomplete; reality is correct | Update spec to match reality | Keep as-built |
 
+An unnamed rollout precondition discovered at review — a consumer that reaches production ahead of the producer it depends on, per `plan-authoring-checks.md`'s Producer-freshness check — is a spec gap to write back, not a beneficial deviation.
+
 ## Interactive mode — single batch table
 
 ```
