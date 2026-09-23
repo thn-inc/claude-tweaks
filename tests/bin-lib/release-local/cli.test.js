@@ -57,7 +57,7 @@ function makeDeps(o = {}) {
       if (key === 'branch --show-current') return `${o.branch || 'main'}\n`;
       if (key === 'status --porcelain --untracked-files=no') return o.dirty || '';
       if (key === 'remote get-url origin') { if (o.noOrigin) throw new Error('fatal: No such remote'); return 'git@github.com:o/r.git\n'; }
-      if (key.startsWith('describe')) { if (o.noTag) throw new Error('fatal: No names found, cannot describe anything.'); return 'v1.2.0\n'; }
+      if (key.startsWith('tag --merged')) return o.noTag ? '' : (o.mergedTag === undefined ? 'v1.2.0\n' : o.mergedTag);
       if (key.startsWith('log --first-parent')) return LOG(o.subjects || ['fix: a', 'feat: b', 'fix: c']);
       if (key.startsWith('fetch')) return '';
       if (key.startsWith('ls-remote --heads origin ')) return o.lsRemote === undefined ? `${SHA}\trefs/heads/${o.branch || 'main'}\n` : o.lsRemote;

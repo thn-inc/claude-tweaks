@@ -6,22 +6,39 @@
 // (.claude/skills/parse-signal-discipline): it is real signal that someone
 // bypassed the merge-time composer.
 const { RELEASE_NOTE_FOOTER_RE } = require('../release-notes');
+const { compareVersions } = require('../changelog.js');
 
 const HEADER_RE = /^(\w+)(\([^)]*\))?(!)?: (.+)$/;
 // Conventional Commits declares `BREAKING CHANGE:` and `BREAKING-CHANGE:` equivalent.
 const BREAKING_FOOTER_RE = /^BREAKING[ -]CHANGE: ?(.*)$/m;
 const RECORD = '\x1e';
 const FIELD = '\x1f';
-const NO_TAG_RE = /No names found|No tags can describe|cannot describe anything/i;
+const SEMVER_RE = /^\d+\.\d+\.\d+$/;
 
+// The highest v* tag reachable as an ancestor of `ref` (`git tag --merged`,
+// full-reachability — not `git describe --first-parent`). A prior version
+// used `describe --first-parent`, which walks the strict first-parent spine
+// and can silently return an OLDER tag when the real last release is only
+// reachable via a non-first-parent edge (e.g. a plain `git merge
+// origin/<branch>` landed on a stale local branch buries the newer tag off
+// the first-parent chain, incident 2026-09-23) — `describe` reports no
+// error in that case, just the wrong tag, so callers never see a signal to
+// fall back on. `--merged` can't make that mistake: it lists every tag
+// that IS an ancestor, so the result is always a genuine ancestor tag, and
+// `readCommits`'s `tag..ref` range below is correct regardless of whether
+// that tag sits on the first-parent spine or not (range exclusion uses
+// full reachability, not the `--first-parent` walk, even when `log
+// --first-parent` is the command doing the walking).
 function lastTag(git, ref = 'HEAD') {
-  try {
-    const out = git(['describe', '--tags', '--match', 'v[0-9]*', '--abbrev=0', '--first-parent', ref]).trim();
-    return out || null;
-  } catch (err) {
-    if (NO_TAG_RE.test(String(err.message || err))) return null;
-    throw err;
+  let best = null;
+  for (const line of git(['tag', '--merged', ref, '-l', 'v[0-9]*']).split('\n')) {
+    const raw = line.trim();
+    if (!raw) continue;
+    const v = raw.replace(/^v/, '');
+    if (!SEMVER_RE.test(v)) continue;
+    if (!best || compareVersions(v, best.replace(/^v/, '')) > 0) best = raw;
   }
+  return best;
 }
 
 function parseCommit({ sha, subject, body = '' }) {
