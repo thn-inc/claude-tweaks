@@ -1071,7 +1071,7 @@ test('extractPremiseCheck: null when absent, when body is empty, and for non-str
 test('specShapedBody: omitting templateStamp is byte-identical to the pre-change composition', () => {
   const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a' });
   assert.strictEqual(body, [
-    'H', '## Current State', 'c', '## Deliverables', 'd', '## Acceptance Criteria', 'a',
+    'H', '## Current State', 'c', '## Deliverables', 'd', '## Acceptance Criteria', 'a', '## Release Note', 'r',
     '_Filed by `x`. Close to resolve; label `wontfix` to suppress future reports of this finding._',
   ].join('\n\n'));
 });
