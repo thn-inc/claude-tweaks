@@ -224,6 +224,43 @@ test('a task declaring Expected: FAIL whose command genuinely fails pre-dispatch
   }
 });
 
+// AC1/AC2/AC4 — the production incident reproduced end-to-end through the CLI (#2593).
+// `makeTmpRepo()` is a bare temp directory, not a git repository (no other
+// test in this file runs `git init`) — proving "never executed" via a real
+// `git stash list` before/after comparison would need its own git-repo setup
+// this fixture doesn't otherwise need. The unit-level guarantee (a `run`
+// fake that throws if called) is pinned directly by checks.test.js; this
+// CLI-level test confirms the same refusal end-to-end through the real
+// (non-faked) `run` default and the human-readable summary line.
+test('#2593: a fixture plan whose Step 2 prose only mentions a forbidden git stash command is refused, never executed, and the CLI still exits 0', () => {
+  const repo = makeTmpRepo();
+  try {
+    const plan = writePlan(repo, [
+      '### Task 1: Remove the plan file',
+      '**Files:**',
+      '- Modify: `plan.md`',
+      '',
+      '- [ ] **Step 2: Run it to confirm FAIL**',
+      '',
+      'Run: never run `git stash push -u -m tag` here; use a WIP commit instead',
+      'Expected: FAIL',
+    ].join('\n'));
+    const { exitCode, stdout } = runCli(plan, repo);
+    assert.strictEqual(exitCode, 0);
+    const [jsonLine, summaryLine] = stdout.split('\n');
+    const report = JSON.parse(jsonLine);
+    assert.strictEqual(report.checkC.ok, true);
+    assert.deepStrictEqual(report.checkC.findings, []);
+    assert.deepStrictEqual(report.checkC.executed, []);
+    assert.strictEqual(report.checkC.warnings.length, 1);
+    assert.strictEqual(report.checkC.warnings[0].reason, 'vcs-mutation-refusal');
+    assert.strictEqual(report.checkC.warnings[0].verb, 'git stash');
+    assert.match(summaryLine, /VCS-mutation refusal/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 // #1997 — a compose call site the plan touches that could not be measured
 // (here: a malformed `when:` marker on one of its two sources) is reported
 // as `headroom.composedErrors` and surfaced in the human summary line as
