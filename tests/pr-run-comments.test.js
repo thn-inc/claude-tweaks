@@ -155,3 +155,69 @@ test('session-start.js appends the recorded PR URL to a stale-run line only when
   assert.match(SESSION_START, /state && state\.pr && state\.pr\.url/);
   assert.match(SESSION_START, /\$\{prSuffix\}/);
 });
+
+// #2592: a multi-spec /flow run shares one PR, and each spec's own review posted the same
+// `<!-- run-comment: verdict -->` marker, so spec B's post-or-update silently overwrote spec
+// A's verdict content (observed live on PR #2586, records #2580/#2581). Fixed by
+// spec-qualifying the marker under multi-spec: `<!-- run-comment: verdict:{spec} -->`.
+
+test('pr-run-comments.md documents the multi-spec verdict marker shape and that single-spec is unchanged', () => {
+  assert.match(COMMENTS, /Multi-spec verdict comments/);
+  assert.match(COMMENTS, /run-comment: verdict:\{spec\}/);
+  assert.ok(
+    COMMENTS.includes('<!-- run-comment: verdict -->'),
+    'the plain single-spec marker must still be documented, unchanged',
+  );
+  assert.match(
+    COMMENTS,
+    /one\s+`verdict`\s+comment per spec/,
+    'the multi-spec section must state the chosen shape (one comment per spec), not silently imply the old single-comment framing',
+  );
+});
+
+test('review/code-mode-steps.md composes the spec-qualified verdict marker under a multi-spec run', () => {
+  assert.match(REVIEW_SKILL, /MULTISPEC_PARENT_DIR/);
+  assert.match(REVIEW_SKILL, /run-comment: verdict:\{spec\}/);
+  assert.match(
+    REVIEW_SKILL,
+    /basename\(\$PIPELINE_RUN_DIR\)/,
+    'the spec identifier must be derived from this spec\'s own run-dir subdirectory, not a separately threaded value',
+  );
+});
+
+test('regression: a second spec\'s verdict post no longer collides with the first spec\'s marker (two-spec-same-PR sequence)', () => {
+  // Minimal reimplementation of pr-run-comments.md's find-by-marker `startsWith` check
+  // (the actual procedure shells out to `gh`; this exercises the same matching logic that
+  // determines whether two specs' comments collide).
+  const markerFor = (kind) => `<!-- run-comment: ${kind} -->`;
+  const findByKind = (comments, kind) =>
+    comments.find((c) => c.body.startsWith(markerFor(kind)));
+  const postOrUpdate = (comments, kind, body) => {
+    const existing = findByKind(comments, kind);
+    if (existing) {
+      existing.body = `${markerFor(kind)}\n${body}`;
+    } else {
+      comments.push({ body: `${markerFor(kind)}\n${body}` });
+    }
+    return comments;
+  };
+
+  const prComments = [];
+  postOrUpdate(prComments, 'verdict:2589', 'PASS — #2589 findings: none');
+  postOrUpdate(prComments, 'verdict:2592', 'PASS — #2592 findings: none');
+
+  assert.strictEqual(prComments.length, 2, 'each spec must get its own comment, not one shared/overwritten comment');
+  const c2589 = findByKind(prComments, 'verdict:2589');
+  const c2592 = findByKind(prComments, 'verdict:2592');
+  assert.ok(c2589, '#2589\'s verdict comment must still be findable after #2592 posts');
+  assert.ok(c2592, '#2592\'s verdict comment must still be findable');
+  assert.match(c2589.body, /#2589/);
+  assert.match(c2592.body, /#2592/);
+  assert.notStrictEqual(c2589.body, c2592.body, 'the two specs\' verdict content must not have collapsed into one');
+
+  // A same-spec re-run (a re-triggered review) still updates in place, never appends a duplicate.
+  postOrUpdate(prComments, 'verdict:2589', 'BLOCKED — #2589 findings: 1 severity:high');
+  assert.strictEqual(prComments.length, 2, 're-posting the same spec\'s verdict must edit in place, not append a third comment');
+  assert.match(findByKind(prComments, 'verdict:2589').body, /BLOCKED/);
+  assert.match(findByKind(prComments, 'verdict:2592').body, /PASS/, '#2592\'s comment must be untouched by #2589\'s re-post');
+});
