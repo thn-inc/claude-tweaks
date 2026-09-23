@@ -127,7 +127,7 @@ When a gate fails, the pipeline stops immediately and renders a failure card. Tw
 5. Resolve and shape-gate every target record now, via `materialize.md`'s Resolution + Materialization hard gate in this skill's directory — this subsumes the design-doc rejection (2.7); an unshaped record stops the run here with a pointer to `/claude-tweaks:specify #{n}`, before Step 2's other checks or the Config Manifesto run.
 6. If a path was given in the argument: it is rejected as a design doc (Step 2.7 enforces). If a topic name was given: resolve to a record; if only a design doc exists for that topic, stop and present the routing message.
 7. If validation fails → **stop before starting**
-8. **Create the open items ledger** using `/claude-tweaks:ledger`'s create operation. The `{feature}` name matches the execution plan that build will create. This file tracks findings and operational tasks across all pipeline phases. See `/claude-tweaks:ledger` for status lifecycle and phase taxonomy.
+8. **Create the open items ledger** using `/claude-tweaks:ledger`'s create operation. The `{feature}` name matches the execution plan that build will create. This file tracks findings and operational tasks across all pipeline phases. See `/claude-tweaks:ledger` for status lifecycle and phase taxonomy. **Log the creation** (#1800) — `review/code-mode-steps.md`'s QA Ledger Check reads this line to distinguish "Step 1.8 ran and this is the ledger it created" from "Step 1.8 was skipped": `AUTO {time} — flow: created open-items ledger {path}. Reversibility: n/a.`
 
 ### Step 2: Pre-flight Checks
 
