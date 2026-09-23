@@ -15,7 +15,7 @@ const {
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, isStaleDir,
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin,
   classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
-  isClosedSlugStuck, recordNumbersFromSlug,
+  isClosedSlugStuck, recordNumbersFromSlug, refusal,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure } = require('../../../plugin/bin/lib/reconcile/cache');
 const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
@@ -354,6 +354,11 @@ test('archiveRunDir: tidy-standalone run — untracked decisions.md/staged refus
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'audit-untracked');
   assert.deepEqual(result.untrackedAuditFiles.sort(), ['decisions.md', 'staged']);
+  // #1982: the hint co-located with this refusal names the actual files and
+  // the fix — hooks.js's archive-run verb no longer hardcodes this text.
+  assert.match(result.hint, /decisions\.md/);
+  assert.match(result.hint, /staged/);
+  assert.match(result.hint, /sync this checkout with origin/);
 
   // Refused before anything moved — nothing in the run dir touched, and the
   // archive dir (created up front as this run's "archiving" claim, before
@@ -409,6 +414,37 @@ test('archiveRunDir: staged/ with one tracked and one untracked file still refus
   assert.equal(fs.existsSync(path.join(runDir, 'staged', 'proposal-2.md')), true);
   const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
   assert.equal(fs.existsSync(path.join(archiveDir, 'staged')), false);
+});
+
+// #1982 — `refusal()` is the one constructor every `{ ok: false, reason }`
+// literal in this file goes through, so `hint` is always present.
+test('refusal: always yields a hint key, defaulting to null, and passes through extra fields', () => {
+  assert.deepEqual(refusal('mkdir-failed'), { ok: false, reason: 'mkdir-failed', hint: null });
+  assert.deepEqual(
+    refusal('move-failed', { lastError: 'boom' }),
+    { ok: false, reason: 'move-failed', hint: null, lastError: 'boom' },
+  );
+  assert.deepEqual(
+    refusal('move-failed', { lastError: 'boom', hint: 'boom' }),
+    { ok: false, reason: 'move-failed', hint: 'boom', lastError: 'boom' },
+  );
+});
+
+// #1982 AC3/#1982 conformance — a bare `{ ok: false, reason: '…' }` literal
+// bypassing `refusal()` would silently reintroduce the drift this record
+// fixes (a renamed/removed reason code losing its co-located hint with
+// nothing pinning the two together). Source-scan the file text directly.
+test('archive-merged.js conformance: every ok:false/reason literal goes through refusal()', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'reconcile', 'archive-merged.js'),
+    'utf8',
+  );
+  // The `refusal()` function's own body (`return { ok: false, reason, hint, ...extra };`)
+  // is the one sanctioned literal — everything else naming both `ok: false`
+  // and a `reason` key must be a `refusal(` call, not a bare object literal.
+  const bareLiteralPattern = /\{\s*ok:\s*false,\s*reason:/g;
+  const matches = src.match(bareLiteralPattern) || [];
+  assert.deepEqual(matches, [], 'found a bare { ok: false, reason: ... } literal outside refusal()');
 });
 
 // #1493 review fix, negative case: the tidy-standalone carve-out above must
@@ -1287,6 +1323,37 @@ test('trackArchiveResult: only tracks move-failed — a different failure reason
   const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-other');
   trackArchiveResult(root, 'o/r', dir, { ok: false, reason: 'commit-failed' });
   assert.deepEqual(listResidueFailures(root), []);
+});
+
+// #2330 — work-twin-conflict/work-twin-resolve-failed[-partial-revert] must
+// escalate to residue tracking the same way move-failed does, instead of
+// being silently dropped by the reason guard every pass.
+test('trackArchiveResult: work-twin-conflict escalates via the same residue streak as move-failed', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-track-twin-'));
+  const calls = [];
+  const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-twin');
+
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    trackArchiveResult(root, 'o/r', dir, { ok: false, reason: 'work-twin-conflict' }, { escalate });
+  }
+  assert.equal(calls.length, 1, `expected exactly one escalation call, got ${calls.length}`);
+  assert.equal(calls[0].reason, 'work-twin-conflict');
+  assert.equal(calls[0].targetPath, dir);
+  assert.equal(calls[0].count, RESIDUE_ESCALATE_THRESHOLD);
+});
+
+// A `work-twin-resolve-failed-partial-revert` is a worse state than a clean
+// `work-twin-conflict` — it must escalate under its own distinct reason key,
+// not be folded into `work-twin-conflict`'s or `move-failed`'s streak.
+test('trackArchiveResult: work-twin-resolve-failed-partial-revert tracks under its own distinct reason key', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-track-twin-partial-'));
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-twin-partial');
+  trackArchiveResult(root, 'o/r', dir, { ok: false, reason: 'work-twin-resolve-failed-partial-revert' });
+  const entries = listResidueFailures(root);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].reason, 'work-twin-resolve-failed-partial-revert');
+  assert.equal(entries[0].path, dir);
 });
 
 test('trackArchiveResult: a success clears a prior failure streak for the same dir', () => {

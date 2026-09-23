@@ -361,6 +361,171 @@ async function consoleExecuteDetect(opts = {}) {
   return { ready, skipped };
 }
 
+// #2568: the write path behind `hooks.js resolve-console` — a session that
+// answered a pending-review console in chat ("merge") rather than by
+// ticking the PR comment's checkboxes performs the same three coupled
+// writes `_shared/console-execution.md`'s "Write order after execution"
+// section documents, in the documented order, instead of hand-deriving
+// them. Composes this file's own read-only helpers (readConsoleJson,
+// isClaimReclaimable, parseItemTicks) with a new write path — never a
+// parallel re-derivation of console state.
+//
+// `deps.gh(args) -> Promise<stdout>` is the one injectable seam every gh
+// call (the read, the reply post, the marker-edit PATCH) goes through, per
+// `gh-api-module-pattern`'s injectable-runner convention — a fake in tests
+// asserts the three writes' exact call order without shelling out to real
+// `gh`. `deps.writeFile(path, content)` is the sync console.json write;
+// `deps.now()` defaults to `Date.now`.
+//
+// Returns (never throws for an expected outcome):
+//   { status: 'executed', outcomes, resolved, prNumber }
+//   { status: 'noop', reason: 'already-resolved' | 'claimed', executingSession? }
+//   { status: 'error', reason: 'no-console' | 'unparseable-console-json' |
+//       'no-comment-ids' | 'no-pr-number' | 'network-failure' |
+//       'comment-not-found' | 'unknown-item-ids' | 'reply-comment-failed' |
+//       'marker-edit-failed', ids?, error? }
+async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = {}, deps = {}) {
+  const now = typeof deps.now === 'function' ? deps.now() : Date.now();
+  const consoleJson = readConsoleJson(runDir);
+  if (consoleJson === null) return { status: 'error', reason: 'no-console' };
+  if (consoleJson === undefined) return { status: 'error', reason: 'unparseable-console-json' };
+
+  // Idempotence — matches preFetchSkipReason's own acceptance rule (a
+  // non-empty executedAt is sufficient on its own; consoles written before
+  // this write order set `resolved: true` carry executedAt alone).
+  if (consoleJson.resolved === true
+    || (typeof consoleJson.executedAt === 'string' && consoleJson.executedAt.trim().length > 0)) {
+    return { status: 'noop', reason: 'already-resolved' };
+  }
+  // Pre-execution claim (`_shared/console-execution.md`'s own section): a
+  // live (non-stale) executingAt claim belongs to another session; no-op
+  // rather than race it. A stale or absent claim is reclaimable — this verb
+  // does not itself write executingAt (it goes straight to the completion
+  // write below), matching a chat-driven resolution's single-shot nature.
+  if (!isClaimReclaimable(consoleJson.executingAt, now)) {
+    return { status: 'noop', reason: 'claimed', executingSession: consoleJson.executingSession || null };
+  }
+
+  const commentIds = Array.isArray(consoleJson.commentIds) ? consoleJson.commentIds : [];
+  if (!commentIds.length) return { status: 'error', reason: 'no-comment-ids' };
+  if (!consoleJson.prNumber) return { status: 'error', reason: 'no-pr-number' };
+
+  let stdout;
+  try {
+    stdout = await deps.gh(['pr', 'view', String(consoleJson.prNumber), '--json', 'comments,body']);
+  } catch (err) {
+    return { status: 'error', reason: 'network-failure', error: errorText(err) };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return { status: 'error', reason: 'network-failure' };
+  }
+  const comments = Array.isArray(parsed.comments) ? parsed.comments : [];
+  const byId = new Map();
+  for (const c of comments) if (c && typeof c.id === 'string') byId.set(c.id, c);
+  const primary = byId.get(commentIds[0]);
+  if (!primary) return { status: 'error', reason: 'comment-not-found' };
+
+  // Validate every named id against the comment's own parsed rows BEFORE
+  // any write — a partial write followed by an error would leave the
+  // console in an inconsistent state.
+  const ticks = parseItemTicks(primary.body);
+  const knownIds = new Set(Object.keys(ticks));
+  const namedIds = [...new Set([...approve, ...decline])];
+  const unknownIds = namedIds.filter((id) => !knownIds.has(id));
+  if (unknownIds.length) return { status: 'error', reason: 'unknown-item-ids', ids: unknownIds };
+
+  const items = Array.isArray(consoleJson.items) ? consoleJson.items : [];
+  const approveSet = new Set(approve);
+  const declineSet = new Set(decline);
+  // Every item this console names gets an outcome — one explicitly declined
+  // via `--decline`, one explicitly (or already-tick) approved, and
+  // anything named in neither list defaults to declined ("declined, no
+  // reason given" — the same Override-drill decline convention
+  // `_shared/console-execution.md`'s Execution routing section already
+  // documents) rather than silently guessing an intent nobody stated.
+  const outcomes = items.map((item) => {
+    if (!declineSet.has(item.id) && (approveSet.has(item.id) || ticks[item.id] === true)) {
+      return { id: item.id, kind: item.kind, outcome: 'executed', isMergeRow: item.isMergeRow === true };
+    }
+    return {
+      id: item.id, kind: item.kind, outcome: 'declined', note: 'declined, no reason given', isMergeRow: item.isMergeRow === true,
+    };
+  });
+  // Resolve ticks only when every item in the console is floor-clearing —
+  // matching the partial-resolution behavior `_shared/console-execution.md`'s
+  // `consoleAutoResolve` section already describes for a non-floor item
+  // (an isMergeRow item declined while others remain unticked leaves both
+  // that item and Resolve unticked).
+  const allExecuted = outcomes.length > 0 && outcomes.every((o) => o.outcome === 'executed');
+
+  // 1. Reply comment first — the source of truth a foreign detection pass
+  // keys "already executed" off, per the Write order section.
+  const replyBody = buildExecutedReplyBody(outcomes);
+  try {
+    await deps.gh(['pr', 'comment', String(consoleJson.prNumber), '--body', replyBody]);
+  } catch (err) {
+    return { status: 'error', reason: 'reply-comment-failed', error: errorText(err) };
+  }
+
+  // 2. Resolved marker edit on the console comment's first line — ticking
+  // the Resolve checkbox only when every item resolved favorably.
+  const editedBody = addConsoleResolvedMarker(tickResolveBoxIfAllExecuted(primary.body, allExecuted));
+  try {
+    await deps.gh(['api', `repos/{owner}/{repo}/issues/comments/${primary.id}`, '-X', 'PATCH', '-f', `body=${editedBody}`]);
+  } catch (err) {
+    return { status: 'error', reason: 'marker-edit-failed', error: errorText(err) };
+  }
+
+  // 3. console.json.executedAt + resolved: true, together, in one write.
+  const nextConsoleJson = { ...consoleJson, executedAt: new Date(now).toISOString(), resolved: allExecuted };
+  deps.writeFile(path.join(runDir, 'console.json'), JSON.stringify(nextConsoleJson, null, 2));
+
+  return {
+    status: 'executed', outcomes, resolved: allExecuted, prNumber: consoleJson.prNumber,
+  };
+}
+
+// Same shape as bin/lib/feedback/file-feedback.js's errorText — a thrown
+// value from an injected fake (or a real gh failure) may not be a plain
+// Error; never let the reported reason come back empty.
+function errorText(err) {
+  const parts = [err && err.message, err && err.stderr, err && err.stdout].filter(Boolean).map(String);
+  return parts.length ? parts.join(' ') : String(err);
+}
+
+// One reply comment naming every item's outcome — `_shared/console-execution.md`'s
+// Write order section's own `<!-- console-item: executed -->` marker, plus
+// one line per item so a human (or a later foreign session) reading the PR
+// sees exactly what this verb decided.
+function buildExecutedReplyBody(outcomes) {
+  const lines = outcomes.map((o) => (o.outcome === 'executed'
+    ? `- \`${o.id}\`: executed`
+    : `- \`${o.id}\`: ${o.note}`));
+  return `<!-- console-item: executed -->\n${lines.join('\n')}`;
+}
+
+// Ticks the Resolve checkbox row (isResolveTicked's own row shape, in
+// reverse) only when every item resolved favorably — a partial resolution
+// must never silently tick Resolve, since that would tell a later detection
+// pass "a human confirmed everything," which isn't true.
+function tickResolveBoxIfAllExecuted(body, allExecuted) {
+  if (!allExecuted || typeof body !== 'string') return body;
+  return body.replace(/(<!--\s*console-item:\s*resolve\s*-->\s*\n-\s*\[)[ ]?(\])/i, '$1x$2');
+}
+
+// Prepends the resolved marker as the comment's first line — idempotent
+// (the pre-execution claim/idempotence checks above already refuse to reach
+// here on an already-resolved console, so this never double-prepends in
+// practice, but a bare prepend is trivially safe either way).
+function addConsoleResolvedMarker(body) {
+  const marker = '<!-- claude-tweaks-console-resolved -->';
+  if (typeof body !== 'string') return marker;
+  return `${marker}\n${body}`;
+}
+
 module.exports = {
   consoleExecuteDetect,
   decideConsoleExecute,
@@ -369,5 +534,6 @@ module.exports = {
   isClaimReclaimable,
   readConsoleJson,
   parseFixesMembers,
+  resolveConsoleExecution,
   RECLAIM_STALE_MS,
 };

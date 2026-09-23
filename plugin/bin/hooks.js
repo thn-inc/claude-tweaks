@@ -11,6 +11,8 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 const ctxLib = require('./lib/hooks/context');
 const siblingSessions = require('./lib/hooks/sibling-sessions');
 const specStatusLib = require('./lib/flow/manifest');
@@ -82,6 +84,7 @@ const USAGE = {
   'close-run': 'close-run [--run <dir>]',
   'teardown-run': 'teardown-run [--run <dir>] [--merged|--abandoned]',
   'archive-run': 'archive-run [--run <dir>]',
+  'resolve-console': 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>]',
   'check-resume-freshness': 'check-resume-freshness [--run <dir>]',
   'check-staged-inventory': 'check-staged-inventory [--run <dir>]',
   'check-sibling-sessions': 'check-sibling-sessions --record <id-or-slug>',
@@ -107,12 +110,13 @@ const KNOWN_FLAGS = {
   'record-pr': ['--run'],
   'spec-status': ['--run', '--spec', '--status', '--phase', '--now'],
   'teardown-run': ['--run', '--merged', '--abandoned'],
+  'resolve-console': ['--run', '--approve', '--decline'],
 };
 
 // Declared flags that consume the following token as a value — the
 // unknown-flag scan below must skip that token rather than risk misreading
 // it as a flag itself (an argument value could itself start with "--").
-const VALUE_FLAGS = new Set(['--run', '--spec', '--status', '--phase', '--now']);
+const VALUE_FLAGS = new Set(['--run', '--spec', '--status', '--phase', '--now', '--approve', '--decline']);
 
 // First `--*`-shaped token in `args` that isn't declared for this verb, or
 // null when every `--*` token is declared (or there are none). Scans the
@@ -1047,18 +1051,12 @@ async function main(argv) {
     // is the exact fixed-list drift this whole record eliminates.
     const result = archiveRunDir(mainRoot, runDir);
     if (!result.ok) {
-      if (result.reason === 'audit-untracked') {
-        process.stdout.write(
-          `claude-tweaks: archival refused — audit-untracked (${result.untrackedAuditFiles.join(', ')} ` +
-          'exist here but are not tracked by this checkout\'s git index). A pr-first standalone run\'s ' +
-          'decisions.md/report.md/staged only become tracked once their worktree copy has merged AND this ' +
-          'checkout has pulled that merge — sync this checkout with origin (git pull, or reconcile\'s own ' +
-          'mirror-ff) and retry. If no such merge exists (the content was never committed anywhere), it is ' +
-          'not recoverable from git history — re-run whatever produced it.\n',
-        );
-        return 0;
-      }
-      process.stdout.write(`claude-tweaks: archival refused — ${result.reason}\n`);
+      // #1982: every refusal reason carries its own recovery `hint`
+      // (co-located with the detector in archive-merged.js's `refusal()`
+      // constructor) — this branch is now a generic reader of `reason`/
+      // `hint`, never a string match against a specific reason code.
+      const hintSuffix = typeof result.hint === 'string' && result.hint.length ? ` — ${result.hint}` : '';
+      process.stdout.write(`claude-tweaks: archival refused — ${result.reason}${hintSuffix}\n`);
       return 0;
     }
     for (const name of result.movedEntries) {
@@ -1066,6 +1064,65 @@ async function main(argv) {
     }
     process.stdout.write(`claude-tweaks: archived ${path.basename(runDir)}\n`);
     return 0;
+  }
+  if (cmd === 'resolve-console') {
+    // #2568: --run is required, no implicit "newest non-terminal run"
+    // fallback — same discipline record-worktree already enforces (a
+    // guessed run dir here could resolve/execute a DIFFERENT console than
+    // the one the calling session actually answered).
+    const {
+      runDir, invalidRunArg, worktreeLocalFallback, explicit,
+    } = resolveRunArg(argv.slice(3), process.cwd(), process.env);
+    if (!explicit) {
+      process.stdout.write(`claude-tweaks: ${USAGE['resolve-console']} — --run is required, console not resolved\n`);
+      return 1;
+    }
+    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+    if (invalidRunArg) {
+      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — console not resolved\n`);
+      return 1;
+    }
+    if (!runDir) {
+      process.stdout.write('claude-tweaks: no pipeline run dir found — console not resolved\n');
+      return 1;
+    }
+    const splitIds = (raw) => (raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : []);
+    const approve = splitIds(flagVal(argv.slice(3), '--approve'));
+    const decline = splitIds(flagVal(argv.slice(3), '--decline'));
+
+    const mainRoot = wtDetect.mainCheckoutRoot(process.cwd()) || process.cwd();
+    const execFileAsync = promisify(execFile);
+    const RESOLVE_CONSOLE_GH_TIMEOUT_MS = 15000;
+    const deps = {
+      now: () => Date.now(),
+      writeFile: (p, content) => fs.writeFileSync(p, content),
+      gh: async (args) => {
+        const { stdout } = await execFileAsync('gh', args, {
+          cwd: mainRoot, encoding: 'utf8', timeout: RESOLVE_CONSOLE_GH_TIMEOUT_MS, windowsHide: true,
+        });
+        return stdout;
+      },
+    };
+    const { resolveConsoleExecution } = require('./lib/reconcile/console-execute');
+    const result = await resolveConsoleExecution(runDir, { approve, decline }, deps);
+    if (result.status === 'executed') {
+      const summary = result.outcomes.map((o) => `${o.id}:${o.outcome}`).join(', ');
+      process.stdout.write(
+        `claude-tweaks: console resolved for ${path.basename(runDir)} (PR #${result.prNumber}) — ${summary}`
+        + `${result.resolved ? '' : ' — Resolve left unticked (not every item cleared)'}\n`,
+      );
+      return 0;
+    }
+    if (result.status === 'noop') {
+      process.stdout.write(`claude-tweaks: console already ${result.reason === 'claimed' ? 'claimed by another execution' : 'resolved'} for ${path.basename(runDir)} — nothing written\n`);
+      return 0;
+    }
+    if (result.reason === 'unknown-item-ids') {
+      process.stdout.write(`claude-tweaks: unknown item id(s) ${result.ids.join(', ')} — no matching console-item row found, console not resolved\n`);
+      return 1;
+    }
+    process.stdout.write(`claude-tweaks: console resolution failed for ${path.basename(runDir)} — ${result.reason}${result.error ? `: ${result.error}` : ''}\n`);
+    return 1;
   }
   if (cmd === 'check-resume-freshness') {
     // Read-only: never writes run-state.json. Skills call this immediately
