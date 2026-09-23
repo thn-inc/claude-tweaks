@@ -14,7 +14,7 @@ Use the `/claude-tweaks:browse` skill's operation vocabulary for all browser ope
 
 ### URL Resolution
 
-When QA is triggered automatically (by `/claude-tweaks:test` in a `/claude-tweaks:flow` pipeline, or via `/claude-tweaks:test qa`), the dev server URL is auto-detected using the shared procedure from `dev-url-detection.md` in `skills/_shared/`. Stories may also contain their own URLs.
+When QA is triggered automatically (by `/claude-tweaks:test` in a `/claude-tweaks:flow` pipeline, or via `/claude-tweaks:test qa`), the dev server URL is auto-detected using the shared procedure from `dev-url-detection.md` in `skills/_shared/`, which resolves it as `APP_URL`. Stories may also contain their own URLs — see `stories/SKILL.md`'s `url:` field convention and `qa-prompts.md`'s "Resolve each story's dispatch URL against `APP_URL`" step (Phase 3) for how a story's own URL is reconciled with `APP_URL` at dispatch time.
 
 ### Browser Check
 

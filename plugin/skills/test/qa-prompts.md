@@ -63,6 +63,15 @@ This phase dispatches qa-agent subagents in parallel — one per story, bounded 
 
 19. For each Task call, use the appropriate prompt template. If the story has `auth: { vault: "<name>" }`, include the `**Auth (vault):**` field.
 
+**Resolve each story's dispatch URL against `APP_URL`** (the value `_shared/dev-url-detection.md` resolved during pre-flight — see `qa-procedures.md`'s URL Resolution section) before assembling any prompt below — never substitute `story.url` directly. For each story, compute `resolved_url`:
+- Root-relative (`story.url` starts with `/`, or carries no scheme+host at all): join it to `APP_URL` unchanged — `resolved_url = new URL(story.url, APP_URL).toString()`. No regression here; this is already the working case.
+- Absolute origin (scheme+host+port) that **differs** from `APP_URL`'s own origin: replace just the origin with `APP_URL`'s, preserving the story's path/query/fragment exactly — e.g. a story pinning `http://127.0.0.1:9999/dashboard` under a resolved `APP_URL = http://localhost:54321` becomes `http://localhost:54321/dashboard`, never the literal `9999` port. This is deliberately mechanical — a story that genuinely needs a different host on purpose (e.g. one exercising an external service) still gets rewritten; that's a known limitation, not something this step tries to distinguish.
+- Absolute origin that already **matches** `APP_URL`'s origin: `resolved_url = story.url` unchanged.
+
+Use `resolved_url` everywhere below — the `**URL:**` field and the `open` command in both templates.
+
+**Log the rewrite once per run, not once per story.** If at least one story needed its origin rewritten this run, emit exactly one line naming the original and resolved origins (e.g. `QA: N stories had an embedded origin rewritten to APP_URL ({old-origin} -> {new-origin})`) — to this run's decision log (`log-decision.js`) when a pipeline run dir is active, otherwise directly in the QA report per `qa-reporting.md`'s existing output conventions. Never log per-story; a large story suite would otherwise drown the report in repeated identical lines.
+
 **Canonical schema.** Both templates below inline the `REPORT_JSON` envelope's nested `page_inventories` shape (`interactive_elements`/`forms`/`navigation`/`accessibility`/`layout`) verbatim rather than referencing it — required by this file's own no-sibling-file-references contract (line 7), since each template is copied wholesale into a dispatched Task agent's prompt and that agent never sees another file. `agents/qa-agent.md`'s `## Report` section declares this same shape canonical for the agent's structured output. Any future change to the schema must be mirrored byte-for-byte across all four locations: `agents/qa-agent.md`, both templates below, and `skills/test/qa-reporting.md`'s aggregated `report.json` schema.
 
 **Structured format prompt:**
@@ -73,7 +82,7 @@ Execute this user story and report results using the playwright-cli CLI.
 
 **ID:** {story.id}
 **Story:** {story.name}
-**URL:** {story.url}
+**URL:** {resolved_url}
 **Session:** {story.id}
 **Headed:** {HEADED}
 
@@ -91,7 +100,7 @@ Execute this user story and report results using the playwright-cli CLI.
 {serialize story.steps as YAML}
 
 Instructions:
-- Open the session: `playwright-cli -s={story.id} open {story.url}`
+- Open the session: `playwright-cli -s={story.id} open {resolved_url}`
 - Start trace recording immediately after `open`: `playwright-cli -s={story.id} tracing-start` (a trace can only be saved for the interval after recording started — there is no retroactive capture).
 <!-- playwright-cli: no equivalent found for agent-browser auth login — see issue Gotchas -->
 - If `Auth (vault)` is present, run `agent-browser --session {story.id} auth login <vault-name>` immediately after `tracing-start` and before the first interactive step.
@@ -138,7 +147,7 @@ Execute this user story and report results using the playwright-cli CLI.
 
 **ID:** {story.id or "legacy-" + slugified-name}
 **Story:** {story.name}
-**URL:** {story.url}
+**URL:** {resolved_url}
 **Session:** {story.id or "legacy-" + slugified-name}
 **Headed:** {HEADED}
 
