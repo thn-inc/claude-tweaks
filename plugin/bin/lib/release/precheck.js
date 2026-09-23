@@ -94,8 +94,15 @@ function precheck(deps, part, opts = {}) {
   const claims = collectClaims(deps, opts);
   const known = [claims.localMain, claims.originMain, claims.tagTip].filter(Boolean);
   const base = known.length ? known.sort(compareVersions).pop() : '0.0.0';
-  const candidate = nextVersion(base, part);
-  return { candidate, claims, result: checkCollisions(candidate, claims, part) };
+  // An explicit candidate (bin/release-local.js's --release-as, #2326) bypasses
+  // nextVersion's derivation but not the collision check below — it must still
+  // be ahead of the computed base, checked separately since "not ahead" is a
+  // usage error (the caller picked a bad value), never a version collision.
+  const candidate = opts.releaseAs || nextVersion(base, part);
+  if (opts.releaseAs && compareVersions(candidate, base) <= 0) {
+    return { candidate, base, claims, result: { ok: false, usageError: true, conflicts: [], suggested: null } };
+  }
+  return { candidate, base, claims, result: checkCollisions(candidate, claims, part) };
 }
 
 module.exports = { collectClaims, checkCollisions, precheck };

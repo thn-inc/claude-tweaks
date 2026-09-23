@@ -37,7 +37,7 @@ files:
 - **URL:** `node plugin/bin/release-local.js`
 - **Action:** The manifest token(s) and the CHANGELOG are spliced, one `chore(release): v1.3.0` commit lands, `v1.3.0` is created as an annotated tag, the branch and the tag are pushed after a fetch-and-ancestry re-check, and the `release-hook` policy command runs. The last line reads `released v1.3.0`.
 - **Should feel:** Like release-please did it — the same tag scheme, the same CHANGELOG grammar, the same manifest handling — so the history has no format seam if the project later moves to `pr-first`.
-- **Should understand:** The tag is the version of record; the manifest follows it. A `manifest-drift` line in the plan means the manifest had wandered away from the last tag and the tag won.
+- **Should understand:** The tag is the version of record; the manifest follows it. A `manifest-drift` line in the plan means the manifest had wandered away from the last tag and the tag won. `--release-as X.Y.Z` replaces the derived bump with an explicit version (#2326) — the plan line then reads `(<part> — --release-as override)`, and a value that is not ahead of the current base is a usage error, exit `2`, naming both versions and writing nothing.
 - **Red flags:** A reformatted `Cargo.toml` (keys reordered, indentation changed) — only the version token may differ; a CHANGELOG bullet carrying a PR link under local-merge; a lightweight tag.
 
 ### 4. Something failed part-way — a named partial state

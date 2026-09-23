@@ -176,23 +176,15 @@ No `-t`/`-b`: the release PR's subject is release-please's own `chore(main): rel
 
 ### local-merge
 
-**`--as` back-stop.** `/claude-tweaks:release` Step 1 owns this check and stops the run there. Should a run nevertheless reach this step with `--as` under `local-merge`, refuse with the same message, log it as `SKIP`, and stop — never invoke the engine:
+**`--as` passthrough.** When `--as {version}` was given, pass it to the engine as `--release-as {version}` (#2326, ledger row 90 of `docs/plans/2026-09-11-release-skill-ledger.md` closed). The engine validates it is strictly ahead of its own derived base and exits `2` (a usage error, naming both versions) if it is not — that exit is handled by the same exit-code table below, row `2`, no special case needed here.
 
-```
---as is pr-first only (release-local.js derives the version from history); use a breaking commit or a manual tag
-```
-
-```
-SKIP {HH:MM:SS} — Step 5: --as {version} refused under local-merge (back-stop; Step 1 owns the check) — release-local.js has no version override. Reversibility: n/a.
-```
-
-A `--release-as` flag on the local engine is an open follow-up, recorded as ledger row 90 of `docs/plans/2026-09-11-release-skill-ledger.md`.
-
-**Invoke the engine.** One call, no flags the CLI does not define — its own are `--dry-run`, `--root <dir>` and `--branch <name>`:
+**Invoke the engine.** One call, no flags the CLI does not define — its own are `--dry-run`, `--root <dir>`, `--branch <name>` and `--release-as <version>`:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/release-local.js" --root "$RUN_ROOT"
 ```
+
+When `--as {version}` was given, append `--release-as {version}` to the invocation above.
 
 Map its exit code, which is the whole verdict — do not re-derive state from the repository:
 
