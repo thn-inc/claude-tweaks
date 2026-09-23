@@ -130,6 +130,31 @@ function checkB(scopeKeywords, plannedPaths, repoRoot) {
   return { ok: list.length === 0, unplanned: list };
 }
 
+// ── Premise-refs — Upstream-schema premise citation check ──────────────────
+// plan-authoring-checks.md's Upstream-schema premise check (#2575): a plan
+// may declare `Premise-refs: {path or URL}` lines naming what it claims to
+// have read to prove a claimed semantic about a schema this project does
+// not own. This reports any *local path* that does not resolve to an
+// existing file — a distinct finding from Check B's unplanned-file list (a
+// scope mismatch vs. an unverifiable citation are different findings, never
+// folded into the same category). A URL cannot be verified here (no network
+// access) and is recorded but never treated as unresolved — the same
+// documented limitation the prose check states. Kept as its own function
+// (not folded into checkB) for the same backward-compatibility reason
+// extractPremiseRefs above is kept separate from extractScopeKeywords: an
+// empty/absent Premise-refs field must leave checkB's own return shape and
+// every existing caller of it completely unchanged.
+const URL_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+
+function checkPremiseRefs(premiseRefs, repoRoot) {
+  const unresolved = [];
+  for (const ref of premiseRefs) {
+    if (URL_RE.test(ref)) continue; // recorded, not fetch-verified
+    if (!fs.existsSync(path.resolve(repoRoot, ref))) unresolved.push(ref);
+  }
+  return { ok: unresolved.length === 0, unresolved };
+}
+
 // ── Check C — Verification-command pre-check ────────────────────────────────
 // Runs each extracted command once, read-only, against current repo state.
 // The only finding: a command that already exhibits a passing/success
@@ -464,5 +489,5 @@ function checkD(text) {
 
 module.exports = {
   checkA, checkB, checkC, checkD, headroomCheck, looksPassing, isGovernedMdPath,
-  refusedVcsMutation, commandSegments,
+  refusedVcsMutation, commandSegments, checkPremiseRefs,
 };

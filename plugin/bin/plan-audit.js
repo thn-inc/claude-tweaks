@@ -13,10 +13,10 @@ const { execFileSync } = require('node:child_process');
 
 const { parseArgs, UsageError, USAGE } = require('./lib/plan-audit/args');
 const {
-  extractFileEntries, extractScopeKeywords, extractVerificationChecks, extractUnparseableStep2s, countTasks,
+  extractFileEntries, extractScopeKeywords, extractPremiseRefs, extractVerificationChecks, extractUnparseableStep2s, countTasks,
 } = require('./lib/plan-audit/parser');
 const {
-  checkA, checkB, checkC, checkD, headroomCheck,
+  checkA, checkB, checkC, checkD, headroomCheck, checkPremiseRefs,
 } = require('./lib/plan-audit/checks');
 
 function resolveRepoRoot(explicit, cwd) {
@@ -49,6 +49,7 @@ function summaryLine(report) {
   // malformed marker) is never silenced into the same "no findings" bucket
   // as a call site that legitimately doesn't apply.
   if (report.headroom.composedErrors.length) parts.push(`Composed: ${report.headroom.composedErrors.length} unmeasured`);
+  if (!report.premiseRefs.ok) parts.push(`Premise-refs: ${report.premiseRefs.unresolved.length} unresolved`);
   if (parts.length === 0) return 'plan-audit: clean — no findings.';
   return `plan-audit: ${parts.join('; ')}.`;
 }
@@ -101,6 +102,7 @@ function main() {
   const checkDResult = checkD(text);
   const entries = extractFileEntries(text);
   const scopeKeywords = extractScopeKeywords(text);
+  const premiseRefs = extractPremiseRefs(text);
   const verificationChecks = extractVerificationChecks(text);
   const unparseableStep2s = extractUnparseableStep2s(text);
 
@@ -110,6 +112,7 @@ function main() {
     checkC: checkC(verificationChecks, repoRoot, {}, unparseableStep2s),
     checkD: checkDResult,
     headroom: headroomCheck(entries, repoRoot),
+    premiseRefs: checkPremiseRefs(premiseRefs, repoRoot),
   };
 
   // Compact JSON on its own first line (never pretty-printed — a caller
@@ -118,7 +121,8 @@ function main() {
   process.stdout.write(`${JSON.stringify(report)}\n`);
   process.stdout.write(`${summaryLine(report)}\n`);
 
-  const pass = report.checkA.ok && report.checkB.ok && report.checkC.ok && report.checkD.ok && report.headroom.ok;
+  const pass = report.checkA.ok && report.checkB.ok && report.checkC.ok && report.checkD.ok && report.headroom.ok
+    && report.premiseRefs.ok;
   process.exitCode = pass ? 0 : 1;
 }
 

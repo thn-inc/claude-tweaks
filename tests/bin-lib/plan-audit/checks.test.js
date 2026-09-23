@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  checkA, checkB, checkC, checkD, headroomCheck, looksPassing, isGovernedMdPath,
+  checkA, checkB, checkC, checkD, headroomCheck, looksPassing, isGovernedMdPath, checkPremiseRefs,
 } = require('../../../plugin/bin/lib/plan-audit/checks');
 const { CEILING_BYTES, composedBytesReport } = require('../../../plugin/bin/lib/skill-audit/context-cost');
 
@@ -200,6 +200,52 @@ test('checkB never descends into node_modules or .git (control match)', () => {
     const result = checkB(['PLAYWRIGHT_MCP'], [], repo);
     assert.strictEqual(result.ok, true);
     assert.deepStrictEqual(result.unplanned, []);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// ── Premise-refs ─────────────────────────────────────────────────────────
+
+test('checkPremiseRefs is a no-op (ok, empty) when the plan declares no Premise-refs', () => {
+  const repo = makeTmpRepo();
+  try {
+    assert.deepStrictEqual(checkPremiseRefs([], repo), { ok: true, unresolved: [] });
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('checkPremiseRefs flags a local path that does not resolve to an existing file', () => {
+  const repo = makeTmpRepo();
+  try {
+    const result = checkPremiseRefs(['db/migrations/nonexistent.sql'], repo);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(result.unresolved, ['db/migrations/nonexistent.sql']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('checkPremiseRefs does not flag a local path that DOES exist', () => {
+  const repo = makeTmpRepo();
+  fs.mkdirSync(path.join(repo, 'db', 'migrations'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'db', 'migrations', 'real.sql'), '-- real');
+  try {
+    const result = checkPremiseRefs(['db/migrations/real.sql'], repo);
+    assert.strictEqual(result.ok, true);
+    assert.deepStrictEqual(result.unresolved, []);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('checkPremiseRefs never treats a URL as unresolved (no network access — recorded, not fetch-verified)', () => {
+  const repo = makeTmpRepo();
+  try {
+    const result = checkPremiseRefs(['https://example.com/does/not/matter'], repo);
+    assert.strictEqual(result.ok, true);
+    assert.deepStrictEqual(result.unresolved, []);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
