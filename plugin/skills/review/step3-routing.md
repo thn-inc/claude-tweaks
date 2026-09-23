@@ -35,17 +35,24 @@ When a pipeline run directory exists (see the composed review-dispatch bundle's 
 
 Also resolve `review-auto-apply-prose-exempt` the same way — `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "$PIPELINE_RUN_DIR" review-auto-apply-prose-exempt` (boolean, default `true`). When it resolves `true` **and** every `Target:` path in the finding's staged-patch preamble (`_shared/staged-patch.md`) matches `skills/**/*.md` or `docs/**/*.md` — prose-only files; `tests/**` was narrowed out of this set by #1059, since it is executable code in this repo and in every consumer project, and #660's own evidentiary basis never exercised it — look up this finding's row in the table below using a **bumped ceiling** — one severity tier above the resolved `review-auto-apply-ceiling` (`none`→`low`, `low`→`medium`, `medium`→`medium` — capped: the bump never reaches `high` or `critical` at any ceiling value) — instead of the plain ceiling. A finding whose fix spans both an exempt and a non-exempt `Target:` path is not eligible for the bump; it routes on the plain ceiling like any other finding. **When `review-auto-apply-prose-exempt` resolves `false`**, this whole paragraph is inert — every finding routes on the plain, unbumped `review-auto-apply-ceiling` exactly as it did before this dimension existed.
 
-Per the `/review` Step 3 Routing row in `_shared/auto-mode-contract.md`, severity routes to: low → AUTO, medium → STAGED, high → STAGED, critical → KEPT-PROMPT (rare; security/correctness hard-fails the bookend). Append every entry to `decisions.md` under the `## /review` heading.
+Per the `/review` Step 3 Routing row in `_shared/auto-mode-contract.md`, severity routes to: low → AUTO, medium → STAGED, high → STAGED, critical → KEPT-PROMPT (rare; security/correctness hard-fails the bookend) — the `low`-ceiling column below. Append every entry to `decisions.md` under the `## /review` heading.
 
-| Severity | Default action under `review-auto-apply-ceiling: low` | Log entry |
-|---|---|---|
-| **Critical** | Stage as patch + `KEPT-PROMPT` — surface inline ALSO. Critical findings always interrupt. | `KEPT-PROMPT {time} — Step 3 Routing: critical finding {category} at {file:line}. Surfaced inline. Reversibility: high.` |
-| **High** | Stage as patch in `staged/review-{n}.patch`. Surface at Review Console. | `STAGED {time} — Step 3 Routing: high-severity finding {category} at {file:line}. Stage path: staged/review-{n}.patch. Reversibility: high.` |
-| **Medium** | Stage as patch in `staged/review-{n}.patch`. Surface at Review Console. | `STAGED {time} — Step 3 Routing: medium-severity finding {category} at {file:line}. Stage path: staged/review-{n}.patch. Reversibility: high.` |
-| **Low** | Auto-apply the fix. Commit. | `AUTO {time} — Step 3 Routing: applied low-severity {category} fix at {file:line}. Reversibility: high; commit: {hash}.` |
+**Ceiling-keyed routing.** The action for a given severity depends on the resolved `review-auto-apply-ceiling` — this table shows every ceiling's behavior in one place; do not read only one column and assume it generalizes:
 
-When `review-auto-apply-ceiling: medium`: auto-apply Low AND Medium; stage High; prompt Critical.
-When `review-auto-apply-ceiling: none`: stage everything; never auto-apply, except a finding eligible for the prose-exempt bump above, which routes at `low`.
+| Severity | `none` | `low` | `medium` |
+|---|---|---|---|
+| **Critical** | KEPT-PROMPT | KEPT-PROMPT | KEPT-PROMPT |
+| **High** | STAGED | STAGED | STAGED |
+| **Medium** | STAGED | STAGED | AUTO |
+| **Low** | STAGED (unless the prose-exempt bump below applies, which routes it at `low`) | AUTO | AUTO |
+
+Critical never varies by ceiling — it always interrupts. `none` stages every non-critical finding; `low` (the intrinsic default absent an unattended-autonomy floor — see the paragraph above) additionally auto-applies Low; `medium` additionally auto-applies Medium on top of Low.
+
+**What each action means:**
+
+- **AUTO** — Auto-apply the fix. Commit. Log: `AUTO {time} — Step 3 Routing: applied {severity}-severity {category} fix at {file:line}. Reversibility: high; commit: {hash}.`
+- **STAGED** — Stage as patch in `staged/review-{n}.patch`. Surface at Review Console. Log: `STAGED {time} — Step 3 Routing: {severity}-severity finding {category} at {file:line}. Stage path: staged/review-{n}.patch. Reversibility: high.`
+- **KEPT-PROMPT** — Stage as patch + `KEPT-PROMPT` — surface inline ALSO. Critical findings always interrupt. Log: `KEPT-PROMPT {time} — Step 3 Routing: critical finding {category} at {file:line}. Surfaced inline. Reversibility: high.`
 
 **Logging a bumped auto-apply.** When the bump above is what moved a finding from Staged/Kept-prompt under the plain ceiling to Auto under the bumped ceiling, the `AUTO` log entry names the bump explicitly: pass `--lever "review-auto-apply-ceiling={ceiling} ({source}); prose-exempt bump applied"` to `log-decision.js`, rendering `[lever: review-auto-apply-ceiling=low (default); prose-exempt bump applied]` — distinguishing it from an ordinary ceiling-driven `AUTO` entry (no trailing clause). A finding that was already going to auto-apply under the plain ceiling (the bump wasn't load-bearing) logs the ordinary format with no bump suffix.
 
