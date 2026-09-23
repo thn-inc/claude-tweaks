@@ -146,5 +146,9 @@
   "skill:init": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1789893220478
+  },
+  "skill:fact-validated-narration": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1790140719400
   }
 }
