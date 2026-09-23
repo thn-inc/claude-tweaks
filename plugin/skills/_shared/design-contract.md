@@ -137,7 +137,7 @@ so "the contract did not carry one" and "we wrote an empty one" can never be con
 | Skill | Uses |
 |---|---|
 | `/claude-tweaks:design-wrapper` `review` mode | Step 3.6 — runs this on the changed UI files it already resolved, then writes `seed` onto the work record as its `Design-seed:` body-metadata line |
-| `/claude-tweaks:demo` | Step 2 — runs this on the changed-path list Step 1 already produced, and renders `blocks` under `### The design contract this was built against` |
+| `/claude-tweaks:demo` | Step 2 — runs this on the changed-path list Step 1 already produced, and renders `blocks` under `### The design contract this was built against` (rendering rules in `demo/design-contract-section.md`, read only when a contract resolves or parses malformed) |
 
 `/demo` re-parses the shipped artifact rather than reading a copy captured at build time. That is
 deliberate: the acceptance gate should show the contract that is actually in the file the human is

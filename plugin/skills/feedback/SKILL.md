@@ -1,7 +1,7 @@
 ---
 name: feedback
 description: Use when a learning belongs upstream in the claude-tweaks plugin rather than this project — a skill that behaves wrongly (defect) or has no opinion where it should (gap). Files a GitHub issue against claude-tweaks after an explicit scrub and confirmation.
-argument-hint: "[<learning text>] [--kind=defect|gap] [--dry-run] [--queue] [--full] [--pre-confirmed]"
+argument-hint: "[<learning text>] [--kind=defect|gap] [--upstream <owner/name>] [--dry-run] [--queue] [--full] [--pre-confirmed]"
 ---
 
 # Feedback — Route a learning upstream to the claude-tweaks plugin
@@ -23,21 +23,22 @@ Lifecycle: `/claude-tweaks:reflect` → **`/claude-tweaks:feedback`** → upstre
   and left for a human to forward — and to evaluate the session itself
   against the maintainer-objective rubric (see Step 0).
 
-Do **not** use this skill to file against any repository other than
-`thomasholknielsen/claude-tweaks`. A learning owned by a third-party dependency
-is reported to the user and stopped — see `_shared/learning-routing.md`,
-"Non-claude-tweaks upstream".
+This skill **files** against `thomasholknielsen/claude-tweaks` and nowhere else. A learning owned
+by a third-party dependency takes `--upstream <owner/name>`'s draft-only path instead, which
+publishes nothing — see `upstream-draft.md` in this skill's directory, and
+`_shared/learning-routing.md`, "Non-claude-tweaks upstream".
 
 ## Input
 
-`$ARGUMENTS` is parsed as `[<learning text>] [--kind=<value>] [--dry-run] [--queue] [--full] [--pre-confirmed]`:
+`$ARGUMENTS` is parsed as `[<learning text>] [--kind=<value>] [--upstream <owner/name>] [--dry-run] [--queue] [--full] [--pre-confirmed]`:
 
 | Argument | Behavior |
 |----------|----------|
 | Free-text learning | The substance of the report. When absent, gather it from the conversation or ask. |
 | `--kind=defect` | The plugin does something wrong. Skips Step 2's inference. |
 | `--kind=gap` | The plugin has no opinion where it should. Skips Step 2's inference. |
-| `--dry-run` | Run Steps 1-7 (classification, self-reference, dedup, drafting, scrub, and the confirm gate's dry-run branch), then render the draft and **stop** — Step 8 (label resolution and `gh issue create`) never runs. Step 4's dedup search is a real, read-only `gh issue list` call; no `gh` call ever creates, labels, or files anything. When `--pre-confirmed` is also passed, `--dry-run` wins — see Step 7. |
+| `--upstream <owner/name>` | Draft-only path for a learning owned by a third-party dependency: Steps 1, 2, 4 (retargeted), 5 (adapted), and 6 run; 3 collapses to the self-target guard; 7 is skipped because nothing is published; 8 never runs. Persists the scrubbed draft and hands the human a paste-ready command — or, with `--dry-run`, renders it without persisting (`upstream-draft.md` Step D). Read `upstream-draft.md`. |
+| `--dry-run` | Run Steps 1-7 (classification, self-reference, dedup, drafting, scrub, and the confirm gate's dry-run branch), then render the draft and **stop** — Step 8 (label resolution and `gh issue create`) never runs. With `--upstream` also passed, Steps 3-8 never run — `upstream-draft.md`'s Steps A-D run instead, where `--dry-run` means render without persisting (Step D). Step 4's dedup search is a real, read-only `gh issue list` call; no `gh` call ever creates, labels, or files anything. When `--pre-confirmed` is also passed, `--dry-run` wins — see Step 7. |
 | `--queue` | Explicit bare-invocation mode (see Step 0) even when free-text is also present — process this project's own `upstream-candidate` backlog instead of (or in addition to) the free-text learning. |
 | `--full` | Presence-only, meaningful only for bare/`--queue` invocation (Step 0's session-evaluation gather): ignore any existing watermark for the resolved transcript, dispatch the full un-scoped judge (no offset clause), then overwrite the watermark with the fresh result exactly as a first-ever evaluation would. This is also what bypasses `session-evaluation.md`'s Skip check (Step 0's Gather 2): that check reads the same watermark, so ignoring it always resolves to dispatch. A no-op combined with free-text-only invocation — free-text invocation without `--queue` runs no session evaluation at all (Step 0's rule). |
 | `--pre-confirmed` | Presence-only like `--dry-run`; the caller passes the item's staged-file path and the approved snapshot body alongside it. Skip Step 7's `AskUserQuestion` for this item when the caller-supplied approved snapshot is diffed against the current staged file with no mismatch (drift check); Step 6's scrub always reruns as a separate safety net regardless. On drift, falls back to a normal per-item confirm (see Step 7). Legitimate only from `/claude-tweaks:wrap-up`'s Review Console or `/claude-tweaks:flow`'s consolidated multi-spec console (see Component-Skill Contract). |
@@ -52,70 +53,12 @@ invocation runs neither gather — the single-learning path (Steps 1-9) is uncha
 `--pre-confirmed` invocation never runs these gathers either — it processes only its
 caller-supplied staged item(s).
 
-**Gather 1 — local upstream-candidate queue (unchanged).** This project may already hold
-headless-filed candidates waiting for a human — the health sweeps' Subject check
-(`_shared/learning-routing.md`) files these locally with `upstream-candidate` plus the sweep's own
-`by:` label, deliberately without `ready`, precisely because nothing else in the plugin queries them
-(#239). Check for them:
-
-```bash
-gh issue list --label upstream-candidate --state open --json number,title,body,labels --limit 100
-```
-
-(matching the label's expected low cardinality — a handful of headless-filed candidates, not the
-full backlog — while still bounding the read per `[IL-67]`; if the count returned equals the
-limit, state this in the summary rather than silently treating it as complete.)
-
-**Gather 2 — session evaluation.** Read `session-evaluation.md` in this skill's directory. Before
-dispatch, its **Skip check** runs first (on the transcript-resolved branch, `--full` not passed):
-when the resolved transcript hasn't grown since the last stamped evaluation, skip the judge
-dispatch entirely and report the prior stamp's `issueUrls` instead of re-evaluating — see that
-section for the full check and its self-assessment exemption. Otherwise, run the judge dispatch
-(or its self-assessment degradation) against `_shared/feedback-objectives.md`'s rubric. Each
-returned finding becomes one merged-batch item; a `NOT EVALUATED` block is not a finding —
-session-evaluation.md's own rule — and never enters the batch. The two gathers are
-failure-isolated in both directions: a judge dispatch that errors or returns nothing usable
-degrades to `session-evaluation.md`'s self-assessment path (noted in the run summary) and never
-aborts the run — Gather 1's queue candidates proceed through the batch regardless — and a Gather
-1 `gh` failure likewise never blocks the evaluation; the failed gather is reported in the run
-summary while the other proceeds.
-
-**Merging.** The two gathers feed **one merged batch by concatenation, no reconciliation** — each
-item keeps its own draft shape; nothing here reconciles a queue candidate against an evaluation
-finding even when they describe the same underlying issue. Run Steps 1-6 non-interactively for
-every item in the merged batch (gather from the queue issue's own body, or from the finding's
-symptom/evidence/proposed fix — deriving the affected component from the skill, contract, or CLI
-the evidence names, falling back to "unclear / general" per Step 1 — classify,
-confirm self-reference doesn't apply, dedup search, draft, scrub), then call
-`_shared/upstream-feedback-batch.md`'s shared batch contract once — chunked per that file's own
-rule — instead of looping Step 7 individually per item. Step 4's dedup fingerprint basis stays the
-affected component plus the core symptom, exactly as today — the draft template's
-`**Objective:**`/`**Measurement:**`/`**Cost this session:**` fields (Step 5) never join that basis.
-
-Inside this loop, "stop" in Steps 2, 3, or 6 scopes to the one item that triggered it — drop that
-item from the batch (report why, alongside the others' results) and continue the loop for the
-rest; it never aborts the whole bare-invocation run, matching Step 7's own per-item isolation for
-the drift-check fallback. A judge finding that Step 2 classifies as not D5 drops from the batch the
-same way. A dedup match in Step 4 does not stop the item or ask interactively — see Step 4's own
-batch-mode text. On a checked queue-derived item filing successfully (Step 8), close the local
-`upstream-candidate` issue with a comment linking the new upstream issue — an evaluation finding has
-no local issue to close. An unchecked item is handled per the shared contract's decline rule
-(comment + leave the local issue open, where one exists).
-
-**Interaction budget.** The whole bare-invocation run — both gathers, however many items each
-produces — costs exactly one Step 7 batch confirmation plus one `## Next Actions` call; the
-evaluation gather itself adds zero mid-flow `AskUserQuestion` calls. Under `--dry-run`, findings
-from both gathers render and the run stops — Step 7's existing `--dry-run` precedence, extended
-here to evaluation findings without change.
-
-**Neither gather produced anything:** proceed to Step 1 as usual (gather from the conversation, or
-ask).
-
-This is what resolves `upstream-candidate`'s dead-write state (#239): the label's own consumer
-was always meant to be a human eyeball plus a manual `/claude-tweaks:feedback` invocation
-(`_shared/learning-routing.md`'s Headless-runs paragraph says exactly this), and this step is what
-makes that eyeball's job a single command instead of a `gh issue list` a human has to remember to
-run.
+On bare invocation, read `bare-invocation.md` in this skill's directory and follow it: Gather 1
+(the local `upstream-candidate` queue), Gather 2 (`session-evaluation.md`'s judge dispatch, with
+its Skip check), the merge-by-concatenation rule that feeds one batch through Steps 1-6
+non-interactively and then `_shared/upstream-feedback-batch.md`'s shared batch contract once, the
+per-item "stop" scoping, and the one-confirmation interaction budget. Neither gather produced
+anything → proceed to Step 1 as usual (gather from the conversation, or ask).
 
 ### Step 1: Gather
 
@@ -141,16 +84,23 @@ once; Step 6's scrub reruns unconditionally as the standing safety net regardles
 
 ### Step 2: Classify the kind
 
-Read `_shared/learning-routing.md` and confirm the learning is D5 at all.
+Read `_shared/learning-routing.md` and confirm the learning's destination.
 
-**If it is not D5, stop.** Report the destination the contract actually returned
-and hand the learning back to the caller. This skill files D5 learnings and
+**`--upstream` routing.** When `--upstream` is present, continue in `upstream-draft.md` in this
+skill's directory once the kind below is determined; its self-target guard returns here, at Step
+3, when the value names claude-tweaks itself. Steps 3-9 below never run for any other `--upstream`
+value. Per `_shared/learning-routing.md`'s "Non-claude-tweaks upstream" rule this is explicitly not
+D5 — expected, not a routing failure.
+
+**If it is not D5 and `--upstream` was not given, stop.** Report the destination the contract
+actually returned and hand the learning back to the caller. This skill files D5 learnings and
 nothing else — a misrouted learning filed here becomes an off-topic public issue.
 
 Otherwise:
 
 - Classifier **rule 1** fired → `defect`
 - Classifier **rule 7** fired → `gap`
+- Third-party `--upstream`: `learning-routing.md`'s third-party rule
 
 The kind comes from which rule fired. Never guess it, and never infer it from
 tone. If `--kind=` was passed, use that and skip the inference.
@@ -372,28 +322,12 @@ is the contract's degenerate single-chunk case; N items under `--queue` chunk pe
 rule. Never file without the resulting per-item confirmation, in any mode. Publishing to a public
 repository is outward-facing and effectively irreversible.
 
-**`--pre-confirmed`:** the caller passes both the item's staged-file path and the exact body text
-it rendered and got approval for (the approved snapshot) — not just a path reference. Before
-filing, two checks run, always in this order:
-
-1. **Scrub rerun (unconditional)** — Step 6's scrub always reruns first, on the current on-disk
-   staged content, as a defense-in-depth safety net before publishing — regardless of whether the
-   drift check below finds a mismatch, since a modification that caused drift could itself have
-   reintroduced content that needs scrubbing. This produces the content that will actually be
-   filed. If this rerun trips Step 6's own hard-stop ("cannot survive the scrub") for this item,
-   treat it exactly like a Step 6 stop anywhere else in a batch: drop this one item (report why)
-   and continue processing the rest of the chunk — it never aborts sibling items.
-2. **Drift check** — if `staged/wrap-up-upstream-{N}.md` no longer exists, treat this as "already
-   filed" (see Step 8's cleanup-on-success below) and skip this item without re-filing or
-   erroring. Otherwise, re-read it fresh from disk (the post-scrub content from step 1 above) and
-   compare it, byte-for-byte, against the approved snapshot the caller passed. A mismatch means
-   the staged file changed after it was rendered and approved — fall back to the normal
-   `AskUserQuestion` confirm, showing the post-scrub content (not the pre-scrub approved snapshot)
-   so the human approves exactly what would be filed. This fallback is per-item — it never aborts
-   sibling items in the same batch.
-
-When the drift check finds no mismatch, skip the `AskUserQuestion` call for that item and file the
-post-scrub content directly.
+**`--pre-confirmed`:** read `pre-confirmed.md` in this skill's directory and follow its Step 7
+section — an unconditional Step 6 scrub rerun on the on-disk staged content, then a byte-for-byte
+drift check against the caller's approved snapshot, with three outcomes: no mismatch → skip this
+item's `AskUserQuestion` and file the post-scrub content directly; a mismatch → fall back to a
+normal per-item confirm showing the post-scrub content; the staged file already gone → already
+filed, skip the item without re-filing or erroring. Never read on a direct invocation.
 
 **`--dry-run`:** render every draft, state the classified destination and kind, then **stop here**
 — no `AskUserQuestion` call of any kind, and nothing filed. This holds whether or not
@@ -477,15 +411,9 @@ goes via `--body-file`.
    draft as a fresh upstream proposal — and tell the user the filing did not happen and the draft
    is preserved. This row means the CLI's own single retry (above) already ran and still failed —
    not that no retry was attempted.
-5. **On success when invoked via `--pre-confirmed`:** delete the staged file at
-   `staged/wrap-up-upstream-{N}.md` for each draft the CLI table reports as `status: filed` or
-   `status: dedup-hit` — condition on the table's status, not on `gh issue create`'s own exit code
-   directly — immediately after the CLI returns. This is what makes Step 7's drift check "file not
-   found" branch mean "already filed" rather than an error, and prevents a
-   `/claude-tweaks:wrap-up resume` (or the multi-spec console's own resume) from re-rendering and
-   re-filing an item whose chunk already succeeded before an interruption. A direct
-   (non-`--pre-confirmed`) invocation has no staged file to clean up — this step is a no-op in
-   that path.
+5. **On success when invoked via `--pre-confirmed`:** run `pre-confirmed.md`'s Step 8 section
+   (this skill's directory) — the per-draft `staged/wrap-up-upstream-{N}.md` cleanup keyed on the
+   CLI table's `filed`/`dedup-hit` status. A direct invocation has no staged file — no-op.
 
 ### Step 9: Report
 
@@ -515,6 +443,9 @@ ambiguity exists (rare; `$PIPELINE_RUN_DIR` is the primary signal).
 Being inside a pipeline never relaxes Steps 6 and 7. `auto` mode does not
 silence this skill — see `_shared/auto-mode-card.md`.
 
+`/claude-tweaks:intake` and `/claude-tweaks:reflect` pass the owner their classifier already
+identified as `--upstream <owner/name>`, so the common third-party path needs no typing.
+
 **`--pre-confirmed` legitimacy is narrower than "inside a pipeline."** The only legitimate source
 of `--pre-confirmed` is `/claude-tweaks:wrap-up`'s Review Console, or the consolidated multi-spec
 console at `/claude-tweaks:flow`'s end-of-run, invoking this skill per checked `U#` item — not a
@@ -530,7 +461,7 @@ a precedent to extend the carve-out to.
 | Pattern | Why It Fails |
 |---------|--------------|
 | Filing without showing the scrubbed draft | Publishing to a public repo is outward-facing and irreversible; confirmation is the contract, not a formality |
-| Filing against a repo other than `thomasholknielsen/claude-tweaks` | Out of scope by design — a third-party owner has different consent requirements |
+| **Filing** against a repo other than `thomasholknielsen/claude-tweaks` | Out of scope by design: a third-party owner has different consent requirements. Drafting for one via `--upstream` is the sanctioned alternative; the draft path never invokes `bin/file-feedback.js` |
 | Inferring the kind from tone rather than from which classifier rule fired | Defect and gap differ in triage; a mislabelled report wastes a maintainer's time in both directions |
 | Applying a label `gh label list` did not confirm | Guessing risks importing the repo's internal automation taxonomy from outside its pipeline |
 | Skipping the scrub because the reporting project "looks fine" | The scrub is unconditional; the cost of one leak exceeds the cost of every scrub |

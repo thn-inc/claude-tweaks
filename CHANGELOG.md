@@ -53,6 +53,19 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.129.0](https://github.com/thomasholknielsen/claude-tweaks/compare/v6.128.0...v6.129.0) (2026-09-21)
+
+
+### Features
+
+* dispatch: build,test call's claim/materialize/PR-open… ([#1728](https://github.com/thomasholknielsen/claude-tweaks/issues/1728)) ([5a024da](https://github.com/thomasholknielsen/claude-tweaks/commit/5a024dad4e5b146d434af822949c00c656aa6a84)), closes [#1996](https://github.com/thomasholknielsen/claude-tweaks/issues/1996) [#2268](https://github.com/thomasholknielsen/claude-tweaks/issues/2268) [#2561](https://github.com/thomasholknielsen/claude-tweaks/issues/2561) [#2562](https://github.com/thomasholknielsen/claude-tweaks/issues/2562) [#2636](https://github.com/thomasholknielsen/claude-tweaks/issues/2636) [#2656](https://github.com/thomasholknielsen/claude-tweaks/issues/2656) [#2658](https://github.com/thomasholknielsen/claude-tweaks/issues/2658) [#2660](https://github.com/thomasholknielsen/claude-tweaks/issues/2660)
+* shared-primitives: the fixed 5 s GH_TIMEOUT_MS makes the… ([#2567](https://github.com/thomasholknielsen/claude-tweaks/issues/2567)) ([a4f3ea5](https://github.com/thomasholknielsen/claude-tweaks/commit/a4f3ea5999552dd6ed817c53b3346686b0ce8c0b))
+
+
+### Bug Fixes
+
+* wrap-up-pack.js: ledger probe reports 0 items for a… ([#2563](https://github.com/thomasholknielsen/claude-tweaks/issues/2563)) ([b65daed](https://github.com/thomasholknielsen/claude-tweaks/commit/b65daed3d4c1e3de2f769223450aa0a009b60fd4))
+
 ## v6.128.0 — Sibling-PR premise-disproof dedup check for dispatch/materialize (#2590); browser automation migrated from agent-browser to Playwright CLI across qa-agent, stories, visual-review, demo/test, and install/detect plumbing (#2645-#2649); shallow-clone git-show guard fix across 5 test files (#2532); check-pr-bookkeeping.js multi-spec Step-0-gate fix (#2571); skill-prose-conformance-tests Anti-Patterns addition (#2605); record-worktree bookkeeping-stamp-deny recovery investigation (#2585); doc staleness fix for the record-1892 ledger (#2587)
 
 Sibling-PR premise-disproof dedup check for dispatch/materialize (#2590); browser automation migrated from agent-browser to Playwright CLI across qa-agent, stories, visual-review, demo/test, and install/detect plumbing (#2645-#2649); shallow-clone git-show guard fix across 5 test files (#2532); check-pr-bookkeeping.js multi-spec Step-0-gate fix (#2571); skill-prose-conformance-tests Anti-Patterns addition (#2605); record-worktree bookkeeping-stamp-deny recovery investigation (#2585); doc staleness fix for the record-1892 ledger (#2587).

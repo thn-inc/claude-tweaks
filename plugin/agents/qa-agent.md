@@ -125,6 +125,8 @@ For each step in the steps array:
    - `hover` → `playwright-cli -s=<story-id> hover <eN>`
    The ref-based action set is limited to `click`/`fill`/`check`/`hover` — a story action outside it has no ref-based translation.
 
+   A story step may also carry a `caption` field — it is a `/claude-tweaks:walkthrough`-only annotation for the generated GIF's caption list; this agent never reads it, and its presence or absence changes nothing about how a step executes.
+
 3. **Locator failure recovery:** If Step 1's snapshot has no unambiguous match, or Step 2's act call errors against the resolved ref, take a fresh snapshot:
    ```
    playwright-cli -s=<story-id> snapshot

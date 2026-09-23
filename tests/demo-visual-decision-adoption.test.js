@@ -7,12 +7,17 @@ const { execFileSync } = require('node:child_process');
 
 const ROOT = path.join(__dirname, '..');
 const DEMO_SKILL_PATH = 'plugin/skills/demo/SKILL.md';
+// #2697 moved the browser-verdict body out of SKILL.md into this sub-file (SKILL.md keeps
+// a routing pointer). The go-red probes below still target DEMO_SKILL_PATH: that is the
+// file each literal was absent from at PRE_CHANGE_SHA, which is what proves discrimination.
+const BROWSER_VERDICT_PATH = 'plugin/skills/demo/browser-verdict.md';
 const BROWSER_REVIEW_PATH = 'plugin/skills/visual-review/browser-review.md';
 const CONTRACT_PATH = 'plugin/skills/_shared/visual-decision.md';
 const PLUGIN_STRUCTURE_PATH = 'docs/plugin-structure.md';
 const SKILL_GRAPH_PATH = 'docs/skill-graph.md';
 
 const demoSkill = fs.readFileSync(path.join(ROOT, DEMO_SKILL_PATH), 'utf8');
+const browserVerdict = fs.readFileSync(path.join(ROOT, BROWSER_VERDICT_PATH), 'utf8');
 const browserReview = fs.readFileSync(path.join(ROOT, BROWSER_REVIEW_PATH), 'utf8');
 const contract = fs.readFileSync(path.join(ROOT, CONTRACT_PATH), 'utf8');
 const pluginStructure = fs.readFileSync(path.join(ROOT, PLUGIN_STRUCTURE_PATH), 'utf8');
@@ -61,7 +66,7 @@ function countAtPreChangeOrSkip(t, relPath, literal) {
 
 const EVENT_SHAPES = ['pick', 'reroll', 'steer', 'tweak', 'exit'];
 
-test('#1208 AC1/AC3: demo/SKILL.md cites the contract and never restates the event JSON shapes', (t) => {
+test('#1208 AC1/AC3: demo/SKILL.md and browser-verdict.md cite the contract and never restate the event JSON shapes', (t) => {
   assert.match(demoSkill, /_shared\/visual-decision\.md/);
   for (const shape of EVENT_SHAPES) {
     assert.equal(
@@ -81,12 +86,25 @@ test('#1208 AC1/AC3: demo/SKILL.md cites the contract and never restates the eve
     demoSkill.split('_shared/visual-decision.md').length - 1 >= 1,
     'demo/SKILL.md must cite the contract at least once now',
   );
+
+  assert.match(browserVerdict, /_shared\/visual-decision\.md/);
+  for (const shape of EVENT_SHAPES) {
+    assert.equal(
+      browserVerdict.includes(`"type":"${shape}"`),
+      false,
+      `demo/browser-verdict.md restates the "${shape}" event shape literal — it must only cite the contract`,
+    );
+  }
+  assert.ok(
+    browserVerdict.split('_shared/visual-decision.md').length - 1 >= 1,
+    'demo/browser-verdict.md must cite the contract at least once',
+  );
 });
 
-test('#1208 AC1: demo/SKILL.md documents pick-replaces / exit-narrows / reroll-steer-tweak-fall-back-full mapping', (t) => {
-  const verdictIdx = demoSkill.indexOf('### Verdict');
-  assert.ok(verdictIdx > -1, '### Verdict section not found');
-  const verdictSection = demoSkill.slice(verdictIdx);
+test('#1208 AC1: demo/browser-verdict.md documents pick-replaces / exit-narrows / reroll-steer-tweak-fall-back-full mapping', (t) => {
+  const verdictIdx = browserVerdict.indexOf('**Browser verdict (optional');
+  assert.ok(verdictIdx > -1, 'browser-verdict.md section not found');
+  const verdictSection = browserVerdict.slice(verdictIdx);
 
   assert.match(verdictSection, /\*\*Pick\*\*.*replaces\*\* the terminal question/s);
   assert.match(verdictSection, /\*\*Exit\*\*.*falls back\*\* to the terminal question/s);
@@ -103,20 +121,22 @@ test('#1208 AC1: demo/SKILL.md documents pick-replaces / exit-narrows / reroll-s
   );
 });
 
-test('#1208 AC1: demo/SKILL.md gates the browser round on rendered-page/app-route only, and on browser-tool availability', () => {
+test('#1208 AC1: demo/browser-verdict.md gates the browser round on rendered-page/app-route only, and on browser-tool availability', () => {
+  assert.match(browserVerdict, /`rendered-page`\/`app-route` only.*applies only to the URL surfaces/s);
+  assert.match(browserVerdict, /Available whenever browser tools resolve/);
   assert.match(demoSkill, /`rendered-page`\/`app-route` only.*applies only to the URL surfaces/s);
-  assert.match(demoSkill, /Available whenever browser tools resolve/);
 });
 
-test('#1208 AC1: demo/SKILL.md documents lifecycle stop on every exit path, matching explore.md\'s rule shape', () => {
-  assert.match(demoSkill, /Stop the server \(`visual-decide\.js stop --state <demo-dir>\/\.vd-state`\)/);
-  assert.match(demoSkill, /on every exit path — pick, exit, or any error that aborts the round/);
-  assert.match(demoSkill, /never rely on the idle timeout/);
+test('#1208 AC1: demo/browser-verdict.md documents lifecycle stop on every exit path, matching explore.md\'s rule shape', () => {
+  assert.match(browserVerdict, /Stop the server \(`visual-decide\.js stop --state <demo-dir>\/\.vd-state`\)/);
+  assert.match(browserVerdict, /on every exit path — pick, exit, or any error that aborts the round/);
+  assert.match(browserVerdict, /never rely on the idle timeout/);
 });
 
-test('CRITICAL gotcha: demo/SKILL.md explicitly states no auto-mode path can reach the browser-verdict step', (t) => {
+test('CRITICAL gotcha: demo/SKILL.md and browser-verdict.md explicitly state no auto-mode path can reach the browser-verdict step', (t) => {
   assert.match(demoSkill, /No auto-mode path reaches this/);
-  assert.match(demoSkill, /never invoked from within an `auto`-mode pipeline/);
+  assert.match(browserVerdict, /No auto-mode path reaches this/);
+  assert.match(browserVerdict, /never invoked from within an `auto`-mode pipeline/);
   const preChange = countAtPreChangeOrSkip(t, DEMO_SKILL_PATH, 'No auto-mode path reaches this');
   if (!preChange.ok) return;
   assert.strictEqual(
