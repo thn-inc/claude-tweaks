@@ -390,3 +390,62 @@ test('validate-findings: a real run still succeeds and emits its payload when du
     'cursors are durable now — no local cursors.json is ever written',
   );
 });
+
+// ── Premise-check threading end-to-end (#2621) ──────────────────────────────
+
+test('validate-findings: a patch finding against a real target file carries a Premise-check: line resolvable to that file', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth\n\nSee `src/auth/login.js`.\n');
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding()]));
+
+  const result = runValidateFindings(root, findingsFile, ['--target', 'auth', '--kind', 'skill']);
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const payloads = JSON.parse(result.stdout);
+  assert.strictEqual(payloads.length, 1);
+  const expectedPath = path.join(root, '.claude', 'skills', 'auth.md');
+  assert.ok(
+    payloads[0].body.includes(`Premise-check: ! grep -qF -- 'See \`src/auth/session.js\`.' '${expectedPath}'`),
+    `expected a Premise-check: line anchored on the resolved target path, got body:\n${payloads[0].body}`,
+  );
+});
+
+test('validate-findings: a patch finding against an unresolvable target carries no Premise-check: line', () => {
+  const root = tmp();
+  // No .claude/skills/auth.md on disk — the target can't resolve to a path.
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding()]));
+
+  const result = runValidateFindings(root, findingsFile, ['--target', 'auth', '--kind', 'skill']);
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const payloads = JSON.parse(result.stdout);
+  assert.strictEqual(payloads.length, 1);
+  assert.ok(!payloads[0].body.includes('Premise-check:'), 'must degrade to no line, not a wrong one');
+});
+
+// A gap-scan run can legitimately fold a finding for one target into another
+// target's findings file (SKILL.md's multi-target section) — a finding whose
+// own assetType/target don't match this invocation's --kind/--target must
+// never get anchored against the wrong file's content (Fix 1, whole-branch
+// review on #2621).
+test('validate-findings: a finding whose target differs from --target/--kind never gets the CLI-resolved path — only the matching finding gets a Premise-check: line', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth\n\nSee `src/auth/login.js`.\n');
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([
+    validFinding({ target: 'auth' }),
+    validFinding({ target: 'billing', description: 'unrelated billing finding', oldString: 'billing old', newString: 'billing new' }),
+  ]));
+
+  const result = runValidateFindings(root, findingsFile, ['--target', 'auth', '--kind', 'skill']);
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const payloads = JSON.parse(result.stdout);
+  assert.strictEqual(payloads.length, 2);
+
+  const authPayload = payloads.find((p) => p.target === 'auth');
+  const billingPayload = payloads.find((p) => p.target === 'billing');
+  assert.ok(authPayload.body.includes('Premise-check:'), 'the finding matching --target/--kind must carry a Premise-check: line');
+  assert.ok(!billingPayload.body.includes('Premise-check:'), 'a finding for a different target must not be anchored against auth.md');
+});

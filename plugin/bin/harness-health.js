@@ -17,7 +17,7 @@ const { decide } = require('./lib/harness-health/dedup');
 const { validateFinding } = require('./lib/harness-health/validate-finding');
 const { toIssuePayload } = require('./lib/harness-health/issue-payload');
 const {
-  selectTarget, listTargets, listMemory, selectMemoryTarget,
+  selectTarget, listTargets, listMemory, selectMemoryTarget, resolveTargetPath,
 } = require('./lib/harness-health/scope');
 const { STALE_DAYS } = require('./lib/harness-health/score');
 
@@ -155,7 +155,7 @@ function cmdValidateFindings(args) {
   const findingsPath = args._[1];
   if (!findingsPath) {
     process.stderr.write(
-      'usage: harness-health.js validate-findings <findings.json> [--root <dir>] [--issues <file>] [--target <id>] [--kind <skill|rule|claude-md|design-artifact|memory>] [--gap-scan] [--min-confidence <low|med|high>] [--run-id <id>] [--dry-run]\n',
+      'usage: harness-health.js validate-findings <findings.json> [--root <dir>] [--issues <file>] [--target <id>] [--kind <skill|rule|claude-md|design-artifact|memory>] [--memory-dir <path>] [--gap-scan] [--min-confidence <low|med|high>] [--run-id <id>] [--dry-run]\n',
     );
     process.exitCode = 2;
     return;
@@ -200,6 +200,16 @@ function cmdValidateFindings(args) {
   // instead of entering `survivors` at all — never dropped, never filed.
   // Mirrors code-health's own rememberCandidates split in bin/code-health.js.
   const remembered = [];
+  // Resolved once per batch (hoisted above the loop, not per finding): a
+  // findings file always corresponds to one target (judge-procedure.md's
+  // per-target dispatch), so every HONEST finding in it shares the same
+  // assetType/target this CLI invocation was already given via --kind/
+  // --target. issue-payload.js's buildPremiseCheck reads this to anchor a
+  // Premise-check: command against the target's live content (#2621) —
+  // undefined here (no --target/--kind, or an unresolvable one, e.g. a
+  // --gap-scan-only run) simply means no Premise-check: line gets emitted,
+  // never a wrong one.
+  const targetPath = resolveTargetPath(root, args.kind, args.target, args.memoryDir) || undefined;
   for (const f of raw) {
     const v = validateFinding(f);
     if (!v.ok) {
@@ -214,7 +224,18 @@ function cmdValidateFindings(args) {
       section: v.value.section || v.value.kind,
       description: v.value.description,
     });
-    const value = { ...v.value, id };
+    // A findings file is supposed to correspond to exactly one target, but a
+    // gap-scan run can legitimately fold new-skill candidates from a scan
+    // into another target's findings file (SKILL.md's multi-target section) —
+    // so a finding whose own assetType/target differs from this invocation's
+    // --kind/--target is a real, expected shape, not a bug. Anchoring such a
+    // finding against the wrong file's content would be silently wrong for a
+    // removal check (the wrong file might still contain the "old" string,
+    // reading as falsely "already resolved") — so only attach path when the
+    // finding actually belongs to the target this batch's path was resolved
+    // for.
+    const sameTarget = v.value.assetType === args.kind && v.value.target === args.target;
+    const value = { ...v.value, id, path: sameTarget ? targetPath : undefined };
     if (args.minConfidence) {
       const rank = CONFIDENCE_RANK[value.confidence];
       const floorRank = CONFIDENCE_RANK[args.minConfidence];
@@ -292,7 +313,7 @@ function main(argv) {
   process.stderr.write(
     'usage: harness-health.js <command> [options]\n' +
     'commands: next-target [--target <id>] [--kind <skill|rule|claude-md|design-artifact|memory>] [--memory-dir <path>] [--budget <n>] [--force-gap-scan], ' +
-    'validate-findings <file> [--target <id>] [--kind <skill|rule|claude-md|design-artifact|memory>] [--gap-scan] [--min-confidence <low|med|high>], ' +
+    'validate-findings <file> [--target <id>] [--kind <skill|rule|claude-md|design-artifact|memory>] [--memory-dir <path>] [--gap-scan] [--min-confidence <low|med|high>], ' +
     'churn-report [--fail-on-high-churn <r>], mark <fingerprint> <declined>, status, ' +
     'retry-queue drain, retry-queue update <results.json>\n',
   );

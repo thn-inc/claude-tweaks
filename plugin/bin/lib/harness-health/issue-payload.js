@@ -18,6 +18,60 @@ const { buildRelatedBlocks } = require('../issues/related-blocks');
 const ASSET_TYPE_LABELS = { skill: 'Skill', rule: 'Rule', 'claude-md': 'CLAUDE.md', 'design-artifact': 'Design Context', memory: 'Memory' };
 const CATEGORY_LABELS = { drift: 'drift', 'template-conformance': 'structure', 'best-practice': 'best-practice' };
 
+// Shell single-quote escape: wraps `str` in single quotes, closing/
+// reopening the quote around an escaped literal `'`. Single-quoted content
+// has no metacharacter interpretation at all in POSIX sh, so this is immune
+// to shell injection regardless of what the string contains (backticks, $,
+// ", spaces) — the one thing it can't hold safely is a literal newline,
+// filtered out separately in buildPremiseCheck below.
+function shQuote(str) {
+  return `'${str.replace(/'/g, "'\\''")}'`;
+}
+
+// Anchor-length ceiling: keeps the composed `grep -F` pattern well clear of
+// a real command-line limit and avoids anchoring on a huge, more likely
+// non-unique substring. Not tied to any other constant in this codebase —
+// chosen generously above the size of a typical oldString/newString (a
+// sentence or a few lines of prose/code).
+const MAX_PREMISE_ANCHOR_LENGTH = 400;
+
+// Builds a Premise-check: command (#1829/#2621) for a mechanically
+// re-checkable patch finding. Additive intent (the common case) checks for
+// the proposed string's absence in the target file — exit 0 while absent
+// (finding still unresolved), non-zero once present (finding resolved),
+// mirroring claude-md-curation.md's existing wc -l-over-budget shape's
+// polarity. A removal checks the opposite way against the string being
+// removed — exit 0 while it's still present (unresolved), non-zero once
+// it's gone (resolved). Returns undefined — never a wrong command — when:
+// the finding isn't a patch (new-skill candidates have no existing content
+// to check against), no targetPath was resolved for it, or the anchor
+// string can't be safely anchored (empty, multi-line, or over the length
+// ceiling above). materialize.js's own "no Premise-check: line" fallback
+// handles the undefined case.
+//
+// Fail-safe when the target file can't be read at check time (#2621): this
+// command can run on a different machine/sandbox than the one that resolved
+// targetPath (a scheduled cloud Routine vs. a build checkout), so the
+// baked-in absolute path may not exist there. Empirically (see
+// final-fix-report.md): a bare `grep` on a missing file exits 2, and a
+// missing-file exit 2 is non-zero — for the removal polarity (a bare grep,
+// no `!`), that reads as "resolved" (false auto-close risk) when it should
+// read as "can't tell, still unresolved." The `! test -r ... ||` guard
+// short-circuits to exit 0 ("unresolved") whenever the file isn't a
+// readable regular file, and is a no-op (same exit code as the bare grep)
+// whenever it is — verified below. The additive branch needs no such guard:
+// `! grep -qF x /missing/path` exits 0 empirically (negating grep's exit 2),
+// which already reads as "unresolved" — the correct fail-safe answer for
+// that polarity, with no change needed.
+function buildPremiseCheck(finding, targetPath) {
+  if (finding.kind !== 'patch' || !targetPath) return undefined;
+  const isRemoval = finding.intent === 'remove';
+  const anchor = isRemoval ? finding.oldString : finding.newString;
+  if (!anchor || anchor.includes('\n') || anchor.length > MAX_PREMISE_ANCHOR_LENGTH) return undefined;
+  const grep = `grep -qF -- ${shQuote(anchor)} ${shQuote(targetPath)}`;
+  return isRemoval ? `! test -r ${shQuote(targetPath)} || ${grep}` : `! ${grep}`;
+}
+
 // verifiedAsOf (#117): the sha the sweep read this repo at, resolved ONCE per
 // run by the caller (bin/harness-health.js, via health-core/read-commit.js)
 // and threaded through here — never resolved inside this function. See
@@ -48,6 +102,8 @@ function toIssuePayload(finding, verifiedAsOf) {
   // no section to bundle by, so finding.relatedSections is always absent there.
   const relatedBlocks = buildRelatedBlocks(finding.relatedSections);
 
+  const premiseCheck = buildPremiseCheck(finding, finding.path);
+
   const body = specShapedBody({
     header: kindLine,
     currentState: [...relatedBlocks, finding.reason],
@@ -62,6 +118,7 @@ function toIssuePayload(finding, verifiedAsOf) {
     releaseNote: 'No user-visible change — agent harness reliability fix.',
     filedBy: '/claude-tweaks:harness-health',
     verifiedAsOf,
+    premiseCheck,
   });
 
   let title;
@@ -130,4 +187,4 @@ function toIssuePayload(finding, verifiedAsOf) {
   };
 }
 
-module.exports = { toIssuePayload };
+module.exports = { toIssuePayload, buildPremiseCheck };
