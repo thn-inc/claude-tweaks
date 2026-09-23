@@ -4,7 +4,9 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { shapeGate, liftMetadata, composeHeader, composeFile, sectionText } = require('../../../plugin/bin/lib/issues/materialize-format');
+const {
+  shapeGate, liftMetadata, composeHeader, composeFile, sectionText, stripCodeSpans,
+} = require('../../../plugin/bin/lib/issues/materialize-format');
 const wtDetect = require('../../../plugin/bin/lib/hooks/worktree-detect');
 
 const SHAPED_BODY = [
@@ -85,6 +87,111 @@ test('shapeGate: a genuine marker in an authored section still fails when an Ori
   const gate = shapeGate(body);
   assert.equal(gate.ok, false);
   assert.ok(gate.missing.includes('unresolved-placeholder'));
+});
+
+// ---- stripCodeSpans / #1839 (quoted markers in fenced/inline code) --------
+
+test('stripCodeSpans: removes a fenced code block, any info string', () => {
+  const text = 'before\n```md\nsome quoted content\n```\nafter';
+  const stripped = stripCodeSpans(text);
+  assert.ok(!stripped.includes('some quoted content'));
+  assert.ok(stripped.includes('before'));
+  assert.ok(stripped.includes('after'));
+});
+
+test('stripCodeSpans: removes an inline code span, matching exact backtick-run length', () => {
+  assert.equal(stripCodeSpans('a `T-O-D-O` b'), 'a  b');
+  assert.equal(stripCodeSpans('a ``T-O-D-O`` b'), 'a  b');
+});
+
+test('stripCodeSpans: a single backtick inside a double-backtick span is not mis-cut', () => {
+  const stripped = stripCodeSpans('x ``a`b`` y');
+  assert.ok(!stripped.includes('a`b'), 'the whole double-backtick span must be removed as one unit');
+});
+
+test('stripCodeSpans: an unclosed fence runs to end of text (the safer direction)', () => {
+  const text = 'before\n```\nunclosed content with TODO inside';
+  const stripped = stripCodeSpans(text);
+  assert.ok(!stripped.includes('unclosed content'));
+  assert.ok(stripped.includes('before'));
+});
+
+test('stripCodeSpans: a code span under the 2000-char defensive cap still strips normally (#1837 review finding)', () => {
+  const longSpan = 'x'.repeat(1999);
+  const stripped = stripCodeSpans(`before \`${longSpan}\` after`);
+  assert.equal(stripped, 'before  after');
+});
+
+test('stripCodeSpans: a span whose content exceeds the 2000-char defensive cap is left as literal text, the same safer direction an unclosed fence already takes', () => {
+  const overCap = 'x'.repeat(2500);
+  const stripped = stripCodeSpans(`before \`${overCap}\` after`);
+  // The cap makes this look "unclosed" from the regex's point of view — content
+  // is left in place rather than silently dropped. No real authored inline
+  // code span is anywhere near this long, so this only affects a
+  // pathological input, and it degrades to leaving text visible (safe),
+  // never to hanging.
+  assert.ok(stripped.includes(overCap));
+});
+
+test('shapeGate: a Deliverables fence quoting a marker word passes; a bare marker in the same section still fails', () => {
+  const bodyWithFence = SHAPED_BODY.replace(
+    '- [ ] do a thing',
+    '- [ ] do a thing\n\nCurrent: "…leave a TODO comment without a corresponding record."\n\n```\nProposed: "…leave a TODO comment without a corresponding record."\n```',
+  );
+  const gate = shapeGate(bodyWithFence);
+  assert.equal(gate.ok, false, 'the un-fenced "Current:" line above still carries a bare marker and must still fail');
+  assert.ok(gate.missing.includes('unresolved-placeholder'));
+
+  const bodyFencedOnly = SHAPED_BODY.replace(
+    '- [ ] do a thing',
+    '- [ ] do a thing\n\n```\nquoted line with a TODO word inside\n```',
+  );
+  assert.deepEqual(shapeGate(bodyFencedOnly), { ok: true, missing: [] });
+});
+
+test('shapeGate: an inline-code marker passes; the same bare marker fails', () => {
+  const bodyInline = SHAPED_BODY.replace('- [ ] do a thing', '- [ ] mentions `TODO` in code');
+  assert.deepEqual(shapeGate(bodyInline), { ok: true, missing: [] });
+  const bodyBare = SHAPED_BODY.replace('- [ ] do a thing', '- [ ] mentions TODO bare');
+  assert.equal(shapeGate(bodyBare).ok, false);
+});
+
+test('shapeGate: an unclosed fence containing a marker passes (runs to end of authored text)', () => {
+  const body = SHAPED_BODY.replace(
+    '- [ ] do a thing',
+    '- [ ] do a thing\n\n```\nunterminated fence with a TODO marker inside',
+  );
+  assert.deepEqual(shapeGate(body), { ok: true, missing: [] });
+});
+
+test('shapeGate: a bare marker AFTER a closed fence still fails — a stray marker cannot hide behind an earlier fence', () => {
+  const body = SHAPED_BODY.replace(
+    '- [ ] do a thing',
+    '- [ ] do a thing\n\n```\nfenced content\n```\n\nTODO: this one is real',
+  );
+  const gate = shapeGate(body);
+  assert.equal(gate.ok, false);
+  assert.ok(gate.missing.includes('unresolved-placeholder'));
+});
+
+test('shapeGate: the reported record shape (Deliverables quoting the "No implicit deferrals" bullet) materializes with exit 0', () => {
+  const body = SHAPED_BODY.replace(
+    '- [ ] do a thing',
+    [
+      '- [ ] Update the Philosophy bullet.',
+      '',
+      '**Current:**',
+      '```',
+      '…leave a TODO comment without a corresponding record.',
+      '```',
+      '',
+      '**Proposed:**',
+      '```',
+      '…leave a TODO comment without a corresponding record, per the new rule.',
+      '```',
+    ].join('\n'),
+  );
+  assert.deepEqual(shapeGate(body), { ok: true, missing: [] });
 });
 
 // ---- liftMetadata ----------------------------------------------------------

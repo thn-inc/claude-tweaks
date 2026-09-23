@@ -308,9 +308,9 @@ Local-files driver: the equivalent re-read is `readRecord(path).body` immediatel
 
 ```bash
 # Bootstrap per _shared/label-bootstrap.md, LABELS_JSON =
-# [['priority:high', 'Priority: dispatch picks this band first'],
-#  ['priority:medium', 'Priority: dispatch picks after priority:high'],
-#  ['priority:low', 'Priority: dispatch picks last among prioritized records']]
+# [['priority:high', 'Priority: dispatch picks this band first', 'B60205'],
+#  ['priority:medium', 'Priority: dispatch picks after priority:high', 'FBCA04'],
+#  ['priority:low', 'Priority: dispatch picks last among prioritized records', 'C2E0C6']]
 CURRENT_PRIORITY=$(gh issue view "$ISSUE" --json labels -q '.labels[].name' | grep -E '^priority:' || true)
 if [ -n "$CURRENT_PRIORITY" ] && [ "$CURRENT_PRIORITY" != "priority:$TIER" ]; then
   gh issue edit "$ISSUE" --remove-label "$CURRENT_PRIORITY" --add-label "priority:$TIER"
@@ -340,8 +340,8 @@ For every row still marked for granting after Step 3.5:
 
 ```bash
 # Bootstrap per _shared/label-bootstrap.md, LABELS_JSON =
-# [['auto:build', 'Grant: agents may build this record autonomously (human-granted; machinery only removes)'],
-#  ['auto:merge', 'Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)']]
+# [['auto:build', 'Grant: agents may build this record autonomously (human-granted; machinery only removes)', '1D76DB'],
+#  ['auto:merge', 'Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)', '1D76DB']]
 # — add the matching risk:low|medium|high / size:low|medium|high pair too, only for a row where
 # the human supplied scoring inline during the override step (Step 4).
 

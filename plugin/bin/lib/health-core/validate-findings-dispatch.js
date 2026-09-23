@@ -12,12 +12,17 @@ const { loadIssueIndex } = require('./issue-index');
 // they're injected rather than hardcoded here — this module owns only the
 // dedup/dispatch control flow shared by all three, not the domain logic.
 //
-// opts: { root, issuesPath, toolName, survivors, verifiedAsOf } — survivors is
+// opts: { root, issuesPath, toolName, survivors, verifiedAsOf, pluginVersion } — survivors is
 // the caller's own array of already-validated, fingerprinted findings.
 // verifiedAsOf (#117, optional): the git sha the caller resolved ONCE at the
 // start of this run (health-core/read-commit.js) — passed straight through
 // to toIssuePayload per finding, never re-resolved here. Absent/null is a
 // valid value (git unavailable) and simply omits the stamp line downstream.
+// pluginVersion (#1840, optional): the running plugin's own version, passed
+// straight through as toIssuePayload's third argument, same never-resolved-
+// here convention. Only harness-health's toIssuePayload reads it today; the
+// other two producers' toIssuePayload signatures simply ignore the extra
+// argument (JS calling convention), so this is safe to always pass through.
 // Returns { cache, payloads, seen, wontfixSuppressed } — cache is the mutated
 // in-memory cache object (the caller still owns persisting it via its own
 // writeCache), payloads is the array of issue payloads to emit, seen is the
@@ -35,7 +40,7 @@ const { loadIssueIndex } = require('./issue-index');
 // `wontfix` decision silently lapses the moment a firing can't reach GitHub,
 // and the suppressed finding is re-filed as brand new.
 function dedupAndDispatch({
-  root, issuesPath, toolName, survivors, readCache, decide, toIssuePayload, verifiedAsOf,
+  root, issuesPath, toolName, survivors, readCache, decide, toIssuePayload, verifiedAsOf, pluginVersion,
 }) {
   const cache = readCache(root);
   const issueIndex = loadIssueIndex(issuesPath, toolName);
@@ -57,7 +62,7 @@ function dedupAndDispatch({
       cache[finding.id] = decision.action === 'reopen'
         ? { status: 'regressed', issue: decision.issue || null, lastSeenMs: Date.now() }
         : { status: 'staged', lastSeenMs: Date.now() };
-      payloads.push(toIssuePayload(finding, verifiedAsOf));
+      payloads.push(toIssuePayload(finding, verifiedAsOf, pluginVersion));
     }
   }
   return { cache, payloads, seen, wontfixSuppressed };

@@ -286,7 +286,7 @@ check-then-create loop:
 
 ```js
 LABELS_JSON = [
-  ["demo:pending", "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo"]
+  ["demo:pending", "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo", "006B75"]
 ]
 ```
 

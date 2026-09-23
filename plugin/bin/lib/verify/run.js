@@ -39,8 +39,13 @@ function runOne({
       });
     };
     stream.on('error', finishError);
+    // #1837: belt and braces on colour — well-behaved runners emit plain
+    // text when told to; the extractor's own stripAnsi stays authoritative
+    // for runners that ignore both. Caller-set values win (a project that
+    // deliberately forces colour on keeps it).
+    const env = { NO_COLOR: '1', FORCE_COLOR: '0', ...process.env };
     try {
-      child = spawnImpl(command, cwd ? { shell: true, cwd } : { shell: true });
+      child = spawnImpl(command, cwd ? { shell: true, cwd, env } : { shell: true, env });
     } catch (err) {
       finishError(err);
       return;

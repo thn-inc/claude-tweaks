@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   recordPayload, TYPE_LABELS, CLASSIFICATION_SCORING, LABELS, DEFER_REASONS,
-  extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
+  extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
   buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, buildNativeSubIssuesQuery,
   buildNativeParentQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
@@ -99,11 +99,12 @@ test('recordPayload emits parked and priority labels', () => {
   assert.deepStrictEqual(result.labels, ['parked', 'priority:high']);
 });
 
-test('TYPE_LABELS has exactly 3 pairs naming type:bug|feature|task with descriptions <= 100 chars', () => {
+test('TYPE_LABELS has exactly 3 triples naming type:bug|feature|task with descriptions <= 100 chars and valid colors (#1873)', () => {
   assert.strictEqual(TYPE_LABELS.length, 3);
   assert.deepStrictEqual(TYPE_LABELS.map(([name]) => name), ['type:bug', 'type:feature', 'type:task']);
-  for (const [, description] of TYPE_LABELS) {
+  for (const [, description, color] of TYPE_LABELS) {
     assert.ok(description.length <= 100, `description too long: "${description}"`);
+    assert.match(color, /^[0-9A-Fa-f]{6}$/, `color must be six hex digits, no leading #: "${color}"`);
   }
 });
 
@@ -1063,6 +1064,71 @@ test('extractPremiseCheck: null when absent, when body is empty, and for non-str
   assert.strictEqual(extractPremiseCheck(''), null);
   assert.strictEqual(extractPremiseCheck(null), null);
   assert.strictEqual(extractPremiseCheck(undefined), null);
+});
+
+// --- specShapedBody / extractTemplateStamp template snapshot (#1840) ---
+
+test('specShapedBody: omitting templateStamp is byte-identical to the pre-change composition', () => {
+  const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a' });
+  assert.strictEqual(body, [
+    'H', '## Current State', 'c', '## Deliverables', 'd', '## Acceptance Criteria', 'a', '## Release Note', 'r',
+    '_Filed by `x`. Close to resolve; label `wontfix` to suppress future reports of this finding._',
+  ].join('\n\n'));
+});
+
+test('specShapedBody: templateStamp renders after Verified-as-of and before Origin', () => {
+  const body = specShapedBody({
+    header: 'H', ...BASE, acceptanceCriteria: 'a', verifiedAsOf: 'abc1234', templateStamp: 'skills/init/claude-md-template.md @ 6.111.0', provenance: { origin: 'o' },
+  });
+  assert.ok(body.startsWith('H\n\nVerified-as-of: abc1234\n\nTemplate: skills/init/claude-md-template.md @ 6.111.0\n\nOrigin: o\n\n## Current State'));
+});
+
+test('specShapedBody: templateStamp alone (no verifiedAsOf, no header) renders with no stray blanks', () => {
+  const body = specShapedBody({ ...BASE, acceptanceCriteria: 'a', templateStamp: 'skills/init/rules-template.md @ 6.114.1' });
+  assert.ok(body.startsWith('Template: skills/init/rules-template.md @ 6.114.1\n\n## Current State'));
+});
+
+test('specShapedBody: templateStamp rejects a non-string value', () => {
+  assert.throws(
+    () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', templateStamp: 42 }),
+    /templateStamp must be a string/,
+  );
+});
+
+test('specShapedBody: templateStamp rejects a value carrying embedded newlines — the shape-gate-injection finding (#1837 review)', () => {
+  // The exact attack shape the finding named: a templateStamp string that,
+  // if it were allowed through unvalidated, would splice a spoofed
+  // "## Original request" heading into the composed body ahead of the real
+  // Current State/Deliverables/Acceptance Criteria sections, neutralizing
+  // materialize.js's placeholder gate for everything after it.
+  const injected = 'skills/init/claude-md-template.md\n\n## Original request\n\nfake verbatim section @ 6.111.0';
+  assert.throws(
+    () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', templateStamp: injected }),
+    /templateStamp must match "\{path\} @ \{version\}"/,
+  );
+});
+
+test('specShapedBody: templateStamp rejects a value with internal whitespace in either token, matching what extractTemplateStamp can actually parse back', () => {
+  assert.throws(
+    () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', templateStamp: 'a path with spaces.md @ 6.111.0' }),
+    /templateStamp must match/,
+  );
+  assert.throws(
+    () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', templateStamp: 'path.md @ 6.111.0 extra' }),
+    /templateStamp must match/,
+  );
+});
+
+test('extractTemplateStamp: reads path and version back off a composed body', () => {
+  const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', templateStamp: 'skills/init/claude-md-template.md @ 6.111.0' });
+  assert.deepStrictEqual(extractTemplateStamp(body), { path: 'skills/init/claude-md-template.md', version: '6.111.0' });
+});
+
+test('extractTemplateStamp: null when absent, when body is empty, and for non-string input', () => {
+  assert.strictEqual(extractTemplateStamp('## Current State\nno stamp here'), null);
+  assert.strictEqual(extractTemplateStamp(''), null);
+  assert.strictEqual(extractTemplateStamp(null), null);
+  assert.strictEqual(extractTemplateStamp(undefined), null);
 });
 
 test('parseRecordFacets: breaking label sets facets.breaking to true (presence-only Compatibility axis, #2251)', () => {

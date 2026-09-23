@@ -52,17 +52,17 @@ Before filing, bootstrap only the label families this run applies, with real des
 
 ```bash
 # Bootstrap per _shared/label-bootstrap.md, LABELS_JSON =
-# [["by:harness-health", "Origin: filed by the harness-health skill"],
-#  ["risk:low",          "Scoring: low blast radius — safe for autonomous build"],
-#  ["risk:medium",       "Scoring: moderate blast radius — review before merge recommended"],
-#  ["size:low",          "Scoring: small, agent-sized change"],
-#  ["size:high",         "Scoring: large change — consider decomposition before building"],
-#  ["ready",             "Stage: spec-shaped and agent-sized — in the authorization gate's worklist"],
-#  ["upstream-candidate", "A headless health-sweep finding about claude-tweaks — forward via /claude-tweaks:feedback"],
-#  ["harness-health:additive",     "Safe, mechanical patch - additive change with no removed behavior"],
-#  ["harness-health:restructural", "Structural change requiring human review before applying"],
-#  ["harness-health:new-skill",    "Proposes a new skill candidate surfaced by harness-health"],
-#  ["harness-health:filing-failed", "Escalation: gh issue create failed repeatedly for this fingerprint — needs human attention"]]
+# [["by:harness-health", "Origin: filed by the harness-health skill", "BFD4F2"],
+#  ["risk:low",          "Scoring: low blast radius — safe for autonomous build", "0E8A16"],
+#  ["risk:medium",       "Scoring: moderate blast radius — review before merge recommended", "FBCA04"],
+#  ["size:low",          "Scoring: small, agent-sized change", "D4C5F9"],
+#  ["size:high",         "Scoring: large change — consider decomposition before building", "5319E7"],
+#  ["ready",             "Stage: spec-shaped and agent-sized — in the authorization gate's worklist", "2EA44F"],
+#  ["upstream-candidate", "A headless health-sweep finding about claude-tweaks — forward via /claude-tweaks:feedback", "0052CC"],
+#  ["harness-health:additive",     "Safe, mechanical patch - additive change with no removed behavior", "0E8A16"],
+#  ["harness-health:restructural", "Structural change requiring human review before applying", "FBCA04"],
+#  ["harness-health:new-skill",    "Proposes a new skill candidate surfaced by harness-health", "7057FF"],
+#  ["harness-health:filing-failed", "Escalation: gh issue create failed repeatedly for this fingerprint — needs human attention", "D93F0B"]]
 ```
 
 Each payload in `$HARNESS_HEALTH_PAYLOADS` (SKILL.md Step 6's session-scoped output, `_shared/session-tmp-root.md`) carries structured fields, not just the GitHub issue text — `id`, `kind`, `target`, `assetType`, `category`, `section`, `classification`, `confidence`, `reversibility`, and `intent` are all present directly on the payload object, alongside `title`, `body`, `labels`, and `type`. These stay on the payload as triage metadata — nothing here branches on them anymore, though Step 7's batch table renders `category`/`classification`/`confidence`/`reversibility` as columns. The finding's `oldString`/`newString` patch text is deliberately **not** duplicated as top-level fields: `payload.body` already carries both verbatim in its fenced Current/Proposed (or "Remove this content") blocks, and that markdown is what ships to GitHub. Read the patch out of `body` if you need it. `intent` is the exception that stays: it is a one-word classification rather than duplicated content, and with `newString` gone it is the only top-level signal distinguishing a removal from a replacement.

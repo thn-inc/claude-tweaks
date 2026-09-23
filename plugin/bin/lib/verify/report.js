@@ -65,6 +65,9 @@ function entryFor(check) {
     });
   }
   if (check.retryDecision) entry.retryDecision = check.retryDecision;
+  // #1837: never disable the count-stamp comparison silently — a tests
+  // check whose counts didn't parse (with a stamp in play) says so.
+  if (check.countsUnparsed) entry.countsUnparsed = check.countsUnparsed;
   return entry;
 }
 

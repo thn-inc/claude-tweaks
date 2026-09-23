@@ -34,16 +34,16 @@ Before filing, bootstrap only the label families this run applies, with real des
 
 ```bash
 # Bootstrap per _shared/label-bootstrap.md, LABELS_JSON =
-# [["by:code-health", "Origin: filed by the code-health skill"],
-#  ["risk:low",        "Scoring: low blast radius — safe for autonomous build"],
-#  ["risk:medium",     "Scoring: moderate blast radius — review before merge recommended"],
-#  ["risk:high",       "Scoring: high blast radius — human review required"],
-#  ["size:low",        "Scoring: small, agent-sized change"],
-#  ["size:medium",     "Scoring: moderate change, may span several files"],
-#  ["size:high",       "Scoring: large change — consider decomposition before building"],
-#  ["ready",           "Stage: spec-shaped and agent-sized — in the authorization gate's worklist"],
-#  ["upstream-candidate", "A headless health-sweep finding about claude-tweaks — forward via /claude-tweaks:feedback"],
-#  ["code-health:filing-failed", "Escalation: gh issue create failed repeatedly for this fingerprint — needs human attention"]]
+# [["by:code-health", "Origin: filed by the code-health skill", "BFD4F2"],
+#  ["risk:low",        "Scoring: low blast radius — safe for autonomous build", "0E8A16"],
+#  ["risk:medium",     "Scoring: moderate blast radius — review before merge recommended", "FBCA04"],
+#  ["risk:high",       "Scoring: high blast radius — human review required", "D93F0B"],
+#  ["size:low",        "Scoring: small, agent-sized change", "D4C5F9"],
+#  ["size:medium",     "Scoring: moderate change, may span several files", "8B5CF6"],
+#  ["size:high",       "Scoring: large change — consider decomposition before building", "5319E7"],
+#  ["ready",           "Stage: spec-shaped and agent-sized — in the authorization gate's worklist", "2EA44F"],
+#  ["upstream-candidate", "A headless health-sweep finding about claude-tweaks — forward via /claude-tweaks:feedback", "0052CC"],
+#  ["code-health:filing-failed", "Escalation: gh issue create failed repeatedly for this fingerprint — needs human attention", "D93F0B"]]
 ```
 
 There is no per-criterion label anymore — the criterion is already in the issue body's header line (`**Criterion:** ...`), and nothing reads it back off a label; this was also the label class that hit GitHub's 100-char cap (see `bin/lib/code-health/issue-payload.js`).

@@ -84,6 +84,19 @@ test('validateShaped: a marker before the ## Original request heading still fail
   assert.ok(result.gaps.some((g) => /unresolved placeholder marker: TBD/.test(g)));
 });
 
+test('validateShaped: a marker quoted inside a fenced code block passes; the same bare marker fails (#1839, agrees with shapeGate)', () => {
+  const fenced = SHAPED.replace('- [ ] Do the thing.', '- [ ] Do the thing.\n\n```\nquoted line with a TODO word inside\n```');
+  assert.deepEqual(validateShaped(fenced), { ok: true, gaps: [] });
+
+  const bare = SHAPED.replace('- [ ] Do the thing.', '- [ ] Do the thing TODO.');
+  assert.equal(validateShaped(bare).ok, false);
+});
+
+test('validateShaped: a marker quoted inside an inline code span passes (#1839)', () => {
+  const inline = SHAPED.replace('- [ ] Do the thing.', '- [ ] mentions `TODO` in code');
+  assert.deepEqual(validateShaped(inline), { ok: true, gaps: [] });
+});
+
 test('splitSections: line-anchored ## headings only — a mid-line "## " is not a heading', () => {
   const sections = splitSections('## Current State\n\ntext with ## not a heading inline\n\n## Deliverables\n\nmore');
   assert.equal(Object.keys(sections).length, 2);

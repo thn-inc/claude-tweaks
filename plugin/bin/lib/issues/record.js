@@ -57,10 +57,13 @@ const LABELS = {
 
 // F8 from the program promise register — type:* label descriptions home
 // (each <= 100 chars; used only when work-types: labels is configured).
+// #1873: colors reuse GitHub's own defaults for bug/enhancement/chore, so
+// the convention reads without a legend for anyone used to GitHub's stock
+// palette — stated once in _shared/work-record.md's label-family table.
 const TYPE_LABELS = [
-  ['type:bug', 'Type: a defect in existing behavior'],
-  ['type:feature', 'Type: new capability or enhancement'],
-  ['type:task', 'Type: maintenance, refactor, docs, or chore work'],
+  ['type:bug', 'Type: a defect in existing behavior', 'D73A4A'],
+  ['type:feature', 'Type: new capability or enhancement', 'A2EEEF'],
+  ['type:task', 'Type: maintenance, refactor, docs, or chore work', 'EDEDED'],
 ];
 
 // Dual-write fingerprint markers: FP_RE_WORK is the current marker written by
@@ -89,6 +92,24 @@ const FP_RE_WORK_PLAIN = /^work-fingerprint: (\S+)[ \t]*$/m;
 // (/m) so prose elsewhere in the body mentioning a commit never matches.
 const VERIFIED_AS_OF_RE = /^Verified-as-of: ([0-9a-f]{7,40})[ \t]*$/mi;
 const SHA_SHAPE_RE = /^[0-9a-f]{7,40}$/i;
+// #1840: same body-metadata-line convention as Verified-as-of — a harness-health
+// template-conformance/best-practice finding's Proposed block is a snapshot of
+// the origin template at filing time, not a promise it still matches the
+// installed template at build time. `{path}` is repo-relative
+// (skills/init/claude-md-template.md); `{version}` is the plugin.json version
+// string (dots, no spaces).
+const TEMPLATE_STAMP_RE = /^Template: (\S+) @ (\S+)[ \t]*$/m;
+// #1837 review finding: the write side (below) only type-checked
+// templateStamp, unlike its sibling verifiedAsOf's SHA_SHAPE_RE — an
+// unconstrained string spliced raw into `Template: {templateStamp}` could
+// carry embedded newlines, including a spoofed `## Original request`
+// heading that neutralizes materialize.js's placeholder gate for
+// everything after it. This mirrors TEMPLATE_STAMP_RE's own reader shape
+// (`\S+ @ \S+`, no whitespace in either token) rather than inventing a
+// separate rule — a value this regex rejects was already going to fail to
+// round-trip through extractTemplateStamp unparsed, so this is a
+// correctness fix as much as a hardening one.
+const TEMPLATE_STAMP_VALUE_RE = /^\S+ @ \S+$/;
 
 // #1829: an optional body-metadata line naming a mechanical command whose
 // exit code answers whether the record's stated premise still holds at the
@@ -339,6 +360,18 @@ function extractPremiseCheck(body) {
   if (typeof body !== 'string' || !body) return null;
   const m = PREMISE_CHECK_RE.exec(body);
   return m ? m[1].trim() : null;
+}
+
+// body -> { path, version } the harness-health finding's Proposed block was
+// snapshotted from, or null when the record carries no Template: line (every
+// finding except a template-derived CLAUDE.md/rule template-conformance or
+// best-practice finding, and every record filed before #1840). Consumers
+// (bin/materialize.js) compare `version` against the installed plugin's own
+// version to decide whether the Proposed block needs re-deriving.
+function extractTemplateStamp(body) {
+  if (typeof body !== 'string' || !body) return null;
+  const m = TEMPLATE_STAMP_RE.exec(body);
+  return m ? { path: m[1], version: m[2] } : null;
 }
 
 // Accepts either bare label-name strings or {name} objects (gh's own shape).
@@ -731,6 +764,7 @@ function parseDependencyAssumptions(body) {
 // content, never as licence to skip the section.
 function specShapedBody({
   header, currentState, deliverables, acceptanceCriteria, openQuestion, releaseNote, filedBy, provenance, footer, verifiedAsOf, premiseCheck,
+  templateStamp,
 } = {}) {
   const isEmpty = (value) => value === undefined || value === null || value === ''
     || (Array.isArray(value) && value.length === 0);
@@ -756,6 +790,12 @@ function specShapedBody({
   if (!isEmpty(premiseCheck) && /\n/.test(premiseCheck)) {
     throw new Error('specShapedBody: premiseCheck must be a single-line command');
   }
+  if (!isEmpty(templateStamp) && typeof templateStamp !== 'string') {
+    throw new Error(`specShapedBody: templateStamp must be a string (got ${typeof templateStamp})`);
+  }
+  if (!isEmpty(templateStamp) && !TEMPLATE_STAMP_VALUE_RE.test(templateStamp)) {
+    throw new Error(`specShapedBody: templateStamp must match "{path} @ {version}" with no whitespace in either token (got "${templateStamp}")`);
+  }
   const { origin, deferReason } = provenance || {};
   if (deferReason !== undefined) oneOf('deferReason', deferReason, DEFER_REASONS);
   const block = (v) => (Array.isArray(v) ? v.join('\n\n') : v);
@@ -763,6 +803,7 @@ function specShapedBody({
   if (!isEmpty(header)) parts.push(header);
   if (!isEmpty(verifiedAsOf)) parts.push(`Verified-as-of: ${verifiedAsOf.toLowerCase()}`);
   if (!isEmpty(premiseCheck)) parts.push(`Premise-check: ${premiseCheck}`);
+  if (!isEmpty(templateStamp)) parts.push(`Template: ${templateStamp}`);
   if (!isEmpty(origin)) parts.push(`Origin: ${origin}`);
   if (deferReason !== undefined) parts.push(`Defer-reason: ${deferReason}`);
   parts.push('## Current State', block(currentState), '## Deliverables', block(deliverables));
@@ -779,7 +820,7 @@ function specShapedBody({
 
 module.exports = {
   ORIGINS, TYPES, TIERS, PRIORITIES, DEFER_REASONS, LABELS, TYPE_LABELS, recordPayload, specShapedBody,
-  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, normalizeLabelNames, parseRecordFacets,
+  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, normalizeLabelNames, parseRecordFacets,
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
   hasOpenNativeBlocker, CLASSIFICATION_SCORING, fenceFor, fencedBlock, parseSubIssues,
   buildNativeSubIssuesQuery, buildNativeParentQuery, partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,

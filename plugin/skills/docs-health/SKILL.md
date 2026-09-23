@@ -144,7 +144,7 @@ Every docs-health record files onto the unified work record (`skills/_shared/wor
 | `additive` | `risk:low` | `size:low` |
 | `restructural` | `risk:medium` | `size:high` |
 
-Every filed finding is **born-`ready`** — docs-health findings are agent-sized and spec-shaped by construction (Current State / Deliverables / Acceptance Criteria), so they file with the `ready` label already applied and appear directly in the authorization gate's worklist, skipping maturation. `toIssuePayload` (`bin/lib/docs-health/issue-payload.js`) assembles the payload via `record.js`'s `recordPayload`, then appends the classification-derived diagnostic label (`docs-health:additive` / `docs-health:restructural`) after the canonical labels — the emitted label set is exactly `by:docs-health` + scoring + `ready` + the diagnostic label.
+Every filed finding is **born-`ready`** — docs-health findings are agent-sized and spec-shaped by construction (Current State / Deliverables / Acceptance Criteria), so they file with the `ready` label already applied and appear directly in the authorization gate's worklist, skipping maturation. `toIssuePayload` (`bin/lib/docs-health/issue-payload.js`) assembles the payload via `record.js`'s `recordPayload`, then appends the classification-derived diagnostic label (`docs-health:additive` / `docs-health:restructural`) after the canonical labels — the emitted label set is exactly `by:docs-health` + scoring + `ready` + the diagnostic label. The body's `**Doc:**` field is a repo-relative path (`docs/{id}.md`) resolvable as written; `**Id:**` alongside it carries the registry id `--target <id>` accepts — the two never collapse into one field (#1851).
 
 **Materiality floor, before the cap digest.** Before the drain-rate cap check below, apply `_shared/materiality-floor.md`'s floor test to any survivor whose Step 5 decision is `'file'`: a finding that fails to clear the materiality floor routes to the materiality floor's own shared digest container instead — never to `docs-health`'s per-origin `{PREFIX}:digest` cap issue described below, a separate mechanism. Only a survivor that clears the materiality floor proceeds to the cap check.
 
@@ -181,16 +181,16 @@ Before filing, bootstrap only the label families this run applies, with real des
 
 ```bash
 # Bootstrap per _shared/label-bootstrap.md, LABELS_JSON =
-# [["by:docs-health",  "Origin: filed by the docs-health skill"],
-#  ["risk:low",         "Scoring: low blast radius — safe for autonomous build"],
-#  ["risk:medium",      "Scoring: moderate blast radius — review before merge recommended"],
-#  ["size:low",         "Scoring: small, agent-sized change"],
-#  ["size:high",        "Scoring: large change — consider decomposition before building"],
-#  ["ready",            "Stage: spec-shaped and agent-sized — in the authorization gate's worklist"],
-#  ["upstream-candidate", "A headless health-sweep finding about claude-tweaks — forward via /claude-tweaks:feedback"],
-#  ["docs-health:additive",     "Safe, mechanical patch — additive change with no removed content"],
-#  ["docs-health:restructural", "Structural change requiring human review before applying"],
-#  ["docs-health:filing-failed", "Escalation: gh issue create failed repeatedly for this fingerprint — needs human attention"]]
+# [["by:docs-health",  "Origin: filed by the docs-health skill", "BFD4F2"],
+#  ["risk:low",         "Scoring: low blast radius — safe for autonomous build", "0E8A16"],
+#  ["risk:medium",      "Scoring: moderate blast radius — review before merge recommended", "FBCA04"],
+#  ["size:low",         "Scoring: small, agent-sized change", "D4C5F9"],
+#  ["size:high",        "Scoring: large change — consider decomposition before building", "5319E7"],
+#  ["ready",            "Stage: spec-shaped and agent-sized — in the authorization gate's worklist", "2EA44F"],
+#  ["upstream-candidate", "A headless health-sweep finding about claude-tweaks — forward via /claude-tweaks:feedback", "0052CC"],
+#  ["docs-health:additive",     "Safe, mechanical patch — additive change with no removed content", "0E8A16"],
+#  ["docs-health:restructural", "Structural change requiring human review before applying", "FBCA04"],
+#  ["docs-health:filing-failed", "Escalation: gh issue create failed repeatedly for this fingerprint — needs human attention", "D93F0B"]]
 ```
 
 Each payload in `$DOCS_HEALTH_PAYLOADS` carries structured fields directly (`id`, `target`, `assetType`, `category`, `misleads`, `section`, `classification`, `confidence`, `reversibility`), alongside `title`, `body`, `labels`, and `type`. These stay on the payload as triage metadata — the batch table below reads `category`/`misleads`/`classification`/`confidence`, and the dismiss path reads `id`. The finding's `oldString`/`newString` patch text is deliberately **not** duplicated as top-level fields: `payload.body` already carries both verbatim in its fenced Current/Proposed blocks, and that markdown is what ships to GitHub. Read the patch out of `body` if you need it.
