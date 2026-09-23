@@ -44,7 +44,7 @@ function installGitPorcelainSpy() {
   const wrapperPath = path.join(wrapperDir, 'git');
   const logPath = path.join(wrapperDir, 'calls.log');
   fs.writeFileSync(wrapperPath, `#!/bin/sh\necho "$@" >> "${logPath}"\nexec "${realGit}" "$@"\n`);
-  fs.chmodSync(wrapperPath, 0o755);
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   const originalPath = process.env.PATH;
   process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
   return {
