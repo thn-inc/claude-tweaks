@@ -83,8 +83,12 @@ gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json numbe
 ```
 
 - **A match with `state: OPEN`** (draft or not): reuse it. Record via `record-pr` (below) and
-  skip PR creation. **Never flip an already-non-draft open PR back to draft** — log the reuse and
-  move on.
+  skip PR creation. **Never flip an already-non-draft open PR back to draft.** **This log line is
+  mandatory, not optional — write it before Step 2's push, for the same reason the no-match line
+  below is (#1800: the bookkeeping-stamps gate's first-push exemption reads it to tell "Step 1 ran"
+  from "Step 1 never ran").** Log to `decisions.md`:
+
+  `AUTO {time} — PR-early run lifecycle: reusing open PR #{number} for {branch}. Reversibility: high.`
 - **A match with `state: CLOSED`**: this is a retry — by construction, nothing else in this
   design closes a run's PR except `_shared/pr-run-comments.md`'s failure tombstone (a prior
   attempt's HARD-GATE failure). Reopen it rather than starting fresh, so the new attempt's
@@ -95,7 +99,10 @@ gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json numbe
   ```
 
   **Reopen succeeds:** record via `record-pr` and skip creation, same as the OPEN branch above.
-  Log: `AUTO {time} — PR-early run lifecycle: reopened PR #{number} for retry. Reversibility: high.`
+  **This log line is mandatory, not optional, for the same reason the reuse-open and no-match
+  lines are (#1800)** — and it names `{branch}`, not just `{number}`, so the bookkeeping-stamps
+  gate's first-push exemption can match it against the push it precedes:
+  `AUTO {time} — PR-early run lifecycle: reopened PR #{number} for {branch} (retry). Reversibility: high.`
 
   **Reopen fails** (the branch was force-pushed out from under it, or some other state GitHub
   rejects): fall through to creation below. The fresh PR reuses the same title/body template;
@@ -109,7 +116,11 @@ gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json numbe
 - **A match with `state: MERGED`**: this branch's PR already merged — the record is done. Treat
   as no match and fall through to creation; a fresh run against an already-merged branch is an
   unexpected precondition this file does not need to specially handle beyond not erroring.
-- **No match**: fall through to creation.
+- **No match**: fall through to creation. **This log line is mandatory, not optional, for the
+  same reason the reuse-open and reopen lines above are (#1800)** — write it before Step 2's
+  push:
+
+  `AUTO {time} — PR-early run lifecycle: no existing PR for {branch}; creating. Reversibility: n/a.`
 
 **Why a stale-branch collision can't reach this step (#767, #1470).** This procedure runs against
 whatever branch name `build/worktree-setup.md` Step 2 already created — and that step's own Step
