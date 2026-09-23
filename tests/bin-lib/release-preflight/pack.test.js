@@ -33,7 +33,7 @@ function fakeDeps(o = {}) {
         }
         if (key.startsWith('rev-parse --verify --quiet refs/remotes/origin/')) { if (o.noOriginRef) throw new Error('fatal: Needed a single revision'); return `${SHA}\n`; }
         if (key.startsWith('rev-parse ')) return `${SHA}\n`;
-        if (key.startsWith('describe')) { if (o.noTag) throw new Error('fatal: No names found, cannot describe anything.'); return 'v1.2.0\n'; }
+        if (key.startsWith('tag --merged')) return o.noTag ? '' : (o.mergedTag === undefined ? 'v1.2.0\n' : o.mergedTag);
         if (key.startsWith('log --first-parent')) return LOG(o.subjects === undefined ? ['feat: a'] : o.subjects);
         if (key === 'tag -l v*') return `${(o.tags === undefined ? ['v1.2.0'] : o.tags).join('\n')}\n`;
         if (key.startsWith('show ')) {
@@ -250,9 +250,9 @@ test('--only limits the probes gathered; the rest are absent from the pack', asy
   assert.deepStrictEqual(Object.keys(pack).filter((k) => PROBE_NAMES.includes(k)), ['engine', 'lastTag']);
 });
 
-test('a probe that throws degrades only itself (a git failure in describe leaves engine ok)', async () => {
+test('a probe that throws degrades only itself (a git failure in tag --merged leaves engine ok)', async () => {
   const { deps } = fakeDeps();
-  deps.git = ((orig) => (args) => { if (args[0] === 'describe') throw new Error('fatal: not a git repository'); return orig(args); })(deps.git);
+  deps.git = ((orig) => (args) => { if (args[0] === 'tag' && args[1] === '--merged') throw new Error('fatal: not a git repository'); return orig(args); })(deps.git);
   const pack = await gatherReleasePreflight({ cwd: ROOT, deps });
   assert.strictEqual(pack.lastTag.ok, false);
   assert.match(pack.lastTag.error, /not a git repository/);
@@ -315,7 +315,7 @@ test('a dependency that fails is named in the dependent field\'s error, never re
   const down = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ ghFail: 'spawn gh ENOENT', ghCode: 'ENOENT' }).deps });
   assert.match(down.openReleasePrConflict.error, /^releasePr unresolved: .*spawn gh ENOENT/);
   const { deps } = fakeDeps();
-  deps.git = ((orig) => (args) => { if (args[0] === 'describe') throw new Error('fatal: not a git repository'); return orig(args); })(deps.git);
+  deps.git = ((orig) => (args) => { if (args[0] === 'tag' && args[1] === '--merged') throw new Error('fatal: not a git repository'); return orig(args); })(deps.git);
   const broken = await gatherReleasePreflight({ cwd: ROOT, deps });
   for (const k of ['lastTag', 'unreleased', 'proposedVersion']) assert.match(broken[k].error, /^history unresolved: .*not a git repository/, k);
 });

@@ -56,15 +56,20 @@ test('parseCommit: an unconventional subject is reported, never dropped, and a b
   assert.strictEqual(c.description, 'Merge branch x');
 });
 
-test('lastTag: the first-parent v* tag, null when git reports no tag', () => {
+test('lastTag: the highest v* tag reachable as an ancestor, null when none are', () => {
   const calls = [];
   const git = (args) => { calls.push(args.join(' ')); return 'v1.2.0\n'; };
   assert.strictEqual(lastTag(git), 'v1.2.0');
-  assert.strictEqual(calls[0], 'describe --tags --match v[0-9]* --abbrev=0 --first-parent HEAD');
-  const none = () => { throw new Error('fatal: No names found, cannot describe anything.'); };
+  assert.strictEqual(calls[0], 'tag --merged HEAD -l v[0-9]*');
+  const none = () => '';
   assert.strictEqual(lastTag(none), null);
   const boom = () => { throw new Error('fatal: not a git repository'); };
   assert.throws(() => lastTag(boom), /not a git repository/);
+});
+
+test('lastTag: picks the highest semver among several merged tags, ignoring unparseable ones', () => {
+  const git = () => 'v1.2.0\nv1.10.0\nv1.3.0\nvnope\n';
+  assert.strictEqual(lastTag(git), 'v1.10.0');
 });
 
 test('readCommits: parses the record-separated log; the no-tag range is the full first-parent history', () => {
@@ -79,7 +84,7 @@ test('readCommits: parses the record-separated log; the no-tag range is the full
 });
 
 test('conventionalHistory: combines lastTag and the range', () => {
-  const git = (args) => (args[0] === 'describe' ? 'v1.2.0\n' : 'z'.repeat(40) + '\x1ffix: c\x1f\x1e\n');
+  const git = (args) => (args[0] === 'tag' ? 'v1.2.0\n' : 'z'.repeat(40) + '\x1ffix: c\x1f\x1e\n');
   const h = conventionalHistory(git);
   assert.strictEqual(h.lastTag, 'v1.2.0');
   assert.strictEqual(h.commits[0].type, 'fix');
@@ -87,10 +92,10 @@ test('conventionalHistory: combines lastTag and the range', () => {
 
 test('lastTag/readCommits/conventionalHistory: an explicit ref replaces HEAD in every git call', () => {
   const calls = [];
-  const git = (args) => { calls.push(args.join(' ')); return args[0] === 'describe' ? 'v1.2.0\n' : 'z'.repeat(40) + '\x1ffix: c\x1f\x1e\n'; };
+  const git = (args) => { calls.push(args.join(' ')); return args[0] === 'tag' ? 'v1.2.0\n' : 'z'.repeat(40) + '\x1ffix: c\x1f\x1e\n'; };
   const h = conventionalHistory(git, 'origin/main');
   assert.strictEqual(h.lastTag, 'v1.2.0');
-  assert.strictEqual(calls[0], 'describe --tags --match v[0-9]* --abbrev=0 --first-parent origin/main');
+  assert.strictEqual(calls[0], 'tag --merged origin/main -l v[0-9]*');
   assert.ok(calls[1].endsWith(' v1.2.0..origin/main'), calls[1]);
   readCommits(git, null, 'refs/heads/main');
   assert.ok(calls[2].endsWith(' refs/heads/main'), calls[2]);
@@ -98,7 +103,7 @@ test('lastTag/readCommits/conventionalHistory: an explicit ref replaces HEAD in 
 
 test('lastTag/readCommits: the default ref is still HEAD', () => {
   const calls = [];
-  const git = (args) => { calls.push(args.join(' ')); return args[0] === 'describe' ? 'v1.2.0\n' : ''; };
+  const git = (args) => { calls.push(args.join(' ')); return args[0] === 'tag' ? 'v1.2.0\n' : ''; };
   lastTag(git); readCommits(git, 'v1.2.0');
-  assert.ok(calls[0].endsWith(' HEAD') && calls[1].endsWith(' v1.2.0..HEAD'), calls.join(' | '));
+  assert.ok(calls[0].startsWith('tag --merged HEAD ') && calls[1].endsWith(' v1.2.0..HEAD'), calls.join(' | '));
 });

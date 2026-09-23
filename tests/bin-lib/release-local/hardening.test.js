@@ -56,7 +56,7 @@ function makeReleaseHookDeps({ policyRaw } = {}) {
       if (key === 'branch --show-current') return 'main\n';
       if (key === 'status --porcelain --untracked-files=no') return '';
       if (key === 'remote get-url origin') throw new Error('fatal: No such remote');
-      if (key.startsWith('describe')) return 'v1.2.0\n';
+      if (key.startsWith('tag --merged')) return 'v1.2.0\n';
       if (key.startsWith('log --first-parent')) return LOG(['fix: a']);
       if (key.startsWith('show ')) {
         const p = key.slice(key.indexOf(':') + 1);
