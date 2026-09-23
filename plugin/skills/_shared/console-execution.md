@@ -95,8 +95,11 @@ step also asks via `AskUserQuestion`, using the same Approve all / Override / St
 just posted to the PR. Two surfaces, one answer: whichever resolves first wins.
 
 - **Chat answers first:** execute directly via this file's Execution routing above, then perform
-  the same Write order (reply comment, resolved marker, `console.json.executedAt`/`resolved`) so a later
-  reconciler pass detects the resolved marker and no-ops rather than re-asking.
+  the same Write order (reply comment, resolved marker, `console.json.executedAt`/`resolved`) —
+  `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-console --run {run-dir} --approve {ids} --decline {ids}`
+  is the concrete mechanism: it performs the three coupled writes in the documented order (reusing
+  `console-execute.js`'s own read/parse/decide helpers rather than re-deriving console state), so a
+  later reconciler pass detects the resolved marker and no-ops rather than re-asking.
 - **PR ticks resolve first** (a human ticked boxes on the PR while the chat prompt was still open,
   or a reconciler pass executed it in the interim): before acting on the chat answer, re-check the
   console comment for the resolved marker. If present, do not execute again and do not re-render

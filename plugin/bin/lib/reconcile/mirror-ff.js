@@ -40,6 +40,24 @@ function mirrorFastForward(repoRoot, integration, opts = {}) {
   const current = runGit(['branch', '--show-current'], repoRoot);
   if (current.failure) return { state: 'behind', action: 'skipped', reason: current.failure };
   if (current.stdout !== integration) {
+    // #2565: not checked out here doesn't mean nothing can be done. A plain
+    // `git fetch origin {integration}:{integration}` updates the *local*
+    // ref directly, without touching the working tree or index — and git
+    // refuses that update outright when it wouldn't be a fast-forward (the
+    // same safety guarantee `--ff-only` gives the checked-out path below),
+    // so this is a genuinely equivalent mechanism, not a weaker substitute.
+    // Without this, `localHasMerge` (archive-merged.js) had no path to ever
+    // see the local integration-branch ref advance whenever the main
+    // checkout stayed off that branch, and every merged run reported
+    // `local-behind-merge` forever.
+    const fetchUpdate = runGit(['fetch', 'origin', `${integration}:${integration}`], repoRoot);
+    if (!fetchUpdate.failure) return { state: 'behind', action: 'fast-forwarded' };
+    // Fetch-based update itself isn't viable (no local `{integration}` ref
+    // to update yet, or it would genuinely not be a fast-forward — a real
+    // divergence anomaly under pr-first) — fall back to the original
+    // wrong-branch skip. This is the existing safety behavior, preserved as
+    // a fallback rather than removed: the fix adds a working path for the
+    // common case, not a replacement for every case.
     return { state: 'behind', action: 'skipped', reason: `wrong-branch: checked out on '${current.stdout}', not '${integration}'` };
   }
   const ff = runGit(['merge', '--ff-only', `origin/${integration}`], repoRoot);

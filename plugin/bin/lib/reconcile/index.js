@@ -357,7 +357,7 @@ async function reconcile(opts = {}) {
   if (overBudget(DISPATCH_ORDER.slice(4))) return result;
   if (checks.includes('archive')) {
     const r = archiveMerged({
-      cwd: root, dryRun, sessionId: opts.sessionId, runner: issueListCache.runner,
+      cwd: root, dryRun, sessionId: opts.sessionId, runner: issueListCache.runner, integration,
     });
     result.runs = r.archived.map((d) => ({ runDir: d, action: 'archived' }))
       .concat(r.skipped.map((s) => ({ runDir: s.runDir, action: 'skipped', reason: s.reason })));
