@@ -44,18 +44,31 @@ craft-critic findings normalized by `review.md` Step 4 and filtered by its Step 
 findings never reach this cache). The staleness rule above covers both kinds identically — a stale
 `craft-critic` entry is skipped along with stale audit entries; there is no separate staleness path.
 
-#### Three-way consumption
+#### Four-way consumption
 
-Every cached finding is consumed one of exactly three ways, keyed on `source` and `suggestion`:
+Every cached finding is consumed one of exactly four ways, keyed on `source`, `dispositionByReview`, and `suggestion` — **checked in this order**, `dispositionByReview` first:
 
 | Cached finding | Consumed as | Where |
 |---|---|---|
-| `source: "audit"` with a usable `suggestion` | **Command** — suggestion-driven dispatch, unchanged | Step 5 |
-| `source: "audit"` with `suggestion: null` / unresolvable | **Staged observation** — `kind: "unclassified"`, unchanged | Step 5 |
+| `source: "audit"` with a `dispositionByReview` field (any value) | **Skipped entirely** — not dispatched as a Command, not staged as an unclassified observation | Step 5 |
+| `source: "audit"` with a usable `suggestion` (and no `dispositionByReview`) | **Command** — suggestion-driven dispatch, unchanged | Step 5 |
+| `source: "audit"` with `suggestion: null` / unresolvable (and no `dispositionByReview`) | **Staged observation** — `kind: "unclassified"`, unchanged | Step 5 |
 | `source: "craft-critic"` (`target: "code"` only) | **Context** — inlined into each refinement-set dispatch prompt as a "Known craft issues" block; never selects a command, never staged, never counted in `commands_invoked` | Step 4 |
 
 A `craft-critic` finding has no `suggestion` by construction (`review.md` Step 4 writes `null`) and is
 never fed to Step 5's resolution — it is not an unclassified observation either; it is context.
+
+**Why the `dispositionByReview` check comes first.** `review/code-mode-steps.md`'s Step 6.7 (Late
+Findings Routing) writes this field back onto a cache entry once it has already routed that finding
+under the run's `review-auto-apply-ceiling` — auto-applying it, staging it for a human, or prompting
+inline. Without this branch, this step's own suggestion-driven dispatch would independently re-derive
+a command from the same finding's `suggestion` field and could auto-apply what review had just staged
+for a human, bypassing the ceiling entirely. The check is presence-only (any `dispositionByReview`
+value means "review already decided") — this step never needs to know *which* terminal status review
+chose, only that review already handled it. This makes review's ceiling-aware routing authoritative
+over this step's suggestion-driven dispatch. A cache with no `dispositionByReview` field on any entry
+(standalone `/claude-tweaks:design-wrapper polish`, where review's Step 6.7 never ran) behaves exactly
+as it did before this field existed — the three original branches apply unchanged.
 
 ### Step 4: Refinement-set dispatch (always invoked when frontend)
 
@@ -90,7 +103,7 @@ carries no block.
 
 ### Step 5: Suggestion-driven dispatch (only when the audit cache holds findings)
 
-Read the audit findings from Step 3 — the cache entries with `source: "audit"` only; `source: "craft-critic"` entries are Step 4's context (three-way consumption table) and never enter this loop. Every finding carries its own `suggestion` field naming the command that remediates it — `audit` writes one on each issue it reports. Dispatch what the finding names. Do not derive a command from the finding's `category`, `rule`, or `description` text; the wrapper does no keyword matching of any kind here.
+Read the audit findings from Step 3 — the cache entries with `source: "audit"` only; `source: "craft-critic"` entries are Step 4's context (four-way consumption table) and never enter this loop. Before reading a finding's `suggestion`, check the finding for a `dispositionByReview` field first — any value means review's Step 6.7 already routed this finding, so skip it entirely (see the four-way consumption table above). For every remaining finding, its own `suggestion` field names the command that remediates it — `audit` writes one on each issue it reports. Dispatch what the finding names. Do not derive a command from the finding's `category`, `rule`, or `description` text; the wrapper does no keyword matching of any kind here.
 
 For each finding, in cache order:
 
