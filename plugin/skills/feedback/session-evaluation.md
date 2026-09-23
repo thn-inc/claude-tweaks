@@ -19,8 +19,6 @@ watermark protocol) with feedback's own four parameters:
 ## Output template
 
 ```
-DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
-
 ## {objective name — one block per rubric objective, in rubric order}
 NO FINDING
 — or —
@@ -36,6 +34,8 @@ Template note (applies to the Avoidable interactions block only, whichever outco
 end that block with a Measurement line stating the session total, e.g.
 **Measurement:** total AskUserQuestion calls: {N}; {M} of {N} resolved to the pre-marked
 Recommended option.
+
+STATUS: {WORD}
 ```
 
 ## Skip check (before dispatch) — #701

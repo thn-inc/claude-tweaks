@@ -150,8 +150,9 @@ of {N} resolved to the pre-marked Recommended option); judgment lenses omit it. 
 the expected common answer** — a lens that cannot be evidenced renders `NOT EVALUATED — {reason}`,
 never a manufactured finding.
 
-The status line is the contract's usual `DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED`
-first line, per `_shared/subagent-output-contract.md`.
+The status line is the contract's usual DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED
+trailing `STATUS: {WORD}` line (the last non-empty line of the reply), per
+`_shared/subagent-output-contract.md`.
 
 ## Degradation: self-assessment
 

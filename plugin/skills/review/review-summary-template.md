@@ -118,6 +118,16 @@ These challenge the project's DESIGN.md, not the diff — the wrapper never edit
 
 (or, when the wrapper skipped entirely — this whole section, Decisions sub-heading included: "Design Quality skipped — {skip reason from wrapper}.")
 
+### Security Hardening (from Step 6.6, code-health's `focus=security-hardening`)
+
+{Include when Step 6.6's pre-check found client/route files in scope and at least one candidate survived judgment. Omit when the pre-check skipped (no client/route files in the diff scope) or when candidates were found but none survived judgment (note the latter in the summary footer instead: "Security Hardening pass ran — no actionable findings.").}
+
+| File | Kind | Severity | Finding |
+|------|------|----------|---------|
+| {file}:{line} | {client-secret / missing-ownership-check / unguarded-ai-endpoint} | {low/medium/high} | {message, per `criteria-security-hardening.md`'s calibration} |
+
+> Findings are advisory — they inform the verdict but were not auto-applied. To action them inline, route through Step 3 Routing's resolution flow with category `Security Hardening`. Each row is a "flag for human review" signal, not a formal proof — confirm the underlying risk before treating a finding as settled (`criteria-security-hardening.md`'s "What NOT to flag").
+
 ### Code Simplification
 - {summary of simplifier changes, or "No simplifications needed"}
 
