@@ -210,5 +210,9 @@
   "plugin/bin/lib/release-preflight": {
     "lastSweptMs": 1789874162812,
     "lastHash": "addfcbe1d29743bf4fcdddd263c323f4e4874660"
+  },
+  "plugin/bin/lib/activity": {
+    "lastSweptMs": 1790132874353,
+    "lastHash": "51423f845ea3667bbf2918093b59e0319ed69935"
   }
 }
