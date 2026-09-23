@@ -281,17 +281,25 @@ whole group this firing. Group membership is computed over *unclaimed* records o
 racing dispatchers converge: exactly one wins each contested member, and the loser backs off
 group-wide.
 
-**Post-write verification (#2073).** A write the claim store reports `ok: true` on has not yet
-been confirmed to have actually landed — `bin/lib/claim-targets/claim-targets.js` re-reads every
-claimed blob immediately after its own write (chained off the just-written git-CAS tip when
-available, so this costs no extra fetch) and confirms it classifies `'live'` with `runId` equal
-to this run's own. A mismatch or an absent/unreadable read-back is `claim-unverified` — exit `5`
-(JSON `{unverified: [{issue}], ...}`), handled exactly like a contest: all-or-abort by default
-(releasing every other target this invocation did confirm), downgraded to a per-target skip under
-`--keep-going`. The unverified target itself is never included in that release — a write this run
-cannot confirm might still be its own valid, if slow-to-replicate, claim, and blindly tombstoning
-it risks breaking a claim that is in fact live; it is instead surfaced for `/tidy`'s sweep or human
-judgment, the same posture `'unreadable'` already has.
+**Post-write verification (#2073, retry/leak-fixed #2329).** A write the claim store reports
+`ok: true` on has not yet been confirmed to have actually landed — `bin/lib/claim-targets/claim-targets.js`
+re-reads every claimed blob immediately after its own write (chained off the just-written git-CAS
+tip when available, so this costs no extra fetch) and confirms it classifies `'live'` with `runId`
+equal to this run's own. On the contents-API path (no git-CAS tip to chain), this re-read is
+retried a bounded number of times with backoff before giving up — a write that just landed can
+still read back as the pre-write blob for a short window on that eventually-consistent transport;
+the git-CAS path reads at the exact commit it just pushed and is already consistent, so it gets no
+retry. A mismatch or an absent/unreadable read-back after the retry window is `claim-unverified` —
+exit `5` (JSON `{unverified: [{issue}], ...}`), handled exactly like a contest: all-or-abort by
+default (releasing every other target this invocation did confirm, **plus** this unverified target
+itself), downgraded to a per-target skip under `--keep-going`. The all-or-abort release attempts
+this target too — via a fresh, later read distinct from the ones the retry window already spent —
+because that later read either confirms it as this run's own live claim (in which case it is
+tombstoned and released like any other, so a later run can reclaim it immediately) or still finds
+it absent/unreadable (in which case the release is a no-op and the target is surfaced in
+`releaseFailed`, not silently retried a second time). Either way the target is never left
+invisibly holding a claim until TTL — visible in `released` or `releaseFailed`, never dropped from
+both.
 
 ## The mirror (human visibility only — never identity)
 
