@@ -157,5 +157,8 @@
   },
   "doc:plans/2026-09-05-dispatch-reselects-open-pr-record-1821-ledger": {
     "lastAuditedMs": 1789970784379
+  },
+  "doc:decisions/0018-release-please-engine": {
+    "lastAuditedMs": 1790144175252
   }
 }
