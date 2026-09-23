@@ -254,7 +254,7 @@ test('releaseAs: a sibling worktree claim on the override version still collides
 });
 
 test('releaseAs omitted: existing callers see the same `base` field added but unchanged candidate/result behavior', () => {
-  const a = precheck(baseDeps({ tsv: '6.70.1\t2026-08-09\trelease\n6.71.0\t2026-08-09\twip-never-shipped\n' }), 'minor');
+  const a = precheck(baseDeps({ tags: 'v6.71.0\n' }), 'minor');
   assert.strictEqual(a.base, '6.71.0');
   assert.strictEqual(a.candidate, '6.72.0');
 });
