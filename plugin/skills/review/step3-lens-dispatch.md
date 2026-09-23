@@ -14,8 +14,8 @@ apply to the type of change" rule and the severity-floor table.
 ## Composed dispatch-contract bundle (#2019)
 
 > Steps 3, 3.5, and 3.6 all cite the Subagent Contract's dispatch-facing sections (Working
-> Directory Discipline, Model Selection, Failed-agent retrieval, the fan-out section) plus the
-> run-directory resolution algorithm — never the whole `_shared/subagent-output-contract.md` or
+> Directory Discipline, Foreground Execution Discipline, Model Selection, Failed-agent retrieval,
+> the fan-out section) plus the run-directory resolution algorithm — never the whole `_shared/subagent-output-contract.md` or
 > `_shared/pipeline-run-dir.md` files, which carry other content these steps never read. When a
 > pipeline run directory exists, compose the narrower bundle once, before Step 3's first dispatch:
 >
@@ -52,6 +52,8 @@ Reproduction pairs (the 2-agent verification dispatch below) run for every lens 
 At `xhigh` and `max`, append the resolver's `effortLine` output to each dispatched lens's prompt, after the Output Format block (do not modify the CALIBRATION block itself — it stays byte-identical across all tiers, per the "Per-lens Calibration + Output template" section below): resolve the lens's profile per the composed review-dispatch bundle's (or, standalone, `_shared/subagent-dispatch-core.md`'s) Model Selection dispatch procedure and append the returned `effortLine` verbatim — shape `[Effort: {level} — apply {level}-level reasoning depth to this task.]`. This is still a best-effort prompt-level nudge, not a verified change to the dispatched agent's actual reasoning depth — the lens-scope table above is the load-bearing mechanism — but it is now the resolver's own honest statement of effort rather than a hand-written sentence, so it never drifts from what the resolver actually returned.
 
 > **Working Directory Discipline:** Applies to every `Task()` dispatch in Step 3, Step 3.5, and Step 3.6 (reproduction, debate, refutation, and gap-sweep agents). Apply the Working Directory Discipline rule from the composed review-dispatch bundle (or, standalone, `_shared/subagent-dispatch-core.md`) before any git or path-sensitive command in the agent prompt. See also `_shared/git-discipline.md`.
+>
+> **Foreground Execution Discipline:** Applies to the same dispatches. Any lens, debate, refutation, or gap-sweep agent that runs a verification command (rather than only reading/reporting) is bound by that same bundle's (or, standalone, `_shared/subagent-dispatch-core.md`'s) Foreground Execution Discipline section — it never backgrounds a check and ends its turn waiting for a Monitor/background-task notification, since none reaches a dispatched agent that way; see that section rather than restating it here.
 
 > **Full diff content is read here, in the lens agents — not in the main thread.** Step 2 deliberately holds only `--stat`/`--name-only`, so this dispatch is the first point at which actual diff content is read. Give each lens agent the shared context bundle's path (built below) plus the diff *scope* — the base/branch refs, or the own-work file set when the Merge-Provenance Check found merge commits. Do not inline diff text into the prompts from the main thread: every dispatched agent has its own context window, and re-inlining the diff N times reintroduces the cost Step 2 exists to avoid.
 
