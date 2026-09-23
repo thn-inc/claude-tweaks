@@ -4,7 +4,7 @@ Referenced by `skills/dispatch/SKILL.md` Step 5. Each group is dispatched as two
 
 ## 2. The gate
 
-Dispatch the second call only if the first call's status line was `DONE` or `DONE_WITH_CONCERNS` **and** its `OUTCOME` was `build-test-ok`. Anything else — a `NEEDS_CONTEXT`/`BLOCKED` status, an `OUTCOME` of `build-test-failed`/`build-test-blocked`, or no parseable report at all — means the second call is never dispatched for that group this firing; go to section 5. A dispatched agent that fails mid-flight is a different case from one that completes — see `_shared/subagent-dispatch-core.md`'s "Failed-agent retrieval" section for how to read its result cheaply, without blocking on the full envelope.
+Dispatch the second call only if the first call's status line was `DONE` or `DONE_WITH_CONCERNS` **and** its `OUTCOME` was `build-test-ok`. Anything else — a `NEEDS_CONTEXT`/`BLOCKED` status, an `OUTCOME` of `build-test-failed`/`build-test-blocked`, or no parseable report at all — means the second call is never dispatched for that group this firing; go to section 5. An `OUTCOME` of `already-shipped` (#2502) is never dispatched to the second call either, but is not a failure — go to section 7 instead of section 5. A dispatched agent that fails mid-flight is a different case from one that completes — see `_shared/subagent-dispatch-core.md`'s "Failed-agent retrieval" section for how to read its result cheaply, without blocking on the full envelope.
 
 ## 5. Terminal path when the first call fails
 
@@ -27,3 +27,79 @@ Dispatch the second call only if the first call's status line was `DONE` or `DON
    Settle has already released this group's claim and adjusted its labels by this point, so `cleanup-only`'s Section E release step may run against an already-released claim. That overlap is accepted and recorded here so a duplicate release comment is not later read as a defect — the alternative is the `[IL-116]` hazard above.
 
 Only once that cleanup call returns does this session enter the next group's worktree.
+
+## 6. Terminal path when the second call's status line is missing or malformed
+
+Same detection as `sequential-execution.md`'s mechanical status-line check, above — but firing on
+the **second** (`review,polish,wrap-up`) call instead of the first. Treated exactly like the
+second call reporting `BLOCKED`.
+
+This needs its own remedy, not simply "same as section 5 above." Settle's own ownership note
+(`settle-and-merge.md`) states it "runs inside whichever of them handles the outcome being
+settled … the second (`review,polish,wrap-up`) on any path that reaches wrap-up." A second call
+whose status line is missing or malformed is, by the same evidence section 2's check relies on,
+one that backgrounded `/flow` or yielded outside the Foreground execution clause — exactly the
+shape of a call that may never have reached wrap-up, and therefore may never have run Settle
+either. Unlike the first-call case in section 5 (where Settle's non-run is certain — a `build,test`
+HARD-GATE is always settled inside that same call, so a first call producing no report also never
+ran Settle), a second call's silence is ambiguous: it may have run Settle and then hung, or died
+before ever reaching it. There is no cheap way to distinguish the two from the dispatching
+session's own thread, so treat it as the worse case (Settle did not run) — running cleanup-only
+against a group whose claim was already released costs nothing (step 2 below), while assuming
+Settle ran when it didn't leaves the claim, worktree, and run directory stranded.
+
+1. **Make the same direct-`/claude-tweaks:wrap-up`-cleanup-only call section 5 item 2 specifies,
+   unchanged in form.** This group already cleared the first gate, so there is no
+   materialize-shape-gate concern to route around, but the same reasoning still applies — call
+   `/claude-tweaks:wrap-up` directly, never through `/claude-tweaks:flow`, for the identical
+   reason section 5 gives (re-running `/flow`'s Step 1.5/Step 2 pre-flight buys nothing here
+   either):
+
+   ```
+   PIPELINE_RUN_DIR="{run-dir}" CLAIM_RUN_ID="{RUN_ID}" /claude-tweaks:wrap-up {target} cleanup-only
+   ```
+
+2. **Claim release is idempotent either way.** If the second call's own Settle procedure did in
+   fact run before it yielded (the ambiguous case above), this group's claim is already released
+   and its labels already adjusted — `cleanup-only`'s Section E release step finds an
+   already-released claim and no-ops, the identical overlap section 5's own note already accepts
+   for the first-call path. If Settle never ran, this call performs the release for the first
+   time. Either way, the dispatching session never needs to determine which case it is before
+   making this call.
+
+3. **Worktree teardown is unaffected by which call reached it.** `[IL-116]`'s constraint on raw
+   `ExitWorktree`/`git worktree remove` applies identically regardless of which Task call's
+   failure triggered this path — `cleanup-only`'s `cleanup-procedures.md` Section C step 3.5 is
+   what performs it correctly either way.
+
+## 7. Terminal path when the first call reports `already-shipped`
+
+`build/SKILL.md`'s Spec Step 2 "Already-shipped assessment" (#2502): when every Deliverable and
+Acceptance Criterion in the materialized spec is already satisfied on the base branch with zero
+implementation diff needed, the first call stops there and reports `OUTCOME: already-shipped`
+instead of proceeding to a normal build. This is **not** a failure — do not route it through
+section 5's fail-loud reporting or Settle's failure classification/retry-counting/failure-comment
+machinery, all of which assume something went wrong. Nothing did; the record was simply already
+done.
+
+By the time this outcome reaches the dispatching session, the first call has already:
+
+- staged a Close proposal for the record (reusing `bin/lib/issues/shipped-candidate.js`'s shape),
+- closed any draft PR the pr-early lifecycle opened for this run,
+- released the record's claim.
+
+**The only thing left for the dispatching session to do is tear the worktree down** — the first
+call inherited it without entering it and, per the outcome-independent constraint at the top of
+this file, can never tear it down itself, on any outcome including this one. Make the same direct
+`/claude-tweaks:wrap-up {target} cleanup-only` call section 5 item 2 and section 6 item 1 both
+specify, unchanged in form:
+
+```
+PIPELINE_RUN_DIR="{run-dir}" CLAIM_RUN_ID="{RUN_ID}" /claude-tweaks:wrap-up {target} cleanup-only
+```
+
+`cleanup-only`'s Section E release step finds an already-released claim and no-ops, the same
+idempotent overlap section 6 item 2 already describes. This dispatching session's own report for
+the group is a **no-op**, never `pending-review` — the record is closed via the staged Close
+proposal, not shipped via a merge this firing performed. Only once that cleanup call returns does
+this session enter the next group's worktree.

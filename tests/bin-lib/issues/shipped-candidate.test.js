@@ -43,6 +43,54 @@ test('the #1484/#1857 shape (merged PR mentions the record, changed files cover 
   assert.ok(result.signals.includes('key-files-covered'));
 });
 
+test('#2449: the #1892/PR#2287 pair (real repo data) -- classifyShipped itself scores strong once given the mention; the actual gap was buildLinkedPRQuery never surfacing this mention at all (fixed separately in record.test.js)', () => {
+  const record = {
+    number: 1892,
+    title: 'bin/lib/reconcile archive-merged.js: split-state run dir makes archival fail with ENOTEMPTY forever and re-files the residue record',
+    createdAt: '2026-09-05T10:20:30Z',
+    body: withKeyFiles([
+      'plugin/bin/lib/reconcile/archive-merged.js',
+      'plugin/bin/lib/reconcile/cache.js',
+      'plugin/bin/lib/reconcile/escalate-residue.js',
+      'tests/bin-lib/reconcile/archive-merged.test.js',
+      'tests/bin-lib/reconcile/cache.test.js',
+      'tests/bin-lib/reconcile/escalate-residue.test.js',
+      'docs/reconcile-checks.md',
+    ]),
+  };
+  const mentions = [
+    {
+      number: 2287,
+      title: 'bin/lib/reconcile archive-merged.js: fix split-state ENOTEMPTY archival (refs #1892)',
+      state: 'MERGED',
+      merged: true,
+      mergedAt: '2026-09-12T13:29:43Z',
+    },
+  ];
+  // First pass, title evidence only (queue-pull-script.md's own two-pass
+  // shape): title similarity alone (~0.48 Jaccard) falls just under the 0.5
+  // threshold, so this pass correctly classifies `weak`, not `strong`.
+  const titleOnly = classifyShipped(record, mentions);
+  assert.strictEqual(titleOnly.tier, 'weak');
+  // Second pass, with PR #2287's real changed files (all 7 Key Files plus
+  // one bookkeeping file) fetched for the weak-tier upgrade probe: every Key
+  // File is covered, so this pass correctly upgrades to `strong`.
+  const prFiles = new Map([[2287, [
+    '.claude-tweaks/pipelines/2026-09-12T045746-record-1892/work/1892-spec.md',
+    'docs/reconcile-checks.md',
+    'plugin/bin/lib/reconcile/archive-merged.js',
+    'plugin/bin/lib/reconcile/cache.js',
+    'plugin/bin/lib/reconcile/escalate-residue.js',
+    'tests/bin-lib/reconcile/archive-merged.test.js',
+    'tests/bin-lib/reconcile/cache.test.js',
+    'tests/bin-lib/reconcile/escalate-residue.test.js',
+  ]]]);
+  const result = classifyShipped(record, mentions, { prFiles });
+  assert.strictEqual(result.tier, 'strong');
+  assert.strictEqual(result.pr, 2287);
+  assert.ok(result.signals.includes('key-files-covered'));
+});
+
 // ── mention-only, unrelated title/files -> weak ─────────────────────────────
 
 test('a merged PR mentioning the record ("refs #N, follow-up") with unrelated title and files classifies weak', () => {

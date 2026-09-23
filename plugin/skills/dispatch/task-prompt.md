@@ -146,7 +146,7 @@ or does not match HEAD, re-run the check before reporting.
 OUTPUT FORMAT (required) -- return ONLY these lines, no preamble:
 
 GROUP: {comma-joined issue numbers}
-OUTCOME: {build-test-ok | build-test-failed | build-test-blocked}
+OUTCOME: {build-test-ok | build-test-failed | build-test-blocked | already-shipped}
 MANIFEST: {absolute path to this group's run-dir manifest.yml/decisions.md -- a
   human-readable trace only; the dispatching session already holds this run's identity as
   {minted-run-dir} and derives nothing from this line}
@@ -176,7 +176,7 @@ reason to relax the Foreground execution clause above or have this call check in
 
 ## Second call — review,polish,wrap-up (gated on the first call)
 
-**Only dispatch this call if the first call's status line was DONE or DONE_WITH_CONCERNS AND its OUTCOME was `build-test-ok`.** A `NEEDS_CONTEXT`/`BLOCKED` status, an `OUTCOME` of `build-test-failed`/`build-test-blocked`, or no parseable report at all means this second call is never dispatched — the first call's own agent settles its own failure (its template above instructs it to), and the dispatching session takes the terminal path in `two-call-gate.md` section 5 (fail-loud reporting plus the `/claude-tweaks:wrap-up {target} cleanup-only` teardown call).
+**Only dispatch this call if the first call's status line was DONE or DONE_WITH_CONCERNS AND its OUTCOME was `build-test-ok`.** A `NEEDS_CONTEXT`/`BLOCKED` status, an `OUTCOME` of `build-test-failed`/`build-test-blocked`, or no parseable report at all means this second call is never dispatched — the first call's own agent settles its own failure (its template above instructs it to), and the dispatching session takes the terminal path in `two-call-gate.md` section 5 (fail-loud reporting plus the `/claude-tweaks:wrap-up {target} cleanup-only` teardown call). An `OUTCOME` of `already-shipped` (#2502) is a **third, distinct** case, neither success nor failure: this second call is never dispatched here either, but the reason is that the first call already finished the record (staged a Close proposal, closed any draft PR, released the claim) — there is nothing left to review, polish, or wrap up. Take `two-call-gate.md` §7's terminal path for it, never section 5's — §7 tears the worktree down the same way section 5 does, but never invokes Settle's failure classification, retry counting, or failure comment, and the dispatching session's own report surfaces the group as a no-op, not `pending-review`.
 
 **Substitute `{minted-run-dir}` into this call's command line**, exactly as `{issue list}` is substituted — not exported as a shell variable in the dispatching session, which would never reach the agent: a dispatched Task agent is a clean room that inherits no environment (`_shared/subagent-output-contract.md`'s Input Discipline). It is the same value substituted into the first call — dispatch Step 4 minted it once, before either call, so there is nothing to derive from the first call's report this time. `/flow` creates a fresh run directory of its own whenever it is not handed an existing one (`flow/SKILL.md` Step 3's adopt-if-set branch), so passing it remains non-negotiable — this call must still resume the exact directory the first call's `/flow` adopted, not start a new one.
 
@@ -271,10 +271,29 @@ file -- fetch it the same way `{minted-run-dir}/context/claims.md` describes (if
 `gh pr view {number} --repo {owner}/{repo} --json state,isDraft,url` rather than assuming from the
 recorded object alone, since it carries no state field. A completed hand-off (a live PR already
 recorded, or `state: MERGED`) is not the same state as a genuinely still-open run awaiting a
-human -- report `pending-review` only for the latter. If the claim's `runId` no longer matches
+human -- report `pending-review` only for the latter.
+
+<!-- HARD-GATE: dispatch-missing-claim-fallback -->
+If the claim's `runId` no longer matches
 this run, or is not `live`, or `bot:in-progress` is already gone -- another session has taken over
-this record since your run started; report `pending-review` and note the discrepancy rather than
-reporting `merged`/`armed`/`ready-to-merge` against a claim you no longer hold.
+this record since your run started; report `pending-review` and note the discrepancy. **This is
+a hard, non-negotiable stop, not a default you may reason past.** Do not report
+`merged`/`armed`/`ready-to-merge` against a claim you no longer hold, no matter how confident your
+own read of the diff's safety is -- a plausible-looking single-author commit/label/PR history is
+not evidence the claim state can be overridden; it is exactly the kind of case this stop exists to
+catch regardless of outcome.
+
+**Mechanical audit trail (#2488) -- log this check before reporting any of the four outcomes
+above, not just when it fails.** Before choosing among `merged`/`armed`/`pending-review`/
+`ready-to-merge`, write one line to `decisions.md` recording what the claim read found, via
+`node "{plugin-root}/bin/log-decision.js" --run "{run-dir}" --status AUTO --section "/dispatch" --text "State-check: claim runId={observed-runId-or-absent}, live={true|false}, bot:in-progress={present|absent} -- reporting {outcome}." --reversibility n/a`.
+
+A report of `merged`/`armed`/`ready-to-merge` with no matching state-check line in `decisions.md`
+is not trustworthy self-report -- the same principle the Auto-merge gate's own
+"mechanically verify... do not rely on having just run the loop above" check already applies to
+the `assess-agent-autonomy` verdict, applied here to this state-check instead. A later audit or
+reconciler pass can use this line's absence as a signal that this HARD-GATE may have been
+bypassed.
 
 OUTPUT FORMAT (required), before the trailing status line -- return ONLY these lines, no preamble:
 

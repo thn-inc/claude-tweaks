@@ -283,10 +283,19 @@ gate)" section, this skill's directory, and follow it before Authorization/Conte
    **Mechanically verify every member's entry exists before proceeding to merge — do not rely on
    having just run the loop above.** Re-read `{run-dir}/decisions.md` back, the same
    re-derive-from-the-artifact-you-just-wrote discipline `bin/lib/dispatch/artifact-verdict.js`'s
-   `deriveTestVerdict` already applies to test output, one grep per member:
+   `deriveTestVerdict` already applies to test output — **one read of the file, checked against
+   every group member in memory, not one `grep -c` subprocess per member:**
 
    ```bash
-   grep -c "Auto-merge gate: #{n} assess-agent-autonomy verdict auto-merge" "{run-dir}/decisions.md"
+   node -e "
+     const fs = require('fs');
+     const content = fs.readFileSync(process.argv[1], 'utf8');
+     const members = process.argv.slice(2);
+     for (const n of members) {
+       const marker = 'Auto-merge gate: #' + n + ' assess-agent-autonomy verdict auto-merge';
+       console.log(n + '=' + (content.includes(marker) ? 1 : 0));
+     }
+   " "{run-dir}/decisions.md" {n1} {n2} ...
    ```
 
    A count of 0 for any member — the entry is missing, whatever the reason — means Content
@@ -356,9 +365,9 @@ Runs in `dispatch/SKILL.md` Step 6, in the dispatching session's own thread — 
 **Before executing the merge below, re-run the Content judgment step's own mechanical check**
 (#2429) — this thread is separate from the Task call that reported `OUTCOME: ready-to-merge`,
 and that line alone is not evidence Content judgment ran (it is exactly the self-report the check
-exists not to trust): `grep -c "Auto-merge gate: #{n} assess-agent-autonomy verdict auto-merge"
-"{run-dir}/decisions.md"` for every group member, same as above. A count of 0 for any member
-means do not merge — fall the group back to the normal pending-review path instead.
+exists not to trust): the same one-read-per-group, checked-in-memory-per-member check above,
+against `{run-dir}/decisions.md`, for every group member. A count of 0 for any member means do
+not merge — fall the group back to the normal pending-review path instead.
 
 Nothing is threaded back from the second Task call beyond its `OUTCOME: ready-to-merge` line itself (per `_shared/subagent-output-contract.md`'s no-echo rule — a resolution trigger, not a summarized finding). The dispatching session already holds everything else it needs:
 

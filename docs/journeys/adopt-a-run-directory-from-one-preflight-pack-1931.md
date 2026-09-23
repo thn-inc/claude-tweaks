@@ -38,7 +38,7 @@ files:
 ### 3. Render the Manifesto FYI from the pack's levers
 - **URL:** `plugin/skills/flow/manifesto.md` "Present the Manifesto"; `jq .levers "$PIPELINE_RUN_DIR/preflight.json"`
 - **Action:** Fill the `### Pipeline Config (auto)` table from `preflight.levers` (`value` + `source`) and lever 1 from the pack's `mode`; do not re-resolve levers.
-- **Should feel:** Twelve values and their sources arrive together, in the resolver's own vocabulary — a case-1 adoption only; cases 2, 3 and 5 compute the levers fresh and write `config.yml` as before.
+- **Should feel:** Twelve values and their sources arrive together, in the resolver's own vocabulary — a case-1 adoption only; cases 2 and 5 compute the levers fresh and write `config.yml` as before. Case 3 (#1826) prefers `decisions.md`'s "Pipeline config snapshot" header as the lever source when it is present and parses, falling back to computing fresh from the precedence chain only when that header is absent or unparseable.
 - **Should understand:** A lever present in the adopted `config.yml` carries `source: run-config`; one absent from it resolves from `policy.yml` (`policy`) or the schema default (`default`), with the same derived defaults `resolve-policy.js` applies (`merge-verification`, `integration-model`); `ceremony-profile`'s source is `header` — it is a Manifesto fold, not a policy key, so the pack reads it from `config.yml`. A lever that failed to resolve carries `error` and renders as `unresolved`, never guessed.
 - **Red flags:** A `resolve-policy.js` call for a lever the pack already carries; a `source` value outside the resolver's vocabulary.
 

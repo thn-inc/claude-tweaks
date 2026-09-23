@@ -601,7 +601,11 @@ test('buildLinkedPRQuery aliases each number and requests closedByPullRequestsRe
 
 test('buildLinkedPRQuery also requests the cross-reference timeline, same-repo PR sources only (#1984)', () => {
   const q = buildLinkedPRQuery([1224]);
-  assert.match(q, /timelineItems\(itemTypes:\[CROSS_REFERENCED_EVENT\], first:20\)/);
+  // #2449: `last:20` (not `first:20`) -- timelineItems paginates oldest-first,
+  // so `first` would fetch the OLDEST events and can silently miss a PR's own
+  // mention on a record that has accumulated many older issue-based
+  // cross-references (confirmed live against #1892/PR#2287).
+  assert.match(q, /timelineItems\(itemTypes:\[CROSS_REFERENCED_EVENT\], last:20\)/);
   assert.match(q, /\.\.\. on CrossReferencedEvent \{ source \{ \.\.\. on PullRequest/);
   assert.match(q, /merged mergedAt repository \{ nameWithOwner \}/);
 });
