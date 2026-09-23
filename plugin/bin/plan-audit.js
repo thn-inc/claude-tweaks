@@ -33,7 +33,10 @@ function summaryLine(report) {
   if (!report.checkA.ok) parts.push(`Check A: ${report.checkA.missing.length} missing path(s)`);
   if (!report.checkB.ok) parts.push(`Check B: ${report.checkB.unplanned.length} unplanned file(s)`);
   if (!report.checkC.ok) parts.push(`Check C: ${report.checkC.findings.length} non-discriminating command(s)`);
-  if (report.checkC.warnings.length) parts.push(`Check C: ${report.checkC.warnings.length} unparseable Step 2(s)`);
+  const unparseableCount = report.checkC.warnings.filter((w) => w.reason !== 'vcs-mutation-refusal').length;
+  if (unparseableCount) parts.push(`Check C: ${unparseableCount} unparseable Step 2(s)`);
+  const refusedCount = report.checkC.warnings.filter((w) => w.reason === 'vcs-mutation-refusal').length;
+  if (refusedCount) parts.push(`Check C: ${refusedCount} VCS-mutation refusal(s)`);
   if (report.checkC.appendShaped.length) parts.push(`Check C: ${report.checkC.appendShaped.length} append-shaped pre-run(s) accepted`);
   if (!report.checkD.ok) parts.push(`Control bytes: ${report.checkD.findings.length}${report.checkD.truncated ? '+' : ''}`);
   if (!report.headroom.ok) parts.push(`Headroom: ${report.headroom.breaches.length} breach(es)`);

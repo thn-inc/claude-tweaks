@@ -353,6 +353,96 @@ test('checkC: the existing AC6 non-discriminating fixture still fails (no append
   assert.deepStrictEqual(result.appendShaped, []);
 });
 
+// ── Check C — VCS-mutation refusal (#2593) ──────────────────────────────────
+
+test('checkC refuses a `git stash` command extracted from prose that only mentions it (#2593) — never executes it, reported as a warning with a vcs-mutation-refusal reason', () => {
+  const deps = { run: () => { throw new Error('must not be called — refused commands are never executed'); } };
+  const result = checkC(
+    [{
+      taskNumber: '1',
+      title: 'Remove the plan file',
+      command: 'git stash push -u -m tag',
+      expected: 'FAIL',
+    }],
+    '/repo', deps,
+  );
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(result.findings, []);
+  assert.deepStrictEqual(result.executed, []);
+  assert.strictEqual(result.warnings.length, 1);
+  assert.strictEqual(result.warnings[0].task, '1');
+  assert.strictEqual(result.warnings[0].command, 'git stash push -u -m tag');
+  assert.strictEqual(result.warnings[0].reason, 'vcs-mutation-refusal');
+  assert.strictEqual(result.warnings[0].verb, 'git stash');
+});
+
+test('checkC refuses every git/gh mutation verb in the refusal list', () => {
+  const verbs = [
+    'git stash list', 'git commit -am wip', 'git push origin main', 'git reset --hard',
+    'git checkout main', 'git switch main', 'git clean -fd', 'git rebase main', 'git merge main',
+    'gh issue close 1', 'gh pr merge 1',
+  ];
+  for (const command of verbs) {
+    const deps = { run: () => { throw new Error(`must not run: ${command}`); } };
+    const result = checkC([{ taskNumber: '1', title: 'T', command, expected: 'FAIL' }], '/repo', deps);
+    assert.strictEqual(result.warnings.length, 1, `expected a refusal warning for: ${command}`);
+    assert.strictEqual(result.warnings[0].reason, 'vcs-mutation-refusal', `for: ${command}`);
+  }
+});
+
+test('checkC refuses a compound command whose mutation verb follows && (#2593 AC4)', () => {
+  const deps = { run: () => { throw new Error('must not be called'); } };
+  const result = checkC(
+    [{ taskNumber: '1', title: 'T', command: 'npm test && git commit -am wip', expected: 'FAIL' }],
+    '/repo', deps,
+  );
+  assert.strictEqual(result.warnings.length, 1);
+  assert.strictEqual(result.warnings[0].reason, 'vcs-mutation-refusal');
+  assert.strictEqual(result.warnings[0].verb, 'git commit');
+});
+
+test('checkC refuses a compound command whose mutation verb follows ; or |', () => {
+  for (const command of ['npm test; git push origin main', 'npm test | git commit -am wip']) {
+    const deps = { run: () => { throw new Error(`must not run: ${command}`); } };
+    const result = checkC([{ taskNumber: '1', title: 'T', command, expected: 'FAIL' }], '/repo', deps);
+    assert.strictEqual(result.warnings.length, 1, `for: ${command}`);
+    assert.strictEqual(result.warnings[0].reason, 'vcs-mutation-refusal', `for: ${command}`);
+  }
+});
+
+test('checkC does not refuse a mutation verb appearing only inside a quoted argument', () => {
+  const deps = { run: () => ({ exitCode: 1, output: 'Error: not defined\n' }) };
+  const result = checkC(
+    [{ taskNumber: '1', title: 'T', command: 'node -e "console.log(\'git commit\')"', expected: 'FAIL' }],
+    '/repo', deps,
+  );
+  assert.strictEqual(result.warnings.length, 0);
+  assert.strictEqual(result.executed.length, 1);
+});
+
+test('checkC still executes and records a genuinely non-mutating command exactly as before (regression, AC3/AC6)', () => {
+  const deps = { run: () => ({ exitCode: 0, output: 'pass\n' }) };
+  const result = checkC(
+    [{ taskNumber: '1', title: 'T', command: 'node -e "process.exit(0)"', expected: 'FAIL with "guard not present"' }],
+    '/repo', deps,
+  );
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.findings.length, 1);
+  assert.deepStrictEqual(result.executed, [{ task: '1', command: 'node -e "process.exit(0)"' }]);
+});
+
+test('checkC a git subcommand not on the refusal list (e.g. git status) still executes normally', () => {
+  const calls = [];
+  const deps = { run: (command, cwd) => { calls.push({ command, cwd }); return { exitCode: 0, output: 'clean\n' }; } };
+  const result = checkC(
+    [{ taskNumber: '1', title: 'T', command: 'git status', expected: 'FAIL' }],
+    '/repo', deps,
+  );
+  assert.strictEqual(result.warnings.length, 0);
+  assert.strictEqual(calls.length, 1);
+  assert.deepStrictEqual(result.executed, [{ task: '1', command: 'git status' }]);
+});
+
 // ── Headroom ─────────────────────────────────────────────────────────────
 
 test('isGovernedMdPath matches plugin/skills/**/*.md only', () => {

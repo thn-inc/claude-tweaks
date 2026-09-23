@@ -173,6 +173,86 @@ function isAppendShaped(check, repoRoot) {
   return { shaped: false, path: null };
 }
 
+// ── Check C safety net — VCS-mutation refusal (#2593) ───────────────────────
+// Check C is documented read-only (plan-audit.md): it pre-runs each task's
+// declared Step 2 verification command against the live repo. Production
+// incident (2026-09-18, plugin 6.126.0): a task's Step 2 prose merely
+// MENTIONED a forbidden command ("Run: never run `git stash push -u -m tag`
+// here; use a WIP commit instead") and extractStep2Verification's
+// first-backtick-span extraction still pulled it out as "the" command,
+// which checkC then executed — sweeping an untracked file off the
+// repository-wide shared stash stack. Tightening extraction itself is not
+// the fix: real plans routinely follow a genuine `Run: \`command\`` with a
+// trailing parenthetical note (every real instance under
+// docs/superpowers/plans/*.md has one), so a stricter "backtick must be the
+// entire line" rule would break those. The actual fix is this refusal,
+// applied identically regardless of how the command text was extracted:
+// before ever calling run(), reject any command whose first token (or any
+// token immediately after a top-level `&&`/`;`/`|` segment separator) is a
+// VCS-mutation verb.
+const GIT_MUTATION_VERBS = new Set([
+  'stash', 'commit', 'push', 'reset', 'checkout', 'switch', 'clean', 'rebase', 'merge',
+]);
+// gh write VERBS — the third token in the standard `gh <noun> <verb>` shape
+// (`gh issue close`, `gh pr merge`, `gh repo create`, `gh label create`, …).
+// Read-only verbs (view, list, status, diff, ...) are deliberately absent;
+// anything not in this set is treated as non-mutating for `gh`.
+const GH_WRITE_VERBS = new Set([
+  'create', 'edit', 'close', 'reopen', 'merge', 'delete', 'comment',
+  'lock', 'unlock', 'ready', 'review', 'pin', 'unpin', 'transfer',
+]);
+
+// Quote-aware split on top-level &&/;/| — a separator character inside a
+// single- or double-quoted argument is never treated as a segment boundary.
+// This is a pre-execution safety refusal, not a full shell parser: it is
+// deliberately conservative (a false "looks safe" for a sufficiently
+// obfuscated command is possible) rather than exhaustive.
+function commandSegments(command) {
+  const segments = [];
+  let current = '';
+  let quote = null;
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i];
+    if (quote) {
+      current += ch;
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === '&' && command[i + 1] === '&') { segments.push(current); current = ''; i += 1; continue; }
+    if (ch === ';' || ch === '|') { segments.push(current); current = ''; continue; }
+    current += ch;
+  }
+  segments.push(current);
+  return segments.map((s) => s.trim()).filter(Boolean);
+}
+
+// Returns the matched "git {verb}"/"gh {noun} {verb}" string when `segment`
+// starts with a refused verb, or null when it's clear to run. `git` is a
+// two-token shape (`git stash`); `gh` is three-token (`gh issue close`,
+// `gh pr merge`, `gh repo create`) — the write verb is the noun's own
+// sub-action, not `gh`'s own second token.
+function mutationVerb(segment) {
+  const tokens = segment.split(/\s+/);
+  if (tokens[0] === 'git' && GIT_MUTATION_VERBS.has(tokens[1])) return `git ${tokens[1]}`;
+  if (tokens[0] === 'gh' && GH_WRITE_VERBS.has(tokens[2])) return `gh ${tokens[1]} ${tokens[2]}`;
+  return null;
+}
+
+// Returns the matched verb string for the first refused segment found in
+// `command`, or null when every segment is clear to run.
+function refusedVcsMutation(command) {
+  for (const segment of commandSegments(command)) {
+    const verb = mutationVerb(segment);
+    if (verb) return verb;
+  }
+  return null;
+}
+
 function checkC(verificationChecks, repoRoot, deps = {}, unparseableStep2s = []) {
   const run = deps.run || ((command, cwd) => {
     try {
@@ -185,10 +265,20 @@ function checkC(verificationChecks, repoRoot, deps = {}, unparseableStep2s = [])
   });
   const findings = [];
   const appendShaped = [];
+  const executed = [];
+  const refused = [];
   for (const check of verificationChecks) {
     const {
       taskNumber, title, command, expected,
     } = check;
+    const verb = refusedVcsMutation(command);
+    if (verb) {
+      refused.push({
+        task: taskNumber, title, command, reason: 'vcs-mutation-refusal', verb,
+      });
+      continue;
+    }
+    executed.push({ task: taskNumber, command });
     const { exitCode, output } = run(command, repoRoot);
     if (looksPassing(exitCode, output)) {
       const { shaped, path: shapedPath } = isAppendShaped(check, repoRoot);
@@ -208,9 +298,10 @@ function checkC(verificationChecks, repoRoot, deps = {}, unparseableStep2s = [])
   // #1594: tasks whose Step 2 is present but unparseable (a wording/
   // formatting drift the parser couldn't extract a Run:/Expected: pair
   // from) — informational only, never a finding, never affects `ok`.
-  const warnings = unparseableStep2s.map(({ taskNumber, title, raw }) => ({ task: taskNumber, title, raw }));
+  const warnings = unparseableStep2s.map(({ taskNumber, title, raw }) => ({ task: taskNumber, title, raw }))
+    .concat(refused);
   return {
-    ok: findings.length === 0, findings, warnings, appendShaped,
+    ok: findings.length === 0, findings, warnings, appendShaped, executed,
   };
 }
 
@@ -373,4 +464,5 @@ function checkD(text) {
 
 module.exports = {
   checkA, checkB, checkC, checkD, headroomCheck, looksPassing, isGovernedMdPath,
+  refusedVcsMutation, commandSegments,
 };
