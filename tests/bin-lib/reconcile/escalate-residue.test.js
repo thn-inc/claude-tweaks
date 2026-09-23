@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  escalateResidue, resolveResidue, residueFingerprint, residueBody,
+  escalateResidue, resolveResidue, residueFingerprint, residueBody, capDirtyFiles,
   structurallyStuckMarker, structurallyStuckBody,
 } = require('../../../plugin/bin/lib/reconcile/escalate-residue');
 
@@ -22,6 +22,72 @@ test('residueBody: embeds the path, reason, and the fingerprint marker', () => {
   assert.match(body, /\/x\/run-1/);
   assert.match(body, /ENOENT/);
   assert.ok(body.includes(marker));
+});
+
+// #1796 — the attribution line used to read `Filed automatically by
+// \`bin/lib/reconcile\` — see #644.`, which reads as an in-repo path and a
+// local issue number in a consumer project. Fixed for every reason, not
+// just removal-failed — structurally-stuck is the reason exercised here.
+test('residueBody: attribution names the plugin and the fully-qualified upstream ref, never the bare bin/lib/reconcile path', () => {
+  const { body, marker } = residueBody({
+    reason: 'structurally-stuck', targetPath: '/x/run-1', count: 3, firstFailedAt: null, lastError: null,
+  });
+  assert.match(body, /thomasholknielsen\/claude-tweaks#644/);
+  assert.ok(!body.includes('Filed automatically by `bin/lib/reconcile`'), 'must not contain the retired bare-path attribution line');
+  // The fingerprint marker's basis is (reason, targetPath) only — unaffected
+  // by the attribution rewrite — so it must still match a fresh computation
+  // for the same (reason, path), keeping existing-issue dedup working.
+  assert.equal(marker, `<!-- fingerprint: ${residueFingerprint('structurally-stuck', '/x/run-1')} -->`);
+});
+
+test('residueBody: non-removal-failed reasons render no dirty-files block, even when dirtyFiles is passed', () => {
+  const { body } = residueBody({
+    reason: 'move-failed', targetPath: '/x/run-1', count: 3, firstFailedAt: null, lastError: null, dirtyFiles: ['?? stray.txt'],
+  });
+  assert.ok(!body.includes('Dirty files'), 'move-failed must never render the dirty-files block');
+  assert.ok(!body.includes('stray.txt'));
+});
+
+test('residueBody: removal-failed with a readable dirtyFiles list renders a fenced block and the disposition hint', () => {
+  const { body } = residueBody({
+    reason: 'removal-failed', targetPath: '/x/wt', count: 3, firstFailedAt: null, lastError: null, dirtyFiles: ['?? docs/plans/x-ledger.md'],
+  });
+  assert.match(body, /\*\*Dirty files/);
+  assert.match(body, /```[\s\S]*\?\? docs\/plans\/x-ledger\.md[\s\S]*```/);
+  assert.match(body, /Only `\?\?` \(untracked\) entries/);
+  assert.match(body, /git worktree remove --force \/x\/wt/);
+});
+
+test('residueBody: removal-failed with dirtyFiles: null renders the unreadable sentence, not an omitted block', () => {
+  const { body } = residueBody({
+    reason: 'removal-failed', targetPath: '/x/wt', count: 3, firstFailedAt: null, lastError: null, dirtyFiles: null,
+  });
+  assert.match(body, /\*\*Dirty files/);
+  assert.match(body, /could not read — git status failed/);
+});
+
+test('residueBody: removal-failed with more than 50 dirty files caps to 50 plus a tail line', () => {
+  const lines = Array.from({ length: 60 }, (_, i) => `?? file-${i}.txt`);
+  const { body } = residueBody({
+    reason: 'removal-failed', targetPath: '/x/wt', count: 3, firstFailedAt: null, lastError: null, dirtyFiles: lines,
+  });
+  assert.match(body, /… and 10 more/);
+  assert.ok(body.includes('file-49.txt'), 'the 50th entry (index 49) must survive the cap');
+  assert.ok(!body.includes('file-50.txt'), 'the 51st entry must be dropped, replaced by the tail line');
+});
+
+test('capDirtyFiles: idempotent — capping an already-capped array is a no-op', () => {
+  const lines = Array.from({ length: 60 }, (_, i) => `?? file-${i}.txt`);
+  const once = capDirtyFiles(lines);
+  const twice = capDirtyFiles(once);
+  assert.deepEqual(twice, once);
+  assert.equal(once.length, 51);
+  assert.equal(once[50], '… and 10 more');
+});
+
+test('capDirtyFiles: an array at or under the cap is returned unchanged', () => {
+  const lines = ['?? a.txt', '?? b.txt'];
+  assert.deepEqual(capDirtyFiles(lines), lines);
 });
 
 test('escalateResidue: no prior issue -> files one via the injected runner, returns its number', () => {
