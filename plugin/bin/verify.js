@@ -43,15 +43,40 @@ function enrich(result) {
   } catch {
     // Unreadable log degrades to absence, never to a fabricated pass —
     // summary/region/counts stay empty; exitCode still decides pass/fail.
-    return { ...result, summary: result.spawnError || null, failingRegion: null, counts: null };
+    // #1837 review finding: this early return never set `countsFamily`, so
+    // a `tests` check whose log went unreadable (a concurrent process
+    // pruning the log dir is a recurring failure mode in this project)
+    // silently skipped the countsUnparsed/CAVEAT mechanism entirely —
+    // reproducing the exact "regression comparison silently disabled" bug
+    // #1837 was filed to fix, via a different root cause than the
+    // originally-diagnosed ANSI one. 'unreadable' is a real, honest family
+    // value here — main() renders it as `CAVEAT: tests counts unparsed
+    // (family unreadable) — ...`, distinct from a parse failure on readable
+    // text.
+    return {
+      ...result,
+      summary: result.spawnError || null,
+      failingRegion: null,
+      counts: null,
+      ...(result.name === 'tests' ? { countsFamily: 'unreadable' } : {}),
+    };
   }
-  const family = sniffFamily(text);
+  // #1837: strip ANSI once, before every parser — a coloured vitest/jest
+  // summary line is otherwise invisible to the anchored regexes below. The
+  // raw log file on disk stays raw; only this in-memory copy is stripped.
+  const plain = stripAnsi(text);
+  const family = sniffFamily(plain);
   const failed = result.exitCode !== 0;
+  const counts = parseCounts(plain, family);
   return {
     ...result,
-    summary: result.spawnError || summaryLine(text, family) || null,
-    failingRegion: failed ? extractFailingRegion(text, family) : null,
-    counts: parseCounts(text, family),
+    summary: result.spawnError || summaryLine(plain, family) || null,
+    failingRegion: failed ? extractFailingRegion(plain, family) : null,
+    counts,
+    // A tests check whose counts didn't parse — surfaced on the report entry
+    // only when a count-stamp comparison is actually in play (main() gates
+    // this on countStampPath before it reaches composeReport).
+    ...(result.name === 'tests' && counts === null ? { countsFamily: family } : {}),
   };
 }
 
@@ -334,9 +359,17 @@ async function main() {
     });
     return { ...retried, retryDecision: decision };
   };
-  const results = sel && sel.mode === 'none' ? [] : (await runChecks({
+  const results = (sel && sel.mode === 'none' ? [] : (await runChecks({
     cmds, logDir, retry: retryHook, cwd: parsed.cwd,
-  })).map(enrich);
+  })).map(enrich)).map((c) => {
+    // #1837: countsUnparsed is real report content only when a count stamp
+    // is actually in play — never disable the comparison silently, but also
+    // never surface the field when there is no comparison to have skipped.
+    const { countsFamily, ...rest } = c;
+    return countStampPath && countsFamily !== undefined
+      ? { ...rest, countsUnparsed: { family: countsFamily } }
+      : rest;
+  });
   const retriedFiles = [...new Set(results.flatMap((c) => c.flakyRetried || []))];
   const git = gitInfo();
 
@@ -516,6 +549,14 @@ async function main() {
     }
   }
   if (testCountRegression) lines.push('', caveatLine(testCountRegression));
+  // #1837: a tests check whose counts didn't parse (with a count stamp in
+  // play) silently disabled the regression comparison before this line
+  // existed — make the skip visible instead of a fabricated non-regression.
+  for (const check of results) {
+    if (check.countsUnparsed) {
+      lines.push('', `CAVEAT: tests counts unparsed (family ${check.countsUnparsed.family}) — count-stamp comparison skipped; see ${check.logPath}`);
+    }
+  }
   for (const line of flakyCaveatLines(results)) lines.push('', line);
   for (const e of flakyEscalation) lines.push('', escalationCaveatLine(e));
   lines.push('', `report: ${jsonPath}`);

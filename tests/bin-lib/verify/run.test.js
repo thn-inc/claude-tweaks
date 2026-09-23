@@ -251,7 +251,8 @@ test('runOne passes cwd through to spawnImpl when given (#2376)', async () => {
   await runOne({
     name: 'tests', command: 'run-x', logDir: tmpLogDir(), spawnImpl, now: Date.now, cwd: '/repo/packages/app',
   });
-  assert.deepStrictEqual(spawnedOpts[0], { shell: true, cwd: '/repo/packages/app' });
+  assert.strictEqual(spawnedOpts[0].shell, true);
+  assert.strictEqual(spawnedOpts[0].cwd, '/repo/packages/app');
 });
 
 test('runOne omits cwd from spawn options when not given, unchanged from before #2376', async () => {
@@ -259,7 +260,8 @@ test('runOne omits cwd from spawn options when not given, unchanged from before 
   await runOne({
     name: 'tests', command: 'run-x', logDir: tmpLogDir(), spawnImpl, now: Date.now,
   });
-  assert.deepStrictEqual(spawnedOpts[0], { shell: true });
+  assert.strictEqual(spawnedOpts[0].shell, true);
+  assert.ok(!('cwd' in spawnedOpts[0]));
 });
 
 test('runChecks forwards cwd to every spawned check (#2376)', async () => {
@@ -272,5 +274,37 @@ test('runChecks forwards cwd to every spawned check (#2376)', async () => {
     ],
     logDir: tmpLogDir(), spawnImpl, cwd: '/repo/packages/app',
   });
-  for (const opts of spawnedOpts) assert.deepStrictEqual(opts, { shell: true, cwd: '/repo/packages/app' });
+  for (const opts of spawnedOpts) {
+    assert.strictEqual(opts.shell, true);
+    assert.strictEqual(opts.cwd, '/repo/packages/app');
+  }
+});
+
+test('runOne spawns the child with NO_COLOR=1 and FORCE_COLOR=0 merged into process.env (#1837)', async () => {
+  const { spawnImpl, spawnedOpts } = makeFakeSpawn({ 'run-x': { exit: 0 } });
+  await runOne({
+    name: 'tests', command: 'run-x', logDir: tmpLogDir(), spawnImpl, now: Date.now,
+  });
+  assert.strictEqual(spawnedOpts[0].env.NO_COLOR, '1');
+  assert.strictEqual(spawnedOpts[0].env.FORCE_COLOR, '0');
+  // The rest of process.env still rides along (e.g. PATH), unchanged.
+  assert.strictEqual(spawnedOpts[0].env.PATH, process.env.PATH);
+});
+
+test('runOne never overrides a caller-set NO_COLOR/FORCE_COLOR value (#1837)', async () => {
+  const priorNoColor = process.env.NO_COLOR;
+  const priorForceColor = process.env.FORCE_COLOR;
+  process.env.NO_COLOR = '0';
+  process.env.FORCE_COLOR = '1';
+  try {
+    const { spawnImpl, spawnedOpts } = makeFakeSpawn({ 'run-x': { exit: 0 } });
+    await runOne({
+      name: 'tests', command: 'run-x', logDir: tmpLogDir(), spawnImpl, now: Date.now,
+    });
+    assert.strictEqual(spawnedOpts[0].env.NO_COLOR, '0');
+    assert.strictEqual(spawnedOpts[0].env.FORCE_COLOR, '1');
+  } finally {
+    if (priorNoColor === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = priorNoColor;
+    if (priorForceColor === undefined) delete process.env.FORCE_COLOR; else process.env.FORCE_COLOR = priorForceColor;
+  }
 });

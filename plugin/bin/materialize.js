@@ -36,7 +36,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const {
-  parseRecordFacets, extractFingerprint, extractVerifiedAsOf, extractPremiseCheck, parseDependencies,
+  parseRecordFacets, extractFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, parseDependencies,
 } = require('./lib/issues/record');
 const { shapeGate, liftMetadata, composeHeader, composeFile } = require('./lib/issues/materialize-format');
 const { findSiblingPremiseDisproof } = require('./lib/issues/sibling-premise');
@@ -47,6 +47,7 @@ const {
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
 const { resolveTarget: resolveStageTarget, writeStagedItem } = require('./lib/stage-item/write');
+const { resolvePluginVersion } = require('./lib/plugin-version');
 
 const USAGE = 'usage: materialize.js <n> --run-dir <dir> [--repo owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]\n';
 
@@ -248,6 +249,14 @@ const realDeps = {
   // deps like every other filesystem/process touch in this file so tests
   // never hit the real filesystem for it either.
   readFile: (file) => fs.readFileSync(file, 'utf8'),
+  // #1840: the RUNNING build's own version — CLAUDE_PLUGIN_ROOT/.claude-plugin/
+  // plugin.json, the same read bin/harness-health.js's own resolvePluginVersion
+  // performs (never this repo's own plugin/.claude-plugin/plugin.json, which is
+  // ahead of the installed build during development). Fail-toward-undefined.
+  // #1837 review finding: this was its own third copy of the same
+  // read/parse/extract logic — now shared with bin/harness-health.js and
+  // bin/lib/hooks/session-start.js via bin/lib/plugin-version.js.
+  installedPluginVersion: () => resolvePluginVersion(),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -513,6 +522,30 @@ function run(argv, deps = realDeps) {
     }
   }
 
+  // #1840: this record's own Template: {path} @ {version} stamp (present
+  // only for a harness-health template-conformance/best-practice
+  // claude-md/rule finding filed after that record's Deliverable 1 landed).
+  // `changed` compares the record's stamped plugin version against the
+  // INSTALLED build's own version — never a sha/commit-distance comparison
+  // (the template ships inside the plugin, so the installed version is what
+  // the builder can compare against without a checkout of this repo).
+  const templateStampInfo = extractTemplateStamp(record.body);
+  let template = null;
+  if (templateStampInfo) {
+    const installedVersion = deps.installedPluginVersion();
+    const changed = installedVersion !== undefined && installedVersion !== templateStampInfo.version;
+    template = {
+      path: templateStampInfo.path, recorded: templateStampInfo.version, installed: installedVersion || null, changed,
+    };
+    if (changed) {
+      deps.stderr(
+        `materialize.js: Record #${opts.n}'s Proposed block was rendered from ${templateStampInfo.path} `
+        + `at ${templateStampInfo.version}; installed is ${installedVersion} — re-derive from the installed `
+        + 'template before implementing.\n',
+      );
+    }
+  }
+
   const facets = parseRecordFacets(record.labels);
   const labelNames = (record.labels || []).map((l) => (typeof l === 'string' ? l : l && l.name)).filter(Boolean);
   const ceremony = facets.ceremony || opts.ceremony;
@@ -546,7 +579,7 @@ function run(argv, deps = realDeps) {
   deps.writeFile(outFile, fileContent);
 
   deps.stdout(JSON.stringify({
-    record: opts.n, file: outFile, ceremonySource: facets.ceremony ? 'label' : 'override', surface: meta.surface || null, uiStack: meta.uiStack || null, drift, premise, siblingPremiseDisproof,
+    record: opts.n, file: outFile, ceremonySource: facets.ceremony ? 'label' : 'override', surface: meta.surface || null, uiStack: meta.uiStack || null, drift, premise, siblingPremiseDisproof, template,
   }, null, 2) + '\n');
   return 0;
 }

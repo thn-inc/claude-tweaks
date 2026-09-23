@@ -19,11 +19,11 @@ test('label-bootstrap.md carries bot:parked in the canonical LABELS_JSON, and bo
   assert.ok(!/\["bot:blocked",\s*"[^"]*merge-verification/i.test(read('_shared', 'label-bootstrap.md')), 'bot:blocked description must no longer describe the merge-verification park (that is bot:parked now)');
 });
 
-test('bot:parked label description fits GitHub\'s 100-char cap', () => {
+test('bot:parked label description fits GitHub\'s 100-char cap and carries a valid color (#1873)', () => {
   const { ensureLabelPayload } = require('../plugin/bin/lib/issues/labels.js');
-  const match = read('_shared', 'label-bootstrap.md').match(/\["bot:parked",\s*"([^"]*)"\]/);
+  const match = read('_shared', 'label-bootstrap.md').match(/\["bot:parked",\s*"([^"]*)",\s*"([^"]*)"\]/);
   assert.ok(match, 'could not locate the bot:parked LABELS_JSON row');
-  assert.doesNotThrow(() => ensureLabelPayload('bot:parked', match[1]));
+  assert.doesNotThrow(() => ensureLabelPayload('bot:parked', match[1], match[2]));
 });
 
 test('work-record.md documents bot:parked in the Bot state axis and label taxonomy table', () => {

@@ -50,6 +50,35 @@ test('toIssuePayload body starts directly with the header line', () => {
   assert.ok(payload.body.startsWith('**Doc:**'), `expected body to start with the header line, got: ${payload.body.slice(0, 40)}`);
 });
 
+// #1851: the body's `Doc:` field and the title are a resolvable
+// repo-relative path (`docs/{id}.md`), not the bare registry id — the id
+// itself stays the identity (fingerprint, --target round-trip) in a
+// separate `Id:` field.
+test('toIssuePayload: Doc: header is the resolvable repo-relative path, Id: carries the registry id (#1851 AC1)', () => {
+  const payload = toIssuePayload(finding());
+  assert.ok(
+    payload.body.startsWith('**Doc:** docs/decisions/0007-foo.md | **Id:** decisions/0007-foo |'),
+    `expected the resolvable-path header, got: ${payload.body.slice(0, 80)}`,
+  );
+});
+
+test('toIssuePayload: title uses the resolvable path, not the bare id (#1851 AC1)', () => {
+  const payload = toIssuePayload(finding());
+  assert.strictEqual(payload.title, 'Doc staleness: docs/decisions/0007-foo.md — Freshness');
+});
+
+test('toIssuePayload: a nested id renders under docs/ with every segment kept (#1851)', () => {
+  const payload = toIssuePayload(finding({ target: 'plans/2026-08-30-spec-253-ledger' }));
+  assert.ok(payload.body.startsWith('**Doc:** docs/plans/2026-08-30-spec-253-ledger.md | **Id:** plans/2026-08-30-spec-253-ledger |'));
+  assert.strictEqual(payload.title, 'Doc staleness: docs/plans/2026-08-30-spec-253-ledger.md — Freshness');
+});
+
+test('toIssuePayload: payload.target and the fingerprint are unchanged by the header/title rendering (#1851 AC2)', () => {
+  const payload = toIssuePayload(finding());
+  assert.strictEqual(payload.target, 'decisions/0007-foo');
+  assert.strictEqual(extractFingerprint(payload.body), 'docshealth-abc12345');
+});
+
 test('toIssuePayload body always includes Current State, Deliverables, Acceptance Criteria, and Release Note sections', () => {
   const payload = toIssuePayload(finding());
   assert.ok(payload.body.includes('## Current State'));

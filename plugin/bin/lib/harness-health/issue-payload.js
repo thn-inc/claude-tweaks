@@ -76,7 +76,15 @@ function buildPremiseCheck(finding, targetPath) {
 // run by the caller (bin/harness-health.js, via health-core/read-commit.js)
 // and threaded through here — never resolved inside this function. See
 // specShapedBody's own verifiedAsOf doc in record.js for why.
-function toIssuePayload(finding, verifiedAsOf) {
+// pluginVersion (#1840, optional): the running plugin's own version
+// (`.claude-plugin/plugin.json` under CLAUDE_PLUGIN_ROOT), resolved ONCE per
+// run by the same caller — same non-resolved-here convention as
+// verifiedAsOf. Only ever combined with finding.templateSource, which the
+// judge sets for a template-derived claude-md/rule finding in the
+// template-conformance/best-practice categories; every other finding (a
+// skill drift finding, a new-skill candidate) carries no templateSource and
+// this parameter is simply unused for it.
+function toIssuePayload(finding, verifiedAsOf, pluginVersion) {
   const isNewSkill = finding.kind === 'new-skill';
   const assetLabel = ASSET_TYPE_LABELS[finding.assetType] || finding.assetType;
   const categoryLabel = CATEGORY_LABELS[finding.category] || finding.category;
@@ -96,6 +104,22 @@ function toIssuePayload(finding, verifiedAsOf) {
     deliverables = `**Remove this content:**\n${fencedBlock(finding.oldString)}\n\n**Proposed:** delete it — nothing replaces it.`;
   } else {
     deliverables = `**Current:**\n${fencedBlock(finding.oldString || '(N/A — new content)')}\n\n**Proposed:**\n${fencedBlock(finding.newString)}`;
+  }
+
+  // #1840: a template-derived finding's Proposed block is a filing-time
+  // snapshot of the origin template — nothing tells a builder that literally
+  // by itself. When the judge set templateSource AND the caller supplied a
+  // pluginVersion to stamp it at, name both in a Template: metadata line
+  // (same convention as Verified-as-of) and open Deliverables with one
+  // sentence saying so. Absent either input, behavior is byte-identical to
+  // before this record (a skill drift finding never carries templateSource
+  // at all, so it is never affected).
+  const templateStamp = finding.templateSource && pluginVersion
+    ? `${finding.templateSource} @ ${pluginVersion}`
+    : undefined;
+  if (templateStamp) {
+    const snapshotSentence = `The Proposed block below is a snapshot of \`${finding.templateSource}\` as rendered at plugin version ${pluginVersion} — at build time, re-derive the replacement from the *installed* template and treat this fence as the intended shape, not the bytes.`;
+    deliverables = `${snapshotSentence}\n\n${deliverables}`;
   }
 
   // Only ever populated for kind: "patch" findings — new-skill candidates have
@@ -119,6 +143,7 @@ function toIssuePayload(finding, verifiedAsOf) {
     filedBy: '/claude-tweaks:harness-health',
     verifiedAsOf,
     premiseCheck,
+    templateStamp,
   });
 
   let title;

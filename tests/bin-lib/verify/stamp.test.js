@@ -3,9 +3,12 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 
+const fs = require('fs');
+
 const {
   composeStamp, writeStamp, readStamp, STAMP_JSON_NAME, STAMP_LEGACY_NAME,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'stamp.js'));
+const { writeFileAtomic } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'atomic-write.js'));
 
 function fakeFs(files = {}) {
   return {
@@ -80,6 +83,40 @@ test('writeStamp writes the JSON stamp through a pid-suffixed tmp file (#2004 �
   // non-pid-suffixed `.tmp` shape.
   const legacyTmpWrite = writeCalls.find((p) => p === `${out.legacyPath}.tmp`);
   assert.strictEqual(legacyTmpWrite, `${out.legacyPath}.tmp`);
+});
+
+// #2335: the count-stamp write (bin/verify.js:395, `writeFileAtomic(countStampPath, …)`)
+// migrated off the deleted lib/verify/atomic-write.js in the same commit as
+// writeStamp's JSON write above, but the deleted tests/bin-lib/verify/
+// atomic-write.test.js was the only place that had pinned that write's
+// temp-filename shape and nothing replaced the coverage. verify.js calls
+// this exact shared primitive directly (not through stamp.js), so pinning
+// writeFileAtomic's own pid-suffixed shape against a count-stamp-shaped
+// path is the same coverage the deleted suite provided — the two call
+// sites (writeStamp's JSON write and verify.js's count-stamp write) both
+// go through this one function, verified by name below.
+test('writeFileAtomic (the count-stamp write\'s own primitive) writes through a pid-suffixed tmp file, never the retired bare .tmp shape (#2335)', () => {
+  const files = {};
+  const writeCalls = [];
+  const fsImpl = {
+    writeFileSync: (p, data) => { writeCalls.push(p); files[p] = data; },
+    renameSync: (from, to) => { files[to] = files[from]; delete files[from]; },
+    unlinkSync: (p) => { delete files[p]; },
+  };
+  const countStampPath = path.join('/g', 'claude-tweaks-test-count.json');
+  writeFileAtomic(countStampPath, `${JSON.stringify({ tests: 727, sha: 'abc123', recordedAt: 't' })}\n`, {
+    writeFile: fsImpl.writeFileSync, rename: fsImpl.renameSync, unlink: fsImpl.unlinkSync,
+  });
+  assert.strictEqual(files[countStampPath], `${JSON.stringify({ tests: 727, sha: 'abc123', recordedAt: 't' })}\n`);
+  assert.ok(!Object.keys(files).some((p) => p.endsWith('.tmp')), 'no bare .tmp files left behind');
+  const tmpWrite = writeCalls.find((p) => p.startsWith(`${countStampPath}.tmp`));
+  assert.ok(tmpWrite, 'the count-stamp write must go through a tmp-then-rename path');
+  assert.ok(/\.tmp-\d+$/.test(tmpWrite), `count-stamp tmp path must be pid-suffixed (got ${tmpWrite}), not the retired module's bare .tmp`);
+});
+
+test('bin/verify.js\'s count-stamp write site calls writeFileAtomic by name — a regression back to a raw fs write would silently lose the pid-suffixed shape pinned above (#2335)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js'), 'utf8');
+  assert.match(src, /writeFileAtomic\(countStampPath,/);
 });
 
 test('writeStamp with legacy:false writes only the JSON stamp and leaves an existing bare file untouched (#1922 review H1)', () => {

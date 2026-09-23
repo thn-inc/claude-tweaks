@@ -101,8 +101,8 @@ comes from `record.js`'s `TYPE_LABELS`:
 
 ```js
 [
-  ["parent-issue",      "Structure: parent issue — carries the acceptance gate for its sub-issues"],
-  ["type:feature",      "Type: new capability or enhancement"]
+  ["parent-issue",      "Structure: parent issue — carries the acceptance gate for its sub-issues", "E99695"],
+  ["type:feature",      "Type: new capability or enhancement", "A2EEEF"]
 ]
 ```
 
