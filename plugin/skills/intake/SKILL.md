@@ -35,7 +35,7 @@ Read, once, before fragmenting anything:
 - The session-scoped record snapshot via `_shared/record-queue-fetch.md`'s read-fresh-or-fetch block (titles, bodies, labels, state) — the candidate set for `absorb`/`shipped` matching below.
 - Recent merged commits via `_shared/integration-branch.md`'s resolution ladder, windowed per `_shared/health-recent-commit-check.md` — the `shipped` evidence set.
 - `work-backend`/`work-types` from CLAUDE.md's `## Work records` section.
-- `git remote get-url origin`, once. `$SELF_REPO` is `true` when the URL resolves to `thomasholknielsen/claude-tweaks`, **and also `true`** when the command fails, prints nothing, or the remote can't be classified — an uncertain identity never files an external issue.
+- `git remote get-url origin`, once. `$SELF_REPO` is `true` when the URL resolves to `thn-inc/claude-tweaks`, **and also `true`** when the command fails, prints nothing, or the remote can't be classified — an uncertain identity never files an external issue.
 
 ## Step 2: Fragment
 

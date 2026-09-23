@@ -11,7 +11,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 ## Installation
 
 ```
-/plugin marketplace add thomasholknielsen/claude-tweaks-marketplace
+/plugin marketplace add thn-inc/claude-tweaks-marketplace
 /plugin install claude-tweaks@claude-tweaks-marketplace
 /plugin install superpowers@claude-plugins-official
 /claude-tweaks:init

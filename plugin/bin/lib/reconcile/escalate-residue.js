@@ -155,7 +155,7 @@ function findResidueDuplicate({ repo, marker, runner = defaultRunner }) {
 // This form always names the plugin and the fully-qualified upstream ref, so
 // a downstream `/claude-tweaks:specify` shaping this record never scopes a
 // fix to a `bin/lib/reconcile/` that doesn't exist in the consumer's own repo.
-const ATTRIBUTION_LINE = 'Filed automatically by the claude-tweaks plugin\'s reconcile pass. The removal/move logic named above lives in `bin/lib/reconcile/` of `thomasholknielsen/claude-tweaks` — not a path in this repository — so a fix, if any, belongs upstream: see thomasholknielsen/claude-tweaks#644. This record is the human handoff for the path named above.';
+const ATTRIBUTION_LINE = 'Filed automatically by the claude-tweaks plugin\'s reconcile pass. The removal/move logic named above lives in `bin/lib/reconcile/` of `thn-inc/claude-tweaks` — not a path in this repository — so a fix, if any, belongs upstream: see thn-inc/claude-tweaks#644. This record is the human handoff for the path named above.';
 
 function residueBody({
   reason, targetPath, count, firstFailedAt, lastError, dirtyFiles,
