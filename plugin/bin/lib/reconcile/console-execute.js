@@ -37,6 +37,15 @@ const FETCH_TIMEOUT_MS = 5000;
 // than this with no executedAt is reclaimable by a fresh executor.
 const RECLAIM_STALE_MS = 30 * 60 * 1000;
 
+// Shared GraphQL mutation for editing an existing PR comment in place, used
+// by both writes in resolveConsoleExecution below — same shape
+// `_shared/pr-run-comments.md`'s own "Found -> update in place" step uses.
+// `gh pr view --json comments`'s `.id` is a GraphQL node ID (e.g.
+// `IC_kwDO...`), never a REST numeric ID, which is exactly why this is a
+// GraphQL mutation rather than a REST PATCH to `issues/comments/{id}` (that
+// file's own rationale, verbatim).
+const UPDATE_ISSUE_COMMENT_MUTATION = 'query=mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}';
+
 // null = no console.json at all; undefined = present but unparseable (fails
 // closed, distinct from absent, mirroring archive-merged.js's readConsoleState).
 function readConsoleJson(runDir) {
@@ -383,7 +392,7 @@ async function consoleExecuteDetect(opts = {}) {
 //   { status: 'error', reason: 'no-console' | 'unparseable-console-json' |
 //       'no-comment-ids' | 'no-pr-number' | 'network-failure' |
 //       'comment-not-found' | 'unknown-item-ids' | 'reply-comment-failed' |
-//       'marker-edit-failed', ids?, error? }
+//       'marker-edit-failed' | 'console-write-failed', ids?, error? }
 async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = {}, deps = {}) {
   const now = typeof deps.now === 'function' ? deps.now() : Date.now();
   const consoleJson = readConsoleJson(runDir);
@@ -462,10 +471,23 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = 
   const allExecuted = outcomes.length > 0 && outcomes.every((o) => o.outcome === 'executed');
 
   // 1. Reply comment first — the source of truth a foreign detection pass
-  // keys "already executed" off, per the Write order section.
+  // keys "already executed" off, per the Write order section. Idempotent
+  // find-or-update, matching `_shared/pr-run-comments.md`'s own established
+  // pattern for this exact marker-comment shape: `gh pr comment` always
+  // CREATES a new comment, so a bare re-post on a retry after step 2 or 3
+  // failed on a prior attempt would duplicate the PR's audit trail every
+  // time this verb is re-run (the natural recovery after seeing a failure
+  // printed). Finding the existing `<!-- console-item: executed -->` reply
+  // and updating it in place keeps a retry a no-op on this step regardless
+  // of whether the outcome content changed between runs.
   const replyBody = buildExecutedReplyBody(outcomes);
+  const existingReply = comments.find((c) => typeof c.body === 'string' && c.body.startsWith('<!-- console-item: executed -->'));
   try {
-    await deps.gh(['pr', 'comment', String(consoleJson.prNumber), '--body', replyBody]);
+    if (existingReply) {
+      await deps.gh(['api', 'graphql', '-f', UPDATE_ISSUE_COMMENT_MUTATION, '-f', `id=${existingReply.id}`, '-f', `body=${replyBody}`]);
+    } else {
+      await deps.gh(['pr', 'comment', String(consoleJson.prNumber), '--body', replyBody]);
+    }
   } catch (err) {
     return { status: 'error', reason: 'reply-comment-failed', error: errorText(err) };
   }
@@ -474,14 +496,25 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = 
   // the Resolve checkbox only when every item resolved favorably.
   const editedBody = addConsoleResolvedMarker(tickResolveBoxIfAllExecuted(primary.body, allExecuted));
   try {
-    await deps.gh(['api', `repos/{owner}/{repo}/issues/comments/${primary.id}`, '-X', 'PATCH', '-f', `body=${editedBody}`]);
+    await deps.gh(['api', 'graphql', '-f', UPDATE_ISSUE_COMMENT_MUTATION, '-f', `id=${primary.id}`, '-f', `body=${editedBody}`]);
   } catch (err) {
     return { status: 'error', reason: 'marker-edit-failed', error: errorText(err) };
   }
 
   // 3. console.json.executedAt + resolved: true, together, in one write.
+  // Guarded (unlike the two gh calls above, this is the only I/O in the
+  // function with no injected-failure return shape of its own): by this
+  // point both gh writes have already landed for real, so an uncaught throw
+  // here would propagate to hooks.js's main()'s top-level
+  // `.catch(() => process.exit(0))` and exit silently successful — this
+  // module's own header names that exact hazard as one a sibling code path
+  // was already patched to avoid.
   const nextConsoleJson = { ...consoleJson, executedAt: new Date(now).toISOString(), resolved: allExecuted };
-  deps.writeFile(path.join(runDir, 'console.json'), JSON.stringify(nextConsoleJson, null, 2));
+  try {
+    deps.writeFile(path.join(runDir, 'console.json'), JSON.stringify(nextConsoleJson, null, 2));
+  } catch (err) {
+    return { status: 'error', reason: 'console-write-failed', error: errorText(err) };
+  }
 
   return {
     status: 'executed', outcomes, resolved: allExecuted, prNumber: consoleJson.prNumber,
