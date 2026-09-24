@@ -39,17 +39,25 @@ function primaryCommentBody(ids = ['1', '2', '3']) {
   return `<!-- console-item: resolve -->\n- [ ] **Resolve console** — tick this last\n${itemRows}`;
 }
 
-function fakeGh(calls, { prViewBody } = {}) {
+function fakeGh(calls, { prViewBody, extraComments = [] } = {}) {
   return async (args) => {
     calls.push(args);
     if (args[0] === 'pr' && args[1] === 'view') {
       return JSON.stringify({
-        comments: [{ id: 'IC_primary', body: prViewBody !== undefined ? prViewBody : primaryCommentBody() }],
+        comments: [
+          { id: 'IC_primary', body: prViewBody !== undefined ? prViewBody : primaryCommentBody() },
+          ...extraComments,
+        ],
         body: 'Fixes #42',
       });
     }
     if (args[0] === 'pr' && args[1] === 'comment') return '';
-    if (args[0] === 'api') return '{}';
+    // The marker edit and the reply-comment update path both go through
+    // `gh api graphql` with an `updateIssueComment` mutation — a REST PATCH
+    // to `issues/comments/{id}` would 404 in reality (`primary.id`/an
+    // existing reply's `id` are GraphQL node IDs, not REST numeric IDs), so
+    // this fake only accepts the GraphQL shape, never a REST `-X PATCH`.
+    if (args[0] === 'api' && args[1] === 'graphql') return '{}';
     throw new Error(`fakeGh: unexpected args ${JSON.stringify(args)}`);
   };
 }
@@ -70,11 +78,11 @@ test('resolveConsoleExecution: posts exactly one reply, before the marker edit, 
   const result = await resolveConsoleExecution(dir, { approve: ['1', '2', '3'], decline: [] }, deps);
 
   assert.equal(result.status, 'executed');
-  assert.equal(ghCalls.length, 3, 'expected pr view (read) + pr comment (reply) + api PATCH (marker edit)');
+  assert.equal(ghCalls.length, 3, 'expected pr view (read) + pr comment (reply) + api graphql (marker edit)');
   assert.deepEqual(ghCalls[0].slice(0, 2), ['pr', 'view']);
   assert.deepEqual(ghCalls[1].slice(0, 2), ['pr', 'comment']);
-  assert.equal(ghCalls[2][0], 'api');
-  assert.match(ghCalls[2].join(' '), /-X PATCH/);
+  assert.deepEqual(ghCalls[2].slice(0, 2), ['api', 'graphql']);
+  assert.match(ghCalls[2].join(' '), /updateIssueComment/);
   assert.equal(writeCalls.length, 1, 'console.json must be written exactly once');
   const written = JSON.parse(writeCalls[0].content);
   assert.equal(typeof written.executedAt, 'string');
@@ -243,4 +251,47 @@ test('resolveConsoleExecution: a reply-comment failure stops before the marker e
   assert.equal(result.reason, 'reply-comment-failed');
   assert.ok(ghCalls.every((a) => a[0] !== 'api'), 'marker edit must never run after a failed reply');
   assert.equal(writeCalls.length, 0, 'console.json must never be written after a failed reply');
+});
+
+// A retry after a prior attempt already posted the executed reply (e.g. the
+// marker edit or console.json write failed last time) must update that
+// existing reply in place rather than posting a duplicate — the exact
+// duplicate-comment defect this idempotency check exists to prevent.
+test('resolveConsoleExecution: a retry with an existing executed-reply comment updates it in place instead of posting a duplicate', async () => {
+  const dir = makeRunDir();
+  writeConsoleJson(dir);
+  const ghCalls = [];
+  const deps = {
+    now: () => Date.now(),
+    gh: fakeGh(ghCalls, { extraComments: [{ id: 'IC_existing_reply', body: '<!-- console-item: executed -->\n- `1`: executed (stale)' }] }),
+    writeFile: () => {},
+  };
+  const result = await resolveConsoleExecution(dir, { approve: ['1', '2', '3'], decline: [] }, deps);
+  assert.equal(result.status, 'executed');
+  assert.ok(ghCalls.every((a) => !(a[0] === 'pr' && a[1] === 'comment')), 'must never create a new reply comment when one already exists');
+  const graphqlCalls = ghCalls.filter((a) => a[0] === 'api' && a[1] === 'graphql');
+  assert.equal(graphqlCalls.length, 2, 'expected one graphql update for the reply, one for the marker edit');
+  const replyUpdate = graphqlCalls.find((a) => a.includes('id=IC_existing_reply'));
+  assert.ok(replyUpdate, 'the existing reply comment must be updated by its own id');
+  assert.match(replyUpdate.find((a) => a.startsWith('body=')), /`1`: executed/);
+});
+
+// The final console.json write is the only unguarded I/O in the function
+// (#2568 follow-up review finding): a throw there — after both gh writes
+// already landed — must surface as a distinguishable error status, never
+// propagate uncaught to hooks.js's top-level catch-and-exit-0.
+test('resolveConsoleExecution: a console.json write failure after both gh writes landed returns console-write-failed, never throws', async () => {
+  const dir = makeRunDir();
+  writeConsoleJson(dir);
+  const ghCalls = [];
+  const deps = {
+    now: () => Date.now(),
+    gh: fakeGh(ghCalls),
+    writeFile: () => { throw new Error('ENOSPC: no space left on device'); },
+  };
+  const result = await resolveConsoleExecution(dir, { approve: ['1', '2', '3'], decline: [] }, deps);
+  assert.equal(result.status, 'error');
+  assert.equal(result.reason, 'console-write-failed');
+  assert.match(result.error, /ENOSPC/);
+  assert.equal(ghCalls.length, 3, 'both gh writes (reply, marker edit) must have already run before the write failure');
 });
