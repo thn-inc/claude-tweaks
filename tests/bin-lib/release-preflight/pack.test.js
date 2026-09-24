@@ -39,7 +39,10 @@ function fakeDeps(o = {}) {
         if (key.startsWith('show ')) {
           const spec = args[1];
           const text = (o.show || {})[spec];
-          if (text === undefined) throw new Error(`fatal: path '${spec.split(':')[1]}' does not exist in '${spec.split(':')[0]}'`);
+          if (text === undefined) {
+            const [rev, file] = spec.split(':');
+            throw new Error(`fatal: path '${file}' does not exist in '${rev}'`);
+          }
           return text;
         }
         throw new Error(`unexpected git: ${key}`);
@@ -57,7 +60,7 @@ function fakeDeps(o = {}) {
         throw new Error(`unexpected gh: ${key}`);
       },
       readFile: (p) => (p in files ? files[p] : null),
-      readdir: (p) => o.workflows && p === path.join(ROOT, '.github/workflows') ? Object.keys(o.workflows) : [],
+      readdir: (p) => ((o.workflows && p === path.join(ROOT, '.github/workflows')) ? Object.keys(o.workflows) : []),
       now: () => 1000,
       probeTimeoutMs: 2000,
     },
