@@ -111,9 +111,12 @@ test('W4: manifest.plannedWrites — a present, tokenless target is omitted from
 
 test('W4: release-local --dry-run — a stack manifest present without a version token is omitted from the manifest: line', () => {
   const { deps, state } = makeReleaseHookDeps();
-  deps.readFile = ((orig) => (p) => (p === 'release-please-config.json'
-    ? JSON.stringify({ packages: { '.': { 'release-type': 'node' } } })
-    : p === 'package.json' ? '{\n  "name": "x"\n}\n' : orig(p)))(deps.readFile);
+  // a node stack whose package.json carries no version token
+  const overrides = {
+    'release-please-config.json': JSON.stringify({ packages: { '.': { 'release-type': 'node' } } }),
+    'package.json': '{\n  "name": "x"\n}\n',
+  };
+  deps.readFile = ((orig) => (p) => (p in overrides ? overrides[p] : orig(p)))(deps.readFile);
   assert.strictEqual(run(['--dry-run'], deps), 0);
   const manifestLine = state.out.split('\n').find((l) => l.startsWith('manifest: '));
   assert.ok(manifestLine, state.out);

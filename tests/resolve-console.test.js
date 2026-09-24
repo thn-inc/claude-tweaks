@@ -12,8 +12,7 @@ const path = require('path');
 const { resolveConsoleExecution } = require('../plugin/bin/lib/reconcile/console-execute');
 
 function makeRunDir() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-'));
-  return dir;
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-'));
 }
 
 function writeConsoleJson(dir, overrides = {}) {

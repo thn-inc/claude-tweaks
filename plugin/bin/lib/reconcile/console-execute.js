@@ -62,6 +62,21 @@ function readConsoleJson(runDir) {
   }
 }
 
+// #1130 review: a non-empty executedAt is execution's own completion stamp —
+// consoles written before the write order also set `resolved: true`
+// (console-execution.md) carry executedAt alone. Without accepting it, an
+// executed-but-unarchived console whose executingAt claim aged past
+// RECLAIM_STALE_MS re-detected as `ready` on every pass (the PR checkbox stays
+// ticked), re-applying Q#/M#/U# items that have no drift guard — and
+// archive-merged.js's readConsoleState (which does accept executedAt) would
+// classify the same file 'resolved' in the same reconcile pass. Same
+// acceptance rule as readConsoleState: keep the readers agreeing. One
+// predicate rather than a copy per caller, so the two cannot drift.
+function isAlreadyResolved(consoleJson) {
+  if (consoleJson.resolved === true) return true;
+  return typeof consoleJson.executedAt === 'string' && consoleJson.executedAt.trim().length > 0;
+}
+
 // A claim is reclaimable when absent, corrupt (fails open — never lets a bad
 // timestamp permanently lock a console), or older than the reclaim window.
 function isClaimReclaimable(executingAt, now) {
@@ -94,31 +109,41 @@ function parseItemTicks(body) {
   return ticks;
 }
 
-// Async (promisified execFile, non-blocking) so this module's per-run-dir
-// fetches can genuinely run concurrently through gh-pool's
+// The one gh seam both fetches below share -> { ok: true, json } | { ok: false,
+// reason }. Async (promisified execFile, non-blocking) so this module's
+// per-run-dir fetches can genuinely run concurrently through gh-pool's
 // runWithConcurrency below, unlike the old execFileSync, which blocks the
 // event loop regardless of how the calling code is structured (#820, D5).
-async function fetchPrData(repoRoot, prNumber) {
+// Unparseable stdout reads as 'network-failure', same as a failed spawn: a gh
+// that answered with something other than the requested JSON told us nothing.
+async function ghJson(repoRoot, args) {
   let stdout;
   try {
     ({ stdout } = await execFileAsync(
       'gh',
-      ['pr', 'view', String(prNumber), '--json', 'comments,body'],
+      args,
       { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true },
     ));
   } catch (e) {
     if (e && e.code === 'ENOENT') return { ok: false, reason: 'gh-absent' };
     return { ok: false, reason: 'network-failure' };
   }
-  let parsed;
   try {
-    parsed = JSON.parse(stdout);
+    return { ok: true, json: JSON.parse(stdout) };
   } catch {
     return { ok: false, reason: 'network-failure' };
   }
-  const comments = Array.isArray(parsed && parsed.comments) ? parsed.comments : [];
-  const body = typeof (parsed && parsed.body) === 'string' ? parsed.body : '';
-  return { ok: true, comments, body };
+}
+
+async function fetchPrData(repoRoot, prNumber) {
+  const res = await ghJson(repoRoot, ['pr', 'view', String(prNumber), '--json', 'comments,body']);
+  if (!res.ok) return res;
+  const { json } = res;
+  return {
+    ok: true,
+    comments: Array.isArray(json && json.comments) ? json.comments : [],
+    body: typeof (json && json.body) === 'string' ? json.body : '',
+  };
 }
 
 // One `Fixes #{n}` line per record (`_shared/pr-early-run-lifecycle.md`'s
@@ -141,25 +166,11 @@ function parseFixesMembers(body) {
 // gh issue view {n} --json labels,comments -> {labels, pendingSince} the same
 // shape console-resolve.js's own ghReadGrants builds, for evaluateMaturation.
 async function fetchIssueGrant(repoRoot, issueNumber) {
-  let stdout;
-  try {
-    ({ stdout } = await execFileAsync(
-      'gh',
-      ['issue', 'view', String(issueNumber), '--json', 'labels,comments'],
-      { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true },
-    ));
-  } catch (e) {
-    if (e && e.code === 'ENOENT') return { ok: false, reason: 'gh-absent' };
-    return { ok: false, reason: 'network-failure' };
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(stdout);
-  } catch {
-    return { ok: false, reason: 'network-failure' };
-  }
-  const labels = (parsed.labels || []).map((l) => (typeof l === 'string' ? l : l.name));
-  const bodies = (parsed.comments || []).map((c) => (typeof c === 'string' ? c : c.body || ''));
+  const res = await ghJson(repoRoot, ['issue', 'view', String(issueNumber), '--json', 'labels,comments']);
+  if (!res.ok) return res;
+  const { json } = res;
+  const labels = (json.labels || []).map((l) => (typeof l === 'string' ? l : l.name));
+  const bodies = (json.comments || []).map((c) => (typeof c === 'string' ? c : c.body || ''));
   return { ok: true, labels, pendingSince: extractPendingGrantedAt(bodies) };
 }
 
@@ -193,19 +204,7 @@ function resolveVetoWindowHours(runDir, repoRoot) {
 function preFetchSkipReason(consoleJson, now) {
   if (consoleJson === null) return 'no-console';
   if (consoleJson === undefined) return 'unparseable-console-json';
-  // #1130 review: a non-empty executedAt is execution's own completion stamp
-  // — consoles written before the write order also set `resolved: true`
-  // (console-execution.md) carry executedAt alone. Without this,
-  // an executed-but-unarchived console whose executingAt claim aged past
-  // RECLAIM_STALE_MS re-detected as `ready` on every pass (the PR checkbox
-  // stays ticked), re-applying Q#/M#/U# items that have no drift guard —
-  // and archive-merged.js's readConsoleState (which does accept executedAt)
-  // would classify the same file 'resolved' in the same reconcile pass.
-  // Same acceptance rule as readConsoleState: keep the two readers agreeing.
-  if (consoleJson.resolved === true
-    || (typeof consoleJson.executedAt === 'string' && consoleJson.executedAt.trim().length > 0)) {
-    return 'already-resolved';
-  }
+  if (isAlreadyResolved(consoleJson)) return 'already-resolved';
   if (!isClaimReclaimable(consoleJson.executingAt, now)) return 'claimed';
   const commentIds = Array.isArray(consoleJson.commentIds) ? consoleJson.commentIds : [];
   if (!commentIds.length) return 'no-comment-ids';
@@ -399,13 +398,8 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = 
   if (consoleJson === null) return { status: 'error', reason: 'no-console' };
   if (consoleJson === undefined) return { status: 'error', reason: 'unparseable-console-json' };
 
-  // Idempotence — matches preFetchSkipReason's own acceptance rule (a
-  // non-empty executedAt is sufficient on its own; consoles written before
-  // this write order set `resolved: true` carry executedAt alone).
-  if (consoleJson.resolved === true
-    || (typeof consoleJson.executedAt === 'string' && consoleJson.executedAt.trim().length > 0)) {
-    return { status: 'noop', reason: 'already-resolved' };
-  }
+  // Idempotence — the same predicate preFetchSkipReason applies.
+  if (isAlreadyResolved(consoleJson)) return { status: 'noop', reason: 'already-resolved' };
   // Pre-execution claim (`_shared/console-execution.md`'s own section): a
   // live (non-stale) executingAt claim belongs to another session; no-op
   // rather than race it. A stale or absent claim is reclaimable — this verb

@@ -1,14 +1,16 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { run, parseArgs, defaultDeps, writeInsideRoot } = require('../../../plugin/bin/release-local.js');
 
+const mkTmpDir = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+
 test('writeInsideRoot: refuses a symlinked leaf and a directory whose real location is outside the root; writes a plain file', () => {
-  const fs = require('fs');
-  const os = require('os');
-  const path = require('path');
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'release-local-root-'));
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'release-local-outside-'));
+  const root = mkTmpDir('release-local-root-');
+  const outside = mkTmpDir('release-local-outside-');
   fs.writeFileSync(path.join(outside, 'victim.json'), '{"version": "1.2.0"}');
   fs.symlinkSync(path.join(outside, 'victim.json'), path.join(root, 'linked.json'));
   assert.throws(() => writeInsideRoot(root, 'linked.json', '{"version": "1.3.0"}'), /refusing to write linked\.json: it is a symlink/);
@@ -24,17 +26,14 @@ test('writeInsideRoot: refuses a symlinked leaf and a directory whose real locat
 });
 
 test('defaultDeps.listPlanFiles: a missing plans directory is "no plan claims"; a present one lists its .md files', () => {
-  const fs = require('fs');
-  const os = require('os');
-  const path = require('path');
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'release-local-plans-'));
+  const root = mkTmpDir('release-local-plans-');
   assert.deepStrictEqual(defaultDeps(root).listPlanFiles(), []);
   fs.mkdirSync(path.join(root, 'docs/superpowers/plans'), { recursive: true });
   fs.writeFileSync(path.join(root, 'docs/superpowers/plans/a.md'), 'ships as v9.9.9');
   fs.writeFileSync(path.join(root, 'docs/superpowers/plans/notes.txt'), 'x');
   assert.deepStrictEqual(defaultDeps(root).listPlanFiles(), ['docs/superpowers/plans/a.md']);
   // a file where the directory should be reads as "no plan claims" too (ENOTDIR), never a raw throw
-  const fileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'release-local-plans-'));
+  const fileRoot = mkTmpDir('release-local-plans-');
   fs.mkdirSync(path.join(fileRoot, 'docs/superpowers'), { recursive: true });
   fs.writeFileSync(path.join(fileRoot, 'docs/superpowers/plans'), 'not a dir');
   assert.deepStrictEqual(defaultDeps(fileRoot).listPlanFiles(), []);
@@ -79,7 +78,7 @@ function makeDeps(o = {}) {
 }
 
 test('parseArgs: flags, unknown argument, --root without value', () => {
-  assert.deepStrictEqual(parseArgs(['--dry-run', '--branch', 'develop']), { dryRun: false || true, branch: 'develop', root: null, releaseAs: null, help: false });
+  assert.deepStrictEqual(parseArgs(['--dry-run', '--branch', 'develop']), { dryRun: true, branch: 'develop', root: null, releaseAs: null, help: false });
   assert.match(parseArgs(['--bogus']).error, /unknown argument/);
   assert.match(parseArgs(['--root']).error, /requires a value/);
 });

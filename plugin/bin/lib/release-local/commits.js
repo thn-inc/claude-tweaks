@@ -30,15 +30,19 @@ const SEMVER_RE = /^\d+\.\d+\.\d+$/;
 // full reachability, not the `--first-parent` walk, even when `log
 // --first-parent` is the command doing the walking).
 function lastTag(git, ref = 'HEAD') {
-  let best = null;
+  let bestTag = null;
+  let bestVersion = null;
   for (const line of git(['tag', '--merged', ref, '-l', 'v[0-9]*']).split('\n')) {
-    const raw = line.trim();
-    if (!raw) continue;
-    const v = raw.replace(/^v/, '');
-    if (!SEMVER_RE.test(v)) continue;
-    if (!best || compareVersions(v, best.replace(/^v/, '')) > 0) best = raw;
+    const tag = line.trim();
+    const version = tag.replace(/^v/, '');
+    // Also rejects the empty line `split` leaves at the end of git's output.
+    if (!SEMVER_RE.test(version)) continue;
+    if (!bestTag || compareVersions(version, bestVersion) > 0) {
+      bestTag = tag;
+      bestVersion = version;
+    }
   }
-  return best;
+  return bestTag;
 }
 
 function parseCommit({ sha, subject, body = '' }) {
@@ -48,21 +52,31 @@ function parseCommit({ sha, subject, body = '' }) {
   // is truncated to its first line here, mirroring `footer`'s own extraction shape.
   const releaseNoteFooter = RELEASE_NOTE_FOOTER_RE.exec(body);
   const releaseNote = releaseNoteFooter ? releaseNoteFooter[1].trim() : null;
-  if (!m) {
-    // An empty `BREAKING CHANGE:` footer (no description of its own) falls back to
-    // the subject, exactly as the conventional path does for its header form (m[4]).
-    return { sha, subject, type: null, scope: null, breaking: footer !== null, breakingNote: footer ? (footer[1].trim() || subject) : null, description: subject, unconventional: true, releaseNote };
-  }
-  const breaking = m[3] === '!' || footer !== null;
-  const breakingNote = footer ? (footer[1].trim() || m[4]) : (breaking ? m[4] : null);
-  return { sha, subject, type: m[1], scope: m[2] ? m[2].slice(1, -1) : null, breaking, breakingNote, description: m[4], unconventional: false, releaseNote };
+  // An unconventional subject IS its own description — which is also what an
+  // empty `BREAKING CHANGE:` footer (no description of its own) falls back to,
+  // on both paths.
+  const description = m ? m[4] : subject;
+  const breaking = (m !== null && m[3] === '!') || footer !== null;
+  let breakingNote = null;
+  if (footer) breakingNote = footer[1].trim() || description;
+  else if (breaking) breakingNote = description;
+  return {
+    sha,
+    subject,
+    type: m ? m[1] : null,
+    scope: m && m[2] ? m[2].slice(1, -1) : null,
+    breaking,
+    breakingNote,
+    description,
+    unconventional: m === null,
+    releaseNote,
+  };
 }
 
 function readCommits(git, tag, ref = 'HEAD') {
   const range = tag ? `${tag}..${ref}` : ref;
   const raw = git(['log', '--first-parent', `--format=%H${FIELD}%s${FIELD}%b${RECORD}`, range]);
   return raw.split(RECORD)
-    .map((chunk) => chunk.replace(/^\n/, ''))
     .filter((chunk) => chunk.trim() !== '')
     .map((chunk) => {
       const [sha, subject, body = ''] = chunk.split(FIELD);
