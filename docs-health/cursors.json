@@ -160,5 +160,8 @@
   },
   "doc:decisions/0018-release-please-engine": {
     "lastAuditedMs": 1790144175252
+  },
+  "doc:decisions/0019-vendored-gif-codec-over-a-runtime-dependency": {
+    "lastAuditedMs": 1790317049695
   }
 }
