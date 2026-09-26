@@ -163,5 +163,8 @@
   },
   "doc:decisions/0019-vendored-gif-codec-over-a-runtime-dependency": {
     "lastAuditedMs": 1790317049695
+  },
+  "doc:plans/2026-09-14-record-2259-ledger": {
+    "lastAuditedMs": 1790403408341
   }
 }
