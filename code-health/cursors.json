@@ -214,5 +214,9 @@
   "plugin/bin/lib/activity": {
     "lastSweptMs": 1790132874353,
     "lastHash": "51423f845ea3667bbf2918093b59e0319ed69935"
+  },
+  "plugin/bin/lib/gif": {
+    "lastSweptMs": 1790392109241,
+    "lastHash": "a88196540a27846b8f49dadfff7b00f88c0c8d22"
   }
 }
