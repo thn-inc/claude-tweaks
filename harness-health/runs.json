@@ -1,11 +1,6 @@
 [
   {
     "runId": "wrapup-1309-skills",
-    "runAt": "2026-08-28T16:05:40.323Z",
-    "fingerprints": []
-  },
-  {
-    "runId": "wrapup-1309-skills",
     "runAt": "2026-08-28T16:05:47.187Z",
     "fingerprints": []
   },
@@ -512,5 +507,12 @@
     "runId": "2026-09-26T05:19:13.181Z",
     "runAt": "2026-09-26T05:19:13.877Z",
     "fingerprints": []
+  },
+  {
+    "runId": "2026-09-27T05:21:33.546Z",
+    "runAt": "2026-09-27T05:21:34.272Z",
+    "fingerprints": [
+      "harnesshealth-2f347782"
+    ]
   }
 ]
