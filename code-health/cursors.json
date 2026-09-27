@@ -218,5 +218,9 @@
   "plugin/bin/lib/gif": {
     "lastSweptMs": 1790392109241,
     "lastHash": "a88196540a27846b8f49dadfff7b00f88c0c8d22"
+  },
+  "plugin/bin/lib/pr-bookkeeping": {
+    "lastSweptMs": 1790478427255,
+    "lastHash": "d14f60b76cddef926bc42ac0e4c56af1b657a4ac"
   }
 }
