@@ -147,8 +147,9 @@ function isOrphanedMint(dir, now = Date.now()) {
 // happened — writing prose for all fourteen-odd reason codes here would be
 // speculative work this file doesn't need. Only `audit-untracked` (hint
 // built where `untrackedAuditFiles` is computed, below) and the
-// `move-failed`/`git-mv-failed`/`git-mv-failed-partial-revert` refusals
-// (hint set from `lastError` when present) carry one today.
+// `move-failed`/`git-mv-failed`/`git-mv-failed-partial-revert`/
+// `work-twin-resolve-failed`/`work-twin-resolve-failed-partial-revert`
+// refusals (hint set from `lastError` when present) carry one today.
 // Not used by `decideArchive`'s pure `{ action: 'skip', reason }` skip path
 // (`gh-absent`/`network-failure`/`console-unresolved`/`console-never-rendered*`,
 // further down this file) — a different shape, consumed inside the
@@ -581,11 +582,11 @@ function resolveIdenticalWorkTwin(root, srcDir, destDir) {
     const destFile = path.join(destDir, rel);
     if (isTracked(root, destFile)) {
       const rm = runGit(['rm', '-q', '--', srcFile], root);
-      if (rm.failure) return refusal('work-twin-resolve-failed', { lastError: rm.stderr, resolved });
+      if (rm.failure) return refusal('work-twin-resolve-failed', { lastError: rm.stderr, hint: rm.stderr || null, resolved });
       resolved.push({ kind: 'twin-rm', srcFile, destFile });
     } else {
       const mv = runGit(['mv', '-f', srcFile, destFile], root);
-      if (mv.failure) return refusal('work-twin-resolve-failed', { lastError: mv.stderr, resolved });
+      if (mv.failure) return refusal('work-twin-resolve-failed', { lastError: mv.stderr, hint: mv.stderr || null, resolved });
       resolved.push({ kind: 'twin-mv', srcFile, destFile });
     }
   }
@@ -894,6 +895,7 @@ function archiveRunDir(root, runDir) {
         const fullyReverted = revertStagedOps(root, stagedOps);
         return refusal(fullyReverted ? result.reason : 'work-twin-resolve-failed-partial-revert', {
           lastError: result.lastError,
+          hint: result.lastError || null,
         });
       }
       // `resolveIdenticalWorkTwin` already removed every file under `src`
