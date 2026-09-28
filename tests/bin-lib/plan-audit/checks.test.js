@@ -477,6 +477,30 @@ test('checkC still executes and records a genuinely non-mutating command exactly
   assert.deepStrictEqual(result.executed, [{ task: '1', command: 'node -e "process.exit(0)"' }]);
 });
 
+test('checkC refuses a git mutation verb behind a leading -C/-c global flag (#2593 class bypass)', () => {
+  const commands = [
+    'git -C /some/path stash push -u -m tag',
+    'git -c user.name=x commit -am wip',
+    'git --git-dir=/repo/.git push origin main',
+  ];
+  for (const command of commands) {
+    const deps = { run: () => { throw new Error(`must not run: ${command}`); } };
+    const result = checkC([{ taskNumber: '1', title: 'T', command, expected: 'FAIL' }], '/repo', deps);
+    assert.strictEqual(result.warnings.length, 1, `expected a refusal warning for: ${command}`);
+    assert.strictEqual(result.warnings[0].reason, 'vcs-mutation-refusal', `for: ${command}`);
+  }
+});
+
+test('checkC refuses a gh mutation verb behind a leading -R/--repo global flag (#2593 class bypass)', () => {
+  const commands = ['gh -R owner/repo pr merge 1', 'gh --repo owner/repo issue close 1'];
+  for (const command of commands) {
+    const deps = { run: () => { throw new Error(`must not run: ${command}`); } };
+    const result = checkC([{ taskNumber: '1', title: 'T', command, expected: 'FAIL' }], '/repo', deps);
+    assert.strictEqual(result.warnings.length, 1, `expected a refusal warning for: ${command}`);
+    assert.strictEqual(result.warnings[0].reason, 'vcs-mutation-refusal', `for: ${command}`);
+  }
+});
+
 test('checkC a git subcommand not on the refusal list (e.g. git status) still executes normally', () => {
   const calls = [];
   const deps = { run: (command, cwd) => { calls.push({ command, cwd }); return { exitCode: 0, output: 'clean\n' }; } };

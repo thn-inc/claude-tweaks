@@ -256,6 +256,27 @@ function commandSegments(command) {
   return segments.map((s) => s.trim()).filter(Boolean);
 }
 
+// A value-taking global flag placed before the subcommand shifts which
+// token names it — `git -C /path stash push` has 'stash' at tokens[2], not
+// tokens[1]; `gh -R owner/repo pr merge` has 'pr'/'merge' at tokens[2]/[3],
+// not tokens[1]/[2]. A naive fixed-position read of the verb then sees the
+// flag itself (never a member of either verb set) and silently clears a
+// real mutation — the exact bypass this safety net exists to prevent. Walk
+// past every leading flag-shaped token first, consuming a following value
+// token only for the specific flags documented to take one; any other
+// leading flag (boolean, or one whose value is attached via `=`) advances
+// by one token, so the walk still lands on the real subcommand.
+const GIT_VALUE_FLAGS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix']);
+const GH_VALUE_FLAGS = new Set(['-R', '--repo']);
+
+function skipLeadingFlags(tokens, startIndex, valueFlags) {
+  let i = startIndex;
+  while (i < tokens.length && tokens[i].startsWith('-')) {
+    i += valueFlags.has(tokens[i]) && !tokens[i].includes('=') ? 2 : 1;
+  }
+  return i;
+}
+
 // Returns the matched "git {verb}"/"gh {noun} {verb}" string when `segment`
 // starts with a refused verb, or null when it's clear to run. `git` is a
 // two-token shape (`git stash`); `gh` is three-token (`gh issue close`,
@@ -263,8 +284,16 @@ function commandSegments(command) {
 // sub-action, not `gh`'s own second token.
 function mutationVerb(segment) {
   const tokens = segment.split(/\s+/);
-  if (tokens[0] === 'git' && GIT_MUTATION_VERBS.has(tokens[1])) return `git ${tokens[1]}`;
-  if (tokens[0] === 'gh' && GH_WRITE_VERBS.has(tokens[2])) return `gh ${tokens[1]} ${tokens[2]}`;
+  if (tokens[0] === 'git') {
+    const i = skipLeadingFlags(tokens, 1, GIT_VALUE_FLAGS);
+    if (GIT_MUTATION_VERBS.has(tokens[i])) return `git ${tokens[i]}`;
+    return null;
+  }
+  if (tokens[0] === 'gh') {
+    const i = skipLeadingFlags(tokens, 1, GH_VALUE_FLAGS);
+    if (GH_WRITE_VERBS.has(tokens[i + 1])) return `gh ${tokens[i]} ${tokens[i + 1]}`;
+    return null;
+  }
   return null;
 }
 
