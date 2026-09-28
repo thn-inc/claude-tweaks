@@ -102,8 +102,7 @@ Execute this user story and report results using the playwright-cli CLI.
 Instructions:
 - Open the session: `playwright-cli -s={story.id} open {resolved_url}`
 - Start trace recording immediately after `open`: `playwright-cli -s={story.id} tracing-start` (a trace can only be saved for the interval after recording started — there is no retroactive capture).
-<!-- playwright-cli: no equivalent found for agent-browser auth login — see issue Gotchas -->
-- If `Auth (vault)` is present, run `agent-browser --session {story.id} auth login <vault-name>` immediately after `tracing-start` and before the first interactive step.
+- If `Auth (vault)` is present, immediately after `tracing-start` and before the first interactive step, load the captured session state and re-navigate so it takes effect: `playwright-cli -s={story.id} state-load .claude-tweaks/auth-state/<vault-name>.json` then `playwright-cli -s={story.id} goto {resolved_url}` (`state-load` restores the browser context's storage state but does not retroactively apply to the already-open page — the `goto` re-navigation is required immediately after, same as `qa-agent.md` Setup Step c; always use `goto` here, never `open`, which would relaunch a fresh browser and discard the just-loaded state).
 - If a `Viewport` is set, run `playwright-cli -s={story.id} resize <w> <h>`.
 - If `Setup` is present, execute its steps first, using the same step semantics as the Steps loop below (snapshot+ref resolution, plain screenshot). Setup failures are treated like any other step failure (save trace, stop, report).
 - For each step in the steps array sequentially:
@@ -158,8 +157,7 @@ Execute this user story and report results using the playwright-cli CLI.
 
 Instructions:
 - Open the session, run `playwright-cli -s=<session> tracing-start` immediately after `open` (traces are record-then-stop — no retroactive capture).
-  <!-- playwright-cli: no equivalent found for agent-browser auth login — see issue Gotchas -->
-  Apply auth (vault preferred via `auth login <vault-name>`, legacy fallback), follow the workflow steps sequentially.
+  If `Auth (vault)` is present, load the captured session state and re-navigate so it takes effect: `playwright-cli -s=<session> state-load .claude-tweaks/auth-state/<vault-name>.json` then `playwright-cli -s=<session> goto {resolved_url}`. Then follow the workflow steps sequentially.
 - Act on elements: take `playwright-cli -s=<session> snapshot` to resolve the target's `eN` ref via a semantic locator inferred from the free-text step (Playwright CLI's `find` is read-only and text-only, so it cannot resolve-and-act the way a locator-flexible find would), then act on that ref (`click <eN>`, `fill <eN> "<text>"`, `check <eN>`, `hover <eN>`); assertions also go through a fresh `snapshot`, never an action-less `find`.
 - Take a screenshot after each significant step: `screenshot --filename={SCREENSHOT_PATH}/<NN>_<step>.png` (no annotation overlay under Playwright CLI).
 - On any failure: `playwright-cli -s=<session> tracing-stop` (takes no output-path argument — auto-writes under `.playwright-cli/traces/`; immediately relocate the freshly-written file to an absolute path: `{TRACES_BASE}/<session>/<timestamp>.trace`), then `close`. Include the relocated trace path in the report.

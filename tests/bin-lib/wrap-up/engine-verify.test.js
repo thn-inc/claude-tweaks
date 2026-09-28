@@ -187,7 +187,7 @@ test('AC2: gh absent renders acceptance-labeling unknown, exit code reflects onl
   const repoRoot = makeCleanRepoRoot();
   try {
     const throwingGh = () => { throw new Error('command not found: gh'); };
-    const cleanGit = (args) => (args[0] === 'log' ? 'abc1234 fix\n' : '');
+    const cleanGit = (args) => (args[0] === 'log' ? 'abc1234 fix\n\nFixes #900\n' : '');
     const result = runVerify({ runDir: originalPath, base: 'main', repoRoot, cwd: repoRoot, deps: { git: cleanGit, gh: throwingGh } });
     const acceptanceRow = result.rows.find((r) => r.check === 'acceptance-labeling');
     assert.strictEqual(acceptanceRow.result, 'unknown');
@@ -218,7 +218,7 @@ test('acceptance-labeling check renders unknown -- not fail -- when a parent-res
   writeExpectations(runDir, { version: 1, memory: [], upstream: [], deferred: ['run-dir-archival'] });
   const cleanGit = (args) => {
     if (args[0] === 'remote') return 'https://github.com/org/repo.git';
-    if (args[0] === 'log' && args.some((a) => typeof a === 'string' && a.includes('Fixes #900'))) return 'abc1234 fix\n';
+    if (args[0] === 'log') return 'abc1234 fix\n\nFixes #900\n';
     return '';
   };
   const fakeGh = (args) => {
@@ -694,13 +694,85 @@ function writeSpecFile(runDir, specId, record) {
 test('carrier-commit check passes when a Fixes #{n} commit exists in range for every resolved issue', () => {
   const runDir = makeTmpDir('verify-carrier-pass-');
   writeSpecFile(runDir, '900', 900);
-  const fakeGit = (args) => {
-    if (args[0] === 'log' && args.some((a) => a.includes('Fixes #900'))) return 'abc1234 Fix wrap-up verify verb\n';
-    return '';
-  };
+  const fakeGit = (args) => (args[0] === 'log' ? 'abc1234 Fix wrap-up verify verb\n\nFixes #900\n' : '');
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
   const row = result.rows.find((r) => r.check === 'carrier-commit');
   assert.strictEqual(row.result, 'pass');
+});
+
+// ---- widened closing-keyword set (#2676) ----
+
+test('#2676: carrier-commit check passes for a Closes #{n} commit (not just literal Fixes)', () => {
+  const runDir = makeTmpDir('verify-carrier-closes-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = (args) => (args[0] === 'log' ? 'abc1234 Close the loop\n\nCloses #900\n' : '');
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('#2676: carrier-commit check passes for a Resolves #{n} commit', () => {
+  const runDir = makeTmpDir('verify-carrier-resolves-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = (args) => (args[0] === 'log' ? 'abc1234 Wrap up\n\nResolves #900\n' : '');
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('#2676: carrier-commit check matches closing keywords case-insensitively (FIXES #{n})', () => {
+  const runDir = makeTmpDir('verify-carrier-caseinsensitive-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = (args) => (args[0] === 'log' ? 'abc1234 Ship it\n\nFIXES #900\n' : '');
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('#2676: carrier-commit check does not match a keyword against a larger number (#12 must not match inside #123)', () => {
+  const runDir = makeTmpDir('verify-carrier-numberboundary-');
+  writeSpecFile(runDir, '12', 12);
+  const fakeGit = (args) => (args[0] === 'log' ? 'abc1234 Unrelated\n\nFixes #123\n' : '');
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /12/);
+});
+
+// ---- ground-truth CLOSED-state fallback (#2676) ----
+
+test('#2676: carrier-commit check passes via ground-truth CLOSED state when no commit message matched textually', () => {
+  const runDir = makeTmpDir('verify-carrier-groundtruth-pass-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = fakeOriginGit(() => ''); // branch log: nothing found for any issue
+  const fakeGh = (args) => {
+    if (args[0] === 'api' && args[1] === 'graphql') {
+      return JSON.stringify({
+        data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [] }, timelineItems: { nodes: [{ source: { number: 950, title: 'Ship it', state: 'MERGED', merged: true, mergedAt: '2026-09-20T00:00:00Z', repository: { nameWithOwner: 'org/repo' } } } ] } } } },
+      });
+    }
+    if (args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ state: 'CLOSED' });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('#2676: carrier-commit check still fails when the ground-truth fallback finds no closing reference or the issue is still open', () => {
+  const runDir = makeTmpDir('verify-carrier-groundtruth-fail-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = fakeOriginGit(() => '');
+  const fakeGh = (args) => {
+    if (args[0] === 'api' && args[1] === 'graphql') {
+      return JSON.stringify({ data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [] }, timelineItems: { nodes: [] } } } } });
+    }
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /900/);
 });
 
 test('carrier-commit check fails when no matching commit exists for a resolved issue', () => {
@@ -729,7 +801,7 @@ test('carrier-commit check skips when no resolved issues found (conversation-bas
 test('carrier-commit check resolves issue numbers from verify-expectations.json issues key when no materialized header exists', () => {
   const runDir = makeTmpDir('verify-carrier-expissues-pass-');
   writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [900] });
-  const fakeGit = (args) => (args.some((a) => a.includes('Fixes #900')) ? 'abc1234 Fix wrap-up verify verb\n' : '');
+  const fakeGit = (args) => (args[0] === 'log' ? 'abc1234 Fix wrap-up verify verb\n\nFixes #900\n' : '');
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
   const row = result.rows.find((r) => r.check === 'carrier-commit');
   assert.strictEqual(row.result, 'pass');
@@ -748,7 +820,7 @@ test('carrier-commit check prefers a materialized header over expectations issue
   const runDir = makeTmpDir('verify-carrier-header-priority-');
   writeSpecFile(runDir, '901', 901);
   writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [900] });
-  const fakeGit = (args) => (args.some((a) => a.includes('Fixes #901')) ? 'abc1234 Fix wrap-up verify verb\n' : '');
+  const fakeGit = (args) => (args[0] === 'log' ? 'abc1234 Fix wrap-up verify verb\n\nFixes #901\n' : '');
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
   const row = result.rows.find((r) => r.check === 'carrier-commit');
   assert.strictEqual(row.result, 'pass', row.detail);
@@ -811,7 +883,7 @@ test('carrier-commit check passes from the branch log alone without ever calling
   const runDir = makeTmpDir('verify-carrier-branchlog-nogh-');
   writeSpecFile(runDir, '900', 900);
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ pr: { number: 1199 } }));
-  const fakeGit = (args) => (args.some((a) => a === '--grep=Fixes #900') ? 'abc1234 Fix wrap-up verify verb\n' : '');
+  const fakeGit = (args) => (args[0] === 'log' ? 'abc1234 Fix wrap-up verify verb\n\nFixes #900\n' : '');
   const prBodyCalls = [];
   const fakeGh = (args) => {
     if (args[0] === 'pr' && args[1] === 'view') prBodyCalls.push(args);
@@ -906,7 +978,12 @@ test('acceptance-labeling check skips (never fails) an issue listed in verify-ex
     // exempted issue must never reach gh at all.
     throw new Error(`unexpected gh call: ${JSON.stringify(args)}`);
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  // carrier-commit's own textual match must succeed here too -- otherwise
+  // its ground-truth fallback (#2676) would call `gh api graphql` for the
+  // still-missing #900, which is a real gh call this fixture's assertion
+  // (below) is scoped to acceptance-labeling's own calls, not carrier-commit's.
+  const carrierSatisfyingGit = fakeOriginGit((args) => (args[0] === 'log' ? 'abc1234 fix\n\nFixes #900\n' : ''));
+  const result = runVerify({ runDir, base: 'main', deps: { git: carrierSatisfyingGit, gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'skip', row.detail);
   assert.match(row.detail, /oversight floor/);
@@ -1347,7 +1424,7 @@ test('carrier-commit check runs git log against the injected cwd, not repoRoot',
   const fakeGit = (args, callCwd) => { calls.push({ args, cwd: callCwd }); return ''; };
   try {
     runVerify({ runDir, base: 'main', repoRoot, cwd, deps: { git: fakeGit, gh: () => '' } });
-    const call = calls.find((c) => c.args[0] === 'log' && c.args.some((a) => a.includes('Fixes #900')));
+    const call = calls.find((c) => c.args[0] === 'log');
     assert.ok(call, 'expected a git log call for the resolved issue');
     assert.strictEqual(call.cwd, cwd);
     assert.notStrictEqual(call.cwd, repoRoot);

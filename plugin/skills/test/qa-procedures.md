@@ -8,7 +8,7 @@ Structured YAML story execution with parallel agents, dependency tiers, and pass
 
 - YAML stories must exist in `stories/` (or custom dir specified with `dir=`)
 - A running dev server URL must be available
-- `playwright-cli` must be installed. There is no persistent background daemon — each `open`/`attach` call starts or reuses a named browser process directly (`_shared/browser-detection.md`'s Session/process lifecycle section). <!-- playwright-cli: no equivalent found for agent-browser doctor — see issue Gotchas --> Recovery from a stuck session: there is no diagnostic command; run `playwright-cli close-all` (or `kill-all` if that doesn't clear it) to reset the process set, then re-open.
+- `playwright-cli` must be installed. There is no persistent background daemon — each `open`/`attach` call starts or reuses a named browser process directly (`_shared/browser-detection.md`'s Session/process lifecycle section). Recovery from a stuck session: there is no diagnostic command; run `playwright-cli close-all` (or `kill-all` if that doesn't clear it) to reset the process set, then re-open.
 
 Use the `/claude-tweaks:browse` skill's operation vocabulary for all browser operations. Concrete commands live in `playwright-cli-reference.md` in that skill's directory.
 
@@ -96,19 +96,16 @@ Before dispatching any tier, resolve auth vault references for stories that requ
 
 14. **Resolve vault references (preferred path):**
     - Collect the set of unique vault names referenced across stories.
-    <!-- playwright-cli: no equivalent found for agent-browser auth list — see issue Gotchas -->
-    - Run `agent-browser auth list` once. Each row is a vault name plus a username.
-    <!-- playwright-cli: no equivalent found for agent-browser auth save — see issue Gotchas -->
-    - For every referenced vault, confirm it is present in the listing. If a vault is missing, log a warning: `Auth vault '{name}' not configured. Run: agent-browser auth save {name} --url <login-url> --username <username> --password <password>`. Stories that reference the missing vault are marked `SKIPPED` with reason `missing-auth-vault` and their dependents cascade as `SKIPPED`.
-    <!-- playwright-cli: no equivalent found for agent-browser auth login — see issue Gotchas -->
-    - The LLM never sees credentials. Vaults store passwords encrypted, locally. The runtime executes `agent-browser --session <story-id> auth login <vault-name>` after `open` and before the first interactive step (see Phase 3 prompt template in `qa-prompts.md`).
+    - Run `ls .claude-tweaks/auth-state/*.json` once. Each file's basename (minus `.json`) is a vault name (`stories/auth-resolution.md`'s convention).
+    - For every referenced vault, confirm it is present in that listing. If a vault is missing, log a warning: `Auth vault '{name}' not configured. Capture it: playwright-cli open <login-url>, log in, then playwright-cli state-save .claude-tweaks/auth-state/{name}.json, then playwright-cli close.` Stories that reference the missing vault are marked `SKIPPED` with reason `missing-auth-vault` and their dependents cascade as `SKIPPED`.
+    - The LLM never sees credentials. Session state is captured once, interactively, and stored locally as a `playwright-cli` storage-state file. The runtime loads it and re-navigates — `playwright-cli -s=<story-id> state-load .claude-tweaks/auth-state/<vault-name>.json` then `playwright-cli -s=<story-id> goto <url>` — after `open` and before the first interactive step (see Phase 3 prompt template in `qa-prompts.md`).
 
 16. **Tag hygiene capture:** `/stories` writes two repair tags this run is the consumer of. While scanning stories in this phase, record two lists for Phase 5's Story Hygiene section (`qa-reporting.md`):
-    - **`needs-auth-vault`** — stories tagged by `/stories` when no vault existed at generation time. If the referenced vault is NOW present in the `auth list` output, the story runs normally this run — add it to the `VAULT_TAG_STALE` list (the tag has healed and should be removed). If the vault is still missing, the normal `missing-auth-vault` SKIPPED path above already covers it.
+    - **`needs-auth-vault`** — stories tagged by `/stories` when no vault existed at generation time. If the referenced vault is NOW present in the `ls .claude-tweaks/auth-state/*.json` listing, the story runs normally this run — add it to the `VAULT_TAG_STALE` list (the tag has healed and should be removed). If the vault is still missing, the normal `missing-auth-vault` SKIPPED path above already covers it.
     - **`needs-review`** — stories that failed `/stories`' generation-time validation. They run normally (the tag is a flag, not a quarantine); add each to the `NEEDS_REVIEW_RAN` list with its eventual status, so Phase 5 can recommend clearing the tag (passed) or regenerating the story (failed).
 
 **Target environment check** (same pre-flight): before dispatching, classify each story's effective target host (the story `url`, or the resolved dev URL). Loopback hosts (`localhost`, `127.0.0.1`, `::1`, `*.localhost`) run everything. For a non-loopback host, `negative`-tagged stories run only when the story file's `target_env` block records `negatives_acknowledged: true` for that same host — negative stories submit injection payloads, and generation-time consent for one host does not transfer to another. Otherwise mark them `SKIPPED` with reason `unacknowledged-remote-target` (interactive runs may instead ask once, one `AskUserQuestion` for the whole run: proceed with negatives / skip negatives; headless and auto runs never ask — they skip and report).
 
-15. **Pre-flight failure handling:** <!-- playwright-cli: no equivalent found for agent-browser auth list — see issue Gotchas --> If `agent-browser auth list` itself fails (daemon down, agent-browser not installed), <!-- playwright-cli: no equivalent found for agent-browser doctor — see issue Gotchas --> abort the run and recommend `playwright-cli close-all` (or `kill-all` if that doesn't clear it) to reset the process set, then re-open. Do not attempt per-story workarounds.
+15. **Pre-flight failure handling:** If the `ls .claude-tweaks/auth-state/*.json` listing itself fails unexpectedly (not simply "no matches"), abort the run and recommend `playwright-cli close-all` (or `kill-all` if that doesn't clear it) to reset the process set, then re-open. Do not attempt per-story workarounds.
 
 → Continue with Phase 3 in `qa-prompts.md`.

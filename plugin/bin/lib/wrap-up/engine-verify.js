@@ -26,6 +26,7 @@ const { execFileSync } = require('node:child_process');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve');
 const { fetchNativeParent } = require('../issues/native-dependencies');
+const { fetchLinkedPRs } = require('../issues/linked-prs');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
@@ -317,21 +318,81 @@ function resolvedIssueNumbers(runDir) {
 // actually resolves for this run (resolvePrNumber); local-merge /
 // current-branch runs have no PR, and the branch-log commit is their only
 // carrier -- missing there stays a genuine `fail`, unchanged from before.
+//
+// GitHub's full recognized closing-keyword set (case-insensitive), each
+// optionally preceded by an `owner/repo` prefix before the `#N` reference
+// (#2676) -- built once here so the branch-log check and the PR-body
+// fallback below match identically instead of drifting the way the old
+// literal-`Fixes #N`-only check did. `\b` after `#N` stops a partial match
+// against a larger number (`#12` must not match inside `#123`).
+const CLOSING_KEYWORDS_SRC = '(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)';
+function closingKeywordRegex(n) {
+  return new RegExp(`${CLOSING_KEYWORDS_SRC}\\s+(?:[\\w.-]+/[\\w.-]+)?#${n}\\b`, 'i');
+}
+
+// Ground-truth fallback (#2676): only invoked for issues the textual match
+// (branch-log + PR-body) already failed for -- never unconditionally, so the
+// common case (a keyword match finds the carrier commit) makes no extra API
+// calls. Reuses `fetchLinkedPRs` (linked-prs.js) rather than writing a new
+// GraphQL query -- its `mentions` field already carries same-repo PRs'
+// merged state from the batched cross-reference timeline, which combined
+// with the issue's own state is the "CLOSED, backed by a closing PR
+// reference" ground truth Deliverable #3 asks for. `gh issue view` has no
+// multi-issue batched form, so the state check stays one call per
+// still-missing issue -- a small set by construction. Returns the subset of
+// `numbers` confirmed closed; degrades to returning none (never throws) on
+// any resolution failure, since this is a fallback on top of the textual
+// check, not a replacement for it.
+function groundTruthClosed(numbers, deps, cwd) {
+  if (!numbers.length) return [];
+  let remote;
+  try {
+    remote = deps.git(['remote', 'get-url', 'origin'], cwd);
+  } catch {
+    return [];
+  }
+  const repoSpec = parseRepo(remote);
+  if (!repoSpec) return [];
+  let linked;
+  try {
+    linked = fetchLinkedPRs({
+      numbers, owner: repoSpec.owner, repo: repoSpec.repo, runner: (args) => deps.gh(args, cwd),
+    });
+  } catch {
+    return [];
+  }
+  const closed = [];
+  for (const n of numbers) {
+    const entry = linked.get(n);
+    const hasClosingRef = entry && entry.mentions.some((m) => m.merged);
+    if (!hasClosingRef) continue;
+    let state;
+    try {
+      state = JSON.parse(deps.gh(['issue', 'view', String(n), '--json', 'state'], cwd)).state;
+    } catch {
+      continue;
+    }
+    if (state === 'CLOSED') closed.push(n);
+  }
+  return closed;
+}
+
 registerCheck('carrier-commit', ({ runDir, base, deps, cwd }) => {
   const issues = resolvedIssueNumbers(runDir);
   if (!issues.length) return { result: 'skip', detail: 'no resolved issue numbers found (conversation-based work, or no materialized headers and no expectations issues)' };
   const prNumber = resolvePrNumber(runDir);
   let prBody = null; // cached across issues once fetched -- never re-fetched per issue
   let prBodyFetched = false;
+  let logText;
+  try {
+    logText = deps.git(['log', `${base}..HEAD`, '--format=%B'], cwd);
+  } catch (err) {
+    return { result: 'unknown', detail: `git log failed: ${err.message}` };
+  }
   const missing = [];
   for (const n of issues) {
-    let out;
-    try {
-      out = deps.git(['log', `--grep=Fixes #${n}`, `${base}..HEAD`, '--oneline'], cwd);
-    } catch (err) {
-      return { result: 'unknown', detail: `git log failed: ${err.message}` };
-    }
-    if (out.trim()) continue;
+    const re = closingKeywordRegex(n);
+    if (re.test(logText)) continue;
 
     if (!prNumber) { missing.push(n); continue; }
     if (!prBodyFetched) {
@@ -342,7 +403,13 @@ registerCheck('carrier-commit', ({ runDir, base, deps, cwd }) => {
         return { result: 'unknown', detail: `gh pr view failed for PR #${prNumber}: ${err.message}` };
       }
     }
-    if (!prBody.includes(`Fixes #${n}`)) missing.push(n);
+    if (!closingKeywordRegex(n).test(prBody)) missing.push(n);
+  }
+  if (missing.length) {
+    const closed = new Set(groundTruthClosed(missing, deps, cwd));
+    for (let i = missing.length - 1; i >= 0; i -= 1) {
+      if (closed.has(missing[i])) missing.splice(i, 1);
+    }
   }
   if (missing.length) return { result: 'fail', detail: `no carrier commit found for #${missing.join(', #')}` };
   return { result: 'pass', detail: '' };
