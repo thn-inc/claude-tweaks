@@ -161,7 +161,7 @@ function checkAuthRateLimiting(rules) {
  * Check 2 (deliverable 2): bot management (or, at minimum, Bot Fight Mode)
  * enabled on high-value pages.
  *
- * @param {{enabled?: boolean, fightMode?: boolean, fight_mode?: boolean}|null|undefined} settings
+ * @param {{enabled?: boolean, fightMode?: boolean, fight_mode?: boolean, botFightMode?: boolean}|null|undefined} settings
  * @returns {{check: string, status: 'pass'|'fail'|'review', message: string}}
  */
 function checkBotManagement(settings) {
