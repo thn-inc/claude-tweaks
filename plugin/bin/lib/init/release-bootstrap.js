@@ -398,6 +398,24 @@ function bootstrapRelease({ root, integrationModel, branch, dryRun = false, list
     return { verdict: 'conflict', tool: 'release-please (partial files)', evidence: existing[0][0], ...empty };
   }
   const toWrite = configShaped ? files.filter(([rel]) => !lexists(path.join(root, rel))) : files;
+  const { written, conflict } = writeBootstrapFiles(root, toWrite, { dryRun });
+  if (conflict) return { verdict: 'conflict', ...conflict, written, policyRows: [] };
+  const envelope = { verdict: 'fresh', releaseType, version, written, policyRows: renderPolicyRows() };
+  if (tagsFailure) envelope.tagsFailure = tagsFailure;
+  return envelope;
+}
+
+// Writes the resolved file set for a fresh bootstrap, applying the write-safety
+// discipline accreted across three review rounds (#2253 rows 34-39): never
+// overwrite a file this run did not itself create (`wx` flag; a same-run race
+// against a sibling process that wins the EEXIST is reported as a conflict, not
+// thrown), and never write through a symlink at any path segment between root
+// and the target (assertSafeWriteTarget, plus a post-mkdirSync realpath
+// containment check that closes the TOCTOU the first check alone can't).
+// Returns { written } on success, or { written, conflict: { tool, evidence } }
+// on the sibling-race case above. Split out of bootstrapRelease so the write
+// discipline is testable and readable on its own (#2251 review/hindsight row 42).
+function writeBootstrapFiles(root, toWrite, { dryRun = false } = {}) {
   const realRoot = fs.realpathSync(root);
   const written = [];
   for (const [rel, content] of toWrite) {
@@ -418,16 +436,14 @@ function bootstrapRelease({ root, integrationModel, branch, dryRun = false, list
         // pre-write check exists for, closed here at the write itself
         // rather than left as a TOCTOU gap.
         if (err.code === 'EEXIST') {
-          return { verdict: 'conflict', tool: 'release-please (partial files)', evidence: rel, written, policyRows: [] };
+          return { written, conflict: { tool: 'release-please (partial files)', evidence: rel } };
         }
         throw err;
       }
     }
     written.push(rel);
   }
-  const envelope = { verdict: 'fresh', releaseType, version, written, policyRows: renderPolicyRows() };
-  if (tagsFailure) envelope.tagsFailure = tagsFailure;
-  return envelope;
+  return { written };
 }
 
 // Refuses to write through a symlink anywhere between root and the target:
@@ -457,5 +473,5 @@ module.exports = {
   RELEASE_STACK_TABLE, RELEASE_TYPE_VALUES, CONFLICT_MARKERS, CONFIG_FILE, MANIFEST_FILE, WORKFLOW_FILE,
   isBootstrapShaped, detectReleaseProcess, resolveReleaseType, readStackManifestVersion, seedManifestVersion,
   isValidBranchName, renderWorkflowYaml, renderConfig, renderManifest, renderPolicyRows,
-  defaultListTags, bootstrapRelease,
+  defaultListTags, bootstrapRelease, writeBootstrapFiles,
 };
