@@ -109,6 +109,15 @@ test('encodeWalkthrough: dimension mismatch throws FrameMismatchError naming the
   );
 });
 
+test('encodeWalkthrough: a decode failure names the offending path, not just the generic PngDecodeError text (review finding: crash message quality)', () => {
+  const png = buildPng(8, 6, () => [1, 2, 3]);
+  const readFile = (p) => (p === 'b.png' ? Buffer.from('not a png at all') : png);
+  assert.throws(
+    () => encodeWalkthrough({ framePaths: ['a.png', 'b.png', 'c.png'], delays: [200, 200, 400], width: null, budgetBytes: 10 * 1024 * 1024 }, { readFile }),
+    (err) => err.message.startsWith('b.png: ') && err.message.includes('bad signature'),
+  );
+});
+
 test('encodeWalkthrough: --width downscales by nearest-neighbor, height computed proportionally', () => {
   const png = buildPng(128, 96, (x, y) => [x, y, (x + y) % 256]);
   const readFile = () => png;
