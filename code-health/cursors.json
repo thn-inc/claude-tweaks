@@ -222,5 +222,9 @@
   "plugin/bin/lib/pr-bookkeeping": {
     "lastSweptMs": 1790478427255,
     "lastHash": "d14f60b76cddef926bc42ac0e4c56af1b657a4ac"
+  },
+  "plugin/bin/lib/render-tidy-report": {
+    "lastSweptMs": 1790564907844,
+    "lastHash": "d3a38905ba9083ec7c717016c361ddbc0198c0fc"
   }
 }
