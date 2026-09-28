@@ -43,8 +43,10 @@
 'use strict';
 
 const { execFileSync } = require('child_process');
-const { composeSubject, ComposeSubjectError, TYPE_PREFIX } = require('./release/subject');
-const { parseRecordFacets, normalizeLabelNames } = require('./issues/record');
+const { composeSubject, ComposeSubjectError } = require('./release/subject');
+const {
+  parseRecordFacets, typeOf, extractSection: extractSectionShared,
+} = require('./issues/record');
 const {
   parseRepo, ghAvailable, remoteUrl, repoSlug,
 } = require('./repo-resolve');
@@ -59,12 +61,11 @@ const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/nam
 // every remote-contacting call") applies unchanged to each one. #2567:
 // shared, not a local re-derivation of the same 5000 default — see
 // shared-primitives.js.
-const RECOGNIZED_TYPES = Object.keys(TYPE_PREFIX);
 // Bundle Type aggregation precedence — highest-impact type wins so a lowest-numbered
 // type:task record can never hide a type:feature (or type:bug) sibling behind a `chore:`
-// subject (#2251 F6). Mirrors TYPE_PREFIX's own key set; a fourth Type added to
-// TYPE_PREFIX in subject.js must gain a slot here too (see the RECOGNIZED_TYPES ===
-// record.TYPES pinning test in compose-subject.test.js, which fails loudly on drift).
+// subject (#2251 F6). Mirrors record.js's TYPES order; a fourth Type added there
+// must gain a slot here too (see the TYPE_PREFIX === record.TYPES pinning test
+// in compose-subject.test.js, which fails loudly on drift).
 const TYPE_PRECEDENCE = ['feature', 'bug', 'task'];
 
 const isPos = (n) => Number.isInteger(n) && n > 0;
@@ -104,12 +105,14 @@ function shellQuote(s) {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
 }
 
-// body, heading text -> that `## {heading}` section's trimmed body ('' when absent).
+// This file's own section shape — h2-only, stop-at-next-h2, trimmed (a
+// Breaking Change/Release Note/Overview section may carry nested
+// subsections that must stay inside it, unlike record.js's h2-h4/any-heading
+// default used by decomposition-crossref.js and grouping.js) — bound once so
+// every call site here (and this module's own re-export) gets it without
+// restating the options.
 function extractSection(body, heading) {
-  if (typeof body !== 'string') return '';
-  const re = new RegExp(`^## ${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[ \\t]*\\r?\\n([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, 'm');
-  const m = re.exec(body);
-  return m ? m[1].trim() : '';
+  return extractSectionShared(body, heading, { levelPattern: '2', stopPattern: '2', trim: true });
 }
 
 // Decision (#2319): a `.` immediately preceded by one of these tokens (case-insensitive,
@@ -185,17 +188,6 @@ function fetchIssueTypeGraphQL(runner, repoSpec, n) {
   } catch {
     return null;
   }
-}
-
-function typeOf(record) {
-  const native = record.issueType;
-  if (native && typeof native === 'object' && typeof native.name === 'string') {
-    const name = native.name.toLowerCase();
-    return RECOGNIZED_TYPES.includes(name) ? name : null;
-  }
-  const names = normalizeLabelNames(record.labels);
-  for (const t of RECOGNIZED_TYPES) if (names.includes(`type:${t}`)) return t;
-  return null;
 }
 
 // records[] -> the bundle's aggregated Type, by TYPE_PRECEDENCE (feature > bug > task) —

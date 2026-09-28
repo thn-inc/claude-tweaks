@@ -6,33 +6,13 @@
 // record again.
 'use strict';
 
-const { TYPE_LABELS, normalizeLabelNames } = require('../issues/record');
+const { typeOf } = require('../issues/record');
 
 const TITLE_MAX = 40;
-// [type:* label, the bare type name it encodes] — 'type:bug' -> 'bug'. Both
-// lookups in typeOf() read from this, so the prefix-stripping rule is stated once.
-const TYPES_BY_LABEL = TYPE_LABELS.map(([label]) => [label, label.split(':')[1]]);
-const RECOGNIZED_TYPES = TYPES_BY_LABEL.map(([, type]) => type);
 
 function truncateTitle(title, max = TITLE_MAX) {
   const text = typeof title === 'string' ? title : '';
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
-}
-
-// Native Issue Type (facets don't carry this — see facet-shape.js's own note
-// that Type has no shared-facet analog) takes precedence over a type:* label,
-// since a project could carry a stale label after switching work-types: native.
-function typeOf(record) {
-  const native = record.issueType;
-  if (native && typeof native === 'object' && typeof native.name === 'string') {
-    const name = native.name.toLowerCase();
-    return RECOGNIZED_TYPES.includes(name) ? name : null;
-  }
-  const names = normalizeLabelNames(record.labels);
-  for (const [label, type] of TYPES_BY_LABEL) {
-    if (names.includes(label)) return type;
-  }
-  return null;
 }
 
 function scoringBadge(facets) {

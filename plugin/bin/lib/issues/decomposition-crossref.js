@@ -20,9 +20,9 @@
 // a human did by hand in the original incident.
 
 const { extractKeyFilesSection } = require('./grouping');
+const { extractSection } = require('./record');
 const { escapeRegExp } = require('../shared-primitives');
 
-const ANY_HEADING_RE = /^#{1,6}[ \t]/;
 const BACKTICK_RE = /`([^`]+)`/g;
 // A facet/property/function-style token -- dotted or bare identifier,
 // optionally call-shaped (`deriveSlug()`) -- never a path (no `/`) and never
@@ -30,19 +30,6 @@ const BACKTICK_RE = /`([^`]+)`/g;
 const IDENTIFIER_LIKE_RE = /^[A-Za-z_][\w]*(\.[A-Za-z_][\w]*)*(\(\))?$/;
 const TEST_PATH_RE = /(^|\/)tests?\//;
 const TEST_FILE_RE = /\.test\.[jt]sx?$/;
-
-function extractSection(body, headingText) {
-  const lines = String(body || '').split('\n');
-  const headingRe = new RegExp(`^#{2,4}[ \\t]+${headingText}[ \\t]*$`);
-  const start = lines.findIndex((line) => headingRe.test(line));
-  if (start === -1) return '';
-  const out = [];
-  for (let i = start + 1; i < lines.length; i += 1) {
-    if (ANY_HEADING_RE.test(lines[i])) break;
-    out.push(lines[i]);
-  }
-  return out.join('\n');
-}
 
 /**
  * units: [{ title, body }] -- one per sub-issue in the same decomposition batch.

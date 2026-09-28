@@ -379,6 +379,62 @@ function normalizeLabelNames(labels) {
   return (labels || []).map((l) => (typeof l === 'string' ? l : l && l.name)).filter(Boolean);
 }
 
+// { labels, issueType } -> 'bug' | 'feature' | 'task' | null. Native Issue Type
+// (facets don't carry this) takes precedence over a type:* label, since a
+// project could carry a stale label after switching work-types: native.
+// Shared behind compose-subject.js's and record-graph/encode.js's own
+// independent copies (#2251 review row 19) — both consumers' RECOGNIZED_TYPES
+// derivations are pinned equal to this module's own TYPES
+// (tests/bin-lib/compose-subject.test.js's "Type vocabulary has one source of
+// truth" test), so unifying on TYPES here changes neither consumer's output.
+function typeOf(record) {
+  const native = record.issueType;
+  if (native && typeof native === 'object' && typeof native.name === 'string') {
+    const name = native.name.toLowerCase();
+    return TYPES.includes(name) ? name : null;
+  }
+  const names = normalizeLabelNames(record.labels);
+  for (const t of TYPES) if (names.includes(`type:${t}`)) return t;
+  return null;
+}
+
+const ANY_HEADING_RE = /^#{1,6}[ \t]/;
+
+// body, heading text, options -> the section text under that heading, or ''
+// when absent. Shared line-boundary finder behind compose-subject.js's
+// Breaking Change/Release Note/Overview extraction, decomposition-crossref.js's
+// Gotchas/Prerequisites extraction, and grouping.js's Key Files extraction —
+// three independent re-implementations of the same "find a heading, walk
+// lines until the next one" loop (#2251 review row 18).
+//   levelPattern: the `{...}` regex-quantifier body for this heading's own
+//     level (default '2,4' — h2 through h4, decomposition-crossref.js's and
+//     grouping.js's shared original range).
+//   stopPattern: the level-class that terminates the section (default
+//     '1,6' — any heading; compose-subject.js overrides to '2' since its own
+//     sections may carry nested subsections that must stay inside them).
+//   trim: trim the joined result (default false, decomposition-crossref.js's
+//     and grouping.js's original behavior; compose-subject.js overrides true).
+// CRLF-normalized before matching — none of the three original
+// implementations did this, so a CRLF file (this repo has at least one,
+// `[IL-160]`) could silently fail every heading match; this fixes that as a
+// side effect rather than as its own goal.
+function extractSection(body, heading, { levelPattern = '2,4', stopPattern = '1,6', trim = false } = {}) {
+  if (typeof body !== 'string') return '';
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const headingRe = new RegExp(`^#{${levelPattern}}[ \\t]+${escaped}[ \\t]*$`);
+  const stopRe = new RegExp(`^#{${stopPattern}}[ \\t]`);
+  const lines = body.replace(/\r\n/g, '\n').split('\n');
+  const start = lines.findIndex((line) => headingRe.test(line));
+  if (start === -1) return '';
+  const out = [];
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (stopRe.test(lines[i])) break;
+    out.push(lines[i]);
+  }
+  const joined = out.join('\n');
+  return trim ? joined.trim() : joined;
+}
+
 // labels (string[] | {name}[]) -> the full record-facet shape. Explicit false/null
 // defaults are set first and only ever flipped/assigned as matching labels are found
 // in a single pass over the normalized names — never inferred from truthiness. Stage
@@ -838,5 +894,5 @@ module.exports = {
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
   hasOpenNativeBlocker, CLASSIFICATION_SCORING, fenceFor, fencedBlock, parseSubIssues,
   buildNativeSubIssuesQuery, buildNativeParentQuery, partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
-  buildLinkedPRQuery, partitionByOpenLinkedPR,
+  buildLinkedPRQuery, partitionByOpenLinkedPR, typeOf, extractSection,
 };
