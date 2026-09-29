@@ -1,6 +1,7 @@
 {
-  "released": true,
-  "runId": "2026-09-29T001711-record-2699",
-  "reason": "failed: shape-gate",
-  "releasedAt": "2026-09-29T00:23:14.293Z"
+  "runId": "2026-09-29T021639-record-2699",
+  "sessionId": "97ef9ccc-6f94-5c12-8123-155abf0f89ca",
+  "claimedAt": "2026-09-29T02:18:57.781Z",
+  "ttlHours": 72,
+  "host": "vm"
 }
