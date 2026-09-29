@@ -324,20 +324,23 @@ In `plugin/skills/_shared/issue-claims.md`, under `## The bot:in-progress label`
   claim-acquiring consumer).
 ```
 
+**Size-headroom note (measured at plan-authoring time):** `issue-claims.md` is at 43,700 bytes
+against the ~46,080-byte governed-corpus ceiling (2,380 bytes headroom) — `/build`'s Common Step
+1.5 plan-audit flags this file `nearCeiling`. The replacement bullet below adds ~400 bytes
+(measured), landing the file at ~44,100 bytes — still comfortably under the ceiling, but keep
+this bullet exactly this size; do not expand it further without re-measuring.
+
 Replace it with:
 
 ```markdown
 - **Added** alongside claim acquisition — bootstrap-then-add, the same check-then-create
   pattern every label in this codebase uses (see `_shared/label-bootstrap.md` for the
   canonical snippet and the full work-record `LABELS_JSON`; `/dispatch` is the
-  claim-acquiring consumer). **`gh` transport:** `gh issue edit "$ISSUE" --add-label
-  bot:in-progress` is inherently additive — no merge step needed. **MCP transport
-  (`gh` absent):** `issue_write`'s `labels` field is a full replacement, not a merge —
-  see `_shared/github-write-transport.md`'s Full-replace hazard section. Read the
-  issue's current labels first (`issue_read`, `get_labels` method), compute the full
-  desired array with `mergeLabelNames` (`bin/lib/issues/label-write.js`, `add:
-  ['bot:in-progress']`), and pass that complete array to `issue_write` — never
-  `labels: ['bot:in-progress']` alone.
+  claim-acquiring consumer). **MCP transport (`gh` absent):** `issue_write`'s `labels` field
+  is a full replacement, not a merge — see `_shared/github-write-transport.md`'s Full-replace
+  hazard section. Read current labels first (`issue_read`, `get_labels`), merge via
+  `mergeLabelNames` (`bin/lib/issues/label-write.js`, `add: ['bot:in-progress']`), and write
+  that full array — never `labels: ['bot:in-progress']` alone.
 ```
 
 - [ ] **Step 2: Run the Task 2 conformance test to verify this file's citation now passes**
@@ -371,10 +374,19 @@ In `plugin/skills/dispatch/settle-and-merge.md`, the existing paragraph (right a
 **MCP path, file-wide.** Every label read/edit and comment operation in this file that isn't called out individually below (e.g. the `gh issue view --json labels` / `gh issue edit --remove-label` pair in Settle step 3, and the failure-comment post in step 5) uses the standard CRUD mapping from `_shared/github-write-transport.md`: `issue_write` (update mode) for label edits, `add_issue_comment` for comments, `issue_read` for reads. The one call site with special MCP-path handling — the retry-ceiling comment fetch (step 4 below) — already has its own dedicated note.
 ```
 
+**Size-headroom warning (measured at plan-authoring time — read before editing):**
+`settle-and-merge.md` is at 45,339 bytes against the ~46,080-byte governed-corpus ceiling — only
+**741 bytes of headroom**, the tightest of any file this plan touches. The replacement paragraph
+below is deliberately trimmed to add ~467 bytes (measured against the exact old/new paragraph
+text), landing at ~45,806 bytes — still under the ceiling, but with almost no margin left. **Use
+the replacement text exactly as given below — do not add further prose to this paragraph.** If a
+future change needs more room here, split this file first (a separate, scoped follow-up) rather
+than pushing this paragraph over the ceiling.
+
 Replace it with:
 
 ```markdown
-**MCP path, file-wide.** Every label read/edit and comment operation in this file that isn't called out individually below (e.g. the `gh issue view --json labels` / `gh issue edit --remove-label` pair in Settle step 3, and the failure-comment post in step 5) uses the standard CRUD mapping from `_shared/github-write-transport.md`: `issue_write` (update mode) for label edits, `add_issue_comment` for comments, `issue_read` for reads. **`issue_write`'s `labels` field is a full replacement, not a merge — see that file's Full-replace hazard section.** Every label edit in this file (step 3's `auto:merge`/`auto:merge-pending` removal, `bot:in-progress` removal via `release-claim.js`'s MCP fallback) reads the issue's current labels first, computes the full desired array with `mergeLabelNames` (`bin/lib/issues/label-write.js`), and passes that complete array to `issue_write` — never a single- or few-label array — on the MCP transport specifically; the `gh`-CLI form (`gh issue edit --remove-label`) needs no such merge, since it is inherently subtractive. The one call site with special MCP-path handling — the retry-ceiling comment fetch (step 4 below) — already has its own dedicated note.
+**MCP path, file-wide.** Every label read/edit and comment operation in this file that isn't called out individually below (e.g. the `gh issue view --json labels` / `gh issue edit --remove-label` pair in Settle step 3, and the failure-comment post in step 5) uses the standard CRUD mapping from `_shared/github-write-transport.md`: `issue_write` (update mode) for label edits, `add_issue_comment` for comments, `issue_read` for reads. **On the MCP transport, `issue_write`'s `labels` field is a full replacement, not a merge — see that file's Full-replace hazard section:** every label edit in this file (step 3's `auto:merge`/`auto:merge-pending` removal, `bot:in-progress` removal via `release-claim.js`'s MCP fallback) reads current labels first and merges via `mergeLabelNames` (`bin/lib/issues/label-write.js`) before writing — the `gh`-CLI form needs no merge, being inherently subtractive. The one call site with special MCP-path handling — the retry-ceiling comment fetch (step 4 below) — already has its own dedicated note.
 ```
 
 - [ ] **Step 2: Run the Task 2 conformance test to verify this file's citation now passes**
