@@ -38,6 +38,7 @@ Scope keywords: validateShaped, PLACEHOLDER_MARKERS, five spec-shaped sections, 
 **Files:**
 - Modify: `plugin/bin/lib/issues/materialize-format.js:9-10` (placeholder constants) and `:175-177` (exports)
 - Modify: `plugin/bin/lib/compose-record/compose.js` (whole `validateShaped` + constants + requires)
+- Modify: `docs/plugin-structure.md:39` (module-map description)
 - Test: `tests/bin-lib/compose-record/compose.test.js`
 - Test (must pass unchanged): `tests/bin-lib/issues/materialize-format.test.js`
 
@@ -219,6 +220,10 @@ function validateShaped(body) {
 
 `module.exports` becomes `{ composeBody, validateShaped, splitSections, REQUIRED_SECTIONS: SECTION_NAMES, PLACEHOLDER_MARKERS: MARKER_NAMES }` — the same exported names and values as before.
 
+- [ ] **Step 6b: Update the module map (added by plan audit Check B)**
+
+`docs/plugin-structure.md:39` — replace `+ validateShaped (reusable implementation of _shared/work-record.md's spec-shaped-body structural check: four sections present and non-empty — Current State, Deliverables, Acceptance Criteria, Release Note (#2580) — no TBD/TODO/<!-- ambiguity: marker anywhere)` with `+ validateShaped (_shared/work-record.md's spec-shaped-body structural check, decided by materialize-format.js's shapeGate — one checker (#2827) — and formatted as per-section / per-marker gap strings: four sections present and non-empty — Current State, Deliverables, Acceptance Criteria, Release Note (#2580) — no unresolved placeholder marker outside ## Original request or code spans)`. Leave the rest of the line unchanged.
+
 - [ ] **Step 7: Run the compose, CLI, and materialize-format suites**
 
 Run: `node --test tests/bin-lib/compose-record/compose.test.js tests/bin-lib/compose-record/cli.test.js tests/bin-lib/issues/materialize-format.test.js`
@@ -227,7 +232,7 @@ Expected: PASS — every pre-existing test unchanged, plus all Task 1 tests.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add plugin/bin/lib/issues/materialize-format.js plugin/bin/lib/compose-record/compose.js tests/bin-lib/compose-record/compose.test.js
+git add plugin/bin/lib/issues/materialize-format.js plugin/bin/lib/compose-record/compose.js tests/bin-lib/compose-record/compose.test.js docs/plugin-structure.md
 git commit -m "Make validateShaped delegate to the gate's shapeGate — one structural checker, per-marker naming via PLACEHOLDER_PATTERNS (refs #2827)" -m "Claude-Session: https://claude.ai/code/session_01DMuab2XkEUVKUYMn3Yigpm"
 ```
 
@@ -237,6 +242,7 @@ git commit -m "Make validateShaped delegate to the gate's shapeGate — one stru
 
 **Files:**
 - Modify: `plugin/bin/compose-record.js` (header comment lines 2-8, `USAGE`, `parseArgs`, `run`)
+- Modify: `docs/plugin-structure.md:152` (CLI reference)
 - Test: `tests/bin-lib/compose-record/cli.test.js`
 
 **Interfaces:**
@@ -358,6 +364,16 @@ and the existing `--require-shaped` branch uses `deps.stderr(shapeGapsMessage(sh
 Run: `node --test tests/bin-lib/compose-record/cli.test.js tests/bin-lib/compose-record/compose.test.js`
 Expected: PASS (all pre-existing CLI tests unchanged, including `--require-shaped: fails (exit 4)` and `malformed invocations exit 2`).
 
+- [ ] **Step 4b: Update the CLI reference (added by plan audit Check B)**
+
+`docs/plugin-structure.md:152` — directly below the existing `node plugin/bin/compose-record.js <payload-file> --out …` line, add one line in the same format:
+
+```
+node plugin/bin/compose-record.js --check <body-file>   # Validate an already-composed body against _shared/work-record.md's spec-shaped-body check (the Materialization gate's shapeGate, #2827) — used by /specify shaping mode before its write and by /tidy's Release-Note repair; exit 0 conforming (no output), 2 malformed invocation (missing/unreadable body file, or combined with a payload, --out, or --require-shaped), 4 not spec-shaped (gaps on stderr in the --require-shaped format)
+```
+
+and on the existing line, change `4 shape validation failed (--require-shaped only)` to `4 shape validation failed (--require-shaped or --check)`.
+
 - [ ] **Step 5: Real-input probe (record the numbers in the task report)**
 
 Run: `node -e "const {execFileSync}=require('child_process');const fs=require('fs');const os=require('os');const p=require('path');const {shapeGate}=require('./plugin/bin/lib/issues/materialize-format');const rs=JSON.parse(execFileSync('gh',['issue','list','--state','open','--label','ready','--limit','500','--json','number,body'],{encoding:'utf8',maxBuffer:1<<28}));const d=fs.mkdtempSync(p.join(os.tmpdir(),'chk-'));let cli=0,gate=0,rn=0;for(const r of rs){const f=p.join(d,r.number+'.md');fs.writeFileSync(f,r.body);let c=0;try{execFileSync('node',['plugin/bin/compose-record.js','--check',f],{stdio:'pipe'})}catch(e){c=e.status}if(c===0)cli++;if(shapeGate(r.body).ok)gate++;if(!/^##\s*Release Note/mi.test(r.body))rn++;}console.log(JSON.stringify({total:rs.length,cliPass:cli,gatePass:gate,missingReleaseNoteRegex:rn}))"`
@@ -366,7 +382,7 @@ Expected: `cliPass === gatePass` (the CLI and the gate agree on every real body)
 - [ ] **Step 6: Commit**
 
 ```bash
-git add plugin/bin/compose-record.js tests/bin-lib/compose-record/cli.test.js
+git add plugin/bin/compose-record.js tests/bin-lib/compose-record/cli.test.js docs/plugin-structure.md
 git commit -m "Add compose-record.js --check <body-file> — validate an existing body with the gate's checker, exit-4 contract reused (refs #2827)" -m "Claude-Session: https://claude.ai/code/session_01DMuab2XkEUVKUYMn3Yigpm"
 ```
 
