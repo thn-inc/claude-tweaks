@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-29T10:57:26.173Z",
+  "computedAt": "2026-09-29T11:14:45.113Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -65,7 +65,7 @@
       },
       {
         "number": 2663,
-        "updatedAt": "2026-09-29T10:44:20Z",
+        "updatedAt": "2026-09-29T11:11:57Z",
         "state": "OPEN"
       },
       {
@@ -465,7 +465,7 @@
         "number": 2663,
         "state": "OPEN",
         "title": "Add legal/compliance pre-launch questions to the security checklist",
-        "updatedAt": "2026-09-29T10:44:20Z",
+        "updatedAt": "2026-09-29T11:11:57Z",
         "facets": {
           "origin": null,
           "risk": null,
