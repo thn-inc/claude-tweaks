@@ -1315,7 +1315,7 @@ git commit -m "Exempt indented Applied sub-lines from the Aligned lint — skip 
 
 **Files:**
 - Modify: `plugin/skills/tidy/step-1-records.md` (worklist-rule heading at line 51; new section inserted after Shape 4, which ends at line 119)
-- Modify: `tests/tidy-needs-worklist-rule.test.js:16,17,23` (the pinned scope string)
+- Modify: `tests/tidy-needs-worklist-rule.test.js:16-23` (the pinned scope string, lines 16, 17 and 23)
 - Test: `tests/tidy-release-note-shape.test.js` (new)
 
 **Interfaces:**
