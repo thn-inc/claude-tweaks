@@ -27,6 +27,31 @@ probe, not an environment classification — it holds regardless of *why* `gh` i
 | Get a single issue by number | `gh issue view {n} --json state,...` | `issue_read` (get mode) |
 | List an issue's comments | `gh api repos/{owner}/{repo}/issues/{n}/comments?per_page=100` | `issue_read` (get_comments mode) |
 
+### Full-replace hazard
+
+**`issue_write`'s labels field is a full replacement, never a merge — unlike `gh issue edit
+--add-label`/`--remove-label`, which are inherently additive/subtractive.** A call passing
+`labels: ["bot:in-progress"]` does not add that one label — it sets the issue's ENTIRE label
+set to exactly that one-element array, silently deleting every other label the issue carried
+(#2789: this wiped `risk:*`/`size:*`/`priority:*`/`ceremony:*`/`type:*`/`shaped:*` categorization
+off two live issues in production). This applies to every `issue_write` call in `update` mode
+that includes a `labels` parameter, regardless of how many labels are changing.
+
+**The fix is always read-then-merge-then-write, never a bare single- or few-label array:**
+
+1. Read the issue's current labels — `issue_read` (`get_labels` method), or the `labels` field
+   already on a fresh `issue_read` (`get` method) response.
+2. Compute the full desired array with `mergeLabelNames` (`bin/lib/issues/label-write.js`):
+   ```bash
+   node -e "const {mergeLabelNames}=require('\${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/label-write.js');
+     console.log(JSON.stringify(mergeLabelNames(\$CURRENT_LABELS_JSON, {add: [...], remove: [...]})))"
+   ```
+3. Pass that COMPLETE array to `issue_write` — never a single-label or delta-only array.
+
+Never assume a `labels` array read earlier in the same call chain is still fresh — a genuine
+read-immediately-before-write is required, since a concurrent label change between the earlier
+read and this write would otherwise be silently reverted by the stale array.
+
 **Pull requests are not covered by this mapping.** Every row above is an issue operation — there
 is no `list_pull_requests`/`pr_read`/`pr_write` row, and none is planned: PR review-thread reads
 (`gh api graphql`), CI-check reads (`gh pr checks`), and PR list/view reads (`gh pr list`/
