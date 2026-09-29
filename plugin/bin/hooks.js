@@ -18,6 +18,7 @@ const siblingSessions = require('./lib/hooks/sibling-sessions');
 const specStatusLib = require('./lib/flow/manifest');
 const resumeFreshness = require('./lib/hooks/resume-freshness');
 const stagedInventory = require('./lib/hooks/staged-inventory');
+const sessionResidue = require('./lib/hooks/session-residue');
 const wtDetect = require('./lib/hooks/worktree-detect');
 const { closeRunState } = require('./lib/hooks/close-run-state');
 const { teardownRun } = require('./lib/hooks/teardown-run');
@@ -87,6 +88,7 @@ const USAGE = {
   'resolve-console': 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>]',
   'check-resume-freshness': 'check-resume-freshness [--run <dir>]',
   'check-staged-inventory': 'check-staged-inventory [--run <dir>]',
+  'check-session-residue': 'check-session-residue [--run <dir>]',
   'check-sibling-sessions': 'check-sibling-sessions --record <id-or-slug>',
   reconcile: 'reconcile [--dry-run] [--json] [--mcp-reachable] [--checks <c1,c2,...>]',
   'reconcile-summary': 'reconcile-summary',
@@ -1170,6 +1172,47 @@ async function main(argv) {
     } else {
       process.stdout.write(`claude-tweaks: staged inventory MISMATCH for ${runId} — ${result.missing.length} of ${result.checked} STAGED entries missing from staged/: ${result.missing.join(', ')}\n`);
     }
+    return 0;
+  }
+  if (cmd === 'check-session-residue') {
+    // #2736: read-only companion to session-start.js's own advisory banners
+    // (session-residue.js is the shared detection both call into) — wrap-up's
+    // Review Console runs this to re-check, at render time, whether any
+    // residue flagged at this session's start is still unresolved, so a long
+    // session doesn't rely on that one-time SessionStart notice for its whole
+    // duration. `--run`, when given, excludes that run dir from both lists —
+    // a wrap-up console must never report its own in-flight run as residue.
+    const { runDir, invalidRunArg, worktreeLocalFallback } = resolveRunArg(argv.slice(3), process.cwd(), process.env);
+    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+    if (invalidRunArg) {
+      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — session residue not checked\n`);
+      return 0;
+    }
+    const root = pluginRoot();
+    const staleEntries = sessionResidue.collectStaleRuns(process.cwd(), { exclude: runDir, pluginRoot: root });
+    const approvableEntries = sessionResidue.collectApprovableStandalone(process.cwd(), { exclude: runDir });
+    if (!staleEntries.length && !approvableEntries.length) {
+      process.stdout.write('claude-tweaks: no pending residue from session start\n');
+      return 0;
+    }
+    // Each line names the item; the resolution command follows on its own
+    // line right after — an ordinary stale entry's own line carries no
+    // command of its own (only a shipped-unclosed verdict embeds one), so
+    // this mirrors session-start.js's own banner trailer rather than
+    // leaving that category's rows without a pointer.
+    const blocks = [];
+    if (staleEntries.length) {
+      blocks.push(
+        `${staleEntries.map((e) => e.line).join('\n')}\n` +
+          `  resolve with: review {run}/decisions.md and staged/ to resume, or close a finished run with: node "${root}/bin/hooks.js" close-run --run <dir>`,
+      );
+    }
+    if (approvableEntries.length) {
+      blocks.push(approvableEntries.map((e) => e.line).join('\n'));
+    }
+    process.stdout.write(
+      `claude-tweaks: pending residue from session start still unresolved:\n${blocks.join('\n')}\n`,
+    );
     return 0;
   }
   if (cmd === 'check-sibling-sessions') {

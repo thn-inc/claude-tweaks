@@ -81,7 +81,7 @@ test('#1143: --help anywhere in the argument list intercepts, not just as the fi
 });
 
 test('#1143: --help on every --run-accepting verb writes nothing to run-state.json (AC1)', () => {
-  const runAccepting = ['record-worktree', 'record-pr', 'spec-status', 'close-run', 'teardown-run', 'archive-run', 'check-resume-freshness', 'check-staged-inventory', 'sweep-shadow'];
+  const runAccepting = ['record-worktree', 'record-pr', 'spec-status', 'close-run', 'teardown-run', 'archive-run', 'check-resume-freshness', 'check-staged-inventory', 'check-session-residue', 'sweep-shadow'];
   for (const verb of runAccepting) {
     const { dir, run } = projectWithRun();
     const before = readRunState(run);
