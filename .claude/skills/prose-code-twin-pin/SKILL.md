@@ -6,13 +6,13 @@ description: Use when reviewing a project skill, or authoring one, that restates
 # Prose-code-twin-pin
 
 A project skill's markdown prose sometimes restates a table that also exists as executable code:
-an enum, a `switch`, a lookup object, a closed vocabulary. The two copies can drift apart —
-someone adds a fourth case to the code and forgets the prose row, or renames a prose column with
-no code changed to match — and nothing catches it, because the prose is never executed and the
-code is never read as documentation. A `/claude-tweaks:reflect` hindsight finding on #2253 (this
-skill's own originating issue, #2792) named exactly this pattern from two records built in the
-same run — #2251's `TYPE_PREFIX` pin and #2253's stack-table pin — which is the evidence this
-pattern is real and recurring, not hypothetical.
+an enum, a `switch`, a lookup object, a closed vocabulary. The two copies can drift apart: someone
+adds a fourth case to the code and forgets the prose row, or renames a prose column with no code
+changed to match. Nothing catches it, because the prose is never executed and the code is never
+read as documentation. A `/claude-tweaks:reflect` hindsight finding on #2253 (this skill's own
+originating issue, #2792) named exactly this pattern from two records built in the same run —
+#2251's `TYPE_PREFIX` pin and #2253's stack-table pin — which is the evidence this pattern is
+real and recurring, not hypothetical.
 
 ## The check
 
@@ -63,8 +63,8 @@ fails loudly instead of silently drifting from the code it once matched.
 `plugin/bin/lib/compose-subject.js:69`'s `TYPE_PRECEDENCE = ['feature', 'bug', 'task']` is a
 *third* copy of the same closed vocabulary `TYPES`/`TYPE_PREFIX` above already key off — used to
 rank a bundle's aggregated Type (line 199) — with no conformance test pinning it against either.
-Grepping `tests/**/*.js` for `TYPE_PRECEDENCE` returns nothing. This is real and currently open;
-fixing it is out of scope for this skill (which only detects and names the pattern).
+Grepping `tests/**/*.js` for `TYPE_PRECEDENCE` returns nothing — fixing it is out of scope for
+this skill (which only detects and names the pattern).
 
 ## Existing coverage, checked
 
