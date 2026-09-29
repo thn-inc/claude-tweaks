@@ -115,7 +115,7 @@ test('renderItem: a bare "release-note" tag renders as [release-note], never dou
     record: null,
     title: 'Widget cache eviction rewrite',
     action: 'Fill Release Note (insert one ## Release Note section; labels unchanged)',
-    command: 'insert into specs/2786-widget-cache-eviction-rewrite.md — release-note-repair.md\nMade widget lookups faster.',
+    command: 'insert into record 2786 — release-note-repair.md\nMade widget lookups faster.',
   });
   assert.ok(rendered.startsWith('1  [release-note]  #—  Widget cache eviction rewrite'));
   assert.ok(!rendered.includes('[[release-note]]'));
@@ -130,7 +130,9 @@ test('render + lint: a Stage-tier [release-note] finding with a long bounds-pass
     + 'first instead of oldest-inserted, cutting p99 lookup latency under heavy churn.';
   assert.ok(longLine.length > 96, 'fixture line must actually need truncation to prove the split works');
   const truncated = `${longLine.slice(0, 96)}…`;
-  const ref = 'specs/2786-widget-cache-eviction-rewrite.md'; // a local-files path ref
+  // A local-files record's short ref is `record {id}`, never its file path: the path's slug alone
+  // can reach 60 characters (local-store.js deriveSlug), which would push this first line past 100.
+  const ref = 'record 99999';
   const approve = renderApproveSection([{
     tag: 'release-note',
     record: null,

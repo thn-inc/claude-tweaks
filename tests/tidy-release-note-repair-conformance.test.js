@@ -45,6 +45,13 @@ test('release-note-repair.md truncates the Applied sub-line to fit the report li
   assert.ok(SUB.includes('truncated to 96 characters'));
 });
 
+test('the Stage-tier command\'s first line carries a bounded ref, never a local-files file path', () => {
+  const text = flat(SUB);
+  assert.ok(text.includes('"command": "insert into {short-ref} — release-note-repair.md'));
+  assert.ok(text.includes('`{short-ref}` is `#{n}` on `github-issues` and `record {id}` on `local-files` — never the record\'s file path'));
+  assert.ok(!text.includes('"insert into {ref} —'));
+});
+
 test('step-6-interactive.md names release-note-repair.md for [release-note] rows, never recomposing the line', () => {
   const interactive = read('plugin/skills/tidy/step-6-interactive.md');
   assert.ok(interactive.includes('`[release-note]` rows are staged and rendered exactly as `release-note-repair.md` describes'));

@@ -43,15 +43,16 @@ Compose the line, then stage one item per record with `stage-item.js` (`step-6-a
 section), `--id tidy-release-note-{id}`. The `.md` holds the record ref, `Proposed line: {line}`
 and `Premise sha256: {sha}`. The sidecar is `[{"tag": "release-note", "record": {n, or null on
 local-files}, "title": …, "action": "Fill Release Note (insert one ## Release Note section; labels
-unchanged)", "command": "insert into {ref} — release-note-repair.md\n{line, truncated to 96
+unchanged)", "command": "insert into {short-ref} — release-note-repair.md\n{line, truncated to 96
 characters plus `…`}"}]` (a bare tag — `render-tidy-report.js` brackets it itself, as it does every
-tag). The command is two lines, mirroring the Applied row's own sub-line convention (`## Audit and
-report` below): a short, ref-bearing first line the report lint's Width rule can always fit,
+tag). `{short-ref}` is `#{n}` on `github-issues` and `record {id}` on `local-files` — never the
+record's file path, whose slug alone can run to 60 characters. The command is two lines, mirroring
+the Applied row's own sub-line convention (`## Audit and report` below): a short, bounded first
+line the report lint's Width rule can always fit,
 followed by the composed line on its own display line, truncated the same way — the composed line
 is free text with no length bound (`specify/spec-template.md`'s Release Note guidance), so
 embedding it inline in the first line would blow the report lint's 100-character cap for any line
-long enough or, on `local-files`, any path `{ref}` long enough; splitting it this way keeps the row
-lint-clean regardless. The line still reaches the Approve row in full when short enough, or
+long enough; splitting it this way, with a bounded first line, keeps the row lint-clean regardless. The line still reaches the Approve row in full when short enough, or
 truncated with the rest visible only at approval time otherwise — either way the human reading it
 sees what will be written, not only that something will; `action` stays exactly the `Proposed:`
 text `decision-markers.md` writes and Shape 4.5's comment check matches, unchanged. An approved
