@@ -87,3 +87,39 @@ test('docs/plugin-structure.md lists the sub-file, the module, and the CLI', () 
   assert.ok(STRUCTURE.includes('plugin/bin/lib/release-note-repair/ → detect.js'));
   assert.ok(STRUCTURE.includes('node plugin/bin/release-note-repair.js scan|repair|verify'));
 });
+
+const STEP6 = read('plugin/skills/tidy/step-6-auto.md');
+const CONTRACT = read('plugin/skills/_shared/auto-mode-contract.md');
+
+test('step-6-auto.md: Fill Release Note is Stage / Auto-apply / Auto-apply with its stated exemption', () => {
+  const row = STEP6.split('\n').find((l) => l.startsWith('| **Fill Release Note** ('));
+  assert.ok(row, 'routing row missing');
+  assert.match(row, /\| Stage \| Auto-apply \| Auto-apply — /);
+  assert.ok(row.includes('exemption from the reversibility floor'));
+  assert.ok(row.includes('`{run-dir}/snapshots/`'));
+  assert.ok(row.includes('Open parent gate row above'));
+  const parentGate = STEP6.indexOf('| **Open parent gate** (');
+  assert.ok(parentGate !== -1 && STEP6.indexOf(row) > parentGate, 'row must follow the Open parent gate row');
+});
+
+test('step-6-auto.md: the preamble names the carve-out and Column shape allows the sub-line', () => {
+  assert.ok(flat(STEP6).includes('bar that contract\'s one named carve-out, the **Fill Release Note** row below'));
+  assert.ok(flat(STEP6).includes('An Applied row may carry one three-space-indented detail sub-line'));
+});
+
+test('auto-mode-contract.md names the carve-out inside the Never-reversible section', () => {
+  const start = CONTRACT.indexOf('### Never-reversible (auto-FORBIDDEN, regardless of mode)');
+  const section = CONTRACT.slice(start, CONTRACT.indexOf('## What `auto` silences', start));
+  assert.match(section, /Network calls beyond reads \(no API writes, no message sends\) — except `\/claude-tweaks:tidy`'s Release Note repair/);
+  assert.ok(section.includes('**Fill Release Note**'));
+});
+
+test('sweep, the tidy journey, and the skill graph restate the new tier truthfully', () => {
+  assert.ok(read('plugin/skills/sweep/SKILL.md').includes('Arm-ready-PR, and Fill-Release-Note'));
+  const journey = read('docs/journeys/tidy-standalone-auto-report.md');
+  assert.ok(journey.includes('the additive Release Note repair (`[release-note]`, snapshot first) auto-apply'));
+  assert.ok(journey.includes('  - plugin/skills/tidy/release-note-repair.md'));
+  assert.ok(journey.includes('Updated during build of #2828'));
+  const graphRow = read('docs/skill-graph.md').split('\n').find((l) => l.startsWith('| `/tidy` | Folds `unsynced: true`'));
+  assert.ok(graphRow.includes('Shape 4.5'));
+});

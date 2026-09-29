@@ -147,7 +147,7 @@ The hook surface (`bin/hooks.js`, see CLAUDE.md Conventions → Hooks) mechanize
 - `git push` to shared branches
 - Creating work records (filing new records on the user's tracker) — except scheduled health-skill born-ready records (see `_shared/work-record.md`'s born-ready rule) and queue-write proposals when the `autonomy` ceiling's `queueWriteAutoFile` bookkeeping capability is unlocked (`trusted`+ — see `_shared/autonomy-ceiling.md`)
 - Originating a work-record grant (`auto:build` / `auto:merge`) — except via `/claude-tweaks:backlog refine`'s headless posture, under the `autonomy` ceiling's `unattended` tier plus its explicit `grant-origination-enabled` opt-in, for an agent-filed class carrying a `clean` trust verdict that also clears a content-aware `grant-check` and every floor (see `_shared/autonomy-ceiling.md`, `backlog/refine-headless.md`). Both keys default off; a human sets them deliberately in `policy.yml`
-- Network calls beyond reads (no API writes, no message sends)
+- Network calls beyond reads (no API writes, no message sends) — except `/claude-tweaks:tidy`'s Release Note repair (`tidy/step-6-auto.md`'s **Fill Release Note** row): one additive `## Release Note` section on a `ready` record, the pre-write body snapshotted first and the post-write diff and label set verified (#2828)
 - Modifying project-policy values — `.claude-tweaks/policy.yml`'s keys, and the
   work-record keys still resident in CLAUDE.md (`work-backend`, `work-types`,
   `record-staleness-weeks`)
