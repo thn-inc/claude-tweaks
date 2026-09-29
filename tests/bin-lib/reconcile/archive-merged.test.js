@@ -2531,6 +2531,17 @@ test('archiveRunDir: differing spec-{n}/work twin returns work-twin-conflict and
   const tracked = trackedFiles(root);
   assert.ok(tracked.includes(`.claude-tweaks/pipelines/${runId}/spec-1/work/1-spec.md`));
   assert.ok(tracked.includes(`.claude-tweaks/pipelines/archive/${runId}/spec-1/work/1-spec.md`));
+  // #2816 follow-up: `tracked` above is a git-index read (git ls-files) —
+  // it stays true even if the archive twin's file was deleted from disk,
+  // since git does not notice a working-tree deletion until a status/add
+  // runs. This call's own `refuseAfterMarker` (added by #2816) must not
+  // have swept the pre-existing archive twin off disk while cleaning up
+  // its "archiving" marker on this genuinely-content refusal.
+  assert.equal(
+    fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId, 'spec-1', 'work', '1-spec.md')),
+    true,
+    'the pre-existing archive twin must still exist on disk, not just in the git index',
+  );
 });
 
 // Same idempotent-twin fix, single-spec (top-level work/) layout — the more

@@ -771,6 +771,15 @@ const GIT_TIMING_REFUSAL_REASONS = new Set([
 function archiveRunDir(root, runDir) {
   const runId = path.basename(runDir);
   const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  // #2816 follow-up: captured before mkdirSync below so `refuseAfterMarker`
+  // can tell "this call created archiveDir" from "archiveDir already held
+  // real content before this call ever started" (e.g. a prior partial
+  // archive attempt's twin — exactly the shape `work-twin-conflict` guards
+  // against). Only the former is safe to blanket-`rmSync` on refusal; a
+  // pre-existing archiveDir's content did not come from THIS call's
+  // `movedEntries`, so an empty `movedEntries` says nothing about whether
+  // archiveDir itself is empty.
+  const archiveDirPreexisted = fs.existsSync(archiveDir);
   try {
     fs.mkdirSync(archiveDir, { recursive: true });
   } catch {
@@ -805,14 +814,23 @@ function archiveRunDir(root, runDir) {
   // deterministic — a concurrent attempt would hit the identical refusal
   // regardless of whether the twin survives, so there is no race left to
   // protect). Wrap every such return: when nothing has landed in
-  // `movedEntries` yet by the time this fires, remove the twin and leave
-  // the filesystem exactly as this call found it. Once `movedEntries` is
-  // non-empty, some content genuinely lives at `archiveDir` now — a later
-  // refusal must not delete that, even though a fully-reverted one may
-  // have left mkdir'd (empty) spec subdirectories behind, which is
-  // cosmetic, not a stray archive twin.
+  // `movedEntries` yet by the time this fires, AND this call is the one
+  // that created `archiveDir` in the first place (`!archiveDirPreexisted`),
+  // remove the twin and leave the filesystem exactly as this call found it.
+  // Once `movedEntries` is non-empty, some content genuinely lives at
+  // `archiveDir` now — a later refusal must not delete that, even though a
+  // fully-reverted one may have left mkdir'd (empty) spec subdirectories
+  // behind, which is cosmetic, not a stray archive twin. And when
+  // `archiveDirPreexisted` is true — a prior partial-archive attempt (or a
+  // genuine, pre-existing archive twin, exactly `work-twin-conflict`'s own
+  // case) already put real content at `archiveDir` before this call ever
+  // ran — an empty `movedEntries` this call built says nothing about
+  // whether `archiveDir` itself is empty; blanket-deleting it would destroy
+  // content this call never created and cannot safely diagnose as
+  // disposable. That case is left exactly as every refusal left it
+  // pre-#2816: refused, `archiveDir` untouched.
   function refuseAfterMarker(reason, extra) {
-    if (movedEntries.length === 0 && !GIT_TIMING_REFUSAL_REASONS.has(reason)) {
+    if (!archiveDirPreexisted && movedEntries.length === 0 && !GIT_TIMING_REFUSAL_REASONS.has(reason)) {
       try { fs.rmSync(archiveDir, { recursive: true, force: true }); } catch { /* best-effort */ }
     }
     return refusal(reason, extra);
