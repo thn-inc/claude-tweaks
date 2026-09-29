@@ -37,7 +37,7 @@
 - Consumes: nothing from other tasks (first task).
 - Produces: `mergeLabelNames(current, { add = [], remove = [] } = {})` — a pure function returning a new `string[]`: `current` with every name in `remove` dropped, then every name in `add` appended unless it is already present (post-removal) or itself named in `remove`. Exported alongside a `ensureLabelNameArray(value, argName)` guard that throws `TypeError` when `value` is not an array of non-empty strings. Later tasks (2-5, all documentation) reference this function by name and file path in prose; no other task calls it programmatically.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```js
 // tests/bin-lib/issues/label-write.test.js
@@ -118,12 +118,12 @@ test('ensureLabelNameArray names the offending argument in its error message', (
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `node --test tests/bin-lib/issues/label-write.test.js`
 Expected: FAIL with "Cannot find module '../../../plugin/bin/lib/issues/label-write'"
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```js
 // plugin/bin/lib/issues/label-write.js
@@ -175,12 +175,12 @@ function mergeLabelNames(current, { add = [], remove = [] } = {}) {
 module.exports = { mergeLabelNames, ensureLabelNameArray };
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `node --test tests/bin-lib/issues/label-write.test.js`
 Expected: PASS (14 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugin/bin/lib/issues/label-write.js tests/bin-lib/issues/label-write.test.js
@@ -199,7 +199,7 @@ git commit -m "Add mergeLabelNames helper for MCP-transport label writes — ref
 - Consumes: `plugin/bin/lib/issues/label-write.js`'s `mergeLabelNames` (Task 1) — referenced by name and path in the new prose, not called from this task.
 - Produces: an explicit warning paragraph and read-then-merge snippet in `github-write-transport.md`, anchored by a stable heading (`### Full-replace hazard`) that Tasks 3-5's citations point at by name, and a literal sentence fragment (`labels field is a full replacement, never a merge`) that this task's own conformance test and Tasks 3-5's each pin.
 
-- [ ] **Step 1: Write the failing conformance test**
+- [x] **Step 1: Write the failing conformance test**
 
 ```js
 // tests/github-write-transport-label-merge-conformance.test.js
@@ -254,12 +254,12 @@ for (const rel of CITING_FILES) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/github-write-transport-label-merge-conformance.test.js`
 Expected: FAIL — `github-write-transport.md carries the full-replace hazard heading` and every other assertion fail (text not present yet)
 
-- [ ] **Step 3: Add the hazard section to `github-write-transport.md`**
+- [x] **Step 3: Add the hazard section to `github-write-transport.md`**
 
 Insert a new subsection immediately after the `## CRUD mapping` table (after its final row, before the "**Pull requests are not covered...**" paragraph):
 
@@ -290,12 +290,12 @@ read-immediately-before-write is required, since a concurrent label change betwe
 read and this write would otherwise be silently reverted by the stale array.
 ```
 
-- [ ] **Step 4: Run test to verify Task 2's own assertions pass (the three citation tests still fail — expected until Tasks 3-5)**
+- [x] **Step 4: Run test to verify Task 2's own assertions pass (the three citation tests still fail — expected until Tasks 3-5)**
 
 Run: `node --test tests/github-write-transport-label-merge-conformance.test.js`
 Expected: the 4 `github-write-transport.md ...` tests PASS; the 3 `cites github-write-transport.md's full-replace hazard` tests still FAIL (Tasks 3-5 not yet done)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugin/skills/_shared/github-write-transport.md tests/github-write-transport-label-merge-conformance.test.js
@@ -313,7 +313,7 @@ git commit -m "Document issue_write's full-replace label hazard in the CRUD mapp
 - Consumes: Task 2's `### Full-replace hazard` section (cited, not restated).
 - Produces: an explicit MCP-transport instruction under "The bot:in-progress label" section's **Added** bullet, so Task 2's conformance test's citation check for this file passes.
 
-- [ ] **Step 1: Locate and edit the "Added" bullet**
+- [x] **Step 1: Locate and edit the "Added" bullet**
 
 In `plugin/skills/_shared/issue-claims.md`, under `## The bot:in-progress label`, the existing text reads:
 
@@ -343,12 +343,12 @@ Replace it with:
   that full array — never `labels: ['bot:in-progress']` alone.
 ```
 
-- [ ] **Step 2: Run the Task 2 conformance test to verify this file's citation now passes**
+- [x] **Step 2: Run the Task 2 conformance test to verify this file's citation now passes**
 
 Run: `node --test tests/github-write-transport-label-merge-conformance.test.js`
 Expected: `plugin/skills/_shared/issue-claims.md cites github-write-transport.md's full-replace hazard` PASSES; the other two citation tests still FAIL
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add plugin/skills/_shared/issue-claims.md
@@ -366,7 +366,7 @@ git commit -m "Fix claim-bootstrap's MCP-transport bot:in-progress add to read-t
 - Consumes: Task 2's `### Full-replace hazard` section (cited, not restated).
 - Produces: the "MCP path, file-wide" paragraph updated to name the hazard explicitly, so Task 2's conformance test's citation check for this file passes.
 
-- [ ] **Step 1: Edit the "MCP path, file-wide" paragraph**
+- [x] **Step 1: Edit the "MCP path, file-wide" paragraph**
 
 In `plugin/skills/dispatch/settle-and-merge.md`, the existing paragraph (right after the file's opening notes, before `## Step 6: Settle`) reads:
 
@@ -389,12 +389,12 @@ Replace it with:
 **MCP path, file-wide.** Every label read/edit and comment operation in this file that isn't called out individually below (e.g. the `gh issue view --json labels` / `gh issue edit --remove-label` pair in Settle step 3, and the failure-comment post in step 5) uses the standard CRUD mapping from `_shared/github-write-transport.md`: `issue_write` (update mode) for label edits, `add_issue_comment` for comments, `issue_read` for reads. **On the MCP transport, `issue_write`'s `labels` field is a full replacement, not a merge — see that file's Full-replace hazard section:** every label edit in this file (step 3's `auto:merge`/`auto:merge-pending` removal, `bot:in-progress` removal via `release-claim.js`'s MCP fallback) reads current labels first and merges via `mergeLabelNames` (`bin/lib/issues/label-write.js`) before writing — the `gh`-CLI form needs no merge, being inherently subtractive. The one call site with special MCP-path handling — the retry-ceiling comment fetch (step 4 below) — already has its own dedicated note.
 ```
 
-- [ ] **Step 2: Run the Task 2 conformance test to verify this file's citation now passes**
+- [x] **Step 2: Run the Task 2 conformance test to verify this file's citation now passes**
 
 Run: `node --test tests/github-write-transport-label-merge-conformance.test.js`
 Expected: `plugin/skills/dispatch/settle-and-merge.md cites github-write-transport.md's full-replace hazard` PASSES; the wrap-up citation test still FAILS
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add plugin/skills/dispatch/settle-and-merge.md
@@ -412,7 +412,7 @@ git commit -m "Fix Settle's MCP-transport label edits to read-then-merge — ref
 - Consumes: Task 2's `### Full-replace hazard` section (cited, not restated).
 - Produces: step 4's gh-absent fallback note updated to name the hazard explicitly, so Task 2's conformance test's citation check for this file passes (closing the full sweep of all three known call sites named in the spec's Deliverable 1).
 
-- [ ] **Step 1: Edit step 4's gh-absent fallback sentence**
+- [x] **Step 1: Edit step 4's gh-absent fallback sentence**
 
 In `plugin/skills/wrap-up/cleanup-procedures-execution.md`, step 4's existing closing sentence reads:
 
@@ -438,17 +438,17 @@ Replace it with:
    the MCP fallback specifically.
 ```
 
-- [ ] **Step 2: Run the full conformance test to verify all three citations now pass**
+- [x] **Step 2: Run the full conformance test to verify all three citations now pass**
 
 Run: `node --test tests/github-write-transport-label-merge-conformance.test.js`
 Expected: PASS (all tests, including all three citation tests)
 
-- [ ] **Step 3: Run the full test suite**
+- [x] **Step 3: Run the full test suite**
 
 Run: `npm test`
 Expected: PASS — no regressions
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add plugin/skills/wrap-up/cleanup-procedures-execution.md
