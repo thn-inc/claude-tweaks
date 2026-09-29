@@ -156,7 +156,7 @@ The user can select multiple options (e.g., Bold + Delightful). Map the answers:
 | `6` (or no answer) | `none` |
 | `1,4` (multiple) | `bold, delightful` (comma-separated) |
 
-Record the chosen value(s) — the calling mode's compose-then-write-once step (decomposition mode's Step 3 in `decomposition-mode.md`; Shaping mode's own Metadata block / Compose-then-write-once subsections in `shaping-mode-stamping.md`, #1346's split of `shaping-mode.md`) writes them into the record's body-metadata block.
+Record the chosen value(s) — the calling mode's compose-then-write-once step (decomposition mode's Step 3 in `decomposition-mode-closeout.md`; Shaping mode's own Metadata block / Compose-then-write-once subsections in `shaping-mode-stamping.md`, #1346's split of `shaping-mode.md`) writes them into the record's body-metadata block.
 
 **For multi-record decompositions:** ask the question once per design doc and apply the same intent across all generated sub-issue records. If the user wants different intents per sub-issue, they can edit individual records after Step 3 (`gh issue edit` / `writeRecord`).
 
@@ -203,6 +203,6 @@ When no run directory resolves, note the outcome in the returned output only, as
 
 The tool's built-in `Other` field covers any UI stack not listed above (e.g. `Material UI`, `Chakra UI`, a project-specific design system) — the same escape hatch `step-09-establish-github-remote.md` documents for its own org-selection question. Map the answer to the `Ui-stack:` value verbatim: a preset option writes that option's label text (`shadcn/ui + Tailwind`, `Plain CSS / no library`); Option 3 writes `none — no preference, defer to reference codebase`; an `Other` answer writes the user's typed text verbatim.
 
-Record the chosen value — the calling mode's compose-then-write-once step (decomposition mode's Step 3 in `decomposition-mode.md`; Shaping mode's own Metadata block / Compose-then-write-once subsections in `shaping-mode-stamping.md`, #1346's split of `shaping-mode.md`) writes it into the record's body-metadata block, immediately after `Design-intent:`.
+Record the chosen value — the calling mode's compose-then-write-once step (decomposition mode's Step 3 in `decomposition-mode-closeout.md`; Shaping mode's own Metadata block / Compose-then-write-once subsections in `shaping-mode-stamping.md`, #1346's split of `shaping-mode.md`) writes it into the record's body-metadata block, immediately after `Design-intent:`.
 
 **For multi-record decompositions:** ask the question once per design doc and apply the same UI stack across all generated sub-issue records covering a frontend surface — the same batching rule Step 2.5c already applies to `Design-intent:`.
