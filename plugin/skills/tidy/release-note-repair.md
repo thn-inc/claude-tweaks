@@ -61,8 +61,9 @@ matches. An approved item runs the Auto path with that line and sha.
      SessionStart banner, `--approve`, and `backlog attention` all read as awaiting approval. With
      no run directory (interactive mode), `{dest}` is `--snapshot-file` with the session-tmp path
      `tidy-release-note-{id}.original.md`. The CLI refuses a repair with neither.
-3. **Branch on the exit.** Every skip/failure branch below reports two things, never one: a Step
-   7.5 checklist line, and — whenever a run directory resolved — a `decisions.md` SKIP entry
+3. **Branch on the exit.** Every skip/failure branch below reports two things, never one: a report
+   line (a Step 7.5 checklist line for exit 5, a Yours row for every other branch, as each branch
+   names), and — whenever a run directory resolved — a `decisions.md` SKIP entry
    (`node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --status SKIP --step "Step 7 Fill Release Note (skipped)" --text "{ref}: {stderr reason} → not written"`); nothing is silent.
    - 0: continue to Step 4.
    - 4: recompose once (`## Compose the line` above). A second exit 4 routes exactly like exit 6 —
