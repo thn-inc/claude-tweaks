@@ -137,6 +137,10 @@ function prepareRepair({ liveBody, expectSha, line, checkCli } = {}) {
   return { outcome: 'ready', body: applied.body, mode: applied.mode, line: bounds.line };
 }
 
+// verifyWritten's labels-only problem prefix: release-note-repair.js routes a lone problem
+// starting with it to exit 8 instead of 7, so the wording lives in one place.
+const LABELS_CHANGED = 'the label set changed';
+
 function verifyWritten({ before, after, line, checkCli } = {}) {
   const body = after && typeof after.body === 'string' ? after.body : null;
   if (body === null) return ['the post-write read carries no body'];
@@ -149,8 +153,8 @@ function verifyWritten({ before, after, line, checkCli } = {}) {
   }
   const was = labelNames(before && before.labels).sort();
   const now = labelNames(after.labels).sort();
-  if (!isDeepStrictEqual(was, now)) problems.push(`the label set changed: before [${was.join(', ')}], after [${now.join(', ')}]`);
+  if (!isDeepStrictEqual(was, now)) problems.push(`${LABELS_CHANGED}: before [${was.join(', ')}], after [${now.join(', ')}]`);
   return problems;
 }
 
-module.exports = { RepairError, applyReleaseNote, onlyReleaseNoteAdded, prepareRepair, verifyWritten };
+module.exports = { RepairError, LABELS_CHANGED, applyReleaseNote, onlyReleaseNoteAdded, prepareRepair, verifyWritten };

@@ -103,9 +103,9 @@ item runs the Auto path with that line and sha.
      Yours **review** row naming `{path}` and `{snapshot}`, plus the SKIP entry. The row's command
      is the manual undo `cp {snapshot} {path}` — offered for a human to run after confirming it's
      still safe, never executed automatically.
-   - 8 (`local-files` only): the CLI's own re-read verification failed, and the file on disk no
-     longer holds the bytes it spliced — something else wrote to `{path}` between this call's write
-     and its own re-read. The CLI refuses to restore automatically: overwriting now would stomp
+   - 8 (`local-files` only): the file on disk no longer holds the bytes the CLI spliced —
+     something else wrote to `{path}` between this call's write and its own re-read, whether or not
+     that content would otherwise verify; it is never reported as this run's repair. The CLI refuses to restore automatically: overwriting now would stomp
      whatever that other write produced, on top of not even knowing whether the original premise
      (the pre-write snapshot) is still the right base to restore to. Yours **review** row naming
      `{path}`, `{snapshot}`, and the stderr's byte-length delta between what's on disk now and what

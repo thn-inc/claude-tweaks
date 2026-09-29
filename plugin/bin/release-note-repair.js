@@ -136,7 +136,9 @@ function repairGithub(o, deps, usage, rawLine, dest) {
   // A reused --out path never carries a previous record's body past this call's own exit —
   // unlink before any work, not just on a failure branch, so an exit-5/6 leaves --out absent
   // rather than stale.
-  try { fs.unlinkSync(o.out); } catch { /* absent is fine */ }
+  try { fs.unlinkSync(o.out); } catch (err) {
+    if (err.code !== 'ENOENT') { deps.stderr(`release-note-repair.js: could not clear --out ${o.out} (${err.message})\n`); return 3; }
+  }
   let live;
   try { live = JSON.parse(readText(o['live-json'])); } catch (err) { return usage(`could not read --live-json (${err.message})`); }
   if (!live || typeof live.body !== 'string') return usage('--live-json carries no body string');
@@ -179,21 +181,22 @@ function repairLocal(o, deps, usage, rawLine, dest) {
     && isDeepStrictEqual(after.facets, live.facets)
     && after.title === live.title
     && detect.checkBody(after.body, { checkCli: deps.checkCli }).verdict === 'conforming';
+  // The byte comparison runs last, after every semantic check, and gates success and restore
+  // alike: a file that no longer holds exactly the bytes this call spliced means another write
+  // landed since ours. Even when that content would still verify, it isn't this run's write, so
+  // it is never reported as a repair. A restore is refused too — stomping that other write would
+  // be worse than leaving it in place for a human to look at.
+  let currentRaw = null;
+  try { currentRaw = fs.readFileSync(file, 'utf8'); } catch { currentRaw = null; }
+  if (currentRaw !== applied.body) {
+    const drift = currentRaw === null
+      ? 'the file could not be re-read'
+      : `${Buffer.byteLength(currentRaw)} bytes on disk now vs ${Buffer.byteLength(applied.body)} this run wrote`;
+    deps.stderr(`release-note-repair.js: the record file no longer matches what this run wrote (${drift}) — restore refused (original preserved at ${dest.file})\n`);
+    return 8;
+  }
   if (!verified) {
-    // Restore only when the file on disk still holds exactly the bytes this call spliced —
-    // proof nothing else has touched it since the write, so overwriting it with `raw` is safe.
-    // If it no longer matches (another write landed between our write and this re-read), the
-    // restore is refused rather than attempted: stomping that other write would be worse than
-    // leaving the current, unverified content in place for a human to look at.
-    let currentRaw = null;
-    try { currentRaw = fs.readFileSync(file, 'utf8'); } catch { currentRaw = null; }
-    if (currentRaw !== applied.body) {
-      const drift = currentRaw === null
-        ? 'the file could not be re-read'
-        : `${currentRaw.length} bytes on disk now vs ${applied.body.length} this run wrote`;
-      deps.stderr(`release-note-repair.js: the record file no longer matches what this run wrote (${drift}) — restore refused (original preserved at ${dest.file})\n`);
-      return 8;
-    }
+    // The file still holds exactly the bytes this call spliced, so overwriting it with `raw` is safe.
     try { writeFileAtomic(file, raw); } catch (err) {
       deps.stderr(`release-note-repair.js: re-read verification failed and restoring ${file} failed (${err.message}); original at ${dest.file}\n`);
       return 7;
@@ -240,7 +243,7 @@ function cmdVerify(o, deps, usage) {
     // landed. Any other problem means the live body itself no longer matches what this run
     // wrote — restoring now would overwrite whatever produced that drift, so it is refused too,
     // just for a different, body-shaped reason (exit 7).
-    const labelOnly = problems.length === 1 && /^the label set changed/.test(problems[0]);
+    const labelOnly = problems.length === 1 && problems[0].startsWith(apply.LABELS_CHANGED);
     if (labelOnly) {
       deps.stderr(`release-note-repair.js: post-write verification failed — labels changed, body verified:\n  - ${problems[0]}\n`);
       return 8;

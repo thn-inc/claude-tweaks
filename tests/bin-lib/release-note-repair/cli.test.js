@@ -224,12 +224,42 @@ test('repair (local-files): a file rewritten by another actor between write and 
   assert.equal(fs.readFileSync(path.join(fx.runDir, 'snapshots', 'tidy-release-note-42.original.md'), 'utf8'), rawBefore);
 });
 
+test('repair (local-files): a concurrent edit that would still verify is exit 8, never reported as this run\'s repair', () => {
+  const fx = localFixture();
+  const rawBefore = fs.readFileSync(fx.recordFile, 'utf8');
+  const before = readRecord(fx.recordFile);
+  const lineFile = fx.write('line.txt', F.LINE);
+  const t = deps(fx.main);
+  const tampered = `${rawBefore}Another section edited concurrently.\n`;
+  let calls = 0;
+  // The third checkBody call (the post-write re-read) passes, but a concurrent write has landed
+  // on the record file: facets and title are intact, so only the byte comparison can catch it.
+  const checkCli = () => {
+    calls += 1;
+    if (calls === 1) return { code: 4, stderr: `${CHECK_HEADER}\n  - missing section: ## Release Note\n` };
+    if (calls === 3) fs.writeFileSync(fx.recordFile, tampered);
+    return { code: 0, stderr: '' };
+  };
+  const code = run(['repair', '--driver', 'local-files', '--ref', '42', '--record-file', fx.recordFile, '--expect-sha', bodySha(before.body), '--line-file', lineFile, '--run', fx.runDir], { ...t.d, checkCli });
+  assert.equal(code, 8, t.err());
+  assert.equal(t.out(), '', 'no success payload is printed');
+  assert.equal(fs.readFileSync(fx.recordFile, 'utf8'), tampered, 'the concurrent write survives untouched');
+});
+
 test('repair (github-issues): a reused --out path is unlinked on entry, never carries a stale prior body past a skip/failure exit', () => {
   const fx = fixture();
   fs.writeFileSync(path.join(fx.root, 'repaired.md'), 'stale body from a previous record\n');
   const { code, out } = githubRepair(fx, { line: 'feat: fixes #12\n' });
   assert.equal(code, 4);
   assert.equal(fs.existsSync(out), false, '--out must be unlinked even though this run never got far enough to write it');
+});
+
+test('repair (github-issues): an --out that cannot be cleared is exit 3 before any other outcome, never a silent skip', () => {
+  const fx = fixture();
+  fs.mkdirSync(path.join(fx.root, 'repaired.md', 'child'), { recursive: true });
+  const { code, t } = githubRepair(fx, { line: 'feat: fixes #12\n' });
+  assert.equal(code, 3);
+  assert.match(t.err(), /could not clear --out/);
 });
 
 test('repair (local-files): a record edited between scan and write is skipped (exit 5), file byte-unchanged', () => {

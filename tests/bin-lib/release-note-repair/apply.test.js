@@ -58,6 +58,15 @@ test('applyReleaseNote skips a `## `-looking line inside a closed fenced code bl
   assert.ok(rnAt > fenceClose, 'Release Note must land after the fence closes, never inside it');
 });
 
+test('applyReleaseNote fills the real empty Release Note heading, never a fenced look-alike ahead of it', () => {
+  const fencedLookalike = '```markdown\n## Release Note\n\nAn example note.\n```\n';
+  const body = [F.EMPTY_RN.split('## Release Note\n')[0], fencedLookalike, '\n## Release Note\n', F.EMPTY_RN.split('## Release Note\n')[1]].join('');
+  const out = applyReleaseNote(body, F.LINE);
+  assert.equal(out.mode, 'filled');
+  assert.equal(onlyReleaseNoteAdded(body, out.body, F.LINE), true);
+  assert.ok(out.body.includes(fencedLookalike), 'the fenced example stays byte-identical');
+});
+
 test('applyReleaseNote refuses an unterminated fenced code block preceding the insert point', () => {
   assert.throws(() => applyReleaseNote(F.UNTERMINATED_FENCE_BODY, F.LINE), RepairError);
 });
