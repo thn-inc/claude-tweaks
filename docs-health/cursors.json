@@ -172,5 +172,8 @@
   },
   "doc:plans/2026-09-17-record-2364-ledger": {
     "lastAuditedMs": 1790576580147
+  },
+  "doc:plugin-structure": {
+    "lastAuditedMs": 1790663267336
   }
 }
