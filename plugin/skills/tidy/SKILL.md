@@ -196,6 +196,7 @@ After all actions are applied, verify every decision was fully executed. Present
 - [x] Opened parent gate: "{title}" — parent #{n} carries a brief comment headed `## Verification Brief` (the template's own first line) and `demo:pending` in its labels, both re-queried (`gh issue view {n} --json labels,comments`); comment present before label, per the invariant (`github-issues`)
 - [x] Opened parent gate: "{title}" — parent record `specs/{id}-{slug}.md` re-read (`readRecord`) and found to carry a `## Verification Brief` section in its body and `acceptance: pending` in its frontmatter. No ordering invariant to check here: the action writes both in one composed `writeRecord`, so a partially-applied gate is not a reachable state on this driver (`local-files`)
 - [x] Filled Release Note: "{title}" — {ref}'s live body passes `compose-record.js --check`, carries the composed line, and keeps its label set (`release-note-repair.js verify` exit 0 on `github-issues`, `repair` exit 0 on `local-files`); snapshot at {snapshot path}
+- [x] Skipped Release Note: {ref} — stale premise (`release-note-repair.js`'s exit 5 — `release-note-repair.md`'s Auto path Step 3); every other exit reports through Yours (`review`) instead, never here
 - [ ] FAILED: "{title}" — {what went wrong}
 ```
 

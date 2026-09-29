@@ -26,9 +26,23 @@ test('release-note-repair.md drives the CLI and branches on every exit', () => {
   assert.ok(f.includes('release-note-repair.js" repair --driver github-issues'));
   assert.ok(f.includes('release-note-repair.js" repair --driver local-files'));
   assert.ok(f.includes('release-note-repair.js" verify'));
-  for (const exit of ['0:', '4:', '5:', '6:', '3:', '2:', 'Exit 7']) assert.ok(f.includes(exit), `missing exit branch ${exit}`);
+  // Anchored to the list-item form the prose actually uses, so a stray "10:" or a time of day
+  // can't satisfy these the way an unanchored substring check would.
+  for (const exit of ['- 0:', '- 4:', '- 5:', '- 6:', '- 3:', '- 2:']) assert.ok(f.includes(exit), `missing exit branch ${exit}`);
+  assert.ok(f.includes('Exit 7'), 'missing the github verify exit 7 branch');
+  assert.ok(f.includes('- 7 (`local-files` only):'), 'missing the local-files repair exit 7 branch');
   assert.ok(f.includes('never a weaker line'));
   assert.ok(f.includes('`/claude-tweaks:specify {ref}`'));
+});
+
+test('release-note-repair.md handles a failed gh issue edit call by re-reading before treating it as a repair failure', () => {
+  const f = flat(SUB);
+  assert.ok(f.includes('A failed edit call itself'), 'missing the edit-failure branch');
+  assert.ok(f.includes("Unchanged from `{live-json}`'s body"));
+});
+
+test('release-note-repair.md truncates the Applied sub-line to fit the report lint\'s 100-char cap', () => {
+  assert.ok(SUB.includes('truncated to 96 characters'));
 });
 
 test('the undo snapshot is under snapshots/, never staged/', () => {
@@ -45,6 +59,7 @@ test('SKILL.md registers the tag, the action, the backend probe count, and the S
   assert.ok(!f.includes('Five actions read'));
   assert.ok(f.includes('`Fill Release Note` writes one body section and never a label.'));
   assert.ok(f.includes('- [x] Filled Release Note: "{title}"'));
+  assert.ok(f.includes('- [x] Skipped Release Note: {ref} — stale premise'));
 });
 
 test('SKILL.md dispatcher block resolves a fresh session-scoped candidates path per run', () => {
