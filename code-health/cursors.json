@@ -226,5 +226,9 @@
   "plugin/bin/lib/render-tidy-report": {
     "lastSweptMs": 1790564907844,
     "lastHash": "d3a38905ba9083ec7c717016c361ddbc0198c0fc"
+  },
+  "plugin/bin/lib/repair-claim": {
+    "lastSweptMs": 1790651292729,
+    "lastHash": "f4bd8215175c13e8b84c7ef28df81667a4e49968"
   }
 }
