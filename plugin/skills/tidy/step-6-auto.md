@@ -127,7 +127,7 @@ Four verb-grouped sections, these exact literal headers, in this order — what 
 
 **Applied automatically**
 ```text
-{verb}       #{N}  {title ≤50, …-truncated}                        {commit abc1234 | reconcile-converged}
+{verb}       #{N}  {title ≤50, …-truncated}                        {commit abc1234 | reconcile-converged | snapshot saved}
 {verb}       #{M}  {title}                                         {commit def5678 | reconcile-converged}
 ```
 
@@ -161,7 +161,7 @@ Four verb-grouped sections, these exact literal headers, in this order — what 
 Full decision log: {run-dir}/decisions.md
 ````
 
-Column shape, stated once: rows indent three spaces under a group head or numbered item; the record column is `#{N}` padded to six characters; the title column is padded to one shared width per section (at least 50, titles truncated to 50 + `…` when longer), so the trailing column starts at one shared offset and fills to the 100-character line cap (Report rules below). A record-less finding (`[health]`, `[doctor]`, `[pattern]` — see `scan-procedures.md`'s routing table) puts `—` in the record column and its `[tag] {summary}` in the title column, same width rules. Applied rows lead with a verb column padded to 13 (`deleted`, `released`, `archived`, `reaped`, …) — the verb *is* the outcome, so the only trailing column is the reversibility token. An Applied row may carry one three-space-indented detail sub-line (a skip reason, a filled Release Note) with no trailing column. Approve items take three lines: number + tag + record + title, then the staged action, then the command or mutation. Yours groups follow the Yours grouping rule below — a group head `{command} ({k})`, its rows, then a batch line or paste block. Clean is one `{scan}  {count} checked` line per scan (`—` when a scan reports no count).
+Column shape, stated once: rows indent three spaces under a group head or numbered item; the record column is `#{N}` padded to six characters; the title column is padded to one shared width per section (at least 50, titles truncated to 50 + `…` when longer), so the trailing column starts at one shared offset and fills to the 100-character line cap (Report rules below). A record-less finding (`[health]`, `[doctor]`, `[pattern]` — see `scan-procedures.md`'s routing table) puts `—` in the record column and its `[tag] {summary}` in the title column, same width rules. Applied rows lead with a verb column padded to 13 (`deleted`, `released`, `archived`, `reaped`, `filled-note`, …) — the verb *is* the outcome, so the only trailing column is the reversibility token. An Applied row may carry one three-space-indented detail sub-line (a skip reason, a filled Release Note) with no trailing column. Approve items take three lines: number + tag + record + title, then the staged action, then the command or mutation. Yours groups follow the Yours grouping rule below — a group head `{command} ({k})`, its rows, then a batch line or paste block. Clean is one `{scan}  {count} checked` line per scan (`—` when a scan reports no count).
 
 How **Approve ({N})** resolves here: staged files persist under `{run-dir}/staged/`; when non-empty, `SKILL.md`'s Next Actions prepends an "Approve ({N})" option — named for this section — that runs Step 7 over exactly those items. Nothing applies without that click.
 
