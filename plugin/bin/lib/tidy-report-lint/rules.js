@@ -194,10 +194,11 @@ function checkAligned(text) {
       // command line have none, and would otherwise be misread as a
       // mis-aligned row.
       if (isYours && (line[0] !== ' ' || COMMAND_LINE.test(trimmed))) return;
-      // Applied rows start at column 0 (a verb); an indented line is a detail sub-line — a
-      // reconcile skip reason or a filled Release Note (tidy/release-note-repair.md) — with no
-      // trailing column of its own.
-      if (isApplied && line[0] === ' ') return;
+      // Applied rows start at column 0 (a verb); a three-space-indented detail sub-line — a
+      // reconcile skip reason or a filled Release Note (tidy/release-note-repair.md) — carries no
+      // trailing column of its own. The exact three-space bound keeps a stray one-space indent on
+      // a top-level Applied row (a mis-padding bug, not a sub-line) still flagged.
+      if (isApplied && /^ {3}\S/.test(line)) return;
       const m = line.match(TRAILING_COL);
       if (!m) return;
       offsets.push({ idx, offset: line.length - m[1].length });

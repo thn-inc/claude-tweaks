@@ -78,6 +78,13 @@ test('Aligned: a mis-padded col-0 Applied row is still flagged when a sub-line s
   assert.match(RULES.find((r) => r.name === 'Aligned').check(lines.join('\n')), /^Aligned: line \d+ trailing column starts at \d+, expected \d+$/);
 });
 
+test('Aligned: an Applied row with a stray one-space indent is still flagged', () => {
+  const lines = conformantReport().split('\n');
+  const idx = lines.findIndex((l) => l.startsWith('deleted'));
+  lines[idx] = ` ${lines[idx]}`;
+  assert.match(RULES.find((r) => r.name === 'Aligned').check(lines.join('\n')), /^Aligned: line \d+ trailing column starts at \d+, expected \d+$/);
+});
+
 test('One record per row: a bare row with two #N refs is flagged; a batch command line is not', () => {
   const check = RULES.find((r) => r.name === 'One record per row').check;
   assert.match(check('   #1  Some title (likewise #2)'), /^One record per row: line 1 carries 2 record refs/);
