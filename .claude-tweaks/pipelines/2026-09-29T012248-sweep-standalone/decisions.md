@@ -65,3 +65,78 @@
 - Applied: 1 orphan ledger (`docs/plans/2026-09-14-record-2231-ledger.md`) + 9 orphan execution plans deleted, in a scratch worktree (`.worktrees/tidy-housekeeping-sweep`, branch `tidy-housekeeping-sweep`, fresh off `origin/main`) per `step-7-5-worktree-always.md`, commit `1bdfd19d7` "Delete 1 orphan ledger and 9 orphan execution plans with no live reference". 6 pipeline-run dirs archived directly (no worktree needed — plain fs move, not a git mutation).
 - Not applied this pass, still Yours: the 13 clean/unlocked worktree candidates (need per-worktree branch-merge + PR-state ladder), the v6.130.0 tag/CHANGELOG mismatch, the claims audit, `acceptance-gap`/`parent-gate` scopes, digest sweep, full pattern extraction, the 8 ledgers/execution plans with a referencing open record, the 10 execution plans with no extractable record number, and the dropped `release-standalone` run dir (still active).
 - `[lever: housekeeping-auto-merge=true (explicit)]` `[lever: tidy-aggressiveness=moderate (default)]` — moderate+ routes to arm-now; see the PR open/arm outcome logged separately below once that step completes.
+
+## Step 7 PR outcome
+
+- PR #2808 opened (branch `tidy-housekeeping-sweep` off origin/main tip 0d73305e2), `<!-- tidy-housekeeping-pr -->` marker stamped. `gh pr merge 2808 --auto --squash` called per the moderate+ arm-now routing; no pending checks blocked it, so it merged immediately (not deferred) — https://github.com/thn-inc/claude-tweaks/pull/2808, squash-merged.
+- Scratch worktree torn down after confirming HEAD is an ancestor of origin/main post-merge.
+## /specify
+- AUTO 05:31:46 — Release: released claim on #2727 (shaped: #2727); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 05:58:57 — Release: released claim on #2729 (shaped: #2729); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 06:01:36 — Release: released claim on #2717 (shaped: #2717); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 06:03:44 — Release: released claim on #2719 (shaped: #2719); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 06:06:10 — Release: released claim on #2730 (shaped: #2730); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 06:08:29 — Release: released claim on #2714 (shaped: #2714); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 06:11:11 — Release: released claim on #2718 (shaped: #2718); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 06:12:59 — Release: released claim on #2720 (shaped: #2720); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 06:14:37 — Release: released claim on #2721 (shaped: #2721); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 06:16:37 — Release: released claim on #2722 (shaped: #2722); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 06:18:26 — Release: released claim on #2728 (shaped: #2728); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 11:26:49 — Release: released claim on #2556 (shaped: #2556); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 11:31:51 — Release: released claim on #2724 (shaped: #2724); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 11:33:50 — Release: released claim on #2725 (shaped: #2725); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 11:35:27 — Release: released claim on #2726 (shaped: #2726); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 11:39:01 — Release: released claim on #2732 (shaped: #2732) — already released or swept; labels removed: bot:in-progress. Reversibility: high.
+- AUTO 11:40:48 — Release: released claim on #2733 (shaped: #2733); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 11:42:55 — Release: released claim on #2734 (shaped: #2734); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 11:44:20 — Release: released claim on #2735 (shaped: #2735); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 11:45:32 — Release: released claim on #2736 (shaped: #2736); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 11:49:02 — Release: released claim on #2739 (shaped: #2739); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 11:50:25 — Release: released claim on #2740 (shaped: #2740); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 11:52:19 — Release: released claim on #2741 (shaped: #2741); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 11:54:16 — Release: released claim on #2742 (shaped: #2742); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 11:55:35 — Release: released claim on #2743 (shaped: #2743); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 11:57:37 — Release: released claim on #2744 (shaped: #2744); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 11:59:02 — Release: released claim on #2745 (shaped: #2745); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:00:34 — Release: released claim on #2746 (shaped: #2746); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:02:00 — Release: released claim on #2747 (shaped: #2747); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:03:27 — Release: released claim on #2749 (shaped: #2749); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:05:35 — Release: released claim on #2748 (shaped: #2748); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:11:23 — Release: released claim on #2750 (shaped: #2750); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:13:29 — Release: released claim on #2751 (shaped: #2751); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:14:58 — Release: released claim on #2762 (shaped: #2762); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:16:10 — Release: released claim on #2766 (shaped: #2766); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:17:24 — Release: released claim on #2767 (shaped: #2767); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:19:52 — Release: released claim on #2775 (shaped: #2775); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:21:22 — Release: released claim on #2776 (shaped: #2776); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:22:28 — Release: released claim on #2777 (shaped: #2777); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:23:24 — Release: released claim on #2779 (shaped: #2779); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:24:54 — Release: released claim on #2783 (shaped: #2783); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:26:12 — Release: released claim on #2784 (shaped: #2784); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:27:11 — Release: released claim on #2789 (shaped: #2789); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:28:14 — Release: released claim on #2793 (routed: needs:definition #2793); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:29:09 — Release: released claim on #2794 (shaped: #2794); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:30:00 — Release: released claim on #2795 (routed: needs:definition #2795); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:30:57 — Release: released claim on #2796 (shaped: #2796); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:32:03 — Release: released claim on #2797 (shaped: #2797); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:33:03 — Release: released claim on #2798 (shaped: #2798); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:34:02 — Release: released claim on #2799 (shaped: #2799); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:34:58 — Release: released claim on #2800 (shaped: #2800); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:35:45 — Release: released claim on #2801 (shaped: #2801); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:36:45 — Release: released claim on #2802 (shaped: #2802); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:37:31 — Release: released claim on #2803 (routed: needs:definition #2803); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 12:38:23 — Release: released claim on #2813 (shaped: #2813); labels removed: bot:in-progress. Reversibility: high.
+
+## /claude-tweaks:backlog refine (headless posture, --source sweep)
+
+- AUTO 10:42:26 — Backlog grant: Step 0 ceiling gate satisfied (ceiling=unattended, opt-in=true) — proceeding to candidate evaluation.
+- AUTO 10:42:26 — Backlog grant: merge-lane circuit breaker sweep — watched set empty, nothing to sweep.
+- AUTO 10:42:26 — Backlog grant: zero-eligible short-circuit — 18 candidate(s) evaluated, 0 needing grant-check: trust: 18 (#2813, #2812, #2811, #2802, #2801, #2800, #2799, #2798, #2797, #2796, #2794, #2787, #2785, #2775, #2762, #2746, #2738, #2737 — no clean trust verdict yet for each record's class).
+- AUTO 10:46:27 — Backlog refine: Priority lane — 40 records labeled (of 68 missing priority; 28 remain beyond this run's budget 40, re-run to continue): #2556(low) #2663(medium) #2666(medium) #2724(low) #2725(high) #2726(low) #2731(medium) #2732(medium) #2733(medium) #2734(high) #2735(low) #2736(low) #2737(low) #2738(medium) #2739(medium) #2740(medium) #2741(medium) #2742(medium) #2743(medium) #2744(low) #2745(medium) #2746(low) #2747(medium) #2749(high) #2748(high) #2750(medium) #2751(medium) #2762(medium) #2763(medium) #2764(low) #2765(high) #2766(low) #2767(medium) #2768(high) #2769(medium) #2770(high) #2771(medium) #2772(low) #2773(medium) #2775(medium) .
+- AUTO 10:46:27 — Backlog refine: Related lane — added cross-reference (#2744, #2746, #2748 — same shape, pure verification-and-close findings); 4 records already carried a Related line pointing elsewhere, left unchanged (#2663, #2666, #2742, #2751, #2767).
+- AUTO 10:46:27 — Backlog refine: Flag-back lane — empty this run (grant chain's zero-eligible short-circuit meant no candidate reached the body-shape check that populates this lane).
+- AUTO 10:46:27 — Backlog refine: Dependency-repair — findUnresolvedDependencyProse over 155 open records found 1 hit (#2543), reviewed and determined a false positive: the matched phrase ("blocked by the integration-branch push gate... #500") describes a gate mechanism's origin, not a dependency on #500. No needs:decision stamp applied — the record has no genuine dependency question. No mechanical wire, no needs-you row.
+
+## Sweep close-out summary
+
+- AUTO 10:48:08 — Sweep run complete. Tidy: Step 1 scan + Step 7 execution (6 pipeline-run dirs archived, 1 orphan ledger + 9 orphan plans deleted via PR #2808, merged). Specify: 52 shaped, 3 routed to needs:definition, 0 failed, eligible pool exhausted. Backlog refine: grant chain 0 granted (18 trust-refused), Priority lane 40/68 labeled (28 remaining), Related lane +3 cross-refs, Dependency-repair 1 reviewed false-positive. Attention: 95 records need attention (84 shaped:headless-no-grant, 9 needs:definition, 9 bot:blocked), breaker clear, nothing staged.
