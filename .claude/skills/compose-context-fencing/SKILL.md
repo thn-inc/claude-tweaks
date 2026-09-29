@@ -53,7 +53,7 @@ Composition can break a pointer that was fine in the raw file: "steps 1-4 below"
 
 ## Evidence
 
-- Ledger: `docs/plans/2026-09-06-skill-context-composer-ledger.md` rows 10, 13, 14, 15, 17, 19, 20, 22 — the survey misses, the byte-derivation rule, the two headroom pins, the unreachable `mode=confirm`, and the pointer-sweep guidance, each with its own measurement.
+- Ledger: `docs/plans/2026-09-06-skill-context-composer-ledger.md` (resolved and removed) rows 10, 13, 14, 15, 17, 19, 20, 22 — the survey misses, the byte-derivation rule, the two headroom pins, the unreachable `mode=confirm`, and the pointer-sweep guidance, each with its own measurement.
 - Mechanism and grammar: `docs/skill-authoring.md`, "Conditional blocks and the composer".
 - Composer: `plugin/bin/compose-context.js`, `plugin/bin/lib/compose-context/{compose,resolve-conditions,index}.js`.
 - Gates: `plugin/bin/lib/skill-audit/context-cost.js` (composed bytes), `plugin/bin/lib/plan-audit/checks.js`'s `headroomCheck`, `plugin/bin/lib/merge-size-probe.js` (raw, warn-tier at merge).
