@@ -1,10 +1,20 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
 const M = require('../../../plugin/bin/lib/release-local/manifest.js');
 
 const files = (map) => ({ readFile: (p) => (Object.prototype.hasOwnProperty.call(map, p) ? map[p] : null), map });
 const config = (releaseType, extraFiles) => JSON.stringify({ packages: { '.': { 'release-type': releaseType, ...(extraFiles ? { 'extra-files': extraFiles } : {}) } } });
+
+// #2791: real fixture files (not hand-typed minimal strings) for the three new
+// stacks — a genuine multi-dependency pom.xml/build.gradle/csproj etc., the same
+// shape a real project's manifest would carry, proving each splice is structural
+// (finds the right token among several plausible false matches) rather than a
+// first-occurrence accident that a one-line fixture couldn't expose.
+const FIXTURES = path.join(__dirname, 'fixtures');
+const readFixture = (name) => fs.readFileSync(path.join(FIXTURES, name), 'utf8');
 
 test('readConfig: null without a config, release-type + extra-files with one', () => {
   assert.strictEqual(M.readConfig(files({}).readFile), null);
@@ -44,9 +54,47 @@ test('resolveTargets: one row per stack type, the manifest file always, unsuppor
   assert.deepStrictEqual(M.resolveTargets({ releaseType: 'go', extraFiles: [] }).map((t) => t.path), ['.release-please-manifest.json']);
   assert.deepStrictEqual(M.resolveTargets({ releaseType: 'simple', extraFiles: ['VERSION.txt', { type: 'json', path: 'p.json', jsonpath: '$.version' }] }).map((t) => [t.path, t.kind]),
     [['.release-please-manifest.json', 'manifest'], ['version.txt', 'text'], ['VERSION.txt', 'generic'], ['p.json', 'json']]);
-  assert.throws(() => M.resolveTargets({ releaseType: 'java', extraFiles: [] }), (e) => e instanceof M.ManifestError && /java/.test(e.message) && /simple/.test(e.message));
+  // #2791: java/ruby/dotnet now resolve like python's own multi-candidate stacks —
+  // every member optional, present regardless of whether listRoot finds a file for
+  // the fixed-name ones (existence is an applyVersion-time question, not a resolve-time one).
+  assert.deepStrictEqual(M.resolveTargets({ releaseType: 'java', extraFiles: [] }).map((t) => [t.path, t.kind, t.optional]),
+    [['.release-please-manifest.json', 'manifest', true], ['pom.xml', 'maven', true], ['build.gradle', 'gradle', true], ['build.gradle.kts', 'gradle', true]]);
   assert.throws(() => M.resolveTargets({ releaseType: 'simple', extraFiles: [{ type: 'yaml', path: 'x.yml' }] }), /yaml/);
   assert.throws(() => M.resolveTargets({ releaseType: 'simple', extraFiles: [{ type: 'json', path: 'p.json', jsonpath: '$.nested.version' }] }), /jsonpath/);
+});
+
+test('#2791: UNSUPPORTED is now empty (java/ruby/dotnet supported), but the exit-2 mechanism it drives is intact for whatever is added to it next', () => {
+  assert.strictEqual(M.UNSUPPORTED.size, 0);
+  M.UNSUPPORTED.add('cobol');
+  try {
+    assert.throws(() => M.resolveTargets({ releaseType: 'cobol', extraFiles: [] }),
+      (e) => e instanceof M.ManifestError && /cobol/.test(e.message) && /simple/.test(e.message) && /extra-files/.test(e.message));
+  } finally {
+    M.UNSUPPORTED.delete('cobol');
+  }
+});
+
+test('#2791: resolveTargets glob targets (ruby *.gemspec, dotnet *.csproj) resolve the actual filename against listRoot', () => {
+  // ruby: version.rb is a fixed-name candidate present regardless of listRoot;
+  // *.gemspec resolves to the one real match.
+  const rubyOne = M.resolveTargets({ releaseType: 'ruby', extraFiles: [] }, { listRoot: () => ['foo.gemspec', 'Gemfile', 'README.md'] });
+  assert.deepStrictEqual(rubyOne.map((t) => [t.path, t.kind]),
+    [['.release-please-manifest.json', 'manifest'], ['version.rb', 'ruby-assign'], ['foo.gemspec', 'gemspec']]);
+  // Zero matches: the glob row drops out entirely, the fixed-name row stays.
+  const rubyNone = M.resolveTargets({ releaseType: 'ruby', extraFiles: [] }, { listRoot: () => ['Gemfile'] });
+  assert.deepStrictEqual(rubyNone.map((t) => t.path), ['.release-please-manifest.json', 'version.rb']);
+  // Ambiguous (2+ matches): dropped the same way, not an error — a multi-project
+  // root is out of this root-only engine's scope, same posture as a genuinely
+  // absent candidate.
+  const rubyAmbiguous = M.resolveTargets({ releaseType: 'ruby', extraFiles: [] }, { listRoot: () => ['a.gemspec', 'b.gemspec'] });
+  assert.deepStrictEqual(rubyAmbiguous.map((t) => t.path), ['.release-please-manifest.json', 'version.rb']);
+  // No listRoot passed at all (existing callers/tests never had to know about this) —
+  // every glob candidate resolves as absent, never throws.
+  assert.deepStrictEqual(M.resolveTargets({ releaseType: 'ruby', extraFiles: [] }).map((t) => t.path), ['.release-please-manifest.json', 'version.rb']);
+
+  const dotnetOne = M.resolveTargets({ releaseType: 'dotnet', extraFiles: [] }, { listRoot: () => ['MyApp.csproj'] });
+  assert.deepStrictEqual(dotnetOne.map((t) => [t.path, t.kind]),
+    [['.release-please-manifest.json', 'manifest'], ['MyApp.csproj', 'csproj'], ['AssemblyInfo.cs', 'assembly-info']]);
 });
 
 test('resolveTargets: extra-files may not escape the repo root — but a leading-dots FILENAME is not an escape', () => {
@@ -128,6 +176,70 @@ test('spliceVersion py-assign / toml: an identifier ENDING in "version" is never
   // setup.cfg's [metadata] line is start-of-line anchored, so the same holds there
   const cfg = '[metadata]\nmin_version = 0.1.0\nversion = 1.2.0\n';
   assert.strictEqual(M.spliceVersion('toml', cfg, '1.3.0', { sections: ['metadata'], unquoted: true }).text, '[metadata]\nmin_version = 0.1.0\nversion = 1.3.0\n');
+});
+
+test('#2791: spliceVersion maven — the project\'s own <version>, never the <parent> block\'s or a dependency\'s', () => {
+  const pom = readFixture('pom.xml');
+  const out = M.spliceVersion('maven', pom, '1.5.0');
+  assert.strictEqual(out.previous, '1.4.2');
+  assert.strictEqual(out.found, true);
+  // Exactly one token changed — the project's own <version>1.4.2</version>, immediately
+  // after <artifactId>widget-service</artifactId>.
+  assert.strictEqual(out.text, pom.replace('<artifactId>widget-service</artifactId>\n  <version>1.4.2</version>', '<artifactId>widget-service</artifactId>\n  <version>1.5.0</version>'));
+  // The parent's version (3.2.5) and the dependency's (0.9.1) and the plugin's (3.2.5) survive untouched.
+  assert.ok(out.text.includes('<version>3.2.5</version>') && out.text.includes('<version>0.9.1</version>'), out.text);
+  assert.strictEqual((out.text.match(/<version>3\.2\.5<\/version>/g) || []).length, 2, 'both parent and plugin 3.2.5 tokens remain');
+});
+
+test('#2791: spliceVersion gradle — Groovy build.gradle and Kotlin build.gradle.kts, dependency coordinates untouched', () => {
+  const groovy = readFixture('build.gradle');
+  const outGroovy = M.spliceVersion('gradle', groovy, '1.5.0');
+  assert.strictEqual(outGroovy.previous, '1.4.2');
+  assert.strictEqual(outGroovy.text, groovy.replace("version = '1.4.2'", "version = '1.5.0'"));
+  assert.ok(outGroovy.text.includes("implementation 'com.example:widget-common:0.9.1'"), 'dependency coordinate version untouched');
+
+  const kts = readFixture('build.gradle.kts');
+  const outKts = M.spliceVersion('gradle', kts, '1.5.0');
+  assert.strictEqual(outKts.previous, '1.4.2');
+  assert.strictEqual(outKts.text, kts.replace('version = "1.4.2"', 'version = "1.5.0"'));
+  assert.ok(outKts.text.includes('implementation("com.example:widget-common:0.9.1")'), 'dependency coordinate version untouched');
+});
+
+test('#2791: spliceVersion ruby-assign (version.rb) and gemspec — the inline assignment, not the required-file dependency versions', () => {
+  const versionRb = readFixture('version.rb');
+  const outRb = M.spliceVersion('ruby-assign', versionRb, '1.5.0');
+  assert.strictEqual(outRb.previous, '1.4.2');
+  assert.strictEqual(outRb.text, versionRb.replace('VERSION = "1.4.2"', 'VERSION = "1.5.0"'));
+
+  const gemspec = readFixture('widget.gemspec');
+  const outGemspec = M.spliceVersion('gemspec', gemspec, '1.5.0');
+  assert.strictEqual(outGemspec.previous, '1.4.2');
+  assert.strictEqual(outGemspec.text, gemspec.replace('spec.version       = "1.4.2"', 'spec.version       = "1.5.0"'));
+  assert.ok(outGemspec.text.includes('spec.add_dependency "activesupport", ">= 6.0"'), 'dependency constraint untouched');
+
+  // A gemspec that references a VERSION constant instead of a literal carries no
+  // token here at all — version.rb is the sibling target that has it.
+  const constRef = 'Gem::Specification.new do |spec|\n  spec.version = Widget::Gem::VERSION\nend\n';
+  assert.strictEqual(M.spliceVersion('gemspec', constRef, '1.5.0').found, false);
+});
+
+test('#2791: spliceVersion csproj and assembly-info — the PropertyGroup <Version>/assembly attributes, not a PackageReference', () => {
+  const csproj = readFixture('widget.csproj');
+  const outCsproj = M.spliceVersion('csproj', csproj, '1.5.0');
+  assert.strictEqual(outCsproj.previous, '1.4.2');
+  assert.strictEqual(outCsproj.text, csproj.replace('<Version>1.4.2</Version>', '<Version>1.5.0</Version>'));
+  // The PackageReference's Version="13.0.3" ATTRIBUTE is a different syntactic shape
+  // (attribute, not an element) and is never touched.
+  assert.ok(outCsproj.text.includes('Version="13.0.3"'), 'PackageReference attribute version untouched');
+
+  const assemblyInfo = readFixture('AssemblyInfo.cs');
+  const outAssembly = M.spliceVersion('assembly-info', assemblyInfo, '1.5.0');
+  assert.strictEqual(outAssembly.previous, '1.4.2');
+  assert.strictEqual(outAssembly.text, assemblyInfo
+    .replace('AssemblyVersion("1.4.2.0")', 'AssemblyVersion("1.5.0.0")')
+    .replace('AssemblyFileVersion("1.4.2.0")', 'AssemblyFileVersion("1.5.0.0")'));
+  // Both attributes moved, and each kept its own trailing .0 revision component.
+  assert.ok(outAssembly.text.includes('AssemblyVersion("1.5.0.0")') && outAssembly.text.includes('AssemblyFileVersion("1.5.0.0")'));
 });
 
 test('applyVersion python: setup.py alone is enough; no stack manifest at all throws BEFORE any write', () => {
