@@ -182,7 +182,9 @@ const TRAILING_COL = /\s{2,}(\S(?:(?!\s{2,}).)*)$/;
 
 function checkAligned(text) {
   for (const block of alignedFences(text)) {
-    const isYours = /\*\*Yours \(\d+\)\*\*/.test(headerAbove(text, block));
+    const header = headerAbove(text, block);
+    const isYours = /\*\*Yours \(\d+\)\*\*/.test(header);
+    const isApplied = header === '**Applied automatically**';
     const offsets = [];
     block.lines.forEach((line, idx) => {
       const trimmed = line.trim();
@@ -192,6 +194,10 @@ function checkAligned(text) {
       // command line have none, and would otherwise be misread as a
       // mis-aligned row.
       if (isYours && (line[0] !== ' ' || COMMAND_LINE.test(trimmed))) return;
+      // Applied rows start at column 0 (a verb); an indented line is a detail sub-line — a
+      // reconcile skip reason or a filled Release Note (tidy/release-note-repair.md) — with no
+      // trailing column of its own.
+      if (isApplied && line[0] === ' ') return;
       const m = line.match(TRAILING_COL);
       if (!m) return;
       offsets.push({ idx, offset: line.length - m[1].length });

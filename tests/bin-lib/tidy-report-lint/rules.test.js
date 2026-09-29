@@ -63,6 +63,21 @@ test('Aligned: flags a mis-padded Applied-automatically row', () => {
   assert.match(issue, /^Aligned: line \d+ trailing column starts at \d+, expected \d+$/);
 });
 
+test('Aligned: an indented detail sub-line under an Applied row is not a mis-aligned row', () => {
+  const lines = conformantReport().split('\n');
+  const idx = lines.findIndex((l) => l.startsWith('deleted'));
+  lines.splice(idx + 1, 0, '   Made widget lookups faster for every dashboard that reads them.');
+  assert.equal(RULES.find((r) => r.name === 'Aligned').check(lines.join('\n')), null);
+});
+
+test('Aligned: a mis-padded col-0 Applied row is still flagged when a sub-line sits beside it', () => {
+  const lines = conformantReport().split('\n');
+  const idx = lines.findIndex((l) => l.startsWith('deleted'));
+  lines[idx] = lines[idx].replace(/\s+commit/, ' commit');
+  lines.splice(idx + 1, 0, '   Made widget lookups faster.');
+  assert.match(RULES.find((r) => r.name === 'Aligned').check(lines.join('\n')), /^Aligned: line \d+ trailing column starts at \d+, expected \d+$/);
+});
+
 test('One record per row: a bare row with two #N refs is flagged; a batch command line is not', () => {
   const check = RULES.find((r) => r.name === 'One record per row').check;
   assert.match(check('   #1  Some title (likewise #2)'), /^One record per row: line 1 carries 2 record refs/);
