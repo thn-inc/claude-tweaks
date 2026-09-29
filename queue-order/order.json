@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-29T18:32:05.515Z",
+  "computedAt": "2026-09-29T18:45:54.933Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -40,12 +40,12 @@
       },
       {
         "number": 2787,
-        "updatedAt": "2026-09-29T18:18:14Z",
+        "updatedAt": "2026-09-29T18:40:37Z",
         "state": "OPEN"
       },
       {
         "number": 2785,
-        "updatedAt": "2026-09-29T13:27:32Z",
+        "updatedAt": "2026-09-29T18:44:55Z",
         "state": "OPEN"
       },
       {
@@ -264,12 +264,6 @@
             "color": "F9D0C4"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
             "id": "LA_kwDORUwzVM8AAAACsXHcvg",
             "name": "priority:low",
             "description": "Priority: dispatch picks last among prioritized records",
@@ -291,7 +285,7 @@
         "number": 2785,
         "state": "OPEN",
         "title": "Doc staleness: decisions/0019-vendored-gif-codec-over-a-runtime-dependency — Consequences",
-        "updatedAt": "2026-09-29T13:27:32Z",
+        "updatedAt": "2026-09-29T18:44:55Z",
         "facets": {
           "origin": "docs-health",
           "risk": "low",
@@ -304,7 +298,7 @@
           "stage": "ready",
           "grants": {
             "build": true,
-            "merge": true
+            "merge": false
           },
           "bot": {
             "inProgress": false,
