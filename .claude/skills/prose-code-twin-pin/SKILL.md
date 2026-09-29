@@ -1,6 +1,6 @@
 ---
 name: prose-code-twin-pin
-description: Use when reviewing a project skill, or authoring one, that restates a table which also exists as executable code (an enum, a switch, a lookup table) — checks whether a conformance test pins the two equal, the same way this repo already pins `record.js`'s TYPE_LABELS against `subject.js`'s TYPE_PREFIX. Keywords - prose table, code twin, conformance test, drift, pinning test, one source of truth, vocabulary equality, review checklist.
+description: Use when reviewing a project skill, or authoring one, that restates a table which also exists as executable code (an enum, a switch, a lookup table) — checks whether a conformance test pins the two equal, the same way this repo already pins `record.js`'s TYPES against `subject.js`'s TYPE_PREFIX. Keywords - prose table, code twin, conformance test, drift, pinning test, one source of truth, vocabulary equality, review checklist.
 ---
 
 # Prose-code-twin-pin
@@ -20,9 +20,13 @@ whose prose contains a table or enumerated list that names a **closed vocabulary
 of type names, outcome words, status labels, facet values — ask two questions:
 
 1. **Does an executable code twin exist?** Grep the vocabulary's own terms (each row/word) against
-   `plugin/bin/lib/**/*.js` for a matching object key, `switch` case, or array literal. A vocabulary
-   that exists only in prose, with nothing in code reading or producing it, is not this pattern —
-   there's no twin to drift from.
+   `plugin/bin/lib/**/*.js` for a matching object key, `switch` case, or array literal. If nothing
+   turns up there, also grep `plugin/skills/**/*.md` — a driver skill's own numbered steps are the
+   executable logic for a vocabulary it produces (this repo's skill-as-code model), so a step file
+   that reads a tool's exit code and names one of the vocabulary's words is a twin exactly as much
+   as a `.js` lookup table is; a passing mention of the same word elsewhere in prose is not. A
+   vocabulary that exists only as a description with nothing — code or skill steps — reading or
+   producing it is not this pattern — there's no twin to drift from.
 2. **If a twin exists, does a conformance test pin the two equal?** Grep `tests/**/*.js` for a test
    that imports both sides and asserts their key/value sets match (`assert.deepEqual(Object.keys(A).sort(), B.slice().sort())` or equivalent) — not merely a test asserting individual literal strings are *present* somewhere (a citation sweep proves nothing about the fourth case someone adds later).
 
@@ -32,7 +36,7 @@ plainly instead of reading like one.
 
 ## Worked examples
 
-**Fixed instance (what pinning looks like):** `plugin/bin/lib/issues/record.js`'s `TYPE_LABELS`
+**Fixed instance (what pinning looks like):** `plugin/bin/lib/issues/record.js`'s `TYPES`
 must stay in sync with `plugin/bin/lib/release/subject.js`'s `TYPE_PREFIX` — both key off the same
 closed vocabulary of record types. `tests/bin-lib/compose-subject.test.js`'s `'Type vocabulary has
 one source of truth: TYPE_PREFIX and record.TYPES name the same set'` test pins them:
