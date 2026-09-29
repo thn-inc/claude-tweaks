@@ -7,17 +7,13 @@
 
 const { recordPayload } = require('../issues/record');
 const {
-  REQUIRED_SECTIONS: GATE_SECTIONS, PLACEHOLDER_PATTERNS, sectionText, shapeGate, stripCodeSpans,
+  REQUIRED_SECTIONS: GATE_SECTIONS, PLACEHOLDER_PATTERNS, ORIGINAL_REQUEST_RE, sectionText, shapeGate, stripCodeSpans,
 } = require('../issues/materialize-format');
 
 // Derived from the gate's own lists — never a locally declared copy (#2827). Exported under
 // the historical names REQUIRED_SECTIONS / PLACEHOLDER_MARKERS.
 const SECTION_NAMES = GATE_SECTIONS.map((h) => h.replace(/^## /, ''));
 const MARKER_NAMES = PLACEHOLDER_PATTERNS.map((p) => p.marker);
-
-// Same exemption boundary shapeGate applies (#1240): markers inside the verbatim
-// ## Original request copy are the original capture's own text.
-const ORIGINAL_REQUEST_RE = /^## Original request[ \t]*$/m;
 
 // body -> { [headingText]: contentString } — content is every line between one line-anchored
 // "## {Heading}" line and the next (or end of string), trimmed. A "## " appearing mid-line

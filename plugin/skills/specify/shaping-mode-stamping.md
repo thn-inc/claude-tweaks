@@ -182,7 +182,7 @@ gh issue edit {n} \
   --remove-label "needs:decision"
 ```
 
-`--check` (#2827) is the Materialization gate's own checker. Exit 4 → write nothing, stamp no labels: the record's Actions Performed row renders `failed` with the Detail `pre-write shape check failed:` plus the stderr gap lines; a batch continues with the next record, and under `--chained`/bare drain that row is the returned/reported outcome.
+`--check` (#2827) is the Materialization gate's own checker. Exit 4 → write nothing, stamp no labels: the record's Actions Performed row renders `failed` with the Detail `pre-write shape check failed:` plus the stderr gap lines (any other exit: the same row, quoting stderr verbatim instead); a batch continues with the next record, and under `--chained`/bare drain that row is the returned/reported outcome.
 
 Omit `--add-label "risk:{tier}"` / `--add-label "size:{tier}"` / `--add-label "ceremony:{tier}"` for whichever family was already stamped; omit `--type {t}` (or the `--add-label "type:{t}"` swap) when Type was already present; omit `--remove-label parked` when the record never carried it. Omit `--remove-label "needs:definition"` / `--remove-label "needs:decision"` individually for
 whichever the record never carried — same omit-when-absent rule as `--remove-label parked` — and

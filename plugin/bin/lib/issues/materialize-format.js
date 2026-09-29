@@ -180,5 +180,5 @@ function composeFile({ header, n, title, body }) {
 }
 
 module.exports = {
-  REQUIRED_SECTIONS, PLACEHOLDER_PATTERNS, sectionText, shapeGate, liftMetadata, composeHeader, composeFile, stripCodeSpans,
+  REQUIRED_SECTIONS, PLACEHOLDER_PATTERNS, ORIGINAL_REQUEST_RE, sectionText, shapeGate, liftMetadata, composeHeader, composeFile, stripCodeSpans,
 };

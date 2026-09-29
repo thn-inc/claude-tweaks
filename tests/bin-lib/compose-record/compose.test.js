@@ -163,6 +163,7 @@ test('compose.js declares no section or placeholder list of its own (#2827)', ()
   const src = require('fs').readFileSync(require('path').join(__dirname, '../../../plugin/bin/lib/compose-record/compose.js'), 'utf8');
   assert.doesNotMatch(src, /REQUIRED_SECTIONS\s*=/);
   assert.doesNotMatch(src, /PLACEHOLDER_MARKERS\s*=/);
+  assert.doesNotMatch(src, /ORIGINAL_REQUEST_RE\s*=/);
 });
 
 test('compose.js still exports REQUIRED_SECTIONS / PLACEHOLDER_MARKERS with their historical values', () => {
