@@ -26,10 +26,12 @@ const USAGE =
 
 const VALUE_FLAGS = new Set(['--cmd', '--json', '--log-dir', '--count-stamp', '--git-dir', '--scope', '--base', '--integration-branch', '--run', '--cwd']);
 
-// argv = process.argv.slice(2). Throws UsageError on any malformed input —
-// the CLI prints message + USAGE to stderr and exits non-zero (AC6).
-// --stamp-status (#1921) is a read-only mode: it needs no --cmd at all.
-function parseArgs(argv) {
+// Tokenizes argv into a flat raw-values object, with per-flag syntax
+// validation (unknown flags, missing values, --cmd's <name>=<command>
+// shape, duplicate --cmd names). This loop is the one thing all three
+// modes below share — cross-mode legality is validated separately, per
+// mode, once tokenizing is done (#2806).
+function tokenize(argv) {
   const cmds = [];
   let json = null;
   let logDir = null;
@@ -76,31 +78,84 @@ function parseArgs(argv) {
     }
     throw new UsageError(`unknown flag: ${flag}`);
   }
-  if (cmds.length === 0 && !stampStatus && !changedFiles) throw new UsageError('at least one --cmd <name>=<command> is required');
-  if (stampStatus && cmds.length) throw new UsageError('--stamp-status takes no --cmd');
-  if (changedFiles && cmds.length) throw new UsageError('--changed-files takes no --cmd');
-  if (changedFiles && scope !== null) throw new UsageError('--changed-files takes no --scope');
-  if (changedFiles && gitDir !== null) throw new UsageError('--changed-files takes no --git-dir');
-  if (changedFiles && stampStatus) throw new UsageError('--changed-files and --stamp-status are separate modes');
+  return {
+    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles, run, cwd,
+  };
+}
+
+// The only check that has to run before a mode can even be picked: the two
+// boolean-flag modes are mutually exclusive.
+function resolveMode(raw) {
+  if (raw.stampStatus && raw.changedFiles) {
+    throw new UsageError('--changed-files and --stamp-status are separate modes');
+  }
+  if (raw.stampStatus) return 'stamp-status';
+  if (raw.changedFiles) return 'changed-files';
+  return 'run';
+}
+
+// --stamp-status (#1921): a read-only mode that needs no --cmd at all, and
+// takes none of --scope/--base/--integration-branch/--run/--cwd (those all
+// apply to an actual check run). --git-dir and --no-stamp are unrestricted.
+function validateStampStatusMode(raw) {
+  if (raw.cmds.length) throw new UsageError('--stamp-status takes no --cmd');
   // L12 (review, #1922): --base/--integration-branch only mean anything
   // alongside --scope, and --stamp-status is a read-only mode that takes
   // none of the three — each combination is a usage error, not a silently
   // ignored flag.
-  if (stampStatus && (scope !== null || base !== null || integrationBranch !== null)) {
+  if (raw.scope !== null || raw.base !== null || raw.integrationBranch !== null) {
     throw new UsageError('--stamp-status takes no --scope/--base/--integration-branch');
   }
-  if (!scope && !changedFiles && (base !== null || integrationBranch !== null)) {
-    throw new UsageError('--base and --integration-branch require --scope or --changed-files');
-  }
-  if (run !== null && (stampStatus || changedFiles)) {
+  if (raw.run !== null) {
     throw new UsageError('--run applies to a check run — not to --stamp-status or --changed-files');
   }
-  if (cwd !== null && (stampStatus || changedFiles)) {
+  if (raw.cwd !== null) {
     throw new UsageError('--cwd applies to a check run — not to --stamp-status or --changed-files');
   }
-  return {
-    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles, run, cwd,
-  };
+}
+
+// --changed-files (#1923): another read-only mode — no --cmd, no --scope,
+// no --git-dir, no --run/--cwd (those all apply to an actual check run).
+// --base/--integration-branch ARE allowed here (unlike --stamp-status):
+// they steer which base the diff is taken against.
+function validateChangedFilesMode(raw) {
+  if (raw.cmds.length) throw new UsageError('--changed-files takes no --cmd');
+  if (raw.scope !== null) throw new UsageError('--changed-files takes no --scope');
+  if (raw.gitDir !== null) throw new UsageError('--changed-files takes no --git-dir');
+  if (raw.run !== null) {
+    throw new UsageError('--run applies to a check run — not to --stamp-status or --changed-files');
+  }
+  if (raw.cwd !== null) {
+    throw new UsageError('--cwd applies to a check run — not to --stamp-status or --changed-files');
+  }
+}
+
+// The default mode: an actual check run. Needs at least one --cmd;
+// --base/--integration-branch only mean anything alongside --scope (L12,
+// #1922) — --changed-files has its own independent grant for the two,
+// validated above.
+function validateRunMode(raw) {
+  if (raw.cmds.length === 0) throw new UsageError('at least one --cmd <name>=<command> is required');
+  if (!raw.scope && (raw.base !== null || raw.integrationBranch !== null)) {
+    throw new UsageError('--base and --integration-branch require --scope or --changed-files');
+  }
+}
+
+const MODE_VALIDATORS = {
+  'stamp-status': validateStampStatusMode,
+  'changed-files': validateChangedFilesMode,
+  run: validateRunMode,
+};
+
+// argv = process.argv.slice(2). Throws UsageError on any malformed input —
+// the CLI prints message + USAGE to stderr and exits non-zero (AC6). Each
+// mode's own legality lives in its own validator above; this just tokenizes,
+// picks the mode, and runs that mode's validator against the shared shape.
+function parseArgs(argv) {
+  const raw = tokenize(argv);
+  const mode = resolveMode(raw);
+  MODE_VALIDATORS[mode](raw);
+  return raw;
 }
 
 module.exports = { parseArgs, UsageError, USAGE };
