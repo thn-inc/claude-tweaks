@@ -590,7 +590,6 @@ test('archiveRunDir: non-empty untracked work/ still refuses git-mv-failed (unch
   assert.equal(result.reason, 'git-mv-failed');
 
   // Nothing moved — the untracked file is still exactly where it was.
-  assert.equal(fs.existsSync(path.join(runDir, 'work', '953-spec.md')), true);
   assert.equal(
     fs.readFileSync(path.join(runDir, 'work', '953-spec.md'), 'utf8'),
     '# spec 953\n',
