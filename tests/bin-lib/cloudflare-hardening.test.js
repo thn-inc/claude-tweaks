@@ -95,6 +95,11 @@ test('AC3c: full bot management enabled (snake_case API field) passes', () => {
   assert.equal(result.status, 'pass');
 });
 
+test('AC3d: Bot Fight Mode enabled via the botFightMode field alone passes', () => {
+  const result = checkBotManagement({ botFightMode: true });
+  assert.equal(result.status, 'pass');
+});
+
 test('bot management settings unavailable is a review verdict, never a silent pass', () => {
   const result = checkBotManagement(null);
   assert.equal(result.status, 'review');
@@ -112,6 +117,16 @@ test('AC4b: at least one custom rule targeting a named attack pattern passes', (
   const result = checkWafCustomRules({
     customRules: [{ name: 'block-sqli-login', description: 'Blocks known SQLi payloads on /login' }],
   });
+  assert.equal(result.status, 'pass');
+});
+
+test('AC4b-1: a custom rule with only a name (no description) passes', () => {
+  const result = checkWafCustomRules({ customRules: [{ name: 'block-sqli-login' }] });
+  assert.equal(result.status, 'pass');
+});
+
+test('AC4b-2: a custom rule with only a description (no name) passes', () => {
+  const result = checkWafCustomRules({ customRules: [{ description: 'Blocks known SQLi payloads on /login' }] });
   assert.equal(result.status, 'pass');
 });
 

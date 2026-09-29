@@ -6,7 +6,7 @@
 // record) is read from the `### Key Files` subsection its body already carries.
 'use strict';
 
-const { normalizeLabelNames } = require('./record');
+const { normalizeLabelNames, extractSection } = require('./record');
 
 // A path referenced by at least this many items, OR at least this fraction
 // of the batch (whichever is larger — see the max() below), is treated as a
@@ -322,11 +322,6 @@ function extractBoldHeaderFile(body) {
 // backticked path per list item followed by an optional annotation:
 //   - `path/to/file.md` (create)
 //   - `path/to/other.md` (modify — why, with commas, **and bold**)
-// Tolerates `##`..`####` so a re-nested body still parses; the section always
-// ends at the next heading of any level (Gotchas routinely names files in
-// backticks, and scraping those would union records on an incidental mention).
-const KEY_FILES_HEADING_RE = /^#{2,4}[ \t]+Key Files[ \t]*$/;
-const ANY_HEADING_RE = /^#{1,6}[ \t]/;
 const LIST_ITEM_RE = /^[ \t]*[-*][ \t]+(.+)$/;
 const BACKTICKED_RE = /`([^`]+)`/;
 // spec-template.md ships the literal "- `{path}` — {what changes}". A record
@@ -336,16 +331,19 @@ const TEMPLATE_PLACEHOLDER_RE = /^\{.*\}$/;
 // Extracts the paths listed under a body's `### Key Files` subsection, or []
 // when the body has no such subsection — the documented absence case, not an
 // error (skills/specify/decomposition-mode.md: records without one "contribute
-// nothing to the map — skip silently").
+// nothing to the map — skip silently"). Boundary-finding (tolerates `##`..`####`
+// so a re-nested body still parses; the section always ends at the next heading
+// of any level — Gotchas routinely names files in backticks, and scraping those
+// would union records on an incidental mention) comes from record.js's shared
+// extractSection, at its own default options — the same h2-h4/any-heading-stop
+// shape this function always used.
 function extractKeyFilesSection(body) {
-  const lines = body.split('\n');
-  const start = lines.findIndex((line) => KEY_FILES_HEADING_RE.test(line));
-  if (start === -1) return [];
+  const section = extractSection(body, 'Key Files');
+  if (!section) return [];
 
   const files = [];
-  for (let i = start + 1; i < lines.length; i += 1) {
-    if (ANY_HEADING_RE.test(lines[i])) break;
-    const item = LIST_ITEM_RE.exec(lines[i]);
+  for (const line of section.split('\n')) {
+    const item = LIST_ITEM_RE.exec(line);
     if (!item) continue;
     // First backticked span wins: it drops the trailing annotation, and an item
     // naming an alternative (``- `a/tests/` or `tests/` ``) yields the primary

@@ -3,7 +3,7 @@
 'use strict';
 
 const fs = require('fs');
-const { decodePng } = require('../gif/png-decode');
+const { decodePng, PngDecodeError } = require('../gif/png-decode');
 const { quantize } = require('../gif/palette');
 const { encodeGif } = require('../gif/encoder');
 
@@ -45,7 +45,19 @@ function downscaleNearest(rgba, srcW, srcH, targetW, targetH) {
 
 function encodeWalkthrough({ framePaths, delays, width, budgetBytes }, deps = {}) {
   const readFile = deps.readFile || fs.readFileSync;
-  const decoded = framePaths.map((p) => ({ path: p, ...decodePng(readFile(p)) }));
+  // decodePng only ever sees a raw buffer, never the path it came from — its
+  // own errors ("not a PNG file (bad signature)", "unsupported bit depth 4")
+  // name nothing about which of N frame files failed. readFile's own errors
+  // (ENOENT etc.) already carry the path via Node's own message shape, so
+  // only decodePng's failures need the path added here.
+  const decoded = framePaths.map((p) => {
+    try {
+      return { path: p, ...decodePng(readFile(p)) };
+    } catch (err) {
+      if (err instanceof PngDecodeError) throw new Error(`${p}: ${err.message}`);
+      throw err;
+    }
+  });
 
   const first = decoded[0];
   for (let i = 1; i < decoded.length; i++) {

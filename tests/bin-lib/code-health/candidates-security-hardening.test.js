@@ -133,6 +133,15 @@ test('scanClientSecrets: does not flag a known-public key shape (Stripe publisha
   assert.strictEqual(candidates.length, 0);
 });
 
+test('scanClientSecrets: an unrelated NEXT_PUBLIC_*/pk_live_* token elsewhere in the file does not suppress a real secret on a different line (allowlist-window tightening)', () => {
+  const candidates = [];
+  const padding = '// filler line to push the two apart\n'.repeat(20); // > 400 chars
+  const text = `export const NEXT_PUBLIC_API_URL = "https://api.example.com";\n${padding}const KEY = "${FAKE_STRIPE_SECRET_KEY}";`;
+  scanClientSecrets('client/src/config.js', text, candidates);
+  assert.strictEqual(candidates.length, 1, 'the real secret must still be flagged despite the unrelated safe-prefix token earlier in the file');
+  assert.strictEqual(candidates[0].kind, 'client-secret');
+});
+
 test('scanClientSecrets: does not flag a file outside any recognized client directory', () => {
   const candidates = [];
   scanClientSecrets('lib/config.js', `const KEY = "${FAKE_STRIPE_SECRET_KEY}";`, candidates);

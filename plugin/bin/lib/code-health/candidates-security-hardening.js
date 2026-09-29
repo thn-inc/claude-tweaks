@@ -96,6 +96,19 @@ function lineOf(text, index) {
   return text.slice(0, index).split('\n').length;
 }
 
+// The physical line(s) spanning a match — deliberately narrower than
+// windowAround's 400-char co-occurrence window. The safe-prefix allowlist
+// check below *suppresses* a candidate outright (unlike the ownership/guard
+// checks, which only ever add one), so a wide window lets an unrelated
+// NEXT_PUBLIC_*/pk_live_* token 400 chars away in the same file silently
+// clear a genuinely private secret on a different line/declaration entirely.
+function lineText(text, index, matchLen) {
+  const start = text.lastIndexOf('\n', index) + 1;
+  const nextNewline = text.indexOf('\n', index + matchLen);
+  const end = nextNewline === -1 ? text.length : nextNewline;
+  return text.slice(start, end);
+}
+
 function scanClientSecrets(rel, text, candidates) {
   if (!CLIENT_DIR_RE.test(rel) || SERVER_DIR_RE.test(rel)) return;
   for (const { name, re } of SECRET_PATTERNS) {
@@ -103,7 +116,7 @@ function scanClientSecrets(rel, text, candidates) {
     let m;
     while ((m = re.exec(text))) {
       const matched = m[0];
-      const win = windowAround(text, m.index, matched.length);
+      const win = lineText(text, m.index, matched.length);
       if (SAFE_PREFIX_RE.test(win)) {
         if (m.index === re.lastIndex) re.lastIndex += 1;
         continue;

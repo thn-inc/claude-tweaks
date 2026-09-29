@@ -13,7 +13,7 @@ const {
   archiveRunDir, listSpecDirs, decideArchive, readConsoleState, isOrphanedMint, trackArchiveResult,
   archiveMerged, lastOwnEventMs, isAbandonedInterrupted, archiveOrphanedMint, ORPHAN_MINT_TTL_MS,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, isStaleDir,
-  isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin,
+  isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin, resolveIdenticalWorkTwin,
   classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
   isClosedSlugStuck, recordNumbersFromSlug, refusal,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
@@ -1354,6 +1354,40 @@ test('trackArchiveResult: work-twin-resolve-failed-partial-revert tracks under i
   assert.equal(entries.length, 1);
   assert.equal(entries[0].reason, 'work-twin-resolve-failed-partial-revert');
   assert.equal(entries[0].path, dir);
+});
+
+// Review finding: `resolveIdenticalWorkTwin`'s own refusals carried
+// `lastError` (the git stderr) but never populated `hint` — the field
+// `hooks.js`'s `archive-run` verb actually reads for operator-facing
+// recovery text — unlike every sibling `move-failed`/`git-mv-failed`
+// refusal in this file, which sets `hint` from the same `lastError` value.
+test('resolveIdenticalWorkTwin: a git rm/mv failure populates hint from lastError, not just lastError itself', (t) => {
+  const root = makeRepo();
+  const srcDir = path.join(root, 'src');
+  const destDir = path.join(root, 'dest');
+  commitPath(root, 'src/a.txt', 'content\n');
+  // destDir/a.txt tracked and identical -> the twin-rm branch (isTracked -> git rm).
+  fs.mkdirSync(destDir, { recursive: true });
+  fs.writeFileSync(path.join(destDir, 'a.txt'), 'content\n');
+  git(root, 'add', 'dest/a.txt');
+  git(root, 'commit', '-m', 'add tracked twin');
+
+  t.mock.method(cp, 'execFileSync', (cmd, args, opts) => {
+    // runGit spawns `git -C {cwd} {args...}`, so the subcommand sits at
+    // args[2], not args[0].
+    if (cmd === 'git' && Array.isArray(args) && args[2] === 'rm') {
+      const err = new Error('simulated failure: git rm');
+      err.stderr = 'fatal: simulated git rm failure\n';
+      throw err;
+    }
+    return execFileSync(cmd, args, opts);
+  });
+
+  const result = resolveIdenticalWorkTwin(root, srcDir, destDir);
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.reason, 'work-twin-resolve-failed');
+  assert.ok(result.lastError, 'lastError must be set');
+  assert.equal(result.hint, result.lastError, 'hint must mirror lastError, not stay null');
 });
 
 test('trackArchiveResult: a success clears a prior failure streak for the same dir', () => {

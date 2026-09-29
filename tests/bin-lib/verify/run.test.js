@@ -253,6 +253,11 @@ test('runOne passes cwd through to spawnImpl when given (#2376)', async () => {
   });
   assert.strictEqual(spawnedOpts[0].shell, true);
   assert.strictEqual(spawnedOpts[0].cwd, '/repo/packages/app');
+  // The #1837 NO_COLOR/FORCE_COLOR env is set on every spawn regardless of cwd —
+  // a property-only check rather than deepStrictEqual against the whole opts
+  // object, since env spreads ...process.env and can't be pinned literally.
+  assert.strictEqual(spawnedOpts[0].env.NO_COLOR, '1');
+  assert.strictEqual(spawnedOpts[0].env.FORCE_COLOR, '0');
 });
 
 test('runOne omits cwd from spawn options when not given, unchanged from before #2376', async () => {

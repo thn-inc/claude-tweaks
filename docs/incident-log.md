@@ -1703,3 +1703,31 @@ common, and reads as evidence.
 **Removal condition:** retire this entry and its `docs/donts.md` rule once the full-suite
 adjudication step mechanically requires the per-file assertion message alongside every attributed
 commit, so an attribution with no quoted failure cannot be recorded in the first place.
+
+## IL-161 — Name-keyed filesystem checks without an `lstat` type check, twice in one build
+
+During #2253's `plugin/bin/lib/init/release-bootstrap.js` build (2026-09-11), whole-branch review
+found the same convention gap twice, independently, in code written in the same session: a check
+that a path *exists* (`fs.existsSync`, a directory listing) was trusted as proof of what *kind* of
+thing exists there, with no `lstat`-based type check to tell a regular file, a directory, or a
+symlink apart.
+
+The first instance treated any entry named `package.json` in the candidate root as evidence of a
+Node project, without checking it was a regular file — a directory that happened to be named
+`package.json` would have read as one. The second, more serious instance (`mkdirSync` recursive +
+`writeFileSync`) followed an existing symlink at any path segment with no realpath/boundary check,
+so a symlinked `.github` could make the bootstrap write outside the intended root while `written`
+kept reporting the intended relative path — the same class of hazard `[IL-150]` names for
+ALLOW/exemption decisions.
+
+Both fixes shipped in the same review round (`spec-2253/staged/review-2.patch`, landed in
+`8409ec468`): lstat every path segment, refuse symlinks, and realpath-bound the write to the real
+root — the same discipline `[IL-150]` already states for a different call site (hook exemptions).
+This entry names it for filesystem-check call sites generally, since two fresh instances landed in
+one build despite `[IL-150]` already being on record.
+
+Cost on this build: one review round across two findings, both fixed in the same patch.
+
+**Removal condition:** retire this entry and its `docs/donts.md` rule once a mechanical check (a
+grep-based lint, or a shared `lstat`-backed helper new filesystem-check code is required to route
+through) flags a name-keyed or existence-only check with no accompanying type check.
