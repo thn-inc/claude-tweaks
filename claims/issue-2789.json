@@ -1,6 +1,7 @@
 {
-  "released": true,
-  "runId": "2026-09-29T012248-sweep-standalone",
-  "reason": "shaped: #2789",
-  "releasedAt": "2026-09-29T10:27:03.783Z"
+  "runId": "2026-09-29T151334-record-2789",
+  "sessionId": "34aa4441-7fdd-5c2d-afdf-92718390b339",
+  "claimedAt": "2026-09-29T15:16:28.310Z",
+  "ttlHours": 72,
+  "host": "vm"
 }
