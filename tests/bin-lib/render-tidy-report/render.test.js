@@ -11,6 +11,7 @@ const {
   truncateTitle,
   formatRecord,
 } = require('../../../plugin/bin/lib/render-tidy-report/render');
+const { lintReport } = require('../../../plugin/bin/lib/tidy-report-lint/rules');
 
 function tmpRunDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'rtr-'));
@@ -106,6 +107,53 @@ test('renderItem: three-line shape — number + tag + record + title, then actio
 test('renderApproveSection: empty items list renders empty string (block must be omitted, never a zero-count header)', () => {
   assert.equal(renderApproveSection([]), '');
   assert.equal(renderApproveSection(null), '');
+});
+
+test('renderItem: a bare "release-note" tag renders as [release-note], never doubled brackets (#2828 R8)', () => {
+  const rendered = renderItem(1, {
+    tag: 'release-note',
+    record: null,
+    title: 'Widget cache eviction rewrite',
+    action: 'Fill Release Note (insert one ## Release Note section; labels unchanged)',
+    command: 'insert into specs/2786-widget-cache-eviction-rewrite.md — release-note-repair.md\nMade widget lookups faster.',
+  });
+  assert.ok(rendered.startsWith('1  [release-note]  #—  Widget cache eviction rewrite'));
+  assert.ok(!rendered.includes('[[release-note]]'));
+});
+
+test('render + lint: a Stage-tier [release-note] finding with a long bounds-passing line and a local-files path ref stays lint-clean (#2828 R3)', () => {
+  // A composed line long enough that embedding it inline in a single command
+  // line (the pre-fix "insert \"{line}\" into {ref} — release-note-repair.md"
+  // shape) would blow the report lint's 100-char Width cap — checkReleaseNoteLine
+  // places no length bound on the composed sentence itself.
+  const longLine = 'Rewrote the widget cache eviction policy to evict least-recently-used entries '
+    + 'first instead of oldest-inserted, cutting p99 lookup latency under heavy churn.';
+  assert.ok(longLine.length > 96, 'fixture line must actually need truncation to prove the split works');
+  const truncated = `${longLine.slice(0, 96)}…`;
+  const ref = 'specs/2786-widget-cache-eviction-rewrite.md'; // a local-files path ref
+  const approve = renderApproveSection([{
+    tag: 'release-note',
+    record: null,
+    title: 'Widget cache eviction rewrite',
+    action: 'Fill Release Note (insert one ## Release Note section; labels unchanged)',
+    command: `insert into ${ref} — release-note-repair.md\n${truncated}`,
+  }]);
+
+  const report = [
+    '## Tidy Report — 2026-08-28',
+    '',
+    approve,
+    '',
+    '**Clean:**',
+    '```text',
+    'release-note        1 checked',
+    '```',
+    '',
+    'Full decision log: .claude-tweaks/pipelines/2026-08-28T120000-tidy-standalone/decisions.md',
+    '',
+  ].join('\n');
+
+  assert.deepEqual(lintReport(report), []);
 });
 
 test('renderApproveSection: produces the exact expected Approve-section text from a fixture staged/ directory', () => {

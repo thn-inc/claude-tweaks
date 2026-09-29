@@ -45,6 +45,12 @@ test('release-note-repair.md truncates the Applied sub-line to fit the report li
   assert.ok(SUB.includes('truncated to 96 characters'));
 });
 
+test('step-6-interactive.md names release-note-repair.md for [release-note] rows, never recomposing the line', () => {
+  const interactive = read('plugin/skills/tidy/step-6-interactive.md');
+  assert.ok(interactive.includes('`[release-note]` rows are staged and rendered exactly as `release-note-repair.md` describes'));
+  assert.ok(interactive.includes('never recomposed here'));
+});
+
 test('the undo snapshot is under snapshots/, never staged/', () => {
   assert.ok(SUB.includes('{run-dir}/snapshots/tidy-release-note-{id}.original.md'));
   assert.ok(!/staged\/tidy-release-note-[^\s`]*\.original/.test(SUB));

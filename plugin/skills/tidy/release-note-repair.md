@@ -29,30 +29,41 @@ line, no `#\d+`, no path-shaped token, no backtick, no conventional-commit prefi
 recompose once from the violations on stderr; a second exit 4 is a repair failure, never a weaker
 line.
 
+Composition timing differs by mode, and both the Stage tier and Interactive mode compose here —
+**before** Step 6's batch report renders, since the row's command line must carry the line
+verbatim: the Stage tier composes once at staging time (`## Stage tier` below) and that line stays
+visible unchanged through approval; Interactive mode composes here too, before the report renders,
+then reuses that same composed text after approval, never recomposing it a second time. Auto mode
+(nothing staged, no report to render first) is the one exception — it composes fresh in the Auto
+path below, immediately before repair.
+
 ## Stage tier (`conservative`, or `--dry-run`)
 
 Compose the line, then stage one item per record with `stage-item.js` (`step-6-auto.md`'s Staging
 section), `--id tidy-release-note-{id}`. The `.md` holds the record ref, `Proposed line: {line}`
-and `Premise sha256: {sha}`. The sidecar is `[{"tag": "[release-note]", "record": {n, or null on
+and `Premise sha256: {sha}`. The sidecar is `[{"tag": "release-note", "record": {n, or null on
 local-files}, "title": …, "action": "Fill Release Note (insert one ## Release Note section; labels
-unchanged)", "command": "insert \"{line}\" into {ref} — release-note-repair.md"}]` — the composed
-line itself goes in `command`, not just the action name, so the Approve row's rendered command
-line names what will actually be written, not only that something will; `action` stays exactly the
-`Proposed:` text `decision-markers.md` writes and Shape 4.5's comment check matches, unchanged. An
-approved item runs the Auto path with that line and sha.
+unchanged)", "command": "insert into {ref} — release-note-repair.md\n{line, truncated to 96
+characters plus `…`}"}]` (a bare tag — `render-tidy-report.js` brackets it itself, as it does every
+tag). The command is two lines, mirroring the Applied row's own sub-line convention (`## Audit and
+report` below): a short, ref-bearing first line the report lint's Width rule can always fit,
+followed by the composed line on its own display line, truncated the same way — the composed line
+is free text with no length bound (`specify/spec-template.md`'s Release Note guidance), so
+embedding it inline in the first line would blow the report lint's 100-character cap for any line
+long enough or, on `local-files`, any path `{ref}` long enough; splitting it this way keeps the row
+lint-clean regardless. The line still reaches the Approve row in full when short enough, or
+truncated with the rest visible only at approval time otherwise — either way the human reading it
+sees what will be written, not only that something will; `action` stays exactly the `Proposed:`
+text `decision-markers.md` writes and Shape 4.5's comment check matches, unchanged. An approved
+item runs the Auto path with that line and sha.
 
 ## Auto path (one record at a time)
 
-1. **Compose the line** (`## Compose the line` above) and write it to the session-tmp path
-   `{line-file}` with the Write tool. `{line-file}`, `{live-json}`, `{repaired-body}` (session-tmp
-   `tidy-release-note-{id}.body.md`, one file per record so a reused path never carries a sibling
-   record's bytes), and `{after-json}` below are all session-tmp paths
-   (`_shared/session-tmp-root.md`). Composition timing differs by mode: the Stage tier composes
-   once at staging time (above, no repeat needed here) and its line is already visible in the
-   Approve row's command (`## Stage tier` above); Auto mode (nothing staged) composes fresh here,
-   immediately before repair; Interactive mode composes **before** Step 6's batch report renders —
-   its Approve row's command line carries the line verbatim, same as the Stage tier's — and reuses
-   that same composed text here after approval, never recomposing it a second time.
+1. **Compose the line** (`## Compose the line` above, including its Composition timing note) and
+   write it to the session-tmp path `{line-file}` with the Write tool. `{line-file}`, `{live-json}`,
+   `{repaired-body}` (session-tmp `tidy-release-note-{id}.body.md`, one file per record so a reused
+   path never carries a sibling record's bytes), and `{after-json}` below are all session-tmp paths
+   (`_shared/session-tmp-root.md`).
 2. **Re-read live, then repair** — immediately before the write, never from the scan's snapshot
    (`_shared/reverify-before-write.md`):
    - `github-issues`: `gh issue view {n} --json body,labels,state > {live-json}` (gh absent: the
@@ -83,20 +94,22 @@ approved item runs the Auto path with that line and sha.
      label touched; Yours **review** row keyed `/claude-tweaks:specify {ref}` (re-shaping is
      `/specify`'s job), plus the SKIP entry.
    - 7 (`local-files` only): the CLI's own re-read verification failed, and — having confirmed the
-     file on disk still held exactly the bytes it spliced, so restoring is safe — its own restore
-     attempt also failed — the record file holds unverified repaired content, and the true original
-     survives only at the snapshot. Restore once, automatically: copy the snapshot over the record
-     file (`cp {snapshot} {path}`), re-read it, and confirm the bytes are identical to the
-     snapshot. Confirmed: Yours **review** row naming `{path}` and `{snapshot}`, plus the SKIP
-     entry. Restore itself fails: the Yours row's command line is that same `cp {snapshot} {path}`,
-     plus the SKIP entry.
+     file on disk still held exactly the bytes it spliced, so restoring was safe at that moment —
+     its own restore attempt also failed: the record file holds unverified repaired content, and
+     the true original survives only at the snapshot. Nothing further is written automatically —
+     the agent has no way to re-check, after the fact, that the file still holds those exact
+     spliced bytes, so a second blind write carries the same risk the CLI's own attempt just hit.
+     Yours **review** row naming `{path}` and `{snapshot}`, plus the SKIP entry. The row's command
+     is the manual undo `cp {snapshot} {path}` — offered for a human to run after confirming it's
+     still safe, never executed automatically.
    - 8 (`local-files` only): the CLI's own re-read verification failed, and the file on disk no
      longer holds the bytes it spliced — something else wrote to `{path}` between this call's write
      and its own re-read. The CLI refuses to restore automatically: overwriting now would stomp
      whatever that other write produced, on top of not even knowing whether the original premise
      (the pre-write snapshot) is still the right base to restore to. Yours **review** row naming
-     `{path}`, `{snapshot}`, and the stderr's description of the live state — no `cp` command is
-     offered; a human decides what to keep — plus the SKIP entry.
+     `{path}`, `{snapshot}`, and the stderr's byte-length delta between what's on disk now and what
+     this call wrote — no `cp` command is offered; a human decides what to keep — plus the SKIP
+     entry.
    - 3: read the stderr to tell the two causes apart. An anchoring failure (stderr names `resolve
      $RUN_ROOT per _shared/pipeline-run-dir.md`) gets one retry — re-resolve `$RUN_ROOT` and repeat
      this step; a second exit 3 is a Yours **review** failure plus the SKIP entry. A
@@ -115,11 +128,10 @@ approved item runs the Auto path with that line and sha.
    `gh issue view {n} --json body,labels,state > {after-json}` and
    `node "${CLAUDE_PLUGIN_ROOT}/bin/release-note-repair.js" verify --ref {n} --before-json {live-json} --after-json {after-json} --line-file {line-file} [--run "{run-dir}"]`.
    Exit 0: the live body passes `compose-record.js --check`, its Release Note is the composed
-   line, and its label set equals the pre-write read. REVISED RULING (#2828 final-fix I2): never
-   restore automatically on either failing exit below — `gh issue edit --body-file` only ever
-   touches the body, so any restore it could perform either fixes nothing (labels) or risks
-   overwriting content someone else wrote after the edit landed (body drift); a human decides,
-   never the pipeline.
+   line, and its label set equals the pre-write read. Never restore automatically on either
+   failing exit below — `gh issue edit --body-file` only ever touches the body, so any restore it
+   could perform either fixes nothing (labels) or risks overwriting content someone else wrote
+   after the edit landed (body drift); a human decides, never the pipeline.
    - Exit 8: the body itself verified clean — `compose-record.js --check` passes, the Release Note
      carries the composed line, and the line-diff proof shows nothing else changed — only the
      label set differs from the pre-write read. Nothing to restore: Yours **review** row naming
