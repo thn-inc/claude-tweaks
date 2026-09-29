@@ -1,6 +1,7 @@
 {
-  "released": true,
-  "runId": "2026-09-29T061734-record-2710",
-  "reason": "failed: materialize-hard-gate",
-  "releasedAt": "2026-09-29T06:22:40.896Z"
+  "runId": "2026-09-29T082118-record-2710",
+  "sessionId": "dc786761-ef28-5059-884e-d1772164d8f8",
+  "claimedAt": "2026-09-29T08:25:02.753Z",
+  "ttlHours": 72,
+  "host": "vm"
 }
