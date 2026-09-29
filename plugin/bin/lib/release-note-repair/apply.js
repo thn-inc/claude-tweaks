@@ -15,7 +15,15 @@ const AC_HEADING = /^## Acceptance Criteria[ \t]*$/;
 const RN_HEADING = /^## Release Note[ \t]*$/;
 const ORIGINAL_REQUEST = /^## Original request[ \t]*$/;
 const H2 = /^## /;
-const FENCE = /^(```|~~~)/;
+// An opener is optional leading whitespace (a fence indented under a list item, common in
+// Acceptance Criteria) plus a run of 3+ backticks or 3+ tildes — the info string, if any, is
+// ignored. A fence closes only on a line whose run of the SAME character is at least as long as
+// the opener's, followed by nothing but whitespace to end of line: a shorter run, the other
+// character, or one followed by more text (an info string, prose) never closes it. This is what
+// lets a longer fence (e.g. ````) hold a shorter one (```) as literal content instead of being
+// prematurely closed by it.
+const FENCE_OPEN = /^[ \t]*(`{3,}|~{3,})/;
+const FENCE_CLOSE = /^[ \t]*(`{3,}|~{3,})[ \t]*$/;
 
 // Lines keep their own terminators so every untouched byte round-trips exactly.
 const splitKeepingEol = (text) => text.match(/[^\n]*\n|[^\n]+$/g) || [];
@@ -23,22 +31,26 @@ const bare = (line) => line.replace(/\r?\n$/, '');
 
 // Fence state per line, computed only over the authored region (before ## Original request):
 // true when a line sits inside — or is itself a delimiter of — a fenced code block, so a
-// `## `-looking line typed into a fenced markdown example is never mistaken for a real heading.
-// An unterminated fence (opened, never closed, before the insert point) leaves `open` non-null —
-// callers refuse to guess a boundary past that point.
+// `## `-looking line typed into a fenced markdown example is never mistaken for a real heading,
+// however that example is indented or nested. An unterminated fence (opened, never closed, before
+// the insert point) leaves `open` non-null — callers refuse to guess a boundary past that point.
 function fenceInfo(authoredLines) {
   const inFence = [];
-  let open = null;
-  for (const l of authoredLines) {
-    const m = FENCE.exec(l);
+  let open = null; // { ch, len } | null
+  for (const raw of authoredLines) {
+    const l = bare(raw);
     if (open) {
       inFence.push(true);
-      if (m && m[1] === open) open = null;
-    } else if (m) {
-      inFence.push(true);
-      open = m[1];
+      const m = FENCE_CLOSE.exec(l);
+      if (m && m[1][0] === open.ch && m[1].length >= open.len) open = null;
     } else {
-      inFence.push(false);
+      const m = FENCE_OPEN.exec(l);
+      if (m) {
+        inFence.push(true);
+        open = { ch: m[1][0], len: m[1].length };
+      } else {
+        inFence.push(false);
+      }
     }
   }
   return { inFence, unterminated: open !== null };

@@ -62,6 +62,24 @@ test('applyReleaseNote refuses an unterminated fenced code block preceding the i
   assert.throws(() => applyReleaseNote(F.UNTERMINATED_FENCE_BODY, F.LINE), RepairError);
 });
 
+test('applyReleaseNote never places the note inside a list-indented fence whose content is not itself reindented', () => {
+  const out = applyReleaseNote(F.MISSING_RN_WITH_INDENTED_FENCE, F.LINE);
+  assert.equal(checkBody(out.body).verdict, 'conforming');
+  assert.equal(onlyReleaseNoteAdded(F.MISSING_RN_WITH_INDENTED_FENCE, out.body, F.LINE), true);
+  const fenceClose = out.body.indexOf('```\n', out.body.indexOf('## Example'));
+  const rnAt = out.body.indexOf('## Release Note');
+  assert.ok(rnAt > fenceClose, 'Release Note must land after the indented fence closes, never inside it');
+});
+
+test('applyReleaseNote never mistakes a shorter nested fence for the close of a longer enclosing one', () => {
+  const out = applyReleaseNote(F.MISSING_RN_WITH_NESTED_FENCE, F.LINE);
+  assert.equal(checkBody(out.body).verdict, 'conforming');
+  assert.equal(onlyReleaseNoteAdded(F.MISSING_RN_WITH_NESTED_FENCE, out.body, F.LINE), true);
+  const outerClose = out.body.indexOf('````\n', out.body.indexOf('## Example'));
+  const rnAt = out.body.indexOf('## Release Note');
+  assert.ok(rnAt > outerClose, 'Release Note must land after the outer fence closes, never inside the nested block');
+});
+
 test('onlyReleaseNoteAdded accepts exactly the section and rejects any other change', () => {
   assert.equal(onlyReleaseNoteAdded(F.MISSING_RN, F.REPAIRED, F.LINE), true);
   assert.equal(onlyReleaseNoteAdded(F.EMPTY_RN, F.REPAIRED, F.LINE), true);
