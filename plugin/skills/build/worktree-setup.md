@@ -156,6 +156,21 @@ re-derived regexes.
    failed push or a `gh`-absent environment — lives in `_shared/pr-early-run-lifecycle.md`; this
    step cites it rather than restating it.
 
+   **Kept separate from Step 5 by design, re-confirmed (#2732).** Folding this step into Step 1's
+   own numbered procedure (so worktree creation always carries its draft PR by construction) was
+   evaluated and rejected: the PR body's `### Spec summary` and the record's `Fixes #{n}` line are
+   composed from the materialized spec file, which does not exist until `build/SKILL.md` Spec
+   Step 1 writes and commits it — strictly after this procedure's Step 5 completes. Coupling them
+   would require either deferring worktree creation until after materialization (breaking the
+   worktree-first ordering `materialize.md` requires — the commit must land inside an isolated
+   worktree, not on the pre-worktree branch) or opening the PR with a placeholder body and
+   patching it in later (reintroducing exactly the reactive-discovery failure mode this record
+   traces). The gap #2732 actually found was not in this coupling — it was an orchestrator
+   hand-executing `/flow`'s Step 4 materialize-and-commit prose without also issuing a literal
+   `Skill`-tool call for `/claude-tweaks:build`, which skipped Step 6 along with the rest of
+   `/build`'s own procedure. That gap is closed in `flow/SKILL.md`'s Step 4 instead (explicit
+   PR-early language + a hand-execution fallback), not here.
+
 ## Cherry-pick source-branch PR check (#1957)
 
 Runs later than Steps 1.5/1.6 — in Common Step 2's per-commit loop, **after each commit lands**,
