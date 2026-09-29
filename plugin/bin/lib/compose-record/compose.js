@@ -1,23 +1,22 @@
 // Composition + spec-shaped-body validation for bin/compose-record.js. Reuses the existing
 // recordPayload composer (bin/lib/issues/record.js) for body assembly (fingerprint marker,
-// Defer-reason prefix, label derivation) and adds the one check that composer does not make:
-// _shared/work-record.md's spec-shaped-body structural check, today only ever applied by
-// hand — specify/shaping-mode.md's Read-back verification and capture/SKILL.md's Shaped-body
-// branch both restate this same three-section-plus-placeholder-marker check in prose.
+// Defer-reason prefix, label derivation) and adds _shared/work-record.md's spec-shaped-body
+// structural check — decided by the Materialization gate's own shapeGate (one checker, #2827);
+// this file only formats the gap strings.
 'use strict';
 
 const { recordPayload } = require('../issues/record');
-// #1839: shared with materialize-format.js's shapeGate — a fenced block or
-// inline code span quotes content rather than authoring it.
-const { stripCodeSpans } = require('../issues/materialize-format');
+const {
+  REQUIRED_SECTIONS: GATE_SECTIONS, PLACEHOLDER_PATTERNS, sectionText, shapeGate, stripCodeSpans,
+} = require('../issues/materialize-format');
 
-const REQUIRED_SECTIONS = ['Current State', 'Deliverables', 'Acceptance Criteria', 'Release Note'];
-const PLACEHOLDER_MARKERS = ['TBD', 'TODO', '<!-- ambiguity:'];
+// Derived from the gate's own lists — never a locally declared copy (#2827). Exported under
+// the historical names REQUIRED_SECTIONS / PLACEHOLDER_MARKERS.
+const SECTION_NAMES = GATE_SECTIONS.map((h) => h.replace(/^## /, ''));
+const MARKER_NAMES = PLACEHOLDER_PATTERNS.map((p) => p.marker);
 
-// Everything from the `## Original request` heading to end of body is a verbatim copy of the
-// record's original title/body (shaping-mode.md's preservation rule). Markers inside it are the
-// original capture's own text, never unresolved authored placeholders, so the placeholder gate
-// tests only the text before it — mirrors materialize-format.js's ORIGINAL_REQUEST_RE (#1240).
+// Same exemption boundary shapeGate applies (#1240): markers inside the verbatim
+// ## Original request copy are the original capture's own text.
 const ORIGINAL_REQUEST_RE = /^## Original request[ \t]*$/m;
 
 // body -> { [headingText]: contentString } — content is every line between one line-anchored
@@ -41,24 +40,25 @@ function splitSections(body) {
   return out;
 }
 
-// body -> { ok, gaps: string[] } — gaps names every failing check at once (never just the
-// first), matching materialize.md's Materialization hard gate's own all-at-once reporting
-// convention. Reused verbatim from _shared/work-record.md's Spec-shaped body section.
+// body -> { ok, gaps: string[] } — ok is shapeGate's verdict; gaps names every failing check at
+// once (never just the first), in REQUIRED_SECTIONS order then marker order.
 function validateShaped(body) {
   const text = String(body || '');
-  const sections = splitSections(text);
+  const gate = shapeGate(text);
+  if (gate.ok) return { ok: true, gaps: [] };
   const gaps = [];
-  for (const name of REQUIRED_SECTIONS) {
-    if (!(name in sections)) gaps.push(`missing section: ## ${name}`);
-    else if (!sections[name]) gaps.push(`empty section: ## ${name}`);
+  for (const name of SECTION_NAMES) {
+    if (!gate.missing.includes(name)) continue;
+    gaps.push(sectionText(text, name) === null ? `missing section: ## ${name}` : `empty section: ## ${name}`);
   }
-  const originalRequestAt = text.search(ORIGINAL_REQUEST_RE);
-  const authored = originalRequestAt === -1 ? text : text.slice(0, originalRequestAt);
-  const strippedAuthored = stripCodeSpans(authored);
-  for (const marker of PLACEHOLDER_MARKERS) {
-    if (strippedAuthored.includes(marker)) gaps.push(`unresolved placeholder marker: ${marker}`);
+  if (gate.missing.includes('unresolved-placeholder')) {
+    const at = text.search(ORIGINAL_REQUEST_RE);
+    const authored = stripCodeSpans(at === -1 ? text : text.slice(0, at));
+    for (const { marker, re } of PLACEHOLDER_PATTERNS) {
+      if (re.test(authored)) gaps.push(`unresolved placeholder marker: ${marker}`);
+    }
   }
-  return { ok: gaps.length === 0, gaps };
+  return { ok: false, gaps };
 }
 
 // payload -> { title, body, labels, type } — thin wrapper; recordPayload's own validation
@@ -67,4 +67,6 @@ function composeBody(payload) {
   return recordPayload(payload || {});
 }
 
-module.exports = { composeBody, validateShaped, splitSections, REQUIRED_SECTIONS, PLACEHOLDER_MARKERS };
+module.exports = {
+  composeBody, validateShaped, splitSections, REQUIRED_SECTIONS: SECTION_NAMES, PLACEHOLDER_MARKERS: MARKER_NAMES,
+};
