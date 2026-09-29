@@ -86,6 +86,7 @@ means there:
 | "Re-run the skill" as the recovery for `PARTIAL` | Name the idempotent per-item writes |
 | Booking the value the skill gated on | Book the value the engine returned |
 | A per-record failure in the last loop with no summary slot | A `bookkeeping: {k} of {n} failed` line whenever k > 0 |
+| A gate/precondition failure that exits before any mutating step, with no `decisions.md` entry | `HELD` is a real outcome too — log it with the gate's stated reason, the same as `failed`/`PARTIAL`/`released` (`plugin/skills/_shared/local-merge-auto-finish.md`'s composer-failure fix: a `compose-subject.js` shaping-defect exit used to leave the run silent — a bare, unlogged process exit — not a logged `HELD`) |
 
 ## When not to use
 
@@ -96,5 +97,5 @@ something else and must be described after the fact.
 ## Origin
 
 Derived at wrap-up from the seven-spec run that shipped `/claude-tweaks:release` (#2251-#2258) —
-ledger row 115 of `docs/plans/2026-09-11-release-skill-ledger.md`, rulings 13, 14, 19, 20 and
+ledger row 115 of `docs/plans/2026-09-11-release-skill-ledger.md` (resolved and removed), rulings 13, 14, 19, 20 and
 review rows 104-108.

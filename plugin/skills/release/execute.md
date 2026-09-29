@@ -176,7 +176,7 @@ No `-t`/`-b`: the release PR's subject is release-please's own `chore(main): rel
 
 ### local-merge
 
-**`--as` passthrough.** When `--as {version}` was given, pass it to the engine as `--release-as {version}` (#2326, ledger row 90 of `docs/plans/2026-09-11-release-skill-ledger.md` closed). The engine validates it is strictly ahead of its own derived base and exits `2` (a usage error, naming both versions) if it is not — that exit is handled by the same exit-code table below, row `2`, no special case needed here.
+**`--as` passthrough.** When `--as {version}` was given, pass it to the engine as `--release-as {version}` (#2326, ledger row 90 of `docs/plans/2026-09-11-release-skill-ledger.md`, resolved and removed, closed). The engine validates it is strictly ahead of its own derived base and exits `2` (a usage error, naming both versions) if it is not — that exit is handled by the same exit-code table below, row `2`, no special case needed here.
 
 **Invoke the engine.** One call, no flags the CLI does not define — its own are `--dry-run`, `--root <dir>`, `--branch <name>` and `--release-as <version>`:
 
