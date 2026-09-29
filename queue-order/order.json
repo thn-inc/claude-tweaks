@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-29T16:30:13.578Z",
+  "computedAt": "2026-09-29T18:32:05.515Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -25,12 +25,12 @@
       },
       {
         "number": 2792,
-        "updatedAt": "2026-09-29T13:27:46Z",
+        "updatedAt": "2026-09-29T16:30:36Z",
         "state": "OPEN"
       },
       {
         "number": 2791,
-        "updatedAt": "2026-09-29T13:27:42Z",
+        "updatedAt": "2026-09-29T17:34:25Z",
         "state": "OPEN"
       },
       {
@@ -40,7 +40,7 @@
       },
       {
         "number": 2787,
-        "updatedAt": "2026-09-29T13:27:35Z",
+        "updatedAt": "2026-09-29T18:18:14Z",
         "state": "OPEN"
       },
       {
@@ -50,17 +50,17 @@
       },
       {
         "number": 2736,
-        "updatedAt": "2026-09-29T15:47:28Z",
+        "updatedAt": "2026-09-29T17:30:11Z",
         "state": "OPEN"
       },
       {
         "number": 2735,
-        "updatedAt": "2026-09-29T15:47:25Z",
+        "updatedAt": "2026-09-29T16:32:45Z",
         "state": "OPEN"
       },
       {
         "number": 2732,
-        "updatedAt": "2026-09-29T15:47:21Z",
+        "updatedAt": "2026-09-29T16:56:58Z",
         "state": "OPEN"
       },
       {
@@ -230,240 +230,6 @@
     ],
     [
       {
-        "body": "Origin: ledger resolve gate\n\n## Current State\n\nTwo review lenses independently flagged a project skill pinning a prose-canonical table to a code twin during the #2251-2258 multi-spec build — a pattern where a skill's markdown prose restates a table that also exists as executable code (an enum, a switch, a lookup table), and the two can drift apart with no test catching it (the same class as `record.js`'s `TYPE_LABELS` needing to stay in sync with `subject.js`'s `TYPE_PREFIX`, which this repo already pins via an explicit conformance test). No project skill currently names this pattern as something to check for during review.\n\n## Deliverables\n\nA new project skill (working name `prose-code-twin-pin`) that a reviewer or skill-author can invoke to find prose-restated tables with a code twin, and check whether a conformance test pins them equal — modeled on this repo's own existing pinning-test convention (e.g. `tests/deferral-gate-conformance.test.js`, `tests/bin-lib/compose-subject.test.js`'s \"Type vocabulary has one source of truth\" test).\n\n## Acceptance Criteria\n\n- A new skill exists under `plugin/skills/` (or `.claude/skills/` per this repo's own dogfooding convention) describing the prose-code-twin-pin pattern and when to check for it\n- The skill names at least the two known instances from #2251-2258 as worked examples\n- `/claude-tweaks:harness-health` or `/claude-tweaks:review`'s skill-gap detection can surface a candidate instance of this pattern\n\n## Release Note\n\nNew project skill: `prose-code-twin-pin`, for finding prose tables that restate executable code without a conformance test pinning them equal.\n\n_Filed by `ledger resolve gate`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n",
-        "createdAt": "2026-09-28T16:13:03Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2792,
-        "state": "OPEN",
-        "title": "New skill idea: detect prose tables pinned to a code twin with no conformance test",
-        "updatedAt": "2026-09-29T13:27:46Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: ledger resolve gate\n\n## Current State\n\n`plugin/bin/lib/release-local/manifest.js` (the local-merge release engine, #2254) declares `UNSUPPORTED = new Set(['java', 'ruby', 'dotnet'])` — a release whose stack resolves to one of these three exits 2, naming the type and pointing at the `simple` + `extra-files` config workaround instead. `go` is tag-only and already handled. release-please itself has per-language updaters for all three (Maven `pom.xml`, Gradle `build.gradle`, Ruby `version.rb`/`.gemspec`, .NET `.csproj`/`AssemblyInfo.cs`) that the local engine does not model.\n\n## Deliverables\n\nThree new manifest-target kinds in `plugin/bin/lib/release-local/manifest.js` (alongside the existing `json`/`toml`/`text`/`generic` kinds): a `maven`/`gradle` version-token splice for java, a `version.rb`/`.gemspec` splice for ruby, and a `.csproj`/`AssemblyInfo.cs` splice for dotnet — each wired into `resolveTargets`/`spliceVersion`/`applyVersion` the same way the existing kinds are, each with real-fixture round-trip tests under `tests/bin-lib/release-local/`.\n\n## Acceptance Criteria\n\n- `manifest.js`'s `UNSUPPORTED` set no longer contains `java`, `ruby`, or `dotnet`\n- Each new kind has a `spliceVersion` round-trip test against a real fixture file for that ecosystem (not a hand-typed minimal string)\n- `plugin/bin/release-local.js --dry-run` against a fixture repo of each stack reports the correct planned write\n- Existing `UNSUPPORTED` exit-2 behavior stays intact for any stack not covered here\n\n## Release Note\n\nLocal-merge releases now support java/ruby/dotnet manifest bumps directly, instead of requiring the `simple` + `extra-files` config workaround.\n\n_Filed by `ledger resolve gate`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n",
-        "createdAt": "2026-09-28T15:51:57Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2791,
-        "state": "OPEN",
-        "title": "Support java/ruby/dotnet manifest updaters in the local-merge release engine",
-        "updatedAt": "2026-09-29T13:27:42Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "**Skill:** shared-contract-extraction | **Section:** Shared contract extraction | **Category:** drift | **Classification:** additive | **Confidence:** high\n\nVerified-as-of: f93b63229ed1d580b82bcbb9d1e8ad0c71eb5f39\n\n## Current State\n\nRunning the skill's own recommended command (`git log --diff-filter=A -- 'plugin/skills/_shared/' 'skills/_shared/'`) and deduping additions by filename (required because the #418 move re-adds a file under the new path when git does not detect a pure rename, e.g. commit 7028b315f) yields 120 distinct _shared contract files ever added, all of them added within the last 6 months (earliest: subagent-output-contract.md on 2026-05-02). Even at the line's own authoring commit (dff2b5174, 2026-08-17) the true count was already 79 — over 3x the stated ~25 — and it now stands at 120. This is exactly the Step 1 check 6 self-referential-count pattern this project's own harness-health procedure warns about: a hand-typed number that drifts the moment reality changes because nothing recomputes it.\n\n## Deliverables\n\n**Current:**\n```\nshows ~25 additions over six months, several explicitly extraction/consolidation commits: `b91e704b`, `47ed1675`, `d937f35d`, `31df65dc`, `ce9dab9c`, `545cd4fd`, `c59f19f8`, `3a270ad4`, `ccd502b0`\n```\n\n**Proposed:**\n```\nshows dozens of distinct contract files added since the pattern started — re-run the command for a current count rather than trusting a hardcoded one, deduping by filename across both path spellings since a file re-pathed by the #418 move otherwise double-counts — several explicitly extraction/consolidation commits: `b91e704b`, `47ed1675`, `d937f35d`, `31df65dc`, `ce9dab9c`, `545cd4fd`, `c59f19f8`, `3a270ad4`, `ccd502b0`\n```\n\n## Acceptance Criteria\n\nThe skill's own recurrence-evidence claim (\"~25 additions over six months\") is a hand-typed count that has drifted far from reality and will keep drifting.\n\n## Release Note\n\nNo user-visible change — agent harness reliability fix.\n\n_Filed by `/claude-tweaks:harness-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n\n<!-- work-fingerprint: harnesshealth-2f347782 -->\nwork-fingerprint: harnesshealth-2f347782",
-        "createdAt": "2026-09-27T05:23:26Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACvj9UVg",
-            "name": "by:harness-health",
-            "description": "",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACvj9UWQ",
-            "name": "harness-health:additive",
-            "description": "",
-            "color": "ededed"
-          }
-        ],
-        "number": 2787,
-        "state": "OPEN",
-        "title": "Skill drift: shared-contract-extraction — Shared contract extraction",
-        "updatedAt": "2026-09-29T13:27:35Z",
-        "facets": {
-          "origin": "harness-health",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "**Doc:** decisions/0019-vendored-gif-codec-over-a-runtime-dependency | **Section:** Consequences | **Category:** staleness | **Misleads:** human engineer + coding agent | **Classification:** additive | **Confidence:** high\n\nVerified-as-of: f93b63229ed1d580b82bcbb9d1e8ad0c71eb5f39\n\n## Current State\n\n`git cat-file -t 41dc8424f` and `git rev-list --all | grep ^41dc84` both come back empty: no object with this hash exists in the repo, shallow-clone artifacts aside. This is not a shallow-clone visibility gap — `git log --oneline --diff-filter=A -- plugin/bin/lib/gif/lzw.js plugin/bin/lib/gif/encoder.js plugin/bin/lib/gif/palette.js plugin/bin/lib/gif/png-decode.js` shows all four codec files were added in a single commit, `15553cf` ('[reconcile] archive run 2026-09-20T084158-record-2571'), already at their final/fixed content — there is no earlier commit touching these paths for a separate fix commit to modify. The cited hash was almost certainly a real in-worktree commit that this repo's own reconcile squashing process (documented elsewhere in this project) folded away when the pipeline run was archived, leaving a dangling reference. A reader — human or agent — who runs `git show 41dc8424f` to see the fix gets 'fatal: bad object 41dc8424f', not the promised diff.\n\n## Deliverables\n\n**Current:**\n```\nFixed at `41dc8424f` and independently re-verified against real screenshots: 4 mid-stream resets exercised across both frames, decoding bit-exact at 921,600/921,600 pixels with 0 mismatches, while the pre-fix output fails the same decoder with a bitstream underrun.\n```\n\n**Proposed:**\n```\nFixed within the same pipeline run; the standalone fix commit does not survive in this repo's history (folded away when the run was archived and squashed into `15553cf`, the commit that actually landed this codec — `41dc8424f` is not a resolvable object in this repository). Independently re-verified against real screenshots: 4 mid-stream resets exercised across both frames, decoding bit-exact at 921,600/921,600 pixels with 0 mismatches, while the pre-fix output fails the same decoder with a bitstream underrun.\n```\n\n## Acceptance Criteria\n\nThe commit hash cited as the LZW clear-code-width fix (`41dc8424f`) does not exist anywhere in this repository's history — replace the dangling reference with an accurate statement of where the fix actually landed.\n\n## Release Note\n\nNo user-visible change — documentation accuracy fix.\n\n_Filed by `/claude-tweaks:docs-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n\n<!-- work-fingerprint: docshealth-95c05adf -->\nwork-fingerprint: docshealth-95c05adf",
         "createdAt": "2026-09-25T06:18:11Z",
         "labels": [
@@ -549,174 +315,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`manifesto.md`'s Step 3 (\"Present the Manifesto\") mandates, for default `auto` mode: \"render the FYI variant... show the same preview + policy-levers tables, but change the heading to `### Pipeline Config (auto)`, drop the approval call entirely, and close with a single line — `→ proceeding (no approval needed) · run with confirm to review/override`.\"\n\nAcross this session's two `/flow` runs, this required visible render never appeared as assistant text. Both times, the levers were computed and written directly to `config.yml` via `set-config.js`, and the pipeline proceeded straight to dispatching the build — skipping the mandated table entirely. (The later, separately-gated Multi-Spec/single-spec Review Console tables — a different, `confirm`-style render at end-of-run — DID appear correctly both times, showing the skip is specific to this one step.)\n\nThis caused no functional harm (the config was still written and read correctly downstream), but it means a user running an \"auto\" pipeline received zero visibility into which policy levers were actually in effect for either run — the entire point of the Manifesto being a bookend \"FYI\" stop.\n\n## Deliverables\n\n- [ ] Decide the enforcement mechanism: (a) a conformance test (in the vein of the existing skill-prose-conformance suite) that asserts an `auto`-mode `/flow` transcript contains the FYI table text, making a skip visible after the fact even if unpreventable in-band; or (b) have `set-config.js` itself print the rendered table as part of its own stdout when invoked for the Manifesto step, so the render is a mechanical side effect of the write rather than something the orchestrating model must remember to compose separately; or (c) both.\n- [ ] Implement the chosen mechanism(s).\n\n## Acceptance Criteria\n\n1. A fresh `auto`-mode `/flow` run's own output (or a mechanical check against its transcript/logs) demonstrably includes the `### Pipeline Config (auto)` table and the `→ proceeding (no approval needed)` line — not merely a `config.yml` write with no visible render.\n2. `npm test` passes.\n\n## Technical Approach\n\nOption (b) is the more structurally reliable fix — a prose instruction (\"render this table\") is exactly the kind of step an LLM orchestrator can silently skip under time/context pressure, which is precisely what happened twice in this session; moving the render into `set-config.js`'s own stdout makes it a mechanical side effect of the write call the orchestrator already makes, not a separate step to remember. Option (a) (a conformance test) can't prevent a live skip — a `node --test` suite only pins prose/fixture shape, it can't observe a real `/flow` session's actual transcript — so it's better understood as after-the-fact detection (useful for catching regressions in a fixture-driven test harness, if one exists for `/flow` runs) than a fix for the live-session problem this record's own evidence describes. Weigh both against `set-config.js`'s existing call sites (the batch write already documented in `manifesto.md`'s \"Write mechanism\" section) — adding a render to its stdout must not break any caller that doesn't expect extra output.\n\n### Key Files\n\n- `plugin/skills/flow/manifesto.md` — Step 3's FYI-variant render instruction (the mandate this record found unenforced) and the \"Write mechanism\" section describing `set-config.js`'s batch call\n- `plugin/bin/set-config.js` — the CLI this record's fix likely extends to print the rendered table itself (Technical Approach option (b))\n\n## Gotchas\n\n- This is a two-run sample (both `/flow` invocations in one session skipped the render the same way) — real but small evidence; if the build phase wants stronger confirmation the skip is systemic rather than session-specific, a few more observed runs would strengthen the case, though the underlying \"prose instructions are skippable\" reasoning holds regardless of sample size.\n- Don't let option (b)'s stdout addition break `set-config.js`'s non-Manifesto callers (the ceremony-escape single-key form, `steps-and-gates.md` case 3's recovery writes) — scope the new render to the Manifesto-specific batch call site, not every invocation of the CLI.\n\n## Original request\n\nflow: the auto-mode Manifesto's required FYI table render isn't mechanically enforced\n\nSurface: infra\n\n## Current State\n\n`manifesto.md`'s Step 3 (\"Present the Manifesto\") mandates, for default `auto` mode: \"render the FYI variant... show the same preview + policy-levers tables, but change the heading to `### Pipeline Config (auto)`, drop the approval call entirely, and close with a single line — `→ proceeding (no approval needed) · run with confirm to review/override`.\"\n\nAcross this session's two `/flow` runs, this required visible render never appeared as assistant text. Both times, the levers were computed and written directly to `config.yml` via `set-config.js`, and the pipeline proceeded straight to dispatching the build — skipping the mandated table entirely. (The later, separately-gated Multi-Spec/single-spec Review Console tables — a different, `confirm`-style render at end-of-run — DID appear correctly both times, showing the skip is specific to this one step.)\n\nThis caused no functional harm (the config was still written and read correctly downstream), but it means a user running an \"auto\" pipeline received zero visibility into which policy levers were actually in effect for either run — the entire point of the Manifesto being a bookend \"FYI\" stop.\n\n## Deliverables\n\n- [ ] Decide the enforcement mechanism: (a) a conformance test (in the vein of the existing skill-prose-conformance suite) that asserts an `auto`-mode `/flow` transcript contains the FYI table text, making a skip visible after the fact even if unpreventable in-band; or (b) have `set-config.js` itself print the rendered table as part of its own stdout when invoked for the Manifesto step, so the render is a mechanical side effect of the write rather than something the orchestrating model must remember to compose separately; or (c) both.\n- [ ] Implement the chosen mechanism(s).\n\n## Acceptance Criteria\n\n1. A fresh `auto`-mode `/flow` run's own output (or a mechanical check against its transcript/logs) demonstrably includes the `### Pipeline Config (auto)` table and the `→ proceeding (no approval needed)` line — not merely a `config.yml` write with no visible render.\n\n## Release Note\n\nMade the auto-mode Pipeline Config Manifesto's required FYI render mechanically verifiable (or automatic), rather than relying solely on the orchestrating model remembering to compose it after writing `config.yml`.\n",
-        "createdAt": "2026-09-21T04:53:22Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2735,
-        "state": "OPEN",
-        "title": "flow: the auto-mode Manifesto's required FYI table render isn't mechanically enforced",
-        "updatedAt": "2026-09-29T15:47:25Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`/flow`'s worktree-creation step (`materialize.md`'s worktree-first ordering, `build/worktree-setup.md`) is documented to open the pipeline's draft PR early (\"born public\" — `_shared/pr-early-run-lifecycle.md`), before any build work happens. In this session's two `/flow` runs (spec-2670-2681, spec-2682), that PR was NOT created automatically at worktree-creation time — a bare `git` worktree was created and a build subagent dispatched directly. Both build subagents independently hit `build/worktree-setup.md`'s own pre-tool-use hook gate (`checkBookkeepingStampsGate`, per `docs/incident-log.md` `[IL-131]`) blocking further edits until a PR was recorded, and both had to improvise: run `record-worktree`/`record-pr` CLI commands and `gh pr create` themselves, mid-task, outside their own declared spec scope.\n\nSession evidence:\n- Spec #2670's build agent: \"This run's PR-early lifecycle step (`build/worktree-setup.md` Step 6) had not run before I was dispatched — the `pre-tool-use` hook (IL-131) blocked all `Edit` calls until it was satisfied. I completed it: pushed the branch, opened draft PR #2698... This is infrastructure the orchestrating pipeline should normally have done at run start, not part of #2670's own deliverables.\"\n- Spec #2682's build agent: \"had to open this draft PR mid-task — the repo's `pr-first` hook blocked further edits until a PR was recorded; used `record-worktree` then `record-pr` CLI commands to satisfy the gate.\"\n\n**Root cause, narrowed during shaping.** `build/SKILL.md`'s own text (Spec Step 1, ~line 68) already documents the draft-PR call as non-skippable: \"Immediately after the materialize commit, in `worktree` mode only: run `build/worktree-setup.md` Step 6 — opens the run's draft PR under `integration-model: pr-first`... Non-skippable, regardless of what Spec Step 2's implementation assessment turns out to find.\" It also already carries a reactive backstop for exactly this failure mode: `build/SKILL.md`'s Common Step 7 \"Bookkeeping assertion\" (#2311) checks `run-state.json` for a missing `worktree`/`pr` field at the end of every build phase and backfills it — this is the mechanism [IL-131] traces to, and it's *already shipped*, not a gap this record needs to invent.\n\nCritically, `build/worktree-setup.md` itself states Step 6 \"is invoked separately from `build/SKILL.md` Spec Step 1, never from within this numbered procedure\" — i.e. Common Step 1 (worktree creation) and Step 6 (open the draft PR) are two *separate* calls, and only `build/SKILL.md`'s own Spec Step 1 sequences them together. This session's `/flow` runs hand-rolled worktree creation (`EnterWorktree` + a bare `Agent` dispatch for \"build\") rather than literally invoking `/claude-tweaks:build` as a `Skill`-tool call — which means Spec Step 1's own explicit Step 6 call, and Common Step 7's own end-of-phase backfill, were both bypassed entirely, since neither lives in the hand-rolled path at all. A grep of `flow/SKILL.md` for \"PR-early\"/\"draft PR\" during this shaping pass returned zero matches — the requirement genuinely isn't stated in `flow/SKILL.md`'s own Step 4 prose at all, only in the two files `build/SKILL.md` cross-references.\n\nThis strongly supports root-cause (b) from the original report (a hand-rolled orchestration path, not a gap in `/flow`/`/build`'s own documented-and-enforced sequence) — but the fix still needs a decision on where to close the gap: strengthen `flow/SKILL.md`'s own Step 4 prose so an orchestrator following it by hand (not literally invoking the Skill tool) can't miss the requirement, and/or consider whether Common Step 1 itself should absorb the Step 6 call so the two can't be separated by construction.\n\n## Deliverables\n\n- [ ] Add explicit PR-early language to `flow/SKILL.md`'s Step 4 (currently silent on it — confirmed via grep during shaping) naming the requirement plainly enough that a hand-executing orchestrator (not literally invoking the `Skill` tool) won't miss it, cross-referencing `build/worktree-setup.md` Step 6 and `_shared/pr-early-run-lifecycle.md`.\n- [ ] Evaluate whether `build/worktree-setup.md`'s Common Step 1 (worktree creation) should call Step 6 (open draft PR) directly, removing the separate-invocation fragility that let this session's hand-rolled path skip it — implement if the evaluation favors it; document the decision either way if not (e.g. if a real reason keeps them separate, such as a caller that legitimately needs the worktree before deciding whether a PR applies).\n- [ ] Confirm `build/SKILL.md`'s existing Common Step 7 Bookkeeping-assertion backstop (#2311) still fires correctly for a *literal* `/claude-tweaks:build` invocation — this record's own investigation didn't find a gap there, only in the hand-rolled path that bypasses `build/SKILL.md` entirely; no changes needed there unless testing turns up a real gap.\n\n## Acceptance Criteria\n\n1. A fresh `/flow #{n}` run (or `/build #{n}` standalone) opens its draft PR before the first implementer edit, with no build-time hook block requiring mid-task improvisation.\n2. `flow/SKILL.md`'s Step 4 states the PR-early requirement explicitly — a reader following the prose by hand, without invoking the `Skill` tool literally, has enough information to not skip it.\n3. `npm test` passes.\n\n## Technical Approach\n\nTwo independent angles, both grounded in the investigation above: (1) a documentation fix to `flow/SKILL.md`'s Step 4, which currently says nothing about PR-early at all; (2) an architectural question about whether `worktree-setup.md`'s Common Step 1 and Step 6 should be coupled rather than two separately-invoked steps — resolve this by reading `build/SKILL.md`'s Spec Step 1 prose (~line 68) and `worktree-setup.md`'s own Step 6 comment about being invoked separately, then deciding whether coupling them removes real flexibility (some caller legitimately needing worktree-without-PR) or is pure accidental fragility.\n\n### Key Files\n\n- `plugin/skills/flow/SKILL.md` — Step 4, where the PR-early requirement needs stating explicitly\n- `plugin/skills/build/SKILL.md` — Spec Step 1 (~line 68, the existing non-skippable PR-early call) and Common Step 7 (the #2311 Bookkeeping-assertion backstop)\n- `plugin/skills/build/worktree-setup.md` — Common Step 1 (worktree creation) and Step 6 (draft PR open), and its own comment on why they're currently separate calls\n- `plugin/skills/_shared/pr-early-run-lifecycle.md` — the push-and-open-draft-PR procedure both Step 6 and the Bookkeeping-assertion backfill call\n\n## Gotchas\n\n- Don't conclude the reactive backstop (#2311's Bookkeeping assertion) is broken — this investigation found no evidence of that; the gap is specific to a hand-rolled orchestration path that bypasses `build/SKILL.md` (and therefore both the Step 6 call and the Common Step 7 backstop) entirely, not a failure of `/claude-tweaks:build`'s own documented sequence when actually invoked.\n- If coupling Common Step 1 and Step 6 turns out to have a legitimate reason to stay separate (check for one before assuming there isn't), the fix narrows to the documentation angle alone — don't force a code change the investigation doesn't support.\n\n## Original request\n\nflow: worktree creation doesn't open the draft PR automatically — discovered twice mid-build\n\nSurface: infra\n\n## Current State\n\n`/flow`'s worktree-creation step (`materialize.md`'s worktree-first ordering, `build/worktree-setup.md`) is documented to open the pipeline's draft PR early (\"born public\" — `_shared/pr-early-run-lifecycle.md`), before any build work happens. In this session's two `/flow` runs (spec-2670-2681, spec-2682), that PR was NOT created automatically at worktree-creation time — a bare `git` worktree was created and a build subagent dispatched directly. Both build subagents independently hit `build/worktree-setup.md`'s own pre-tool-use hook gate (`checkBookkeepingStampsGate`, per `docs/incident-log.md` `[IL-131]`) blocking further edits until a PR was recorded, and both had to improvise: run `record-worktree`/`record-pr` CLI commands and `gh pr create` themselves, mid-task, outside their own declared spec scope.\n\nSession evidence:\n- Spec #2670's build agent: \"This run's PR-early lifecycle step (`build/worktree-setup.md` Step 6) had not run before I was dispatched — the `pre-tool-use` hook (IL-131) blocked all `Edit` calls until it was satisfied. I completed it: pushed the branch, opened draft PR #2698... This is infrastructure the orchestrating pipeline should normally have done at run start, not part of #2670's own deliverables.\"\n- Spec #2682's build agent: \"had to open this draft PR mid-task — the repo's `pr-first` hook blocked further edits until a PR was recorded; used `record-worktree` then `record-pr` CLI commands to satisfy the gate.\"\n\nRoot cause is ambiguous between two possibilities and should be investigated as part of this record: (a) a genuine gap in `/flow`'s own documented sequence (the PR-early step is real but easy for an orchestrating session to skip because it's spread across `worktree-setup.md`/`pr-early-run-lifecycle.md` rather than being front-and-center in `flow/SKILL.md`'s own Step 4), or (b) this was specific to how this session executed `/flow` (hand-rolling worktree creation via `EnterWorktree` + a bare `Agent` dispatch for \"build\" rather than literally invoking `/claude-tweaks:build` as a Skill-tool call, which may have skipped Common Step 1's full sequence including the PR-early step).\n\n## Deliverables\n\n- [ ] Determine whether a literal `/claude-tweaks:build #{n}` invocation (Skill tool, not a hand-rolled equivalent) reliably performs the PR-early lifecycle step as part of its own Common Step 1 sequence.\n- [ ] If yes: no code change needed — this is a documentation/discoverability issue; strengthen `flow/SKILL.md`'s Step 4 language so an orchestrator following it (rather than literally invoking the Skill tool) can't miss the PR-early requirement.\n- [ ] If no (a genuine gap even on a literal invocation): harden the sequence so the draft PR opens automatically and early — before any implementer work begins, not discovered reactively by a blocked `Edit` call.\n\n## Acceptance Criteria\n\n1. A fresh `/flow #{n}` run (or `/build #{n}` standalone) opens its draft PR before the first implementer edit, with no build-time hook block requiring mid-task improvisation.\n2. `flow/SKILL.md`'s or `worktree-setup.md`'s prose makes the PR-early requirement unmissable regardless of whether the orchestrating agent literally invokes the Skill tool or hand-executes the documented sequence.\n\n## Release Note\n\nEnsured `/flow`/`/build`'s draft PR opens automatically at worktree creation, not via a build subagent's reactive discovery of a blocked edit.\n",
-        "createdAt": "2026-09-21T04:53:15Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2732,
-        "state": "OPEN",
-        "title": "flow: worktree creation doesn't open the draft PR automatically — discovered twice mid-build",
-        "updatedAt": "2026-09-29T15:47:21Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
@@ -1281,90 +879,6 @@
           "risk": "medium",
           "size": "medium",
           "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nAt session start, the SessionStart hook surfaced 3 unfinished pipeline runs (`record-2585`, `record-2539`, `record-1936` — one interrupted, two active, each with an open PR) and 1 standalone run with unapproved staged proposals (`2026-09-19T185831-sweep-standalone`), each with its own resolution command, correctly declining to touch any of them (ownership could not be confirmed — a listed run might be live in a sibling session). This is the correct safety behavior.\n\nHowever, this residue was surfaced exactly once, at the very top of the session, and never resurfaced again — not at either Review Console this session ran, not in the final closing summary — across a session that ran for roughly 8.6 hours. A one-time-only notice easily gets lost in a long transcript, especially one with a multi-hour unattended stretch in the middle (see the separate merge-authorization finding filed alongside this one).\n\n## Deliverables\n\n- [ ] Have `/claude-tweaks:wrap-up`'s Review Console (both the single-spec and multi-spec/consolidated forms) re-check for any residue that was flagged at this session's own start and remains unresolved (same detection the SessionStart hook already runs — unfinished `.claude-tweaks/pipelines/` runs, unapproved `staged/` proposals on a standalone run), and render a short \"still-pending from earlier\" line pointing back at it, rather than treating the SessionStart notice as sufficient for the whole session's duration.\n- [ ] Ensure this resurfacing check does not attempt to resolve or act on the residue itself — it is informational only, preserving the existing ownership-safety posture (a listed run may belong to a sibling session).\n\n## Acceptance Criteria\n\n1. A `/claude-tweaks:wrap-up` Review Console rendered later in a session that started with unresolved residue includes a line naming that residue and its resolution command, without attempting to act on it.\n2. The check adds no new `AskUserQuestion` stop — it is a passive, informational re-surface only.\n3. `npm test` passes.\n\n## Technical Approach\n\nRe-run the same residue-detection logic the SessionStart hook already implements (unfinished `.claude-tweaks/pipelines/` run directories, unapproved `staged/` proposals) as a read-only check inside the Review Console's own render step, rather than duplicating the detection rules by hand — find the hook's existing implementation and call the same underlying check (or its result, if already cached/logged somewhere this session) instead of re-deriving the unfinished-run/staged-proposal criteria independently, which would risk the two checks drifting apart over time.\n\n### Key Files\n\n- `plugin/skills/wrap-up/review-console.md` — the single-spec Review Console render, where the new \"still-pending from earlier\" line is added\n- `plugin/skills/wrap-up/console-template.md` — the shared console template both single- and multi-spec forms compose from, if the addition belongs at that shared layer rather than duplicated in each\n- SessionStart hook's own residue-detection implementation (the code that produced this session's own opening notice) — the logic to reuse, not reimplement\n\n## Gotchas\n\n- Preserve the ownership-safety posture exactly — this check must never attempt to close, resume, or otherwise act on a residue item it finds, even one that looks obviously abandoned; a listed run may be live in a sibling session, same as the original SessionStart notice already warns.\n- Don't add a new `AskUserQuestion` for this — Acceptance Criteria 2 is explicit that this stays a passive, informational line, not a new stop competing with the console's own existing decision points.\n\n## Original request\n\nwrap-up: start-of-run residue is flagged once and never resurfaced at the Review Console\n\nSurface: infra\n\n## Current State\n\nAt session start, the SessionStart hook surfaced 3 unfinished pipeline runs (`record-2585`, `record-2539`, `record-1936` — one interrupted, two active, each with an open PR) and 1 standalone run with unapproved staged proposals (`2026-09-19T185831-sweep-standalone`), each with its own resolution command, correctly declining to touch any of them (ownership could not be confirmed — a listed run might be live in a sibling session). This is the correct safety behavior.\n\nHowever, this residue was surfaced exactly once, at the very top of the session, and never resurfaced again — not at either Review Console this session ran, not in the final closing summary — across a session that ran for roughly 8.6 hours. A one-time-only notice easily gets lost in a long transcript, especially one with a multi-hour unattended stretch in the middle (see the separate merge-authorization finding filed alongside this one).\n\n## Deliverables\n\n- [ ] Have `/claude-tweaks:wrap-up`'s Review Console (both the single-spec and multi-spec/consolidated forms) re-check for any residue that was flagged at this session's own start and remains unresolved (same detection the SessionStart hook already runs — unfinished `.claude-tweaks/pipelines/` runs, unapproved `staged/` proposals on a standalone run), and render a short \"still-pending from earlier\" line pointing back at it, rather than treating the SessionStart notice as sufficient for the whole session's duration.\n- [ ] Ensure this resurfacing check does not attempt to resolve or act on the residue itself — it is informational only, preserving the existing ownership-safety posture (a listed run may belong to a sibling session).\n\n## Acceptance Criteria\n\n1. A `/claude-tweaks:wrap-up` Review Console rendered later in a session that started with unresolved residue includes a line naming that residue and its resolution command, without attempting to act on it.\n2. The check adds no new `AskUserQuestion` stop — it is a passive, informational re-surface only.\n\n## Release Note\n\nWrap-Up's Review Console now re-surfaces any pipeline residue flagged at session start that remains unresolved, instead of relying on a single notice at the very beginning of a potentially long session.\n",
-        "createdAt": "2026-09-21T04:53:24Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2736,
-        "state": "OPEN",
-        "title": "wrap-up: start-of-run residue is flagged once and never resurfaced at the Review Console",
-        "updatedAt": "2026-09-29T15:47:28Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
