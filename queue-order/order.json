@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-09-29T18:45:54.933Z",
+  "computedAt": "2026-09-29T19:11:11.227Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -15,7 +15,7 @@
       },
       {
         "number": 2806,
-        "updatedAt": "2026-09-29T13:30:11Z",
+        "updatedAt": "2026-09-29T18:49:54Z",
         "state": "OPEN"
       },
       {
@@ -156,78 +156,6 @@
     ]
   },
   "groups": [
-    [
-      {
-        "body": "Origin: ledger resolve gate\n\n**Related:** #2779 (add `--cmd-env` to verify.js — both records edit `plugin/bin/lib/verify/args.js`; build order matters, coordinate before dispatching both)\n\n## Current State\n\n`plugin/bin/lib/verify/args.js`'s `parseArgs` handles four distinct CLI modes (a normal check run, `--stamp-status`, `--changed-files`, and their `--scope`/`--base`/`--integration-branch` variants) inside one function, with roughly ten cross-mode incompatibility checks (lines 79-100) enforcing which flags are illegal in which mode. A whole-branch review lens (3e, single-agent, unconfirmed) flagged this as coupling.\n\n## Deliverables\n\nUntangle the four modes — e.g. a discriminated result shape per mode, or separate parse paths that share only the flag-tokenizing loop — so each mode's own validation lives with that mode, not interleaved with the other three's.\n\n## Acceptance Criteria\n\n- Every existing cross-mode incompatibility check (the ~10 branches at lines 79-100) has an equivalent assertion in the new structure, each individually verified against the current test suite before the refactor is trusted\n- `tests/bin-lib/verify/args.test.js` (or wherever this file's tests live) passes unchanged, plus any new tests the refactor's own shape needs\n- No change to `verify.js`'s CLI-facing behavior (usage text, exit codes, flag names)\n\n## Release Note\n\n`verify/args.js`'s argument parsing restructured for clarity; no CLI-facing behavior change.\n\n_Filed by `ledger resolve gate`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n",
-        "createdAt": "2026-09-29T02:00:10Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          }
-        ],
-        "number": 2806,
-        "state": "OPEN",
-        "title": "Untangle verify/args.js's four-mode parseArgs coupling",
-        "updatedAt": "2026-09-29T13:30:11Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
     [
       {
         "body": "**Doc:** decisions/0019-vendored-gif-codec-over-a-runtime-dependency | **Section:** Consequences | **Category:** staleness | **Misleads:** human engineer + coding agent | **Classification:** additive | **Confidence:** high\n\nVerified-as-of: f93b63229ed1d580b82bcbb9d1e8ad0c71eb5f39\n\n## Current State\n\n`git cat-file -t 41dc8424f` and `git rev-list --all | grep ^41dc84` both come back empty: no object with this hash exists in the repo, shallow-clone artifacts aside. This is not a shallow-clone visibility gap — `git log --oneline --diff-filter=A -- plugin/bin/lib/gif/lzw.js plugin/bin/lib/gif/encoder.js plugin/bin/lib/gif/palette.js plugin/bin/lib/gif/png-decode.js` shows all four codec files were added in a single commit, `15553cf` ('[reconcile] archive run 2026-09-20T084158-record-2571'), already at their final/fixed content — there is no earlier commit touching these paths for a separate fix commit to modify. The cited hash was almost certainly a real in-worktree commit that this repo's own reconcile squashing process (documented elsewhere in this project) folded away when the pipeline run was archived, leaving a dangling reference. A reader — human or agent — who runs `git show 41dc8424f` to see the fix gets 'fatal: bad object 41dc8424f', not the promised diff.\n\n## Deliverables\n\n**Current:**\n```\nFixed at `41dc8424f` and independently re-verified against real screenshots: 4 mid-stream resets exercised across both frames, decoding bit-exact at 921,600/921,600 pixels with 0 mismatches, while the pre-fix output fails the same decoder with a bitstream underrun.\n```\n\n**Proposed:**\n```\nFixed within the same pipeline run; the standalone fix commit does not survive in this repo's history (folded away when the run was archived and squashed into `15553cf`, the commit that actually landed this codec — `41dc8424f` is not a resolvable object in this repository). Independently re-verified against real screenshots: 4 mid-stream resets exercised across both frames, decoding bit-exact at 921,600/921,600 pixels with 0 mismatches, while the pre-fix output fails the same decoder with a bitstream underrun.\n```\n\n## Acceptance Criteria\n\nThe commit hash cited as the LZW clear-code-width fix (`41dc8424f`) does not exist anywhere in this repository's history — replace the dangling reference with an accurate statement of where the fix actually landed.\n\n## Release Note\n\nNo user-visible change — documentation accuracy fix.\n\n_Filed by `/claude-tweaks:docs-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n\n<!-- work-fingerprint: docshealth-95c05adf -->\nwork-fingerprint: docshealth-95c05adf",
