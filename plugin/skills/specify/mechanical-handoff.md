@@ -61,8 +61,10 @@ Run context: work-backend={value}, PIPELINE_RUN_DIR={value}
 
 OUTPUT FORMAT (required): Return the Step 9 summary exactly as `decomposition-mode-closeout.md`'s
 own Step 9 template renders it (Work Units Created table, Collapse outcome line, Existing Records
-Modified, Artifacts Removed, Diagram suggestions when present, Actions Performed table) — no
-paraphrase, so the caller can relay it without having watched the work happen.
+Modified, Artifacts Removed, Diagram suggestions when present, Actions Performed table, and
+`### Staged for caller` when Step 5's red-team left any decision-worthy finding unresolved — see
+that file's own template for its exact row shape) — no paraphrase, so the caller can relay it
+without having watched the work happen.
 
 Status line (required): after the summary above, on its own trailing line — the last non-empty
 line of your reply — must read exactly `STATUS: DONE` (or DONE_WITH_CONCERNS / NEEDS_CONTEXT /

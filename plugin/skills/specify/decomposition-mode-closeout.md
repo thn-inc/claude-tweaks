@@ -31,6 +31,8 @@ Before deleting the design doc, dispatch persona-instantiated agents in one para
 
 Each agent's input is a record reference, never inlined content: `work-backend: github-issues` — the sub-issue's number plus a `gh issue view` read instruction; `work-backend: local-files` — the sub-issue's record file path. Never both in the same dispatch. Findings are written **back into the record body** — inline `<!-- ambiguity: ... -->` HTML comments next to flagged sentences, or rows in an appended `## Open Questions` table — via compose-then-write-once, the same discipline every write in this skill uses, after the per-persona dedup and severity floor in `red-team.md`'s write-back procedure. A decision-worthy finding (critical, or one whose resolution would change the sub-issue's Deliverables/Acceptance-Criteria scope) is staged for the Review Console with the sub-issue's `ready` cleared, rather than left for Step 6 to self-resolve. No mid-flow prompt — Step 6 Self-Review picks up everything below that bar.
 
+**No `PIPELINE_RUN_DIR` (plain interactive `/specify`, or a delegated subagent with no Review Console to stage into).** Leave the finding as the inline `<!-- ambiguity: ... -->` marker (or `## Open Questions` row) it already is — never invent a stage-and-resolve mechanism that doesn't exist in this context — and report it in Step 9's `### Staged for caller` section (below) instead of a stage write. The caller resolves each row with `bin/resolve-ambiguity.js` (#2699) — see Step 9's template for the exact fields it needs.
+
 Read `red-team.md` in this skill's directory for the dispatch prompt (Template A block must remain inlined verbatim in the dispatch prompt at runtime per the Subagent Contract), the persona lens questions, and the write-back procedure.
 
 ---
@@ -104,7 +106,30 @@ Present a summary. The `Collapse outcome` line below renders in every decomposit
 
 ### Diagram suggestions (optional — render only when Step 2.5d emitted any)
 - {one or two `**Diagram suggestion:** …` blocks emitted by Step 2.5d}
+
+### Staged for caller (optional — render only when a decision-worthy finding was left unresolved)
+| Record | Flagged text | Suggested resolution |
+|--------|-------------|----------------------|
+| {ref} | {the exact `<!-- ambiguity: ... -->` marker text, or the flagged sentence, verbatim} | {the resolution the red-team persona proposed, or "—" if none was proposed} |
 ```
+
+**Resolving a `### Staged for caller` row.** For each row, decide the resolution (an `AskUserQuestion` call or your own judgment), then apply it mechanically with `bin/resolve-ambiguity.js` — no hand-rolled `gh issue view` + `node -e` + `gh issue edit` surgery:
+
+```bash
+# 1. Fetch the current body to a file (gh, or the MCP equivalent read):
+gh issue view {ref} --json body -q .body > /tmp/body-{ref}.txt
+
+# 2. Apply the resolution — reports whether `ready` is restorable:
+node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-ambiguity.js" /tmp/body-{ref}.txt \
+  --marker "{the row's Flagged text, verbatim}" \
+  --resolution "{your chosen resolution text}" \
+  --out /tmp/body-{ref}-resolved.txt
+
+# 3. Write the result back, restoring `ready` only when step 2 reported readyRestorable: true:
+gh issue edit {ref} --body-file /tmp/body-{ref}-resolved.txt [--add-label ready]
+```
+
+`bin/resolve-ambiguity.js` never touches `gh`/MCP itself — it is a pure local transform (fetch-then-transform-then-write, the same compose-then-write-once discipline every write in this skill uses) — so step 1's fetch and step 3's write-back use whichever transport (`gh` or the MCP `issue_read`/`create_or_update_file` equivalents) this run is already using elsewhere. `readyRestorable` matches `spec-template.md`'s exact structural check: zero remaining `<!-- ambiguity: -->` markers AND no surviving `## Open Questions` heading — never restore `ready` when it reports `false`, even if this row's own marker was the last one you expected to find.
 
 `{ref}` is `#{N}` under `work-backend: github-issues`, the bare record id under `local-files` — same convention as Step 1's Overlap Analysis.
 
