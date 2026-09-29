@@ -53,6 +53,14 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.130.0](https://github.com/thn-inc/claude-tweaks/compare/v6.129.0...v6.130.0) (2026-09-28)
+
+
+### Features
+
+* /demo and /feedback SKILL.md files load their full body… ([#2697](https://github.com/thn-inc/claude-tweaks/issues/2697)) ([cdb32b0](https://github.com/thn-inc/claude-tweaks/commit/cdb32b04608da907c156acdfd2f48a4126401fee)), closes [#2757](https://github.com/thn-inc/claude-tweaks/issues/2757) [#2758](https://github.com/thn-inc/claude-tweaks/issues/2758) [#2759](https://github.com/thn-inc/claude-tweaks/issues/2759)
+* Add Cloudflare WAF/rate-limiting config check for auth… ([#2665](https://github.com/thn-inc/claude-tweaks/issues/2665)) ([e11278f](https://github.com/thn-inc/claude-tweaks/commit/e11278f455f2f16ae69cf30ea2c730fce3687153))
+
 ## [6.129.0](https://github.com/thomasholknielsen/claude-tweaks/compare/v6.128.0...v6.129.0) (2026-09-21)
 
 
