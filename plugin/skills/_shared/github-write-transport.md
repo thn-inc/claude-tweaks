@@ -44,7 +44,7 @@ that includes a `labels` parameter, regardless of how many labels are changing.
 2. Compute the full desired array with `mergeLabelNames` (`bin/lib/issues/label-write.js`):
    ```bash
    node -e "const {mergeLabelNames}=require('\${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/label-write.js');
-     console.log(JSON.stringify(mergeLabelNames(\$CURRENT_LABELS_JSON, {add: [...], remove: [...]})))"
+     console.log(JSON.stringify(mergeLabelNames(\$CURRENT_LABELS_JSON, {add: process.argv[1] ? [process.argv[1]] : [], remove: process.argv[2] ? [process.argv[2]] : []})))" "bot:in-progress" ""
    ```
 3. Pass that COMPLETE array to `issue_write` — never a single-label or delta-only array.
 
