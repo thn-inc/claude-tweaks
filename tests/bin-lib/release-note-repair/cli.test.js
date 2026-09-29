@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { run } = require('../../../plugin/bin/release-note-repair');
-const { bodySha } = require('../../../plugin/bin/lib/release-note-repair/detect');
+const { bodySha, CHECK_HEADER } = require('../../../plugin/bin/lib/release-note-repair/detect');
 const { onlyReleaseNoteAdded } = require('../../../plugin/bin/lib/release-note-repair/apply');
 const { writeRecord, readRecord } = require('../../../plugin/bin/lib/issues/local-store');
 const F = require('./fixtures');
@@ -167,6 +167,31 @@ test('repair (local-files): writes the file, keeps facets and every other byte, 
   const json = JSON.parse(t.out());
   assert.equal(json.written, true);
   assert.equal(json.logged, true);
+});
+
+test('a local repair whose written file fails re-verification is restored and exits 6', () => {
+  const fx = localFixture();
+  const rawBefore = fs.readFileSync(fx.recordFile, 'utf8');
+  const before = readRecord(fx.recordFile);
+  const lineFile = fx.write('line.txt', F.LINE);
+  const t = deps(fx.main);
+  // Three checkBody calls happen in this order for a successful-until-the-last-check repair:
+  //   1. prepareRepair's pre-write check on the live (pre-fill) body -> must read as release-note-only
+  //   2. prepareRepair's post-apply check on the composed (post-fill) body -> must read as conforming
+  //   3. repairLocal's own post-write re-read check on the written-then-reread body -> forced to fail
+  // so the write itself still succeeds but the CLI's own re-verification catches it and restores.
+  let calls = 0;
+  const checkCli = () => {
+    calls += 1;
+    if (calls === 1) return { code: 4, stderr: `${CHECK_HEADER}\n  - missing section: ## Release Note\n` };
+    if (calls === 2) return { code: 0, stderr: '' };
+    return { code: 4, stderr: `${CHECK_HEADER}\n  - missing section: ## Deliverables\n` };
+  };
+  const code = run(['repair', '--driver', 'local-files', '--ref', '42', '--record-file', fx.recordFile, '--expect-sha', bodySha(before.body), '--line-file', lineFile, '--run', fx.runDir], { ...t.d, checkCli });
+  assert.equal(code, 6);
+  assert.equal(calls, 3);
+  assert.equal(fs.readFileSync(fx.recordFile, 'utf8'), rawBefore);
+  assert.equal(fs.existsSync(path.join(fx.runDir, 'snapshots', 'tidy-release-note-42.original.md')), true);
 });
 
 test('repair (local-files): a record edited between scan and write is skipped (exit 5), file byte-unchanged', () => {
