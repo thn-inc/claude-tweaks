@@ -94,6 +94,18 @@ function resolveMode(raw) {
   return 'run';
 }
 
+// Shared by both read-only modes below: --run/--cwd only mean anything
+// alongside an actual check run (#2806 hindsight — was duplicated verbatim
+// in both validators).
+function rejectCheckRunFlags(raw) {
+  if (raw.run !== null) {
+    throw new UsageError('--run applies to a check run — not to --stamp-status or --changed-files');
+  }
+  if (raw.cwd !== null) {
+    throw new UsageError('--cwd applies to a check run — not to --stamp-status or --changed-files');
+  }
+}
+
 // --stamp-status (#1921): a read-only mode that needs no --cmd at all, and
 // takes none of --scope/--base/--integration-branch/--run/--cwd (those all
 // apply to an actual check run). --git-dir and --no-stamp are unrestricted.
@@ -106,12 +118,7 @@ function validateStampStatusMode(raw) {
   if (raw.scope !== null || raw.base !== null || raw.integrationBranch !== null) {
     throw new UsageError('--stamp-status takes no --scope/--base/--integration-branch');
   }
-  if (raw.run !== null) {
-    throw new UsageError('--run applies to a check run — not to --stamp-status or --changed-files');
-  }
-  if (raw.cwd !== null) {
-    throw new UsageError('--cwd applies to a check run — not to --stamp-status or --changed-files');
-  }
+  rejectCheckRunFlags(raw);
 }
 
 // --changed-files (#1923): another read-only mode — no --cmd, no --scope,
@@ -122,12 +129,7 @@ function validateChangedFilesMode(raw) {
   if (raw.cmds.length) throw new UsageError('--changed-files takes no --cmd');
   if (raw.scope !== null) throw new UsageError('--changed-files takes no --scope');
   if (raw.gitDir !== null) throw new UsageError('--changed-files takes no --git-dir');
-  if (raw.run !== null) {
-    throw new UsageError('--run applies to a check run — not to --stamp-status or --changed-files');
-  }
-  if (raw.cwd !== null) {
-    throw new UsageError('--cwd applies to a check run — not to --stamp-status or --changed-files');
-  }
+  rejectCheckRunFlags(raw);
 }
 
 // The default mode: an actual check run. Needs at least one --cmd;
