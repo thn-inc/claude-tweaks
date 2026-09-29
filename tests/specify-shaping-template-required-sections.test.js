@@ -40,6 +40,7 @@ test('shaping-mode-stamping.md runs compose-record.js --check before the write',
   assert.ok(checkAt < writeAt, 'the --check call must come before the gh issue edit write');
   const lines = src.split('\n');
   const writeLine = lines.findIndex((l) => l.startsWith('gh issue edit {n} \\'));
+  assert.ok(writeLine > 0, 'no line starts with the gh issue edit {n} write');
   assert.match(lines[writeLine - 1], /--check "\$SPECIFY_SHAPED_BODY" \|\| exit\b/, 'a failed --check must stop the write on the line before it');
   assert.ok(src.includes('pre-write shape check failed:'), 'failed-row Detail wording missing');
 });
