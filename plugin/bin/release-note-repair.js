@@ -38,8 +38,9 @@ const USAGE = [
   '       release-note-repair.js repair --driver local-files --ref <id> --record-file <path> --expect-sha <sha256> --line-file <file> (--run <run-dir> | --snapshot-file <file>)',
   '       release-note-repair.js verify --ref <n> --before-json <file> --after-json <file> --line-file <file> [--run <run-dir>]',
   'exit: 0 done | 2 malformed or unreadable input | 3 run dir missing/not anchored, or a write failed',
-  '      4 line fails a bound | 5 stale premise, skipped | 6 repair failure, nothing written | 7 post-write verification failed',
-  '      8 post-write verification failed, restore refused (labels-only drift, or the file/body no longer matches what this run wrote)',
+  '      4 line fails a bound | 5 stale premise, skipped | 6 repair failure, nothing written',
+  '      7 post-write verification failed (`verify`: the live body itself no longer matches what this run wrote; `repair --driver local-files`: the CLI\'s own restore attempt itself failed)',
+  '      8 post-write verification failed, restore refused (`verify`: labels-only drift, body verified clean; `repair --driver local-files`: the record file no longer matches what this run wrote)',
 ].join('\n') + '\n';
 
 const FLAGS = {
@@ -187,7 +188,10 @@ function repairLocal(o, deps, usage, rawLine, dest) {
     let currentRaw = null;
     try { currentRaw = fs.readFileSync(file, 'utf8'); } catch { currentRaw = null; }
     if (currentRaw !== applied.body) {
-      deps.stderr(`release-note-repair.js: the record file no longer matches what this run wrote — restore refused (original preserved at ${dest.file})\n`);
+      const drift = currentRaw === null
+        ? 'the file could not be re-read'
+        : `${currentRaw.length} bytes on disk now vs ${applied.body.length} this run wrote`;
+      deps.stderr(`release-note-repair.js: the record file no longer matches what this run wrote (${drift}) — restore refused (original preserved at ${dest.file})\n`);
       return 8;
     }
     try { writeFileAtomic(file, raw); } catch (err) {

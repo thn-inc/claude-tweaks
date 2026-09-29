@@ -216,6 +216,10 @@ test('repair (local-files): a file rewritten by another actor between write and 
   const code = run(['repair', '--driver', 'local-files', '--ref', '42', '--record-file', fx.recordFile, '--expect-sha', bodySha(before.body), '--line-file', lineFile, '--run', fx.runDir], { ...t.d, checkCli });
   assert.equal(code, 8, t.err());
   assert.match(t.err(), /restore refused/);
+  // #2828 R7: the stderr must itself name what differs (a byte-length delta), not just assert a
+  // mismatch — the release-note-repair.md Yours row reports this delta rather than claiming the
+  // stderr "describes the live state".
+  assert.match(t.err(), /\d+ bytes on disk now vs \d+ this run wrote/);
   assert.equal(fs.readFileSync(fx.recordFile, 'utf8'), tampered, 'the concurrent write must survive untouched, never overwritten by our restore');
   assert.equal(fs.readFileSync(path.join(fx.runDir, 'snapshots', 'tidy-release-note-42.original.md'), 'utf8'), rawBefore);
 });
