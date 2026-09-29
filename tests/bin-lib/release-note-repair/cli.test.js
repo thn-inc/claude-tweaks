@@ -194,6 +194,40 @@ test('a local repair whose written file fails re-verification is restored and ex
   assert.equal(fs.existsSync(path.join(fx.runDir, 'snapshots', 'tidy-release-note-42.original.md')), true);
 });
 
+test('repair (local-files): a file rewritten by another actor between write and re-read verification is exit 8, restore refused', () => {
+  const fx = localFixture();
+  const rawBefore = fs.readFileSync(fx.recordFile, 'utf8');
+  const before = readRecord(fx.recordFile);
+  const lineFile = fx.write('line.txt', F.LINE);
+  const t = deps(fx.main);
+  const tampered = `${rawBefore}tampered externally\n`;
+  let calls = 0;
+  // Same three-call shape as the mocked-checker restore test above, except the third call also
+  // simulates a concurrent external write landing on the real record file (never on the tmp file
+  // checkBody hands it) before reporting a check failure — the CLI's re-read verification must
+  // notice the file no longer holds what it spliced, and refuse to restore over it.
+  const checkCli = () => {
+    calls += 1;
+    if (calls === 1) return { code: 4, stderr: `${CHECK_HEADER}\n  - missing section: ## Release Note\n` };
+    if (calls === 2) return { code: 0, stderr: '' };
+    fs.writeFileSync(fx.recordFile, tampered);
+    return { code: 4, stderr: `${CHECK_HEADER}\n  - missing section: ## Deliverables\n` };
+  };
+  const code = run(['repair', '--driver', 'local-files', '--ref', '42', '--record-file', fx.recordFile, '--expect-sha', bodySha(before.body), '--line-file', lineFile, '--run', fx.runDir], { ...t.d, checkCli });
+  assert.equal(code, 8, t.err());
+  assert.match(t.err(), /restore refused/);
+  assert.equal(fs.readFileSync(fx.recordFile, 'utf8'), tampered, 'the concurrent write must survive untouched, never overwritten by our restore');
+  assert.equal(fs.readFileSync(path.join(fx.runDir, 'snapshots', 'tidy-release-note-42.original.md'), 'utf8'), rawBefore);
+});
+
+test('repair (github-issues): a reused --out path is unlinked on entry, never carries a stale prior body past a skip/failure exit', () => {
+  const fx = fixture();
+  fs.writeFileSync(path.join(fx.root, 'repaired.md'), 'stale body from a previous record\n');
+  const { code, out } = githubRepair(fx, { line: 'feat: fixes #12\n' });
+  assert.equal(code, 4);
+  assert.equal(fs.existsSync(out), false, '--out must be unlinked even though this run never got far enough to write it');
+});
+
 test('repair (local-files): a record edited between scan and write is skipped (exit 5), file byte-unchanged', () => {
   const fx = localFixture();
   const rawBefore = fs.readFileSync(fx.recordFile, 'utf8');
@@ -222,13 +256,29 @@ test('verify: identical labels + conforming body carrying the line is exit 0 and
   assert.ok(decisions.includes(`filled the Release Note on #7 with "${F.LINE}"; snapshot snapshots/tidy-release-note-7.original.md`));
 });
 
-test('verify: a changed label set is exit 7 and logs nothing', () => {
+test('verify: a labels-only mismatch (body verified clean) is exit 8 — never a restore candidate', () => {
+  // REVISED RULING (#2828 final-fix I2): `gh issue edit --body-file` can't touch labels, so a
+  // label-only diff means another actor (e.g. a grant stamping `bot:in-progress`) — there is
+  // nothing here for a body-file restore to fix. This deliberately changes the prior expectation
+  // (exit 7, "restore once, automatically") to exit 8, "restore refused, reported distinctly".
   const fx = fixture();
   const before = fx.write('before.json', liveJson(F.MISSING_RN));
   const after = fx.write('after.json', JSON.stringify({ body: F.REPAIRED, labels: [{ name: 'ready' }], state: 'OPEN' }));
   const t = deps(fx.main);
-  assert.equal(run(['verify', '--ref', '7', '--before-json', before, '--after-json', after, '--line-file', fx.write('line.txt', F.LINE), '--run', fx.runDir], t.d), 7);
+  assert.equal(run(['verify', '--ref', '7', '--before-json', before, '--after-json', after, '--line-file', fx.write('line.txt', F.LINE), '--run', fx.runDir], t.d), 8);
+  assert.match(t.err(), /labels changed, body verified/);
   assert.match(t.err(), /label set changed/);
+  assert.equal(fs.existsSync(path.join(fx.runDir, 'decisions.md')), false);
+});
+
+test('verify: a live body drifted beyond the Release Note section (Technical Approach rewritten) is exit 7, restore never attempted by the CLI', () => {
+  const fx = fixture();
+  const before = fx.write('before.json', liveJson(F.MISSING_RN));
+  const drifted = F.REPAIRED.replace('Use a Map.', 'Use a Set.');
+  const after = fx.write('after.json', JSON.stringify({ body: drifted, labels: [{ name: 'ready' }, { name: 'auto:build' }], state: 'OPEN' }));
+  const t = deps(fx.main);
+  assert.equal(run(['verify', '--ref', '7', '--before-json', before, '--after-json', after, '--line-file', fx.write('line.txt', F.LINE), '--run', fx.runDir], t.d), 7);
+  assert.match(t.err(), /more than the Release Note section changed/);
   assert.equal(fs.existsSync(path.join(fx.runDir, 'decisions.md')), false);
 });
 

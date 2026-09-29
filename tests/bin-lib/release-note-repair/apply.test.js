@@ -49,6 +49,19 @@ test('applyReleaseNote throws RepairError with no line-anchored AC heading, or a
   assert.throws(() => applyReleaseNote(F.CONFORMING, F.LINE), RepairError);
 });
 
+test('applyReleaseNote skips a `## `-looking line inside a closed fenced code block when finding the section boundary', () => {
+  const out = applyReleaseNote(F.MISSING_RN_WITH_FENCE, F.LINE);
+  assert.equal(checkBody(out.body).verdict, 'conforming');
+  assert.equal(onlyReleaseNoteAdded(F.MISSING_RN_WITH_FENCE, out.body, F.LINE), true);
+  const fenceClose = out.body.indexOf('```\n', out.body.indexOf('## Example heading'));
+  const rnAt = out.body.indexOf('## Release Note');
+  assert.ok(rnAt > fenceClose, 'Release Note must land after the fence closes, never inside it');
+});
+
+test('applyReleaseNote refuses an unterminated fenced code block preceding the insert point', () => {
+  assert.throws(() => applyReleaseNote(F.UNTERMINATED_FENCE_BODY, F.LINE), RepairError);
+});
+
 test('onlyReleaseNoteAdded accepts exactly the section and rejects any other change', () => {
   assert.equal(onlyReleaseNoteAdded(F.MISSING_RN, F.REPAIRED, F.LINE), true);
   assert.equal(onlyReleaseNoteAdded(F.EMPTY_RN, F.REPAIRED, F.LINE), true);
@@ -97,4 +110,12 @@ test('verifyWritten: a changed label set, a missing line, or a failing body is r
   assert.match(verifyWritten({ before, after: { body: F.REPAIRED, labels: before.labels }, line: 'Other line.' })[0], /does not carry the composed line/);
   assert.ok(verifyWritten({ before, after: { body: F.MISSING_RN, labels: before.labels }, line: F.LINE }).length >= 1);
   assert.deepEqual(verifyWritten({ before, after: {}, line: F.LINE }), ['the post-write read carries no body']);
+});
+
+test('verifyWritten: a body that drifted beyond the Release Note section (e.g. Technical Approach rewritten) is reported', () => {
+  const before = { body: F.MISSING_RN, labels: [{ name: 'ready' }] };
+  const drifted = F.REPAIRED.replace('Use a Map.', 'Use a Set.');
+  assert.match(checkBody(drifted).verdict, /conforming/);
+  const problems = verifyWritten({ before, after: { body: drifted, labels: before.labels }, line: F.LINE });
+  assert.ok(problems.some((p) => /more than the Release Note section changed/.test(p)), problems.join('; '));
 });

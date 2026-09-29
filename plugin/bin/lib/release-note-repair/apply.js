@@ -15,10 +15,34 @@ const AC_HEADING = /^## Acceptance Criteria[ \t]*$/;
 const RN_HEADING = /^## Release Note[ \t]*$/;
 const ORIGINAL_REQUEST = /^## Original request[ \t]*$/;
 const H2 = /^## /;
+const FENCE = /^(```|~~~)/;
 
 // Lines keep their own terminators so every untouched byte round-trips exactly.
 const splitKeepingEol = (text) => text.match(/[^\n]*\n|[^\n]+$/g) || [];
 const bare = (line) => line.replace(/\r?\n$/, '');
+
+// Fence state per line, computed only over the authored region (before ## Original request):
+// true when a line sits inside — or is itself a delimiter of — a fenced code block, so a
+// `## `-looking line typed into a fenced markdown example is never mistaken for a real heading.
+// An unterminated fence (opened, never closed, before the insert point) leaves `open` non-null —
+// callers refuse to guess a boundary past that point.
+function fenceInfo(authoredLines) {
+  const inFence = [];
+  let open = null;
+  for (const l of authoredLines) {
+    const m = FENCE.exec(l);
+    if (open) {
+      inFence.push(true);
+      if (m && m[1] === open) open = null;
+    } else if (m) {
+      inFence.push(true);
+      open = m[1];
+    } else {
+      inFence.push(false);
+    }
+  }
+  return { inFence, unterminated: open !== null };
+}
 
 function applyReleaseNote(body, rawLine) {
   const text = String(body);
@@ -27,13 +51,15 @@ function applyReleaseNote(body, rawLine) {
   const lines = splitKeepingEol(text);
   const originalAt = lines.findIndex((l) => ORIGINAL_REQUEST.test(bare(l)));
   const authoredEnd = originalAt === -1 ? lines.length : originalAt;
+  const { inFence, unterminated } = fenceInfo(lines.slice(0, authoredEnd));
+  if (unterminated) throw new RepairError('an unterminated fenced code block precedes the insert point');
   const nextH2 = (from) => {
-    for (let k = from; k < lines.length; k += 1) if (H2.test(lines[k])) return k;
+    for (let k = from; k < lines.length; k += 1) if (!inFence[k] && H2.test(lines[k])) return k;
     return lines.length;
   };
   const terminate = (k) => { if (k >= 0 && !lines[k].endsWith('\n')) lines[k] += eol; };
 
-  const rn = lines.slice(0, authoredEnd).findIndex((l) => RN_HEADING.test(bare(l)));
+  const rn = lines.slice(0, authoredEnd).findIndex((l, idx) => !inFence[idx] && RN_HEADING.test(bare(l)));
   if (rn !== -1) {
     const end = nextH2(rn + 1);
     if (lines.slice(rn + 1, end).some((l) => bare(l).trim() !== '')) {
@@ -44,7 +70,7 @@ function applyReleaseNote(body, rawLine) {
     lines.splice(rn + 1, end - (rn + 1), ...fill);
     return { body: lines.join(''), mode: 'filled' };
   }
-  const ac = lines.slice(0, authoredEnd).findIndex((l) => AC_HEADING.test(bare(l)));
+  const ac = lines.slice(0, authoredEnd).findIndex((l, idx) => !inFence[idx] && AC_HEADING.test(bare(l)));
   if (ac === -1) throw new RepairError('no line-anchored ## Acceptance Criteria heading to insert after');
   const at = nextH2(ac + 1);
   if (at < lines.length) {
@@ -105,6 +131,10 @@ function verifyWritten({ before, after, line, checkCli } = {}) {
   const problems = [];
   if (checkBody(body, { checkCli }).verdict !== 'conforming') problems.push('the live body fails compose-record.js --check');
   if (sectionText(body, 'Release Note') !== String(line).trim()) problems.push('the live ## Release Note section does not carry the composed line');
+  const beforeBody = before && typeof before.body === 'string' ? before.body : null;
+  if (beforeBody !== null && !onlyReleaseNoteAdded(beforeBody, body, line)) {
+    problems.push('the post-write diff shows more than the Release Note section changed');
+  }
   const was = labelNames(before && before.labels).sort();
   const now = labelNames(after.labels).sort();
   if (!isDeepStrictEqual(was, now)) problems.push(`the label set changed: before [${was.join(', ')}], after [${now.join(', ')}]`);

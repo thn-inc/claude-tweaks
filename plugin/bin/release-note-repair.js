@@ -10,9 +10,16 @@
 // dir missing or not anchored under the main checkout, or a snapshot/--out/record write failed) plus
 // domain codes, each branched on by release-note-repair.md: 4 the composed line fails a bound —
 // recompose once; 5 stale premise — skip, nothing written; 6 repair failure — nothing written
-// (local-files: original restored); 7 post-write verification failed. The snapshot is always
-// written before any output body or record file, and a repair without a snapshot destination is
-// refused — the undo copy precedes the write by construction.
+// (local-files: original restored); 7 post-write verification failed (`verify`: the live body
+// itself no longer matches what this run wrote; `repair --driver local-files`: the CLI's own
+// automatic restore attempt failed to write); 8 post-write verification failed, but an automatic
+// restore is refused and was never attempted — `verify`: the ONLY drift is the label set (the
+// body verified clean; `gh issue edit --body-file` can't touch labels anyway, so there's nothing
+// to restore); `repair --driver local-files`: the record file on disk no longer matches the exact
+// text this call spliced (something else wrote to it between the write and the re-read), so
+// overwriting it now would stomp that other write. The snapshot is always written before any
+// output body or record file, and a repair without a snapshot destination is refused — the undo
+// copy precedes the write by construction.
 'use strict';
 
 const fs = require('fs');
@@ -32,6 +39,7 @@ const USAGE = [
   '       release-note-repair.js verify --ref <n> --before-json <file> --after-json <file> --line-file <file> [--run <run-dir>]',
   'exit: 0 done | 2 malformed or unreadable input | 3 run dir missing/not anchored, or a write failed',
   '      4 line fails a bound | 5 stale premise, skipped | 6 repair failure, nothing written | 7 post-write verification failed',
+  '      8 post-write verification failed, restore refused (labels-only drift, or the file/body no longer matches what this run wrote)',
 ].join('\n') + '\n';
 
 const FLAGS = {
@@ -84,7 +92,7 @@ function outcomeExit(prep, deps) {
 
 function logAuto(deps, runDir, text) {
   const code = logDecision.run(
-    ['--run', runDir, '--status', 'AUTO', '--step', 'Step 7 Fill Release Note', '--text', text, '--reversibility', 'high'],
+    ['--run', runDir, '--section', '/tidy', '--status', 'AUTO', '--step', 'Step 7 Fill Release Note', '--text', text, '--reversibility', 'high'],
     { now: deps.now, cwd: deps.cwd, mainRoot: deps.mainRoot, stdout: () => {}, stderr: deps.stderr },
   );
   return code === 0;
@@ -124,6 +132,10 @@ function cmdScan(o, deps, usage) {
 
 function repairGithub(o, deps, usage, rawLine, dest) {
   if (!o['live-json'] || !o.out) return usage('github-issues repair needs --live-json and --out');
+  // A reused --out path never carries a previous record's body past this call's own exit —
+  // unlink before any work, not just on a failure branch, so an exit-5/6 leaves --out absent
+  // rather than stale.
+  try { fs.unlinkSync(o.out); } catch { /* absent is fine */ }
   let live;
   try { live = JSON.parse(readText(o['live-json'])); } catch (err) { return usage(`could not read --live-json (${err.message})`); }
   if (!live || typeof live.body !== 'string') return usage('--live-json carries no body string');
@@ -167,6 +179,17 @@ function repairLocal(o, deps, usage, rawLine, dest) {
     && after.title === live.title
     && detect.checkBody(after.body, { checkCli: deps.checkCli }).verdict === 'conforming';
   if (!verified) {
+    // Restore only when the file on disk still holds exactly the bytes this call spliced —
+    // proof nothing else has touched it since the write, so overwriting it with `raw` is safe.
+    // If it no longer matches (another write landed between our write and this re-read), the
+    // restore is refused rather than attempted: stomping that other write would be worse than
+    // leaving the current, unverified content in place for a human to look at.
+    let currentRaw = null;
+    try { currentRaw = fs.readFileSync(file, 'utf8'); } catch { currentRaw = null; }
+    if (currentRaw !== applied.body) {
+      deps.stderr(`release-note-repair.js: the record file no longer matches what this run wrote — restore refused (original preserved at ${dest.file})\n`);
+      return 8;
+    }
     try { writeFileAtomic(file, raw); } catch (err) {
       deps.stderr(`release-note-repair.js: re-read verification failed and restoring ${file} failed (${err.message}); original at ${dest.file}\n`);
       return 7;
@@ -207,6 +230,17 @@ function cmdVerify(o, deps, usage) {
   const line = detect.checkReleaseNoteLine(rawLine).line;
   const problems = apply.verifyWritten({ before, after, line, checkCli: deps.checkCli });
   if (problems.length) {
+    // A labels-only mismatch (the body itself verified clean) is never a restore candidate:
+    // `gh issue edit --body-file` can't touch labels, so there is nothing a restore would fix —
+    // another actor (e.g. a grant stamping `bot:in-progress`) touched the record after the write
+    // landed. Any other problem means the live body itself no longer matches what this run
+    // wrote — restoring now would overwrite whatever produced that drift, so it is refused too,
+    // just for a different, body-shaped reason (exit 7).
+    const labelOnly = problems.length === 1 && /^the label set changed/.test(problems[0]);
+    if (labelOnly) {
+      deps.stderr(`release-note-repair.js: post-write verification failed — labels changed, body verified:\n  - ${problems[0]}\n`);
+      return 8;
+    }
     deps.stderr(`release-note-repair.js: post-write verification failed:\n${problems.map((p) => `  - ${p}`).join('\n')}\n`);
     return 7;
   }
