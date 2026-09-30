@@ -32,11 +32,11 @@ function checkPrBookkeepingPrecondition({ runDir, cwd = process.cwd() }) {
   // handler (--run required, #1124) and record-pr handler (--run, else
   // resolveImplicitRunUnambiguous, whose first arm is PIPELINE_RUN_DIR).
   // writeRunState's other callers either mint a separate ad-hoc run dir
-  // (context.js's stampAdHocRunDir, post-tool-use.js's stamp) or patch only
-  // status/exemption memos (prExempt, close-run, session-end) onto the dir
-  // they were handed -- none redirects a write to a parent dir. Each spec's
-  // own /build stamps its
-  // PER-SPEC {parent-run-id}/spec-{N}/ dir: build/worktree-setup.md Step 4.5
+  // (post-tool-use.js's stampAdHocRunDir, context.js's stampAdHocRunDirForDenial)
+  // or patch only status/exemption memos (prExempt, close-run, session-end)
+  // onto the dir they were handed -- none redirects a write to a parent dir.
+  // Each spec's own /build stamps its PER-SPEC {parent-run-id}/spec-{N}/ dir:
+  // build/worktree-setup.md Step 4.5
   // (record-worktree) still runs under MULTISPEC_SHARED_WORKTREE, and Step 6
   // (_shared/pr-early-run-lifecycle.md Step 1) reuses the already-open
   // shared PR and record-pr's it. The parent dir may carry its own
