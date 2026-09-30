@@ -53,6 +53,19 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.131.0](https://github.com/thn-inc/claude-tweaks/compare/v6.130.0...v6.131.0) (2026-09-30)
+
+
+### Features
+
+* New skill idea: detect prose tables pinned to a code… ([#2792](https://github.com/thn-inc/claude-tweaks/issues/2792)) ([32e1fa3](https://github.com/thn-inc/claude-tweaks/commit/32e1fa3f7cca3facc49453e12914610cd1115220))
+
+
+### Bug Fixes
+
+* archive-run refuses git-mv-failed on the empty untracked… ([#2816](https://github.com/thn-inc/claude-tweaks/issues/2816)) ([6998665](https://github.com/thn-inc/claude-tweaks/commit/69986658041f18c85245d677e71064dedf42f389))
+* dispatch: queue-pull-script.md's multi-line `node -e`… ([#2564](https://github.com/thn-inc/claude-tweaks/issues/2564)) ([5f5636b](https://github.com/thn-inc/claude-tweaks/commit/5f5636b5bfff177769ad0dab23935ec41fdafe90))
+
 ## [6.130.0](https://github.com/thn-inc/claude-tweaks/compare/v6.129.0...v6.130.0) (2026-09-28)
 
 
