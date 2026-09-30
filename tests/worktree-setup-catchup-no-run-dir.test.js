@@ -43,8 +43,7 @@ test('worktree-catchup-no-run-dir.md: names its callers and why no standalone lo
 });
 
 test('specify/SKILL.md: Next Actions carries a catch-up advance per the no-run-dir branch', () => {
-  const start = SPECIFY.indexOf('## Next Actions');
-  assert.notStrictEqual(start, -1, '## Next Actions heading missing');
+  const m = /^## Next Actions$/m.exec(SPECIFY); assert.ok(m, '## Next Actions heading missing'); const start = m.index;
   const end = SPECIFY.indexOf('\n## ', start + 1);
   const region = SPECIFY.slice(start, end === -1 ? undefined : end);
   assert.match(region, /_shared\/worktree-catchup-no-run-dir\.md/, 'must cite the no-run-dir branch file');
