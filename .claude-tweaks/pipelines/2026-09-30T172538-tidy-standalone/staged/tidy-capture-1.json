@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "capture",
+  "record": null,
+  "title": "readClaimBlobsGitBatch rejects string input + bu…",
+  "action": "Capture defect: batch runner string input + encoding buffer → every blob fails",
+  "command": "/claude-tweaks:capture (body: staged/tidy-capture-1.md)"
+ }
+]
