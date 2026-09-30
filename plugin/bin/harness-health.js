@@ -275,9 +275,18 @@ function cmdValidateFindings(args) {
   // root, before filing — a command that doesn't read "unresolved" right now
   // is dropped rather than left to auto-close the record at its first
   // materialize. Only this CLI injects the real shell runner; toIssuePayload
-  // itself never spawns one.
+  // itself never spawns one. A drop is logged, like every other soft-drop in
+  // this command, so a missing line is diagnosable from the sweep's stderr.
   const toIssuePayloadSelfChecked = (finding, v, p) => toIssuePayload(finding, v, p, {
-    premiseSelfCheck: (command) => premiseReadsUnresolved(command, { root }),
+    premiseSelfCheck: (command) => {
+      const keep = premiseReadsUnresolved(command, { root });
+      if (!keep) {
+        process.stderr.write(
+          `[harness-health] validate-findings: dropped Premise-check: line for finding ${finding.id} — the command does not read "unresolved" at filing time (non-zero exit, timeout, or spawn error)\n`,
+        );
+      }
+      return keep;
+    },
   });
 
   const { cache, payloads, seen, wontfixSuppressed } = dedupAndDispatch({

@@ -409,6 +409,7 @@ test('validate-findings: a patch finding against a real target file carries a Pr
     payloads[0].body.includes(`Premise-check: ! grep -qF -- 'See \`src/auth/session.js\`.' '${expectedPath}'`),
     `expected a Premise-check: line anchored on the resolved target path, got body:\n${payloads[0].body}`,
   );
+  assert.ok(!result.stderr.includes('dropped Premise-check:'), `a kept line must not log a drop, got:\n${result.stderr}`);
 });
 
 test('validate-findings: a patch finding against an unresolvable target carries no Premise-check: line', () => {
@@ -465,6 +466,10 @@ test('validate-findings: an additive finding whose proposed string already exist
   const payloads = JSON.parse(result.stdout);
   assert.strictEqual(payloads.length, 1);
   assert.ok(!payloads[0].body.includes('Premise-check:'), `expected the self-check to drop the line, got:\n${payloads[0].body}`);
+  assert.ok(
+    result.stderr.includes(`dropped Premise-check: line for finding ${payloads[0].id}`),
+    `a self-check drop must be logged to stderr, got:\n${result.stderr}`,
+  );
 });
 
 test('validate-findings: a removal finding whose old string is already gone is filed with no Premise-check: line', () => {
@@ -484,4 +489,8 @@ test('validate-findings: a removal finding whose old string is already gone is f
   const payloads = JSON.parse(result.stdout);
   assert.strictEqual(payloads.length, 1);
   assert.ok(!payloads[0].body.includes('Premise-check:'), `expected the self-check to drop the line, got:\n${payloads[0].body}`);
+  assert.ok(
+    result.stderr.includes(`dropped Premise-check: line for finding ${payloads[0].id}`),
+    `a self-check drop must be logged to stderr, got:\n${result.stderr}`,
+  );
 });
