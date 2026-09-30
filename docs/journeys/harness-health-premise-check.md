@@ -37,7 +37,7 @@ files:
 - **Should feel:** Invisible when the finding is genuine; a quiet guard when it isn't — a finding whose proposed text already appears in the target file (a short, generic anchor) is filed without a `Premise-check:` line instead of auto-closing on its very first materialize.
 - **Should understand:** The drop always errs toward "no auto-close" — losing the line only costs the automatic close-detection for that one record, while keeping a line that already reads "resolved" would close a finding whose work was never done. `buildPremiseCheck` itself stays pure; only the CLI injects the real shell runner, so `toIssuePayload`'s own unit tests never spawn a shell.
 - **Check:** file a finding whose `newString` already exists in the target skill file and confirm the emitted payload body has no `Premise-check:` line; a finding whose `newString` is absent still carries the line byte-for-byte.
-- **Red flags:** A relative `--root` resolves a relative target path that the self-check (run with `cwd: --root`) can't find — it then reads "unresolved" and keeps the line (safe direction, pre-existing #2621 path issue). Every other health skill still files without this step, since none composes a `Premise-check:` line.
+- **Red flags:** A kept line whose target path isn't absolute. `validate-findings` resolves `--root` to an absolute path first, so a relative `--root` can't leave the self-check (run with `cwd: --root`) reading the wrong file. Every other health skill still files without this step, since none composes a `Premise-check:` line.
 
 ### 4. The issue is filed with (or without) the line
 - **URL:** N/A
