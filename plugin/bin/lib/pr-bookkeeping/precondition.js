@@ -24,6 +24,28 @@ const { mainCheckoutRoot, repoInfo } = require('../hooks/worktree-detect');
 function checkPrBookkeepingPrecondition({ runDir, cwd = process.cwd() }) {
   if (!runDir) return { ok: true, reason: 'no-run-dir' };
 
+  // Where run-state.json lives for a /flow multi-spec run (#2664 -- traced
+  // from the writers, #2571 Deliverable 2): always {runDir}/run-state.json
+  // for whichever dir the writer was handed. Every write goes through
+  // hooks/context.js's writeRunState(runDir, patch); the pipeline writers of
+  // the `worktree`/`pr` fields read below are bin/hooks.js's record-worktree
+  // handler (--run required, #1124) and record-pr handler (--run, else
+  // resolveImplicitRunUnambiguous, whose first arm is PIPELINE_RUN_DIR).
+  // writeRunState's other callers either mint a separate ad-hoc run dir
+  // (context.js's stampAdHocRunDir, post-tool-use.js's stamp) or patch only
+  // status/exemption memos (prExempt, close-run, session-end) onto the dir
+  // they were handed -- none redirects a write to a parent dir. Each spec's
+  // own /build stamps its
+  // PER-SPEC {parent-run-id}/spec-{N}/ dir: build/worktree-setup.md Step 4.5
+  // (record-worktree) still runs under MULTISPEC_SHARED_WORKTREE, and Step 6
+  // (_shared/pr-early-run-lifecycle.md Step 1) reuses the already-open
+  // shared PR and record-pr's it. The parent dir may carry its own
+  // run-state.json from /flow's run-level steps, but it is never read here.
+  // A per-spec skill's $PIPELINE_RUN_DIR is that per-spec dir, so reading
+  // runDir reads the same file its writers wrote -- reader and writers
+  // agree, and no parent fallback is taken: a per-spec dir missing its own
+  // stamps means that spec skipped Step 4.5/6, which is exactly what this
+  // check exists to report.
   let runState;
   try {
     runState = readRunState(runDir) || {};
