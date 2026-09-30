@@ -16,6 +16,7 @@ const { makeCmdStatus } = require('./lib/health-core/remembered-status');
 const { decide } = require('./lib/harness-health/dedup');
 const { validateFinding } = require('./lib/harness-health/validate-finding');
 const { toIssuePayload } = require('./lib/harness-health/issue-payload');
+const { premiseReadsUnresolved } = require('./lib/health-core/premise-self-check');
 const {
   selectTarget, listTargets, listMemory, selectMemoryTarget, resolveTargetPath,
 } = require('./lib/harness-health/scope');
@@ -270,8 +271,17 @@ function cmdValidateFindings(args) {
   // convention as verifiedAsOf above.
   const pluginVersion = resolvePluginVersion();
 
+  // #2633: run each composed Premise-check: once, from this sweep's own
+  // root, before filing — a command that doesn't read "unresolved" right now
+  // is dropped rather than left to auto-close the record at its first
+  // materialize. Only this CLI injects the real shell runner; toIssuePayload
+  // itself never spawns one.
+  const toIssuePayloadSelfChecked = (finding, v, p) => toIssuePayload(finding, v, p, {
+    premiseSelfCheck: (command) => premiseReadsUnresolved(command, { root }),
+  });
+
   const { cache, payloads, seen, wontfixSuppressed } = dedupAndDispatch({
-    root, issuesPath: args.issues, toolName: TOOL_NAME, survivors, readCache: readCacheWithDeclined, decide, toIssuePayload, verifiedAsOf, pluginVersion,
+    root, issuesPath: args.issues, toolName: TOOL_NAME, survivors, readCache: readCacheWithDeclined, decide, toIssuePayload: toIssuePayloadSelfChecked, verifiedAsOf, pluginVersion,
   });
 
   if (!args.dryRun) {
