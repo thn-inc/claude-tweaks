@@ -191,6 +191,8 @@ Never delete anything here — report only. A path under `{ctx-dir}` is a siblin
 - Database queries have proper indexes?
 - Pagination used for unbounded lists?
 - **Polling instead of realtime push.** Does the diff introduce a fixed-interval polling loop (`setInterval`/recursive `setTimeout`, or an equivalent polling construct) against a data source that already exposes, or could reasonably expose, a realtime push/subscription mechanism (e.g. a Supabase/Convex subscription, a websocket, SSE)? This formalizes CLAUDE.md's "don't use feature flags or backwards-compatibility shims when you can just change the code" spirit — preferring the direct mechanism over a workaround — into an automated check (#2669). False-positive guard: do not flag polling against a data source with no realtime alternative available (e.g. a third-party REST API with no push option) — polling is the correct choice there.
+- **Oversized or legacy-format images.** Does the diff add an image in a legacy format (e.g. BMP, uncompressed TIFF) or an oversized bitmap where a modern, smaller format (WebP/AVIF) or a vector format would serve — without any accompanying compression/conversion step? (#2692)
+- **Unused loaded resources.** Does the diff add a script, stylesheet, or font load (a `<script>`/`<link>` tag, an import, a CDN reference) that nothing in the diff actually references or uses? (#2692)
 
 ### 3e: Architecture
 
