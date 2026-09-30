@@ -75,16 +75,18 @@ const IMAGE_SIZE_LIMIT_BYTES = 500 * 1024;
 // (count): the record's AC says "all 20 items", but its body names only
 // these 17 — no source for the other 3 is available, so none are invented
 // (see criteria-prelaunch.md).
+// `kind` is the candidate `kind` this item's fail status matches against —
+// present only for automated items, one-to-one with each.
 const CHECKLIST_ITEMS = [
-  { id: 'sitemap', label: 'sitemap.xml', group: 'automated' },
-  { id: 'robots', label: 'robots.txt', group: 'automated' },
-  { id: 'favicon', label: 'Favicon', group: 'automated' },
-  { id: 'custom-404', label: 'Custom 404 page', group: 'automated' },
-  { id: 'meta-title', label: 'Meta title on every page', group: 'automated' },
-  { id: 'meta-description', label: 'Meta description on every page', group: 'automated' },
-  { id: 'og-image', label: 'Open Graph image', group: 'automated' },
-  { id: 'alt-text', label: 'Alt text on images', group: 'automated' },
-  { id: 'image-size', label: 'Compressed images', group: 'automated' },
+  { id: 'sitemap', label: 'sitemap.xml', group: 'automated', kind: 'missing-sitemap' },
+  { id: 'robots', label: 'robots.txt', group: 'automated', kind: 'missing-robots' },
+  { id: 'favicon', label: 'Favicon', group: 'automated', kind: 'missing-favicon' },
+  { id: 'custom-404', label: 'Custom 404 page', group: 'automated', kind: 'missing-custom-404' },
+  { id: 'meta-title', label: 'Meta title on every page', group: 'automated', kind: 'missing-meta-title' },
+  { id: 'meta-description', label: 'Meta description on every page', group: 'automated', kind: 'missing-meta-description' },
+  { id: 'og-image', label: 'Open Graph image', group: 'automated', kind: 'missing-og-image' },
+  { id: 'alt-text', label: 'Alt text on images', group: 'automated', kind: 'img-missing-alt' },
+  { id: 'image-size', label: 'Compressed images', group: 'automated', kind: 'oversized-image' },
   { id: 'mobile-breakpoints', label: 'Mobile breakpoints', group: 'manual' },
   { id: 'form-loading-states', label: 'Form and loading states', group: 'manual' },
   { id: 'thank-you-page', label: 'Thank-you / confirmation page', group: 'manual' },
@@ -94,19 +96,6 @@ const CHECKLIST_ITEMS = [
   { id: 'analytics', label: 'Analytics', group: 'manual' },
   { id: 'contact-info', label: 'Real contact info', group: 'manual' },
 ];
-
-// Candidate `kind` -> checklist item id, one-to-one for every automated item.
-const KIND_BY_ITEM_ID = {
-  sitemap: 'missing-sitemap',
-  robots: 'missing-robots',
-  favicon: 'missing-favicon',
-  'custom-404': 'missing-custom-404',
-  'meta-title': 'missing-meta-title',
-  'meta-description': 'missing-meta-description',
-  'og-image': 'missing-og-image',
-  'alt-text': 'img-missing-alt',
-  'image-size': 'oversized-image',
-};
 
 const PAGE_EXTS = new Set(['.jsx', '.tsx', '.js', '.ts', '.vue', '.svelte', '.astro', '.mdx', '.md']);
 const ALT_SCAN_EXTS = new Set(['.jsx', '.tsx', '.js', '.mdx', '.vue', '.svelte', '.astro', '.html', '.htm']);
@@ -443,8 +432,7 @@ function scanPrelaunch(rootDir) {
     if (item.group === 'manual') {
       return { id: item.id, label: item.label, group: item.group, status: 'manual', evidence: 'needs manual check — see criteria-prelaunch.md' };
     }
-    const kind = KIND_BY_ITEM_ID[item.id];
-    const matching = candidates.filter((c) => c.kind === kind);
+    const matching = candidates.filter((c) => c.kind === item.kind);
     if (matching.length > 0) {
       return { id: item.id, label: item.label, group: item.group, status: 'fail', evidence: `${matching.length} candidate(s)` };
     }
