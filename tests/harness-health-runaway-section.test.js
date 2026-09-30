@@ -69,6 +69,24 @@ test('the shipped snippet reports a runaway section and a balanced file correctl
   }
 });
 
+test('the shipped snippet skips files under 50 lines and files with fewer than two ## sections', () => {
+  const code = snippet(ANALYSIS);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hh-runaway-skip-'));
+  const body = (n) => Array.from({ length: n }, (_, i) => `line ${i}`).join('\n');
+  const cases = {
+    'short.md': [`# T\n## A\n${body(10)}\n## B\n${body(10)}\n`, 'skip: under 50 lines'],
+    'headingless.md': [`# T\n${body(60)}\n`, 'skip: fewer than two ## sections'],
+    'one-section.md': [`# T\n## Only\n${body(60)}\n`, 'skip: fewer than two ## sections'],
+    'empty.md': ['', 'skip: under 50 lines'],
+  };
+  for (const [name, [content, expected]] of Object.entries(cases)) {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, content);
+    assert.strictEqual(execFileSync(process.execPath, ['-e', code, file], { encoding: 'utf8' }).trim(), expected, name);
+  }
+  assert.match(runawayParagraphs(JUDGE), /prints `skip: …` instead of shares/);
+});
+
 test('the always-loaded budget default is still 150', () => {
   const out = execFileSync(process.execPath, [path.join(ROOT, 'plugin/bin/resolve-policy.js'), 'harness-health-always-loaded-budget'], { cwd: fs.mkdtempSync(path.join(os.tmpdir(), 'hh-policy-')), encoding: 'utf8' });
   const resolved = JSON.parse(out)['harness-health-always-loaded-budget'];
