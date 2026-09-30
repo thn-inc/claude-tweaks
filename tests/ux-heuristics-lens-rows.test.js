@@ -36,6 +36,21 @@ test('#2706: badge colour must map to meaning, and badging everything is flagged
   assert.match(r, /badge everything/i);
 });
 
+test('#2707: an unbounded type scale is flagged by the rule it breaks', () => {
+  const r = row('Bound the type scale');
+  assert.match(r, /not derived from one ratio/);
+  assert.match(r, /weights/);
+  assert.match(r, /line-height/);
+});
+
+test('#2707: paragraph measure outside 45-75 characters is flagged', () => {
+  assert.match(row('Cap line length'), /45-75 characters/);
+});
+
+test('#2707: numeric UI without tabular figures is flagged', () => {
+  assert.match(row('Use tabular figures for numbers'), /tabular-nums/);
+});
+
 test('#2706: a badge must clear on view and a count must tick down', () => {
   const r = row('Clear badges on view');
   assert.match(r, /lingers after the user has viewed/);
