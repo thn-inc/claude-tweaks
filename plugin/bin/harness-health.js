@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 const fs = require('fs');
+const path = require('path');
 const { fingerprint } = require('./lib/harness-health/fingerprint');
 const {
   readCache, writeCache, readDurableState, writeDurableState, buildValidateFindingsUpdate,
@@ -161,7 +162,10 @@ function cmdNextTarget(args) {
 }
 
 function cmdValidateFindings(args) {
-  const root = args.root || process.cwd();
+  // Absolute, so a relative --root can't leave the resolved target path
+  // relative to this process's cwd while the Premise-check self-check runs
+  // with cwd: root (#2633 review follow-up).
+  const root = path.resolve(args.root || process.cwd());
   const findingsPath = args._[1];
   if (!findingsPath) {
     process.stderr.write(

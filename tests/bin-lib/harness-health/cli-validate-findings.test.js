@@ -472,6 +472,24 @@ test('validate-findings: an additive finding whose proposed string already exist
   );
 });
 
+test('validate-findings: a RELATIVE --root still anchors the Premise-check on the real target (the self-check reads it, and drops an already-present anchor)', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth\n\nSee `src/auth/login.js`.\nSee `src/auth/session.js`.\n');
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding()]));
+
+  // --root relative to the CLI's own cwd: before the fix the target path stayed
+  // relative, the self-check (run with cwd: --root) resolved it one level too
+  // deep, read "unresolved", and kept a line that should have been dropped.
+  const result = spawnSync('node', [CLI, 'validate-findings', findingsFile, '--root', path.basename(root), '--target', 'auth', '--kind', 'skill'],
+    { encoding: 'utf8', cwd: path.dirname(root) });
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const payloads = JSON.parse(result.stdout);
+  assert.strictEqual(payloads.length, 1);
+  assert.ok(!payloads[0].body.includes('Premise-check:'), `expected the self-check to drop the line, got:\n${payloads[0].body}`);
+});
+
 test('validate-findings: a removal finding whose old string is already gone is filed with no Premise-check: line', () => {
   const root = tmp();
   // intent "remove" is only valid for assetType claude-md + classification
