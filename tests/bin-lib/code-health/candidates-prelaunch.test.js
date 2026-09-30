@@ -143,6 +143,20 @@ test('a real site does not flag images or pages that live under test or fixture 
   assert.deepStrictEqual(offending, []);
 });
 
+test('a site-level file that exists only under a fixture directory does not satisfy the site', () => {
+  const root = tmpGitRepo();
+  write(root, 'public/index.html', '<html><head><title>Home</title></head><body></body></html>');
+  write(root, 'tests/fixtures/robots.txt', 'User-agent: *\n');
+
+  const result = scanPrelaunch(root);
+
+  const robots = result.checklist.find((r) => r.id === 'robots');
+  assert.strictEqual(robots.status, 'fail');
+  const desc = result.candidates.find((c) => c.kind === 'missing-meta-description');
+  assert.match(desc.evidence, /no description signal/);
+  assert.ok(!result.candidates.some((c) => c.kind === 'missing-meta-title'));
+});
+
 // ── An App Router page inherits title and description from an ancestor layout
 
 test('an App Router page inherits title and description from an ancestor layout', () => {

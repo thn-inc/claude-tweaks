@@ -290,7 +290,10 @@ function scanPrelaunch(rootDir) {
     };
   }
 
-  const ancestorFiles = discovery.files.filter(isAncestorFile);
+  // Every later check reads only files that could ship as the site — a
+  // `tests/fixtures/robots.txt` must not satisfy the site's robots item.
+  const siteFiles = discovery.files.filter((f) => !NON_SITE_SEGMENT_RE.test(f));
+  const ancestorFiles = siteFiles.filter(isAncestorFile);
   const textFiles = [...new Set([...pageFiles, ...ancestorFiles])].sort();
 
   const skippedFiles = [];
@@ -317,7 +320,7 @@ function scanPrelaunch(rootDir) {
 
   // Site-level presence.
   for (const check of SITE_LEVEL_CHECKS) {
-    const found = findSiteLevel(check, discovery.files, contentsByFile);
+    const found = findSiteLevel(check, siteFiles, contentsByFile);
     if (found) {
       passEvidenceById[check.id] = found;
     } else {
@@ -345,9 +348,9 @@ function scanPrelaunch(rootDir) {
         if (!descOk && DESC_RE.test(layoutText)) descOk = true;
       }
     }
-    const evidence = `${page} has no title/description signal in itself or an ancestor layout`;
-    if (!titleOk) candidates.push({ file: page, kind: 'missing-meta-title', evidence });
-    if (!descOk) candidates.push({ file: page, kind: 'missing-meta-description', evidence });
+    const evidenceFor = (what) => `${page} has no ${what} signal in itself or an ancestor layout`;
+    if (!titleOk) candidates.push({ file: page, kind: 'missing-meta-title', evidence: evidenceFor('title') });
+    if (!descOk) candidates.push({ file: page, kind: 'missing-meta-description', evidence: evidenceFor('description') });
   }
   passEvidenceById['meta-title'] = `${pageFiles.length} page(s) checked`;
   passEvidenceById['meta-description'] = `${pageFiles.length} page(s) checked`;
@@ -374,9 +377,8 @@ function scanPrelaunch(rootDir) {
   // whether it's a "page" — a hero image lives under public/assets, not a
   // page path.
   let imagesScanned = 0;
-  for (const f of discovery.files) {
+  for (const f of siteFiles) {
     if (!IMAGE_EXTS.has(path.extname(f).toLowerCase())) continue;
-    if (NON_SITE_SEGMENT_RE.test(f)) continue;
     imagesScanned += 1;
     let stat;
     try {
