@@ -51,6 +51,14 @@ Run these mechanical checks first and treat their output as **evidence a later j
    ```
 
    Classify the tier, resolve the budget, compare. Over budget is mechanical, high-confidence evidence for a `template-conformance` finding — content belongs in a skill instead (always-loaded tier), or needs tightening/splitting (scoped tier).
+
+   **Runaway section** (`claude-md` only, at 50+ lines, whether or not the file is over budget). Split the file at its `##` headings, ignoring any inside a fenced code block. Each section runs from its heading to the line before the next `##` heading, and any text before the first heading counts as a section of its own. Compute the largest section's share of the file's lines **and** of its bytes; bytes count too, because a section written as a few very long lines is large while its line share stays small.
+
+   ```bash
+   node -e 'const L=require("fs").readFileSync(process.argv[1],"utf8").replace(/\n$/,"").split("\n");let f=false,c={h:"(preamble)",l:0,b:0};const s=[c];for(const x of L){if(/^(```|~~~)/.test(x))f=!f;if(!f&&/^## /.test(x))s.push(c={h:x,l:0,b:0});c.l++;c.b+=Buffer.byteLength(x)+1}const B=s.reduce((a,y)=>a+y.b,0);for(const y of s)console.log(Math.round(100*y.l/L.length)+"% lines "+Math.round(100*y.b/B)+"% bytes "+y.h)' "{target.path}"
+   ```
+
+   Flag it when the largest section's line share or byte share exceeds **40%**. At that point the file is mostly one topic that loads every session, and that topic usually belongs in a skill or a linked doc. Report it as a `template-conformance` finding for review, never a hard failure: `medium` confidence, naming the section and both shares. A large section can be legitimate; the finding asks a human to decide.
 5. **Unscoped-rule structural check** (`rule` only). Parse the frontmatter: `sed -n '/^---$/,/^---$/p' "{target.path}"`. A rule with no `paths:` key, or an empty list, is an always-high-confidence `template-conformance` finding on its own, independent of line count — project-wide conventions belong in CLAUDE.md, not a rule. A 10-line unscoped rule is still a structural violation, just a cheap one to fix.
 6. **Self-referential count/date check** (all kinds).
 

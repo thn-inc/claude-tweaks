@@ -98,6 +98,14 @@ Before forming any finding, run these mechanical checks and treat their output a
    ```
 
    Classify the target's tier, take its budget from the resolver's JSON output (the resolver applies the schema defaults when the file or key is absent), then compare. Over budget is mechanical, high-confidence evidence for a `template-conformance` finding — content belongs in a skill instead (always-loaded tier), or needs tightening/splitting (scoped tier), per `skills/init/claude-md-template.md`'s "Under 150 lines" principle and `skills/init/rules-template.md`'s budget guidance.
+
+   **Runaway section** (CLAUDE.md only, at 50+ lines, whether or not the file is over budget). Split the file at its `##` headings, ignoring any inside a fenced code block. Each section runs from its heading to the line before the next `##` heading, and any text before the first heading counts as a section of its own. Compute the largest section's share of the file's lines **and** of its bytes; bytes count too, because a section written as a few very long lines is large while its line share stays small.
+
+   ```bash
+   node -e 'const L=require("fs").readFileSync(process.argv[1],"utf8").replace(/\n$/,"").split("\n");let f=false,c={h:"(preamble)",l:0,b:0};const s=[c];for(const x of L){if(/^(```|~~~)/.test(x))f=!f;if(!f&&/^## /.test(x))s.push(c={h:x,l:0,b:0});c.l++;c.b+=Buffer.byteLength(x)+1}const B=s.reduce((a,y)=>a+y.b,0);for(const y of s)console.log(Math.round(100*y.l/L.length)+"% lines "+Math.round(100*y.b/B)+"% bytes "+y.h)' <target-path>
+   ```
+
+   Flag it when the largest section's line share or byte share exceeds **40%**. At that point the file is mostly one topic that loads every session, and that topic usually belongs in a skill or a linked doc. Report it as a `template-conformance` finding for review, never a hard failure: `medium` confidence, naming the section and both shares. A large section can be legitimate; the finding asks a human to decide.
 5. **Unscoped-rule structural check** (rules only, new). Parse the rule's frontmatter for a `paths:` key:
    ```bash
    sed -n '/^---$/,/^---$/p' "<rule-path>"
@@ -210,7 +218,7 @@ Judging this is inherently softer than harness-health's other, more mechanical d
 A finding here proposes a consolidated rewrite — never an automatic deletion, the same posture every other dimension in this file already holds — with `reason` naming the specific older-model quirk the flagged text appears to compensate for and why the current model no longer needs it spelled out that way.
 
 **CLAUDE.md-specific checks unlocked by dimension 7/8 (concrete, largely mechanical):**
-- **Line budget** — Step 1's tiered `wc -l` check vs. the `harness-health-always-loaded-budget` policy lever.
+- **Line budget** — Step 1's tiered `wc -l` check vs. the `harness-health-always-loaded-budget` policy lever, plus its runaway-section signal (one `##` section over 40% of the file's lines or bytes).
 - **Observed-not-aspirational** — flag language ("should", "TODO", "need to add") describing infrastructure that doesn't exist yet; that belongs in the project's backlog, not CLAUDE.md.
 - **Working Approach present verbatim** — `skills/init/claude-md-template.md` mandates this section be included unmodified in every generated CLAUDE.md; a structural presence check.
 - **Don'ts are guardrails, not wishes** — every Don't must describe an *existing* pattern (grep-checkable, same evidence style as dimension 2), never aspirational infrastructure.
