@@ -382,7 +382,7 @@ test('record-worktree rejects the main checkout root itself as --run when it car
 // deliberately excluded from this list — see archive-run-verb.test.js's
 // "refuses a run dir with no run-state.json, naming archiveOrphanedMint",
 // its own documented exception for reporting a stale, never-claimed mint.
-test('record-pr, spec-status, close-run, teardown-run, check-resume-freshness, and check-staged-inventory each reject an uninitialized --run target', () => {
+test('record-pr, spec-status, close-run, teardown-run, check-resume-freshness, check-staged-inventory, and check-session-residue each reject an uninitialized --run target', () => {
   const verbs = [
     ['record-pr', '7', 'https://github.com/o/r/pull/7'],
     ['spec-status', '--spec', '1', '--status', 'running', '--phase', 'build'],
@@ -390,6 +390,7 @@ test('record-pr, spec-status, close-run, teardown-run, check-resume-freshness, a
     ['teardown-run'],
     ['check-resume-freshness'],
     ['check-staged-inventory'],
+    ['check-session-residue'],
   ];
   for (const [verb, ...rest] of verbs) {
     const project = gitRepo();
@@ -1112,6 +1113,64 @@ test('check-staged-inventory: reports MISMATCH naming the missing path when a ST
 test('check-staged-inventory: no resolvable --run path reports the not-found line', () => {
   const project = tmpProject();
   const result = runHook(['check-staged-inventory', '--run', path.join(project, 'nope')], { cwd: project });
+  assert.strictEqual(result.code, 0);
+  assert.match(result.stdout, /--run path rejected/);
+});
+
+// #2736: wrap-up's Review Console runs this to re-surface, at render time,
+// any residue SessionStart already flagged at session start and that
+// remains unresolved — same detection session-start.js's own banners use
+// (residue.js), reused rather than re-derived.
+test('check-session-residue: reports no pending residue when this is the only run dir', () => {
+  // #2736: gitRepo() (unlike tmpProject()) seeds no default run dir — the
+  // scan this CLI performs would otherwise pick up tmpProject()'s own
+  // '2026-07-01T090000-spec-1' fixture as a false positive.
+  const project = gitRepo();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-08-01T000000-record-6');
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'decisions.md'), '');
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  const result = runHook(['check-session-residue', '--run', run], { cwd: project });
+  assert.strictEqual(result.code, 0);
+  assert.match(result.stdout, /no pending residue from session start/);
+});
+
+test('check-session-residue: reports a sibling interrupted run, excluding the --run target itself', () => {
+  const project = gitRepo();
+  const own = path.join(project, '.claude-tweaks', 'pipelines', '2026-08-02T000000-record-7');
+  fs.mkdirSync(own, { recursive: true });
+  fs.writeFileSync(path.join(own, 'decisions.md'), '');
+  fs.writeFileSync(path.join(own, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  const sibling = path.join(project, '.claude-tweaks', 'pipelines', '2026-08-01T000000-record-6');
+  fs.mkdirSync(sibling, { recursive: true });
+  fs.writeFileSync(path.join(sibling, 'run-state.json'), JSON.stringify({ status: 'interrupted' }));
+  const result = runHook(['check-session-residue', '--run', own], { cwd: project });
+  assert.strictEqual(result.code, 0);
+  assert.match(result.stdout, /pending residue from session start still unresolved/);
+  assert.match(result.stdout, /2026-08-01T000000-record-6 \(status: interrupted\)/);
+  assert.match(result.stdout, /close-run --run/);
+  assert.doesNotMatch(result.stdout, /2026-08-02T000000-record-7/, "the --run target's own dir must never be reported as its own residue");
+});
+
+test('check-session-residue: reports a clean standalone run with unapproved staged proposals', () => {
+  const project = gitRepo();
+  const own = path.join(project, '.claude-tweaks', 'pipelines', '2026-08-02T000000-record-8');
+  fs.mkdirSync(own, { recursive: true });
+  fs.writeFileSync(path.join(own, 'decisions.md'), '');
+  fs.writeFileSync(path.join(own, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  const standalone = path.join(project, '.claude-tweaks', 'pipelines', '2026-08-01T000000-tidy-standalone');
+  fs.mkdirSync(path.join(standalone, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(standalone, 'run-state.json'), JSON.stringify({ status: 'clean' }));
+  fs.writeFileSync(path.join(standalone, 'staged', 'stale-close-1.json'), '{}');
+  const result = runHook(['check-session-residue', '--run', own], { cwd: project });
+  assert.strictEqual(result.code, 0);
+  assert.match(result.stdout, /pending residue from session start still unresolved/);
+  assert.match(result.stdout, /2026-08-01T000000-tidy-standalone.*tidy --approve/);
+});
+
+test('check-session-residue: no resolvable --run path reports the not-found line', () => {
+  const project = tmpProject();
+  const result = runHook(['check-session-residue', '--run', path.join(project, 'nope')], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /--run path rejected/);
 });
