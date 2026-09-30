@@ -193,3 +193,5 @@ Do not add narration, headers, or summaries before or after the table.
 ```
 
 The blockquote above is the dispatch-site directive; the fenced block is what each `Task()` call's prompt actually contains.
+
+**No `Task`/Agent tool available.** Some environments expose no `Task`/Agent dispatch tool at all (`ToolSearch` finds none, deferred or otherwise) — a session that is itself a dispatched subagent with no nested-dispatch capability is the common case. When a dispatch site's own skill hits this, do not skip the step or fabricate a dispatch: execute the step directly in-session instead, applying the intended receiving agent's own checklist/template as a genuinely adversarial self-review — not a rubber stamp — and log the fallback (which step, why) rather than silently proceeding as if a real dispatch happened. Observed independently in two dispatch calls of the same run (#2644): SDD's implementer/reviewer split and review's Step 3 lens dispatch both took this path ad hoc; this note standardizes it so a third site doesn't have to reinvent the same ruling.
