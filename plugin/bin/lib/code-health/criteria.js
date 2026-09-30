@@ -144,6 +144,12 @@ const CRITERIA = [
   // directly by code-health's focus=security-hardening
   // (skills/code-health/focus-mode.md), never selected via criteriaForArea.
   { id: 'security-hardening', appliesTo: ['frontend', 'backend', 'cli', 'infra'], confidenceFloor: 'high', fragment: 'criteria-security-hardening.md' },
+  // Domain: prelaunch → the pre-launch checklist for a website (sitemap,
+  // robots, favicon, custom 404, per-page meta, OG image, alt text, image
+  // weight, plus eight needs-manual-check items). Area-gated to frontend,
+  // the only surface a site's pages and assets live in; pinned directly by
+  // code-health's focus=prelaunch (skills/code-health/focus-mode.md).
+  { id: 'prelaunch', appliesTo: ['frontend'], confidenceFloor: 'medium', fragment: 'criteria-prelaunch.md' },
 ];
 
 // Build a lookup map once on load for O(1) getCriterion.
