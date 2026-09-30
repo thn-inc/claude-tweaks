@@ -4,9 +4,9 @@ Shared, criteria-only fragment — what to flag when judging `focus=prelaunch` c
 
 ## What the generator hands you
 
-Each candidate is `{ file, kind, evidence }` — `kind` is one of `missing-sitemap`, `missing-robots`, `missing-favicon`, `missing-custom-404`, `missing-meta-title`, `missing-meta-description`, `missing-og-image`, `img-missing-alt`, `oversized-image`. Site-level kinds carry the web root (`public`, or `.`) as `file`; per-page and per-image kinds carry the offending file. A candidate is a starting pointer, not a finding — judge it holistically.
+Each candidate is `{ file, kind, evidence }` — `kind` is one of `missing-sitemap`, `missing-robots`, `missing-favicon`, `missing-custom-404`, `missing-meta-title`, `missing-meta-description`, `missing-og-image`, `img-missing-alt`, `oversized-image`. Per-page and per-image kinds carry the offending file. Site-level kinds (sitemap, robots, favicon, custom 404, OG image) are about something absent, so they carry the site's entry file (its shallowest `index.html`, else its root layout, else its shallowest page) — anchor such a finding as `{file}#{item id}`, e.g. `public/index.html#sitemap`. A candidate is a starting pointer, not a finding — judge it holistically.
 
-The scan also carries a `checklist` array — one `{ id, label, group, status, evidence }` row per item below, on every firing. `status` is `pass`/`fail` for automated items and always `manual` for the rest; it is `n/a` on every row when the repo has no web pages (`notApplicable: true`) or discovery failed.
+The scan also carries a `checklist` array — one `{ id, label, group, status, evidence }` row per item below, on every firing. For automated items the generator's `status` means `pass` = no candidate raised under its stated coverage, `fail` = candidates raised; neither is a verdict until you judge (see Reporting). Manual items are always `manual`. Every row is `n/a` when the repo has no web pages (`notApplicable: true`) or discovery failed.
 
 ## The checklist — every item, every firing
 
@@ -16,10 +16,10 @@ The scan also carries a `checklist` array — one `{ id, label, group, status, e
 | `robots` — robots.txt | automated | A `robots.txt` or a `robots.ts`/`.js`/`.mjs` route |
 | `favicon` — Favicon | automated | A `favicon.*`/`icon.*`/`apple-icon.png` file, or a `rel="icon"` link in a page or layout |
 | `custom-404` — Custom 404 page | automated | A `404.*`, `not-found.*`, or `+error.svelte` file |
-| `meta-title` — Meta title on every page | automated | A title signal in each page or an ancestor layout/`_app`/`_document` |
-| `meta-description` — Meta description on every page | automated | A description signal in each page or an ancestor layout |
+| `meta-title` — Meta title on every page | automated | A title signal in each page or a layout wrapping it (Next.js, Nuxt, Astro, SvelteKit layout conventions) |
+| `meta-description` — Meta description on every page | automated | A description signal in each page or a layout wrapping it |
 | `og-image` — Open Graph image | automated | An `opengraph-image.*` file, an `og:image` tag, or an `openGraph:` config key |
-| `alt-text` — Alt text on images | automated | Every `<img>`/`<Image>` tag in a page carries an `alt=` attribute |
+| `alt-text` — Alt text on images | automated | Every `<img>`/`<Image>` tag in any shipped page, layout, or component carries an `alt` attribute |
 | `image-size` — Compressed images | automated | No shipped raster image over 500 KB |
 | `mobile-breakpoints` — Mobile breakpoints | manual | Load the key pages at phone width: no horizontal scroll, readable text, tappable targets |
 | `form-loading-states` — Form and loading states | manual | Submit each form: disabled/pending state while in flight, a visible error on failure |
@@ -60,7 +60,13 @@ This vertical owns exactly the 17-item checklist above. It does **not** own #262
 
 ## Reporting
 
-The summary always renders every checklist row, never only the failures, as `| Item | Group | Status | Evidence |` — automated rows (`pass`/`fail`, verified) kept visibly separate from manual rows (`manual`, a human should confirm). A run that lists only failures reads as "everything else passed", which overstates what a presence check did.
+The summary always renders every checklist row, never only the failures, as `| Item | Group | Status | Evidence |`, with automated rows kept visibly separate from manual rows (`manual` — a human should confirm). A run that lists only failures reads as "everything else passed", which overstates what a presence check did.
+
+Reconcile each automated row with your verdicts before rendering it, so the status says what was filed rather than what the generator guessed:
+
+- `pass` stays `pass` — "no gap found under the generator's stated coverage", never a guarantee.
+- `fail` whose candidates you all rejected → `pass (N rejected: {reason})`.
+- `fail` with at least one candidate filed → `fail`, with evidence naming the filed count and any rejected count.
 
 ## What this vertical never does
 

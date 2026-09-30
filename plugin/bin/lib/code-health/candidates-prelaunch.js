@@ -28,10 +28,20 @@
 //     plain `.html` files count as pages only alongside an `index.html` —
 //     so a repo whose only HTML is fixtures or a standalone template is
 //     "not applicable", not a site missing every launch item.
+//     Recognized page shapes: plain HTML, `pages/` routing (Next.js pages
+//     router, Nuxt, Astro), Next.js App Router `page.*`, SvelteKit
+//     `+page.svelte`.
 //   - Meta detection (title, description, Open Graph image, favicon) is a
 //     regex text signal against source, never a render — a value injected
 //     only at runtime (a client-side `document.title = ...`, a meta tag
-//     written by a script this generator doesn't execute) is invisible.
+//     written by a script this generator doesn't execute) is invisible, and
+//     a title set through a helper the pattern doesn't match reads as
+//     missing. A page's layouts count: Next.js `layout.*`/`_app.*`/
+//     `_document.*` and SvelteKit `+layout.svelte` for their own subtree,
+//     Nuxt `layouts/*`/`app.vue` and Astro `src/layouts/*` for every page.
+//   - Alt text is checked on every `<img>`/`<Image>` tag in any shipped
+//     markup-bearing file (pages, layouts, components), by attribute
+//     presence only — `alt="image"` passes.
 //   - Site-level items (sitemap, robots, favicon, custom 404, OG image)
 //     check presence of a recognized file/tag shape, never content quality
 //     — a `sitemap.xml` with zero URLs, or a `robots.txt` that disallows
@@ -53,8 +63,11 @@
 
 const fs = require('fs');
 const path = require('path');
-const { listTrackedFiles } = require('./candidates-dead-code');
+// `./focus-generators` first: requiring `./candidates-dead-code` first from
+// a direct entry leaves sibling verticals bound to an in-progress exports
+// object (candidates-abstraction-police.js's header documents the order).
 const { registerGenerator } = require('./focus-generators');
+const { listTrackedFiles } = require('./candidates-dead-code');
 
 const IMAGE_SIZE_LIMIT_BYTES = 500 * 1024;
 
@@ -96,12 +109,21 @@ const KIND_BY_ITEM_ID = {
 };
 
 const PAGE_EXTS = new Set(['.jsx', '.tsx', '.js', '.ts', '.vue', '.svelte', '.astro', '.mdx', '.md']);
-const ALT_SCAN_EXTS = new Set(['.jsx', '.tsx', '.vue', '.svelte', '.astro', '.html', '.htm']);
+const ALT_SCAN_EXTS = new Set(['.jsx', '.tsx', '.js', '.mdx', '.vue', '.svelte', '.astro', '.html', '.htm']);
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff']);
 
-const TITLE_RE = /<title[\s>]|<Head[\s>]|<Helmet[\s>]|useHead\s*\(|useSeoMeta\s*\(|generateMetadata|\btitle\s*:/;
-const DESC_RE = /name=["']description["']|\bdescription\s*:/;
-const ALT_TAG_RE = /<(img|Image)\b[^>]*>/g;
+// A `title:`/`description:` key counts only with a string value, so a CSS
+// `.title:hover` rule or a `title: string` type annotation is not a signal.
+// A `title=`/`description=` prop on a capitalized component is the Astro
+// layout-component idiom (`<Layout title="Home">`).
+const TITLE_RE = /<title[\s>]|<Head[\s>]|<Helmet[\s>]|useHead\s*\(|useSeoMeta\s*\(|generateMetadata|(^|[\s{,])title\s*:\s*['"`]|<[A-Z][\w.]*\s[^>]*\btitle=/;
+const DESC_RE = /name\s*[:=]\s*["']description["']|(^|[\s{,])description\s*:\s*['"`]|<[A-Z][\w.]*\s[^>]*\bdescription=/;
+// An `<img`/`<Image` tag: the name must be followed by whitespace or `/`,
+// so a TypeScript generic `useRef<Image>` is not a tag, and `{...}`
+// attribute expressions (one level of nesting) may contain `>`, as in an
+// `onLoad={() => ...}` arrow.
+const ALT_TAG_RE = /<(img|Image)(?=[\s/])(?:[^<>{}]|\{(?:[^{}]|\{[^{}]*\})*\})*>/g;
+const ALT_ATTR_RE = /\s(:|v-bind:)?alt\s*=/;
 
 // Directory segments whose contents never ship as the site itself — test
 // suites, fixtures, examples, dependencies, and build output. Pages and
@@ -119,6 +141,7 @@ function isPageFile(rel) {
   const ext = path.extname(rel);
   if (ext === '.html' || ext === '.htm') return true;
   if (/^page\.(jsx|tsx|js|ts|mdx)$/.test(base)) return true; // Next.js App Router
+  if (base === '+page.svelte') return true; // SvelteKit
   if (!PAGE_EXTS.has(ext)) return false;
   if (rel.includes('/pages/api/') || rel.startsWith('pages/api/')) return false;
   if (base.startsWith('_')) return false;
@@ -137,13 +160,28 @@ function listPageFiles(files) {
   return hasHtmlIndex ? pages : pages.filter((f) => !/\.html?$/.test(f));
 }
 
-// Ancestor-layout files whose text can satisfy a page's title/description
-// check — Next.js `layout.*`/`_app.*`/`_document.*` conventions.
-function isAncestorFile(rel) {
+// The directory whose pages a layout file wraps, or null when `rel` is not
+// a layout. Next.js `layout.*`/`_app.*`/`_document.*` and SvelteKit
+// `+layout.svelte` wrap their own directory subtree; Nuxt `layouts/*`,
+// Astro `src/layouts/*`, and Nuxt's `app.vue` wrap every page (`''`).
+function layoutScope(rel) {
   const base = path.basename(rel);
-  return /^layout\.(jsx|tsx|js|ts|mdx)$/.test(base)
+  if (/^layout\.(jsx|tsx|js|ts|mdx)$/.test(base)
     || /^_app\.(jsx|tsx|js|ts)$/.test(base)
-    || /^_document\.(jsx|tsx|js|ts)$/.test(base);
+    || /^_document\.(jsx|tsx|js|ts)$/.test(base)
+    || base === '+layout.svelte') return dirOf(rel);
+  if (/(^|\/)layouts\/[^/]+\.(vue|astro|svelte|jsx|tsx|js|ts)$/.test(rel) || base === 'app.vue') return '';
+  return null;
+}
+
+// The one real file site-level candidates are anchored to (code-health
+// anchors are `relfile#Symbol`, and `areaId` is that file's directory):
+// the shallowest `index.html`, else the shallowest layout, else the
+// shallowest page.
+function siteEntryFile(pageFiles, layoutFiles) {
+  const byDepth = (a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b);
+  const htmlIndexes = pageFiles.filter((f) => /^index\.html?$/.test(path.basename(f))).sort(byDepth);
+  return htmlIndexes[0] || [...layoutFiles].sort(byDepth)[0] || [...pageFiles].sort(byDepth)[0];
 }
 
 function dirOf(rel) {
@@ -293,8 +331,11 @@ function scanPrelaunch(rootDir) {
   // Every later check reads only files that could ship as the site — a
   // `tests/fixtures/robots.txt` must not satisfy the site's robots item.
   const siteFiles = discovery.files.filter((f) => !NON_SITE_SEGMENT_RE.test(f));
-  const ancestorFiles = siteFiles.filter(isAncestorFile);
-  const textFiles = [...new Set([...pageFiles, ...ancestorFiles])].sort();
+  const ancestorFiles = siteFiles.filter((f) => layoutScope(f) !== null);
+  // Pages and layouts for the meta checks, plus every markup-bearing site
+  // file for the alt scan — most `<img>` tags live in components, not pages.
+  const altScanFiles = siteFiles.filter((f) => ALT_SCAN_EXTS.has(path.extname(f)));
+  const textFiles = [...new Set([...pageFiles, ...ancestorFiles, ...altScanFiles])].sort();
 
   const skippedFiles = [];
   const contentsByFile = new Map();
@@ -313,7 +354,7 @@ function scanPrelaunch(rootDir) {
     contentsByFile.set(rel, buf.toString('utf8'));
   }
 
-  const webRoot = discovery.files.some((f) => f.startsWith('public/')) ? 'public' : '.';
+  const entryFile = siteEntryFile(pageFiles, ancestorFiles);
 
   const candidates = [];
   const passEvidenceById = {};
@@ -325,7 +366,7 @@ function scanPrelaunch(rootDir) {
       passEvidenceById[check.id] = found;
     } else {
       candidates.push({
-        file: webRoot,
+        file: entryFile,
         kind: check.kind,
         evidence: `${check.label} not found (looked for: ${check.shortList})`,
       });
@@ -341,7 +382,7 @@ function scanPrelaunch(rootDir) {
       const pageDir = dirOf(page);
       for (const layout of ancestorFiles) {
         if (titleOk && descOk) break;
-        if (!isAncestorOrSame(dirOf(layout), pageDir)) continue;
+        if (!isAncestorOrSame(layoutScope(layout), pageDir)) continue;
         const layoutText = contentsByFile.get(layout);
         if (!layoutText) continue;
         if (!titleOk && TITLE_RE.test(layoutText)) titleOk = true;
@@ -355,7 +396,8 @@ function scanPrelaunch(rootDir) {
   passEvidenceById['meta-title'] = `${pageFiles.length} page(s) checked`;
   passEvidenceById['meta-description'] = `${pageFiles.length} page(s) checked`;
 
-  // Alt text: page files and any read file of a markup-bearing extension.
+  // Alt text: every read markup-bearing site file — pages, layouts, and
+  // components alike.
   let altScanned = 0;
   for (const [file, text] of contentsByFile) {
     if (!ALT_SCAN_EXTS.has(path.extname(file))) continue;
@@ -364,14 +406,15 @@ function scanPrelaunch(rootDir) {
     let m;
     while ((m = ALT_TAG_RE.exec(text))) {
       const tag = m[0];
-      if (!/\balt\s*=/.test(tag)) {
+      if (!ALT_ATTR_RE.test(tag)) {
         const line = lineOf(text, m.index);
-        candidates.push({ file, kind: 'img-missing-alt', evidence: `${file}:${line} ${tag} has no alt attribute` });
+        const shown = tag.replace(/\s+/g, ' ');
+        candidates.push({ file, kind: 'img-missing-alt', evidence: `${file}:${line} ${shown} has no alt attribute` });
       }
       if (m.index === ALT_TAG_RE.lastIndex) ALT_TAG_RE.lastIndex += 1;
     }
   }
-  passEvidenceById['alt-text'] = `${altScanned} page(s) checked`;
+  passEvidenceById['alt-text'] = `${altScanned} file(s) checked`;
 
   // Image size: every tracked/untracked-unignored image file, regardless of
   // whether it's a "page" — a hero image lives under public/assets, not a

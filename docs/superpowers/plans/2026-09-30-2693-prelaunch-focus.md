@@ -67,6 +67,13 @@
    - its extension is one of `.jsx .tsx .js .ts .vue .svelte .astro .mdx .md` and the path sits under a `pages/` directory segment. This excludes any path containing `/pages/api/` and basenames starting with `_`.
    - The `.md` form counts only for `.astro` sites. Simplest rule: include `.md`/`.mdx` only under `src/pages/`.
    - *(Task-review amendment.)* No file under a test/fixture/example/dependency/build-output directory segment is a page or a scanned image. Plain `.html`/`.htm` files count as pages only when an `index.html`/`index.htm` is among the pages. The literal rule above made this plugin repo, whose HTML is only test fixtures plus one template, read as a site missing 7 launch items.
+   - *(Whole-branch-review amendments.)*
+     - Layouts: Nuxt `layouts/*`/`app.vue` and Astro `src/layouts/*` wrap every page, and SvelteKit `+layout.svelte` wraps its subtree.
+     - SvelteKit `+page.svelte` counts as a page.
+     - Alt text is scanned in every shipped markup file, components included.
+     - Site-level candidates name the site's entry file, not a directory, because anchors must be files.
+     - Meta and alt regexes are tightened: string-valued `title:`/`description:`, component `title=` props, brace-aware tags, and whitespace-anchored `alt`.
+     - The fragment tells the judge to reconcile checklist rows with its verdicts.
 3. **Applicability.** When there are zero page files, return:
    - `notApplicable: true` with `notApplicableReason: 'no web pages detected'`;
    - zero candidates;

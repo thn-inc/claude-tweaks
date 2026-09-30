@@ -255,3 +255,141 @@ test('candidatesPrelaunch: bare-array direct entry point mirrors scanPrelaunch()
   const full = scanPrelaunch(root);
   assert.deepStrictEqual(arr, full.candidates);
 });
+
+// ── Framework layouts (whole-branch review) ──────────────────────────────────
+
+function metaKinds(result) {
+  return result.candidates.filter((c) => c.kind === 'missing-meta-title' || c.kind === 'missing-meta-description');
+}
+
+test('a sibling-directory layout does not satisfy a page outside it', () => {
+  const root = tmpGitRepo();
+  write(root, 'app/admin/layout.tsx', "export const metadata = { title: 'Admin', description: 'Admin area' };\n");
+  write(root, 'app/blog/page.tsx', 'export default function Blog() { return null; }\n');
+
+  const result = scanPrelaunch(root);
+
+  assert.deepStrictEqual(metaKinds(result).map((c) => `${c.kind}@${c.file}`).sort(), [
+    'missing-meta-description@app/blog/page.tsx',
+    'missing-meta-title@app/blog/page.tsx',
+  ]);
+});
+
+test('a Nuxt layouts/ file supplies title and description to every page', () => {
+  const root = tmpGitRepo();
+  write(root, 'layouts/default.vue', "<script setup>\nuseHead({ title: 'Site', meta: [{ name: 'description', content: 'd' }] })\n</script>\n");
+  write(root, 'pages/index.vue', '<template><main /></template>\n');
+  write(root, 'pages/about.vue', '<template><main /></template>\n');
+
+  assert.deepStrictEqual(metaKinds(scanPrelaunch(root)), []);
+});
+
+test('an Astro page passes title to its src/layouts/ component', () => {
+  const root = tmpGitRepo();
+  write(root, 'src/layouts/Layout.astro', '---\nconst { title } = Astro.props;\n---\n<html><head><title>{title}</title><meta name="description" content="d"></head><body><slot /></body></html>\n');
+  write(root, 'src/pages/index.astro', '---\nimport Layout from "../layouts/Layout.astro";\n---\n<Layout title="Home"><h1>Hi</h1></Layout>\n');
+
+  assert.deepStrictEqual(metaKinds(scanPrelaunch(root)), []);
+});
+
+test('a SvelteKit site is a site: +page.svelte pages, +layout.svelte ancestors', () => {
+  const root = tmpGitRepo();
+  write(root, 'src/routes/+layout.svelte', '<svelte:head><title>Site</title><meta name="description" content="d"></svelte:head><slot />\n');
+  write(root, 'src/routes/+page.svelte', '<img src="/hero.png">\n');
+  write(root, 'src/routes/+error.svelte', '<h1>Not found</h1>\n');
+
+  const result = scanPrelaunch(root);
+
+  assert.strictEqual(result.notApplicable, false);
+  assert.deepStrictEqual(metaKinds(result), []);
+  assert.strictEqual(result.checklist.find((r) => r.id === 'custom-404').status, 'pass');
+  assert.ok(result.candidates.some((c) => c.kind === 'img-missing-alt' && c.file === 'src/routes/+page.svelte'));
+});
+
+// ── Alt-text scan (whole-branch review) ──────────────────────────────────────
+
+test('alt-text scans component files, not only pages', () => {
+  const root = tmpGitRepo();
+  write(root, 'app/layout.tsx', "export const metadata = { title: 'X', description: 'Y' };\n");
+  write(root, 'app/page.tsx', 'import Hero from "../components/Hero";\nexport default function P() { return <Hero />; }\n');
+  write(root, 'components/Hero.tsx', 'export default function Hero() { return <img src="/hero.png" />; }\n');
+
+  const result = scanPrelaunch(root);
+
+  const alt = result.candidates.filter((c) => c.kind === 'img-missing-alt');
+  assert.deepStrictEqual(alt.map((c) => c.file), ['components/Hero.tsx']);
+
+  write(root, 'components/Hero.tsx', 'export default function Hero() { return <img src="/hero.png" alt="Hero" />; }\n');
+  const fixed = scanPrelaunch(root).checklist.find((r) => r.id === 'alt-text');
+  assert.strictEqual(fixed.status, 'pass');
+  assert.strictEqual(fixed.evidence, '3 file(s) checked');
+});
+
+test('alt detection handles expressions, arrows, multi-line tags, and ignores generics and data-alt', () => {
+  const root = tmpGitRepo();
+  write(root, 'app/layout.tsx', "export const metadata = { title: 'X', description: 'Y' };\n");
+  write(root, 'app/page.tsx', [
+    'const ref = useRef<Image>(null);',
+    'export default function P() {',
+    '  return (<>',
+    '    <img src={a} alt={caption} />',
+    '    <img src={b} onLoad={() => setOk(true)} alt="hero" />',
+    '    <img',
+    '      src={c}',
+    '      alt="multi-line"',
+    '    />',
+    '    <img src="d.png" data-alt="not an alt" />',
+    '  </>);',
+    '}',
+  ].join('\n'));
+
+  const alt = scanPrelaunch(root).candidates.filter((c) => c.kind === 'img-missing-alt');
+
+  assert.strictEqual(alt.length, 1, JSON.stringify(alt));
+  assert.match(alt[0].evidence, /data-alt/);
+});
+
+// ── Meta signals (whole-branch review) ───────────────────────────────────────
+
+test('a CSS .title: rule or a title: type annotation is not a title signal', () => {
+  const root = tmpGitRepo();
+  write(root, 'public/index.html', '<html><head><style>.title:hover{color:red}</style><meta name="description" content="d"></head><body></body></html>');
+  write(root, 'pages/about.tsx', 'type Props = { title: string; description: string };\nexport default function About(p: Props) { return null; }\n');
+
+  const kinds = metaKinds(scanPrelaunch(root)).map((c) => `${c.kind}@${c.file}`).sort();
+
+  assert.deepStrictEqual(kinds, [
+    'missing-meta-description@pages/about.tsx',
+    'missing-meta-title@pages/about.tsx',
+    'missing-meta-title@public/index.html',
+  ]);
+});
+
+// ── Site-level candidate anchors (whole-branch review) ───────────────────────
+
+test('site-level candidates name a readable entry file, never a directory', () => {
+  const root = tmpGitRepo();
+  write(root, 'public/index.html', '<html><head><title>T</title></head><body></body></html>');
+  write(root, 'public/about.html', '<html><head><title>A</title></head><body></body></html>');
+
+  const siteLevel = scanPrelaunch(root).candidates.filter((c) => c.kind === 'missing-sitemap');
+
+  assert.strictEqual(siteLevel.length, 1);
+  assert.strictEqual(siteLevel[0].file, 'public/index.html');
+  assert.ok(fs.statSync(path.join(root, siteLevel[0].file)).isFile());
+});
+
+// ── Require order (whole-branch review) ──────────────────────────────────────
+
+test('requiring candidates-prelaunch first leaves sibling generators callable', () => {
+  const lib = path.join(__dirname, '../../../plugin/bin/lib/code-health');
+  const out = execFileSync(process.execPath, ['-e', `
+    require(${JSON.stringify(path.join(lib, 'candidates-prelaunch'))});
+    const { FOCUS_GENERATORS } = require(${JSON.stringify(path.join(lib, 'focus-generators'))});
+    FOCUS_GENERATORS['security-hardening'](process.argv[1]);
+    FOCUS_GENERATORS['dead-code'](process.argv[1]);
+    console.log('ok');
+  `, tmpGitRepo()], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  assert.strictEqual(out.trim(), 'ok');
+});
+

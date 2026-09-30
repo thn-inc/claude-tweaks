@@ -35,6 +35,13 @@ test('criteria-prelaunch.md names every checklist item id', () => {
   }
 });
 
+test('criteria-prelaunch.md reconciles checklist rows with verdicts and names the site-level anchor', () => {
+  const fragment = fs.readFileSync(path.join(ROOT, 'plugin/skills/_shared/criteria-prelaunch.md'), 'utf8');
+  assert.match(fragment, /`fail` whose candidates you all rejected → `pass \(N rejected: \{reason\}\)`/);
+  assert.match(fragment, /anchor such a finding as `\{file\}#\{item id\}`/);
+  assert.doesNotMatch(fragment, /`pass`\/`fail`, verified/);
+});
+
 test('focus-mode.md pins prelaunch to its criterion and fragment', () => {
   const pinning = section(FOCUS_MODE, 'Criterion pinning', 'F0');
   assert.match(pinning, /^\| `prelaunch` \| `prelaunch` \| `criteria-prelaunch\.md` \|$/m);
