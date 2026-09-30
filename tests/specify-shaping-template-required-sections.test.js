@@ -41,6 +41,7 @@ test('shaping-mode-stamping.md runs compose-record.js --check before the write',
   const lines = src.split('\n');
   const writeLine = lines.findIndex((l) => l.startsWith('gh issue edit {n} \\'));
   assert.ok(writeLine > 0, 'no line starts with the gh issue edit {n} write');
-  assert.match(lines[writeLine - 1], /--check "\$SPECIFY_SHAPED_BODY" \|\| exit\b/, 'a failed --check must stop the write on the line before it');
+  // Anchored at end of line: a bare `|| exit` re-raises --check's own code; `|| exit 4` would collapse exit 2 into 4.
+  assert.match(lines[writeLine - 1], /--check "\$SPECIFY_SHAPED_BODY" \|\| exit\s*$/, 'a failed --check must stop the write on the line before it, keeping its own exit code');
   assert.ok(src.includes('pre-write shape check failed:'), 'failed-row Detail wording missing');
 });
