@@ -77,8 +77,12 @@ proposed field, answer three questions against the code, at plan-authoring time:
      enumeration is top-level only (`context.js` `iterRunDirsWithState`).
    - **Reading the stamps.** Read per-spec first, then fill missing stamps field by field from the
      parent. Gate that fallback on a run-id-shaped parent, the same rule `perSpecPathspec` uses.
-     `pack.js` `resolveState`, `engine-verify.js` `resolvePrNumber` and `precondition.js` each
-     carry a copy.
+     `pr-bookkeeping/precondition.js` is the one reader that does all of it: `worktree`, `pr` and
+     `prExempt`, plus the parent's PR-early degrade line in `decisions.md`. Do not model a new
+     reader on the other two, which are partial: `wrap-up/pack.js` `resolveState` fills per field
+     but gates only on the `spec-` basename, and `wrap-up/engine-verify.js` `resolvePrNumber`
+     swaps to the parent's whole `run-state.json` only when the per-spec file is missing, with no
+     gate and no per-field fill.
    - **Why it matters.** #2664's first trace got this wrong by following the writers alone.
 2. **Does the consumer mandate a freshness step first?** `mergeSize` was dropped from the wrap-up
    pack because its consumer must measure *after its own fetch* — a pre-gathered value is stale by
