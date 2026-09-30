@@ -207,3 +207,20 @@ test('run (#2664): a stamped multi-spec per-spec run dir exits 0 as pr-stamped-o
   assert.strictEqual(code, 0);
   assert.match(out.join(''), /ok \(pr-stamped-or-exempt\)/);
 });
+
+test('run (#2664): a per-spec run dir whose PARENT carries the worktree+PR stamps exits 0 (the multi-spec false exit-4 this run hit)', () => {
+  const main = gitRepoWithCommit();
+  const wt = linkedWorktreeOf(main);
+  const parentId = '2026-09-17T000019-spec-7-8';
+  commitPerSpecMaterializeFile(wt, parentId, 7);
+  const parentRunDir = path.join(main, '.claude-tweaks', 'pipelines', parentId);
+  const runDir = path.join(parentRunDir, 'spec-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(parentRunDir, 'run-state.json'), JSON.stringify({
+    status: 'active', worktree: wt, pr: { number: 1, url: 'https://example.com/1' },
+  }));
+  const { deps, out } = makeDeps({ cwd: wt });
+  const code = run(['--run', runDir], deps);
+  assert.strictEqual(code, 0);
+  assert.match(out.join(''), /ok \(pr-stamped-or-exempt\)/);
+});

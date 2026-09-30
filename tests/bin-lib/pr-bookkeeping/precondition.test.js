@@ -226,7 +226,7 @@ test('checkPrBookkeepingPrecondition (#2664): a per-spec runDir does NOT arm off
   assert.strictEqual(r.reason, 'not-materialized-yet');
 });
 
-test('checkPrBookkeepingPrecondition (#2664): parent-only stamps do not satisfy a per-spec runDir -- run-state.json is read from the per-spec dir, no parent fallback', () => {
+test('checkPrBookkeepingPrecondition (#2664): parent-only stamps satisfy a per-spec runDir -- the run\'s shared worktree/PR live on the parent (pack.js resolveState-style fallback)', () => {
   const parentId = '2026-09-17T000015-spec-7-8';
   const main = gitRepoWithCommit();
   const wt = linkedWorktreeOf(main);
@@ -236,6 +236,28 @@ test('checkPrBookkeepingPrecondition (#2664): parent-only stamps do not satisfy 
   const runDir = path.join(parentRunDir, 'spec-7');
   fs.mkdirSync(runDir, { recursive: true });
   const r = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
-  assert.strictEqual(r.ok, false);
-  assert.strictEqual(r.reason, 'no-worktree-stamp');
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.reason, 'pr-stamped-or-exempt');
+});
+
+test('checkPrBookkeepingPrecondition (#2664): a per-spec runDir honors a PR-early degrade line logged in the PARENT decisions.md', () => {
+  const parentId = '2026-09-17T000018-spec-7-8';
+  const main = gitRepoWithCommit();
+  fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
+  execFileSync('git', ['-C', main, 'add', '.claude-tweaks/policy.yml']);
+  execFileSync('git', ['-C', main, 'commit', '-m', 'policy', '-q']);
+  const wt = linkedWorktreeOf(main);
+  commitPerSpecMaterializeFile(wt, parentId, 7);
+  const parentRunDir = makeRunDir(parentId);
+  // The run-level PR-early lifecycle ran against the parent: worktree
+  // stamped there, PR creation failed, degrade line logged there.
+  writeRunState(parentRunDir, { status: 'active', worktree: wt });
+  fs.writeFileSync(path.join(parentRunDir, 'decisions.md'),
+    '- AUTO 10:00:00 -- PR-early run lifecycle: push of br FAILED (network). Reversibility: n/a.\n');
+  const runDir = path.join(parentRunDir, 'spec-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  const r = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.reason, 'degrade-logged');
 });
