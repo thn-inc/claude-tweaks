@@ -169,3 +169,73 @@ test('checkPrBookkeepingPrecondition: DENY when pr-first, worktree stamped, no P
   assert.strictEqual(r.reason, 'no-pr-stamp');
   assert.match(r.message, /pr-early-run-lifecycle/);
 });
+
+// #2664: a multi-spec /flow run hands each spec's skills a PER-SPEC
+// $PIPELINE_RUN_DIR ({parent-run-id}/spec-{N}/, flow/multi-spec.md's env-var
+// table), and materialize commits that spec's file at
+// {parent-run-id}/spec-{N}/work/{N}-spec.md. Before #2571, hasMaterializeCommit
+// keyed its pathspec off path.basename(runDir) ("spec-{N}", never a real run
+// id), so the materialize commit was never found and this precondition
+// silently returned not-materialized-yet for every multi-spec run.
+function commitPerSpecMaterializeFile(repo, parentId, n) {
+  const rel = path.join('.claude-tweaks', 'pipelines', parentId, `spec-${n}`, 'work', `${n}-spec.md`);
+  const full = path.join(repo, rel);
+  fs.mkdirSync(path.dirname(full), { recursive: true });
+  fs.writeFileSync(full, 'spec\n');
+  execFileSync('git', ['-C', repo, 'add', rel.split(path.sep).join('/')]);
+  execFileSync('git', ['-C', repo, 'commit', '-m', `materialize ${n}`, '-q']);
+}
+
+test('checkPrBookkeepingPrecondition (#2664): a multi-spec per-spec runDir recognizes its own materialize commit -> no-worktree-stamp, not a false not-materialized-yet', () => {
+  const parentId = '2026-09-17T000012-spec-7-8';
+  const main = gitRepoWithCommit();
+  const wt = linkedWorktreeOf(main);
+  commitPerSpecMaterializeFile(wt, parentId, 7);
+  const runDir = path.join(makeRunDir(parentId), 'spec-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  // No per-spec run-state.json -- Step 4.5's record-worktree never ran for this spec.
+  const r = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'no-worktree-stamp');
+  assert.match(r.message, /record-worktree/);
+});
+
+test('checkPrBookkeepingPrecondition (#2664): a stamped multi-spec per-spec runDir passes as pr-stamped-or-exempt', () => {
+  const parentId = '2026-09-17T000013-spec-7-8';
+  const main = gitRepoWithCommit();
+  const wt = linkedWorktreeOf(main);
+  commitPerSpecMaterializeFile(wt, parentId, 7);
+  const runDir = path.join(makeRunDir(parentId), 'spec-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  writeRunState(runDir, { status: 'active', worktree: wt, pr: { number: 1, url: 'https://example.com/1' } });
+  const r = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.reason, 'pr-stamped-or-exempt');
+});
+
+test('checkPrBookkeepingPrecondition (#2664): a per-spec runDir does NOT arm off a SIBLING spec\'s materialize commit', () => {
+  const parentId = '2026-09-17T000014-spec-7-8';
+  const main = gitRepoWithCommit();
+  const wt = linkedWorktreeOf(main);
+  // Only spec-8 has materialized; this check runs on behalf of spec-7.
+  commitPerSpecMaterializeFile(wt, parentId, 8);
+  const runDir = path.join(makeRunDir(parentId), 'spec-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  const r = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.reason, 'not-materialized-yet');
+});
+
+test('checkPrBookkeepingPrecondition (#2664): parent-only stamps do not satisfy a per-spec runDir -- run-state.json is read from the per-spec dir, no parent fallback', () => {
+  const parentId = '2026-09-17T000015-spec-7-8';
+  const main = gitRepoWithCommit();
+  const wt = linkedWorktreeOf(main);
+  commitPerSpecMaterializeFile(wt, parentId, 7);
+  const parentRunDir = makeRunDir(parentId);
+  writeRunState(parentRunDir, { status: 'active', worktree: wt, pr: { number: 1, url: 'https://example.com/1' } });
+  const runDir = path.join(parentRunDir, 'spec-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  const r = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'no-worktree-stamp');
+});
