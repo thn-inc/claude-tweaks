@@ -2,7 +2,9 @@
 
 Referenced by `_shared/worktree-setup.md`'s Post-creation catch-up ("Log the correction when it
 changes anything") — read only when that catch-up's merge advanced the branch and no pipeline run
-directory resolves (`_shared/run-dir-resolution.md`'s Resolution order steps 1-4 all miss).
+directory resolves (`_shared/run-dir-resolution.md`'s Resolution order steps 1-4 all miss — a
+step-4 mint for an allowlisted skill in auto mode counts as resolving; never mint a run directory
+solely to hold this one line).
 
 ## Who reaches the catch-up with no run directory
 
@@ -11,8 +13,13 @@ directory resolves (`_shared/run-dir-resolution.md`'s Resolution order steps 1-4
   deny message in `bin/lib/hooks/pre-tool-use.js`) — which covers every `/claude-tweaks:specify`
   entry path (shaping, decomposition, the `needs:definition` brainstorming redirect), since none
   of them creates a run directory before the session is isolated.
-- `/claude-tweaks:init`, and any other `_shared/scratch-worktree.md` Section 3 caller running
-  without a run directory.
+- Standalone `/claude-tweaks:build` reaching Common Step 1 (`build/SKILL.md`), whose
+  `build/worktree-setup.md` Step 4 runs the catch-up, in either mode: record mode mints its run
+  directory later, at Spec Step 1's materialize; design mode never mints one.
+- `/claude-tweaks:init`, when it has no run directory yet by the time it provisions its scratch
+  worktree — it is on the standalone-auto allowlist and may already have minted
+  `{ts}-init-standalone/` first — and any other `_shared/scratch-worktree.md` Section 3 caller
+  running without a run directory.
 - `/claude-tweaks:routine`'s create-and-update Step 0.
 
 ## Where the advance line goes
@@ -29,7 +36,10 @@ unchanged) still writes and reports nothing.
 
 ## Why not a standalone log file
 
-The `worktree-always` gate exempts only `.claude-tweaks/pipelines/` and
-`.claude-tweaks/policy.yml`, so the very worktree session running this catch-up cannot create a
-new log file elsewhere under `.claude-tweaks/`. Minting a run directory just to hold one line
-leaves reconcile residue.
+A gitignored log under `.claude-tweaks/` would in fact be permitted — see
+`_shared/policy-schema-coverage.md`'s `worktree-always` coverage block for what the gate exempts —
+and the gate never denies a write inside the linked worktree either way. But no skill or
+reconciler reads such a file, so an advance written there is as invisible as one left unlogged. A
+copy inside the worktree is deleted when the worktree itself is torn down. The caller's own output
+is where the user actually sees it. Minting a run directory just to hold one line leaves reconcile
+residue.

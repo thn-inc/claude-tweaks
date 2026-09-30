@@ -139,7 +139,7 @@ Read `decomposition-mode.md` in this skill's directory now, for the interactive 
 
 Rendered for both modes — this is the one block that straddles them, which is why it isn't owned by either mode file. Full procedure — the Situation → options table (including the multiple-records-shaped row recommending `/claude-tweaks:flow #{N1},#{N2},...` **(Recommended)**), the self-routing/already-durable rule, and the render/recommend rules — lives in `next-actions.md` in this skill's directory; read it once decomposition or shaping mode signals completion (Shaping mode's own procedure, or Decomposition mode's Step 9).
 
-When this session's worktree catch-up merge advanced the branch and no pipeline run directory resolved, the rendered Next Actions block also carries that advance line — `_shared/worktree-catchup-no-run-dir.md` names `/specify` among its callers.
+When this session's worktree catch-up merge advanced the branch and no pipeline run directory resolved, that advance line goes in the rendered Next Actions block, or — under `--chained`, where Next Actions isn't rendered — in this call's returned output per the shared file's "next reply" rule; `_shared/worktree-catchup-no-run-dir.md` names `/specify` among its callers.
 
 ## Component-Skill Contract
 

@@ -36,10 +36,11 @@ test('worktree-catchup-no-run-dir.md: routes the advance line to the caller\'s o
 test('worktree-catchup-no-run-dir.md: names its callers and why no standalone log', () => {
   assert.match(NO_RUN_DIR, /SessionStart/, 'must name worktree-always sessions entered via the SessionStart instruction');
   assert.match(NO_RUN_DIR, /\/claude-tweaks:specify/, 'must name /claude-tweaks:specify');
+  assert.match(NO_RUN_DIR, /\/claude-tweaks:build/, 'must name standalone /claude-tweaks:build');
   assert.match(NO_RUN_DIR, /\/claude-tweaks:init/, 'must name /claude-tweaks:init');
   assert.match(NO_RUN_DIR, /\/claude-tweaks:routine/, 'must name /claude-tweaks:routine');
   assert.match(NO_RUN_DIR, /scratch-worktree\.md/, 'must name _shared/scratch-worktree.md callers');
-  assert.match(NO_RUN_DIR, /\.claude-tweaks\/pipelines\//, 'must state why a standalone log is not used: the gate exempts only pipelines/');
+  assert.match(NO_RUN_DIR, /policy-schema-coverage\.md/, 'must cite policy-schema-coverage.md for what the gate exempts, not restate the list');
 });
 
 test('specify/SKILL.md: Next Actions carries a catch-up advance per the no-run-dir branch', () => {
