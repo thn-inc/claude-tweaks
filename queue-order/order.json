@@ -1,13 +1,8 @@
 {
-  "computedAt": "2026-09-29T19:11:11.227Z",
+  "computedAt": "2026-09-30T06:20:12.050Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
-      {
-        "number": 2816,
-        "updatedAt": "2026-09-29T14:10:56Z",
-        "state": "OPEN"
-      },
       {
         "number": 2807,
         "updatedAt": "2026-09-29T15:24:37Z",
@@ -21,11 +16,6 @@
       {
         "number": 2805,
         "updatedAt": "2026-09-29T16:05:09Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2792,
-        "updatedAt": "2026-09-29T16:30:36Z",
         "state": "OPEN"
       },
       {
@@ -49,38 +39,28 @@
         "state": "OPEN"
       },
       {
-        "number": 2736,
-        "updatedAt": "2026-09-29T17:30:11Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2735,
-        "updatedAt": "2026-09-29T16:32:45Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2732,
         "updatedAt": "2026-09-29T16:56:58Z",
         "state": "OPEN"
       },
       {
         "number": 2709,
-        "updatedAt": "2026-09-21T06:13:00Z",
+        "updatedAt": "2026-09-30T06:06:04Z",
         "state": "OPEN"
       },
       {
         "number": 2707,
-        "updatedAt": "2026-09-21T06:13:02Z",
+        "updatedAt": "2026-09-30T06:06:01Z",
         "state": "OPEN"
       },
       {
         "number": 2706,
-        "updatedAt": "2026-09-21T06:13:05Z",
+        "updatedAt": "2026-09-30T06:05:58Z",
         "state": "OPEN"
       },
       {
         "number": 2704,
-        "updatedAt": "2026-09-21T06:13:10Z",
+        "updatedAt": "2026-09-30T06:05:38Z",
         "state": "OPEN"
       },
       {
@@ -100,57 +80,47 @@
       },
       {
         "number": 2693,
-        "updatedAt": "2026-09-21T06:13:22Z",
+        "updatedAt": "2026-09-30T06:05:41Z",
         "state": "OPEN"
       },
       {
         "number": 2692,
-        "updatedAt": "2026-09-21T06:13:24Z",
+        "updatedAt": "2026-09-30T06:05:34Z",
         "state": "OPEN"
       },
       {
         "number": 2685,
-        "updatedAt": "2026-09-21T06:13:27Z",
+        "updatedAt": "2026-09-30T06:05:45Z",
         "state": "OPEN"
       },
       {
         "number": 2684,
-        "updatedAt": "2026-09-21T06:13:30Z",
+        "updatedAt": "2026-09-30T06:05:48Z",
         "state": "OPEN"
       },
       {
         "number": 2669,
-        "updatedAt": "2026-09-20T19:20:59Z",
+        "updatedAt": "2026-09-30T06:05:31Z",
         "state": "OPEN"
       },
       {
         "number": 2644,
-        "updatedAt": "2026-09-20T19:21:10Z",
+        "updatedAt": "2026-09-30T06:05:51Z",
         "state": "OPEN"
       },
       {
         "number": 2634,
-        "updatedAt": "2026-09-20T19:21:15Z",
+        "updatedAt": "2026-09-30T06:06:16Z",
         "state": "OPEN"
       },
       {
         "number": 2625,
-        "updatedAt": "2026-09-20T19:21:20Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2573,
-        "updatedAt": "2026-09-29T11:22:00Z",
+        "updatedAt": "2026-09-30T06:05:55Z",
         "state": "OPEN"
       },
       {
         "number": 2564,
         "updatedAt": "2026-09-29T16:18:51Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 1350,
-        "updatedAt": "2026-09-13T13:14:34Z",
         "state": "OPEN"
       }
     ]
@@ -158,62 +128,22 @@
   "groups": [
     [
       {
-        "body": "**Doc:** decisions/0019-vendored-gif-codec-over-a-runtime-dependency | **Section:** Consequences | **Category:** staleness | **Misleads:** human engineer + coding agent | **Classification:** additive | **Confidence:** high\n\nVerified-as-of: f93b63229ed1d580b82bcbb9d1e8ad0c71eb5f39\n\n## Current State\n\n`git cat-file -t 41dc8424f` and `git rev-list --all | grep ^41dc84` both come back empty: no object with this hash exists in the repo, shallow-clone artifacts aside. This is not a shallow-clone visibility gap — `git log --oneline --diff-filter=A -- plugin/bin/lib/gif/lzw.js plugin/bin/lib/gif/encoder.js plugin/bin/lib/gif/palette.js plugin/bin/lib/gif/png-decode.js` shows all four codec files were added in a single commit, `15553cf` ('[reconcile] archive run 2026-09-20T084158-record-2571'), already at their final/fixed content — there is no earlier commit touching these paths for a separate fix commit to modify. The cited hash was almost certainly a real in-worktree commit that this repo's own reconcile squashing process (documented elsewhere in this project) folded away when the pipeline run was archived, leaving a dangling reference. A reader — human or agent — who runs `git show 41dc8424f` to see the fix gets 'fatal: bad object 41dc8424f', not the promised diff.\n\n## Deliverables\n\n**Current:**\n```\nFixed at `41dc8424f` and independently re-verified against real screenshots: 4 mid-stream resets exercised across both frames, decoding bit-exact at 921,600/921,600 pixels with 0 mismatches, while the pre-fix output fails the same decoder with a bitstream underrun.\n```\n\n**Proposed:**\n```\nFixed within the same pipeline run; the standalone fix commit does not survive in this repo's history (folded away when the run was archived and squashed into `15553cf`, the commit that actually landed this codec — `41dc8424f` is not a resolvable object in this repository). Independently re-verified against real screenshots: 4 mid-stream resets exercised across both frames, decoding bit-exact at 921,600/921,600 pixels with 0 mismatches, while the pre-fix output fails the same decoder with a bitstream underrun.\n```\n\n## Acceptance Criteria\n\nThe commit hash cited as the LZW clear-code-width fix (`41dc8424f`) does not exist anywhere in this repository's history — replace the dangling reference with an accurate statement of where the fix actually landed.\n\n## Release Note\n\nNo user-visible change — documentation accuracy fix.\n\n_Filed by `/claude-tweaks:docs-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n\n<!-- work-fingerprint: docshealth-95c05adf -->\nwork-fingerprint: docshealth-95c05adf",
-        "createdAt": "2026-09-25T06:18:11Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACverRqw",
-            "name": "by:docs-health",
-            "description": "",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACverRrA",
-            "name": "docs-health:additive",
-            "description": "",
-            "color": "ededed"
-          }
-        ],
         "number": 2785,
-        "state": "OPEN",
         "title": "Doc staleness: decisions/0019-vendored-gif-codec-over-a-runtime-dependency — Consequences",
+        "body": "**Doc:** decisions/0019-vendored-gif-codec-over-a-runtime-dependency | **Section:** Consequences | **Category:** staleness | **Misleads:** human engineer + coding agent | **Classification:** additive | **Confidence:** high\n\nVerified-as-of: f93b63229ed1d580b82bcbb9d1e8ad0c71eb5f39\n\n## Current State\n\n`git cat-file -t 41dc8424f` and `git rev-list --all | grep ^41dc84` both come back empty: no object with this hash exists in the repo, shallow-clone artifacts aside. This is not a shallow-clone visibility gap — `git log --oneline --diff-filter=A -- plugin/bin/lib/gif/lzw.js plugin/bin/lib/gif/encoder.js plugin/bin/lib/gif/palette.js plugin/bin/lib/gif/png-decode.js` shows all four codec files were added in a single commit, `15553cf` ('[reconcile] archive run 2026-09-20T084158-record-2571'), already at their final/fixed content — there is no earlier commit touching these paths for a separate fix commit to modify. The cited hash was almost certainly a real in-worktree commit that this repo's own reconcile squashing process (documented elsewhere in this project) folded away when the pipeline run was archived, leaving a dangling reference. A reader — human or agent — who runs `git show 41dc8424f` to see the fix gets 'fatal: bad object 41dc8424f', not the promised diff.\n\n## Deliverables\n\n**Current:**\n```\nFixed at `41dc8424f` and independently re-verified against real screenshots: 4 mid-stream resets exercised across both frames, decoding bit-exact at 921,600/921,600 pixels with 0 mismatches, while the pre-fix output fails the same decoder with a bitstream underrun.\n```\n\n**Proposed:**\n```\nFixed within the same pipeline run; the standalone fix commit does not survive in this repo's history (folded away when the run was archived and squashed into `15553cf`, the commit that actually landed this codec — `41dc8424f` is not a resolvable object in this repository). Independently re-verified against real screenshots: 4 mid-stream resets exercised across both frames, decoding bit-exact at 921,600/921,600 pixels with 0 mismatches, while the pre-fix output fails the same decoder with a bitstream underrun.\n```\n\n## Acceptance Criteria\n\nThe commit hash cited as the LZW clear-code-width fix (`41dc8424f`) does not exist anywhere in this repository's history — replace the dangling reference with an accurate statement of where the fix actually landed.\n\n## Release Note\n\nNo user-visible change — documentation accuracy fix.\n\n_Filed by `/claude-tweaks:docs-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n\n<!-- work-fingerprint: docshealth-95c05adf -->\nwork-fingerprint: docshealth-95c05adf",
+        "labels": [
+          "ready",
+          "risk:low",
+          "size:low",
+          "type:task",
+          "auto:build",
+          "priority:low",
+          "by:docs-health",
+          "docs-health:additive"
+        ],
+        "createdAt": "2026-09-25T06:18:11Z",
         "updatedAt": "2026-09-29T18:44:55Z",
+        "state": "OPEN",
         "facets": {
           "origin": "docs-health",
           "risk": "low",
@@ -242,68 +172,23 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\n\n`_shared/worktree-setup.md`'s \"Post-creation catch-up\" section states: \"When either merge actually advances the worktree's branch ... the calling procedure appends an entry to the run's `decisions.md` under its own heading.\" This assumes a pipeline run directory (and its `decisions.md`) already exists at the point the catch-up merge runs. But `specify/SKILL.md`'s own `needs:definition` redirect path explicitly states \"brainstorming completes before any pipeline run directory exists\" — and the ordinary interactive `/claude-tweaks:specify #N` entry point more generally has no `PIPELINE_RUN_DIR` at the point its own worktree is created and the catch-up procedure runs (a plain `/specify` invocation is not itself a `/flow`/`/dispatch`-orchestrated pipeline run). When this catch-up's merge genuinely advances the worktree branch (a real fast-forward pulling in upstream commits, not a no-op) under one of these no-run-dir call sites, the log obligation `worktree-setup.md` prescribes has nowhere to be written — the advance happens, but its audit trail is silently dropped.\n\n## Deliverables\n\n- Add an explicit no-run-dir branch to `_shared/worktree-setup.md`'s Post-creation catch-up \"Log the correction when it changes anything\" subsection: when no `$PIPELINE_RUN_DIR` resolves, either (a) write the advance to a standalone per-session log under `.claude-tweaks/` (a new, minimal mechanism), or (b) state explicitly that the calling skill must report the advance in its own Step 9/completion summary instead, and name which callers this applies to.\n- Update `specify/SKILL.md` (or wherever it cites `worktree-setup.md`'s catch-up section for its own worktree-creation call site) to point at whichever branch is chosen, so the obligation has a stated home rather than being silently unsatisfiable for this call site.\n\n## Acceptance Criteria\n\n- `_shared/worktree-setup.md`'s Post-creation catch-up section states what happens to its own logging obligation when no pipeline run directory exists, rather than assuming one always does.\n- A `/claude-tweaks:specify #N` invocation whose worktree-creation catch-up merge genuinely advances the branch reports that advance somewhere the user or a later auditor can find it (the skill's own summary, or a standalone log) — not silently.\n\n## Technical Approach\n\nDecide between the two named branches in the Deliverables before implementing: a new minimal per-session standalone log (more mechanism, more durable) versus pushing the obligation onto each no-run-dir caller's own completion summary (less mechanism, relies on each caller remembering to report it). Given this repo's general preference for durable audit trails over caller-remembered reporting (per CLAUDE.md's auto-decision-log conventions elsewhere), lean toward option (a) unless the no-run-dir call sites are few enough that option (b) is reliably enforceable — enumerate every no-run-dir caller of `worktree-setup.md`'s catch-up section before choosing, since the choice should cover all of them, not just `/specify`.\n\n### Key Files\n\n- `plugin/skills/_shared/worktree-setup.md` — the Post-creation catch-up section's logging obligation\n- `plugin/skills/specify/SKILL.md` — the citing call site to update once the branch is chosen\n\n## Gotchas\n\n- This is related to #2702 (also touches `worktree-setup.md`) — check for overlap before implementing either, since both modify the same file's Post-creation catch-up guidance.\n- Enumerate every caller of `worktree-setup.md`'s catch-up section that might run with no `$PIPELINE_RUN_DIR` (not just `/specify`) before deciding the fix's scope — a fix that only covers `/specify`'s call site could leave the same silent-drop gap open elsewhere.\n\n## Original request\n\nworktree-setup.md's catch-up log obligation has no home when no run directory exists\n\nOrigin: by:feedback (self-referential session evaluation, /claude-tweaks:feedback bare invocation)\n\n**Related:** #2702\n\n## Current State\n\n`_shared/worktree-setup.md`'s \"Post-creation catch-up\" section states: \"When either merge actually advances the worktree's branch ... the calling procedure appends an entry to the run's `decisions.md` under its own heading.\" This assumes a pipeline run directory (and its `decisions.md`) already exists at the point the catch-up merge runs. But `specify/SKILL.md`'s own `needs:definition` redirect path explicitly states \"brainstorming completes before any pipeline run directory exists\" — and the ordinary interactive `/claude-tweaks:specify #N` entry point more generally has no `PIPELINE_RUN_DIR` at the point its own worktree is created and the catch-up procedure runs (a plain `/specify` invocation is not itself a `/flow`/`/dispatch`-orchestrated pipeline run).\n\nWhen this catch-up's merge genuinely advances the worktree branch (a real fast-forward pulling in upstream commits, not a no-op) under one of these no-run-dir call sites, the log obligation `worktree-setup.md` prescribes has nowhere to be written — the advance happens, but its audit trail is silently dropped, with no branch in the shared file covering this case.\n\n## Deliverables\n\n- Add an explicit no-run-dir branch to `_shared/worktree-setup.md`'s Post-creation catch-up \"Log the correction when it changes anything\" subsection: when no `$PIPELINE_RUN_DIR` resolves, either (a) write the advance to a standalone per-session log under `.claude-tweaks/` (a new, minimal mechanism), or (b) state explicitly that the calling skill must report the advance in its own Step 9/completion summary instead, and name which callers this applies to.\n- Update `specify/SKILL.md` (or wherever it cites `worktree-setup.md`'s catch-up section for its own worktree-creation call site) to point at whichever branch is chosen, so the obligation has a stated home rather than being silently unsatisfiable for this call site.\n\n## Acceptance Criteria\n\n- `_shared/worktree-setup.md`'s Post-creation catch-up section states what happens to its own logging obligation when no pipeline run directory exists, rather than assuming one always does.\n- A `/claude-tweaks:specify #N` invocation whose worktree-creation catch-up merge genuinely advances the branch reports that advance somewhere the user or a later auditor can find it (the skill's own summary, or a standalone log) — not silently.\n\n## Original request\n\nSurfaced by `/claude-tweaks:feedback`'s bare-invocation session evaluation (Instruction efficacy objective), judging the transcript of a `/claude-tweaks:specify #2537` decomposition run on 2026-09-20. Evidence: the worktree's post-creation `git merge origin/main` produced a real merge commit deleting one file (not a no-op), and the session noted \"that logging obligation belongs to `/claude-tweaks:specify`'s own run directory once it's created\" and deferred it — but no pipeline run directory or `decisions.md` write ever occurred for the rest of the session, since a plain `/specify` invocation never creates one.\n",
-        "createdAt": "2026-09-20T19:03:24Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAAC2-eqcQ",
-            "name": "by:feedback",
-            "description": "Origin: filed via /claude-tweaks:feedback's session-evaluation (self-referential)",
-            "color": "ededed"
-          }
-        ],
         "number": 2704,
-        "state": "OPEN",
         "title": "worktree-setup.md's catch-up log obligation has no home when no run directory exists",
-        "updatedAt": "2026-09-21T06:13:10Z",
+        "body": "Surface: infra\n\n## Current State\n\n`_shared/worktree-setup.md`'s \"Post-creation catch-up\" section states: \"When either merge actually advances the worktree's branch ... the calling procedure appends an entry to the run's `decisions.md` under its own heading.\" This assumes a pipeline run directory (and its `decisions.md`) already exists at the point the catch-up merge runs. But `specify/SKILL.md`'s own `needs:definition` redirect path explicitly states \"brainstorming completes before any pipeline run directory exists\" — and the ordinary interactive `/claude-tweaks:specify #N` entry point more generally has no `PIPELINE_RUN_DIR` at the point its own worktree is created and the catch-up procedure runs (a plain `/specify` invocation is not itself a `/flow`/`/dispatch`-orchestrated pipeline run). When this catch-up's merge genuinely advances the worktree branch (a real fast-forward pulling in upstream commits, not a no-op) under one of these no-run-dir call sites, the log obligation `worktree-setup.md` prescribes has nowhere to be written — the advance happens, but its audit trail is silently dropped.\n\n## Deliverables\n\n- Add an explicit no-run-dir branch to `_shared/worktree-setup.md`'s Post-creation catch-up \"Log the correction when it changes anything\" subsection: when no `$PIPELINE_RUN_DIR` resolves, either (a) write the advance to a standalone per-session log under `.claude-tweaks/` (a new, minimal mechanism), or (b) state explicitly that the calling skill must report the advance in its own Step 9/completion summary instead, and name which callers this applies to.\n- Update `specify/SKILL.md` (or wherever it cites `worktree-setup.md`'s catch-up section for its own worktree-creation call site) to point at whichever branch is chosen, so the obligation has a stated home rather than being silently unsatisfiable for this call site.\n\n## Acceptance Criteria\n\n- `_shared/worktree-setup.md`'s Post-creation catch-up section states what happens to its own logging obligation when no pipeline run directory exists, rather than assuming one always does.\n- A `/claude-tweaks:specify #N` invocation whose worktree-creation catch-up merge genuinely advances the branch reports that advance somewhere the user or a later auditor can find it (the skill's own summary, or a standalone log) — not silently.\n\n## Release Note\n\nWorktree setup now states where its catch-up correction is recorded when no pipeline run is active.\n\n## Technical Approach\n\nDecide between the two named branches in the Deliverables before implementing: a new minimal per-session standalone log (more mechanism, more durable) versus pushing the obligation onto each no-run-dir caller's own completion summary (less mechanism, relies on each caller remembering to report it). Given this repo's general preference for durable audit trails over caller-remembered reporting (per CLAUDE.md's auto-decision-log conventions elsewhere), lean toward option (a) unless the no-run-dir call sites are few enough that option (b) is reliably enforceable — enumerate every no-run-dir caller of `worktree-setup.md`'s catch-up section before choosing, since the choice should cover all of them, not just `/specify`.\n\n### Key Files\n\n- `plugin/skills/_shared/worktree-setup.md` — the Post-creation catch-up section's logging obligation\n- `plugin/skills/specify/SKILL.md` — the citing call site to update once the branch is chosen\n\n## Gotchas\n\n- This is related to #2702 (also touches `worktree-setup.md`) — check for overlap before implementing either, since both modify the same file's Post-creation catch-up guidance.\n- Enumerate every caller of `worktree-setup.md`'s catch-up section that might run with no `$PIPELINE_RUN_DIR` (not just `/specify`) before deciding the fix's scope — a fix that only covers `/specify`'s call site could leave the same silent-drop gap open elsewhere.\n\n## Original request\n\nworktree-setup.md's catch-up log obligation has no home when no run directory exists\n\nOrigin: by:feedback (self-referential session evaluation, /claude-tweaks:feedback bare invocation)\n\n**Related:** #2702\n\n## Current State\n\n`_shared/worktree-setup.md`'s \"Post-creation catch-up\" section states: \"When either merge actually advances the worktree's branch ... the calling procedure appends an entry to the run's `decisions.md` under its own heading.\" This assumes a pipeline run directory (and its `decisions.md`) already exists at the point the catch-up merge runs. But `specify/SKILL.md`'s own `needs:definition` redirect path explicitly states \"brainstorming completes before any pipeline run directory exists\" — and the ordinary interactive `/claude-tweaks:specify #N` entry point more generally has no `PIPELINE_RUN_DIR` at the point its own worktree is created and the catch-up procedure runs (a plain `/specify` invocation is not itself a `/flow`/`/dispatch`-orchestrated pipeline run).\n\nWhen this catch-up's merge genuinely advances the worktree branch (a real fast-forward pulling in upstream commits, not a no-op) under one of these no-run-dir call sites, the log obligation `worktree-setup.md` prescribes has nowhere to be written — the advance happens, but its audit trail is silently dropped, with no branch in the shared file covering this case.\n\n## Deliverables\n\n- Add an explicit no-run-dir branch to `_shared/worktree-setup.md`'s Post-creation catch-up \"Log the correction when it changes anything\" subsection: when no `$PIPELINE_RUN_DIR` resolves, either (a) write the advance to a standalone per-session log under `.claude-tweaks/` (a new, minimal mechanism), or (b) state explicitly that the calling skill must report the advance in its own Step 9/completion summary instead, and name which callers this applies to.\n- Update `specify/SKILL.md` (or wherever it cites `worktree-setup.md`'s catch-up section for its own worktree-creation call site) to point at whichever branch is chosen, so the obligation has a stated home rather than being silently unsatisfiable for this call site.\n\n## Acceptance Criteria\n\n- `_shared/worktree-setup.md`'s Post-creation catch-up section states what happens to its own logging obligation when no pipeline run directory exists, rather than assuming one always does.\n- A `/claude-tweaks:specify #N` invocation whose worktree-creation catch-up merge genuinely advances the branch reports that advance somewhere the user or a later auditor can find it (the skill's own summary, or a standalone log) — not silently.\n\n## Original request\n\nSurfaced by `/claude-tweaks:feedback`'s bare-invocation session evaluation (Instruction efficacy objective), judging the transcript of a `/claude-tweaks:specify #2537` decomposition run on 2026-09-20. Evidence: the worktree's post-creation `git merge origin/main` produced a real merge commit deleting one file (not a no-op), and the session noted \"that logging obligation belongs to `/claude-tweaks:specify`'s own run directory once it's created\" and deferred it — but no pipeline run directory or `decisions.md` write ever occurred for the rest of the session, since a plain `/specify` invocation never creates one.\n",
+        "labels": [
+          "ready",
+          "risk:low",
+          "size:low",
+          "type:bug",
+          "auto:build",
+          "priority:low",
+          "ceremony:standard",
+          "shaped:headless",
+          "by:feedback"
+        ],
+        "createdAt": "2026-09-20T19:03:24Z",
+        "updatedAt": "2026-09-30T06:05:38Z",
+        "state": "OPEN",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -332,62 +217,22 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\n\nNo standing pre-launch checklist exists across `/review`, `/code-health`, or `/build` for AI-generated sites. A documented 20-item pre-publish checklist covers custom 404, meta title/description per page, OG image, favicon, robots.txt, sitemap.xml, alt text, mobile breakpoints, form/loading states, thank-you page, privacy policy, terms, cookie banner, analytics, real contact info, and compressed images.\n\n## Deliverables\n\n- Turn the 20-item list into a policy-row set for `/code-health` or a final `/review` pass before a site ships.\n- Group items by cheap-to-automate (sitemap.xml, robots.txt, alt text, image compression) vs. needs-human-judgment (privacy policy, terms).\n\n## Acceptance Criteria\n\n- Running the lens against a sample site reports pass/fail for all 20 items.\n\n## Technical Approach\n\nSplit into two check classes per the Deliverables' own grouping: automatable checks (file/DOM presence checks — sitemap.xml exists, robots.txt exists, `alt` attributes present, image sizes under a compression threshold) implemented as mechanical policy rows, and judgment checks (privacy policy, terms, cookie banner, real contact info) surfaced as a checklist a human confirms rather than auto-verified. Land this in whichever skill (`/code-health` or `/review`) already has policy-row infrastructure this lens can extend, rather than building a new mechanism from scratch.\n\n### Key Files\n\n- `plugin/skills/code-health/` or `plugin/skills/review/` — wherever the pre-launch checklist lands (decide at build time based on which skill's existing structure fits best)\n\n## Gotchas\n\n- Keep the automatable/human-judgment split explicit in the output — a pass/fail report that conflates \"verified automatically\" with \"a human should still confirm this\" understates what the lens actually checked.\n- Some items (mobile breakpoints, form/loading states) may need a live-render check rather than a static file check — verify which of the 20 are realistically automatable before committing to \"all 20 report pass/fail\" as a mechanical claim; some may need to render as \"needs manual check\" rather than a true pass/fail.\n\n## Original request\n\nAdd a pre-launch checklist lens for AI/vibe-coded sites\n\nCurrent State:\n- No standing pre-launch checklist exists across /review, /code-health, or /build for AI-generated sites.\n- A reel lists 20 concrete pre-publish checks: custom 404, meta title/description per page, OG image, favicon, robots.txt, sitemap.xml, alt text, mobile breakpoints, form/loading states, thank-you page, privacy policy, terms, cookie banner, analytics, real contact info, compressed images.\n\nDeliverables:\n- Turn the 20-item list into a policy-row set for /code-health or a final /review pass before a site ships.\n- Group items by cheap-to-automate (sitemap.xml, robots.txt, alt text, image compression) vs. needs-human-judgment (privacy policy, terms).\n\nAcceptance Criteria:\n- Running the lens against a sample site reports pass/fail for all 20 items.\n\nSource: https://www.instagram.com/reel/DcEqXsySUaP/\n",
-        "createdAt": "2026-09-20T19:00:56Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
         "number": 2693,
-        "state": "OPEN",
         "title": "Add a pre-launch checklist lens for AI/vibe-coded sites",
-        "updatedAt": "2026-09-21T06:13:22Z",
+        "body": "Surface: infra\n\n**Related:** #2624, #2692\n\n## Current State\n\nNo standing pre-launch checklist exists across `/review`, `/code-health`, or `/build` for AI-generated sites. A documented 20-item pre-publish checklist covers custom 404, meta title/description per page, OG image, favicon, robots.txt, sitemap.xml, alt text, mobile breakpoints, form/loading states, thank-you page, privacy policy, terms, cookie banner, analytics, real contact info, and compressed images.\n\n## Deliverables\n\n- Turn the 20-item list into a policy-row set for `/code-health` or a final `/review` pass before a site ships.\n- Group items by cheap-to-automate (sitemap.xml, robots.txt, alt text, image compression) vs. needs-human-judgment (privacy policy, terms).\n\n## Acceptance Criteria\n\n- Running the lens against a sample site reports pass/fail for all 20 items.\n\n## Release Note\n\nAdded a pre-launch code-health check for AI-built sites covering commonly missed launch items such as sitemaps, meta tags, and legal pages.\n\n## Technical Approach\n\nFollow the precedent #2624 set for the sibling pre-launch security checklist: a `/claude-tweaks:code-health` focus vertical (`focus=prelaunch`) made of a candidate generator, a criterion entry, a criterion fragment, and the focus-mode registration rows. The generator emits candidates only for the mechanically detectable items (sitemap.xml, robots.txt, favicon, custom 404, per-page meta title/description, OG image, `alt` attributes, image sizes over a compression threshold); the fragment lists every one of the 20 items and marks the rest (privacy policy, terms, cookie banner, analytics, real contact info, mobile breakpoints, form/loading states, thank-you page) as needs-manual-check, so the report separates \"verified\" from \"a human should confirm\".\n\n### Key Files\n\n- `plugin/bin/lib/code-health/candidates-prelaunch.js` — new focus generator: file/markup-presence candidates for the automatable items, with a Coverage block header like `candidates-security-hardening.js`\n- `plugin/bin/lib/code-health/focus-generators.js` — register the `prelaunch` focus\n- `plugin/bin/lib/code-health/criteria.js` — `prelaunch` criterion entry pointing at its fragment\n- `plugin/skills/_shared/criteria-prelaunch.md` — new criterion fragment: all 20 items, split into automatable vs. needs-manual-check, with severity calibration\n- `plugin/skills/code-health/focus-mode.md` — Criterion-pinning table row and Coverage-section pointer for `prelaunch` (both required whenever `FOCUS_GENERATORS` gains a key)\n- `tests/bin-lib/code-health/candidates-prelaunch.test.js` — generator tests, mirroring `candidates-security-hardening.test.js`\n\n## Gotchas\n\n- Keep the automatable/manual split explicit in the output — a report that conflates \"verified automatically\" with \"a human should confirm\" overstates what the check did.\n- Items needing a live render (mobile breakpoints, form/loading states) are needs-manual-check in the fragment, not generator candidates — the acceptance criterion's pass/fail for all 20 items allows a \"needs manual check\" outcome.\n- The generator's Coverage block must state its reach honestly (IL-110): presence of a file or tag, not its quality.\n- focus-mode.md makes a registry key without a Criterion-pinning row a fail-loud stop — land both in the same change.\n\n## Original request\n\nAdd a pre-launch checklist lens for AI/vibe-coded sites\n\nCurrent State:\n- No standing pre-launch checklist exists across /review, /code-health, or /build for AI-generated sites.\n- A reel lists 20 concrete pre-publish checks: custom 404, meta title/description per page, OG image, favicon, robots.txt, sitemap.xml, alt text, mobile breakpoints, form/loading states, thank-you page, privacy policy, terms, cookie banner, analytics, real contact info, compressed images.\n\nDeliverables:\n- Turn the 20-item list into a policy-row set for /code-health or a final /review pass before a site ships.\n- Group items by cheap-to-automate (sitemap.xml, robots.txt, alt text, image compression) vs. needs-human-judgment (privacy policy, terms).\n\nAcceptance Criteria:\n- Running the lens against a sample site reports pass/fail for all 20 items.\n\nSource: https://www.instagram.com/reel/DcEqXsySUaP/\n",
+        "labels": [
+          "ready",
+          "risk:low",
+          "size:medium",
+          "type:feature",
+          "auto:build",
+          "priority:low",
+          "ceremony:standard",
+          "shaped:headless"
+        ],
+        "createdAt": "2026-09-20T19:00:56Z",
+        "updatedAt": "2026-09-30T06:05:41Z",
+        "state": "OPEN",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -416,62 +261,108 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\n\nAnthropic has described a file convention, intent.MD, that precedes and guides a feature's development lifecycle — a single file with sections like Author, Status, and Problem that an agent reads before starting a build. claude-tweaks currently starts build work from an issue/spec record (via `/specify`) with no equivalent lightweight, structured intent-capture step ahead of that.\n\n## Deliverables\n\n- Assess whether an intent.MD-style file would improve the current spec/build flow (e.g. as a precursor to `/claude-tweaks:specify`), and if so, propose its field structure and where it's read from.\n\n## Acceptance Criteria\n\n- A written adopt/discard decision, with reasoning either way.\n\n## Technical Approach\n\nThis is an evaluation record, not a build record — the deliverable IS the written decision. Compare intent.MD's stated purpose (Author/Status/Problem fields read before a build starts) against what `/claude-tweaks:capture` and `/claude-tweaks:specify`'s existing shaping-mode body sections (`## Current State`, `## Deliverables`, `## Acceptance Criteria`) already capture, to judge whether intent.MD would be net-new value or a redundant precursor to a step this repo already has. Read the source article's description of intent.MD's actual field set and workflow position before judging overlap, rather than assuming from the title alone.\n\n### Key Files\n\n- `plugin/skills/capture/` and `plugin/skills/specify/` — the existing record-intake and shaping flow to compare against\n\n## Gotchas\n\n- The Acceptance Criteria only require a written decision, not an implementation either way — if the decision is \"adopt,\" a follow-up record should be filed for the actual implementation rather than folding both into this one.\n- Judge genuinely, not performatively — this repo's existing `/capture` → `/specify` flow may already cover intent.MD's value; a reflexive \"adopt everything Anthropic describes\" isn't the goal here.\n\n## Original request\n\nEvaluate adopting an Intent.MD-style pre-build intent file\n\nCurrent State:\n- Anthropic has described a file convention, intent.MD, that precedes and guides a feature's development lifecycle -- a single file with sections like Author, Status, and Problem that an agent reads before starting a build.\n- claude-tweaks currently starts build work from an issue/spec record (via /specify) with no equivalent lightweight, structured intent-capture step ahead of that.\n\nDeliverables:\n- Assess whether an intent.MD-style file would improve the current spec/build flow (e.g. as a precursor to /claude-tweaks:specify), and if so, propose its field structure and where it's read from.\n\nAcceptance Criteria:\n- A written adopt/discard decision, with reasoning either way.\n\nSource: https://medium.com/@joe.njenga/claude-code-intent-md-new-anthropic-blueprint-for-building-great-software-e2f0c8a5eac2\n",
-        "createdAt": "2026-09-20T18:57:07Z",
+        "number": 2692,
+        "title": "Add a lightweight perf-audit lens (images, unused loads, measure-first)",
+        "body": "Surface: infra\n\n**Related:** #2693\n\n## Current State\n\nclaude-tweaks has no standing performance-audit lens — `/code-health` and `/review` don't check image format, unused resource loading, or a measured baseline. A 3-minute speed-audit checklist (image format conversion, unused-resource flagging, PageSpeed Insights baseline before changing anything) exists as an established, low-cost pattern worth codifying as a lens.\n\n## Deliverables\n\n- Add a perf-audit lens/policy row (image-format check, unused-resource flag, PageSpeed Insights baseline) to `/code-health` or `/review`.\n- Keep it a fast, free check — no new paid tooling.\n\n## Acceptance Criteria\n\n- Running the lens against a sample app reports pass/fail for at least the three checks above (image format, unused resources, PageSpeed Insights baseline).\n\n## Release Note\n\nCode and visual reviews now flag oversized or legacy-format images and unused loaded resources, and recommend measuring page speed before optimizing.\n\n## Technical Approach\n\nTwo homes, split by what each can observe. The static checks — a legacy-format or oversized image added to the diff, and a script/stylesheet/font loaded but unused — join `/claude-tweaks:review`'s lens 3d (Performance) in `plugin/skills/review/step3-lens-dispatch.md` as question bullets. The measure-first rule — record a baseline with a free tool (Lighthouse CLI, or the PageSpeed Insights API's free tier) before changing anything for performance — joins `/claude-tweaks:visual-review`'s `page-mode.md` Step 4 Performance subsection, which already owns runtime vitals. No new paid dependency.\n\n### Key Files\n\n- `plugin/skills/review/step3-lens-dispatch.md` — lens 3d (Performance) gains the image-format/oversized-asset and unused-loaded-resource bullets\n- `plugin/skills/visual-review/page-mode.md` — Step 4's Performance subsection gains the measure-first baseline (free Lighthouse CLI or PageSpeed Insights) before any performance fix\n\n## Gotchas\n\n- \"No new paid tooling\" is an explicit constraint — Lighthouse CLI and the PageSpeed Insights API free tier both stay within it; name the tool in the text.\n- This is a lightweight addition, not a full performance-audit subsystem — scope the three named checks only.\n- page-mode's Performance subsection says vitals are unavailable from its own browser session; the measure-first rule is guidance to run a baseline, not a claim that the walk measures it.\n\n## Original request\n\nAdd a lightweight perf-audit lens (images, unused loads, measure-first)\n\nCurrent State:\n- claude-tweaks has no standing performance-audit lens; /code-health and /review don't check image format, unused resource loading, or a measured baseline.\n- A reel gives a 3-minute speed-audit checklist: convert non-PNG-appropriate images, cut unused loaded resources, and run PageSpeed Insights before changing anything.\n\nDeliverables:\n- Add a perf-audit lens/policy row (image-format check, unused-resource flag, PageSpeed Insights baseline) to /code-health or /review.\n- Keep it a fast, free check — no new paid tooling.\n\nAcceptance Criteria:\n- Running the lens against a sample app reports pass/fail for at least the three checks above.\n\nSource: https://www.instagram.com/reel/DcFfEBOxlKZ/\n",
         "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
+          "ready",
+          "risk:low",
+          "size:low",
+          "type:feature",
+          "auto:build",
+          "priority:low",
+          "ceremony:fast-lane",
+          "shaped:headless"
         ],
+        "createdAt": "2026-09-20T19:00:54Z",
+        "updatedAt": "2026-09-30T06:05:34Z",
+        "state": "OPEN",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      },
+      {
+        "number": 2669,
+        "title": "Flag polling-vs-realtime and duplicate-version anti-patterns",
+        "body": "Surface: infra\n\n## Current State\nTwo recurring coding-agent anti-patterns have been identified from an external source (a transcribed Instagram Reel from a developer who has shipped 15+ AI-built apps):\n\n1. **Polling instead of realtime push** — agents building a data flow that needs live updates default to fixed-interval polling (e.g. `setInterval` fetches every few seconds) instead of a realtime push/subscription mechanism when the backend already supports one (e.g. a Supabase/Convex subscription, a websocket, SSE). This looks fine in testing but drains battery and degrades frame rate under real usage.\n2. **Duplicate \"v2\" files instead of in-place edits** — agents avoid replacing working code in place, instead layering a `v2`/duplicate-suffixed file or function on top \"just in case.\" This leaves dead code around, and the agent loses track of which version is actually live, leading to circular, self-breaking edits on later requests.\n\nAnti-pattern 2 is already a standing instruction in this repo's own CLAUDE.md (\"don't use feature flags or backwards-compatibility shims when you can just change the code\" — see the Philosophy/Don'ts sections) — the external source is independent confirmation that the same failure mode is common enough across coding agents generally to be worth a dedicated automated review check, not just a written instruction the agent might drift from under pressure.\n\nNeither anti-pattern currently has an automated review-lens check.\n\n## Deliverables\n1. Add a review-lens check that flags a newly introduced fixed-interval polling loop (`setInterval`/`setTimeout` recursion, or an equivalent polling construct) against a data source that already exposes or could reasonably expose a realtime push/subscription mechanism.\n2. Add a review-lens check that flags a newly created file or function with a version-suffix name pattern (`v2`, `-new`, `-copy`, `_updated`, etc.) sitting alongside an unremoved original that the diff did not delete or fully migrate away from.\n3. Document that these two checks formalize the existing CLAUDE.md \"change code in place\" instruction into an automated check, rather than relying on the instruction alone.\n\n## Acceptance Criteria\n- The polling check flags a sample diff that adds a fixed-interval polling loop against a realtime-capable backend.\n- The polling check does not flag polling against a data source with no realtime alternative available (e.g. a third-party REST API with no push option).\n- The duplicate-version check flags a sample diff that introduces a `v2`-suffixed (or equivalent) file/function alongside its unremoved original.\n- The duplicate-version check does not flag a legitimate versioned artifact (e.g. an API route intentionally versioned as `/v2/` for external consumers) — the check targets abandoned/duplicated internal code, not a deliberate external contract.\n- Documentation for the review-lens (or the relevant skill's checklist) states that these two checks formalize the existing CLAUDE.md instruction into an automated check.\n\n## Release Note\n\nCode review now flags new polling loops where realtime updates are available, and leftover \"v2\"-style duplicate copies of code.\n\n## Technical Approach\n\nBoth checks land in `/claude-tweaks:review`'s lens definitions (`plugin/skills/review/step3-lens-dispatch.md`, \"Lens definitions (3a-3f)\"), as new question bullets matching those lenses' existing style. The polling check joins 3d (Performance): flag a newly introduced fixed-interval polling loop (`setInterval`/recursive `setTimeout`, or equivalent) against a source that exposes a push/subscription mechanism. The duplicate-version check joins 3a (Convention Compliance): flag a new version-suffixed file or function (`v2`, `-new`, `-copy`, `_updated`) beside an original the diff neither deleted nor migrated away from. Each bullet states its false-positive guard inline (no realtime alternative; a deliberately versioned external contract).\n\n### Key Files\n\n- `plugin/skills/review/step3-lens-dispatch.md` — lens 3d (Performance) gains the polling check; lens 3a (Convention Compliance) gains the duplicate-version check; each carries its false-positive guard\n\n## Gotchas\n\n- The duplicate-version check must not fire on legitimate, deliberately-versioned external-facing artifacts (API routes, published package majors) — only on abandoned/duplicated internal code from indecisive in-place-edit avoidance.\n- The polling check must not fire when no realtime alternative exists for the given backend/data source — polling is the correct choice there, not an anti-pattern.\n- `step3-lens-dispatch.md` feeds a composed dispatch-contract bundle (#2019); run `npm test` for the prose/byte pins that cover it.\n\n## Original request\n\nFlag polling-vs-realtime and duplicate-version anti-patterns\n\nCurrent State:\n- Reel (hook-only caption; transcribed), from a developer who has shipped 15+ AI-built apps, names two recurring coding-agent anti-patterns: (1) agents default to polling the server every few seconds instead of using a realtime push mechanism (e.g. Supabase/Convex subscriptions), draining battery and degrading frame rate under real usage even though it feels fine in testing; (2) agents avoid replacing code in place, instead layering a \"v2\" on top of the working version \"just in case,\" which leaves dead code around and causes the agent to lose track of which version is live, leading to circular, self-breaking edits on later requests.\n- The second anti-pattern is already addressed as a standing instruction in this session's own CLAUDE.md guidance (\"don't use feature flags or backwards-compatibility shims when you can just change the code\") — this reel is independent confirmation the same failure mode is common enough to be worth a dedicated automated check, not just a written instruction the agent might drift from.\n\nDeliverables:\n- Add a review-lens check for: (a) new realtime data flows implemented as fixed-interval polling instead of push/subscription where the backend supports it; (b) newly created \"v2\"/duplicate-suffixed files or functions sitting alongside an unremoved original.\n\nAcceptance Criteria:\n- Check flags a sample polling loop and a sample duplicate-version file pair.\n- Docs note this formalizes an existing CLAUDE.md instruction into an automated check rather than relying on the instruction alone.\n\nSource: https://www.instagram.com/reel/DcW5UU5SUaB/\n",
+        "labels": [
+          "ready",
+          "risk:low",
+          "size:low",
+          "type:feature",
+          "auto:build",
+          "priority:low",
+          "ceremony:fast-lane",
+          "shaped:headless"
+        ],
+        "createdAt": "2026-09-20T09:55:37Z",
+        "updatedAt": "2026-09-30T06:05:31Z",
+        "state": "OPEN",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      }
+    ],
+    [
+      {
         "number": 2685,
-        "state": "OPEN",
         "title": "Evaluate adopting an Intent.MD-style pre-build intent file",
-        "updatedAt": "2026-09-21T06:13:27Z",
+        "body": "Surface: infra\n\n## Current State\n\nAnthropic has described a file convention, intent.MD, that precedes and guides a feature's development lifecycle — a single file with sections like Author, Status, and Problem that an agent reads before starting a build. claude-tweaks currently starts build work from an issue/spec record (via `/specify`) with no equivalent lightweight, structured intent-capture step ahead of that.\n\n## Deliverables\n\n- Assess whether an intent.MD-style file would improve the current spec/build flow (e.g. as a precursor to `/claude-tweaks:specify`), and if so, propose its field structure and where it's read from.\n\n## Acceptance Criteria\n\n- A written adopt/discard decision, with reasoning either way.\n\n## Release Note\n\nRecorded a decision on whether to adopt an Intent.MD-style pre-build intent file (no user-visible change).\n\n## Technical Approach\n\nThis is an evaluation record, not a build record — the deliverable IS the written decision, recorded as an ADR under `docs/decisions/` (a rejected option is a valid ADR outcome). Compare intent.MD's stated purpose (Author/Status/Problem fields read before a build starts) against what `/claude-tweaks:capture` and `/claude-tweaks:specify`'s shaping-mode body sections (`## Current State`, `## Deliverables`, `## Acceptance Criteria`) already capture, to judge whether intent.MD adds net-new value or duplicates a step this repo already has. Read the source article's description of intent.MD's actual field set and workflow position before judging overlap. The compared skill files are read, not edited, so they are not Key Files.\n\n### Key Files\n\n- `docs/decisions/0020-intent-file-evaluation.md` — new: the written adopt/discard decision (take the next free number under `docs/decisions/` at build time)\n\n## Gotchas\n\n- The Acceptance Criteria only require a written decision, not an implementation either way — if the decision is \"adopt,\" a follow-up record should be filed for the actual implementation rather than folding both into this one.\n- Judge genuinely, not performatively — this repo's existing `/capture` → `/specify` flow may already cover intent.MD's value; a reflexive \"adopt everything Anthropic describes\" isn't the goal here.\n\n## Original request\n\nEvaluate adopting an Intent.MD-style pre-build intent file\n\nCurrent State:\n- Anthropic has described a file convention, intent.MD, that precedes and guides a feature's development lifecycle -- a single file with sections like Author, Status, and Problem that an agent reads before starting a build.\n- claude-tweaks currently starts build work from an issue/spec record (via /specify) with no equivalent lightweight, structured intent-capture step ahead of that.\n\nDeliverables:\n- Assess whether an intent.MD-style file would improve the current spec/build flow (e.g. as a precursor to /claude-tweaks:specify), and if so, propose its field structure and where it's read from.\n\nAcceptance Criteria:\n- A written adopt/discard decision, with reasoning either way.\n\nSource: https://medium.com/@joe.njenga/claude-code-intent-md-new-anthropic-blueprint-for-building-great-software-e2f0c8a5eac2\n",
+        "labels": [
+          "ready",
+          "risk:low",
+          "size:low",
+          "type:task",
+          "auto:build",
+          "priority:low",
+          "ceremony:standard",
+          "shaped:headless"
+        ],
+        "createdAt": "2026-09-20T18:57:07Z",
+        "updatedAt": "2026-09-30T06:05:45Z",
+        "state": "OPEN",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -500,62 +391,22 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\n\nAnthropic's own context-engineering guidance says Claude Code's own system prompt was cut by over 80% for Opus 5/Fable 5 with no measurable eval loss, and targets CLAUDE.md files at roughly under 200 lines. An independent audit of a real 388-skill repository found its CLAUDE.md at 829 lines / 110KB — 4x over that target, with one section alone consuming 86,630 characters. A separate piece from the same author on writing a good global CLAUDE.md argues each rule should name a specific past failure rather than state vague preferences (e.g. \"write clean code\"). claude-tweaks generates and maintains CLAUDE.md content across projects with no check against this size or authoring guidance. Notably, this repo's own CLAUDE.md already practices a related discipline manually — its `## Don'ts` section states \"Full rule list now lives in docs/donts.md (moved out of this always-loaded file to fit the 150-line budget)\" — so a lint/audit check would formalize and enforce a budget this repo already tries to hold ad hoc.\n\n## Deliverables\n\n- A lint/audit check (as part of `/code-health` or a dedicated pass) that flags a project's CLAUDE.md when it exceeds roughly 200 lines or shows a single runaway section.\n- Authoring guidance in claude-tweaks' own CLAUDE.md docs citing the <200-line target and the \"name a specific failure, not a vague preference\" principle.\n\n## Acceptance Criteria\n\n- Running the check against a sample of enrolled repos' CLAUDE.md files reports a pass/fail against the line-count guidance.\n\n## Technical Approach\n\nAdd a mechanical line-count + largest-section-size check, following the existing pattern of a `/code-health` or `harness-health` scan step (a metadata-only read: file path, line count, section boundaries via `##`/`###` heading scan — never reading full section prose into a report unless flagging it). Pair with a documentation addition to this repo's own `CLAUDE.md`-authoring guidance (likely `docs/skill-authoring.md` or wherever CLAUDE.md conventions are documented) citing the <200-line target and the specific-failure-not-vague-preference principle — this repo's own `claude-md-conciseness` convention (already referenced elsewhere in this codebase's memory/practice) is a natural place to extend rather than duplicate.\n\n### Key Files\n\n- `plugin/skills/code-health/` or `plugin/skills/harness-health/` — new lint/audit check for CLAUDE.md size\n- `docs/skill-authoring.md` (or wherever CLAUDE.md-authoring guidance already lives) — the <200-line target + specific-failure principle\n\n## Gotchas\n\n- This repo's own CLAUDE.md is itself close to or over a strict 200-line reading depending on how the `docs/donts.md`/`docs/incident-log.md` extraction is counted — verify the check's own line-count definition (raw file lines vs. effective always-loaded content) before flagging this repo's own file as a false positive.\n- \"Roughly 200 lines\" is Anthropic's stated target, not a hard requirement — the check should flag for review, not hard-fail a build; frame the pass/fail output as a signal, not a gate.\n\n## Original request\n\nAudit CLAUDE.md files against Anthropic's own <200-line context-engineering guidance\n\nCurrent State:\n- Anthropic's own context-engineering guidance (Thariq Shihipar, \"The new rules of context engineering for Claude 5 generation models\", claude.com/blog) says Claude Code's own system prompt was cut by over 80% for Opus 5/Fable 5 with no measurable eval loss, and targets CLAUDE.md files at roughly under 200 lines.\n- An independent audit of a real 388-skill repository found its CLAUDE.md at 829 lines / 110KB -- 4x over that target, with one section alone consuming 86,630 characters.\n- A separate piece from the same author on writing a good global CLAUDE.md argues each rule should name a specific past failure rather than state vague preferences (e.g. \"write clean code\").\n- claude-tweaks generates and maintains CLAUDE.md content across projects with no check against this size or authoring guidance.\n\nDeliverables:\n- A lint/audit check (as part of code-health or a dedicated pass) that flags a project's CLAUDE.md when it exceeds roughly 200 lines or shows a single runaway section.\n- Authoring guidance in claude-tweaks' own CLAUDE.md docs citing the <200-line target and the \"name a specific failure, not a vague preference\" principle.\n\nAcceptance Criteria:\n- Running the check against a sample of enrolled repos' CLAUDE.md files reports a pass/fail against the line-count guidance.\n\nSource: https://medium.com/@alirezarezvani/claude-code-context-engineering-78-of-my-claude-md-failed-the-audit-d59b6931463e , https://medium.com/@nitingavhane/top-10-things-to-install-after-you-first-open-claude-code-cut-your-first-day-friction-by-80-49ea3d5a2e87 , https://medium.com/@alirezarezvani/a-global-claude-md-and-its-best-pieces-972ba72b408e (citing Anthropic, \"The new rules of context engineering for Claude 5 generation models\")\n",
-        "createdAt": "2026-09-20T18:57:06Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
         "number": 2684,
+        "title": "Audit CLAUDE.md files against Anthropic's own &lt;200-line context-engineering guidance",
+        "body": "Surface: infra\n\n## Current State\n\nAnthropic's own context-engineering guidance says Claude Code's own system prompt was cut by over 80% for Opus 5/Fable 5 with no measurable eval loss, and targets CLAUDE.md files at roughly under 200 lines. An independent audit of a real 388-skill repository found its CLAUDE.md at 829 lines / 110KB — 4x over that target, with one section alone consuming 86,630 characters. A separate piece from the same author on writing a good global CLAUDE.md argues each rule should name a specific past failure rather than state vague preferences (e.g. \"write clean code\"). claude-tweaks generates and maintains CLAUDE.md content across projects with no check against this size or authoring guidance. Notably, this repo's own CLAUDE.md already practices a related discipline manually — its `## Don'ts` section states \"Full rule list now lives in docs/donts.md (moved out of this always-loaded file to fit the 150-line budget)\" — so a lint/audit check would formalize and enforce a budget this repo already tries to hold ad hoc.\n\nUpdate (shaping, 2026-09-30): the line-count half already exists. harness-health's check 4 (`plugin/skills/harness-health/judge-procedure.md`, \"Tiered line-budget check\") puts CLAUDE.md in the always-loaded tier and compares it against `harness-health-always-loaded-budget`, default 150 (`_shared/policy-schema.md`). Missing: a single-runaway-section signal, and the specific-failure authoring principle in `init`'s CLAUDE.md template. The record is rescoped to that delta.\n\n## Deliverables\n\n1. Add a runaway-section signal to harness-health's tiered line-budget check (check 4) in `plugin/skills/harness-health/judge-procedure.md` and `plugin/skills/_shared/harness-health-analysis.md`: flag a CLAUDE.md whose largest `##` section exceeds a stated share of the file's lines, even when the file is under budget.\n2. Add the \"each rule names a specific past failure, not a vague preference\" principle, citing Anthropic's context-engineering guidance, to `plugin/skills/init/claude-md-template.md`'s authoring guidance.\n\n## Acceptance Criteria\n\n1. Check 4 in both `judge-procedure.md` and `_shared/harness-health-analysis.md` describes the runaway-section signal, its threshold, and how the section share is computed (heading-bounded line counts).\n2. The signal reports as a `template-conformance` finding framed as a flag for review, never a hard failure.\n3. The `harness-health-always-loaded-budget` default (150) is unchanged.\n4. `plugin/skills/init/claude-md-template.md` states the specific-past-failure principle and cites its source.\n5. `npm test` passes.\n\n## Release Note\n\nHarness health now flags a CLAUDE.md dominated by one runaway section, and generated CLAUDE.md guidance asks each rule to name a specific past failure.\n\n## Technical Approach\n\nharness-health check 4 already classifies CLAUDE.md into the always-loaded tier and compares `wc -l` against `harness-health-always-loaded-budget` (default 150, stricter than the 200-line guidance). Extend that check with a second mechanical signal: scan `##` heading boundaries and flag when the largest section exceeds a stated share of the file (e.g. 40% of its lines), even when the total is under budget — reported as the same `template-conformance` finding, a flag for review, never a gate. Mirror the change in `_shared/harness-health-analysis.md`'s check 4 so the two stay identical. Separately, add the specific-failure principle to `plugin/skills/init/claude-md-template.md`, the origin template dimensions 7 and 8 already read for `claude-md` targets.\n\n### Key Files\n\n- `plugin/skills/harness-health/judge-procedure.md` — check 4 (tiered line-budget) gains the runaway-section signal\n- `plugin/skills/_shared/harness-health-analysis.md` — the same check 4 in the shared analysis procedure, kept in step\n- `plugin/skills/init/claude-md-template.md` — authoring guidance gains the \"name a specific past failure, not a vague preference\" principle\n\n## Gotchas\n\n- This repo's own CLAUDE.md follows a 150-line budget; confirm the runaway-section threshold does not flag it spuriously (its largest section is the claude-tweaks Pipeline block).\n- A fixed threshold stated in prose keeps this a small change. Making it configurable would add a policy lever — then follow `_shared/auto-mode-contract.md`'s \"Adding a new policy lever\" checklist rather than adding a key ad hoc.\n- The `size:medium` label predates the rescope; the remaining work is smaller.\n\n## Original request\n\nAudit CLAUDE.md files against Anthropic's own <200-line context-engineering guidance\n\nCurrent State:\n- Anthropic's own context-engineering guidance (Thariq Shihipar, \"The new rules of context engineering for Claude 5 generation models\", claude.com/blog) says Claude Code's own system prompt was cut by over 80% for Opus 5/Fable 5 with no measurable eval loss, and targets CLAUDE.md files at roughly under 200 lines.\n- An independent audit of a real 388-skill repository found its CLAUDE.md at 829 lines / 110KB -- 4x over that target, with one section alone consuming 86,630 characters.\n- A separate piece from the same author on writing a good global CLAUDE.md argues each rule should name a specific past failure rather than state vague preferences (e.g. \"write clean code\").\n- claude-tweaks generates and maintains CLAUDE.md content across projects with no check against this size or authoring guidance.\n\nDeliverables:\n- A lint/audit check (as part of code-health or a dedicated pass) that flags a project's CLAUDE.md when it exceeds roughly 200 lines or shows a single runaway section.\n- Authoring guidance in claude-tweaks' own CLAUDE.md docs citing the <200-line target and the \"name a specific failure, not a vague preference\" principle.\n\nAcceptance Criteria:\n- Running the check against a sample of enrolled repos' CLAUDE.md files reports a pass/fail against the line-count guidance.\n\nSource: https://medium.com/@alirezarezvani/claude-code-context-engineering-78-of-my-claude-md-failed-the-audit-d59b6931463e , https://medium.com/@nitingavhane/top-10-things-to-install-after-you-first-open-claude-code-cut-your-first-day-friction-by-80-49ea3d5a2e87 , https://medium.com/@alirezarezvani/a-global-claude-md-and-its-best-pieces-972ba72b408e (citing Anthropic, \"The new rules of context engineering for Claude 5 generation models\")\n",
+        "labels": [
+          "ready",
+          "risk:low",
+          "size:medium",
+          "type:feature",
+          "auto:build",
+          "priority:low",
+          "ceremony:standard",
+          "shaped:headless"
+        ],
+        "createdAt": "2026-09-20T18:57:06Z",
+        "updatedAt": "2026-09-30T06:05:48Z",
         "state": "OPEN",
-        "title": "Audit CLAUDE.md files against Anthropic's own <200-line context-engineering guidance",
-        "updatedAt": "2026-09-21T06:13:30Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -584,62 +435,22 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\nclaude-tweaks skills are themselves prompts for Claude models, but Anthropic's own official documentation lists behavioral differences for Claude Fable 5.1 vs. 5 (effort-level selection, needing explicit asks for user-facing progress updates, batching independent tool calls, formatting, safeguard false positives, subagent and vision handling) that can silently change how existing skills behave. No skill or CLAUDE.md guidance currently references model-version-specific prompting quirks; skills are written once and assumed stable across model upgrades. Several of the documented deltas (progress-update prompts, tool-call batching) already show up piecemeal in some skill bodies but aren't tracked as a reusable checklist.\n\n## Deliverables\n1. Add a short \"model-version prompting notes\" section or policy row to claude-tweaks' skill-authoring guidance (`docs/skill-authoring.md`, or a cross-reference in `superpowers:writing-skills` if that's where the canonical authoring checklist lives) summarizing the Fable 5.1 deltas that matter for skill instructions: tool-call batching, progress-update prompts, effort-level selection, formatting, safeguard false positives, and subagent/vision handling.\n2. Cross-check a sample of existing skills against the documented differences and flag any relying on now-changed default behavior (or confirm none are affected).\n3. Link the source doc (Anthropic's Fable 5.1 prompting guide) from the new guidance section so future model version bumps get the same treatment.\n\n## Acceptance Criteria\n1. The skill-authoring guidance names at least the tool-call-batching, progress-update, and effort-level differences, each with a one-line note on what changed and what a skill author should check for.\n2. At least one example skill from the sample cross-check is shown updated against the checklist, or explicitly confirmed unaffected with the reasoning stated.\n3. The guidance states this checklist applies whenever a new Claude model version ships, not only for Fable 5.1 — i.e., it's framed as a durable process addition, not a one-off note tied to a single model version.\n4. The source doc (https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-1) is linked from the new guidance.\n\n## Technical Approach\nAdd the new \"model-version prompting notes\" content to `docs/skill-authoring.md` (the canonical skill-authoring conventions file this repo already maintains per CLAUDE.md's Conventions section), phrased as a durable checklist rather than a one-off note about Fable 5.1 specifically. Read a representative sample of existing skills (a mix of frequently-used and complex ones) and check each against the documented deltas — particularly progress-update prompting and tool-call batching, which the record notes already show up piecemeal — noting in the guidance (or as a brief follow-up list) which skills were checked and their outcome.\n\n### Key Files\n- `plugin/docs/skill-authoring.md` — add the new model-version prompting notes section/checklist, with the source doc linked\n- A sample of existing `plugin/skills/**/SKILL.md` files — read and cross-check against the checklist (exact sample to be chosen at build time; no specific file list mandated by this record)\n\n## Gotchas\nThis record intentionally does not mandate exactly one home for the new guidance (\"a short section or policy row... e.g. superpowers:writing-skills or a CLAUDE.md template\") — `docs/skill-authoring.md` is the most likely fit given CLAUDE.md's own routing of skill-authoring conventions there, but confirm that's still the canonical location before writing. The cross-check in Deliverable 2/AC2 is a sampling exercise, not an exhaustive audit of every skill file — scope it to a representative handful rather than treating it as a full skill-corpus sweep.\n\n## Original request\n\nAudit skill-authoring guidance for Claude Fable 5.1 prompting deltas\n\nCurrent State:\n- claude-tweaks skills are themselves prompts for Claude models, but Anthropic's own docs list behavioral differences for Claude Fable 5.1 vs. 5 (effort-level selection, needing explicit asks for user-facing progress updates, batching independent tool calls, formatting, safeguard false positives, subagent and vision handling) that can silently change how existing skills behave.\n- No skill or CLAUDE.md guidance currently references model-version-specific prompting quirks; skills are written once and assumed stable across model upgrades.\n- Several of the documented deltas (progress-update prompts, tool-call batching) already show up piecemeal in some skill bodies but aren't tracked as a reusable checklist.\n\nDeliverables:\n- Add a short \"model-version prompting notes\" section or policy row to claude-tweaks' skill-authoring guidance (e.g. superpowers:writing-skills or a CLAUDE.md template) summarizing the Fable 5.1 deltas that matter for skill instructions.\n- Cross-check a sample of existing skills against the documented differences and flag any relying on now-changed default behavior.\n- Link the source doc so future model version bumps get the same treatment.\n\nAcceptance Criteria:\n- The skill-authoring guidance names at least the tool-call-batching, progress-update, and effort-level differences.\n- One example skill is shown updated (or confirmed unaffected) against the checklist.\n- Docs note this applies whenever a new Claude model version ships, not just Fable 5.1.\n\nSource: https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-1\n",
-        "createdAt": "2026-09-20T06:57:51Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
         "number": 2644,
-        "state": "OPEN",
         "title": "Audit skill-authoring guidance for Claude Fable 5.1 prompting deltas",
-        "updatedAt": "2026-09-20T19:21:10Z",
+        "body": "Surface: infra\n\n## Current State\nclaude-tweaks skills are themselves prompts for Claude models, but Anthropic's own official documentation lists behavioral differences for Claude Fable 5.1 vs. 5 (effort-level selection, needing explicit asks for user-facing progress updates, batching independent tool calls, formatting, safeguard false positives, subagent and vision handling) that can silently change how existing skills behave. No skill or CLAUDE.md guidance currently references model-version-specific prompting quirks; skills are written once and assumed stable across model upgrades. Several of the documented deltas (progress-update prompts, tool-call batching) already show up piecemeal in some skill bodies but aren't tracked as a reusable checklist.\n\n## Deliverables\n1. Add a short \"model-version prompting notes\" section or policy row to claude-tweaks' skill-authoring guidance (`docs/skill-authoring.md`, or a cross-reference in `superpowers:writing-skills` if that's where the canonical authoring checklist lives) summarizing the Fable 5.1 deltas that matter for skill instructions: tool-call batching, progress-update prompts, effort-level selection, formatting, safeguard false positives, and subagent/vision handling.\n2. Cross-check a sample of existing skills against the documented differences and flag any relying on now-changed default behavior (or confirm none are affected).\n3. Link the source doc (Anthropic's Fable 5.1 prompting guide) from the new guidance section so future model version bumps get the same treatment.\n\n## Acceptance Criteria\n1. The skill-authoring guidance names at least the tool-call-batching, progress-update, and effort-level differences, each with a one-line note on what changed and what a skill author should check for.\n2. At least one example skill from the sample cross-check is shown updated against the checklist, or explicitly confirmed unaffected with the reasoning stated.\n3. The guidance states this checklist applies whenever a new Claude model version ships, not only for Fable 5.1 — i.e., it's framed as a durable process addition, not a one-off note tied to a single model version.\n4. The source doc (https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-1) is linked from the new guidance.\n\n## Release Note\n\nUpdated internal skill-authoring guidance with Claude Fable 5.1 prompting notes (no user-visible change).\n\n## Technical Approach\nAdd the new \"model-version prompting notes\" content to `docs/skill-authoring.md` (the canonical skill-authoring conventions file this repo already maintains per CLAUDE.md's Conventions section), phrased as a durable checklist rather than a one-off note about Fable 5.1 specifically. Read a representative sample of existing skills (a mix of frequently-used and complex ones) and check each against the documented deltas — particularly progress-update prompting and tool-call batching, which the record notes already show up piecemeal — noting in the guidance (or as a brief follow-up list) which skills were checked and their outcome.\n\n### Key Files\n\n- `docs/skill-authoring.md` — add the new model-version prompting notes section/checklist, with the source doc linked\n\n## Gotchas\nThis record intentionally does not mandate exactly one home for the new guidance (\"a short section or policy row... e.g. superpowers:writing-skills or a CLAUDE.md template\") — `docs/skill-authoring.md` is the most likely fit given CLAUDE.md's own routing of skill-authoring conventions there, but confirm that's still the canonical location before writing. The cross-check in Deliverable 2/AC2 is a sampling exercise, not an exhaustive audit of every skill file — scope it to a representative handful rather than treating it as a full skill-corpus sweep.\n\n## Original request\n\nAudit skill-authoring guidance for Claude Fable 5.1 prompting deltas\n\nCurrent State:\n- claude-tweaks skills are themselves prompts for Claude models, but Anthropic's own docs list behavioral differences for Claude Fable 5.1 vs. 5 (effort-level selection, needing explicit asks for user-facing progress updates, batching independent tool calls, formatting, safeguard false positives, subagent and vision handling) that can silently change how existing skills behave.\n- No skill or CLAUDE.md guidance currently references model-version-specific prompting quirks; skills are written once and assumed stable across model upgrades.\n- Several of the documented deltas (progress-update prompts, tool-call batching) already show up piecemeal in some skill bodies but aren't tracked as a reusable checklist.\n\nDeliverables:\n- Add a short \"model-version prompting notes\" section or policy row to claude-tweaks' skill-authoring guidance (e.g. superpowers:writing-skills or a CLAUDE.md template) summarizing the Fable 5.1 deltas that matter for skill instructions.\n- Cross-check a sample of existing skills against the documented differences and flag any relying on now-changed default behavior.\n- Link the source doc so future model version bumps get the same treatment.\n\nAcceptance Criteria:\n- The skill-authoring guidance names at least the tool-call-batching, progress-update, and effort-level differences.\n- One example skill is shown updated (or confirmed unaffected) against the checklist.\n- Docs note this applies whenever a new Claude model version ships, not just Fable 5.1.\n\nSource: https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-1\n",
+        "labels": [
+          "ready",
+          "risk:low",
+          "size:medium",
+          "type:task",
+          "auto:build",
+          "priority:low",
+          "ceremony:standard",
+          "shaped:headless"
+        ],
+        "createdAt": "2026-09-20T06:57:51Z",
+        "updatedAt": "2026-09-30T06:05:51Z",
+        "state": "OPEN",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -668,134 +479,22 @@
     ],
     [
       {
-        "body": "Origin: reflect light from #2621\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:simplify`'s Step 2 dispatches the `code-simplifier:code-simplifier` subagent via the `Agent` tool, which is asynchronous — the dispatch call returns immediately with an `agentId`, and the caller is told \"you know nothing about its results until [a] notification arrives.\" Step 2's own guidance (\"Before committing the returned changes, the caller should diff them against its own change scope and revert anything outside it\") assumes the caller can check `git status`/`git diff` once, right after dispatch, and see the agent's *final* state. During this review's Step 5 (record #2621), the caller (this flow run) checked `git status` shortly after dispatch, saw one out-of-scope file modified, reverted it (`git checkout --`), and moved on — only to find on a later, unrelated check that the agent had *continued writing* after that revert, producing a second, larger wave of out-of-scope edits (a `cmdNextTarget` refactor in `harness-health.js`) that required a second `git checkout --` pass to reach a clean tree. Because the Agent tool's async notification is the only reliable \"the agent is truly done\" signal, and the coordinating call cannot poll/sleep-loop for it, a caller that does the diff-and-revert check on its own initiative (rather than waiting for the completion notification) has no guarantee it is looking at final state.\n\n## Deliverables\n\nClarify `skills/simplify/SKILL.md` Step 2's diff-and-revert guidance to state explicitly that the revert check must run only after the dispatch's completion notification has been received (not on an ad hoc `git status` poll), or provide an explicit \"wait for this dispatch\" primitive callers can use without violating the \"never end this turn waiting\" constraint documented elsewhere in this same plugin's dispatch guidance.\n\n## Acceptance Criteria\n\n`skills/simplify/SKILL.md`'s Step 2 names the completion-notification requirement (or an equivalent wait primitive) as a precondition for the diff-and-revert check, so a caller following the instructions as written cannot repeat this race.\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-09-20T00:20:33Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2634,
-        "state": "OPEN",
-        "title": "simplify dispatch: caller can observe a still-in-flight async Task write as \"done\"",
-        "updatedAt": "2026-09-20T19:21:15Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\nDeleting a user from the production database on account deletion leaves their personal data intact in rolling database backups (e.g. a 30-day retention window), which can violate GDPR right-to-erasure. Rewriting, decrypting, and recompressing terabytes of backup data to scrub one user on every deletion request is operationally expensive and can overwhelm production systems. Cryptographic erasure — encrypting each user's sensitive data with a unique per-user key and destroying only that key on deletion — makes the backup copy unreadable without ever touching the backup itself. This project's pre-launch security hardening checklist (#2624, open, priority:medium) is being built for AI-built apps but currently has no check for this specific data-retention/right-to-erasure gap.\n\n## Deliverables\n1. Add a data-retention/right-to-erasure check — as a new row in the pre-launch security checklist being built under #2624, or as its own standalone policy row if #2624 lands first without this scope — that flags whether the app's backup/retention strategy leaves deleted users' data readable, and whether per-user field-level encryption is in place for data that lands in backups.\n2. Document the cryptographic-erasure pattern (per-user key encryption + key destruction on deletion) as the recommended fix when a project keeps rolling backups containing user PII.\n3. Ship a copy-paste prompt, matching this pipeline's existing pattern for this class of check, that walks a codebase through checking for this specific gap.\n\n## Acceptance Criteria\n1. Running the check against a sample app flags whether a deleted user's data would remain readable in existing backups after an account-deletion flow runs.\n2. The shipped documentation/policy content notes its relationship to the pre-launch security checklist (#2624) so the two records' scope doesn't duplicate — whichever lands first, the other references it rather than re-deriving the same check.\n3. The check (and its copy-paste prompt) works standalone and as a step within `/claude-tweaks:review` or a security-review pass.\n4. The documented recommended-fix pattern (cryptographic erasure) is described generically enough to apply across storage backends, not tied to one specific database or cloud vendor's backup product.\n\n## Technical Approach\nCoordinate scope with #2624: if #2624's checklist already has a data-retention section by the time this is built, extend it with this specific right-to-erasure-vs-backup-retention row; otherwise ship this as its own standalone policy/check entry that #2624 can later reference. Write the check as a prompt/heuristic (in the same style as this pipeline's other copy-paste-prompt checks) that inspects a codebase's backup/retention configuration and data-deletion code path for evidence of per-user field-level encryption versus plaintext PII landing in backups. Document the cryptographic-erasure pattern as the recommended remediation, generically (not vendor-specific).\n\n### Key Files\n- Whichever file(s) #2624's pre-launch security checklist lands in (to be determined once #2624 is shaped/built) — the natural home for this check if it lands first\n- A new standalone policy/check file (if #2624 has not yet defined a home) documenting the GDPR account-deletion vs. backup-retention check and the cryptographic-erasure remediation pattern\n\n## Gotchas\nThis record's scope is coupled to #2624's timing and final shape — the exact file(s) this check's row lands in can't be pinned until #2624 is itself shaped/built, since #2624 is the natural home. If #2624 ships without a data-retention section, this record's Deliverable 1 falls back to a standalone policy row instead, per the Technical Approach above. Whoever builds this should re-check #2624's current state (open/shaped/merged) before deciding which of the two paths applies.\n\n## Original request\n\nAdd GDPR account-deletion vs. backup-retention check\n\nCurrent State:\n- Deleting a user from the production database on account deletion leaves their personal data intact in rolling database backups (e.g. a 30-day retention window), which can violate GDPR right-to-erasure.\n- Rewriting, decrypting, and recompressing terabytes of backup data to scrub one user on every deletion request is operationally expensive and can overwhelm production systems.\n- Cryptographic erasure — encrypting each user's sensitive data with a unique per-user key and destroying only that key on deletion — makes the backup copy unreadable without ever touching the backup itself.\n\nDeliverables:\n- Add a data-retention/right-to-erasure check to the existing pre-launch security checklist (issue #2624) or as its own policy row: does the app's backup/retention strategy leave deleted users' data readable, and is per-user field-level encryption in place for data that lands in backups?\n- Document the cryptographic-erasure pattern as the recommended fix when a project keeps rolling backups containing user PII.\n- Ship a copy-paste prompt, matching the pipeline's existing pattern, that walks a codebase through checking for this gap.\n\nAcceptance Criteria:\n- Running the check against a sample app flags whether a deleted user's data would remain readable in existing backups.\n- Docs note the relationship to the pre-launch security checklist (#2624) so scope doesn't duplicate.\n- Works standalone and as a step within /review or /security-review.\n\nSource: https://www.instagram.com/reel/DdB4g89NEbJ/\n\n**Related:** #2624\n",
-        "createdAt": "2026-09-19T22:26:58Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
         "number": 2625,
-        "state": "OPEN",
         "title": "Add GDPR account-deletion vs. backup-retention check",
-        "updatedAt": "2026-09-20T19:21:20Z",
+        "body": "Surface: infra\n\n## Current State\nDeleting a user from the production database on account deletion leaves their personal data intact in rolling database backups (e.g. a 30-day retention window), which can violate GDPR right-to-erasure. Rewriting, decrypting, and recompressing terabytes of backup data to scrub one user on every deletion request is operationally expensive and can overwhelm production systems. Cryptographic erasure — encrypting each user's sensitive data with a unique per-user key and destroying only that key on deletion — makes the backup copy unreadable without ever touching the backup itself. This project's pre-launch security hardening checklist (#2624, open, priority:medium) is being built for AI-built apps but currently has no check for this specific data-retention/right-to-erasure gap.\n\nUpdate (shaping, 2026-09-30): #2624 has shipped as `plugin/skills/_shared/criteria-security-hardening.md`, and its \"Scope boundary\" section explicitly excludes this check. It therefore lands standalone, in the `privacy-pii` criterion.\n\n## Deliverables\n1. Add a data-retention/right-to-erasure check — as a new row in the pre-launch security checklist being built under #2624, or as its own standalone policy row if #2624 lands first without this scope — that flags whether the app's backup/retention strategy leaves deleted users' data readable, and whether per-user field-level encryption is in place for data that lands in backups.\n2. Document the cryptographic-erasure pattern (per-user key encryption + key destruction on deletion) as the recommended fix when a project keeps rolling backups containing user PII.\n3. Ship a copy-paste prompt, matching this pipeline's existing pattern for this class of check, that walks a codebase through checking for this specific gap.\n\n## Acceptance Criteria\n1. Running the check against a sample app flags whether a deleted user's data would remain readable in existing backups after an account-deletion flow runs.\n2. The shipped documentation/policy content notes its relationship to the pre-launch security checklist (#2624) so the two records' scope doesn't duplicate — whichever lands first, the other references it rather than re-deriving the same check.\n3. The check (and its copy-paste prompt) works standalone and as a step within `/claude-tweaks:review` or a security-review pass.\n4. The documented recommended-fix pattern (cryptographic erasure) is described generically enough to apply across storage backends, not tied to one specific database or cloud vendor's backup product.\n\n## Release Note\n\nAdded a privacy check that flags when deleted users' data stays readable in backups, with a cryptographic-erasure fix pattern.\n\n## Technical Approach\n\n#2624 has shipped (`plugin/skills/_shared/criteria-security-hardening.md`) and its Scope boundary explicitly excludes this check, so it lands standalone in `plugin/skills/_shared/criteria-privacy-pii.md` — the generalist `privacy-pii` criterion (`criteria.js`) that already applies to frontend/backend/data areas. Add a \"What to flag\" bullet for the concrete code pattern (an account-deletion path that removes live rows while backups keep plaintext PII, with no per-user key to destroy), a severity-calibration entry, and a copy-paste prompt in the style of criteria-security-hardening.md's \"Copy-paste prompts\" section. Document cryptographic erasure (per-user key encryption, key destruction on deletion) generically as the recommended fix. Repoint criteria-security-hardening.md's Scope boundary bullet at the new home.\n\n### Key Files\n\n- `plugin/skills/_shared/criteria-privacy-pii.md` — new backup-retention-vs-erasure flag, severity calibration entry, and copy-paste prompt\n- `plugin/skills/_shared/criteria-security-hardening.md` — its Scope boundary bullet for this check repointed at `criteria-privacy-pii.md`\n\n## Gotchas\n\n- `criteria-privacy-pii.md` already says to flag only the concrete code pattern, not the regulatory question — phrase the new flag as a code/config pattern (a deletion path plus a plaintext backup), never as a GDPR compliance verdict.\n- Keep the fix pattern vendor-neutral (acceptance criterion 4).\n\n## Original request\n\nAdd GDPR account-deletion vs. backup-retention check\n\nCurrent State:\n- Deleting a user from the production database on account deletion leaves their personal data intact in rolling database backups (e.g. a 30-day retention window), which can violate GDPR right-to-erasure.\n- Rewriting, decrypting, and recompressing terabytes of backup data to scrub one user on every deletion request is operationally expensive and can overwhelm production systems.\n- Cryptographic erasure — encrypting each user's sensitive data with a unique per-user key and destroying only that key on deletion — makes the backup copy unreadable without ever touching the backup itself.\n\nDeliverables:\n- Add a data-retention/right-to-erasure check to the existing pre-launch security checklist (issue #2624) or as its own policy row: does the app's backup/retention strategy leave deleted users' data readable, and is per-user field-level encryption in place for data that lands in backups?\n- Document the cryptographic-erasure pattern as the recommended fix when a project keeps rolling backups containing user PII.\n- Ship a copy-paste prompt, matching the pipeline's existing pattern, that walks a codebase through checking for this gap.\n\nAcceptance Criteria:\n- Running the check against a sample app flags whether a deleted user's data would remain readable in existing backups.\n- Docs note the relationship to the pre-launch security checklist (#2624) so scope doesn't duplicate.\n- Works standalone and as a step within /review or /security-review.\n\nSource: https://www.instagram.com/reel/DdB4g89NEbJ/\n\n**Related:** #2624\n",
+        "labels": [
+          "ready",
+          "size:medium",
+          "type:feature",
+          "auto:build",
+          "priority:low",
+          "risk:medium",
+          "ceremony:standard",
+          "shaped:headless"
+        ],
+        "createdAt": "2026-09-19T22:26:58Z",
+        "updatedAt": "2026-09-30T06:05:55Z",
+        "state": "OPEN",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -824,68 +523,22 @@
     ],
     [
       {
-        "body": "Surface: backend\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule\nsentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`,\n18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its\npersonas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent`\ntool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a\nstatic `node --test` assertion; it can only be confirmed by observing an actual future `/specify`\ndecomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that\npersona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s\nfan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the\nobservation (transcript excerpt or note) against this item, or file a defect against\n`red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use\ncalls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of\nsub-issues) assistant messages.\n\n## Technical Approach\n\nWait for (or trigger) a `/claude-tweaks:specify` decomposition-mode run that produces 2 or more\n`ceremony:standard` sub-issue records — `ceremony-check` (`assess-agent-autonomy/ceremony-check.md`)\nresolves the tier per sub-issue during that run's own Step 3, so the tier isn't knowable until the\nrun happens. Once such a run occurs, inspect that session's stored transcript for the Step 5\nred-team dispatch (`specify/red-team.md`'s Parallel dispatch section): locate the `Agent` tool_use\nblocks for each dispatched persona and group them by the assistant message id each block belongs\nto. Confirm the number of distinct assistant message ids covering all persona dispatches for a\ngiven sub-issue is ≤ the number of sub-issues in that batch. Use the same read-only transcript\ninspection method `transcript-payload-verification` documents for reading this session's own\nlocally-stored transcript, rather than instrumenting or modifying `red-team.md` itself.\n\nIf the count exceeds the bound, file a defect issue against `red-team.md`'s dispatch prose\n(quoting the transcript grouping that violates the rule) instead of editing the file directly from\nthis record — this record's own deliverable is the observation, not the fix.\n\n### Key Files\n\n- `plugin/skills/specify/red-team.md` — the per-sub-issue persona dispatch procedure being observed\n- `plugin/skills/_shared/subagent-output-contract.md` — the fan-out single-assistant-message rule this observation verifies compliance with\n- `tests/subagent-contract-clauses.test.js` — AC1's existing static test coverage (unaffected by this record)\n\n## Gotchas\n\n- This record's acceptance criterion depends on an external event (a live `/specify` decomposition\n  run over 2+ `ceremony:standard` sub-issues happening) that this record cannot itself trigger on a\n  fixed schedule — it may sit open for some time until a qualifying run occurs naturally, or until\n  someone deliberately runs one to close it out.\n- A qualifying run must be observed via its own transcript at the time it happens; this record\n  cannot be resolved from historical data if no already-completed run's transcript is still\n  available.\n\n## Original request\n\nVerify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)\n\nOrigin: ledger resolve gate\n\nDefer-reason: needs-human-decision\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule sentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`, 18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its personas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent` tool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a static `node --test` assertion; it can only be confirmed by observing an actual future `/specify` decomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that persona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s fan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the observation (transcript excerpt or note) against this item, or file a defect against `red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use calls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of sub-issues) assistant messages.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
-        "createdAt": "2026-08-24T03:21:25Z",
+        "number": 2709,
+        "title": "Add classic friction-reduction UX laws to the review lens",
+        "body": "Surface: infra\n\n**Related:** #2655, #2706, #2707\n\n## Current State\n\nThe design-review lens has no checks tied to the classic conversion/friction heuristics: choice count (Hick's Law), tap-target/CTA affordance (Fitts's Law), navigation familiarity (Jacob's Law), or chunked identifiers like phone numbers and codes (Miller's Law). No check for a journey's peak/end moments (Peak-End Rule), spatial grouping of related controls (Proximity), or a single visually distinct emphasis element (Von Restorff Effect).\n\nUpdate (shaping, 2026-09-30): #2655 already shipped `plugin/skills/visual-review/ux-heuristics-lens.md`, whose rows cover all seven heuristics this record names (Reduce choices per screen, Use large targets, Favor familiar patterns, Chunk content, End flows memorably, Group related info, Highlight the primary action). What is missing is the record's second deliverable: naming each law, so violations are self-documenting. The record is rescoped to that delta.\n\n## Deliverables\n\n1. Add the law's name to each of the seven existing `ux-heuristics-lens.md` rows that already cover it: Reduce choices per screen → Hick's law; Use large targets → Fitts's law; Favor familiar patterns → Jakob's law; Chunk content → Miller's law; End flows memorably → peak-end rule; Group related info → law of common region / proximity; Highlight the primary action → Von Restorff effect.\n2. Extend the Chunk content row's example to cover unchunked numeric identifiers (e.g. a 16-digit code rendered as one unbroken run).\n3. Add one sentence to the lens's \"Reporting a finding\" section: a finding cites its row's law by name when the row has one, so violations are self-documenting.\n\n## Acceptance Criteria\n\n1. Each of the seven rows listed in Deliverable 1 names its law.\n2. The Chunk content row's example covers an unchunked numeric identifier.\n3. The checklist still has 20 rows — no duplicate row is added for a law an existing row already covers.\n4. \"Reporting a finding\" asks a finding to cite the row's law by name.\n5. `npm test` passes.\n\n## Release Note\n\nUX heuristics findings now name the classic UX law behind each check, such as Hick's law or Fitts's law.\n\n## Technical Approach\n\nA text edit to `plugin/skills/visual-review/ux-heuristics-lens.md`: append the law's name to the Heuristic cell (or the start of \"What it flags\") of the seven rows #2655 already shipped, extend the Chunk content example to cover numeric identifiers, and add one sentence to \"Reporting a finding\" asking a finding to cite the law when its row names one. No new rows and no new mechanism.\n\n### Key Files\n\n- `plugin/skills/visual-review/ux-heuristics-lens.md` — law names added to seven existing rows; Chunk content example extended; Reporting section updated\n\n## Gotchas\n\n- #2706 and #2707 edit the same file; consider landing them together.\n- Some laws (peak-end rule, Von Restorff effect) are more subjective than others (Fitts's law, Miller's law); the citation names the law without implying more mechanical certainty than the row's manual-inspection framing allows.\n- The source reel spells it \"Jacob's law\"; the correct name is Jakob's law (after Jakob Nielsen).\n\n## Original request\n\nAdd classic friction-reduction UX laws to the review lens\n\nCurrent State:\n- The design-review lens has no checks tied to the classic conversion/friction heuristics: choice count (Hick's Law), tap-target/CTA affordance (Fitts's Law), navigation familiarity (Jacob's Law), or chunked identifiers like phone numbers and codes (Miller's Law).\n- No check for a journey's peak/end moments (Peak-End Rule), spatial grouping of related controls (Proximity), or a single visually distinct emphasis element (Von Restorff Effect).\n\nDeliverables:\n- A policy row per law: too-many-options, small/ambiguous primary actions, unfamiliar nav patterns, unchunked numeric IDs, no memorable peak/end step, ungrouped related controls, no standout CTA.\n- Cite the law by name in the check's explanation so violations are self-documenting.\n\nAcceptance Criteria:\n- Running the lens on a form with 10+ ungrouped choices or an unchunked ID field flags the specific law violated.\n\nSource: https://www.instagram.com/p/DddqpGrS-lI/\n",
         "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAAC0IWj4w",
-            "name": "fix-on-worktree-worktree-dispatch-record-1350",
-            "description": "Fixed on worktree-worktree-dispatch-record-1350, not yet on the default branch",
-            "color": "FBCA04"
-          }
+          "ready",
+          "risk:low",
+          "size:low",
+          "type:feature",
+          "auto:build",
+          "priority:low",
+          "ceremony:fast-lane",
+          "shaped:headless"
         ],
-        "number": 1350,
+        "createdAt": "2026-09-20T19:30:43Z",
+        "updatedAt": "2026-09-30T06:06:04Z",
         "state": "OPEN",
-        "title": "Verify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)",
-        "updatedAt": "2026-09-13T13:14:34Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -898,7 +551,50 @@
           "stage": "ready",
           "grants": {
             "build": true,
-            "merge": true
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      }
+    ],
+    [
+      {
+        "number": 2634,
+        "title": "simplify dispatch: caller can observe a still-in-flight async Task write as \"done\"",
+        "body": "Surface: infra\nOrigin: reflect light from #2621\nDefer-reason: tangential\n\n**Related:** #2533, #2714\n\n## Current State\n\n`/claude-tweaks:simplify`'s Step 2 dispatches the `code-simplifier:code-simplifier` subagent via the `Agent` tool, which runs asynchronously: the dispatch returns immediately, and the agent's final state is only known once its completion notification (its reply ending in the `STATUS:` line Step 2's own output template requires) arrives. The paragraph at `plugin/skills/simplify/SKILL.md:87` (\"When dispatched with file-path scope …\") tells the caller to \"diff them against its own change scope and revert anything outside it\" but never says *when* — nothing ties the check to that completion signal.\n\nDuring record #2621's review Step 5, the caller ran `git status` shortly after dispatch, saw one out-of-scope file modified, reverted it (`git checkout --`), and moved on. The agent was still running: it went on to write a second, larger wave of out-of-scope edits (a `cmdNextTarget` refactor in `harness-health.js`) that a later, unrelated check caught and a second `git checkout --` pass had to clean up. A diff-and-revert check run before the agent has returned has no guarantee it is looking at final state.\n\n## Deliverables\n\n1. Amend the file-path-scope paragraph in `plugin/skills/simplify/SKILL.md` Step 2 so the diff-and-revert check has an explicit precondition: it runs only after the subagent's reply — carrying Step 2's required `STATUS:` line — has been received, never against an ad hoc `git status` poll taken while the dispatch may still be running.\n2. State the consequence of a premature check in the same paragraph, briefly: edits the agent writes after an early revert survive into the caller's commit.\n\n## Acceptance Criteria\n\n1. `plugin/skills/simplify/SKILL.md` Step 2's file-path-scope paragraph names receipt of the subagent's final reply (its `STATUS:` line) as the precondition for the diff-and-revert check.\n2. The same paragraph says a working-tree check taken before that reply is not the agent's final state and must not drive a revert.\n3. No other step of `/claude-tweaks:simplify` changes, and `npm test` passes (prose conformance suites pin skill text repo-wide).\n\n## Release Note\n\nClarified that /simplify's out-of-scope revert check waits for the simplifier agent to finish, so late edits can no longer slip past it.\n\n## Technical Approach\n\nA prose-only change to one paragraph. The record's original second option — a new \"wait for this dispatch\" primitive — is not taken: the completion notification already exists and is the plugin's established \"agent is done\" signal (`plugin/skills/dispatch/task-prompt.md` forbids ending a turn to wait on one, which is compatible — the caller simply does the check in the turn that receives the reply). Naming the existing signal as the precondition closes the race without new machinery.\n\n### Key Files\n\n- `plugin/skills/simplify/SKILL.md` — Step 2's file-path-scope paragraph gains the completion-precondition sentence\n\n## Gotchas\n\n- Do not add polling or sleep-loop guidance — the fix is ordering (check after the reply), not waiting harder.\n- `/claude-tweaks:review` Step 5 dispatches `/simplify` and is where the race surfaced; its own text defers to Step 2 here, so no edit is needed there — confirm with a grep for the Step 2 paragraph's wording before assuming otherwise.\n\n## Original request\n\nsimplify dispatch: caller can observe a still-in-flight async Task write as \"done\"\n\nOrigin: reflect light from #2621\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:simplify`'s Step 2 dispatches the `code-simplifier:code-simplifier` subagent via the `Agent` tool, which is asynchronous — the dispatch call returns immediately with an `agentId`, and the caller is told \"you know nothing about its results until [a] notification arrives.\" Step 2's own guidance (\"Before committing the returned changes, the caller should diff them against its own change scope and revert anything outside it\") assumes the caller can check `git status`/`git diff` once, right after dispatch, and see the agent's *final* state. During this review's Step 5 (record #2621), the caller (this flow run) checked `git status` shortly after dispatch, saw one out-of-scope file modified, reverted it (`git checkout --`), and moved on — only to find on a later, unrelated check that the agent had *continued writing* after that revert, producing a second, larger wave of out-of-scope edits (a `cmdNextTarget` refactor in `harness-health.js`) that required a second `git checkout --` pass to reach a clean tree. Because the Agent tool's async notification is the only reliable \"the agent is truly done\" signal, and the coordinating call cannot poll/sleep-loop for it, a caller that does the diff-and-revert check on its own initiative (rather than waiting for the completion notification) has no guarantee it is looking at final state.\n\n## Deliverables\n\nClarify `skills/simplify/SKILL.md` Step 2's diff-and-revert guidance to state explicitly that the revert check must run only after the dispatch's completion notification has been received (not on an ad hoc `git status` poll), or provide an explicit \"wait for this dispatch\" primitive callers can use without violating the \"never end this turn waiting\" constraint documented elsewhere in this same plugin's dispatch guidance.\n\n## Acceptance Criteria\n\n`skills/simplify/SKILL.md`'s Step 2 names the completion-notification requirement (or an equivalent wait primitive) as a precondition for the diff-and-revert check, so a caller following the instructions as written cannot repeat this race.\n\n_Filed by `reflect` via specShapedBody._\n",
+        "labels": [
+          "ready",
+          "risk:low",
+          "size:low",
+          "type:bug",
+          "auto:build",
+          "priority:low",
+          "ceremony:fast-lane"
+        ],
+        "createdAt": "2026-09-20T00:20:33Z",
+        "updatedAt": "2026-09-30T06:06:16Z",
+        "state": "OPEN",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
           },
           "bot": {
             "inProgress": false,
@@ -910,320 +606,24 @@
           "notPlanned": false,
           "shapedHeadless": false
         }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n`checkOneFixture` in `tools/upstream-drift/checks.js` (lines 330-380) replays a manifest fixture command and asserts its observed output against `expect`. The function hard-requires the named stream (`expect.stream`, `stdout` or `stderr`) to parse as JSON — `tryParseJson(streams[wanted].trim())` — and returns a mismatch if it doesn't, including a special case that names when the JSON payload landed on the other stream instead. This makes it impossible to write a fixture for a command whose failure output is plain text rather than JSON. This was discovered while auditing #2480 (Impeccable CLI Rust-engine shim): the engine-locate/download failure path writes a plain-text message to stderr and exits 127, but there is no way to assert that exact behavior as a fixture today — only a JSON-shaped stderr/stdout payload is expressible.\n\n## Deliverables\n1. Extend `checkOneFixture` to support a plain-text/substring assertion mode on a named stream, as an alternative to the existing JSON-parse assertion — expressible via a new `expect` field (e.g. `expect.contains` or `expect.textMatch`) that, when present, asserts a substring match on `streams[expect.stream]` instead of requiring JSON parse.\n2. Update the manifest schema/validation (`tools/upstream-drift/manifest.js`) to accept the new field alongside the existing `exit`/`stream`/`keys` fields, validating that a fixture specifies either the JSON-mode fields or the new text-mode field, not an ambiguous mix.\n3. Add a fixture to `tools/upstream-drift/manifest.yml` (or a test-only manifest) exercising the plain-text stderr case from #2480 (or an equivalent), to prove the new mode round-trips a real plain-text failure.\n\n## Acceptance Criteria\n1. A fixture whose `expect` includes the new text-mode field and a substring that appears in the named stream's actual output passes `checkOneFixture`.\n2. A fixture whose `expect` includes the new text-mode field and a substring that does NOT appear in the named stream's actual output returns a `mismatch` result with a detail naming the expected substring and which stream was checked.\n3. Existing JSON-mode fixtures (using `expect.keys`) are unaffected — `checkOneFixture`'s existing JSON-parse path and its stdout/stderr swap detection continue to work exactly as before for fixtures that don't use the new field.\n4. The manifest validation in `manifest.js` accepts fixtures using the new text-mode field without requiring the JSON-mode `keys` field, and still validates `exit`/`stream` are present as it does today.\n5. A fixture reproducing the #2480 plain-text-stderr/exit-127 case round-trips correctly (passes when the actual behavior matches, fails with an informative detail when it regresses).\n\n## Technical Approach\nAdd a new optional `expect` field for text/substring assertion, checked in `checkOneFixture` before or alongside the existing JSON-parse branch: if the text-mode field is present, skip the JSON-parse requirement entirely and instead check `streams[wanted].includes(expectedSubstring)`, returning a `mismatch` with a clear detail (naming the expected substring and observed stream) on failure. Keep the existing JSON-parse path unchanged for fixtures that don't opt into the new field — the two modes should be mutually exclusive per fixture, decided by which `expect` fields are present. Update `manifest.js`'s fixture validation to allow this new field and to require that a fixture uses exactly one assertion mode (JSON-mode via `keys`, or text-mode via the new field) rather than allowing both or neither silently.\n\n### Key Files\n- `tools/upstream-drift/checks.js` — `checkOneFixture` (lines 330-380): add the text/substring assertion branch, keep the JSON-parse path unchanged for non-opted-in fixtures\n- `tools/upstream-drift/manifest.js` — fixture schema validation: accept the new `expect` field, enforce mutually-exclusive assertion mode\n- `tools/upstream-drift/manifest.yml` — add or extend a fixture exercising the plain-text-stderr case from #2480\n- `tools/upstream-drift/tests/manifest.test.js` — add test coverage for the new field's validation\n- `tools/upstream-drift/tests/checks.test.js` (if it exists; otherwise the relevant checks test file) — add test coverage for the new text-mode assertion branch in `checkOneFixture`\n\n## Gotchas\nThe two assertion modes (JSON-parse vs. text/substring) must stay mutually exclusive per fixture — allowing both to be specified together would create ambiguous validation semantics. The existing stdout/stderr-swap detection in the JSON-parse path is a load-bearing anti-regression check (comment at checks.js:361-366 calls it \"the single most important case this function exists to catch\"); the new text-mode path does not need to replicate that specific swap-detection logic unless a plain-text payload swap becomes a realized failure mode worth catching, but should not regress the existing JSON-mode swap detection.\n\n## Original request\n\nupstream-drift checkOneFixture cannot assert plain-text stderr, only JSON\n\n**Related:** #2480\n\nContext: Discovered auditing #2480 (Impeccable CLI Rust-engine shim) -- the engine-locate/download failure writes a plain-text message to stderr and exits 127, but checkOneFixture (tools/upstream-drift/checks.js:359-369) hard-requires the asserted stream to parse as JSON.\n\nScope: Extend checkOneFixture (or add a sibling assertion mode) to support a text/substring match on a named stream, so a plain-text failure like this becomes expressible as a fixture.\n",
-        "createdAt": "2026-09-17T20:11:46Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2573,
-        "state": "OPEN",
-        "title": "upstream-drift checkOneFixture cannot assert plain-text stderr, only JSON",
-        "updatedAt": "2026-09-29T11:22:00Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
       },
       {
-        "body": "Surface: infra\n\n## Current State\nTwo recurring coding-agent anti-patterns have been identified from an external source (a transcribed Instagram Reel from a developer who has shipped 15+ AI-built apps):\n\n1. **Polling instead of realtime push** — agents building a data flow that needs live updates default to fixed-interval polling (e.g. `setInterval` fetches every few seconds) instead of a realtime push/subscription mechanism when the backend already supports one (e.g. a Supabase/Convex subscription, a websocket, SSE). This looks fine in testing but drains battery and degrades frame rate under real usage.\n2. **Duplicate \"v2\" files instead of in-place edits** — agents avoid replacing working code in place, instead layering a `v2`/duplicate-suffixed file or function on top \"just in case.\" This leaves dead code around, and the agent loses track of which version is actually live, leading to circular, self-breaking edits on later requests.\n\nAnti-pattern 2 is already a standing instruction in this repo's own CLAUDE.md (\"don't use feature flags or backwards-compatibility shims when you can just change the code\" — see the Philosophy/Don'ts sections) — the external source is independent confirmation that the same failure mode is common enough across coding agents generally to be worth a dedicated automated review check, not just a written instruction the agent might drift from under pressure.\n\nNeither anti-pattern currently has an automated review-lens check.\n\n## Deliverables\n1. Add a review-lens check that flags a newly introduced fixed-interval polling loop (`setInterval`/`setTimeout` recursion, or an equivalent polling construct) against a data source that already exposes or could reasonably expose a realtime push/subscription mechanism.\n2. Add a review-lens check that flags a newly created file or function with a version-suffix name pattern (`v2`, `-new`, `-copy`, `_updated`, etc.) sitting alongside an unremoved original that the diff did not delete or fully migrate away from.\n3. Document that these two checks formalize the existing CLAUDE.md \"change code in place\" instruction into an automated check, rather than relying on the instruction alone.\n\n## Acceptance Criteria\n- The polling check flags a sample diff that adds a fixed-interval polling loop against a realtime-capable backend.\n- The polling check does not flag polling against a data source with no realtime alternative available (e.g. a third-party REST API with no push option).\n- The duplicate-version check flags a sample diff that introduces a `v2`-suffixed (or equivalent) file/function alongside its unremoved original.\n- The duplicate-version check does not flag a legitimate versioned artifact (e.g. an API route intentionally versioned as `/v2/` for external consumers) — the check targets abandoned/duplicated internal code, not a deliberate external contract.\n- Documentation for the review-lens (or the relevant skill's checklist) states that these two checks formalize the existing CLAUDE.md instruction into an automated check.\n\n## Technical Approach\nLocate where existing review-lens checks live (likely under `/claude-tweaks:review`'s checks or a related lens-definition file) and read at least one existing check to match its structure and severity/reporting conventions. Add the two new checks following that same structure, including copy-paste-able flag conditions and a false-positive guard for each (realtime-unavailable backends for the polling check; deliberately-versioned external contracts for the duplicate-version check).\n\n### Key Files\n- (the review-lens check definitions directory — identify exact path via the `/claude-tweaks:review` skill before editing; not yet confirmed in this record)\n\n## Gotchas\n- The exact location of existing review-lens check definitions is not confirmed in this record — locate it first rather than assuming a path.\n- The duplicate-version check must not fire on legitimate, deliberately-versioned external-facing artifacts (API routes, published package majors) — only on abandoned/duplicated internal code from indecisive in-place-edit avoidance.\n- The polling check must not fire when no realtime alternative exists for the given backend/data source — polling is the correct choice there, not an anti-pattern.\n\n## Original request\n\nFlag polling-vs-realtime and duplicate-version anti-patterns\n\nCurrent State:\n- Reel (hook-only caption; transcribed), from a developer who has shipped 15+ AI-built apps, names two recurring coding-agent anti-patterns: (1) agents default to polling the server every few seconds instead of using a realtime push mechanism (e.g. Supabase/Convex subscriptions), draining battery and degrading frame rate under real usage even though it feels fine in testing; (2) agents avoid replacing code in place, instead layering a \"v2\" on top of the working version \"just in case,\" which leaves dead code around and causes the agent to lose track of which version is live, leading to circular, self-breaking edits on later requests.\n- The second anti-pattern is already addressed as a standing instruction in this session's own CLAUDE.md guidance (\"don't use feature flags or backwards-compatibility shims when you can just change the code\") — this reel is independent confirmation the same failure mode is common enough to be worth a dedicated automated check, not just a written instruction the agent might drift from.\n\nDeliverables:\n- Add a review-lens check for: (a) new realtime data flows implemented as fixed-interval polling instead of push/subscription where the backend supports it; (b) newly created \"v2\"/duplicate-suffixed files or functions sitting alongside an unremoved original.\n\nAcceptance Criteria:\n- Check flags a sample polling loop and a sample duplicate-version file pair.\n- Docs note this formalizes an existing CLAUDE.md instruction into an automated check rather than relying on the instruction alone.\n\nSource: https://www.instagram.com/reel/DcW5UU5SUaB/\n",
-        "createdAt": "2026-09-20T09:55:37Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2669,
-        "state": "OPEN",
-        "title": "Flag polling-vs-realtime and duplicate-version anti-patterns",
-        "updatedAt": "2026-09-20T19:20:59Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\nclaude-tweaks has no standing performance-audit lens — `/code-health` and `/review` don't check image format, unused resource loading, or a measured baseline. A 3-minute speed-audit checklist (image format conversion, unused-resource flagging, PageSpeed Insights baseline before changing anything) exists as an established, low-cost pattern worth codifying as a lens.\n\n## Deliverables\n\n- Add a perf-audit lens/policy row (image-format check, unused-resource flag, PageSpeed Insights baseline) to `/code-health` or `/review`.\n- Keep it a fast, free check — no new paid tooling.\n\n## Acceptance Criteria\n\n- Running the lens against a sample app reports pass/fail for at least the three checks above (image format, unused resources, PageSpeed Insights baseline).\n\n## Technical Approach\n\nFollow the existing lens/checklist pattern already used by `/code-health` or `/review` (whichever this lands in — a per-file judgment at build time) rather than inventing a new mechanism: a checklist section the skill consults during its audit pass. Image-format check and unused-resource flag are static analysis (file extension/size heuristics); the PageSpeed Insights baseline step is a documented manual/CLI step (Lighthouse CLI or the PSI API), not a new paid dependency.\n\n### Key Files\n\n- `plugin/skills/code-health/` or `plugin/skills/review/` — wherever the new lens/policy row lands (decide at build time based on which skill's existing structure fits best)\n\n## Gotchas\n\n- \"No new paid tooling\" is an explicit constraint from the Deliverables — verify whichever PageSpeed Insights integration is chosen (CLI, free-tier API) stays within that bound.\n- This is a lightweight addition, not a full performance-audit subsystem — scope the three named checks only; resist expanding into a broader perf-testing framework.\n\n## Original request\n\nAdd a lightweight perf-audit lens (images, unused loads, measure-first)\n\nCurrent State:\n- claude-tweaks has no standing performance-audit lens; /code-health and /review don't check image format, unused resource loading, or a measured baseline.\n- A reel gives a 3-minute speed-audit checklist: convert non-PNG-appropriate images, cut unused loaded resources, and run PageSpeed Insights before changing anything.\n\nDeliverables:\n- Add a perf-audit lens/policy row (image-format check, unused-resource flag, PageSpeed Insights baseline) to /code-health or /review.\n- Keep it a fast, free check — no new paid tooling.\n\nAcceptance Criteria:\n- Running the lens against a sample app reports pass/fail for at least the three checks above.\n\nSource: https://www.instagram.com/reel/DcFfEBOxlKZ/\n",
-        "createdAt": "2026-09-20T19:00:54Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2692,
-        "state": "OPEN",
-        "title": "Add a lightweight perf-audit lens (images, unused loads, measure-first)",
-        "updatedAt": "2026-09-21T06:13:24Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nThe Impeccable/design-review lens has no explicit rules for count badges vs. status dots (when to combine, when they collide). No guidance distinguishes \"something changed\" (dot) from \"how much\" (number), or governs badge color semantics (red = act now, green = online). No rule flags a badge that lingers after the user has already viewed the item, or a count that resets to zero instead of ticking down.\n\n## Deliverables\n\n- A policy row (or lens check) for badge/dot usage: one signal per element, color tied to meaning, clears on view.\n- A check for \"badge everything\" anti-patterns that dilute color meaning.\n- Reference the source technique inline so the check has a rationale, not just a rule.\n\n## Acceptance Criteria\n\n- Running the design-review lens on a UI with a badge flags a dual dot+counter on the same element.\n- The check explains why (noise / trained-to-ignore) rather than just failing silently.\n\n## Technical Approach\n\nFollow this repo's existing design-review lens/policy-row pattern (`design-wrapper`'s Impeccable-routed passes) rather than inventing a new check mechanism. Add the badge/dot rule as a new policy row: flag an element carrying both a status dot and a count badge simultaneously (dual signal), flag a badge color that doesn't map to the established red/green (or equivalent) meaning convention, and flag a badge/count pattern description that never mentions clearing on view. Each flagged violation's message should name the specific rule violated and a one-line rationale (noise / trained-to-ignore), per the Acceptance Criteria.\n\n### Key Files\n\n- `plugin/skills/design-wrapper/modes/` — wherever the design-review lens's policy rows are defined, for the new badge/dot check\n\n## Gotchas\n\n- This is related to #2707 (a sibling UI-review-lens checklist addition, same reel author/series) — consider whether both land in the same lens-extension pass rather than two separate small PRs, to avoid churn on the same file.\n- Keep the check's rationale text genuinely explanatory (why dual-signal badges create noise), not just a restated rule — the Acceptance Criteria explicitly require this.\n\n## Original request\n\nAdd a notification-badge design checklist to the UI review lens\n\n**Related:** #2707\n\nCurrent State:\n- The impeccable/design-review lens has no explicit rules for count badges vs. status dots (when to combine, when they collide).\n- No guidance distinguishes \"something changed\" (dot) from \"how much\" (number), or governs badge color semantics (red = act now, green = online).\n- No rule flags a badge that lingers after the user has already viewed the item, or a count that resets to zero instead of ticking down.\n\nDeliverables:\n- A policy row (or lens check) for badge/dot usage: one signal per element, color tied to meaning, clears on view.\n- A check for \"badge everything\" anti-patterns that dilute color meaning.\n- Reference the source technique inline so the check has a rationale, not just a rule.\n\nAcceptance Criteria:\n- Running the design-review lens on a UI with a badge flags a dual dot+counter on the same element.\n- The check explains why (noise / trained-to-ignore) rather than just failing silently.\n\nSource: https://www.instagram.com/reel/Dcnuc60NbeO/\n",
-        "createdAt": "2026-09-20T19:14:14Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
         "number": 2706,
-        "state": "OPEN",
         "title": "Add a notification-badge design checklist to the UI review lens",
-        "updatedAt": "2026-09-21T06:13:05Z",
+        "body": "Surface: infra\n\n**Related:** #2707, #2709\n\n## Current State\n\nThe Impeccable/design-review lens has no explicit rules for count badges vs. status dots (when to combine, when they collide). No guidance distinguishes \"something changed\" (dot) from \"how much\" (number), or governs badge color semantics (red = act now, green = online). No rule flags a badge that lingers after the user has already viewed the item, or a count that resets to zero instead of ticking down.\n\n## Deliverables\n\n- A policy row (or lens check) for badge/dot usage: one signal per element, color tied to meaning, clears on view.\n- A check for \"badge everything\" anti-patterns that dilute color meaning.\n- Reference the source technique inline so the check has a rationale, not just a rule.\n\n## Acceptance Criteria\n\n- Running the design-review lens on a UI with a badge flags a dual dot+counter on the same element.\n- The check explains why (noise / trained-to-ignore) rather than just failing silently.\n\n## Release Note\n\nThe UX heuristics lens now flags confusing notification badges: doubled dot-and-count signals, colors without meaning, and badges that never clear.\n\n## Technical Approach\n\nAdd the badge/dot rules as rows in `/claude-tweaks:visual-review`'s UX heuristics lens (`plugin/skills/visual-review/ux-heuristics-lens.md`, the plugin-owned UI checklist that page mode Step 4 applies and `/claude-tweaks:review` uses for UI-affecting diffs), in its existing Heuristic | What it flags | Example violation shape. `design-wrapper/modes/` is not the home: it routes to Impeccable and to project-local critics and owns no checklist of its own. Rows: one signal per element (flag a status dot and a count badge on the same element), color tied to meaning (flag badge colors that do not map to a stated convention, and \"badge everything\" dilution), and clears on view (flag a badge that lingers after the item was viewed, or a count that resets instead of ticking down). Each row's \"What it flags\" carries the one-line rationale (noise; users trained to ignore), per the Acceptance Criteria.\n\n### Key Files\n\n- `plugin/skills/visual-review/ux-heuristics-lens.md` — new checklist rows for badge/dot usage\n\n## Gotchas\n\n- #2707 and #2709 edit the same file (`ux-heuristics-lens.md`); Key Files overlap lets `/flow`/`/dispatch` group them. Landing them together avoids three rounds of churn on one table.\n- Keep the rationale text genuinely explanatory (why dual-signal badges create noise), not a restated rule — the Acceptance Criteria require it.\n- The lens header describes its rows as manual-inspection prompts, not hard rules; the new rows follow that framing.\n\n## Original request\n\nAdd a notification-badge design checklist to the UI review lens\n\n**Related:** #2707\n\nCurrent State:\n- The impeccable/design-review lens has no explicit rules for count badges vs. status dots (when to combine, when they collide).\n- No guidance distinguishes \"something changed\" (dot) from \"how much\" (number), or governs badge color semantics (red = act now, green = online).\n- No rule flags a badge that lingers after the user has already viewed the item, or a count that resets to zero instead of ticking down.\n\nDeliverables:\n- A policy row (or lens check) for badge/dot usage: one signal per element, color tied to meaning, clears on view.\n- A check for \"badge everything\" anti-patterns that dilute color meaning.\n- Reference the source technique inline so the check has a rationale, not just a rule.\n\nAcceptance Criteria:\n- Running the design-review lens on a UI with a badge flags a dual dot+counter on the same element.\n- The check explains why (noise / trained-to-ignore) rather than just failing silently.\n\nSource: https://www.instagram.com/reel/Dcnuc60NbeO/\n",
+        "labels": [
+          "ready",
+          "risk:low",
+          "size:low",
+          "type:feature",
+          "auto:build",
+          "priority:low",
+          "ceremony:fast-lane",
+          "shaped:headless"
+        ],
+        "createdAt": "2026-09-20T19:14:14Z",
+        "updatedAt": "2026-09-30T06:05:58Z",
+        "state": "OPEN",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -1250,144 +650,22 @@
         }
       },
       {
-        "body": "Surface: infra\n\n## Current State\n\nThe design-review lens has no check for typographic-system discipline: font count, a fixed type-scale ratio, or a capped weight count. No rule catches hand-picked pixel sizes, uniform line-height across headings/body, or unbounded paragraph measure (characters per line). No check for tabular figures on numeric/price/timer UI, which is what stops columns from wobbling on data updates. Competitive note: a third-party Claude Code plugin (\"UX engine\") designs the screen before coding and audits diffs for an \"AI look\" — worth knowing about as adjacent to Impeccable.\n\n## Deliverables\n\n- A policy row for a bounded type scale (one ratio, capped sizes/weights) and capped line length (45-75 characters).\n- A check for tabular-nums usage on numeric UI.\n- A short note in Impeccable's own docs flagging the competing \"UX engine\" tool as a reference point.\n\n## Acceptance Criteria\n\n- Running the lens on a UI with unbounded font sizes or an unmeasured paragraph flags it with the specific rule violated.\n\n## Technical Approach\n\nFollow this repo's existing design-review lens/policy-row pattern (`design-wrapper`'s Impeccable-routed passes) rather than inventing a new check mechanism. Add three checks: (1) type-scale discipline — flag font-size values not derived from a single declared ratio, or a font/weight count exceeding a capped threshold; (2) line-length — flag a paragraph measure outside 45-75 characters per line; (3) tabular figures — flag numeric/price/timer UI not using tabular-nums (or equivalent fixed-width digit styling). Each flagged violation names the specific rule violated, per the Acceptance Criteria.\n\n### Key Files\n\n- `plugin/skills/design-wrapper/modes/` — wherever the design-review lens's policy rows are defined, for the three new checks\n- `plugin/skills/design-wrapper/` docs — the short note on the competing \"UX engine\" tool\n\n## Gotchas\n\n- This is related to #2706 (a sibling UI-review-lens checklist addition, same reel author/series) — consider whether both land in the same lens-extension pass rather than two separate small PRs, to avoid churn on the same file.\n- The competitor note is informational only — do not scope this record to evaluating/adopting the \"UX engine\" tool itself; that would be a separate evaluation record if warranted.\n\n## Original request\n\nAdd a typographic-system checklist to the UI review lens\n\n**Related:** #2706\n\nCurrent State:\n- The design-review lens has no check for typographic-system discipline: font count, a fixed type-scale ratio, or a capped weight count.\n- No rule catches hand-picked pixel sizes, uniform line-height across headings/body, or unbounded paragraph measure (characters per line).\n- No check for tabular figures on numeric/price/timer UI, which is what stops columns from wobbling on data updates.\n- Competitive note: the reel promotes a third-party Claude Code plugin (\"UX engine\") that designs the screen before coding and audits diffs for an \"AI look\" — worth knowing about as adjacent to impeccable.\n\nDeliverables:\n- A policy row for a bounded type scale (one ratio, capped sizes/weights) and capped line length (45-75 characters).\n- A check for tabular-nums usage on numeric UI.\n- A short note in impeccable's own docs flagging the competing \"UX engine\" tool as a reference point.\n\nAcceptance Criteria:\n- Running the lens on a UI with unbounded font sizes or an unmeasured paragraph flags it with the specific rule violated.\n\nSource: https://www.instagram.com/reel/Ddd04e2tQWx/\n",
-        "createdAt": "2026-09-20T19:16:47Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
         "number": 2707,
-        "state": "OPEN",
         "title": "Add a typographic-system checklist to the UI review lens",
-        "updatedAt": "2026-09-21T06:13:02Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\nThe design-review lens has no checks tied to the classic conversion/friction heuristics: choice count (Hick's Law), tap-target/CTA affordance (Fitts's Law), navigation familiarity (Jacob's Law), or chunked identifiers like phone numbers and codes (Miller's Law). No check for a journey's peak/end moments (Peak-End Rule), spatial grouping of related controls (Proximity), or a single visually distinct emphasis element (Von Restorff Effect).\n\n## Deliverables\n\n- A policy row per law: too-many-options, small/ambiguous primary actions, unfamiliar nav patterns, unchunked numeric IDs, no memorable peak/end step, ungrouped related controls, no standout CTA.\n- Cite the law by name in the check's explanation so violations are self-documenting.\n\n## Acceptance Criteria\n\n- Running the lens on a form with 10+ ungrouped choices or an unchunked ID field flags the specific law violated.\n\n## Technical Approach\n\nFollow this repo's existing design-review lens/policy-row pattern (`design-wrapper`'s Impeccable-routed passes, the same mechanism #2706/#2707 extend) rather than inventing a new check mechanism. Add seven policy rows, one per named heuristic, each citing the law by name in its violation message: choice-count threshold (Hick's), minimum tap-target size (Fitts's), navigation-pattern familiarity (Jacob's), numeric-ID chunking (Miller's), peak/end moment presence in multi-step journeys (Peak-End), spatial grouping of related controls (Proximity), and single-standout-CTA presence (Von Restorff).\n\n### Key Files\n\n- `plugin/skills/design-wrapper/modes/` — wherever the design-review lens's policy rows are defined, for the seven new checks\n\n## Gotchas\n\n- This is the third UI-review-lens checklist addition from the same source series (#2706, #2707, #2709) — consider whether all three should land in one consolidated lens-extension pass rather than three separate small PRs, to avoid repeated churn on the same policy-row file.\n- Some of these heuristics (Peak-End Rule, Von Restorff Effect) are more subjective/journey-level than the others (tap-target size, ID chunking, which are directly measurable) — keep the check's confidence/certainty language honest per heuristic rather than treating all seven as equally mechanical.\n\n## Original request\n\nAdd classic friction-reduction UX laws to the review lens\n\nCurrent State:\n- The design-review lens has no checks tied to the classic conversion/friction heuristics: choice count (Hick's Law), tap-target/CTA affordance (Fitts's Law), navigation familiarity (Jacob's Law), or chunked identifiers like phone numbers and codes (Miller's Law).\n- No check for a journey's peak/end moments (Peak-End Rule), spatial grouping of related controls (Proximity), or a single visually distinct emphasis element (Von Restorff Effect).\n\nDeliverables:\n- A policy row per law: too-many-options, small/ambiguous primary actions, unfamiliar nav patterns, unchunked numeric IDs, no memorable peak/end step, ungrouped related controls, no standout CTA.\n- Cite the law by name in the check's explanation so violations are self-documenting.\n\nAcceptance Criteria:\n- Running the lens on a form with 10+ ungrouped choices or an unchunked ID field flags the specific law violated.\n\nSource: https://www.instagram.com/p/DddqpGrS-lI/\n",
-        "createdAt": "2026-09-20T19:30:43Z",
+        "body": "Surface: infra\n\n**Related:** #2706, #2709\n\n## Current State\n\nThe design-review lens has no check for typographic-system discipline: font count, a fixed type-scale ratio, or a capped weight count. No rule catches hand-picked pixel sizes, uniform line-height across headings/body, or unbounded paragraph measure (characters per line). No check for tabular figures on numeric/price/timer UI, which is what stops columns from wobbling on data updates. Competitive note: a third-party Claude Code plugin (\"UX engine\") designs the screen before coding and audits diffs for an \"AI look\" — worth knowing about as adjacent to Impeccable.\n\n## Deliverables\n\n- A policy row for a bounded type scale (one ratio, capped sizes/weights) and capped line length (45-75 characters).\n- A check for tabular-nums usage on numeric UI.\n\n## Acceptance Criteria\n\n- Running the lens on a UI with unbounded font sizes or an unmeasured paragraph flags it with the specific rule violated.\n\n## Release Note\n\nThe UX heuristics lens now checks typography: a bounded type scale, readable line length, and tabular figures on numeric UI.\n\n## Technical Approach\n\nAdd the checks as rows in `/claude-tweaks:visual-review`'s UX heuristics lens (`plugin/skills/visual-review/ux-heuristics-lens.md`, the plugin-owned UI checklist page mode Step 4 applies and `/claude-tweaks:review` uses for UI-affecting diffs), in its existing Heuristic | What it flags | Example violation shape. `design-wrapper/modes/` is not the home: it routes to Impeccable and project-local critics and owns no checklist. Rows: (1) type-scale discipline — font sizes not derived from one ratio, or font/weight counts over a cap; (2) line length — paragraph measure outside 45-75 characters; (3) tabular figures — numeric/price/timer UI without tabular-nums. Each finding names the rule violated, per the lens's own Reporting section.\n\n### Key Files\n\n- `plugin/skills/visual-review/ux-heuristics-lens.md` — new checklist rows for type scale, line length, and tabular figures\n\n## Gotchas\n\n- #2706 and #2709 edit the same file (`ux-heuristics-lens.md`); consider landing them together to avoid repeated churn on one table.\n- The competitor (\"UX engine\") mention in Current State is informational only. Shaping dropped the original \"note in Impeccable's own docs\" deliverable: Impeccable is a third-party plugin this repo does not edit. Evaluating the tool would be a separate record.\n\n## Original request\n\nAdd a typographic-system checklist to the UI review lens\n\n**Related:** #2706\n\nCurrent State:\n- The design-review lens has no check for typographic-system discipline: font count, a fixed type-scale ratio, or a capped weight count.\n- No rule catches hand-picked pixel sizes, uniform line-height across headings/body, or unbounded paragraph measure (characters per line).\n- No check for tabular figures on numeric/price/timer UI, which is what stops columns from wobbling on data updates.\n- Competitive note: the reel promotes a third-party Claude Code plugin (\"UX engine\") that designs the screen before coding and audits diffs for an \"AI look\" — worth knowing about as adjacent to impeccable.\n\nDeliverables:\n- A policy row for a bounded type scale (one ratio, capped sizes/weights) and capped line length (45-75 characters).\n- A check for tabular-nums usage on numeric UI.\n- A short note in impeccable's own docs flagging the competing \"UX engine\" tool as a reference point.\n\nAcceptance Criteria:\n- Running the lens on a UI with unbounded font sizes or an unmeasured paragraph flags it with the specific rule violated.\n\nSource: https://www.instagram.com/reel/Ddd04e2tQWx/\n",
         "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
+          "ready",
+          "risk:low",
+          "size:low",
+          "type:feature",
+          "auto:build",
+          "priority:low",
+          "ceremony:fast-lane",
+          "shaped:headless"
         ],
-        "number": 2709,
+        "createdAt": "2026-09-20T19:16:47Z",
+        "updatedAt": "2026-09-30T06:06:01Z",
         "state": "OPEN",
-        "title": "Add classic friction-reduction UX laws to the review lens",
-        "updatedAt": "2026-09-21T06:13:00Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -1419,16 +697,9 @@
   "bundles": [
     {
       "records": [
-        2573,
-        2669,
-        2692
-      ]
-    },
-    {
-      "records": [
+        2634,
         2706,
-        2707,
-        2709
+        2707
       ]
     }
   ]
