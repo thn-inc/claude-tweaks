@@ -49,3 +49,12 @@ AUTO 17:42:19 — Step 7: deleted execution plan docs/superpowers/plans/2026-09-
 AUTO 17:42:19 — Step 7: deleted execution plan docs/superpowers/plans/2026-09-20-harness-health-premise-check.md (related record #2621 closed). Reversibility: med (commit dcaf1a5ed).
 AUTO 17:42:20 — Step 7: deleted execution plan docs/superpowers/plans/2026-09-21-plan-audit-checkc-vcs-refusal.md (related record #2593 closed). Reversibility: med (commit ca5ff478b).
 AUTO 17:42:20 — Step 7: deleted execution plan docs/superpowers/plans/2026-09-29-prose-code-twin-pin-skill.md (related record #2792 closed). Reversibility: med (commit e5f6d32fb).
+AUTO 17:46:32 — Step 7.5: PR #2851 opened (tidy-housekeeping-pr) and gh pr merge --auto requested; PR merged immediately (no pending required checks) [lever: housekeeping-auto-merge=true (policy)]. Reversibility: med (revert PR).
+APPROVED — Step 6: user approved all 7 staged items in-session ("okay go ahead"); premises re-verified fresh (4 parked records open+parked with blockers closed; no existing record for any of the 3 defects).
+AUTO 18:00:39 — Step 7: Promote #2668 — no mutation; recommended /claude-tweaks:specify #2668 (staged/tidy-promote-1.md). Reversibility: high.
+AUTO 18:00:39 — Step 7: Promote #2667 — no mutation; recommended /claude-tweaks:specify #2667 (staged/tidy-promote-2.md). Reversibility: high.
+AUTO 18:00:39 — Step 7: Promote #2664 — no mutation; recommended /claude-tweaks:specify #2664 (staged/tidy-promote-3.md). Reversibility: high.
+AUTO 18:00:39 — Step 7: Promote #2633 — no mutation; recommended /claude-tweaks:specify #2633 (staged/tidy-promote-4.md). Reversibility: high.
+AUTO 18:00:39 — Step 7: Captured #2852 (readClaimBlobsGitBatch encoding defect) — shaped, ready, risk:low size:low, Defer-reason: tangential; overlap-check comment posted (false positive, defect verified on origin/main) (staged/tidy-capture-1.md). Reversibility: high.
+AUTO 18:00:39 — Step 7: Captured #2853 (item 10 GraphQL node-limit defect) — shaped, ready, risk:low size:low, Defer-reason: tangential; overlap-check comment posted (false positive) (staged/tidy-capture-2.md). Reversibility: high.
+AUTO 18:00:39 — Step 7: Captured #2854 (acceptance-gap stateReason defect) — shaped, ready, risk:medium size:medium, Defer-reason: tangential (staged/tidy-capture-3.md). Reversibility: high.

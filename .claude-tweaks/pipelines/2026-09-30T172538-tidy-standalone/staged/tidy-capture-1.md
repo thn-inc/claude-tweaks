@@ -6,7 +6,7 @@ Proposed: file a backlog record (bug) with the spec-shaped body below via /claud
 ## Current State
 
 `plugin/bin/lib/issues/claims-git-cas.js:299` (origin/main) calls
-`runner(['cat-file', '--batch'], { input: \`${orderedShas.join('\n')}\n\`, encoding: 'buffer' })`.
+`` runner(['cat-file', '--batch'], { input: `${orderedShas.join('\n')}\n`, encoding: 'buffer' }) ``.
 With the module's `defaultRunner` (`execFileSync`), Node uses `options.encoding` to encode a
 string `input`, and `'buffer'` is not a valid string encoding — Node v22.23.2 throws
 `ERR_UNKNOWN_ENCODING` (reproduced: `execFileSync('cat', [], { input: 'x\n', encoding: 'buffer' })`).
