@@ -147,12 +147,14 @@ The hook surface (`bin/hooks.js`, see CLAUDE.md Conventions → Hooks) mechanize
 - `git push` to shared branches
 - Creating work records (filing new records on the user's tracker) — except scheduled health-skill born-ready records (see `_shared/work-record.md`'s born-ready rule) and queue-write proposals when the `autonomy` ceiling's `queueWriteAutoFile` bookkeeping capability is unlocked (`trusted`+ — see `_shared/autonomy-ceiling.md`)
 - Originating a work-record grant (`auto:build` / `auto:merge`) — except via `/claude-tweaks:backlog refine`'s headless posture, under the `autonomy` ceiling's `unattended` tier plus its explicit `grant-origination-enabled` opt-in, for an agent-filed class carrying a `clean` trust verdict that also clears a content-aware `grant-check` and every floor (see `_shared/autonomy-ceiling.md`, `backlog/refine-headless.md`). Both keys default off; a human sets them deliberately in `policy.yml`
-- Network calls beyond reads (no API writes, no message sends)
+- Network calls beyond reads (no API writes, no message sends) — except `/claude-tweaks:tidy`'s Release Note repair (`tidy/step-6-auto.md`'s **Fill Release Note** row): one additive `## Release Note` section on a `ready` record, the pre-write body snapshotted first and the post-write diff and label set verified (#2828). The pre-write snapshot plus a human-run `gh issue edit --body-file`/record-file restore (`local-files`) — the pipeline never restores automatically — is what satisfies the Reversibility floor's `high` for this one write — an undo that costs one more API call or file write, not a `git revert`, but cheap and mechanical the same way
 - Modifying project-policy values — `.claude-tweaks/policy.yml`'s keys, and the
   work-record keys still resident in CLAUDE.md (`work-backend`, `work-types`,
   `record-staleness-weeks`)
 - Deleting specs
 - Executing a live, side-effecting, hard-to-reverse action against shared state solely to verify an acceptance criterion — a real PR/merge/branch-delete cycle, an irreversible external API call, or anything similarly destructive taken just to prove the AC — defer it instead to the closing summary's Manual Steps table (an `ops` ledger entry, `reason-not-auto: live-verification` — `_shared/ledger-format.md`'s Required-for-ops table). Worked example: #683's AC4 asked for a live create-worktree/commit/PR/merge/teardown cycle against the actual repo; deferred rather than executed mid-pipeline.
+
+**An exception to this list states its restore contract before it is built.** A record that adds one — an auto-applied outward write whose `high` reversibility rests on an undo artifact — writes as an Acceptance Criterion who restores (the pipeline, or a named human-run command), the precondition a restore requires (the target still holds exactly this run's write), and the outcome when that precondition fails. Left unstated, #2828's Release Note repair took five restore rulings across four review rounds to settle.
 
 ## What `auto` silences
 

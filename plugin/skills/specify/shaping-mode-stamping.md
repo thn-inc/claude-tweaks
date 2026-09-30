@@ -143,6 +143,9 @@ Ui-stack: {value}
 ## Acceptance Criteria
 ...
 
+## Release Note
+...
+
 ## Technical Approach
 ...
 
@@ -166,6 +169,7 @@ SPECIFY_SHAPED_BODY=$(node -e "
   const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
   console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-shaped-body.md') || require('path').join(require('os').tmpdir(), 'specify-shaped-body.md'))
 ")
+node "${CLAUDE_PLUGIN_ROOT}/bin/compose-record.js" --check "$SPECIFY_SHAPED_BODY" || exit
 gh issue edit {n} \
   --body-file "$SPECIFY_SHAPED_BODY" \
   --add-label ready \
@@ -178,6 +182,8 @@ gh issue edit {n} \
   --remove-label "needs:decision"
 ```
 
+`--check` (#2827) is the Materialization gate's own checker; the bare `exit` keeps its exit code. Any non-zero exit → write nothing, stamp no labels. Exit 4: the record's Actions Performed row renders `failed` with the Detail `pre-write shape check failed:` plus the stderr gap lines (any other exit: the same row, quoting stderr verbatim instead); a batch continues with the next record, and under `--chained`/bare drain that row is the returned/reported outcome.
+
 Omit `--add-label "risk:{tier}"` / `--add-label "size:{tier}"` / `--add-label "ceremony:{tier}"` for whichever family was already stamped; omit `--type {t}` (or the `--add-label "type:{t}"` swap) when Type was already present; omit `--remove-label parked` when the record never carried it. Omit `--remove-label "needs:definition"` / `--remove-label "needs:decision"` individually for
 whichever the record never carried — same omit-when-absent rule as `--remove-label parked` — and
 run the comment-resolution mechanics above first when `needs:decision` is one of the labels being
@@ -185,7 +191,7 @@ removed. `--add-label "solution:unjustified"` follows a different rule from the 
 
 One further flag is keyed to the **entry path**, not to any verdict: when this pass was entered via the bare-drain headless entry path (including its deprecated `next` alias) (`next-mode.md`'s Shape step — this file's opening paragraph names it as an entry path), add `--add-label "shaped:headless"` to this same call, alongside `--add-label ready`. Unlike `--add-label "solution:unjustified"`, this one is **unconditional** whenever the entry was via bare drain — every successful bare-drain shape carries the provenance marker, no exceptions — and it never appears at all under the interactive or `--chained` entry paths, which have a human or a caller in the loop. Carrying it in this call is what makes the pair atomic: `ready` and `shaped:headless` land in one write, so no reader ever observes a bare-drain-shaped record as `ready` (and therefore permanently outside bare drain's own eligibility query) without its marker, and a failed write leaves the record unshaped and still eligible rather than stranded half-stamped. Bootstrap `shaped:headless` per `_shared/label-bootstrap.md` before the first write, same as any other new label.
 
-**`work-backend: local-files`:** one `writeRecord` call does the same job, setting `facets.stage: 'ready'` (which supersedes any prior `'parked'` value — the two are mutually exclusive states) and filling `facets.risk`/`facets.size`/`facets.ceremony`/`facets.type` when they were `null` (`facets.ceremony` always gets a value the first time a record is shaped — no null/unscored state for this axis, unlike `risk`/`size`) and `facets.solutionUnjustified` (unlike `facets.ceremony`, this one is written `true` ONLY on a final `solution-baked` outcome — `false` whenever the outcome is `open`, matching `sharedFacetDefaults()`'s own default) and `facets.breaking` (written `true` only when the Compatibility bullet stamped it, `false` otherwise). When the outcome is `open` and the record's existing `facets` already carry `solutionUnjustified: true` from an earlier pass, clear it — set `facets.solutionUnjustified` to `false` in the same `writeRecord` call rather than leaving a stale `true` on a record that has since re-shaped clean:
+**`work-backend: local-files`:** write `$SHAPED_BODY` to that same session-tmp path and run the same `compose-record.js --check` first, same exit handling; then one `writeRecord` call does the same job, setting `facets.stage: 'ready'` (which supersedes any prior `'parked'` value — the two are mutually exclusive states) and filling `facets.risk`/`facets.size`/`facets.ceremony`/`facets.type` when they were `null` (`facets.ceremony` always gets a value the first time a record is shaped — no null/unscored state for this axis, unlike `risk`/`size`) and `facets.solutionUnjustified` (unlike `facets.ceremony`, this one is written `true` ONLY on a final `solution-baked` outcome — `false` whenever the outcome is `open`, matching `sharedFacetDefaults()`'s own default) and `facets.breaking` (written `true` only when the Compatibility bullet stamped it, `false` otherwise). When the outcome is `open` and the record's existing `facets` already carry `solutionUnjustified: true` from an earlier pass, clear it — set `facets.solutionUnjustified` to `false` in the same `writeRecord` call rather than leaving a stale `true` on a record that has since re-shaped clean:
 
 ```bash
 node -e "const {writeRecord}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
@@ -211,7 +217,7 @@ Immediately after each record's write lands — the `gh issue edit`/`writeRecord
 
 Assert, against the re-fetched result:
 - `ready` is present, plus every scoring label this record's stamp step (above) added or already carried (`risk:*`, `size:*`, `ceremony:*`, Type). When this pass was entered via the `next` form's headless posture, `shaped:headless` is present too — the atomicity guarantee above is only as good as this check catching a partial write of the two-flag call.
-- The five spec-shaped sections (`## Current State`, `## Deliverables`, `## Acceptance Criteria`, `## Technical Approach`, `## Gotchas`) plus `## Original request` are all present in the re-fetched body.
+- The six spec-shaped sections (`## Current State`, `## Deliverables`, `## Acceptance Criteria`, `## Release Note`, `## Technical Approach`, `## Gotchas`) plus `## Original request` are all present in the re-fetched body.
 - No unresolved placeholder marker (`TBD`, `TODO`, `<!-- ambiguity:`) survived into the written body outside the preserved `## Original request` section (these exact literals — assertion targets, not composed-body mentions — see the placeholder-token rule above).
 - `parked` is absent from the re-fetched labels — the stamp step above always removes it on promotion.
 - No `needs:*`-prefixed label survived the write — this pass's own removal bullet (above) always
@@ -232,13 +238,13 @@ A read-back failure does **not** roll back the write or stop the batch — it fo
 
 ### Actions Performed
 
-One row per record — a single-record run renders one row, a comma-list batch renders one row per shaped record (a record whose write failed, or whose read-back verification (above) failed, renders its row with the failure in the Detail cell instead of the stamps):
+One row per record — a single-record run renders one row, a comma-list batch renders one row per shaped record (a record whose pre-write shape check refused the body, whose write failed, or whose read-back verification (above) failed, renders its row with the failure in the Detail cell instead of the stamps):
 
 | Action | Detail | Ref |
 |--------|--------|-----|
 | Operational | Shaped record {ref} into spec shape — stamped `risk:{tier}`/`size:{tier}`/`ceremony:{tier}` and Type where each was absent, added `ready`, removed `parked` if present | `{hash}` (local-files) / `—` (github-issues — edit already landed via API, no commit) |
 
-For a comma-list batch, render one row per shaped element, in list order, and prefix each Detail with its outcome: `shaped` (this run edited the record — the row above), `already shaped, no-op` (every section present and non-empty and every label family already stamped — nothing written, nothing to undo), `refused — proposed Absorb into #{candidate}` (`shaping-mode.md`'s Near-duplicate candidate check found a `ready`, in-flight-build candidate and stopped before composing — no body write, `needs:decision` stamped instead), or `failed` (either the write call itself failed, or the read-back verification (above) failed — the Detail cell's own text names which one). There is no `skipped` outcome here — the batch branch's stop-all failure semantics (`SKILL.md`'s `## Input`, Comma-list batch form) mean an unresolvable element never reaches shaping mode at all; every row this table renders is an element that was actually shaped, refused, or attempted-and-failed. The Ref column follows the same per-driver rule on every row.
+For a comma-list batch, render one row per shaped element, in list order, and prefix each Detail with its outcome: `shaped` (this run edited the record — the row above), `already shaped, no-op` (every section present and non-empty and every label family already stamped — nothing written, nothing to undo), `refused — proposed Absorb into #{candidate}` (`shaping-mode.md`'s Near-duplicate candidate check found a `ready`, in-flight-build candidate and stopped before composing — no body write, `needs:decision` stamped instead), or `failed` (the pre-write shape check (Compose-then-write-once) refused the composed body, the write call itself failed, or the read-back verification (above) failed — the Detail cell's own text names which one). There is no `skipped` outcome here — the batch branch's stop-all failure semantics (`SKILL.md`'s `## Input`, Comma-list batch form) mean an unresolvable element never reaches shaping mode at all; every row this table renders is an element that was actually shaped, refused, or attempted-and-failed. The Ref column follows the same per-driver rule on every row.
 
 Shaping mode ends here — return to `SKILL.md` and render its `## Next Actions` block: the "Shaping mode — one record shaped in place" row of its Situation table for a single record, the "Shaping mode — multiple records shaped in place" row for a comma-list batch (its recommended command lists every successfully shaped record, in the order given). Under `--chained` (see `SKILL.md`'s Input and Component-Skill Contract), or under the `next` form's headless posture (`next-mode.md`), skip Next Actions entirely and return control to the calling skill — the shaped, `ready` record is the whole deliverable; `next-mode.md` has nobody present to read a rendered Next Actions block anyway.
 

@@ -83,6 +83,7 @@ means there:
 |---|---|
 | Reporting a landed-but-unverified mutation as `HELD` | `HELD` means nothing landed; this is `PARTIAL` |
 | Mapping one engine exit code to one outcome word | Split the ambiguous code on stderr or a re-probe |
+| A snippet that rewrites the engine's exit (`cmd \|\| exit 4`) ahead of prose that branches on its codes | End it with a bare `\|\| exit`, which re-raises the engine's own code — `\|\| exit 4` turned `compose-record.js --check`'s exit 2 into 4 and made the non-gap branch unreachable (`plugin/skills/specify/shaping-mode-stamping.md`, `2042a3948`). Pin it by running the snippet against a fake CLI that exits 2; a `\|\| exit\b` regex also matches `\|\| exit 4` |
 | "Re-run the skill" as the recovery for `PARTIAL` | Name the idempotent per-item writes |
 | Booking the value the skill gated on | Book the value the engine returned |
 | A per-record failure in the last loop with no summary slot | A `bookkeeping: {k} of {n} failed` line whenever k > 0 |
