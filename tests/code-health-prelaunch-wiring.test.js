@@ -58,9 +58,14 @@ test('focus-mode.md F1/F2 handle the checklist array and the not-applicable resu
   assert.match(f2, /focus=prelaunch: not applicable — no web pages detected/);
 });
 
-test('every registered focus has a Criterion-pinning row', () => {
+test('the Criterion-pinning table and the focus registry name exactly the same foci', () => {
   const pinning = section(FOCUS_MODE, 'Criterion pinning', 'F0');
-  for (const key of Object.keys(FOCUS_GENERATORS)) {
-    assert.ok(pinning.includes(`| \`${key}\` |`), `no Criterion-pinning row for focus \`${key}\``);
-  }
+  const rowKeys = pinning.split('\n')
+    .map((l) => l.match(/^\| `([a-z-]+)` \|/))
+    .filter(Boolean)
+    .map((m) => m[1]);
+  assert.ok(rowKeys.length > 0, 'no Criterion-pinning rows parsed');
+  // Both directions: a registered focus with no row is a fail-loud stop at
+  // runtime, and a row for a retired or mistyped focus is dead guidance.
+  assert.deepStrictEqual([...rowKeys].sort(), Object.keys(FOCUS_GENERATORS).sort());
 });
