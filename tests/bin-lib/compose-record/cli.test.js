@@ -129,3 +129,50 @@ test('--help prints usage and exits 0', () => {
   assert.equal(run(['--help'], deps(out)), 0);
   assert.match(streamOf(out, 'out'), /usage: compose-record\.js/);
 });
+
+const SHAPED_BODY = SHAPED_PAYLOAD.body;
+
+test('--check: a conforming body exits 0 with no output', () => {
+  const dir = tmpDir();
+  const bodyFile = path.join(dir, 'body.md');
+  fs.writeFileSync(bodyFile, SHAPED_BODY);
+  const out = [];
+  assert.equal(run(['--check', bodyFile], deps(out)), 0);
+  assert.equal(out.length, 0);
+});
+
+test('--check: a body missing its Release Note exits 4 with the exact --require-shaped stderr', () => {
+  const dir = tmpDir();
+  const bodyFile = path.join(dir, 'body.md');
+  fs.writeFileSync(bodyFile, SHAPED_BODY.replace('\n\n## Release Note\n\nDid the thing.', ''));
+  const out = [];
+  assert.equal(run(['--check', bodyFile], deps(out)), 4);
+  assert.equal(streamOf(out, 'err'), 'compose-record.js: body is not spec-shaped:\n  - missing section: ## Release Note\n');
+  assert.equal(streamOf(out, 'out'), '');
+});
+
+test('--check: an empty body file exits 4 naming all four sections', () => {
+  const dir = tmpDir();
+  const bodyFile = path.join(dir, 'empty.md');
+  fs.writeFileSync(bodyFile, '');
+  const out = [];
+  assert.equal(run(['--check', bodyFile], deps(out)), 4);
+  const err = streamOf(out, 'err');
+  for (const s of ['Current State', 'Deliverables', 'Acceptance Criteria', 'Release Note']) {
+    assert.match(err, new RegExp(`  - missing section: ## ${s}\\n`));
+  }
+});
+
+test('--check: misuse exits 2', () => {
+  const dir = tmpDir();
+  const bodyFile = path.join(dir, 'body.md');
+  fs.writeFileSync(bodyFile, SHAPED_BODY);
+  const payloadFile = path.join(dir, 'payload.json');
+  fs.writeFileSync(payloadFile, JSON.stringify(SHAPED_PAYLOAD));
+  assert.equal(run(['--check'], deps([])), 2, '--check with no file');
+  assert.equal(run(['--check', path.join(dir, 'missing.md')], deps([])), 2, 'unreadable body file');
+  assert.equal(run(['--check', bodyFile, '--out', path.join(dir, 'o.md')], deps([])), 2, 'with --out');
+  assert.equal(run(['--check', bodyFile, '--require-shaped'], deps([])), 2, 'with --require-shaped');
+  assert.equal(run([payloadFile, '--check', bodyFile], deps([])), 2, 'with a positional payload');
+  assert.equal(fs.existsSync(path.join(dir, 'o.md')), false, 'nothing written on misuse');
+});

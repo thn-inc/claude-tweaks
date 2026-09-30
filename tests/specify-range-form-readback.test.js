@@ -57,7 +57,7 @@ test('shaping-mode.md documents mandatory read-back verification after each reco
   assert.ok(src.includes('does **not** roll back the write or stop the batch'), 'read-back failure-isolation rule missing');
   // Ordering language: the read-back for record k must complete before record k+1 starts.
   assert.ok(src.includes('before moving to the next record in the batch'), 'read-back per-record ordering language missing');
-  for (const token of ['`ready` is present', 'five spec-shaped sections', 'No unresolved placeholder marker']) {
+  for (const token of ['`ready` is present', 'six spec-shaped sections', 'No unresolved placeholder marker']) {
     assert.ok(src.includes(token), `read-back assertion "${token}" missing`);
   }
   // The pre-existing outcome vocabulary this task must not disturb:

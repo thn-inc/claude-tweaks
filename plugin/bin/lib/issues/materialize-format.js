@@ -7,7 +7,14 @@
 'use strict';
 
 const REQUIRED_SECTIONS = ['## Current State', '## Deliverables', '## Acceptance Criteria', '## Release Note'];
-const PLACEHOLDER_RE = /\bTBD\b|\bTODO\b|<!--\s*ambiguity:/;
+// One entry per placeholder marker; the gate's combined regex is their union, so
+// compose.js can name which marker matched without a second implementation (#2827).
+const PLACEHOLDER_PATTERNS = [
+  { marker: 'TBD', re: /\bTBD\b/ },
+  { marker: 'TODO', re: /\bTODO\b/ },
+  { marker: '<!-- ambiguity:', re: /<!--\s*ambiguity:/ },
+];
+const PLACEHOLDER_RE = new RegExp(PLACEHOLDER_PATTERNS.map((p) => p.re.source).join('|'));
 
 // Everything from the `## Original request` heading to end of body is a
 // verbatim copy of the record's original title/body (shaping-mode.md's
@@ -173,5 +180,5 @@ function composeFile({ header, n, title, body }) {
 }
 
 module.exports = {
-  REQUIRED_SECTIONS, sectionText, shapeGate, liftMetadata, composeHeader, composeFile, stripCodeSpans,
+  REQUIRED_SECTIONS, PLACEHOLDER_PATTERNS, ORIGINAL_REQUEST_RE, sectionText, shapeGate, liftMetadata, composeHeader, composeFile, stripCodeSpans,
 };

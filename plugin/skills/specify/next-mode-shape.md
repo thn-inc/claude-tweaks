@@ -228,7 +228,8 @@ even though it passed the guard. `shaping-mode.md`'s own per-record
 self-check excludes this file's guard invocation from its count for
 exactly this reason.
 
-A shaping-stage failure — the compose-then-write-once call failing, or
+A shaping-stage failure — the pre-write `compose-record.js --check` refusing
+the body, the compose-then-write-once call failing, or
 `shaping-mode.md`'s own read-back verification failing — is a failure for
 this file's purposes: Release (below) still runs first, unconditionally,
 before this failure reaches Failure self-report below.

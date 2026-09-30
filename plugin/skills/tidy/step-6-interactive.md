@@ -38,6 +38,8 @@ Full decision log: {run-dir}/decisions.md
 
 Section semantics follow `step-6-auto.md`'s Bucket mapping and are bound by its "Report rules" section (stated once there — not restated here): in interactive mode, **Applied automatically** carries only what already executed without a decision (reconcile-converged outcomes only); every active recommendation from the scans (delete, defer, absorb, promote, sync, fix, close, resolve, capture, open parent gate — every mutating entry in `SKILL.md`'s Action Vocabulary table) renders as a numbered row (1..N) in **Approve ({N})**, which is the set the "Approve ({N})" option executes; findings that only a human can act on (needs-scoring, re-triage, acceptance gaps, trigger-met parked records, unsettled runs, ungranted PRs, cross-spec patterns, design-record drift) render in **Yours ({N})** grouped per `step-6-auto.md`'s Yours grouping, each group closing with its batch line or paste block; Keep rows and clean scans are counted in **Clean:** — kept visible as counts, never itemized rows.
 
+`[release-note]` rows are staged and rendered exactly as `release-note-repair.md` describes: its `## Compose the line` step's Composition timing note has this mode compose each line before this report renders, written to the per-record session-tmp line file, and the row's command renders exactly as that file's Stage tier `command` — never recomposed here, never restated.
+
 Immediately after presenting the report above, call `AskUserQuestion`:
 
 - `question`: `"How do you want to handle these tidy actions?"`, `header`: `"Tidy actions"`, `multiSelect`: `false`
