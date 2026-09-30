@@ -22,7 +22,7 @@ Each candidate is `{ file, kind, evidence }` — `kind` is one of `client-secret
 
 This vertical owns exactly the three checks above. It explicitly does **not** own:
 - **#2622's pre-scale hardening** (query performance, background-job reliability, caching, connection pooling, monitoring/alerting for scale) — a different, performance-oriented concern even where it also touches "endpoint hardening" territory (e.g. rate limiting appears in both problem statements; here it is scoped narrowly to protecting an AI-calling endpoint from cost/abuse, not to general throughput).
-- **#2625's GDPR/backup-retention check** (cryptographic erasure for backup retention on account deletion) — a narrower, compliance-specific concern this vertical does not touch.
+- **The GDPR/backup-retention check** (cryptographic erasure for backup retention on account deletion) — a narrower, compliance-specific concern this vertical does not touch; it lives in `criteria-privacy-pii.md`'s "Backup retention outlives erasure" flag instead (#2625).
 
 ## Severity calibration
 
