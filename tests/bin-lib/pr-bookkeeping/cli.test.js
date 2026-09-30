@@ -163,3 +163,47 @@ test('run: a genuine bookkeeping violation exits 4 and surfaces the message on s
   assert.match(err.join(''), /IL-131/);
   assert.strictEqual(out.join(''), '', 'a violation must never print an ok result');
 });
+
+// #2664: the same multi-spec per-spec runDir shape as precondition.test.js's
+// #2664 cases, driven end-to-end through the CLI's run() -- the run dir is
+// anchored under the main checkout ({main}/.claude-tweaks/pipelines/
+// {parent-run-id}/spec-{N}/), the real layout, and resolveTarget computes the
+// anchor itself (mainRoot omitted) via a genuine git-worktree traversal.
+function commitPerSpecMaterializeFile(repo, parentId, n) {
+  const rel = path.join('.claude-tweaks', 'pipelines', parentId, `spec-${n}`, 'work', `${n}-spec.md`);
+  const full = path.join(repo, rel);
+  fs.mkdirSync(path.dirname(full), { recursive: true });
+  fs.writeFileSync(full, 'spec\n');
+  execFileSync('git', ['-C', repo, 'add', rel.split(path.sep).join('/')]);
+  execFileSync('git', ['-C', repo, 'commit', '-m', `materialize ${n}`, '-q']);
+}
+
+test('run (#2664): an unstamped multi-spec per-spec run dir with a landed materialize commit exits 4', () => {
+  const main = gitRepoWithCommit();
+  const wt = linkedWorktreeOf(main);
+  const parentId = '2026-09-17T000016-spec-7-8';
+  commitPerSpecMaterializeFile(wt, parentId, 7);
+  const runDir = path.join(main, '.claude-tweaks', 'pipelines', parentId, 'spec-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  const { deps, err, out } = makeDeps({ cwd: wt });
+  const code = run(['--run', runDir], deps);
+  assert.strictEqual(code, 4);
+  assert.match(err.join(''), /record-worktree/);
+  assert.strictEqual(out.join(''), '', 'a violation must never print an ok result');
+});
+
+test('run (#2664): a stamped multi-spec per-spec run dir exits 0 as pr-stamped-or-exempt', () => {
+  const main = gitRepoWithCommit();
+  const wt = linkedWorktreeOf(main);
+  const parentId = '2026-09-17T000017-spec-7-8';
+  commitPerSpecMaterializeFile(wt, parentId, 7);
+  const runDir = path.join(main, '.claude-tweaks', 'pipelines', parentId, 'spec-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active', worktree: wt, pr: { number: 1, url: 'https://example.com/1' },
+  }));
+  const { deps, out } = makeDeps({ cwd: wt });
+  const code = run(['--run', runDir], deps);
+  assert.strictEqual(code, 0);
+  assert.match(out.join(''), /ok \(pr-stamped-or-exempt\)/);
+});
