@@ -10,16 +10,16 @@ Gate invocation on `Surface: web/mobile/desktop` (per `design-wrapper/frontend-d
 
 | Heuristic | What it flags | Example violation |
 |---|---|---|
-| Reduce choices per screen | More top-level options/actions than a user can scan at a glance | A settings screen with 15+ ungrouped toggles in one flat list |
-| Use large targets | Interactive elements sized or spaced too small/tight for comfortable tapping/clicking | A 16px icon-only button with no surrounding padding, adjacent to another tappable element |
-| Favor familiar patterns | A novel interaction where a well-established convention exists and would serve just as well | A custom swipe-to-delete gesture with no visible affordance, replacing a standard delete icon |
-| Group related info | Visually or spatially separated content that belongs together | A form's error message rendered far from the field it refers to |
-| Chunk content | A long unbroken block of text/fields with no visual segmentation | A 12-field signup form with no section headers or grouping |
+| Reduce choices per screen (Hick's law) | More top-level options/actions than a user can scan at a glance | A settings screen with 15+ ungrouped toggles in one flat list |
+| Use large targets (Fitts's law) | Interactive elements sized or spaced too small/tight for comfortable tapping/clicking | A 16px icon-only button with no surrounding padding, adjacent to another tappable element |
+| Favor familiar patterns (Jakob's law) | A novel interaction where a well-established convention exists and would serve just as well | A custom swipe-to-delete gesture with no visible affordance, replacing a standard delete icon |
+| Group related info (law of common region / proximity) | Visually or spatially separated content that belongs together | A form's error message rendered far from the field it refers to |
+| Chunk content (Miller's law) | A long unbroken block of text/fields with no visual segmentation | A 12-field signup form with no section headers or grouping, or a 16-digit card or license code shown as one unbroken run of digits instead of groups of four |
 | Keep interactions under ~400ms | A click/tap/keystroke response that feels sluggish (manual-inspection prompt — no stopwatch available; judge from lived feel, not a measured threshold) | A button press with a visible lag before any feedback appears |
-| Highlight the primary action | No clear visual distinction between the primary action and secondary/tertiary ones | Three same-weight buttons ("Save", "Cancel", "Delete") with no visual hierarchy |
+| Highlight the primary action (Von Restorff effect) | No clear visual distinction between the primary action and secondary/tertiary ones | Three same-weight buttons ("Save", "Cancel", "Delete") with no visual hierarchy |
 | Keep key actions nearby | A frequently-needed action requires excessive scrolling or navigation to reach | The "Submit" button is off-screen below a long form with no sticky footer |
 | Put essentials first | Critical information or actions buried below less important content | A dashboard's most-used metric appears third, after two decorative widgets |
-| End flows memorably | A multi-step flow ends abruptly with no confirmation, summary, or next-step guidance | A checkout flow that just redirects to the homepage after payment with no confirmation screen |
+| End flows memorably (peak-end rule) | A multi-step flow ends abruptly with no confirmation, summary, or next-step guidance | A checkout flow that just redirects to the homepage after payment with no confirmation screen |
 | Show visible progress | A long-running operation gives no indication it's working | A file upload with no progress bar or spinner — the UI just appears frozen |
 | Simplify complex interfaces | A screen exposes more configuration/complexity than the common case needs | An "advanced" option always visible instead of behind a disclosure toggle |
 | Use sensible defaults | A field/setting ships with no default, or a default that fits nobody | A "results per page" selector defaulting to 1 instead of a reasonable common value |
@@ -39,7 +39,7 @@ Gate invocation on `Surface: web/mobile/desktop` (per `design-wrapper/frontend-d
 
 ## Reporting a finding
 
-When a screen violates a heuristic, name the specific heuristic (not a vague "UX could be better") and cite the concrete evidence — an `eN` ref plus description (per `browser-review.md`'s Element-reference convention) or a screenshot path. Findings from this lens fold into the same Step 6 Report & Route table as every other visual-review lens, with `Source = UX Heuristics`.
+When a screen violates a heuristic, name the specific heuristic (not a vague "UX could be better") and cite the concrete evidence — an `eN` ref plus description (per `browser-review.md`'s Element-reference convention) or a screenshot path. Findings from this lens fold into the same Step 6 Report & Route table as every other visual-review lens, with `Source = UX Heuristics`. When the violated row names a law (Hick's law, Fitts's law, and so on), cite that law by name in the finding, so the violation documents itself. The name identifies the principle; it does not make a manual-inspection row any more mechanical.
 
 ## What NOT to flag
 

@@ -51,6 +51,31 @@ test('#2707: numeric UI without tabular figures is flagged', () => {
   assert.match(row('Use tabular figures for numbers'), /tabular-nums/);
 });
 
+test('#2709: the seven covered rows name their law, without adding rows', () => {
+  const laws = {
+    'Reduce choices per screen': "Hick's law",
+    'Use large targets': "Fitts's law",
+    'Favor familiar patterns': "Jakob's law",
+    'Chunk content': "Miller's law",
+    'End flows memorably': 'peak-end rule',
+    'Group related info': 'law of common region / proximity',
+    'Highlight the primary action': 'Von Restorff effect',
+  };
+  for (const [heuristic, law] of Object.entries(laws)) row(`${heuristic} (${law})`);
+  // 20 rows from #2655, plus 3 from #2706 and 3 from #2707; #2709 adds none.
+  assert.strictEqual(checklistRows().length, 26);
+});
+
+test('#2709: the Chunk content example covers an unchunked numeric identifier', () => {
+  assert.match(row("Chunk content (Miller's law)"), /16-digit/);
+});
+
+test('#2709: a finding cites its row\'s law by name', () => {
+  const start = LENS.indexOf('## Reporting a finding');
+  const reporting = LENS.slice(start, LENS.indexOf('\n## ', start + 1));
+  assert.match(reporting, /cite that law by name/);
+});
+
 test('#2706: a badge must clear on view and a count must tick down', () => {
   const r = row('Clear badges on view');
   assert.match(r, /lingers after the user has viewed/);
