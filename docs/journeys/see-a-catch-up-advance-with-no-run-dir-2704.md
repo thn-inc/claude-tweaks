@@ -9,6 +9,8 @@ files:
 
 **Persona:** A maintainer working in a `worktree-always` project who opens an interactive session to shape or decompose a record with `/claude-tweaks:specify`. The SessionStart instruction moves them into a fresh worktree whose post-creation catch-up merge pulls in commits from `origin/main`. No `/flow` or `/dispatch` pipeline is running, so no run directory exists yet.
 **Goal:** Learn that the catch-up actually moved their branch, and by how much, without a `decisions.md` to read and without the advance being silently dropped.
+**Entry point:** A session started in the main checkout, where the SessionStart hook prints `claude-tweaks: worktree-always: ON (...)` and the instruction to invoke `/superpowers:using-git-worktrees`, then `/claude-tweaks:specify` asked to shape or decompose a record.
+**Success state:** A branch-advancing catch-up shows its `Post-creation catch-up: worktree branch advanced from …` line in the next reply and again in `/claude-tweaks:specify`'s Next Actions (or its `--chained` returned output); a no-op merge reports nothing; no run directory or log file was created to hold the line.
 
 ## Steps
 
