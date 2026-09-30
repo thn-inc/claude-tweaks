@@ -230,5 +230,9 @@
   "plugin/bin/lib/repair-claim": {
     "lastSweptMs": 1790651292729,
     "lastHash": "f4bd8215175c13e8b84c7ef28df81667a4e49968"
+  },
+  "plugin/bin/lib/residue": {
+    "lastSweptMs": 1790737647215,
+    "lastHash": "41dd5ed869332b9d90c85e8d685864a84e168a23"
   }
 }
