@@ -218,5 +218,10 @@ directives section, against the deltas above:
   list doesn't include it — noted here as an incidental finding) — `build/SKILL.md`'s "Autonomy Rules"
   section ("Do not ask for feedback during execution", "Do not ask 'should I proceed?' — yes, you should.
   Always.") already matches 5.1's documented "operating autonomously" prompting pattern. Confirmed aligned.
+- **Effort-level selection** — `_shared/subagent-dispatch-core.md`'s Model Selection table pins
+  `effort: high` for the Standard/Capable/Frontier profiles (Fast/Haiku carries no effort dial).
+  This is exactly the kind of profile-to-effort mapping the delta warns can stop matching a new
+  model version's own scale — flagged for a future re-sweep against Fable 5.1's own evals, not
+  changed here (re-deriving it is outside this record's scope; see spec Gotchas).
 - No skill body was found relying on now-changed default formatting or safeguard-phrasing behavior in this
   sample; a full-corpus sweep was out of scope for this record (spec Gotchas).
