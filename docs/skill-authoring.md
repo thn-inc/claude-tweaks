@@ -179,3 +179,44 @@ Use the exact blockquote prefix (`> **Parallel execution:**` or `> **Parallel ex
 Forms B and C always pair with the **Subagent Contract** (`plugin/skills/_shared/subagent-output-contract.md`) — minimal input, one of `DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED` as the agent's first line, then Templates A/B/C for output. Each dispatch picks a model profile (`Fast | Standard | Capable`); default to the cheapest that fits the work. Third-party agents are exempt from the agent-side protocol (see CLAUDE.md's Subagent Contract section); the dispatcher's side still applies in full.
 
 **Everything the agent must satisfy goes inside the inlined block.** A requirement written in the skill's own prose beside the template — a rule about what a section must always state, a constraint on when a line may be omitted, a tie-break the agent has to apply — is invisible to the agent: it receives the fenced block, not the file around it. Fold such requirements into the fence itself, or into the dispatch prompt's own enumerated contents list, and read the assembled prompt as the agent would receive it before shipping it. Inlining the template is necessary but not sufficient; the surrounding prose is not part of the dispatch. Inside the fence, order matters too: when a rule carries an exemption, state the exemption's **condition before its example** (or as its own bullet) — never `e.g. {example} … with {condition}`. An example that precedes its qualifying clause is read as the whole rule and the clause is dropped, independently and in the same direction, by the agent and by its reviewer (#704 Task 7).
+
+## Model-version prompting notes
+
+Anthropic documents behavioral differences between Claude model versions that can silently
+change how an existing skill's prose is followed — not because the skill's instructions are
+wrong, but because the model reading them defaults differently than the model the skill was
+written against. Run this checklist whenever a new Claude model version ships, not only for
+the Fable 5.1 delta below: re-read the model's own "Prompting Claude {version}" doc (when
+Anthropic publishes one) and re-check the deltas that apply to skill instructions specifically.
+
+**Claude Fable 5.1 vs. Fable 5** (source:
+https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-1):
+
+| Delta | What changed | What a skill author should check for |
+|---|---|---|
+| Tool-call batching | In coding/agent loops, 5.1 may issue one independent tool call per turn instead of batching them, where the next calls are implied by the task rather than explicitly requested. | A skill step that names several independent read-only operations (Glob/Grep/Read/Bash) should carry one of this file's own Parallel execution directive forms (see that section above) rather than assuming the model batches them unprompted. |
+| Progress-update prompting | 5.1 writes fewer user-facing updates during long tool-calling turns by default, especially at higher effort — a final message can cover only the last step instead of the whole task. | A skill that runs a long, mostly-silent tool chain (a multi-phase pipeline, a sweep) should say explicitly when it wants interim narration and what each update should contain — distinct from this repo's own `auto-decision-log.md` silent-automation-is-forbidden rule, which governs *audit trail*, not conversational narration. |
+| Effort-level selection | Effort-level names don't correspond to the same amount of thinking across model versions — a `Fast`/`Standard`/`Capable`/`Frontier` mapping tuned for one model version is not guaranteed to hold for the next. | Re-run the model-profile sweep in `_shared/subagent-output-contract.md`'s Model Selection section against the new model version's own evals before assuming an existing profile mapping still holds. |
+| Formatting | 5.1 leans toward less bold/fewer headers/lists by default than earlier models did; anti-formatting instructions written against an earlier model's over-formatting tendency can now over-correct. | A skill carrying explicit anti-bullet/anti-bold language (written against an earlier model's opposite bias) should be re-checked against the new model's own default rather than assumed still necessary. |
+| Safeguard false positives | 5.1's safety classifiers produce fewer false positives than earlier launches, but specific phrasings (e.g. "does this compile?" vs. "are there bugs?") and base64 tool output still trigger them more than other phrasings. | A skill instructing an agent to phrase a security/bug-finding request should prefer "are there bugs/vulnerabilities" phrasing over "does this compile/pass" phrasing, and avoid routing base64-encoded tool output through a step that also asks the model to reason about it. |
+| Subagent and vision handling | 5.1 coding agents get lower time-to-completion when the lead agent keeps working while a dispatched subagent runs, rather than blocking on it; vision work benefits from crop/zoom tooling on dense images. | A skill dispatching Task-tool subagents for independent work should not require blocking-wait phrasing when the lead has other independent work to continue; a skill analyzing a screenshot/chart should offer a crop/zoom step rather than a single full-image read when detail matters. |
+
+**Sample cross-check (2026-09-30, record #2644).** Read `plugin/skills/_shared/subagent-dispatch-core.md`
+(dispatch instructions to subagents), `plugin/skills/flow/SKILL.md` (multi-phase pipeline orchestrator),
+`plugin/skills/build/SKILL.md` (long-running autonomous build), and this file's own Parallel execution
+directives section, against the deltas above:
+
+- **Tool-call batching** — already covered, repo-wide: this file's own "Parallel execution directives"
+  section (Forms A/B/C, above) already instructs skills to batch independent read-only operations and
+  dispatch independent analytical work in parallel. No skill body was found asserting the opposite.
+  Confirmed unaffected — the existing convention already produces the behavior 5.1's delta calls for.
+- **Progress-update prompting** — `flow/SKILL.md` Step 4 already narrates `## Flow: Running {step} ({N}/{total})`
+  once per pipeline phase (a deliberate exception to that file's own mechanical-coupling rule, precisely
+  because there is no other progress signal for a single-spec run). This is exactly the kind of explicit
+  interim-narration instruction the delta recommends adding; confirmed aligned, not affected.
+- **Finish-the-whole-task / autonomy** (related but not table-listed above, since the spec's named delta
+  list doesn't include it — noted here as an incidental finding) — `build/SKILL.md`'s "Autonomy Rules"
+  section ("Do not ask for feedback during execution", "Do not ask 'should I proceed?' — yes, you should.
+  Always.") already matches 5.1's documented "operating autonomously" prompting pattern. Confirmed aligned.
+- No skill body was found relying on now-changed default formatting or safeguard-phrasing behavior in this
+  sample; a full-corpus sweep was out of scope for this record (spec Gotchas).
