@@ -261,3 +261,18 @@ test('checkPrBookkeepingPrecondition (#2664): a per-spec runDir honors a PR-earl
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.reason, 'degrade-logged');
 });
+
+test('checkPrBookkeepingPrecondition (#2664): a spec-* dir whose parent is NOT run-id-shaped does not inherit that parent\'s stamps', () => {
+  const main = gitRepoWithCommit();
+  const wt = linkedWorktreeOf(main);
+  // Not a multi-spec child (same rule as pre-tool-use.js's perSpecPathspec),
+  // so its materialize path is the ordinary single-record one rooted at spec-7.
+  commitMaterializeFile(wt, 'spec-7');
+  const notARun = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prbk-notarun-'));
+  writeRunState(notARun, { status: 'active', worktree: wt, pr: { number: 1, url: 'https://example.com/1' } });
+  const runDir = path.join(notARun, 'spec-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  const r = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'no-worktree-stamp');
+});

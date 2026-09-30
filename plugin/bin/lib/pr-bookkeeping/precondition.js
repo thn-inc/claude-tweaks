@@ -4,7 +4,7 @@ const path = require('path');
 const {
   hasMaterializeCommit, hasLoggedPrDegrade, resolveRunPinnedIntegrationModel,
 } = require('../hooks/pre-tool-use');
-const { readRunState } = require('../hooks/context');
+const { readRunState, RUN_ID_RE } = require('../hooks/context');
 const { mainCheckoutRoot, repoInfo } = require('../hooks/worktree-detect');
 
 // checkPrBookkeepingPrecondition({ runDir, cwd }) -> { ok, reason, message? }
@@ -48,7 +48,10 @@ function checkPrBookkeepingPrecondition({ runDir, cwd = process.cwd() }) {
   let parentRunDir = null;
   try {
     runState = readRunState(runDir) || {};
-    if (/^spec-/.test(path.basename(runDir))) {
+    // Only a genuine multi-spec child -- a spec-* dir whose parent is itself
+    // run-id-shaped, the same rule pre-tool-use.js's perSpecPathspec applies
+    // -- may borrow the parent's stamps; any other parent is not this run's.
+    if (/^spec-/.test(path.basename(runDir)) && RUN_ID_RE.test(path.basename(path.dirname(runDir)))) {
       parentRunDir = path.dirname(runDir);
       const parent = readRunState(parentRunDir) || {};
       runState = { ...runState };
