@@ -23,7 +23,11 @@
 //     routing convention) is invisible to every per-page check, and a
 //     non-page file that happens to match one of these shapes (e.g. a
 //     `page.ts` helper file outside App Router) is a possible false
-//     positive candidate site.
+//     positive candidate site. Files under test/fixture/example/dependency/
+//     build-output directories are never pages or scanned images, and
+//     plain `.html` files count as pages only alongside an `index.html` —
+//     so a repo whose only HTML is fixtures or a standalone template is
+//     "not applicable", not a site missing every launch item.
 //   - Meta detection (title, description, Open Graph image, favicon) is a
 //     regex text signal against source, never a render — a value injected
 //     only at runtime (a client-side `document.title = ...`, a meta tag
@@ -99,11 +103,18 @@ const TITLE_RE = /<title[\s>]|<Head[\s>]|<Helmet[\s>]|useHead\s*\(|useSeoMeta\s*
 const DESC_RE = /name=["']description["']|\bdescription\s*:/;
 const ALT_TAG_RE = /<(img|Image)\b[^>]*>/g;
 
+// Directory segments whose contents never ship as the site itself — test
+// suites, fixtures, examples, dependencies, and build output. Pages and
+// images under them are neither evidence that a repo is a website nor
+// launch defects of one.
+const NON_SITE_SEGMENT_RE = /(^|\/)(tests?|__tests__|spec|e2e|cypress|fixtures|__fixtures__|examples?|node_modules|vendor|dist|build|out|coverage|\.storybook)\//;
+
 // A file is a "page" for this checklist's purposes — see the plan's
 // Detection rule 2 for the exact shape. `.md`/`.mdx` count only under
 // `src/pages/` (Astro's convention); every other recognized extension needs
 // only a `pages/` directory segment anywhere in the path.
 function isPageFile(rel) {
+  if (NON_SITE_SEGMENT_RE.test(rel)) return false;
   const base = path.basename(rel);
   const ext = path.extname(rel);
   if (ext === '.html' || ext === '.htm') return true;
@@ -115,8 +126,15 @@ function isPageFile(rel) {
   return /(^|\/)pages\//.test(rel);
 }
 
+// A standalone `.html` file (a template, an exported report) is not a
+// site on its own: plain-HTML pages count only when the set also holds an
+// `index.html`/`index.htm`, the one file every static site has.
+// Framework-routed pages (`pages/`, App Router `page.*`) need no such
+// anchor — the routing convention already says "this is a site".
 function listPageFiles(files) {
-  return files.filter(isPageFile);
+  const pages = files.filter(isPageFile);
+  const hasHtmlIndex = pages.some((f) => /^index\.html?$/.test(path.basename(f)));
+  return hasHtmlIndex ? pages : pages.filter((f) => !/\.html?$/.test(f));
 }
 
 // Ancestor-layout files whose text can satisfy a page's title/description
@@ -358,6 +376,7 @@ function scanPrelaunch(rootDir) {
   let imagesScanned = 0;
   for (const f of discovery.files) {
     if (!IMAGE_EXTS.has(path.extname(f).toLowerCase())) continue;
+    if (NON_SITE_SEGMENT_RE.test(f)) continue;
     imagesScanned += 1;
     let stat;
     try {

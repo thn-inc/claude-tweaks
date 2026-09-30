@@ -111,6 +111,38 @@ test('a repo with no web pages is not applicable', () => {
   }
 });
 
+test('a repo whose only HTML is test fixtures and a standalone template is not applicable', () => {
+  const root = tmpGitRepo();
+  write(root, 'tests/fixtures/impeccable-cli/clean.html', '<html><body><img src=x></body></html>');
+  write(root, 'test/__fixtures__/page.html', '<html></html>');
+  write(root, 'plugin/skills/compare-shell/template.html', '<html><body></body></html>');
+  write(root, 'lib/util.js', 'module.exports = {};\n');
+
+  const result = scanPrelaunch(root);
+
+  assert.strictEqual(result.notApplicable, true);
+  assert.deepStrictEqual(result.candidates, []);
+  assert.deepStrictEqual(listPageFiles([
+    'tests/fixtures/impeccable-cli/clean.html',
+    'plugin/skills/compare-shell/template.html',
+  ]), []);
+});
+
+test('a real site does not flag images or pages that live under test or fixture directories', () => {
+  const root = tmpGitRepo();
+  write(root, 'public/index.html', '<html><head><title>Home</title><meta name="description" content="d"></head><body></body></html>');
+  write(root, 'public/about.html', '<html><head><title>About</title><meta name="description" content="d"></head><body></body></html>');
+  write(root, 'tests/fixtures/big.png', Buffer.alloc(600 * 1024));
+  write(root, 'tests/fixtures/untitled.html', '<html><body><img src=x></body></html>');
+
+  const result = scanPrelaunch(root);
+
+  assert.strictEqual(result.notApplicable, false);
+  assert.deepStrictEqual(listPageFiles(['public/index.html', 'public/about.html', 'tests/fixtures/untitled.html']), ['public/index.html', 'public/about.html']);
+  const offending = result.candidates.filter((c) => c.file.startsWith('tests/'));
+  assert.deepStrictEqual(offending, []);
+});
+
 // ── An App Router page inherits title and description from an ancestor layout
 
 test('an App Router page inherits title and description from an ancestor layout', () => {
