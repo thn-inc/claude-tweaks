@@ -35,7 +35,7 @@ files:
 - **Action:** The judge confirms or rejects each candidate against `criteria-prelaunch.md`'s severity calibration, and confirmed gaps are filed exactly like any other code-health finding. On a repo with no web pages — only a library, or only HTML test fixtures and templates — the run reports `focus=prelaunch: not applicable — no web pages detected` and stops.
 - **Should feel:** Proportionate. A missing 404 page is high severity; a missing favicon is low.
 - **Should understand:** Files under test, fixture, example, and build-output directories never count as the site, so a fixture's `robots.txt` or a 2 MB test image changes nothing.
-- **Red flags:** A non-website repo gets seven "missing" site-level issues filed against it.
+- **Red flags:** A non-website repo gets the five site-level "missing" issues (sitemap, robots, favicon, custom 404, OG image) filed against it.
 
 ## Origin
 - Created during build of #2693 (pre-launch checklist lens for AI/vibe-coded sites), 2026-09-30
