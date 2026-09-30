@@ -20,6 +20,8 @@
 
 ### Deliverable 2 trace (already done, the input to Task 3)
 
+> **Superseded during build:** the whole-branch review showed this trace's conclusion is wrong. Run-dir enumeration is top-level only, so a multi-spec run's shared `worktree`/`pr` stamps canonically live on the PARENT run dir, and the hook gate, `pack.js` `resolveState`, `engine-verify.js` `resolvePrNumber`, and the multispec console all read them there. Deliverable 3 WAS triggered. `precondition.js` now falls back per-spec → parent (commits 837d59fd3, c29752cb4). See the comment in `precondition.js` for the authoritative trace. The bullets below are kept as the original, disproven reasoning.
+
 - **Writer:** `plugin/bin/lib/hooks/context.js` `writeRunState(runDir, patch)` writes `{runDir}/run-state.json`. The pipeline writers of the `worktree`/`pr` fields are `plugin/bin/hooks.js`'s `record-worktree` handler (`--run` required, #1124) and `record-pr` handler (`--run`, else `resolveImplicitRunUnambiguous`, whose first arm is `PIPELINE_RUN_DIR`).
 - **Other callers (sole-site proof):** `grep -rn "writeRunState(" plugin/bin` lists 12 call sites. The rest either mint a separate ad-hoc dir (`context.js:587` `stampAdHocRunDir`, `post-tool-use.js:339`, both `standalone: 'adhoc'`) or patch only status or exemption fields onto the dir they're handed (`pre-tool-use.js:1735/1737/1845`, `close-run-state.js:109`, `session-end.js:25`, `pre-compact.js:18`, `reconcile/archive-merged.js:798/1160`). None writes to a parent dir.
 - **Per-spec writes:** in a `/flow` multi-spec run, each spec's own `/build` writes its per-spec `{parent}/spec-{N}/` dir:
