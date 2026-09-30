@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "capture",
+  "record": null,
+  "title": "github-pr-scan item 10 PR fetch exceeds GraphQL n…",
+  "action": "Capture defect: bulk PR fetch exceeds the 500k GraphQL node cap above ~50 PRs",
+  "command": "/claude-tweaks:capture (body: staged/tidy-capture-2.md)"
+ }
+]
