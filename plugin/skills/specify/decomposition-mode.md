@@ -169,7 +169,9 @@ Defaults below apply under `--granularity standard` (the default when the flag i
 
 ### Decomposition Heuristics
 
-**Check first — rewrite-signal against an existing subsystem.** Resolve `project-maturity` — `MATURITY=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values project-maturity)`. The resolver's schema default is `greenfield`, and a value outside the four-item enum also resolves to `greenfield`; at `greenfield`/`pre-launch`, skip this check entirely. When `early-production` or `established`, scan the design doc's Deliverables/Overview for rewrite-shaped language ("replace," "rewrite," "rebuild," "migrate off," "delete and rebuild") naming a target that appears to already exist in the codebase (per Step 1's file/git-log reads) — not something this same design doc introduces fresh. Step 1's Landscape scan does not itself compute an outside-reference count, so before deciding, run one targeted grep for the named target's identifier across the codebase (excluding its own file) to confirm at least one reference from outside the file itself. When matched, decompose along a strangler-fig boundary instead of the standard five below:
+**Check first — rewrite-signal against an existing subsystem.** Resolve `project-maturity` — `MATURITY=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values project-maturity)`. The resolver's schema default is `greenfield`, and a value outside the four-item enum also resolves to `greenfield`; at `greenfield`/`pre-launch`, skip this check entirely. When `early-production` or `established`, scan the design doc's Deliverables/Overview for rewrite-shaped language ("replace," "rewrite," "rebuild," "migrate off," "delete and rebuild") naming a target that appears to already exist in the codebase (per Step 1's file/git-log reads) — not something this same design doc introduces fresh. Step 1's Landscape scan does not itself compute an outside-reference count, so before deciding, run one targeted grep for the named target's identifier across the codebase (excluding its own file) to confirm at least one reference from outside the file itself.
+
+**Blast-radius qualifier (#2703).** A confirmed match doesn't automatically mandate the shape below — its rationale (old path stays working until the new one is verified) assumes a live consumer, which doesn't hold for dev/CI-only tooling. Fall through to the standard five heuristics instead, skipping the mandate, only when the doc's `Surface:` is `infra`/`backend` **and** its stated scope names no runtime consumer beyond this project's own dev/CI tooling (never an external-facing service or user-facing artifact). Narrowing, not weakening: an unclear/ambiguous doc still falls to the mandate below — never guess toward skipping. Otherwise, decompose along a strangler-fig boundary instead of the standard five:
 
 | Maturity | Decomposition shape |
 |---|---|
@@ -297,8 +299,24 @@ Place these recommendations in the Step 9 summary under a `### Diagram suggestio
 
 ---
 
-Continue at Step 3 in `decomposition-mode-closeout.md` (this skill's directory) — record creation
-and linking, the multi-persona red-team dispatch, record self-review, deletion of consumed
-artifacts, and the Step 9 summary/commit. Delegating this range to a subagent instead of
-continuing in this same thread? Use `mechanical-handoff.md`'s canonical dispatch prompt (this
-skill's directory) rather than hand-authoring one.
+## Delegate-or-continue decision (#2700)
+
+Steps 1, 2, 2.6, 2.5, and 2.5d above have resolved. **Decide now, before opening anything else,**
+whether the mechanical range (Step 3 onward) continues in this thread or delegates to a subagent —
+placed here, before either branch's own files, so a delegating caller never reads (then discards)
+the continuing-caller's files first.
+
+**Delegating?** Your complete interface is `mechanical-handoff.md`'s Required-inputs table (this
+skill's directory) plus `collapse-decision.md` (already read for Step 2.6) — compose the dispatch
+prompt from those two alone. Do **not** open `decomposition-mode-closeout.md`, `record-creation.md`,
+`record-creation-subissues.md`, `record-creation-linking.md`, `red-team.md`, or `spec-template.md`
+yourself — the delegated subagent reads them independently, so reading them here spends context
+on prose it will never execute (measured: 77,687 B / 26% of one session's tool-result bytes).
+The Required-inputs table already covers every input Steps 3-9 consume
+(work units ← Step 2, collapse ← Step 2.6, dependency graph ← Steps 1-2, design pre-step answers
+← Step 2.5, diagram suggestions ← Step 2.5d, design doc, run context) — nothing here is missing.
+
+**Continuing in this same thread?** This branch is unaffected by the above. Continue at Step 3 in `decomposition-mode-closeout.md`
+(this skill's directory) — record creation and linking, the
+multi-persona red-team dispatch, record self-review, deletion of consumed artifacts, and the
+Step 9 summary/commit.
