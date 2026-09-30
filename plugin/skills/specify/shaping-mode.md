@@ -13,7 +13,7 @@ there is nothing to decompose, and none of decomposition mode's Steps 1-9 (`deco
 element (case 1's batch branch) before this file loads. Sniff every record's surface first (Step
 2.5a needs only the fetched content) and resolve the one batched design-intent question (Metadata
 block below), then run every section below independently for each record, in the order given: its
-own five sections + `## Original request`, its own metadata block, its own
+own six sections + `## Original request`, its own metadata block, its own
 scoring/ceremony/framing/type stamps, its own compose-then-write-once call. Two things differ from a
 single-record run and are stated where they apply below: interactive decisions raised per record
 collapse into one batch table + one `AskUserQuestion` (Metadata block), and the Actions Performed
@@ -37,7 +37,7 @@ references are the primary input) and it has no use for decomposition mode's muc
 
 ### Edit the body into spec shape
 
-Rewrite the record's body into six sections, in this literal shape (`spec-template.md`'s own placement — `### Key Files` nested under `## Technical Approach`):
+Rewrite the record's body into seven sections, in this literal shape (`spec-template.md`'s own placement — `### Key Files` nested under `## Technical Approach`):
 
 ```
 ## Current State
@@ -51,6 +51,10 @@ Rewrite the record's body into six sections, in this literal shape (`spec-templa
 ## Acceptance Criteria
 
 {...}
+
+## Release Note
+
+{one plain-language, verb-first line — spec-template.md's Release Note guidance}
 
 ## Technical Approach
 
@@ -66,7 +70,7 @@ Rewrite the record's body into six sections, in this literal shape (`spec-templa
 {...}
 ```
 
-`## Current State`, `## Deliverables`, `## Acceptance Criteria`, `## Technical Approach`, and `## Gotchas` are the core of the record body template `spec-template.md` documents — Current State, Deliverables, Acceptance Criteria, and Release Note are the structural minimum (`_shared/work-record.md`'s spec-shaped-body check re-verifies exactly these four are present and non-empty before the authorization gate will grant anything); Technical Approach and Gotchas can stay brief for a small record. `### Key Files` lists every file path the composed Technical Approach section references, plus — when the work renames a contract surface — every consumer file the rename-grep in `spec-template.md`'s `### Key Files` guidance turns up, plus — always — every generator module the generated-file grep in that same guidance turns up, with the generated entry annotated per that guidance. One bullet per path, in `spec-template.md`'s `- \`{path}\` — {what changes}` format. This is what `/flow`, `/dispatch`, and `/help` read for cross-spec file-overlap detection (`bin/lib/issues/grouping.js`'s `extractKeyFilesSection`) — omitting it silently disables that detection for this record (see Cross-spec conflict detection in `flow/multi-spec.md`). The template's fuller section list (Overview, Non-Goals, Prerequisites, and so on) is decomposition-mode scaffolding for multi-record output — a single shaped record doesn't need it.
+`## Current State`, `## Deliverables`, `## Acceptance Criteria`, `## Release Note`, `## Technical Approach`, and `## Gotchas` are the core of the record body template `spec-template.md` documents — Current State, Deliverables, Acceptance Criteria, and Release Note are the structural minimum (`_shared/work-record.md`'s spec-shaped-body check re-verifies exactly these four are present and non-empty before the authorization gate will grant anything); Technical Approach and Gotchas can stay brief for a small record. `### Key Files` lists every file path the composed Technical Approach section references, plus — when the work renames a contract surface — every consumer file the rename-grep in `spec-template.md`'s `### Key Files` guidance turns up, plus — always — every generator module the generated-file grep in that same guidance turns up, with the generated entry annotated per that guidance. One bullet per path, in `spec-template.md`'s `- \`{path}\` — {what changes}` format. This is what `/flow`, `/dispatch`, and `/help` read for cross-spec file-overlap detection (`bin/lib/issues/grouping.js`'s `extractKeyFilesSection`) — omitting it silently disables that detection for this record (see Cross-spec conflict detection in `flow/multi-spec.md`). The template's fuller section list (Overview, Non-Goals, Prerequisites, and so on) is decomposition-mode scaffolding for multi-record output — a single shaped record doesn't need it.
 
 Absorb the record's existing content into whichever section it belongs in — a human-filed or captured record's raw text usually becomes Current State plus Deliverables context, with Acceptance Criteria freshly written since raw captures rarely state them explicitly. A record already filed in this shape — every `by:code-health`/`by:harness-health`/`by:journey-health`/`by:docs-health` record is spec-shaped and agent-sized by construction, per `_shared/work-record.md`'s born-ready rule — needs near-zero translation: verify the sections are present and non-empty and move on rather than rewriting content that's already correct.
 

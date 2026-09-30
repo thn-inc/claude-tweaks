@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "parked",
+  "record": 2664,
+  "title": "Add check-pr-bookkeeping.js CLI-level regression …",
+  "action": "Promote — parked trigger met (its blocker PR merged 2026-09-20)",
+  "command": "/claude-tweaks:specify #2664"
+ }
+]
