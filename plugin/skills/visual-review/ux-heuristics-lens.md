@@ -1,6 +1,6 @@
 # UX Heuristics Lens
 
-Shared, criteria-only checklist — what to flag when applying the UX-heuristics lens during a visual review pass or a UI-affecting code review (#2655). No workflow, no Next Actions: this file is the checklist itself, invoked from `page-mode.md`'s Step 4 (Structured Analysis) and available to `/claude-tweaks:review`'s Code-Mode Procedure for UI-affecting diffs. Source: a ~20-item social-media Reel (hook-only caption, unsourced) — treat every row as a manual-inspection prompt to check for, not a hard rule to enforce mechanically; some rows (e.g. sub-400ms interactions) can't be measured without instrumentation this repo doesn't have, so judge them from lived interaction feel, not a stopwatch.
+Shared, criteria-only checklist — what to flag when applying the UX-heuristics lens during a visual review pass or a UI-affecting code review (#2655). No workflow, no Next Actions: this file is the checklist itself, invoked from `page-mode.md`'s Step 4 (Structured Analysis) and available to `/claude-tweaks:review`'s Code-Mode Procedure for UI-affecting diffs. Source: a ~20-item social-media Reel (hook-only caption, unsourced) — treat every row as a manual-inspection prompt to check for, not a hard rule to enforce mechanically; some rows (e.g. sub-400ms interactions) can't be measured without instrumentation this repo doesn't have, so judge them from lived interaction feel, not a stopwatch. Rows added later name their own source: the three badge rows (#2706) come from a Reel on notification-badge design (https://www.instagram.com/reel/Dcnuc60NbeO/).
 
 ## When this lens applies
 
@@ -30,6 +30,9 @@ Gate invocation on `Surface: web/mobile/desktop` (per `design-wrapper/frontend-d
 | Reduce task time | A flow requires more steps or re-entry of the same information than necessary | Asking for the same email address twice with no autofill/carry-forward between steps |
 | Reveal complexity gradually | All configuration options are shown at once instead of progressively disclosed as needed | A "create project" form showing 20 fields upfront instead of starting with just name + type |
 | Make completion feel close | A multi-step flow gives no sense of how much remains | A 6-step wizard with no step indicator ("Step 3 of 6") or progress bar |
+| One signal per element | A status dot and a count badge on the same element. A dot says something changed and a number says how much, so one element needs one of them. Two signals for one event read as noise, and users shown redundant badges learn to ignore both | A chat avatar with a green "online" dot and a red "3" count in the same corner |
+| Tie badge color to meaning | A badge color that maps to no stated convention (red = act now, green = online), or badges on so many elements that color stops meaning anything. "Badge everything" dilutes the one badge that is urgent | Every nav item carries a red badge, including Settings and Help, so the unread-inbox count no longer stands out |
+| Clear badges on view | A badge that lingers after the user has viewed the item, or a count that resets to zero instead of ticking down as items are read. A badge that never clears stops being read as information | The inbox still shows "5" after all five messages were opened, or opening one of five unread messages drops the count straight to 0 |
 
 ## Reporting a finding
 
