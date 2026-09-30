@@ -154,6 +154,8 @@ The hook surface (`bin/hooks.js`, see CLAUDE.md Conventions → Hooks) mechanize
 - Deleting specs
 - Executing a live, side-effecting, hard-to-reverse action against shared state solely to verify an acceptance criterion — a real PR/merge/branch-delete cycle, an irreversible external API call, or anything similarly destructive taken just to prove the AC — defer it instead to the closing summary's Manual Steps table (an `ops` ledger entry, `reason-not-auto: live-verification` — `_shared/ledger-format.md`'s Required-for-ops table). Worked example: #683's AC4 asked for a live create-worktree/commit/PR/merge/teardown cycle against the actual repo; deferred rather than executed mid-pipeline.
 
+**An exception to this list states its restore contract before it is built.** A record that adds one — an auto-applied outward write whose `high` reversibility rests on an undo artifact — writes as an Acceptance Criterion who restores (the pipeline, or a named human-run command), the precondition a restore requires (the target still holds exactly this run's write), and the outcome when that precondition fails. Left unstated, #2828's Release Note repair took five restore rulings across four review rounds to settle.
+
 ## What `auto` silences
 
 | Prompt / decision | Default behavior | Behavior under `auto` |
