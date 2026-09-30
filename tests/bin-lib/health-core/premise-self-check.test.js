@@ -38,7 +38,13 @@ test('the runner receives the command, the root as cwd, and the timeout', () => 
   assert.deepStrictEqual(calls, [['echo hi', { cwd: '/some/root', timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS }]]);
 });
 
-test('the timeout matches materialize.js (5000 ms)', () => {
+test('materialize.js runs Premise-check commands through this module, not a copy of it', () => {
+  // Structural parity: the filing-time self-check reads a command "the way
+  // materialize will" only while both use one runner and one timeout.
+  const src = fs.readFileSync(path.join(__dirname, '../../../plugin/bin/materialize.js'), 'utf8');
+  assert.match(src, /require\('\.\/lib\/health-core\/premise-self-check'\)/);
+  assert.doesNotMatch(src, /PREMISE_CHECK_TIMEOUT_MS\s*=/);
+  assert.doesNotMatch(src, /execFileSync\('\/bin\/sh'/);
   assert.strictEqual(PREMISE_SELF_CHECK_TIMEOUT_MS, 5000);
 });
 

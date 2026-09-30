@@ -11,14 +11,16 @@
 // PURE_MODULES.
 const { execFileSync } = require('child_process');
 
-// Mirrors plugin/bin/materialize.js's PREMISE_CHECK_TIMEOUT_MS — the same
-// command runs there later, under the same bound.
+// #1829: a short bound on a bound-but-arbitrary command a record body names,
+// so a hostile or hung Premise-check: command can never stall filing or
+// materialize. plugin/bin/materialize.js imports this constant and
+// defaultRunner, so the command runs there later under the same bound.
 const PREMISE_SELF_CHECK_TIMEOUT_MS = 5000;
 
-// command, { cwd, timeoutMs } -> exit code. Same shape as materialize.js's
-// runPremiseCheckDefault: a non-zero exit is a normal outcome (unwrapped
-// from execFileSync's throw); no exit code at all (timeout, spawn error)
-// re-throws.
+// command, { cwd, timeoutMs } -> exit code. Also materialize.js's runner:
+// a non-zero exit is a normal outcome (unwrapped from execFileSync's
+// throw); no exit code at all (timeout, spawn error) re-throws. An omitted
+// cwd runs in the process cwd.
 function defaultRunner(command, { cwd, timeoutMs }) {
   try {
     execFileSync('/bin/sh', ['-c', command], { cwd, stdio: 'ignore', timeout: timeoutMs });
