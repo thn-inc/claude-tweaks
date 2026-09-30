@@ -11,7 +11,7 @@ Referenced by `skills/dispatch/SKILL.md` Step 2. Run this verbatim — it produc
 A sixth reason, `firing`, is never written by this script — it is appended incrementally by `SKILL.md`'s Loop between successive re-runs of this script within one firing (`firing-exclusion.md`), which is exactly why this script's own truncation step preserves it rather than dropping it.
 
 ```bash
-eval "$(node -e "
+eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" <<NODE_EVAL_EOF
   const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
   const os = require('os'); const path = require('path');
   const files = {
@@ -41,19 +41,20 @@ eval "$(node -e "
     const p = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
     console.log(varName + '=' + JSON.stringify(p));
   }
-")"
+NODE_EVAL_EOF
+)"
 
 # #1752: truncate this run's session-scoped dispatch-exclusions.json, keeping
 # only 'firing'-reason entries -- those are appended incrementally by
 # SKILL.md's Loop BETWEEN successive re-runs of this script within one
 # firing (firing-exclusion.md) and must survive this script's own re-pull,
 # while every other reason below is recomputed fresh each run.
-node -e "
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_EXCLUSIONS" <<NODE_EVAL_EOF
   const { readExclusions } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const fs = require('fs');
   const kept = readExclusions(process.argv[1]).filter((e) => e.reason === 'firing');
   fs.writeFileSync(process.argv[1], JSON.stringify(kept));
-" "$DISPATCH_EXCLUSIONS"
+NODE_EVAL_EOF
 
 gh issue list --label auto:build --state open --json number,title,body,labels,createdAt,updatedAt,state --limit 500 > "$DISPATCH_QUEUE_RAW"
 QUEUE_RAW_COUNT=$(node -e "console.log(require(process.argv[1]).length)" "$DISPATCH_QUEUE_RAW")
@@ -69,7 +70,7 @@ fi
 # not a lock: two racing firings both attempt the write-back below; the CAS
 # loser's own in-memory groups/excluded (computed by its own full pull) stay
 # valid for its own firing regardless of whether its write landed.
-DISPATCH_DEP_NUMBERS=$(node -e "
+DISPATCH_DEP_NUMBERS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" <<NODE_EVAL_EOF
   const { mainCheckoutRoot } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/hooks/worktree-detect.js');
   const { readOrder, buildFreshnessSignal } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/queue-order.js');
   const root = mainCheckoutRoot(process.cwd()) || process.cwd();
@@ -78,7 +79,8 @@ DISPATCH_DEP_NUMBERS=$(node -e "
   const autoBuildNumbers = new Set(require(process.argv[1]).map((i) => i.number));
   const depOnly = (persisted.freshnessSignal.issues || []).filter((i) => !autoBuildNumbers.has(i.number));
   console.log(depOnly.map((i) => i.number).join(','));
-" "$DISPATCH_QUEUE_RAW")
+NODE_EVAL_EOF
+)
 echo '[]' > "$DISPATCH_DEP_FRESHNESS"
 # Cache-hit default: computed before cache-hit/miss is known, so this is
 # only the pre-computation placeholder -- the CACHE_HIT node -e block below
@@ -88,7 +90,7 @@ echo '[]' > "$DISPATCH_FASTLANE_BUNDLES"
 if [ -n "$DISPATCH_DEP_NUMBERS" ]; then
   gh issue list --search "$(echo "$DISPATCH_DEP_NUMBERS" | tr ',' ' ' | sed 's/[0-9][0-9]*/#&/g')" --state all --json number,updatedAt,state --limit 500 > "$DISPATCH_DEP_FRESHNESS" 2>/dev/null || echo '[]' > "$DISPATCH_DEP_FRESHNESS"
 fi
-CACHE_HIT=$(node -e "
+CACHE_HIT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPATCH_DEP_FRESHNESS" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values dispatch-group-size-guard)" "$DISPATCH_FASTLANE_BUNDLES" <<NODE_EVAL_EOF
   const { mainCheckoutRoot } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/hooks/worktree-detect.js');
   const { readOrder, buildFreshnessSignal, signalsMatch } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/queue-order.js');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
@@ -119,7 +121,8 @@ CACHE_HIT=$(node -e "
   // this field existed has no 'bundles' key, so this falls back to [].
   fs.writeFileSync(process.argv[6], JSON.stringify(persisted.bundles || []));
   console.log('1');
-" "$DISPATCH_QUEUE_RAW" "$DISPATCH_DEP_FRESHNESS" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values dispatch-group-size-guard)" "$DISPATCH_FASTLANE_BUNDLES")
+NODE_EVAL_EOF
+)
 
 if [ "$CACHE_HIT" = "1" ]; then
   echo "Queue-order cache hit — using persisted groups/excluded, skipping dependency verification and native blocker query (#1571)." >&2
@@ -131,7 +134,7 @@ gh issue list --state open --json number --limit 200 > "$DISPATCH_OPEN_NUMBERS"
 WORK_LINKS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values work-links)
 DISPATCH_GROUP_SIZE_GUARD=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values dispatch-group-size-guard)
 DISPATCH_FASTLANE_BUNDLE_CAP=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values dispatch-fastlane-bundle-cap)
-node -e "
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPATCH_OPEN_NUMBERS" "$DISPATCH_ELIGIBLE_PRE_DEP" "$DISPATCH_UNRESOLVED_DEPS" <<NODE_EVAL_EOF
   const { parseRecordFacets, parseDependencies } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
   const issues = require(process.argv[1]);
   const openNumbers = new Set(require(process.argv[2]).map((i) => i.number));
@@ -145,13 +148,13 @@ node -e "
   const unresolved = [...new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter((dep) => !openNumbers.has(dep)))];
   require('fs').writeFileSync(process.argv[3], JSON.stringify(eligiblePreDep));
   require('fs').writeFileSync(process.argv[4], JSON.stringify(unresolved));
-" "$DISPATCH_QUEUE_RAW" "$DISPATCH_OPEN_NUMBERS" "$DISPATCH_ELIGIBLE_PRE_DEP" "$DISPATCH_UNRESOLVED_DEPS"
+NODE_EVAL_EOF
 : > "$DISPATCH_VERIFIED_OPEN_DEPS"
 for DEP in $(node -e "console.log(require(process.argv[1]).join(' '))" "$DISPATCH_UNRESOLVED_DEPS"); do
   STATE=$(gh issue view "$DEP" --json state -q .state 2>/dev/null)
   if [ "$STATE" = "OPEN" ]; then echo "$DEP" >> "$DISPATCH_VERIFIED_OPEN_DEPS"; fi
 done
-node -e "
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" "$DISPATCH_OPEN_NUMBERS" "$DISPATCH_VERIFIED_OPEN_DEPS" "$DISPATCH_ELIGIBLE" "$DISPATCH_BLOCKED_EXCLUDED_BODY" <<NODE_EVAL_EOF
   const fs = require('fs');
   const { partitionByOpenBodyBlockers } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
   const eligiblePreDep = require(process.argv[1]);
@@ -163,7 +166,7 @@ node -e "
   const { eligible, excluded } = partitionByOpenBodyBlockers(eligiblePreDep, openNumbers);
   fs.writeFileSync(process.argv[4], JSON.stringify(eligible));
   fs.writeFileSync(process.argv[5], JSON.stringify(excluded));
-" "$DISPATCH_ELIGIBLE_PRE_DEP" "$DISPATCH_OPEN_NUMBERS" "$DISPATCH_VERIFIED_OPEN_DEPS" "$DISPATCH_ELIGIBLE" "$DISPATCH_BLOCKED_EXCLUDED_BODY"
+NODE_EVAL_EOF
 echo '{}' > "$DISPATCH_NATIVE_DEPS"
 if [ "$WORK_LINKS" = "native" ]; then
   NATIVE_NUMS=$(node -e "console.log(require(process.argv[1]).map((i) => i.number).join(','))" "$DISPATCH_ELIGIBLE")
@@ -176,7 +179,7 @@ if [ "$WORK_LINKS" = "native" ]; then
     fi
   fi
 fi
-node -e "
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE" "$DISPATCH_NATIVE_DEPS" "$DISPATCH_BLOCKED_EXCLUDED_BODY" "$DISPATCH_EXCLUSIONS" "$DISPATCH_GROUP_SIZE_GUARD" "$DISPATCH_FASTLANE_BUNDLE_CAP" "$DISPATCH_FASTLANE_BUNDLES" > "$DISPATCH_GROUPS" <<NODE_EVAL_EOF
   const fs = require('fs');
   const { extractKeyFiles, expectsKeyFilesSection, groupByFileOverlap, partitionGroupsBySizeGuard, bundleFastLaneSingletons } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/grouping.js');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
@@ -221,7 +224,7 @@ node -e "
   for (const g of oversized) {
     appendExclusion(process.argv[4], { reason: 'oversized', records: g.map((i) => i.number), detail: { size: g.length, threshold } });
   }
-" "$DISPATCH_ELIGIBLE" "$DISPATCH_NATIVE_DEPS" "$DISPATCH_BLOCKED_EXCLUDED_BODY" "$DISPATCH_EXCLUSIONS" "$DISPATCH_GROUP_SIZE_GUARD" "$DISPATCH_FASTLANE_BUNDLE_CAP" "$DISPATCH_FASTLANE_BUNDLES" > "$DISPATCH_GROUPS"
+NODE_EVAL_EOF
 
 # #1571: write-back (cache-miss path only — a hit's persisted blob already
 # reflects current state, so re-persisting it would be a wasted, byte-
@@ -229,17 +232,18 @@ node -e "
 # this firing (this design's own Gotchas) — only the persisted cache misses
 # the update, exactly like a losing CAS writer's own in-memory groups/
 # excluded staying valid for its own firing (AC5).
-DISPATCH_ALL_DEP_NUMBERS=$(node -e "
+DISPATCH_ALL_DEP_NUMBERS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" <<NODE_EVAL_EOF
   const { parseDependencies } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
   const eligiblePreDep = require(process.argv[1]);
   const deps = new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)));
   console.log([...deps].join(','));
-" "$DISPATCH_ELIGIBLE_PRE_DEP")
+NODE_EVAL_EOF
+)
 echo '[]' > "$DISPATCH_DEP_FRESHNESS"
 if [ -n "$DISPATCH_ALL_DEP_NUMBERS" ]; then
   gh issue list --search "$(echo "$DISPATCH_ALL_DEP_NUMBERS" | tr ',' ' ' | sed 's/[0-9][0-9]*/#&/g')" --state all --json number,updatedAt,state --limit 500 > "$DISPATCH_DEP_FRESHNESS" 2>/dev/null || echo '[]' > "$DISPATCH_DEP_FRESHNESS"
 fi
-node -e "
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPATCH_DEP_FRESHNESS" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_FASTLANE_BUNDLES" <<NODE_EVAL_EOF
   const { mainCheckoutRoot } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/hooks/worktree-detect.js');
   const path = require('path');
   const { writeOrder, buildFreshnessSignal, composeOrderBlob } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/queue-order.js');
@@ -264,7 +268,7 @@ node -e "
   });
   const result = writeOrder(root, blob);
   if (!result.ok) console.error('Queue-order cache write-back failed (non-blocking): ' + result.error);
-" "$DISPATCH_QUEUE_RAW" "$DISPATCH_DEP_FRESHNESS" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_FASTLANE_BUNDLES"
+NODE_EVAL_EOF
 
 fi
 
@@ -281,10 +285,11 @@ fi
 # filtering -- there is no point checking a candidate already excluded for
 # another reason), via bin/resolve-linked-prs.js (record.js's
 # buildLinkedPRQuery + bin/lib/issues/linked-prs.js's fetchLinkedPRs).
-DISPATCH_GROUP_NUMS=$(node -e "
+DISPATCH_GROUP_NUMS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" <<NODE_EVAL_EOF
   const groups = require(process.argv[1]);
   console.log(groups.flat().map((i) => i.number).join(','))
-" "$DISPATCH_GROUPS")
+NODE_EVAL_EOF
+)
 echo '{}' > "$DISPATCH_LINKED_PRS"
 echo '[]' > "$DISPATCH_OPEN_PR_EXCLUDED"
 if [ -n "$DISPATCH_GROUP_NUMS" ]; then
@@ -294,7 +299,7 @@ if [ -n "$DISPATCH_GROUP_NUMS" ]; then
     echo '{}' > "$DISPATCH_LINKED_PRS"
   fi
 fi
-if node -e "
+if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" > "${DISPATCH_GROUPS}.tmp" 2>"$DISPATCH_LINKED_PRS_ERR" <<NODE_EVAL_EOF
   const fs = require('fs');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const groups = require(process.argv[1]);
@@ -310,7 +315,8 @@ if node -e "
     }))
     .filter((g) => g.length > 0);
   console.log(JSON.stringify(finalGroups));
-" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" > "${DISPATCH_GROUPS}.tmp" 2>"$DISPATCH_LINKED_PRS_ERR"; then
+NODE_EVAL_EOF
+then
   mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
 else
   echo "Warning: open-linked-PR filtering failed — dispatch-groups.json left unfiltered for this exclusion this run: $(cat "$DISPATCH_LINKED_PRS_ERR")" >&2
@@ -337,7 +343,7 @@ if [ -z "$INTEGRATION_BRANCH" ]; then
   INTEGRATION_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')
 fi
 INTEGRATION_REF="origin/$INTEGRATION_BRANCH"
-node -e "
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_NAMED_TARGETS" <<NODE_EVAL_EOF
   const fs = require('fs');
   const { namedTarget } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/named-target.js');
   const groups = require(process.argv[1]);
@@ -345,8 +351,8 @@ node -e "
     .map((c) => ({ number: c.number, target: namedTarget(c) }))
     .filter((c) => c.target);
   fs.writeFileSync(process.argv[2], JSON.stringify(named));
-" "$DISPATCH_GROUPS" "$DISPATCH_NAMED_TARGETS"
-node -e "
+NODE_EVAL_EOF
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_NAMED_TARGETS" "$INTEGRATION_REF" "$DISPATCH_EXCLUSIONS" <<NODE_EVAL_EOF
   const { execFileSync } = require('child_process');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const named = require(process.argv[1]);
@@ -362,8 +368,8 @@ node -e "
   for (const { number, target } of missing) {
     appendExclusion(process.argv[3], { reason: 'target-missing', records: [number], detail: { path: target.path } });
   }
-" "$DISPATCH_NAMED_TARGETS" "$INTEGRATION_REF" "$DISPATCH_EXCLUSIONS"
-node -e "
+NODE_EVAL_EOF
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" > "${DISPATCH_GROUPS}.tmp" <<NODE_EVAL_EOF && mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
   const fs = require('fs');
   const { readExclusions, groupIsExcluded } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const groups = require(process.argv[1]);
@@ -372,14 +378,15 @@ node -e "
     .map((g) => g.filter((c) => !groupIsExcluded([c], entries, ['target-missing'])))
     .filter((g) => g.length > 0);
   console.log(JSON.stringify(finalGroups));
-" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" > "${DISPATCH_GROUPS}.tmp" && mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
-for ROW in $(node -e "
+NODE_EVAL_EOF
+for ROW in $(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_EXCLUSIONS" <<NODE_EVAL_EOF
   const { readExclusions } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const missing = readExclusions(process.argv[1])
     .filter((e) => e.reason === 'target-missing')
     .map((e) => ({ number: e.records[0], path: e.detail.path }));
   for (const m of missing) console.log(Buffer.from(JSON.stringify(m)).toString('base64'));
-" "$DISPATCH_EXCLUSIONS"); do
+NODE_EVAL_EOF
+); do
   NUM=$(node -e "console.log(JSON.parse(Buffer.from(process.argv[1], 'base64').toString()).number)" "$ROW")
   TPATH=$(node -e "console.log(JSON.parse(Buffer.from(process.argv[1], 'base64').toString()).path)" "$ROW")
   node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$DISPATCH_STANDALONE_DIR" --status AUTO \
@@ -418,7 +425,7 @@ done
 # didn't already clear `strong`) is a candidate for the files-based upgrade
 # below — a `strong`/`none` result from title evidence alone is final.
 # Capped at 5 live `gh pr view` calls per pull (#1984's own cap).
-node -e "
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_SHIPPED_PROBE_PRS" <<NODE_EVAL_EOF
   const { classifyShipped } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
   const groups = require(process.argv[1]);
   const linkedPRs = require(process.argv[2]);
@@ -431,7 +438,7 @@ node -e "
     if (result.tier === 'weak') toProbe.push(result.pr);
   }
   require('fs').writeFileSync(process.argv[3], JSON.stringify([...new Set(toProbe)].slice(0, 5)));
-" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_SHIPPED_PROBE_PRS"
+NODE_EVAL_EOF
 
 : > "$DISPATCH_SHIPPED_PR_FILES"
 for PR in $(node -e "console.log(require(process.argv[1]).join(' '))" "$DISPATCH_SHIPPED_PROBE_PRS"); do
@@ -445,7 +452,7 @@ done
 # GitHub itself — the proposal is the only write path, fingerprint-
 # deduplicated the same way tidy's own Close (GitHub) shape is). `weak`
 # stays eligible, logged for build-time context. `none` is silent.
-node -e "
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_SHIPPED_PR_FILES" > "${DISPATCH_GROUPS}.tmp" <<NODE_EVAL_EOF && mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
   const fs = require('fs');
   const { classifyShipped } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
@@ -473,7 +480,7 @@ node -e "
     }))
     .filter((g) => g.length > 0);
   console.log(JSON.stringify(finalGroups));
-" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_SHIPPED_PR_FILES" > "${DISPATCH_GROUPS}.tmp" && mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
+NODE_EVAL_EOF
 
 # Stage one Close proposal per strong-tier exclusion, into this firing's own
 # standalone run dir (Step 1's $RUN_ID — resolved again here since this
@@ -482,7 +489,7 @@ node -e "
 # uses for every outward-facing mutation.
 DISPATCH_FIRING_RUN_DIR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug dispatch-standalone 2>/dev/null || true)
 if [ -n "$DISPATCH_FIRING_RUN_DIR" ]; then
-  node -e "
+  node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_EXCLUSIONS" "$(dirname "$DISPATCH_EXCLUSIONS")" <<NODE_EVAL_EOF | while IFS='=' read -r NUM FILE; do
     const fs = require('fs');
     const path = require('path');
     const { readExclusions } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
@@ -499,11 +506,11 @@ if [ -n "$DISPATCH_FIRING_RUN_DIR" ]; then
         '',
         'Signals: ' + entry.signals.join(', '),
         '',
-        'Comment then close: \`gh issue close ' + entry.number + ' --comment \"Deliverables already shipped by #' + entry.pr + '\"\`',
+        'Comment then close: \`gh issue close ' + entry.number + ' --comment "Deliverables already shipped by #' + entry.pr + '"\`',
       ].join('\n'));
       console.log(entry.number + '=' + file);
     }
-  " "$DISPATCH_EXCLUSIONS" "$(dirname "$DISPATCH_EXCLUSIONS")" | while IFS='=' read -r NUM FILE; do
+NODE_EVAL_EOF
     node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$DISPATCH_FIRING_RUN_DIR" --id "shipped-close-$NUM" --file "$FILE" >/dev/null 2>&1 || true
   done
 fi
@@ -528,7 +535,7 @@ OPEN_PR_COUNT=$(node -e "console.log(require(process.argv[1]).length)" "$DISPATC
 if [ "$OPEN_PR_COUNT" -ge 100 ]; then
   echo "Warning: the open-PR pull for the cross-PR overlap report (#1579) returned exactly the --limit cap (100) — overlap detection may be missing older open PRs. Informational only; never blocks dispatch." >&2
 fi
-node -e "
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_OPEN_PRS" "$DISPATCH_CROSSPR_OVERLAP" <<NODE_EVAL_EOF
   const { extractKeyFiles, detectCrossPRFileOverlap } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/grouping.js');
   const groups = require(process.argv[1]);
   const openPrsRaw = require(process.argv[2]);
@@ -540,7 +547,7 @@ node -e "
   }));
   const overlaps = detectCrossPRFileOverlap(candidates, openPRs);
   require('fs').writeFileSync(process.argv[3], JSON.stringify(overlaps));
-" "$DISPATCH_GROUPS" "$DISPATCH_OPEN_PRS" "$DISPATCH_CROSSPR_OVERLAP"
+NODE_EVAL_EOF
 
 # #1944: cross-group near-duplicate candidate warning. Read-only and never a
 # selection change (AC4) -- run findNearDuplicates pairwise across every pair
@@ -550,7 +557,7 @@ node -e "
 # decisions.md as an AUTO line naming both records and the signals that fired
 # -- the dispatcher's cue to look before dispatching both in the same firing,
 # never a gate.
-node -e "
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" <<NODE_EVAL_EOF
   const { findNearDuplicates } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
   const groups = require(process.argv[1]);
   const seen = new Set();
@@ -565,7 +572,7 @@ node -e "
       }
     }
   }
-" "$DISPATCH_GROUPS"
+NODE_EVAL_EOF
 ```
 
 **MCP path** (`gh` unavailable): see `mcp-transport.md` in this skill's directory for the queue pull and the per-dependency open-state check. Both replace their `gh`-CLI equivalent one-for-one — no change to the surrounding `node -e` eligibility/dependency logic, which only consumes the fetched JSON shape, not how it was fetched.

@@ -34,12 +34,16 @@ const QUEUE_PULL_SCRIPT = fs.readFileSync(
 );
 
 // Structurally anchored (not a prose sentence): the first line is the require call unique to
-// this block, the last is the mv this block's own filter step performs -- both content, not
-// commentary, so a rewording of the surrounding prose does not move this extraction.
-// #1752: the tail now names the unified $DISPATCH_EXCLUSIONS file, not a dedicated
+// this block, the last is this block's own final console.log + heredoc terminator -- both
+// content, not commentary, so a rewording of the surrounding prose does not move this
+// extraction.
+// #1752: the tail names the unified $DISPATCH_EXCLUSIONS file, not a dedicated
 // $DISPATCH_TARGET_MISSING_EXCLUDED one -- see queue-pull-script.md's Task 2 migration.
-const START_ANCHOR = 'node -e "\n  const fs = require(\'fs\');\n  const { namedTarget } = require(\'${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/named-target.js\');';
-const END_ANCHOR = '" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" > "${DISPATCH_GROUPS}.tmp" && mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"';
+// #2564: each `node -e "..."` block became `node bin/node-eval-file.js <<NODE_EVAL_EOF ...
+// NODE_EVAL_EOF` (the Windows Git Bash multi-line-arg fix) -- anchors updated to the new
+// call shape; the extracted snippet is unchanged in behavior (bash -c still runs it below).
+const START_ANCHOR = 'node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_NAMED_TARGETS" <<NODE_EVAL_EOF\n  const fs = require(\'fs\');\n  const { namedTarget } = require(\'${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/named-target.js\');';
+const END_ANCHOR = '  console.log(JSON.stringify(finalGroups));\nNODE_EVAL_EOF';
 
 function extractExclusionSnippet() {
   const startIdx = QUEUE_PULL_SCRIPT.indexOf(START_ANCHOR);
