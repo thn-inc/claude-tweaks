@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-01T22:16:09.784Z",
+  "computedAt": "2026-10-01T23:09:15.240Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -36,11 +36,6 @@
       {
         "number": 2853,
         "updatedAt": "2026-10-01T16:18:47Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2852,
-        "updatedAt": "2026-10-01T16:18:43Z",
         "state": "OPEN"
       },
       {
@@ -1113,90 +1108,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: /claude-tweaks:tidy run 2026-09-30T172538-tidy-standalone (approved Step 6 Capture)\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/bin/lib/issues/claims-git-cas.js:299` (origin/main) calls\n`` runner(['cat-file', '--batch'], { input: `${orderedShas.join('\\n')}\\n`, encoding: 'buffer' }) ``.\nWith the module's `defaultRunner` (`execFileSync`), Node uses `options.encoding` to encode a\nstring `input`, and `'buffer'` is not a valid string encoding — Node v22.23.2 throws\n`ERR_UNKNOWN_ENCODING` (reproduced: `execFileSync('cat', [], { input: 'x\\n', encoding: 'buffer' })`).\nThe `catch` maps that to `markTransportFailure()`, so every blob returns\n`failure: 'transport-failure'` — against this repo's 1293-blob registry, 1293/1293.\n`tests/bin-lib/issues/claims-git-cas.test.js` exercises `readClaimBlobsGitBatch` through a fake\nrunner, so the suite stays green. Downstream effect: tidy Step 4.7's #2613 \"never sample\" batched\nreader is unusable, which pushes scan agents back to sampling — this run's Step 4.7 agent sampled\n100 blobs and emitted false release/label-removal rows (every \"closed-issue claim\" was a\ntombstone; every \"missed bot:in-progress\" issue held a live claim).\n\nEvidence: tidy run 2026-09-30T172538-tidy-standalone, scan/claims-full.jsonl (after a workaround runner).\n\n## Deliverables\n\n- Pass `input` as a Buffer (`Buffer.from(...)`) or drop `encoding: 'buffer'` in favor of reading\n  stdout as a Buffer by default, in `readClaimBlobsGitBatch`.\n- A test that runs `readClaimBlobsGitBatch` through the real `defaultRunner` against a temp git\n  repo with a `claims-registry` tree (not the fake runner).\n\n## Acceptance Criteria\n\n- `readClaimBlobsGitBatch({ tip })` with the default runner returns content (not\n  `transport-failure`) for every blob of a real registry tree.\n- The new test fails on the current line 299 and passes after the fix.\n\n## Release Note\n\nTidy's batched claim-registry read works against a real git checkout instead of reporting every claim as a transport failure.\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-09-30T17:59:47Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 2852,
-        "state": "OPEN",
-        "title": "readClaimBlobsGitBatch's default runner rejects string input with encoding 'buffer' — every batched claim read fails",
-        "updatedAt": "2026-10-01T16:18:43Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
           "stage": "ready",
           "grants": {
             "build": true,
