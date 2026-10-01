@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-01T20:18:48.883Z",
+  "computedAt": "2026-10-01T20:47:51.678Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -216,11 +216,6 @@
       {
         "number": 2750,
         "updatedAt": "2026-10-01T16:13:04Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2748,
-        "updatedAt": "2026-10-01T16:13:13Z",
         "state": "OPEN"
       },
       {
@@ -515,7 +510,7 @@
       },
       {
         "number": 2552,
-        "updatedAt": "2026-10-01T16:15:59Z",
+        "updatedAt": "2026-10-01T20:23:46Z",
         "state": "OPEN"
       },
       {
@@ -3242,94 +3237,6 @@
         }
       },
       {
-        "body": "Surface: infra\n\n## Current State\n`plugin/bin/lib/wrap-up/engine-verify.js`'s `carrier-commit` check (`registerCheck('carrier-commit', …)`, line ~320) verifies that each resolved issue in a wrap-up run has a \"carrier commit\" that closed it. The check currently greps the branch log for the literal string `Fixes #{n}` only (line ~330: `deps.git(['log', '--grep=Fixes #${n}', ...])`), and, when a PR-first fallback is needed, checks the PR body for the same literal string (line ~345: `prBody.includes('Fixes #${n}')`).\n\nGitHub recognizes a broader set of closing keywords in commit messages and PR bodies — `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved` (case-insensitive, optionally `owner/repo#N`) — any of which actually closes the linked issue on merge. Because this check only recognizes the literal `Fixes #N` form, a run whose commits used any other recognized keyword (e.g. `Closes #N`) fails the check with `missing` populated for every record, even though GitHub's own state shows the issues correctly closed. This was observed on a real four-record standalone wrap-up (commits used `Closes #N`; all four issues were CLOSED at merge time; `verify` still exited 3 and `execution-and-verification.md`'s exit-3 → BLOCKED rule fired incorrectly), on plugin 6.127.0.\n\nThe repo already has a reusable mechanism for checking an issue's actual closing state via GraphQL: `plugin/bin/lib/issues/linked-prs.js`'s `fetchLinkedPRs` resolves each candidate issue's `closedByPullRequestsReferences` connection in one batched call — this is the \"ground truth\" data source the bug report's proposed fix references.\n\nA related, separately-tracked false-negative in the same verify table is #2552 (`run-dir-archived`) — not in scope here, but worth being aware the verify table has more than one known false-negative row.\n\n## Deliverables\n1. Replace the `carrier-commit` check's branch-log grep (line ~330) with a case-insensitive match over GitHub's full recognized closing-keyword set (`close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`), each optionally preceded by `owner/repo` before the `#N`, matching against `#{n}` as a whole reference (not a substring of a larger number).\n2. Apply the same keyword-set widening to the PR-body fallback check (line ~345), which currently has the identical literal-`Fixes` narrowing.\n3. Add a ground-truth fallback: when neither the branch-log grep nor the PR-body check finds a carrier commit for an issue, query the issue's actual state via `gh issue view N --json state` (or reuse `plugin/bin/lib/issues/linked-prs.js`'s `fetchLinkedPRs`/`closedByPullRequestsReferences` connection) and treat a CLOSED state backed by a closing PR/commit reference as a pass on its own, rather than failing purely because no commit message matched a keyword pattern.\n4. Keep the existing `fail` behavior for a genuinely-open issue with no matching commit and no closing reference — the fix narrows false negatives, it does not weaken the check's ability to catch a real missing carrier commit.\n\n## Acceptance Criteria\n- `carrier-commit` passes for a run whose closing commit message uses any of GitHub's recognized closing keywords (`close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`), case-insensitive, with or without an `owner/repo#N` prefix — not just the literal `Fixes #N` form.\n- The PR-body fallback check recognizes the same keyword set as the branch-log check (no longer just `Fixes #N`).\n- `carrier-commit` passes for an issue that is CLOSED with a `closedByPullRequestsReferences`/closing-commit reference, even if no commit message in the branch range matched any keyword pattern textually (the ground-truth fallback).\n- `carrier-commit` still fails (`missing` populated) for an issue with no matching commit message, no matching PR body reference, and no closing-PR-reference-backed CLOSED state — a genuinely missing carrier commit is still caught.\n- `tests/bin-lib/wrap-up/engine-verify.test.js` gains test cases covering: a `Closes #N` commit (currently would fail, should now pass), a `Resolves #N` commit, case-insensitivity (`FIXES #N`), and the ground-truth CLOSED-state fallback path.\n- Existing passing test cases in `tests/bin-lib/wrap-up/engine-verify.test.js` for the `carrier-commit` check (including the literal `Fixes #N` case) continue to pass.\n\n## Release Note\n\nFixed wrap-up missing closing keywords other than Fixes when checking the merge commit.\n\n## Technical Approach\nRead `plugin/bin/lib/wrap-up/engine-verify.js` lines ~306-345 (the `carrier-commit` check and its preceding comment block) and `tests/bin-lib/wrap-up/engine-verify.test.js`'s existing `carrier-commit` test cases before changing anything, to preserve the check's existing pr-first/local-merge branching logic (the comment block above the check, lines ~312-318, explains why the PR-body fallback exists only when `resolvePrNumber` resolves a PR — don't disturb that branching, only the keyword-matching and add the new ground-truth fallback). Build the keyword regex once (a shared constant, since it's needed in three places: the git log `--grep`, the PR body match, and potentially reused by any other check that does closing-keyword matching) rather than inlining it three times. For the ground-truth fallback, reuse `plugin/bin/lib/issues/linked-prs.js`'s existing `fetchLinkedPRs` rather than writing a new GraphQL query — it already resolves `closedByPullRequestsReferences` in one batched call across all candidate issues, matching this check's existing per-issue loop shape.\n\n### Key Files\n- `plugin/bin/lib/wrap-up/engine-verify.js` — widen the `--grep` pattern (line ~330) and the PR-body check (line ~345) to the full keyword set; add the ground-truth CLOSED-state fallback to `registerCheck('carrier-commit', ...)`\n- `plugin/bin/lib/issues/linked-prs.js` — reuse `fetchLinkedPRs` for the ground-truth fallback rather than writing new GraphQL query logic\n- `tests/bin-lib/wrap-up/engine-verify.test.js` — add test cases for the widened keyword set, case-insensitivity, and the ground-truth fallback path; verify no regression on the existing `Fixes #N` case\n\n## Gotchas\n- Preserve the existing pr-first/local-merge branching logic (the comment at lines ~312-318) — the fix is about widening keyword matching and adding a ground-truth fallback, not restructuring when the PR-body check applies vs. the branch-log check.\n- The keyword regex must match `#N` as a whole issue reference, not a substring of a larger number (e.g. `#12` should not match inside `#123`) — use a word boundary or equivalent anchor.\n- `owner/repo#N` is a valid GitHub closing-keyword form too (per the bug report) — the regex/match should account for it, not just bare `#N`.\n- The ground-truth fallback adds a `gh` (or GraphQL) call — keep it scoped to only the issues that fail the textual match, not run unconditionally for every issue, to avoid unnecessary API calls on the common case where the textual match already succeeds.\n- #2552 (`run-dir-archived`) is a separate, already-filed false-negative in the same verify table — do not fold its fix into this record; it has its own scope.\n\n## Original request\n\nwrap-up verify: carrier-commit check only matches the literal \"Fixes #N\", missing GitHub's other closing keywords\n\n**Summary:** `wrap-up-engine.js verify`'s `carrier-commit` check greps the branch log for the literal `Fixes #N` only, so a run whose closing commits used GitHub's other closing keywords (`Closes #N`, `Resolves #N`, `Fixed #N`, etc.) fails the check even though GitHub closed the issues on merge.\n\n**Kind:** Defect\n\n**Affected component:** `bin/lib/wrap-up/engine-verify.js` (`registerCheck('carrier-commit', …)`), and the `skills/wrap-up/execution-and-verification.md` exit-3 → BLOCKED rule that consumes it\n\n**Repro steps:**\n1. On a `local-merge` project, fix a record in a worktree and commit with a footer line `Closes #N` (GitHub's documented closing keyword) instead of `Fixes #N`.\n2. Rebase-merge to the integration branch; GitHub closes issue #N.\n3. Run `/claude-tweaks:wrap-up #N`; at Phase 4's Verify step, `node bin/wrap-up-engine.js verify --run-dir <run-dir> --base <sha>`.\n\n**Expected vs. actual:**\nExpected: `carrier-commit` passes — the range contains a commit whose message closes #N with any keyword GitHub recognizes (`close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`, case-insensitive, optionally `owner/repo#N`), and the issue is in fact closed.\nActual: `deps.git(['log', '--grep=Fixes #N', …])` finds nothing, `missing` fills with every record, the row reads `fail — no carrier commit found for #N, …`, verify exits 3, and the skill's rule forbids the closure line on a run that closed all its records. Observed on a four-record standalone wrap-up (commits used `Closes #N`; all four issues showed CLOSED at merge time), plugin 6.127.0.\n\nProposed fix: match with a case-insensitive regex over GitHub's closing-keyword set (`--grep` with `-i -E '(close[sd]?|fix(e[sd])?|resolve[sd]?) #N\\b'`, or read the log once and match in JS), and — since the issue's own state is the ground truth — treat a `gh issue view N --json state` of CLOSED with a `closedByPullRequestsReferences`/closing-commit reference as a pass on its own. The PR-body fallback has the same literal-`Fixes` narrowing (`prBody.includes('Fixes #N')`) and should use the same set.\n\n**Related:** #2552 (run-dir-archived, the other false-negative row in the same verify table)\n\n**Definition:** Clear\n\n**Plugin version:** 6.127.0\n",
-        "createdAt": "2026-09-20T12:42:34Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2676,
-        "state": "OPEN",
-        "title": "wrap-up verify: carrier-commit check only matches the literal \"Fixes #N\", missing GitHub's other closing keywords",
-        "updatedAt": "2026-10-01T16:09:56Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
         "body": "Surface: infra\n\n## Current State\n\nPlugin4Shell is a documented zero-click RCE affecting the top four coding agents, exploited through a malicious skill or MCP integration reaching further (filesystem, network, or credentials) than the host session intended (https://www.air.security/blog-posts/plugin4shell). `/claude-tweaks:assess-agent-autonomy`'s `grant-check` mode (`skills/assess-agent-autonomy/grant-check.md`) already judges whether a record's *content* warrants `auto:build`/`auto:merge`, but nothing in the grant chain inspects what a skill or MCP server *can technically reach* — filesystem paths, outbound network, secrets/env — before that grant is extended to unattended (routine) execution. A broad-reach skill and a narrow-reach skill are graded identically today.\n\n## Deliverables\n\n- A reachability-audit lens: a standalone checklist or mechanized script that inventories what a given skill/plugin manifest or MCP server config can touch — filesystem paths (read/write scope), outbound network (domains/ports it can reach), and secrets/env vars it can read.\n- Wiring from `grant-check.md`'s Step 2 (Judge) into this lens: a broad-reach verdict downgrades the autonomy recommendation (e.g. `RECOMMEND_BUILD: false`, or a ceiling-clamped grant) rather than being silently ignored.\n\n## Acceptance Criteria\n\n- The lens runs standalone against a skill/plugin manifest or MCP server config and produces a reachability summary (paths, network, secrets) with no other side effects.\n- `grant-check.md`'s Step 1 (Gather) or Step 2 (Judge) consults the lens's output before recommending an unattended/routine grant, and a broad-reach verdict measurably changes the recommendation (not just an informational note).\n- The lens has a `node --test` suite covering at minimum: a narrow-reach skill (passes clean), a broad-reach skill (flags filesystem/network/secrets separately), and a malformed/unreadable manifest (fails closed, never silently passes).\n\n## Technical Approach\n\nAdd the lens as a new `bin/lib/` module (e.g. `bin/lib/issues/reachability-audit.js` or a sibling directory, following this repo's existing `bin/lib/{concern}/` convention) that statically inspects a skill's frontmatter/tool-allowlist and any MCP server config for filesystem/network/secret-reaching declarations — this is a static manifest read, not a live sandbox probe, consistent with the rest of `assess-agent-autonomy`'s content-only judgment style (no subagent dispatch, no execution of the audited skill). Wire it into `grant-check.md`'s existing Step 1/Step 2 flow as an additional signal alongside the record body/labels already gathered there, following the same could-not-gather / gathered-but-inconclusive error-handling shape `SKILL.md`'s Error Handling section already documents for this skill's other modes (conservative default on any read failure, never resolved toward more autonomy).\n\n### Key Files\n\n- `plugin/skills/assess-agent-autonomy/grant-check.md` — wire the new lens into Step 1 (Gather) and Step 2 (Judge)\n- `plugin/skills/assess-agent-autonomy/SKILL.md` — Error Handling section's conservative-default table, if the lens introduces a new could-not-gather case\n- `plugin/bin/lib/` — new module implementing the reachability-audit lens itself (path TBD at build time, following the existing `bin/lib/{concern}/` convention)\n\n## Gotchas\n\n- The lens is a static-manifest read, not a live capability probe — it can only flag *declared* reach (tool allowlists, MCP server config), not runtime behavior a skill's own code might exhibit beyond what it declares. State this limitation explicitly wherever the lens's output is surfaced, so a clean reachability summary is never read as a guarantee of safety.\n- Scope this to claude-tweaks' own skill/MCP surface first (the `assess-agent-autonomy` call site) rather than attempting a general-purpose security-scanning tool — the Acceptance Criteria are about gating this repo's own unattended-authorization chain, not shipping a standalone product.\n\n## Original request\n\nAdd a reachability audit lens for skill/MCP routine authorization\n\nCurrent State:\n- Plugin4Shell is a zero-click RCE found in the top four coding agents, exploited through a malicious skill or MCP integration reaching further than intended.\n- claude-tweaks authorizes skills/plugins for unattended routine jobs (assess-agent-autonomy, backlog auto:build/auto:merge) without a documented check on what filesystem, network, or credential surface a given skill or MCP server can actually reach.\n\nDeliverables:\n- A reachability-audit lens (checklist or skill) that inventories what a skill/MCP integration can touch -- filesystem paths, outbound network, secrets/env -- before it is granted routine (unattended) authorization.\n- Wire the lens into assess-agent-autonomy so a broad-reach skill downgrades the autonomy grant.\n\nAcceptance Criteria:\n- The lens runs standalone and reports a reachability summary for a given skill/plugin manifest.\n- assess-agent-autonomy consults it before recommending an unattended/routine grant.\n\nSource: https://www.air.security/blog-posts/plugin4shell\n",
         "createdAt": "2026-09-20T11:14:22Z",
         "labels": [
@@ -3644,100 +3551,6 @@
         "state": "OPEN",
         "title": "hook event logging: complexity refusals never append wd-deny, ask-user-question is logged without the answer, contract-violation false-positives on conformant judges, duplicate commit/push events, close-without-wrapup on a clean run",
         "updatedAt": "2026-10-01T16:15:55Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n`bin/wrap-up-engine.js verify` (backed by `bin/lib/wrap-up/engine-verify.js`) runs nine checks and forces a `BLOCKED` closure per `skills/wrap-up/execution-and-verification.md`'s exit-3 rule whenever any check fails. Three of those checks — `run-dir-archived`, `reference-repairs`, and `plans-ledger` — currently fail on runs that are actually fine, because each check's assumptions don't hold under this plugin's own configuration:\n\n1. `run-dir-archived` decides pass/fail by checking whether the *original* pipeline path is gone. When invoked with `--run-dir` already pointed at the post-archival path (`pipelines/archive/<name>`), it reports \"original path still present\" (misreading the archive path as the original); before archival happens, it reports \"not archived\" — there's no invocation shape that reports a genuine pass.\n2. `reference-repairs` reads the file set of the single merged commit on `main` to confirm each `Initiative-Fix:` repair landed. Under `integration-model: pr-first`, the mandated merge strategy is a squash merge, which folds N one-file `Initiative-Fix:` commits into one multi-file commit — so a check written for a fast-forward/merge-commit history sees a shape it never expected and fails even though every fix landed.\n3. `plans-ledger` scans for gitignored `.superpowers/sdd/*-archive` directories and attributes anything it finds to the current run, regardless of whether that artifact's timestamp predates the run's start or the run ever referenced it. On a shared checkout with other sessions' leftover archive directories, this hands the operator a false \"must run `/claude-tweaks:tidy`\" instruction for artifacts unrelated to their run.\n\nThe observed cost on one real run: verify exited 3 on both attempts, forcing a BLOCKED closure narrative built entirely from checks the run could not have passed, plus a manual follow-up handed to the user for residue that wasn't the run's.\n\n## Deliverables\n1. `run-dir-archived`: pass when `pipelines/archive/<name>` exists and the pre-archival `pipelines/<name>` path does not — regardless of which of the two paths `--run-dir` was invoked with.\n2. `reference-repairs`: under `integration-model: pr-first`, verify each `Initiative-Fix:` repair by inspecting the source PR's commit list (or the run's staged patch files) instead of assuming a 1:1 mapping between source commits and the post-merge commit on `main`.\n3. `plans-ledger`: scope residue detection to artifacts this run actually referenced (or, failing that, to tracked files only) rather than every gitignored `.superpowers/sdd/*-archive` directory found in the working tree. Directories that predate the run's start and that the run never touched are reported as informational \"found, not owned\" rather than counted as a fail.\n4. `skills/wrap-up/execution-and-verification.md`'s exit-3 handling distinguishes a genuine failing row from a structural/not-applicable row (e.g. an informational \"found, not owned\" residue report) before forcing the BLOCKED closure line — a run whose only non-passing rows are structural/informational is allowed to close normally.\n\n## Acceptance Criteria\n1. Given a run pointed at its post-archival path (`pipelines/archive/<name>`), `run-dir-archived` reports pass, not \"original path still present\".\n2. Given the same run invoked before archival (still at `pipelines/<name>`), `run-dir-archived` reports \"not archived\" (its existing not-yet-archived signal), and after archival with `--run-dir` at either the pre- or post-archival path, it reports pass — i.e. there exists an invocation shape post-archival that passes.\n3. Given a `pr-first` run whose PR squash-merges N one-file `Initiative-Fix:` commits into a single multi-file commit on `main`, `reference-repairs` reports pass, verified against the PR's commit list or staged patch files rather than the squash commit's file set.\n4. Given a working tree containing a gitignored `.superpowers/sdd/*-archive` directory dated before the run's start and never referenced by the run, `plans-ledger` reports it as informational \"found, not owned\" and does not count it toward the check's fail state.\n5. Given a run where the only non-passing rows are the informational/structural cases covered by ACs 1-4, `wrap-up-engine.js verify` exits 0 (or its existing non-blocking success code), not exit 3, and the wrap-up skill's closure narrative does not force `BLOCKED`.\n6. A run with a genuine, unrelated verify failure (e.g. an actual missing `Initiative-Fix:` repair) still exits 3 and still forces `BLOCKED` — the fix narrows false positives without masking real ones.\n\n## Release Note\n\nFixed wrap-up verification failing on archived runs and ledger checks for reasons outside the run.\n\n## Technical Approach\n- `run-dir-archived`: detect archival state from the pair of candidate paths (`pipelines/<name>` and `pipelines/archive/<name>`) rather than from which single path `--run-dir` was given, so the check's pass condition (\"archive path exists AND original path does not\") holds under either invocation shape.\n- `reference-repairs`: branch on `integration-model` — when `pr-first`, resolve the repair commit list via `gh pr view <pr> --json commits` (or by reading the run's staged patch files, if commit history isn't reliably available) instead of diffing the single post-merge commit on `main`.\n- `plans-ledger`: cross-reference found `.superpowers/sdd/*-archive` directories against the run's own recorded run-dir start time and/or referenced-artifact list before attributing them to the run; anything outside that scope becomes an informational line, not a fail.\n- `execution-and-verification.md`: introduce a row-classification step (real fail vs. structural/informational) ahead of the existing \"any fail → BLOCKED\" rule, so BLOCKED is reserved for rows that are genuine failures.\n\n### Key Files\n- `plugin/bin/wrap-up-engine.js` — `verify` subcommand entry point; no logic change expected beyond what the lib functions below already handle, but confirm the exit-code mapping still distinguishes real fails from informational rows.\n- `plugin/bin/lib/wrap-up/engine-verify.js` — home of the `run-dir-archived`, `reference-repairs`, and `plans-ledger` checks; fix each per the Technical Approach above.\n- `plugin/skills/wrap-up/execution-and-verification.md` — update the exit-3 → BLOCKED rule to gate on genuine fails only, per Deliverable 4.\n\n## Gotchas\n- The `reference-repairs` fix must not silently accept a squash-merged commit that dropped a repair — the check still needs to fail when a repair genuinely didn't land; the fix changes *how* landed-ness is verified under `pr-first`, not what counts as landed.\n- `plans-ledger`'s \"found, not owned\" reclassification must not become a blanket pass for all gitignored residue — an artifact the run itself created (even if gitignored) should still be attributed to that run and cleaned up normally.\n- Distinguishing \"structural/not-applicable\" from \"real fail\" in `execution-and-verification.md` needs an explicit, auditable classification per row (not an implicit heuristic) so a future genuine regression in one of these three checks doesn't get silently reclassified as informational.\n- Related record #2565 may share root cause or fix surface with one or more of these three checks — cross-check before landing to avoid duplicate or conflicting fixes.\n\n## Original request\n\nwrap-up-engine verify: run-dir-archived, reference-repairs and plans-ledger fail for reasons outside the run, forcing a BLOCKED closure\n\n**Summary:** `wrap-up-engine.js verify` exited 3 twice on a fully completed standalone run because three checks cannot pass under the plugin's own configuration: `run-dir-archived` reports the *archive* path as \"original path still present\" when pointed at it (and \"not archived\" before archival); `reference-repairs` reads the merged commit's file set, but `integration-model: pr-first`'s mandated squash merge folds the three one-file `Initiative-Fix:` commits into one multi-file commit; and `plans-ledger` attributed eight gitignored `.superpowers/sdd/*-archive` directories from other sessions (dated before the run started) to this run and handed the operator a manual `/claude-tweaks:tidy` step.\n\n**Kind:** Defect\n\n**Affected component:** `bin/wrap-up-engine.js verify` / `bin/lib/wrap-up/engine-verify.js` (checks `run-dir-archived`, `reference-repairs`, `plans-ledger`); `skills/wrap-up/execution-and-verification.md` (exit-3 → BLOCKED rule)\n\n**Objective:** Trust calibration; Recovery quality\n\n**Measurement:** verify fails 3 of 9 rows on a run with 0 orphaned worktrees of 3 entered, 1 of 1 run dirs archived, 8 residue items flagged of which 0 belong to the run.\n\n**Cost this session:** two verify runs, a closure forced to BLOCKED, three paragraphs of operator-facing explanation for fails the run could not have passed, one manual follow-up handed to the user.\n\n**Repro steps:**\n1. Standalone wrap-up under `integration-model: pr-first` with a Broken-references row that applies 3 `Initiative-Fix` repairs as separate commits; squash-merge the PR; archive the run dir with `hooks.js archive-run`.\n2. `node bin/wrap-up-engine.js verify --run-dir <archived path> --base <sha>`.\n3. Have any gitignored `.superpowers/sdd/*` directory from an earlier session present in the repo.\n\n**Expected vs. actual:**\nExpected: `run-dir-archived` passes when `pipelines/archive/<name>` exists and `pipelines/<name>` does not; `reference-repairs` under pr-first inspects the PR's commit list (or the staged patch files) rather than the squash commit; `plans-ledger` is scoped to artifacts this run referenced (or to tracked files) and reports pre-existing gitignored leftovers as informational \"found, not owned\".\nActual: all three fail; exit 3; the skill's rule then forbids the closure line.\n\nProposed fix: as in Expected; and let `execution-and-verification.md` distinguish structural/not-applicable rows from real fails before forcing BLOCKED.\n\n**Related:** #2565\n\n**Definition:** Clear\n\n**Plugin version:** 6.126.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-7de07e1b -->\n",
-        "createdAt": "2026-09-17T12:51:30Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2552,
-        "state": "OPEN",
-        "title": "wrap-up-engine verify: run-dir-archived, reference-repairs and plans-ledger fail for reasons outside the run, forcing a BLOCKED closure",
-        "updatedAt": "2026-10-01T16:15:59Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -7866,96 +7679,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n**Related:** #2744, #2746 (same shape — pure verification-and-close findings, already-resolved by the time of shaping)\n\n## Current State\n\nPR #2535 (branch `worktree-worktree-record-1728`, \"Fix #1728: MCP-transport adapter for claim-materialize-PR-open bookends\") was reported failing its `test` workflow run, specifically `tests/bin-lib/harness-health/skill-md.test.js:168` (an unresolvable inline \"below\" reference in `judge-procedure.md`) and `tests/research/skill-md.test.js:344` (`source-registry.md` needing the four-value status line inlined rather than merely mentioning BLOCKED).\n\n**Verified during shaping: this is already resolved.** `gh pr view 2535 --json state,mergeable,statusCheckRollup` shows the PR is `MERGED`, with its `test` workflow run (`https://github.com/thn-inc/claude-tweaks/actions/runs/35537132207`) showing `conclusion: SUCCESS`. Whatever caused the two cited test failures was fixed before this PR merged — nothing remains to build. Note: this PR is also one of the three unfinished-pipeline-runs flagged at this session's own start (run `2026-09-20T193838-record-1728`, listed as \"status: active\" at session start) — its `close-run` bookkeeping may still be outstanding even though the PR itself is merged and green; that's a separate concern from this record's own scope (this record is about the two failing tests, not the run's close-out state).\n\n## Deliverables\n\n- Confirm at build time that PR #2535 is still merged with a green `test` workflow (re-check — this shaping pass's snapshot could theoretically be stale, though a merged PR is a stable, unlikely-to-regress state).\n- Close this record with a comment citing the confirming evidence (PR state, the passing workflow run URL) — no code change needed.\n- Separately note (in the closing comment, or as a pointer) that run `2026-09-20T193838-record-1728` may still need its own `close-run` bookkeeping resolved independently of this record — flagged for whoever owns that cleanup, not something this record's own scope covers.\n\n## Acceptance Criteria\n\n- A fresh check confirms PR #2535 is merged with a passing `test` workflow (or reports a genuine surprise if not).\n- The record is closed with an explanatory comment, not left open as if the two test failures still need fixing.\n- `npm test` passes on the current `main` branch (unrelated to this record's own scope, but confirms no regression).\n\n## Release Note\n\nNo user-visible change: closed out failing documentation-consistency tests on an already-merged change.\n\n## Technical Approach\n\nPure verification-and-close — the same shape as #2744's and #2746's already-resolved findings earlier in this same shaping pass. No code investigation needed beyond re-confirming PR #2535's state via `gh pr view`.\n\n### Key Files\n\n- None — no code change. PR #2535's merge/workflow state is the only thing to re-verify.\n\n## Gotchas\n\n- Don't conflate this record's scope with run `2026-09-20T193838-record-1728`'s own separate close-run bookkeeping — that run was independently flagged as still-unfinished at this session's start; this record only covers the two test failures, which the merge confirms are resolved.\n- If re-verification at build time contradicts this (PR #2535 shows a failing test workflow again, or was somehow unmerged), stop and report that explicitly — it would mean something unusual happened since this shaping pass.\n\n## Original request\n\nFix failing skill-md doc-consistency tests on PR #2535 (#1728)\n\nCurrent State:\n- PR #2535 (branch worktree-worktree-record-1728, \"Fix #1728: MCP-transport adapter for claim-materialize-PR-open bookends\") fails its `test` workflow run.\n- `tests/bin-lib/harness-health/skill-md.test.js:168` fails: judge-procedure.md has an unresolvable inline reference (\"below\") a clean-room agent can't resolve.\n- `tests/research/skill-md.test.js:344` fails: source-registry.md must inline the four-value status line, not merely mention BLOCKED.\nDeliverables:\n- Fix judge-procedure.md's reference so it resolves standalone.\n- Inline the four-value status line in source-registry.md's dispatch section.\n- Re-run `npm test` on the PR branch and confirm both failures clear.\nAcceptance Criteria:\n- `gh run view` shows a passing `test` workflow on PR #2535.\n- No new skill-md doc-consistency regressions introduced.\nSource: https://github.com/thomasholknielsen/claude-tweaks/actions/runs/35536173723\n\n",
-        "createdAt": "2026-09-21T14:06:18Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2748,
-        "state": "OPEN",
-        "title": "Fix failing skill-md doc-consistency tests on PR #2535 (#1728)",
-        "updatedAt": "2026-10-01T16:13:13Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: infra\n\n## Current State\n`skills/wrap-up/skill-curation.md`'s Skills curation row mandates running `bin/harness-health.js validate-findings` once per analysed skill. That command records its health-state cursor by pushing a commit directly to the remote `health-state` ref on every call. In a standalone `/claude-tweaks:wrap-up` run whose Skills row analysed 4 candidate skills, this produced four separate remote pushes as a side effect of what is meant to be a read/judge step — confirmed by `git ls-remote origin health-state` advancing once per call. The Skills curation judge is otherwise a fan-out agent forbidden any git mutation, so this remote-write side effect is inconsistent with the row's own no-mutation contract, and adds latency plus remote noise proportional to the number of skills analysed in a single row.\n\n## Deliverables\n1. Change `bin/harness-health.js validate-findings`'s default behavior to record the health-state cursor locally only (no remote push).\n2. Add an explicit way to push the accumulated cursor once — either a `--push` flag on `validate-findings` or a separate `harness-health.js push-cursor` subcommand.\n3. Update `skills/wrap-up/skill-curation.md` so the Skills curation row's per-skill judge calls `validate-findings` without pushing, and the controller (row end, or Phase 4) performs exactly one push of the accumulated cursor state.\n\n## Acceptance Criteria\n- Running `bin/harness-health.js validate-findings` against N candidate skills in a single wrap-up Skills row produces zero remote pushes to `health-state`, verified by `git ls-remote origin health-state` showing no change in ref sha across the N calls.\n- The new push mechanism (`--push` flag or `push-cursor` subcommand), invoked once after the row completes, produces exactly one remote push carrying the accumulated cursor state from all N local recordings — verified by `git ls-remote origin health-state` advancing exactly once and the pushed commit containing the same cursor data the N local calls would have produced individually.\n- `skills/wrap-up/skill-curation.md`'s Skills curation row text is updated to reflect the new no-push-by-default call, plus the single controller-side push call and where in the row's lifecycle (row end, or Phase 4) it happens.\n- A fan-out Skills curation judge, run per this updated procedure, performs zero git mutations of any kind (matching the existing no-mutation contract already asserted for that judge in other respects).\n\n## Release Note\n\nStopped the skills curation step from pushing health-state updates to the remote once per skill.\n\n## Technical Approach\nAdd a local-only cursor write path to `bin/harness-health.js validate-findings` (or confirm one already exists and simply stop the remote push from firing on that path), gated behind a default now flipped away from pushing. Add the explicit push mechanism as a thin wrapper around the existing git-push logic already implemented for the remote `health-state` ref. Update `skill-curation.md`'s prescribed step text to call the non-pushing form per-skill and the pushing form once, at the row's natural end point.\n\n### Key Files\n- `plugin/bin/harness-health.js` — `validate-findings` subcommand; flip the default to local-only recording, add `--push` flag or `push-cursor` subcommand\n- `plugin/skills/wrap-up/skill-curation.md` — Skills curation row prescribed steps; update per-skill call to the non-pushing form, add the single controller-side push call\n\n## Gotchas\n- Confirm no other caller of `validate-findings` relies on its current always-push behavior before flipping the default — a sweep of call sites is warranted (`grep -r \"validate-findings\" plugin/`).\n- If the local cursor recording mechanism doesn't already exist independent of the push, this may require adding local persistence, not just suppressing an existing push — check `bin/harness-health.js`'s current implementation before assuming the local-write path is already there.\n- The single controller-side push must aggregate cursor state from all N per-skill local recordings correctly — verify the pushed commit reflects all N skills' findings, not just the last one recorded.\n\n## Original request\n\nharness-health validate-findings: a Skills curation judge pushes the health-state cursor to the remote once per analysed skill\n\n**Summary:** The Skills curation row's judge file mandates running the harness-health audit recorder per analysed skill; that recorder pushes its cursor commit to the remote `health-state` ref each time, so a single wrap-up judge produced four remote pushes as a side effect of judging.\n\n**Kind:** Defect\n\n**Affected component:** `bin/harness-health.js validate-findings` (health-state cursor), as invoked by `skills/wrap-up/skill-curation.md`\n\n**Objective:** Automation efficiency\n\n**Cost this session:** four remote pushes from inside a curation row; latency and remote noise, otherwise unclear.\n\n**Repro steps:**\n1. Run a standalone `/claude-tweaks:wrap-up` whose Skills row opens (`.claude/skills/` exists) with 4+ candidate skills.\n2. The dispatched Skills judge follows `skill-curation.md` and runs `harness-health.js validate-findings` once per skill it analyses.\n3. Observe `git ls-remote origin health-state` advancing once per call (the judge reported \"pushed its own cursor commits to the remote health-state ref four times as a side effect\").\n\n**Expected vs. actual:**\nExpected: a judge is a read/judge step with no remote writes; the cursor is recorded locally and pushed once at row end, or by Phase 4.\nActual: one remote push per analysed skill, from a fan-out agent that is otherwise forbidden any git mutation.\n\nProposed fix: make `validate-findings` record the cursor locally by default and add a `--push` (or a separate `harness-health.js push-cursor`) that the controller runs once after the row's payload is recorded.\n\n**Definition:** Clear\n\n**Plugin version:** 6.126.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-ee37feaa -->\n",
         "createdAt": "2026-09-17T12:48:43Z",
         "labels": [
@@ -8584,6 +8307,94 @@
         }
       },
       {
+        "body": "Surface: infra\n\n## Current State\n`plugin/bin/lib/wrap-up/engine-verify.js`'s `carrier-commit` check (`registerCheck('carrier-commit', …)`, line ~320) verifies that each resolved issue in a wrap-up run has a \"carrier commit\" that closed it. The check currently greps the branch log for the literal string `Fixes #{n}` only (line ~330: `deps.git(['log', '--grep=Fixes #${n}', ...])`), and, when a PR-first fallback is needed, checks the PR body for the same literal string (line ~345: `prBody.includes('Fixes #${n}')`).\n\nGitHub recognizes a broader set of closing keywords in commit messages and PR bodies — `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved` (case-insensitive, optionally `owner/repo#N`) — any of which actually closes the linked issue on merge. Because this check only recognizes the literal `Fixes #N` form, a run whose commits used any other recognized keyword (e.g. `Closes #N`) fails the check with `missing` populated for every record, even though GitHub's own state shows the issues correctly closed. This was observed on a real four-record standalone wrap-up (commits used `Closes #N`; all four issues were CLOSED at merge time; `verify` still exited 3 and `execution-and-verification.md`'s exit-3 → BLOCKED rule fired incorrectly), on plugin 6.127.0.\n\nThe repo already has a reusable mechanism for checking an issue's actual closing state via GraphQL: `plugin/bin/lib/issues/linked-prs.js`'s `fetchLinkedPRs` resolves each candidate issue's `closedByPullRequestsReferences` connection in one batched call — this is the \"ground truth\" data source the bug report's proposed fix references.\n\nA related, separately-tracked false-negative in the same verify table is #2552 (`run-dir-archived`) — not in scope here, but worth being aware the verify table has more than one known false-negative row.\n\n## Deliverables\n1. Replace the `carrier-commit` check's branch-log grep (line ~330) with a case-insensitive match over GitHub's full recognized closing-keyword set (`close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`), each optionally preceded by `owner/repo` before the `#N`, matching against `#{n}` as a whole reference (not a substring of a larger number).\n2. Apply the same keyword-set widening to the PR-body fallback check (line ~345), which currently has the identical literal-`Fixes` narrowing.\n3. Add a ground-truth fallback: when neither the branch-log grep nor the PR-body check finds a carrier commit for an issue, query the issue's actual state via `gh issue view N --json state` (or reuse `plugin/bin/lib/issues/linked-prs.js`'s `fetchLinkedPRs`/`closedByPullRequestsReferences` connection) and treat a CLOSED state backed by a closing PR/commit reference as a pass on its own, rather than failing purely because no commit message matched a keyword pattern.\n4. Keep the existing `fail` behavior for a genuinely-open issue with no matching commit and no closing reference — the fix narrows false negatives, it does not weaken the check's ability to catch a real missing carrier commit.\n\n## Acceptance Criteria\n- `carrier-commit` passes for a run whose closing commit message uses any of GitHub's recognized closing keywords (`close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`), case-insensitive, with or without an `owner/repo#N` prefix — not just the literal `Fixes #N` form.\n- The PR-body fallback check recognizes the same keyword set as the branch-log check (no longer just `Fixes #N`).\n- `carrier-commit` passes for an issue that is CLOSED with a `closedByPullRequestsReferences`/closing-commit reference, even if no commit message in the branch range matched any keyword pattern textually (the ground-truth fallback).\n- `carrier-commit` still fails (`missing` populated) for an issue with no matching commit message, no matching PR body reference, and no closing-PR-reference-backed CLOSED state — a genuinely missing carrier commit is still caught.\n- `tests/bin-lib/wrap-up/engine-verify.test.js` gains test cases covering: a `Closes #N` commit (currently would fail, should now pass), a `Resolves #N` commit, case-insensitivity (`FIXES #N`), and the ground-truth CLOSED-state fallback path.\n- Existing passing test cases in `tests/bin-lib/wrap-up/engine-verify.test.js` for the `carrier-commit` check (including the literal `Fixes #N` case) continue to pass.\n\n## Release Note\n\nFixed wrap-up missing closing keywords other than Fixes when checking the merge commit.\n\n## Technical Approach\nRead `plugin/bin/lib/wrap-up/engine-verify.js` lines ~306-345 (the `carrier-commit` check and its preceding comment block) and `tests/bin-lib/wrap-up/engine-verify.test.js`'s existing `carrier-commit` test cases before changing anything, to preserve the check's existing pr-first/local-merge branching logic (the comment block above the check, lines ~312-318, explains why the PR-body fallback exists only when `resolvePrNumber` resolves a PR — don't disturb that branching, only the keyword-matching and add the new ground-truth fallback). Build the keyword regex once (a shared constant, since it's needed in three places: the git log `--grep`, the PR body match, and potentially reused by any other check that does closing-keyword matching) rather than inlining it three times. For the ground-truth fallback, reuse `plugin/bin/lib/issues/linked-prs.js`'s existing `fetchLinkedPRs` rather than writing a new GraphQL query — it already resolves `closedByPullRequestsReferences` in one batched call across all candidate issues, matching this check's existing per-issue loop shape.\n\n### Key Files\n- `plugin/bin/lib/wrap-up/engine-verify.js` — widen the `--grep` pattern (line ~330) and the PR-body check (line ~345) to the full keyword set; add the ground-truth CLOSED-state fallback to `registerCheck('carrier-commit', ...)`\n- `plugin/bin/lib/issues/linked-prs.js` — reuse `fetchLinkedPRs` for the ground-truth fallback rather than writing new GraphQL query logic\n- `tests/bin-lib/wrap-up/engine-verify.test.js` — add test cases for the widened keyword set, case-insensitivity, and the ground-truth fallback path; verify no regression on the existing `Fixes #N` case\n\n## Gotchas\n- Preserve the existing pr-first/local-merge branching logic (the comment at lines ~312-318) — the fix is about widening keyword matching and adding a ground-truth fallback, not restructuring when the PR-body check applies vs. the branch-log check.\n- The keyword regex must match `#N` as a whole issue reference, not a substring of a larger number (e.g. `#12` should not match inside `#123`) — use a word boundary or equivalent anchor.\n- `owner/repo#N` is a valid GitHub closing-keyword form too (per the bug report) — the regex/match should account for it, not just bare `#N`.\n- The ground-truth fallback adds a `gh` (or GraphQL) call — keep it scoped to only the issues that fail the textual match, not run unconditionally for every issue, to avoid unnecessary API calls on the common case where the textual match already succeeds.\n- #2552 (`run-dir-archived`) is a separate, already-filed false-negative in the same verify table — do not fold its fix into this record; it has its own scope.\n\n## Original request\n\nwrap-up verify: carrier-commit check only matches the literal \"Fixes #N\", missing GitHub's other closing keywords\n\n**Summary:** `wrap-up-engine.js verify`'s `carrier-commit` check greps the branch log for the literal `Fixes #N` only, so a run whose closing commits used GitHub's other closing keywords (`Closes #N`, `Resolves #N`, `Fixed #N`, etc.) fails the check even though GitHub closed the issues on merge.\n\n**Kind:** Defect\n\n**Affected component:** `bin/lib/wrap-up/engine-verify.js` (`registerCheck('carrier-commit', …)`), and the `skills/wrap-up/execution-and-verification.md` exit-3 → BLOCKED rule that consumes it\n\n**Repro steps:**\n1. On a `local-merge` project, fix a record in a worktree and commit with a footer line `Closes #N` (GitHub's documented closing keyword) instead of `Fixes #N`.\n2. Rebase-merge to the integration branch; GitHub closes issue #N.\n3. Run `/claude-tweaks:wrap-up #N`; at Phase 4's Verify step, `node bin/wrap-up-engine.js verify --run-dir <run-dir> --base <sha>`.\n\n**Expected vs. actual:**\nExpected: `carrier-commit` passes — the range contains a commit whose message closes #N with any keyword GitHub recognizes (`close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`, case-insensitive, optionally `owner/repo#N`), and the issue is in fact closed.\nActual: `deps.git(['log', '--grep=Fixes #N', …])` finds nothing, `missing` fills with every record, the row reads `fail — no carrier commit found for #N, …`, verify exits 3, and the skill's rule forbids the closure line on a run that closed all its records. Observed on a four-record standalone wrap-up (commits used `Closes #N`; all four issues showed CLOSED at merge time), plugin 6.127.0.\n\nProposed fix: match with a case-insensitive regex over GitHub's closing-keyword set (`--grep` with `-i -E '(close[sd]?|fix(e[sd])?|resolve[sd]?) #N\\b'`, or read the log once and match in JS), and — since the issue's own state is the ground truth — treat a `gh issue view N --json state` of CLOSED with a `closedByPullRequestsReferences`/closing-commit reference as a pass on its own. The PR-body fallback has the same literal-`Fixes` narrowing (`prBody.includes('Fixes #N')`) and should use the same set.\n\n**Related:** #2552 (run-dir-archived, the other false-negative row in the same verify table)\n\n**Definition:** Clear\n\n**Plugin version:** 6.127.0\n",
+        "createdAt": "2026-09-20T12:42:34Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
+            "name": "bug",
+            "description": "Something isn't working",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 2676,
+        "state": "OPEN",
+        "title": "wrap-up verify: carrier-commit check only matches the literal \"Fixes #N\", missing GitHub's other closing keywords",
+        "updatedAt": "2026-10-01T16:09:56Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      },
+      {
         "body": "Surface: infra\n\nStaged backlog record proposal — awaiting Review Console approval.\nOrigin: build/ledger item #2, run 2026-09-20T185343-spec-2670-2681 (discovered while building #2681).\nDefer-reason: agent holds the context; genuinely separate file scope from #2681's declared Key Files, not introduced by this build.\n\n---\n\n## Proposed title\n\n`/test`: migrate qa-prompts.md and qa-procedures.md's live agent-browser auth invocations to playwright-cli session-state\n\n## Current State\n\n`#2681` (this run) migrated the QA-story-authoring path — `plugin/agents/qa-agent.md`, `plugin/skills/stories/auth-resolution.md`, `SKILL.md`, `refine.md`, `story-examples.md` — from `agent-browser`'s credential-vault auth model to `playwright-cli`'s `state-load`/`state-save` session-state persistence.\n\nThe `/test qa` orchestrator's own live invocations were outside #2681's declared scope and were NOT migrated:\n\n- `plugin/skills/test/qa-prompts.md` — Phase 3 prompt template (~lines 96-97, ~152): still instructs `agent-browser --session {story.id} auth login <vault-name>`.\n- `plugin/skills/test/qa-procedures.md` — Phase 2.5 pre-flight (~lines 99-112): still runs `agent-browser auth list`, tells a story author to run `agent-browser auth save <vault-name> --url <login-url> --username <username> --password <password>` for a missing vault, and instructs `agent-browser --session <story-id> auth login <vault-name>`.\n- `plugin/skills/_shared/dev-url-detection.md` (line 28): still references credentials being \"saved via `agent-browser auth save`\".\n\nConfirmed via `grep -rn agent-browser plugin/skills/test/qa-prompts.md plugin/skills/test/qa-procedures.md plugin/skills/_shared/dev-url-detection.md` against this run's worktree.\n\nThis means #2682's stated premise (\"once #2670 and #2681 ship, nothing in the plugin calls agent-browser anymore\") does not actually hold yet — the `/test qa` production pipeline still depends on agent-browser's auth commands for its own pre-flight and prompt template, independent of the qa-agent.md/stories path #2681 fixed.\n\n## Deliverables\n\n- [ ] Update `plugin/skills/test/qa-prompts.md`'s Phase 3 prompt template to invoke the same `playwright-cli state-load <file>` + `goto <url>` sequence #2681 established in `qa-agent.md`, instead of `agent-browser auth login`.\n- [ ] Update `plugin/skills/test/qa-procedures.md`'s Phase 2.5 pre-flight to check for `.claude-tweaks/auth-state/<vault-name>.json` (per #2681's `auth-resolution.md` convention) instead of running `agent-browser auth list`; update the missing-vault warning message to print the new capture procedure instead of `agent-browser auth save`.\n- [ ] Update `plugin/skills/_shared/dev-url-detection.md` line 28's credential-storage description to reference the captured session-state file instead of `agent-browser auth save`.\n- [ ] Re-run `grep -rn agent-browser plugin/skills/test/ plugin/skills/_shared/dev-url-detection.md` and confirm clean.\n\n## Acceptance Criteria\n\n1. `grep -rn agent-browser plugin/skills/test/qa-prompts.md plugin/skills/test/qa-procedures.md plugin/skills/_shared/dev-url-detection.md` returns no match.\n2. `/test qa`'s Phase 2.5 pre-flight and Phase 3 prompt template both resolve auth via a captured `.claude-tweaks/auth-state/<vault-name>.json` file, consistent with #2681's `auth-resolution.md` convention.\n3. A manual QA run exercising an auth-gated story through the actual `/test qa` orchestrator (not just `qa-agent.md` directly) passes with no `agent-browser` process ever starting.\n\n## Release Note\n\nMoved QA story authentication to the new browser backend's saved sessions.\n\n## Related\n\n#2670, #2681 (this run), #2682 (blocked on this record's premise being fully true, though #2682's own Deliverable #1 already independently re-verifies via a fresh grep before proceeding)\n\n\n## Technical Approach\n\nFollow #2681's already-established `auth-resolution.md` convention directly rather than inventing a new pattern — the Deliverables checklist above already names the exact three files and their line ranges. Apply the same `playwright-cli state-load <file>` + `goto <url>` sequence #2681 used in `qa-agent.md` to `qa-prompts.md`'s Phase 3 prompt template, and the same `.claude-tweaks/auth-state/<vault-name>.json` check to `qa-procedures.md`'s Phase 2.5 pre-flight, replacing the `agent-browser auth list`/`auth save`/`auth login` invocations named above.\n\n## Gotchas\n\n- Acceptance Criterion 3 requires a manual QA run through the actual `/test qa` orchestrator (not just `qa-agent.md` directly) — don't treat the grep-clean check (AC1) alone as sufficient verification.\n- This record's premise is a precondition for #2682 (a related record) — landing this fixes #2682's stated premise gap, so sequencing may matter if #2682 is also in flight.\n\n## Original request\n\n/test: migrate qa-prompts.md and qa-procedures.md's live agent-browser auth invocations to playwright-cli session-state\n\nStaged backlog record proposal — awaiting Review Console approval.\nOrigin: build/ledger item #2, run 2026-09-20T185343-spec-2670-2681 (discovered while building #2681).\nDefer-reason: agent holds the context; genuinely separate file scope from #2681's declared Key Files, not introduced by this build.\n\n---\n\n## Proposed title\n\n`/test`: migrate qa-prompts.md and qa-procedures.md's live agent-browser auth invocations to playwright-cli session-state\n\n## Current State\n\n`#2681` (this run) migrated the QA-story-authoring path — `plugin/agents/qa-agent.md`, `plugin/skills/stories/auth-resolution.md`, `SKILL.md`, `refine.md`, `story-examples.md` — from `agent-browser`'s credential-vault auth model to `playwright-cli`'s `state-load`/`state-save` session-state persistence.\n\nThe `/test qa` orchestrator's own live invocations were outside #2681's declared scope and were NOT migrated:\n\n- `plugin/skills/test/qa-prompts.md` — Phase 3 prompt template (~lines 96-97, ~152): still instructs `agent-browser --session {story.id} auth login <vault-name>`.\n- `plugin/skills/test/qa-procedures.md` — Phase 2.5 pre-flight (~lines 99-112): still runs `agent-browser auth list`, tells a story author to run `agent-browser auth save <vault-name> --url <login-url> --username <username> --password <password>` for a missing vault, and instructs `agent-browser --session <story-id> auth login <vault-name>`.\n- `plugin/skills/_shared/dev-url-detection.md` (line 28): still references credentials being \"saved via `agent-browser auth save`\".\n\nConfirmed via `grep -rn agent-browser plugin/skills/test/qa-prompts.md plugin/skills/test/qa-procedures.md plugin/skills/_shared/dev-url-detection.md` against this run's worktree.\n\nThis means #2682's stated premise (\"once #2670 and #2681 ship, nothing in the plugin calls agent-browser anymore\") does not actually hold yet — the `/test qa` production pipeline still depends on agent-browser's auth commands for its own pre-flight and prompt template, independent of the qa-agent.md/stories path #2681 fixed.\n\n## Deliverables\n\n- [ ] Update `plugin/skills/test/qa-prompts.md`'s Phase 3 prompt template to invoke the same `playwright-cli state-load <file>` + `goto <url>` sequence #2681 established in `qa-agent.md`, instead of `agent-browser auth login`.\n- [ ] Update `plugin/skills/test/qa-procedures.md`'s Phase 2.5 pre-flight to check for `.claude-tweaks/auth-state/<vault-name>.json` (per #2681's `auth-resolution.md` convention) instead of running `agent-browser auth list`; update the missing-vault warning message to print the new capture procedure instead of `agent-browser auth save`.\n- [ ] Update `plugin/skills/_shared/dev-url-detection.md` line 28's credential-storage description to reference the captured session-state file instead of `agent-browser auth save`.\n- [ ] Re-run `grep -rn agent-browser plugin/skills/test/ plugin/skills/_shared/dev-url-detection.md` and confirm clean.\n\n## Acceptance Criteria\n\n1. `grep -rn agent-browser plugin/skills/test/qa-prompts.md plugin/skills/test/qa-procedures.md plugin/skills/_shared/dev-url-detection.md` returns no match.\n2. `/test qa`'s Phase 2.5 pre-flight and Phase 3 prompt template both resolve auth via a captured `.claude-tweaks/auth-state/<vault-name>.json` file, consistent with #2681's `auth-resolution.md` convention.\n3. A manual QA run exercising an auth-gated story through the actual `/test qa` orchestrator (not just `qa-agent.md` directly) passes with no `agent-browser` process ever starting.\n\n## Related\n\n#2670, #2681 (this run), #2682 (blocked on this record's premise being fully true, though #2682's own Deliverable #1 already independently re-verifies via a fresh grep before proceeding)\n",
         "createdAt": "2026-09-20T19:31:19Z",
         "labels": [
@@ -8692,6 +8503,7 @@
     {
       "records": [
         2566,
+        2676,
         2710
       ]
     }
