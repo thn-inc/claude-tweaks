@@ -292,6 +292,23 @@ On match, skip Entry Format's stub assembly and its character-budget cap, and ru
 2. **The deferral check.** The filing is a deferral when the body carries an `Origin:` line, `--origin=` was supplied (both content signals — either way the composed body carries provenance), **or** any `--source` value other than `intake` was given — the rule keys on "any `--source`", not named producers. A deferral with no `--defer-reason=` and no `Defer-reason:` line in the text → **stop and report the missing reason; file nothing** (the same hard gate `wrap-up/refused-proposals.md` enforces at the console). This check is evaluated before branch selection — a supplied `--defer-reason=` is never silently dropped on the stub path (a stub deferral's validated value is passed to `recordPayload({deferReason})`, which inserts the body line). This is the one deliberate content-keyed exception where invoker identity enters (`--source` as the headless-caller equivalent of the `Origin:` content signal), named as such.
 3. **Score and file born-ready.** Judge `risk`/`size` per `_shared/work-record.md`'s Scoring axis (or take `--risk=`/`--size=` overrides), compose via `specShapedBody({ header, currentState, deliverables, acceptanceCriteria, releaseNote: <a plain-language, verb-first sentence describing what becomes true for a user once this record is built, or 'No user-visible change.' for a purely internal one — #2660, required>, filedBy: 'capture', provenance: { origin: <the lifted line's value (the text after `Origin: `), else the `--origin=` text, else omitted>, deferReason }, footer: '_Filed by `capture` via specShapedBody._' })`, and file via Backend Selection's existing filing step with `recordPayload({ …, origin: 'capture', risk, size, ready: true, deferReason })` — `ready` regardless of the autonomy ceiling.
 
+   This branch's full `recordPayload` call, spelled out (`record.js`'s accepted keys are wider —
+   `ceremony`, `solutionUnjustified`, `parked`, `priority`, `fingerprint` — this branch never
+   passes those):
+
+   ```json
+   {
+     "title": "<the record title>",
+     "body": "<specShapedBody's composed text, from this step>",
+     "type": "<bug|feature|task>",
+     "origin": "capture",
+     "risk": "<low|medium|high>",
+     "size": "<low|medium|high>",
+     "ready": true,
+     "deferReason": "<one of DEFER_REASONS, present only when the deferral check above applies>"
+   }
+   ```
+
 **Decision (recorded, not an omission):** `ready` on this branch follows from the born-ready rule's own reasoning — a `specShapedBody`-composed, scored body is structurally what health skills file, and they are `ready` by construction — not from a trust verdict; the human gate stays the grant at `refine`, and the trust ledger's `producer:capture` class grades outcomes post-hoc. Self-judged scoring is likewise deliberately unconditional (the same judgment `/specify` shaping mode makes).
 
 **Skips on this branch:** the `gh issue list`/git-log trust fetch and #575's chain-into-`/claude-tweaks:specify` step never run — the record is already the shape that chain exists to produce. Presentation line: `Added: '{title}' (Type: {t}, Definition: clear, shaped — risk:{r} size:{s}, ready)`.
