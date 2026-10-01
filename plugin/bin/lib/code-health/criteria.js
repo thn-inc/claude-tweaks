@@ -150,6 +150,15 @@ const CRITERIA = [
   // the only surface a site's pages and assets live in; pinned directly by
   // code-health's focus=prelaunch (skills/code-health/focus-mode.md).
   { id: 'prelaunch', appliesTo: ['frontend'], confidenceFloor: 'medium', fragment: 'criteria-prelaunch.md' },
+  // Domain: agent-trust-scope → an unattended autonomous agent's own
+  // standing reach (registry access, network egress, credential scope), as
+  // configured by `.claude/settings.json` permission posture combined with
+  // `.claude-tweaks/policy.yml` autonomy level — distinct from the `risk:*`
+  // label's per-change blast-radius scoring (#2749). Area-gated to infra,
+  // the surface a project's own agent/dispatch configuration lives in;
+  // pinned directly by code-health's focus=agent-trust-scope
+  // (skills/code-health/focus-mode.md), never selected via criteriaForArea.
+  { id: 'agent-trust-scope', appliesTo: ['infra'], confidenceFloor: 'medium', fragment: 'criteria-agent-trust-scope.md' },
 ];
 
 // Build a lookup map once on load for O(1) getCriterion.

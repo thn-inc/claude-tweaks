@@ -128,6 +128,16 @@ These challenge the project's DESIGN.md, not the diff — the wrapper never edit
 
 > Findings are advisory — they inform the verdict but were not auto-applied. To action them inline, route through Step 3 Routing's resolution flow with category `Security Hardening`. Each row is a "flag for human review" signal, not a formal proof — confirm the underlying risk before treating a finding as settled (`criteria-security-hardening.md`'s "What NOT to flag").
 
+### Agent Trust Scope (from Step 6.65, code-health's `focus=agent-trust-scope`)
+
+{Include when Step 6.65's pre-check found `.claude/settings.json` or `.claude-tweaks/policy.yml` in scope and at least one candidate survived judgment. Omit when the pre-check skipped (neither config file in the diff scope), when the result was `notApplicable: true` (no `.claude-tweaks/policy.yml`), or when candidates were found but none survived judgment (note the latter in the summary footer instead: "Agent Trust Scope pass ran — no actionable findings.").}
+
+| File | Dimension | Severity | Finding |
+|------|-----------|----------|---------|
+| {file} | {registry-access / network-egress / credential-scope} | {low/medium/high} | {message, per `criteria-agent-trust-scope.md`'s calibration} |
+
+> Findings are advisory — they inform the verdict but were not auto-applied. To action them inline, route through Step 3 Routing's resolution flow with category `Agent Trust Scope`. This audits the project's own committed `.claude/settings.json` permission posture only — never a claim about an agent's actual real-world reach (`criteria-agent-trust-scope.md`'s "What NOT to flag").
+
 ### Code Simplification
 - {summary of simplifier changes, or "No simplifications needed"}
 
