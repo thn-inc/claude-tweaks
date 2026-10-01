@@ -210,7 +210,7 @@ toward the grant.
          --label by:capture)
        ISSUE_NODE_ID=$(gh issue view "$(basename "$ISSUE_URL")" --json id -q .id)
        TYPE_ID=$(gh api graphql -f query='query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){issueTypes(first:50){nodes{id name}}}}' \
-         -f owner='{owner}' -f repo='{repo}' -q ".data.repository.issueTypes.nodes[] | select(.name | ascii_downcase == \"$TYPE\") | .id")
+         -F owner='{owner}' -F repo='{repo}' -q ".data.repository.issueTypes.nodes[] | select(.name | ascii_downcase == \"$TYPE\") | .id")
        gh api graphql -f query='mutation($id:ID!,$typeId:ID!){updateIssue(input:{id:$id,issueTypeId:$typeId}){issue{id}}}' \
          -f id="$ISSUE_NODE_ID" -f typeId="$TYPE_ID" >/dev/null
      else
