@@ -221,11 +221,12 @@ function composeFixesBlock(specs, deferredClosures) {
     const deferredReason = deferred.get(String(spec.id));
     if (deferredReason) return `Refs #${spec.id} — deferred: ${deferredReason}`;
     if (spec.status === 'complete') return `Fixes #${spec.id}`;
-    const reason = spec.status === 'not-run'
-      ? 'not run'
-      : spec.status === 'failed'
-        ? (spec.phase ? `failed at ${spec.phase}` : 'failed')
-        : spec.status; // pending/running — defensive; the refresh runs post-gate
+
+    let reason;
+    if (spec.status === 'not-run') reason = 'not run';
+    else if (spec.status === 'failed') reason = spec.phase ? `failed at ${spec.phase}` : 'failed';
+    else reason = spec.status; // pending/running — defensive; the refresh runs post-gate
+
     return `Refs #${spec.id} — not run/failed: ${reason}`;
   });
 }
