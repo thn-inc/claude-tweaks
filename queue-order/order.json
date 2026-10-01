@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-01T18:41:55.697Z",
+  "computedAt": "2026-10-01T19:26:37.324Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -305,12 +305,12 @@
       },
       {
         "number": 2726,
-        "updatedAt": "2026-10-01T16:14:17Z",
+        "updatedAt": "2026-10-01T18:45:16Z",
         "state": "OPEN"
       },
       {
         "number": 2725,
-        "updatedAt": "2026-10-01T16:14:21Z",
+        "updatedAt": "2026-10-01T18:45:09Z",
         "state": "OPEN"
       },
       {
@@ -6795,196 +6795,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`plugin/skills/capture/SKILL.md`'s Backend Selection step 2 shows only the stub payload shape for `bin/compose-record.js` (`{title, body, type, origin}`). The Shaped-body branch (line ~268) tells the caller to file via `recordPayload({ …, origin: 'capture', risk, size, ready: true, deferReason })` — eliding the base fields with `…` rather than restating them — and separately compose the body via `specShapedBody(...)`. Verified against `plugin/bin/lib/issues/record.js`'s actual `recordPayload` signature: `{ title, body, type, origin, risk, size, ceremony, solutionUnjustified, ready, parked, priority, fingerprint, effort, framing, deferReason }`. Nowhere in `capture/SKILL.md` does the full accepted field list appear in one place for the Shaped-body branch — a caller has to cross-reference the Shaped-body branch's elliptical `{…, ...}` call against Backend Selection's stub example and `record.js`'s source to reconstruct the complete payload, which is exactly the reverse-engineering cost the filer measured (five source reads before one shaped capture could be filed).\n\n## Deliverables\n\n- Add a Shaped-body-branch-specific payload example to `capture/SKILL.md`, spelled out in full (not elliptical), showing every field the Shaped-body branch actually passes: `title`, `body` (the `specShapedBody`-composed text), `type`, `origin: 'capture'`, `risk`, `size`, `ready: true`, `deferReason` — placed near the existing Backend Selection stub example or inline at the Shaped-body branch's own `recordPayload({…})` reference, whichever reads more naturally in context.\n- Keep the stub-payload example (`{title, body, type, origin}`) for the non-shaped (stub) branch as-is — this record only fills the gap for the Shaped-body branch's own field list, not a rewrite of the existing stub documentation.\n\n## Acceptance Criteria\n\n- `capture/SKILL.md` states the Shaped-body branch's full `recordPayload` field list in one place, matching `record.js`'s actual accepted keys for the fields the branch uses (`title`, `body`, `type`, `origin`, `risk`, `size`, `ready`, `deferReason`) — not an elliptical `{…}` reference requiring a source read to complete.\n- The existing stub-payload example and Backend Selection's own prose are unchanged except for this addition — this is a documentation fill-in, not a restructuring.\n\n## Release Note\n\nDocumented every field capture passes when it files an already-shaped record.\n\n## Technical Approach\n\nPure documentation change to `plugin/skills/capture/SKILL.md` — no code or CLI behavior changes. Cross-reference `record.js`'s `recordPayload` signature (already verified above) as the source of truth for the field list, and #2589 (named in the original report as covering the shaped-body *prose's* required section names, a related but distinct gap) to avoid duplicating content that record already owns.\n\n### Key Files\n\n- `plugin/skills/capture/SKILL.md` — the Shaped-body branch (~line 268) and Backend Selection step 2, where the full payload example belongs\n- `plugin/bin/lib/issues/record.js` — `recordPayload`'s actual signature, the source of truth this documentation must match\n\n## Gotchas\n\n- Don't restate `ceremony`, `solutionUnjustified`, `parked`, `priority`, `fingerprint`, `effort`, or `framing` in the new example — the Shaped-body branch's own call only ever passes `title`/`body`/`type`/`origin`/`risk`/`size`/`ready`/`deferReason`; listing the full `recordPayload` signature unconditionally would misrepresent what this branch actually sends.\n- Cross-check against #2589 if it's still open at build time — that record covers the shaped-body *prose's* section names (Current State/Deliverables/etc.), not the CLI payload fields this record covers; keep the two additions non-overlapping.\n\n## Original request\n\ncapture: Shaped-body branch never states `bin/compose-record.js`'s payload fields\n\n**Summary:** The Shaped-body branch tells the caller to compose via `specShapedBody(...)` and file via `recordPayload({...})`, while Backend Selection only shows the stub payload (`{title, body, type, origin}`) for `bin/compose-record.js` — the JSON fields a shaped filing must pass to the CLI (`risk`, `size`, `ready`, `deferReason`, and the body carrying its own `Origin:` line and `## ` sections) are nowhere in the skill text.\n\n**Kind:** Gap\n\n**Affected component:** `/claude-tweaks:capture` (Shaped-body branch and Backend Selection step 2), `bin/compose-record.js`\n\n**Objective:** Context overhead\n\n**Measurement:** 5 of 260 Bash calls spent reading `bin/lib/compose-record/compose.js` and `bin/lib/issues/record.js` to learn the accepted payload; 50 Read calls over 26 user turns in the session.\n\n**Cost this session:** five source reads of the plugin's own library before one shaped capture could be filed.\n\n**Use case:** An agent that holds the full context of a deferral (Origin, Defer-reason, Current State / Deliverables / Acceptance Criteria, a risk/size judgment) wants to file it born-ready with one `compose-record.js` call, as the branch intends. Without the field list it has to reverse-engineer `recordPayload`'s accepted keys from source, which costs context and risks a wrong guess that `--require-shaped` would not catch (e.g. `ready` or `deferReason` silently absent).\n\nPossibly related: #2589 (the shaped-body prose's required-section list), which covers the section names but not the CLI payload fields.\n\n**Definition:** Clear\n\n**Plugin version:** 6.126.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-b6ebf916 -->\n",
-        "createdAt": "2026-09-21T04:52:27Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2726,
-        "state": "OPEN",
-        "title": "capture: Shaped-body branch never states `bin/compose-record.js`'s payload fields",
-        "updatedAt": "2026-10-01T16:14:17Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`plugin/skills/capture/SKILL.md`'s `work-types: native` filing branch (line ~199) runs:\n\n```bash\ngh issue create \\\n  --title \"$TITLE\" \\\n  --body-file \"/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md\" \\\n  --type \"$TYPE\" \\\n  --label by:capture\n```\n\nThe filer reported this failed against `gh` 2.92.0 (2026-04-28) with `unknown flag: --type`, requiring a 3-step workaround (create without the flag, GraphQL-lookup the repo's issue types, GraphQL `updateIssue(issueTypeId:)`) — the same fallback mechanism `backlog/refine-record.md`, `specify/shaping-mode-stamping.md`, and `_shared/console-on-pr.md` already use elsewhere in this codebase for the identical native-type-setting need.\n\n**Premise re-check during shaping:** the currently-installed `gh` (2.96.0, 2026-07-02) *does* support `--type` — `gh issue create --help` documents it (`--type name  Set the issue type by name`, with a worked example) and it is not rejected. So the flag was added to `gh` somewhere between 2.92.0 and 2.96.0, after the filer's environment predates it. This means the original bug's specific claim (\"gh has no such flag\") is no longer universally true — but this plugin ships to many projects' environments, each with whatever `gh` version happens to be installed there, so both \"flag exists\" and \"flag doesn't exist\" are live cases in the field, not a closed question this repo's own current `gh` answers definitively.\n\n## Deliverables\n\n- Make the `work-types: native` filing branch tolerant of both `gh` behaviors: attempt `gh issue create ... --type \"$TYPE\"` first: on success, done (no fallback needed, no wasted GraphQL round-trip on modern `gh`). On failure specifically matching an unknown-flag rejection (not any other `gh issue create` failure — a real auth/network/validation error must still surface as-is, not silently swallowed into the fallback), fall back to today's already-implemented workaround: create without `--type`, then set the native type via the GraphQL `updateIssue(issueTypeId:)` mutation, reusing the exact mechanism `backlog/refine-record.md`/`specify/shaping-mode-stamping.md`/`_shared/console-on-pr.md` already carry (don't reinvent a fourth copy — extract or reference the existing one if it isn't already a shared helper).\n- Update `plugin/skills/capture/SKILL.md`'s `work-types: native` branch text to describe this detect-then-fallback shape instead of the current bare `--type` call.\n\n## Acceptance Criteria\n\n- On a `gh` version that supports `--type` (confirmed: 2.96.0), `/claude-tweaks:capture` with `work-types: native` files the issue with its type set in a single `gh issue create` call — no fallback GraphQL calls fire.\n- On a `gh` version that rejects `--type` as unknown, the same capture flow still succeeds, ending with the issue's native type set via the existing GraphQL fallback — matching today's (post-workaround) behavior, not a regression.\n- A real `gh` auth/network/validation failure on the initial `gh issue create` call is NOT silently absorbed into the unknown-flag fallback path — it surfaces as a genuine capture failure, same as before this record's fix.\n- `npm test` passes.\n\n## Release Note\n\nFixed native issue types failing on the current GitHub CLI when capturing a record.\n\n## Technical Approach\n\nDetect the unknown-flag case from `gh`'s own exit behavior/stderr text for an unrecognized flag (distinct, testable string) rather than version-sniffing `gh --version` — a flag's presence is what actually matters, and sniffing the version string is one more thing to keep in sync with `gh`'s own release cadence. Reuse whichever of the three existing call sites' GraphQL `updateIssue(issueTypeId:)` invocation is most reusable as-is (`backlog/refine-record.md`, `specify/shaping-mode-stamping.md`, or `_shared/console-on-pr.md`) rather than writing a fourth copy of the same mutation.\n\n### Key Files\n\n- `plugin/skills/capture/SKILL.md` — the `work-types: native` branch (~line 199) that needs the detect-then-fallback shape\n- `plugin/skills/backlog/refine-record.md`, `plugin/skills/specify/shaping-mode-stamping.md`, `plugin/skills/_shared/console-on-pr.md` — existing GraphQL `updateIssue(issueTypeId:)` call sites to reuse rather than duplicate\n\n## Gotchas\n\n- Don't assume the currently-installed `gh` version's behavior (flag works) generalizes to every consuming project's environment — this plugin ships broadly, and the filer's own repro (gh 2.92.0) is real evidence the flag was absent in a recent-enough release to still be in the field.\n- Distinguish an unknown-flag rejection from every other `gh issue create` failure mode carefully — a broad catch-and-fallback would mask real auth/network/validation errors as if they were a version-compatibility issue.\n\n## Original request\n\ncapture: `work-types: native` branch runs `gh issue create --type`, which the current gh CLI rejects\n\n**Summary:** `/claude-tweaks:capture`'s `work-types: native` filing command passes `--type \"$TYPE\"` to `gh issue create`, but gh 2.92.0 (2026-04-28) has no such flag, so every native-typed capture fails on its first filing attempt.\n\n**Kind:** Defect\n\n**Affected component:** `/claude-tweaks:capture` (Backend Selection step 2, the `work-types: native` branch)\n\n**Objective:** Friction\n\n**Measurement:** 1 failed `gh issue create` + 3 workaround calls (re-create without the flag, GraphQL lookup of the repository's issue types, GraphQL `updateIssue`) per capture; 260 Bash calls in the session.\n\n**Cost this session:** about 4 extra tool calls to file one record, plus a stub-typed issue until the type was set by hand.\n\n**Repro steps:**\n1. Project with `work-types: native` in CLAUDE.md, gh CLI 2.92.0 authenticated against a GitHub Enterprise host that has native issue types enabled.\n2. Run `/claude-tweaks:capture <any idea>` and let it reach the `gh issue create ... --type \"$TYPE\"` call.\n\n**Expected vs. actual:**\nExpected: the issue is created with its native type set, as the skill text prescribes.\nActual: `unknown flag: --type` followed by the usage text; nothing is created until the flag is dropped, and the type then has to be set through the GraphQL `updateIssue(issueTypeId:)` mutation — the same mechanism `backlog/refine-record.md`, `specify/shaping-mode-stamping.md` and `_shared/console-on-pr.md` already use.\n\n**Definition:** Clear\n\n**Plugin version:** 6.126.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-34f9cfb1 -->\n",
-        "createdAt": "2026-09-21T04:52:07Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2725,
-        "state": "OPEN",
-        "title": "capture: `work-types: native` branch runs `gh issue create --type`, which the current gh CLI rejects",
-        "updatedAt": "2026-10-01T16:14:21Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
           "stage": "ready",
           "grants": {
             "build": true,
