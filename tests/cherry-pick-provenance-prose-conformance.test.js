@@ -16,11 +16,21 @@ const path = require('path');
 // Read live, not a frozen fixture: this is just-shipped prose expected to
 // evolve alongside worktree-setup.md's own Step 1.5/1.6 (which it mirrors),
 // not content a future migration is scheduled to delete.
+//
+// #2768: the full section was extracted to its own file
+// (build/cherry-pick-provenance-check.md) to keep the build/SKILL.md Common
+// Step 1 compose bundle under the composed-bytes ceiling
+// (context-cost.test.js) — the structural content pins below read the
+// extracted file directly; worktree-setup.md itself now carries only the
+// heading plus a one-paragraph pointer to it (the same pattern
+// tests/worktree-dependency-freshness-check.test.js already pins for the
+// Dependency freshness check extraction).
 
 const ROOT = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
 
 const WORKTREE_SETUP = read('plugin', 'skills', 'build', 'worktree-setup.md');
+const CHERRY_PICK_CHECK = read('plugin', 'skills', 'build', 'cherry-pick-provenance-check.md');
 const BUILD_SKILL = read('plugin', 'skills', 'build', 'SKILL.md');
 const DISPATCH = read('plugin', 'skills', 'build', 'dispatch.md');
 
@@ -29,23 +39,27 @@ const DISPATCH = read('plugin', 'skills', 'build', 'dispatch.md');
 // whitespace runs to a single space before matching multi-word phrases.
 const norm = (text) => text.replace(/\s+/g, ' ');
 
-test('worktree-setup.md carries the new Cherry-pick source-branch PR check section', () => {
+test('worktree-setup.md carries the new Cherry-pick source-branch PR check heading and points at the extracted file', () => {
   assert.match(WORKTREE_SETUP, /## Cherry-pick source-branch PR check \(#1957\)/);
+  const section = WORKTREE_SETUP.slice(WORKTREE_SETUP.indexOf('## Cherry-pick source-branch PR check'));
+  assert.match(
+    section,
+    /build\/cherry-pick-provenance-check\.md/,
+    'the shared heading must point to the extracted sub-file, not restate it inline',
+  );
 });
 
 test('the new check states the -x trailer as the only trigger, and the manual-port limitation explicitly', () => {
-  assert.match(WORKTREE_SETUP, /\(cherry picked from commit/);
+  assert.match(CHERRY_PICK_CHECK, /\(cherry picked from commit/);
   assert.match(
-    norm(WORKTREE_SETUP),
+    norm(CHERRY_PICK_CHECK),
     /manual port of code[^.]*is not caught by this check/i,
     'must state the accepted manual-port/no-`-x` limitation explicitly, not imply broader coverage',
   );
 });
 
 test('AC4: the new check is stated as NOT a silenceable auto-mode lever, and hard-stops', () => {
-  const section = norm(
-    WORKTREE_SETUP.slice(WORKTREE_SETUP.indexOf('## Cherry-pick source-branch PR check')),
-  );
+  const section = norm(CHERRY_PICK_CHECK);
   assert.match(
     section,
     /\*\*Auto mode:\*\*[\s\S]*?not\*\* a lever `_shared\/auto-mode-contract\.md` lists as silenceable/,
@@ -55,17 +69,13 @@ test('AC4: the new check is stated as NOT a silenceable auto-mode lever, and har
 });
 
 test('the check mirrors Step 1.6\'s fail-open-but-distinct posture on a lookup failure', () => {
-  const section = norm(
-    WORKTREE_SETUP.slice(WORKTREE_SETUP.indexOf('## Cherry-pick source-branch PR check')),
-  );
+  const section = norm(CHERRY_PICK_CHECK);
   assert.match(section, /fail open/i);
   assert.match(section, /degrade distinctly/i);
 });
 
 test('the check states the #1821 incident and the #1944 / review-time-check non-goals', () => {
-  const section = norm(
-    WORKTREE_SETUP.slice(WORKTREE_SETUP.indexOf('## Cherry-pick source-branch PR check')),
-  );
+  const section = norm(CHERRY_PICK_CHECK);
   assert.match(section, /#1821/);
   assert.match(section, /#1944/);
 });
