@@ -63,6 +63,8 @@ When a Deliverable adds a new Manifesto policy lever — a new `auto`-mode behav
 2. {Specific, testable criterion}
 3. ...
 
+A criterion that counts something (rows, items, entries) states the count relative to this record's own change ("adds no rows", "adds exactly three items"), never as a file's absolute total, and the count must match what the record's body names. An absolute total breaks as soon as a Related record grows the same file: #2709's "the checklist still has 20 rows" was unsatisfiable once #2706 and #2707 landed beside it, and #2693's "all 20 items" named only 17.
+
 ## Release Note
 
 {One plain-language, verb-first sentence describing what this record delivers, written for someone reading the release notes — never a raw conventional-commit subject, an internal module name, a record number, or a file path. Required on every record, including one with no end-user-visible effect: describe what changed from the release-notes reader's perspective, even when that's "no user-visible change" phrased plainly (e.g. "Improved internal test coverage for the release composer") — never omitted.}
@@ -211,14 +213,7 @@ Example: #560's Task 0 probed `gh pr merge --auto`'s actual merge timing against
 
 ## Gate-Authoring Deliverables
 
-When a spec's plan adds a new gate — a PreToolUse/PostToolUse hook check, a permission rule, or a teardown/cleanup guard — write a plan-time deliverable that traces the gate's proposed condition against two enumerations before implementation begins, not after:
-
-- **Every sanctioned caller of the operation being gated** — every documented or in-repo code path that legitimately invokes the operation the gate is about to restrict (a cleanup procedure, a companion skill's step, a CLI the operation is wrapped by).
-- **Every non-destructive/safe mode of the gated tool or operation** — a flag or field value that makes an otherwise-gated call harmless (e.g. a read-only or `keep`-style mode).
-
-For every item in both lists, check it against the proposed gate condition and confirm it is not denied.
-
-Spec #373's plan skipped this trace, and its whole-branch review had to catch — after implementation — two collisions the enumeration above would have caught at plan time: the new teardown gate denied the plugin's own documented cleanup sequence (a sanctioned caller), and it separately denied a non-destructive mode of the gated tool that an earlier task in the same plan had already pinned. Both collisions are already fixed in the current codebase; this section exists so the trace happens while the plan is being written, not after review finds what it missed.
+When a spec's plan adds a new gate — a PreToolUse/PostToolUse hook check, a permission rule, or a teardown/cleanup guard — read `gate-authoring-deliverables.md` in this skill's directory and write the plan-time caller trace it describes as a deliverable.
 
 ## Why Each Section Matters for `/superpowers:writing-plans`
 
