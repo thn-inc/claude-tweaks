@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-01T20:47:51.678Z",
+  "computedAt": "2026-10-01T21:01:45.574Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -190,7 +190,7 @@
       },
       {
         "number": 2765,
-        "updatedAt": "2026-10-01T16:12:41Z",
+        "updatedAt": "2026-10-01T20:57:34Z",
         "state": "OPEN"
       },
       {
@@ -5368,7 +5368,7 @@
         "number": 2765,
         "state": "OPEN",
         "title": "feedback/SKILL.md is down to 2 bytes of headroom under its advisory byte ceiling — plan a split or ceiling raise before the next edit",
-        "updatedAt": "2026-10-01T16:12:41Z",
+        "updatedAt": "2026-10-01T20:57:34Z",
         "facets": {
           "origin": null,
           "risk": "low",
