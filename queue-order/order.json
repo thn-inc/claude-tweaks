@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-01T17:52:59.477Z",
+  "computedAt": "2026-10-01T18:41:55.697Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -415,7 +415,7 @@
       },
       {
         "number": 2686,
-        "updatedAt": "2026-10-01T16:15:18Z",
+        "updatedAt": "2026-10-01T17:57:57Z",
         "state": "OPEN"
       },
       {
@@ -7433,90 +7433,6 @@
           "grants": {
             "build": true,
             "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`_shared/pr-early-run-lifecycle.md`'s dual-marker PR body convention (the `[claude-tweaks-fixes-start]...[claude-tweaks-fixes-end]` block, per-record `Fixes #{n}` lines composed around line 195/259-267) lists a `Fixes #{n}` line for every spec in a multi-spec run unconditionally. When a spec deliberately omits the closing keyword from its own commit — because a decision was already logged (e.g. to `decisions.md`) to leave that spec's issue open until a later manual step completes — the shared PR-level block still lists it. GitHub auto-closes on the coarser PR-body signal regardless of the finer per-commit one, contradicting the logged decision. Observed cost: one issue was incorrectly auto-closed, requiring manual reopen, an explanatory comment, and a follow-up PR to properly re-close once the deferred work actually finished.\n\n## Deliverables\n\n- Before composing the dual-marker `Fixes #{n}` block, check whether any spec in the run has a logged decision to withhold its own closing keyword (e.g. a `decisions.md` entry recording a deliberate deferred-closure decision for that spec).\n- Omit any such spec's `Fixes #{n}` line from the shared PR-body block, so the PR-level marker never contradicts a more specific per-spec decision already on record.\n\n## Acceptance Criteria\n\n- A multi-spec run where one spec has a logged deferred-closure decision produces a dual-marker block that omits that spec's `Fixes #{n}` line.\n- Merging that PR does NOT auto-close the deferred spec's issue.\n- Every other spec in the run (with no such decision) still gets its `Fixes #{n}` line as before — this fix narrows the block, it never widens or otherwise changes it.\n\n## Release Note\n\nFixed multi-record pull requests closing a record that was deliberately left open.\n\n## Technical Approach\n\nLocate the block-composition step in `_shared/pr-early-run-lifecycle.md` (the \"One `Fixes #{n}` line per record\" section, and the dual-marker template around line 195) and add a check, before emitting each record's line, against that run's own decision log for a deferred-closure marker naming that spec. The check reuses whatever mechanism already records a deliberate withhold-closing-keyword decision (per the bug report, a `decisions.md` entry) — no new log format should be invented if one already captures this decision shape; if none does today, this fix needs to also define what that entry looks like so a later run can be checked against it reliably.\n\n### Key Files\n\n- `plugin/skills/_shared/pr-early-run-lifecycle.md` — the dual-marker block composition logic (Fixes-start/Fixes-end template, per-record line emission)\n\n## Gotchas\n\n- This fix must not change single-spec runs at all (they get one line, unconditionally, today) — scope the check to the multi-spec bundle path only, where a per-spec deferred-closure decision is possible.\n- If no existing log entry shape unambiguously records \"this spec's closing keyword was deliberately withheld,\" this fix needs to define one before the check above can be reliable — verify a matching entry shape exists (or add it) rather than guessing at a decisions.md grep pattern.\n\n## Original request\n\nPR-early run lifecycle: dual-marker Fixes-#N block doesn't reconcile per-spec deferred-closure decisions\n\n**Summary:** The PR-early run lifecycle's dual-marker PR body lists `Fixes #N` for every spec in a multi-spec run unconditionally, even when a per-spec decision was already logged to deliberately withhold that keyword from one spec's own commit — GitHub still auto-closes that spec's issue on merge.\n\n**Kind:** Defect\n\n**Affected component:** PR-early run lifecycle (the dual-marker PR body convention)\n\n**Objective:** Trust calibration\n\n**Repro steps:**\n1. Run a multi-spec pipeline where one spec's implementation deliberately omits a `Fixes #N` keyword from its own commit message, because that spec's acceptance criteria aren't fully met and a decision has already been logged (e.g. to `decisions.md`) to leave it open until a later manual step completes.\n2. Let the PR-early lifecycle generate the shared PR's dual-marker `[claude-tweaks-fixes-start]...[claude-tweaks-fixes-end]` block, which lists every spec in the run.\n3. Merge the PR.\n\n**Expected vs. actual:**\nExpected: The spec deliberately excluded from \"Fixes\" at the commit level stays open after merge, matching the per-spec decision already on record.\nActual: GitHub auto-closes it anyway — the PR body's block lists it regardless of the more granular per-commit decision, so the two signals contradict each other and the coarser one (PR body) wins. The issue then has to be manually reopened, annotated, and re-closed once the deferred work actually completes.\n\n**Cost this session:** One issue incorrectly auto-closed and had to be manually reopened with an explanatory comment, tracked, and re-closed via a follow-up PR once the deferred manual steps were actually done.\n\n**Proposed fix:** Before composing the dual-marker `Fixes #N` block, check whether any spec in the run has a logged decision to withhold its own closing keyword, and omit that spec from the shared block too — so the PR-level marker never contradicts a more specific per-spec decision already on record.\n\n**Definition:** Clear\n\n**Plugin version:** 6.127.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-16e0285b -->\n",
-        "createdAt": "2026-09-20T18:57:51Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2686,
-        "state": "OPEN",
-        "title": "PR-early run lifecycle: dual-marker Fixes-#N block doesn't reconcile per-spec deferred-closure decisions",
-        "updatedAt": "2026-10-01T16:15:18Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
           },
           "bot": {
             "inProgress": false,
