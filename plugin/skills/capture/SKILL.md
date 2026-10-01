@@ -192,12 +192,33 @@ toward the grant.
    **Type expression branch.** Read the project's `work-types` config key once before filing and branch — never re-probe mid-flow (`_shared/work-record.md`'s config-key table; the key is written by `/init`). `work-types: native` applies `$TYPE` via GitHub's native Issue Type; `work-types: labels` adds the matching `type:$TYPE` label instead (the pairs live in `record.js`'s `TYPE_LABELS`):
 
    ```bash
-   # work-types: native
-   gh issue create \
+   # work-types: native — detect-then-fallback, never version-sniff `gh --version`
+   # (gh added `issue create --type` between 2.92.0 and 2.96.0; a fleet runs a mix
+   # of both, so presence of the flag is what matters, not the version string).
+   if ! ISSUE_URL=$(gh issue create \
      --title "$TITLE" \
      --body-file "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md" \
      --type "$TYPE" \
-     --label by:capture
+     --label by:capture 2>"/tmp/capture-${CLAUDE_CODE_SESSION_ID}-create-err.txt"); then
+     if grep -qi 'unknown flag: --type' "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-create-err.txt"; then
+       # This gh build predates --type on `issue create` — file without it, then
+       # set the native type via GraphQL: resolve the type's node id, then
+       # `updateIssue(issueTypeId:)`.
+       ISSUE_URL=$(gh issue create \
+         --title "$TITLE" \
+         --body-file "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md" \
+         --label by:capture)
+       ISSUE_NODE_ID=$(gh issue view "$(basename "$ISSUE_URL")" --json id -q .id)
+       TYPE_ID=$(gh api graphql -f query='query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){issueTypes(first:50){nodes{id name}}}}' \
+         -f owner='{owner}' -f repo='{repo}' -q ".data.repository.issueTypes.nodes[] | select(.name | ascii_downcase == \"$TYPE\") | .id")
+       gh api graphql -f query='mutation($id:ID!,$typeId:ID!){updateIssue(input:{id:$id,issueTypeId:$typeId}){issue{id}}}' \
+         -f id="$ISSUE_NODE_ID" -f typeId="$TYPE_ID" >/dev/null
+     else
+       cat "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-create-err.txt" >&2
+       exit 1
+     fi
+   fi
+   rm -f "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-create-err.txt"
 
    # work-types: labels
    gh issue create \
@@ -206,6 +227,10 @@ toward the grant.
      --label by:capture \
      --label "type:$TYPE"
    ```
+
+   The unknown-flag detection above matches only the specific `unknown flag: --type` rejection —
+   any other `gh issue create` failure (auth, network, validation) falls through to the final
+   `else` branch and surfaces as-is, never silently absorbed into the fallback.
 
    Append `--label needs:definition` to whichever `gh issue create` call above ran, when
    `$NEEDS_DEFINITION` is `true`.
