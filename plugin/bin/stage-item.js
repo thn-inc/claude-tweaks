@@ -1,17 +1,35 @@
 #!/usr/bin/env node
 // bin/stage-item.js — write one staged proposal file into a run's staged/
 // directory.
-//   node bin/stage-item.js --run <run-dir> --id <kind>-<n> --file <path> [--json <path>] [--help]
+//   node bin/stage-item.js --run <run-dir> --id <kind>-<n> --file <path> [--json <path>] [--allocate] [--help]
 // Exit 0 on success (writes staged/<id><ext> — and, when --json was given,
 // staged/<id>.json alongside it — echoes the written path(s) to stdout, one
 // per line); 2 on a malformed invocation (missing/unsafe args, unreadable
-// --file/--json, or --json content that isn't a JSON array); 3 when the run
-// dir is missing or not anchored under the main checkout (a worktree-local
-// shadow — _shared/pipeline-run-dir.md's Anchoring section, [IL-127]), or a
-// staged file is unwritable. The printed path is the run dir's realpath,
-// which can differ from the caller's --run input string (e.g. a /tmp path
-// resolves to /private/tmp on macOS) — a caller string-matching stdout
-// against its own $RUN_DIR should account for this.
+// --file/--json, --json content that isn't a JSON array, or --allocate with
+// an --id that isn't a "{kind}-{n}" shape); 3 when the run dir is missing or
+// not anchored under the main checkout (a worktree-local shadow —
+// _shared/pipeline-run-dir.md's Anchoring section, [IL-127]), or a staged
+// file is unwritable. The printed path is the run dir's realpath, which can
+// differ from the caller's --run input string (e.g. a /tmp path resolves to
+// /private/tmp on macOS) — a caller string-matching stdout against its own
+// $RUN_DIR should account for this.
+// #2770: by default --id is a plain overwrite-in-place address, exactly as
+// before — every existing caller keeps its contract unchanged (e.g.
+// materialize.js's `premise-satisfied-{issueNumber}`, where the trailing
+// digits are a stable identity key, not a counter, and re-staging the same
+// issue is an intentional update, not a collision). Pass --allocate when
+// --id ("{kind}-{n}") is instead a REQUESTED slot from a per-invocation
+// counter prone to racing a sibling writer (the incident this fixes:
+// `/build`'s architecture-alignment check staged `build-deviation-{N}.md`
+// from an N that restarted at 1 per invocation, so a later invocation in the
+// same run clobbered an earlier one's findings). Under --allocate, a
+// collision against an existing staged/{id} reallocates against this run
+// dir's own contents instead of clobbering, and an extra stdout line
+// (`--id {requested} already exists in staged/ — wrote {actual} instead`)
+// reports the adjustment — the caller does not need to parse it (the first
+// stdout line is still the written path), but should not assume the id it
+// passed is the id that landed. See bin/lib/stage-item/write.js's
+// writeStagedItem for the full contract.
 // The staged/ half of #637 ("no CLI writes decisions.md or staged/ items");
 // bin/log-decision.js is the decisions.md half, shipped under #686.
 // `--json` (#2612) is the machine-readable sidecar render-tidy-report.js
@@ -22,12 +40,16 @@
 'use strict';
 
 const fs = require('fs');
-const { resolveTarget, sanitizeId, writeStagedItem, writeStagedSidecar } = require('./lib/stage-item/write');
+const {
+  resolveTarget, sanitizeId, writeStagedItem, writeStagedSidecar, parseNumberedKind,
+} = require('./lib/stage-item/write');
 
-const USAGE = 'usage: stage-item.js --run <run-dir> --id <kind>-<n> --file <path> [--json <path>] [--help]\n';
+const USAGE = 'usage: stage-item.js --run <run-dir> --id <kind>-<n> --file <path> [--json <path>] [--allocate] [--help]\n';
 
 function parseArgs(argv) {
-  const o = { run: null, id: null, file: null, json: null, help: false };
+  const o = {
+    run: null, id: null, file: null, json: null, allocate: false, help: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => argv[++i] ?? null;
@@ -36,6 +58,7 @@ function parseArgs(argv) {
     else if (a === '--id') o.id = next();
     else if (a === '--file') o.file = next();
     else if (a === '--json') o.json = next();
+    else if (a === '--allocate') o.allocate = true;
     else return { error: `unknown argument: ${a}` };
   }
   return o;
@@ -58,6 +81,7 @@ function run(argv, deps = realDeps) {
   if (!o.file) return usageError('--file <path> is required');
   const id = sanitizeId(o.id);
   if (!id) return usageError(`--id must be a plain filename stem (letters, digits, ., _, - — no path separators): ${JSON.stringify(o.id)}`);
+  if (o.allocate && !parseNumberedKind(id)) return usageError(`--allocate requires a "{kind}-{n}" --id, got ${JSON.stringify(id)}`);
 
   let content;
   try { content = deps.readFile(o.file); } catch (err) {
@@ -96,15 +120,22 @@ function run(argv, deps = realDeps) {
   }
 
   let result;
-  try { result = writeStagedItem({ runDir: target.dir, id, sourcePath: o.file, content }); } catch (err) {
+  try {
+    result = writeStagedItem({
+      runDir: target.dir, id, sourcePath: o.file, content, allocate: o.allocate,
+    });
+  } catch (err) {
     deps.stderr(`stage-item.js: could not write staged item (${err && err.message})\n`);
     return 3;
   }
   deps.stdout(result.file + '\n');
+  if (result.renamed) {
+    deps.stdout(`stage-item.js: --id ${result.requestedId} already exists in staged/ — wrote ${result.id} instead\n`);
+  }
 
   if (jsonContent !== null) {
     let sidecar;
-    try { sidecar = writeStagedSidecar({ runDir: target.dir, id, content: jsonContent }); } catch (err) {
+    try { sidecar = writeStagedSidecar({ runDir: target.dir, id: result.id, content: jsonContent }); } catch (err) {
       deps.stderr(`stage-item.js: could not write staged sidecar (${err && err.message})\n`);
       return 3;
     }

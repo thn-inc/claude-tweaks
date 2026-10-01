@@ -115,6 +115,67 @@ test('cli: --json content that is not valid JSON is a malformed invocation (exit
   assert.equal(fs.existsSync(path.join(runDir, 'staged')), false);
 });
 
+test('cli: --allocate on a numbered-kind --id collision reallocates and reports the adjusted name on stdout (#2770)', () => {
+  const { main, runDir, sourceFile } = fixture();
+  const { deps: d1 } = fakeDeps(main);
+  const firstCode = run(['--run', runDir, '--id', 'build-deviation-1', '--file', sourceFile, '--allocate'], d1);
+  assert.equal(firstCode, 0);
+
+  const secondSource = path.join(main, 'proposal-2.patch');
+  fs.writeFileSync(secondSource, 'diff --git a b\n+y\n');
+  const { deps: d2, out } = fakeDeps(main);
+  const secondCode = run(['--run', runDir, '--id', 'build-deviation-1', '--file', secondSource, '--allocate'], d2);
+  assert.equal(secondCode, 0);
+
+  const firstFile = path.join(runDir, 'staged', 'build-deviation-1.patch');
+  const secondFile = path.join(runDir, 'staged', 'build-deviation-2.patch');
+  assert.equal(fs.readFileSync(firstFile, 'utf8'), 'diff --git a b\n+x\n');
+  assert.equal(fs.readFileSync(secondFile, 'utf8'), 'diff --git a b\n+y\n');
+  const printed = out.join('');
+  assert.ok(printed.includes(secondFile), 'prints the actually-written (adjusted) path');
+  assert.match(printed, /--id build-deviation-1 already exists in staged\/ — wrote build-deviation-2 instead/);
+});
+
+test('cli: without --allocate, a numbered-kind --id collision keeps overwriting in place — no reallocation note', () => {
+  const { main, runDir, sourceFile } = fixture();
+  const { deps: d1 } = fakeDeps(main);
+  run(['--run', runDir, '--id', 'build-deviation-1', '--file', sourceFile], d1);
+
+  const secondSource = path.join(main, 'proposal-2.patch');
+  fs.writeFileSync(secondSource, 'diff --git a b\n+y\n');
+  const { deps: d2, out } = fakeDeps(main);
+  const code = run(['--run', runDir, '--id', 'build-deviation-1', '--file', secondSource], d2);
+  assert.equal(code, 0);
+
+  const file = path.join(runDir, 'staged', 'build-deviation-1.patch');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'diff --git a b\n+y\n');
+  assert.ok(!out.join('').includes('already exists'));
+});
+
+test('cli: a bare/slug --id collision keeps overwriting in place — no reallocation note', () => {
+  const { main, runDir, sourceFile } = fixture();
+  const { deps: d1 } = fakeDeps(main);
+  run(['--run', runDir, '--id', 'leftover-my-slug', '--file', sourceFile], d1);
+
+  const secondSource = path.join(main, 'proposal-2.patch');
+  fs.writeFileSync(secondSource, 'diff --git a b\n+y\n');
+  const { deps: d2, out } = fakeDeps(main);
+  const code = run(['--run', runDir, '--id', 'leftover-my-slug', '--file', secondSource], d2);
+  assert.equal(code, 0);
+
+  const file = path.join(runDir, 'staged', 'leftover-my-slug.patch');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'diff --git a b\n+y\n');
+  assert.ok(!out.join('').includes('already exists'));
+});
+
+test('cli: --allocate with a bare/slug --id is a malformed invocation (exit 2), nothing written', () => {
+  const { main, runDir, sourceFile } = fixture();
+  const { deps } = fakeDeps(main);
+  const code = run(['--run', runDir, '--id', 'leftover-my-slug', '--file', sourceFile, '--allocate'], deps);
+  assert.equal(code, 2);
+  assert.equal(fs.existsSync(path.join(runDir, 'staged')), false);
+});
+
 test('cli: --help prints usage and exits 0 without touching the filesystem', () => {
   const { main } = fixture();
   const { deps, out } = fakeDeps(main);
