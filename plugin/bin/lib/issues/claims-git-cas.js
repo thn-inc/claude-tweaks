@@ -294,9 +294,12 @@ function readClaimBlobsGitBatch({ issueNumbers = null, tip, runner = defaultRunn
     }
   };
 
+  // A Buffer, not a string: execFileSync can't string-encode `input` when
+  // `encoding: 'buffer'` (throws ERR_UNKNOWN_ENCODING, #2852).
+  const batchInput = Buffer.from(`${orderedShas.join('\n')}\n`);
   let batchRaw;
   try {
-    batchRaw = runner(['cat-file', '--batch'], { input: `${orderedShas.join('\n')}\n`, encoding: 'buffer' });
+    batchRaw = runner(['cat-file', '--batch'], { input: batchInput, encoding: 'buffer' });
   } catch {
     markTransportFailure();
     return { tipSha: tip, results, failure: null };

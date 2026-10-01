@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  classifyGitError, readClaimBlobGit, writeClaimBlobGit, readClaimBlobsGitBatch, CLAIMS_BRANCH,
+  classifyGitError, readClaimBlobGit, writeClaimBlobGit, readClaimBlobsGitBatch, CLAIMS_BRANCH, defaultRunner,
 } = require('../../../plugin/bin/lib/issues/claims-git-cas');
 
 test('classifyGitError: missing path in a git show', () => {
@@ -316,4 +316,22 @@ test('readClaimBlobsGitBatch: issues exactly 2 subprocess invocations regardless
   for (const n of numbers) {
     assert.equal(batch.results[n].content, `{"runId":"r${n}"}`);
   }
+});
+
+// #2852: the `realRunner` fixture above hardcodes `encoding: 'utf8'`, dropping
+// the caller's `encoding: 'buffer'` override, so it can't reproduce the
+// `cat-file --batch` input/encoding bug. This test uses the exported
+// `defaultRunner` instead. Pre-fix, execFileSync threw ERR_UNKNOWN_ENCODING on
+// the plain-string `input`, which surfaced as `failure: 'transport-failure'`.
+test('readClaimBlobsGitBatch: real defaultRunner (not the fake/fixture runner) returns content, not transport-failure', () => {
+  const { cloneDir } = makeBareOriginAndClone();
+  const runner = (args, opts) => defaultRunner(args, { ...opts, cwd: cloneDir });
+  const prettyContent = JSON.stringify({ runId: 'r50', claimedAt: '2026-01-01T00:00:00.000Z', ttlHours: 72 }, null, 2);
+  const tip = writeBlob(cloneDir, runner, 50, prettyContent);
+
+  const batch = readClaimBlobsGitBatch({ issueNumbers: [50], tip, runner });
+  assert.equal(batch.failure, null);
+  assert.equal(batch.results[50].failure, null, 'must not degrade to transport-failure against the real defaultRunner');
+  assert.equal(batch.results[50].absent, false);
+  assert.equal(batch.results[50].content, prettyContent);
 });
