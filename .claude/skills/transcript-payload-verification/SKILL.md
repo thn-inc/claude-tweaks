@@ -32,6 +32,15 @@ standard step in implementing the handler.
    `~/.claude/projects/<project-slug>/<session-id>.jsonl` (one line per turn/event, JSON-encoded).
    The project-slug is derived from the working directory path; the session-id is this session's
    own UUID.
+   **Find it by filename, not by re-deriving the slug.** The slug tracks the session's *current*
+   cwd, so an `EnterWorktree`/`ExitWorktree` mid-session moves the transcript into a different
+   slug directory while its name stays `<session-id>.jsonl`. Search the whole store for that name
+   — the same primary resolution `plugin/skills/_shared/transcript-judge.md` uses (#2696):
+   ```bash
+   find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects" -mindepth 2 -maxdepth 2 -name "${CLAUDE_CODE_SESSION_ID}.jsonl"
+   ```
+   A worktree-isolated session's guard refuses that line as written (a runtime-computed variable
+   inside `find`); substitute the literal store path and the id from `printenv CLAUDE_CODE_SESSION_ID`.
    **Resolve the config root; do not assume `~/.claude`.** When `$CLAUDE_CONFIG_DIR` is set the
    store is `$CLAUDE_CONFIG_DIR/projects/`. On this machine that is
    `~/.claude-accounts/{account}/projects/`, which `~/.claude/projects/` happens to resolve to
