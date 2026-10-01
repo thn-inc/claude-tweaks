@@ -42,13 +42,40 @@ test('transcript-judge.md documents the main-session-only scope statement', () =
 });
 
 test('transcript-judge.md documents project-slug derivation with the doubled-hyphen rule', () => {
-  assert.match(SHARED, /each `\/`,\s*\n\s*space, and `\.` in that path is replaced by `-`/);
-  assert.match(SHARED, /produces a doubled hyphen where the directory separator and the/);
+  assert.match(SHARED, /each `\/`,\s+space, and `\.` in that path is replaced by `-`/);
+  assert.match(SHARED, /produces a doubled hyphen where\s+the directory separator and the/);
 });
 
 test('transcript-judge.md documents the mtime-newest fallback with mandatory disclosure', () => {
-  assert.match(SHARED, /pick the newest\s*\n`\.jsonl` file in the resolved project-slug directory by mtime/);
+  assert.match(SHARED, /pick the newest `\.jsonl` file by mtime/);
   assert.match(SHARED, /never silent newest-wins/);
+});
+
+// #2696: resolution now searches for the session-id filename across the whole
+// projects root before falling back to the cwd-derived slug directory, so it
+// survives a worktree cwd change mid-session. Pins the new Primary section and
+// the CLAUDE_CONFIG_DIR root reuse (same override claude-tweaks-statusline.js
+// already uses for a relocated config home).
+
+test('transcript-judge.md documents the projects root using CLAUDE_CONFIG_DIR, reusing the statusline override', () => {
+  assert.match(SHARED, /\*\*Projects root:\*\* `\$\{CLAUDE_CONFIG_DIR:-~\/\.claude\}\/projects`/);
+  assert.match(SHARED, /claude-tweaks-statusline\.js.*resolveConfigDir.*already uses/);
+});
+
+test('transcript-judge.md documents primary resolution by session-id filename search', () => {
+  assert.match(SHARED, /\*\*Primary — search by session-id filename\.\*\*/);
+  assert.match(SHARED, /search every\s*\nimmediate subdirectory of the projects root for a file named exactly `<session-id>\.jsonl`/);
+  assert.match(SHARED, /find "\$\{CLAUDE_CONFIG_DIR:-\$HOME\/\.claude\}\/projects" -mindepth 2 -maxdepth 2/);
+});
+
+test('transcript-judge.md documents the primary search survives a worktree cwd change mid-session', () => {
+  assert.match(SHARED, /survive a\s*\nworktree cwd change mid-session/);
+});
+
+test('transcript-judge.md documents zero-match and multi-match handling for the primary search before falling to the Fallback', () => {
+  assert.match(SHARED, /\*\*Exactly one match:\*\* use it\./);
+  assert.match(SHARED, /\*\*More than one match\*\* \(pathological/);
+  assert.match(SHARED, /\*\*Zero matches, or `\$CLAUDE_CODE_SESSION_ID` unset:\*\* proceed to the Fallback below\./);
 });
 
 // --- 3. Watermark protocol moved verbatim, including timing and degrade-open ---

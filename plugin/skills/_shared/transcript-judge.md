@@ -32,22 +32,42 @@ and named in the consumer's own file, never here.
 
 Runs in the main thread, before dispatch.
 
-**Path:** `~/.claude/projects/<project-slug>/<session-id>.jsonl`.
+**Projects root:** `${CLAUDE_CONFIG_DIR:-~/.claude}/projects` — the same override
+`plugin/bin/claude-tweaks-statusline.js`'s `resolveConfigDir` already uses for a relocated config
+home; no new mechanism.
 
-- **`<project-slug>`:** derived from the session's absolute working-directory path — each `/`,
-  space, and `.` in that path is replaced by `-`. Worked example: `/Users/alice/projects/my-app`
-  becomes `-Users-alice-projects-my-app`. A path segment starting with `.` (e.g. a `.claude`
-  segment inside a worktree path) produces a doubled hyphen where the directory separator and the
-  leading dot both convert — that doubling is correct, not a bug to normalize away.
-- **`<session-id>`:** the value of `$CLAUDE_CODE_SESSION_ID`.
+**Primary — search by session-id filename.** When `$CLAUDE_CODE_SESSION_ID` is set, search every
+immediate subdirectory of the projects root for a file named exactly `<session-id>.jsonl`:
 
-**Fallback — whenever the id-derived path does not resolve:** `$CLAUDE_CODE_SESSION_ID` unset, or
-set but no file exists at the derived path (a stale or rotated session id) — pick the newest
-`.jsonl` file in the resolved project-slug directory by mtime. Whenever this fallback ran at all,
-the rendered report names the chosen file together with its mtime; when the directory holds more
-than one `.jsonl` file, of any age, it also lists the ones ignored — never silent newest-wins.
-Only when no candidate `.jsonl` exists at all (or the directory itself doesn't exist) does the
-self-assessment degradation below apply.
+```bash
+find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects" -mindepth 2 -maxdepth 2 \
+  -name "${CLAUDE_CODE_SESSION_ID}.jsonl"
+```
+
+A near-globally-unique session id resolves the actively-growing transcript directly, regardless of
+which project-slug directory it currently lives under — this is what makes resolution survive a
+worktree cwd change mid-session: `EnterWorktree`/`ExitWorktree` moves the session into a new
+project-slug directory (the slug is derived from the literal cwd path, so it changes whenever the
+cwd does), but the file's name — `<session-id>.jsonl` — does not, so a filename search finds it
+under whichever directory it currently lives in without needing to guess that the new directory is
+"a worktree-suffixed variant" of any prior one.
+
+- **Exactly one match:** use it.
+- **More than one match** (pathological — a reused or colliding session id): pick the newest by
+  mtime, same transparency convention as the Fallback below — name the chosen file and mtime, and
+  list the ignored matches.
+- **Zero matches, or `$CLAUDE_CODE_SESSION_ID` unset:** proceed to the Fallback below.
+
+**Fallback — slug-derived single directory.** Derive `<project-slug>` from the session's current
+absolute working-directory path — each `/`, space, and `.` in that path is replaced by `-`. Worked
+example: `/Users/alice/projects/my-app` becomes `-Users-alice-projects-my-app`. A path segment
+starting with `.` (e.g. a `.claude` segment inside a worktree path) produces a doubled hyphen where
+the directory separator and the leading dot both convert — that doubling is correct, not a bug to
+normalize away. Within `<projects-root>/<project-slug>/`, pick the newest `.jsonl` file by mtime.
+Whenever this fallback ran at all, the rendered report names the chosen file together with its
+mtime; when the directory holds more than one `.jsonl` file, of any age, it also lists the ones
+ignored — never silent newest-wins. Only when no candidate `.jsonl` exists at all (or the directory
+itself doesn't exist) does the self-assessment degradation below apply.
 
 **Scope statement:** this resolves the **main session's own transcript only.** Any Task agent
 dispatched during this session wrote its own separate transcript file, which is out of scope here
