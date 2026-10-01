@@ -64,12 +64,12 @@ test('transcript-judge.md documents the projects root using CLAUDE_CONFIG_DIR, r
 
 test('transcript-judge.md documents primary resolution by session-id filename search', () => {
   assert.match(SHARED, /\*\*Primary — search by session-id filename\.\*\*/);
-  assert.match(SHARED, /search every\s*\nimmediate subdirectory of the projects root for a file named exactly `<session-id>\.jsonl`/);
+  assert.match(SHARED, /search every\s+immediate subdirectory of the projects root for a file named exactly `<session-id>\.jsonl`/);
   assert.match(SHARED, /find "\$\{CLAUDE_CONFIG_DIR:-\$HOME\/\.claude\}\/projects" -mindepth 2 -maxdepth 2/);
 });
 
 test('transcript-judge.md documents the primary search survives a worktree cwd change mid-session', () => {
-  assert.match(SHARED, /survive a\s*\nworktree cwd change mid-session/);
+  assert.match(SHARED, /survive a\s+worktree cwd change mid-session/);
 });
 
 test('transcript-judge.md documents zero-match and multi-match handling for the primary search before falling to the Fallback', () => {
