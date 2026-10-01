@@ -53,6 +53,16 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.132.0](https://github.com/thn-inc/claude-tweaks/compare/v6.131.0...v6.132.0) (2026-10-01)
+
+
+### Features
+
+* Add GDPR account-deletion vs. backup-retention check ([#2625](https://github.com/thn-inc/claude-tweaks/issues/2625)) ([8ff9eb8](https://github.com/thn-inc/claude-tweaks/commit/8ff9eb81844e60ba75b67b792b52beb566b0c9d7))
+* Apply three staged skill improvements — count-relative ACs, low-tier no-executable-content review skip, focus-vertical skill ([#2864](https://github.com/thn-inc/claude-tweaks/issues/2864)) ([d8b863d](https://github.com/thn-inc/claude-tweaks/commit/d8b863d4d8d5c8ada9fe55b7e34df754e346cac8))
+* Audit CLAUDE.md files against Anthropic's own &lt;200-line… ([#2684](https://github.com/thn-inc/claude-tweaks/issues/2684)) ([a413bb7](https://github.com/thn-inc/claude-tweaks/commit/a413bb76c153a323dec25aa5a2eefaefaeaac2bd)), closes [#2685](https://github.com/thn-inc/claude-tweaks/issues/2685) [#2693](https://github.com/thn-inc/claude-tweaks/issues/2693) [#2704](https://github.com/thn-inc/claude-tweaks/issues/2704) [#2706](https://github.com/thn-inc/claude-tweaks/issues/2706) [#2707](https://github.com/thn-inc/claude-tweaks/issues/2707) [#2709](https://github.com/thn-inc/claude-tweaks/issues/2709)
+* emit and check Release Notes when shaping; tidy fills gaps ([#2827](https://github.com/thn-inc/claude-tweaks/issues/2827)) ([025f73b](https://github.com/thn-inc/claude-tweaks/commit/025f73b60a7feec35e0b72e5edac871e76d6c304)), closes [#2828](https://github.com/thn-inc/claude-tweaks/issues/2828)
+
 ## [6.131.0](https://github.com/thn-inc/claude-tweaks/compare/v6.130.0...v6.131.0) (2026-09-30)
 
 
