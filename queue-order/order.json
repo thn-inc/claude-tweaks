@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-01T19:26:37.324Z",
+  "computedAt": "2026-10-01T20:18:48.883Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -219,13 +219,13 @@
         "state": "OPEN"
       },
       {
-        "number": 2749,
-        "updatedAt": "2026-10-01T16:13:08Z",
+        "number": 2748,
+        "updatedAt": "2026-10-01T16:13:13Z",
         "state": "OPEN"
       },
       {
-        "number": 2748,
-        "updatedAt": "2026-10-01T16:13:13Z",
+        "number": 2749,
+        "updatedAt": "2026-10-01T19:31:01Z",
         "state": "OPEN"
       },
       {
@@ -5821,90 +5821,6 @@
           "grants": {
             "build": true,
             "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nOpenAI's own autonomous coding agents reportedly attacked RubyGems.org's supply-chain infrastructure — a vendor's unattended agents causing real infra harm, not a third-party attacker. `dispatch` runs as this user's own unattended agent hub with no documented check on what an autonomous build/dispatch agent is allowed to reach (registries, network egress, credential scope). No existing claude-tweaks check evaluates an agent's blast radius before granting it unattended/`auto:build` trust.\n\n**Verified during shaping:** \"blast radius\" already appears in this codebase (`dispatch/SKILL.md`, `dispatch/configuration.md`, `dispatch/settle-and-merge.md`, `code-health/SKILL.md`) — but every existing use is the record-scoring sense: how bad a *specific code change* could be if it goes wrong (the `risk:*` label's own \"blast radius, reversibility\" criteria, `_shared/work-record.md`'s Scoring axis). None of the existing usages audit the *agent's own outer boundary* — what registries, network destinations, or credentials an unattended dispatch/build agent can actually reach, independent of any one task's content. This record's proposal is a genuinely distinct, not-yet-built capability, not a duplicate of the existing risk-scoring mechanism.\n\n## Deliverables\n\n- A hardening check (a lens, or a new row in `/code-health` or `/security-review`) that asks what an autonomous agent's tool/network/credential scope actually is, not just whether a given task behaves correctly — distinct from the existing `risk:*` scoring, which judges a specific change's blast radius, not the agent's standing reach.\n- Guidance for scoping dispatch-style unattended agents to least-privilege registry/network access (what should an unattended build agent NOT be able to reach, by default).\n\n## Acceptance Criteria\n\n- The check runs standalone and as a step within `/review` or `/security-review`.\n- Applying it to dispatch's own agent-trust config reports pass/fail per scope dimension (registry access, network egress, credential scope — whichever dimensions the implementation settles on).\n- `npm test` passes.\n\n## Release Note\n\nAdded a hardening check for how much an autonomous agent's tools, network, and credentials can reach.\n\n## Technical Approach\n\nScope the check's dimensions concretely before implementing — the record names three candidates (registries, network egress, credential scope) but the actual claude-tweaks/dispatch environment (this plugin runs inside Claude Code's own tool sandbox, not a bespoke agent runtime) may only meaningfully audit a subset of these; ground the check in what's actually inspectable/configurable in this environment rather than a generic checklist copied from the source incident's different context (OpenAI's own agent infrastructure is architecturally different from a Claude Code plugin's dispatch mechanism). Integrate as a new check function alongside `/security-review`'s existing checks (the closer thematic fit — credential/scope auditing is security-review's territory) or as a `/code-health` finding category, whichever existing skill's own scan structure fits the \"run standalone and as a step within an existing skill\" AC most naturally — read both skills' existing check-registration patterns before choosing.\n\n### Key Files\n\n- `plugin/skills/security-review/` or `plugin/skills/code-health/` — the more likely home for the new check, pending a structural fit decision at build time\n- `plugin/skills/dispatch/configuration.md` — dispatch's own agent-trust config, the concrete target the AC's \"applying it to dispatch's own config\" needs to run against\n- `plugin/skills/_shared/work-record.md` — the existing `risk:*` Scoring axis, cited here only to confirm this record's proposal is distinct from it, not to be modified\n\n## Gotchas\n\n- Don't conflate this with the existing `risk:*`/blast-radius record-scoring mechanism — that's per-task judgment already in place; this record's check is about the agent's own standing capability boundary, a different question entirely.\n- The source incident (OpenAI agents vs. RubyGems) involved a different agent architecture than this plugin's own dispatch mechanism — treat it as motivating evidence that this class of risk is real, not as a template to copy literally; ground the actual check dimensions in what's true of *this* environment.\n\n## Original request\n\nAdd an autonomous-agent blast-radius check to hardening practice\n\nCurrent State:\n- OpenAI's own autonomous coding agents reportedly attacked RubyGems.org's supply-chain infrastructure -- a vendor's unattended agents causing real infra harm, not a third-party attacker.\n- dispatch runs as this user's own unattended agent hub with no documented check on what an autonomous build/dispatch agent is allowed to reach (registries, network egress, credential scope).\n- No existing claude-tweaks check evaluates an agent's blast radius before granting it unattended/auto:build trust.\nDeliverables:\n- A hardening check (lens, or a row in /code-health or /security-review) that asks what an autonomous agent's tool/network/credential scope actually is, not just whether it behaves correctly.\n- Guidance for scoping dispatch-style unattended agents to least-privilege registry/network access.\nAcceptance Criteria:\n- The check runs standalone and as a step within /review or /security-review.\n- Applying it to dispatch's own agent-trust config reports pass/fail per scope dimension.\nSource: https://simonwillison.net/2026/Sep/12/openai-agents-rubygems/\n",
-        "createdAt": "2026-09-21T14:06:18Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2749,
-        "state": "OPEN",
-        "title": "Add an autonomous-agent blast-radius check to hardening practice",
-        "updatedAt": "2026-10-01T16:13:08Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
           },
           "bot": {
             "inProgress": false,
