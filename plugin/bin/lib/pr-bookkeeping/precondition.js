@@ -4,7 +4,7 @@ const path = require('path');
 const {
   hasMaterializeCommit, hasLoggedPrDegrade, resolveRunPinnedIntegrationModel,
 } = require('../hooks/pre-tool-use');
-const { readRunState } = require('../hooks/context');
+const { readRunState, RUN_ID_RE } = require('../hooks/context');
 const { mainCheckoutRoot, repoInfo } = require('../hooks/worktree-detect');
 
 // checkPrBookkeepingPrecondition({ runDir, cwd }) -> { ok, reason, message? }
@@ -24,9 +24,41 @@ const { mainCheckoutRoot, repoInfo } = require('../hooks/worktree-detect');
 function checkPrBookkeepingPrecondition({ runDir, cwd = process.cwd() }) {
   if (!runDir) return { ok: true, reason: 'no-run-dir' };
 
+  // Where run-state.json lives for a /flow multi-spec run (#2664, traced
+  // from the writers and every sibling reader -- #2571 Deliverable 2): the
+  // run's shared worktree and PR stamps live on the PARENT run dir. Every
+  // plugin/bin write goes through hooks/context.js's writeRunState(runDir,
+  // patch) (the skill-side standalone mints in wrap-up/release SKILL.md
+  // printf a fresh file of their own); the stamp writers are bin/hooks.js's
+  // record-worktree (--run required, #1124) and record-pr (--run, else
+  // resolveImplicitRunUnambiguous) handlers. Run-dir enumeration lists only
+  // top-level run-id-shaped dirs (context.js's iterRunDirsWithState), so any
+  // resolution not handed the per-spec {parent-run-id}/spec-{N}/ path inline
+  // lands on the parent -- /flow's run-start PR-early lifecycle stamps it
+  // there, and the PreToolUse bookkeeping-stamps gate, wrap-up/pack.js's
+  // resolveState (#1930 review C1), wrap-up/engine-verify.js's
+  // resolvePrNumber and flow/multispec-review-console.md all read the parent
+  // for them. A per-spec dir carries its own status (and its own copy of the
+  // stamps only when a skill passed that path as --run), so read it first
+  // and fill a missing worktree/pr/prExempt -- and the PR-early degrade line
+  // below -- from the parent, the same fallback pack.js's resolveState
+  // applies. Reading only the per-spec dir falsely denied a correctly-stamped
+  // multi-spec run (exit 4 on run 2026-09-30T190052-spec-2633-2664).
   let runState;
+  let parentRunDir = null;
   try {
     runState = readRunState(runDir) || {};
+    // Only a genuine multi-spec child -- a spec-* dir whose parent is itself
+    // run-id-shaped, the same rule pre-tool-use.js's perSpecPathspec applies
+    // -- may borrow the parent's stamps; any other parent is not this run's.
+    if (/^spec-/.test(path.basename(runDir)) && RUN_ID_RE.test(path.basename(path.dirname(runDir)))) {
+      parentRunDir = path.dirname(runDir);
+      const parent = readRunState(parentRunDir) || {};
+      runState = { ...runState };
+      if (!runState.worktree && parent.worktree) runState.worktree = parent.worktree;
+      if (!runState.pr && parent.pr) runState.pr = parent.pr;
+      if (!runState.prExempt && parent.prExempt) runState.prExempt = parent.prExempt;
+    }
   } catch {
     return { ok: true, reason: 'unreadable-run-state' };
   }
@@ -85,7 +117,9 @@ function checkPrBookkeepingPrecondition({ runDir, cwd = process.cwd() }) {
   }
   if (model !== 'pr-first') return { ok: true, reason: 'not-pr-first' };
 
-  if (hasLoggedPrDegrade(runDir)) return { ok: true, reason: 'degrade-logged' };
+  if (hasLoggedPrDegrade(runDir) || (parentRunDir && hasLoggedPrDegrade(parentRunDir))) {
+    return { ok: true, reason: 'degrade-logged' };
+  }
 
   return {
     ok: false,

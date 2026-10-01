@@ -72,6 +72,18 @@ proposed field, answer three questions against the code, at plan-authoring time:
 
 1. **Where does this data live at gather time?** Not where it lives conceptually. #1930's records
    probe read `work/`, which never exists in the main-checkout run dir.
+   - **Multi-spec per-spec dirs.** A `{parent-run-id}/spec-{N}/` dir carries its own `status`, but
+     the run's shared `worktree` and `pr` stamps live on the **parent** run dir, because run-dir
+     enumeration is top-level only (`context.js` `iterRunDirsWithState`).
+   - **Reading the stamps.** Read per-spec first, then fill missing stamps field by field from the
+     parent. Gate that fallback on a run-id-shaped parent, the same rule `perSpecPathspec` uses.
+     `pr-bookkeeping/precondition.js` is the one reader that does all of it: `worktree`, `pr` and
+     `prExempt`, plus the parent's PR-early degrade line in `decisions.md`. Do not model a new
+     reader on the other two, which are partial: `wrap-up/pack.js` `resolveState` fills per field
+     but gates only on the `spec-` basename, and `wrap-up/engine-verify.js` `resolvePrNumber`
+     swaps to the parent's whole `run-state.json` only when the per-spec file is missing, with no
+     gate and no per-field fill.
+   - **Why it matters.** #2664's first trace got this wrong by following the writers alone.
 2. **Does the consumer mandate a freshness step first?** `mergeSize` was dropped from the wrap-up
    pack because its consumer must measure *after its own fetch* — a pre-gathered value is stale by
    construction.

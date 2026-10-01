@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 const fs = require('fs');
+const path = require('path');
 const { fingerprint } = require('./lib/harness-health/fingerprint');
 const {
   readCache, writeCache, readDurableState, writeDurableState, buildValidateFindingsUpdate,
@@ -16,6 +17,7 @@ const { makeCmdStatus } = require('./lib/health-core/remembered-status');
 const { decide } = require('./lib/harness-health/dedup');
 const { validateFinding } = require('./lib/harness-health/validate-finding');
 const { toIssuePayload } = require('./lib/harness-health/issue-payload');
+const { premiseReadsUnresolved } = require('./lib/health-core/premise-self-check');
 const {
   selectTarget, listTargets, listMemory, selectMemoryTarget, resolveTargetPath,
 } = require('./lib/harness-health/scope');
@@ -160,7 +162,10 @@ function cmdNextTarget(args) {
 }
 
 function cmdValidateFindings(args) {
-  const root = args.root || process.cwd();
+  // Absolute, so a relative --root can't leave the resolved target path
+  // relative to this process's cwd while the Premise-check self-check runs
+  // with cwd: root (#2633 review follow-up).
+  const root = path.resolve(args.root || process.cwd());
   const findingsPath = args._[1];
   if (!findingsPath) {
     process.stderr.write(
@@ -270,8 +275,26 @@ function cmdValidateFindings(args) {
   // convention as verifiedAsOf above.
   const pluginVersion = resolvePluginVersion();
 
+  // #2633: run each composed Premise-check: once, from this sweep's own
+  // root, before filing — a command that doesn't read "unresolved" right now
+  // is dropped rather than left to auto-close the record at its first
+  // materialize. Only this CLI injects the real shell runner; toIssuePayload
+  // itself never spawns one. A drop is logged, like every other soft-drop in
+  // this command, so a missing line is diagnosable from the sweep's stderr.
+  const toIssuePayloadSelfChecked = (finding, v, p) => toIssuePayload(finding, v, p, {
+    premiseSelfCheck: (command) => {
+      const keep = premiseReadsUnresolved(command, { root });
+      if (!keep) {
+        process.stderr.write(
+          `[harness-health] validate-findings: dropped Premise-check: line for finding ${finding.id} — the command does not read "unresolved" at filing time (non-zero exit, timeout, or spawn error)\n`,
+        );
+      }
+      return keep;
+    },
+  });
+
   const { cache, payloads, seen, wontfixSuppressed } = dedupAndDispatch({
-    root, issuesPath: args.issues, toolName: TOOL_NAME, survivors, readCache: readCacheWithDeclined, decide, toIssuePayload, verifiedAsOf, pluginVersion,
+    root, issuesPath: args.issues, toolName: TOOL_NAME, survivors, readCache: readCacheWithDeclined, decide, toIssuePayload: toIssuePayloadSelfChecked, verifiedAsOf, pluginVersion,
   });
 
   if (!args.dryRun) {

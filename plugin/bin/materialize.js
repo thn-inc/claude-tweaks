@@ -48,6 +48,7 @@ const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
 const { resolveTarget: resolveStageTarget, writeStagedItem } = require('./lib/stage-item/write');
 const { resolvePluginVersion } = require('./lib/plugin-version');
+const { defaultRunner: runPremiseCommand, PREMISE_SELF_CHECK_TIMEOUT_MS } = require('./lib/health-core/premise-self-check');
 
 const USAGE = 'usage: materialize.js <n> --run-dir <dir> [--repo owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]\n';
 
@@ -86,12 +87,6 @@ function computeDrift(sha, deps) {
   return { sha, commits, ageDays, stale: commits >= DRIFT_THRESHOLD_COMMITS };
 }
 
-// #1829: the CLI's usual short timeout for a bound-but-arbitrary command a
-// record body names (same order of magnitude as repo-resolve.js's
-// GH_TIMEOUT_MS) — bound so a hostile or hung Premise-check: command can
-// never stall materialize.
-const PREMISE_CHECK_TIMEOUT_MS = 5000;
-
 // Security fix (whole-branch pre-release review, base b9c8bbd86): a
 // `Premise-check:` line is body text — anyone who can create or edit the
 // record's issue can write one, regardless of whether it was actually
@@ -117,20 +112,14 @@ const AUTHOR_ASSOCIATION_TIMEOUT_MS = GH_TIMEOUT_MS;
 // on a black-holed network (see .claude/skills/gh-api-module-pattern).
 const SIBLING_PREMISE_SEARCH_TIMEOUT_MS = GH_TIMEOUT_MS;
 
-// command -> exit code, run from the checkout root. Distinguishes "the
-// command ran and exited non-zero" (a normal outcome — execFileSync throws
-// on any non-zero exit, so this unwraps err.status back into a plain
-// return) from "the command could not be run at all" (ENOENT on /bin/sh,
-// a timeout — no exit code exists, so this re-throws for computePremise's
-// own catch to degrade to null).
+// command -> exit code, run from the checkout root. Shares health-core's
+// runner and 5 s bound with the filing-time self-check (#2633), so a
+// command is read here exactly the way it was read before filing. A
+// non-zero exit is a normal outcome; no exit code at all (ENOENT on
+// /bin/sh, a timeout) re-throws for computePremise's own catch to degrade
+// to null.
 function runPremiseCheckDefault(command) {
-  try {
-    execFileSync('/bin/sh', ['-c', command], { stdio: 'ignore', timeout: PREMISE_CHECK_TIMEOUT_MS });
-    return 0;
-  } catch (err) {
-    if (typeof err.status === 'number') return err.status;
-    throw err;
-  }
+  return runPremiseCommand(command, { timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS });
 }
 
 // command -> { command, exit, satisfiedAtBase } | null. null means "no
