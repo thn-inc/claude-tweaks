@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-01T21:01:45.574Z",
+  "computedAt": "2026-10-01T21:33:50.894Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -176,11 +176,6 @@
       {
         "number": 2769,
         "updatedAt": "2026-10-01T16:12:29Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2768,
-        "updatedAt": "2026-10-01T16:12:32Z",
         "state": "OPEN"
       },
       {
@@ -5222,84 +5217,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: ledger resolve gate (Phase 2, `ledgerRouteRemainder`) — run `2026-09-21T213441-spec-2697-2757-2758-2759`, ledger row #18 (as corrected by row #28)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n`tests/bin-lib/skill-audit/context-cost.test.js`'s composed-bytes ceiling check is red on the\nintegration branch:\n\n```\nworktree-setup @ build\\SKILL.md:170: 45.5 KB > 45.0 KB\n```\n\nRoot cause is traced, not guessed: the breach arrived with commit `522f8b6d1` (record #2348).\n`git merge-base --is-ancestor 522f8b6d1 c3a0057f0` exits 0, so it is an ancestor of this run's own\nbase and predates every commit in this run. #2758's only edit to that test file was an unrelated\ndescription-char-ceiling bump.\n\nA composed-call-site budget that is already over its ceiling cannot report a *new* breach — it is\npermanently red, so the next caller to push `build/SKILL.md`'s composed cost up gets no signal at\nall. That is the real cost: the check has stopped being a guard.\n\n**Scope correction (important for whoever picks this up).** Ledger row #18 originally bundled a\nsecond claim — that `tests/demo-visual-decision-adoption.test.js` was a regression from #2697's\n`b8fd015d9`. The run's batch-reflect pass disproved that: it is a bare-LF-literal-against-a-CRLF-read\nfailure, reproducible on an unmodified checkout, and `b8fd015d9` never touched\n`docs/skill-graph.md`. That half is tracked with the other three instances of its class on its own\nrecord and is **not** in scope here. The mis-attribution itself is recorded as `[IL-160]`.\n\n## Deliverables\n\nBring `worktree-setup`'s composed cost at `build/SKILL.md:170` back under the 45.0 KB ceiling, or\nmove the ceiling deliberately with a stated reason — whichever is the honest answer after reading\nwhat `522f8b6d1` added. A split of the composed set, a lazy-load of one member, or a documented\nceiling raise are all acceptable; silently widening the threshold to make the suite green is not.\n\n## Acceptance Criteria\n\n`node --test tests/bin-lib/skill-audit/context-cost.test.js` passes on the integration branch, with\nthe `worktree-setup @ build/SKILL.md:170` call site reported under its ceiling — quote the measured\nbefore/after byte counts.\n\nIf the ceiling was raised rather than the cost reduced, `docs/plugin-structure.md`'s budget prose\nstates the new number and why, so the next reader does not treat the raise as drift.\n\n## Release Note\n\nBrought the worktree setup instructions back under their context-size ceiling so new breaches are reported again.\n\n## Provenance\n\nRouted here by the resolve gate's Phase 2 at this project's `autonomy: unattended` ceiling via the\n`ledgerRouteRemainder` bookkeeping capability (`_shared/autonomy-ceiling.md`). Phase 1 fix-exhaust:\nnot fix-now eligible — the breach originates outside this run's diff, in a commit already on the\nintegration branch before the run's base, and fixing it means re-budgeting a composed call site that\nnone of this run's four specs owns. Its blocker reason is `pre-existing-outside-diff`, which\n`STRUCTURED_FLOOR` maps to `false`, so `ledgerNarrowing` (`trusted`+) did not cover it;\n`ledgerRouteRemainder` (`unattended` only) is the capability that routes that remainder, and it\nauthorizes exactly one disposition — `Route to a record -> Keep (backlog)`, never `Accept`, `Drop`,\nor `Fix anyway`.\n",
-        "createdAt": "2026-09-22T13:25:14Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 2768,
-        "state": "OPEN",
-        "title": "context-cost composed-bytes ceiling is already breached on main (worktree-setup @ build/SKILL.md:170, 45.5 KB > 45.0 KB, from 522f8b6d1) — the guard can no longer report a new breach",
-        "updatedAt": "2026-10-01T16:12:32Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
           "stage": "ready",
           "grants": {
             "build": true,
