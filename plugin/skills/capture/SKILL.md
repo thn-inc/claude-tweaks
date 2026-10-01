@@ -209,8 +209,14 @@ toward the grant.
          --body-file "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md" \
          --label by:capture)
        ISSUE_NODE_ID=$(gh issue view "$(basename "$ISSUE_URL")" --json id -q .id)
+       # Resolve the slug locally first (`gh api graphql`'s -f/-F never expands a
+       # GraphQL variable from {owner}/{repo} — .claude/skills/gh-api-module-pattern's
+       # own guidance; the same `read -r OWNER REPO <<< ...` resolution
+       # `init/bootstrap/step-17-work-record-backend.md` and `_shared/github-pr-scan.md`
+       # already use), then pass the resolved strings with -f.
+       read -r OWNER REPO <<< "$(gh repo view --json owner,name -q '.owner.login + " " + .name')"
        TYPE_ID=$(gh api graphql -f query='query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){issueTypes(first:50){nodes{id name}}}}' \
-         -F owner='{owner}' -F repo='{repo}' -q ".data.repository.issueTypes.nodes[] | select(.name | ascii_downcase == \"$TYPE\") | .id")
+         -f owner="$OWNER" -f repo="$REPO" -q ".data.repository.issueTypes.nodes[] | select(.name | ascii_downcase == \"$TYPE\") | .id")
        gh api graphql -f query='mutation($id:ID!,$typeId:ID!){updateIssue(input:{id:$id,issueTypeId:$typeId}){issue{id}}}' \
          -f id="$ISSUE_NODE_ID" -f typeId="$TYPE_ID" >/dev/null
      else
