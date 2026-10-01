@@ -296,7 +296,7 @@ function readClaimBlobsGitBatch({ issueNumbers = null, tip, runner = defaultRunn
 
   let batchRaw;
   try {
-    batchRaw = runner(['cat-file', '--batch'], { input: `${orderedShas.join('\n')}\n`, encoding: 'buffer' });
+    batchRaw = runner(['cat-file', '--batch'], { input: Buffer.from(`${orderedShas.join('\n')}\n`), encoding: 'buffer' });
   } catch {
     markTransportFailure();
     return { tipSha: tip, results, failure: null };

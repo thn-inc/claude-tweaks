@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  classifyGitError, readClaimBlobGit, writeClaimBlobGit, readClaimBlobsGitBatch, CLAIMS_BRANCH,
+  classifyGitError, readClaimBlobGit, writeClaimBlobGit, readClaimBlobsGitBatch, CLAIMS_BRANCH, defaultRunner,
 } = require('../../../plugin/bin/lib/issues/claims-git-cas');
 
 test('classifyGitError: missing path in a git show', () => {
@@ -316,4 +316,31 @@ test('readClaimBlobsGitBatch: issues exactly 2 subprocess invocations regardless
   for (const n of numbers) {
     assert.equal(batch.results[n].content, `{"runId":"r${n}"}`);
   }
+});
+
+// #2852: every prior readClaimBlobsGitBatch test above drives the batch call
+// through this file's own `realRunner` fixture helper, which hardcodes
+// `encoding: 'utf8'` on every execFileSync call and so silently drops the
+// production `defaultRunner`'s `...opts` passthrough of the caller's
+// `encoding: 'buffer'` override — the fixture can't reproduce the bug it's
+// supposed to guard against. This test runs through the real, exported
+// `defaultRunner` (cwd-bound the same way the fixtures above bind
+// `realRunner`) against a real registry tree instead, so it actually
+// exercises the `cat-file --batch` call's `input`/`encoding` combination
+// production code hits. Pre-fix, Node's execFileSync throws
+// `ERR_UNKNOWN_ENCODING` on the plain-string `input` (confirmed directly:
+// `execFileSync('cat', [], { input: 'x\n', encoding: 'buffer' })`), the
+// catch maps that to `markTransportFailure()`, and every result below comes
+// back `failure: 'transport-failure'` instead of its real content.
+test('readClaimBlobsGitBatch: real defaultRunner (not the fake/fixture runner) returns content, not transport-failure', () => {
+  const { cloneDir } = makeBareOriginAndClone();
+  const runner = (args, opts) => defaultRunner(args, { ...opts, cwd: cloneDir });
+  const prettyContent = JSON.stringify({ runId: 'r50', claimedAt: '2026-01-01T00:00:00.000Z', ttlHours: 72 }, null, 2);
+  const tip = writeBlob(cloneDir, runner, 50, prettyContent);
+
+  const batch = readClaimBlobsGitBatch({ issueNumbers: [50], tip, runner });
+  assert.equal(batch.failure, null);
+  assert.equal(batch.results[50].failure, null, 'must not degrade to transport-failure against the real defaultRunner');
+  assert.equal(batch.results[50].absent, false);
+  assert.equal(batch.results[50].content, prettyContent);
 });
