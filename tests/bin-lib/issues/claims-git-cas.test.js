@@ -318,20 +318,11 @@ test('readClaimBlobsGitBatch: issues exactly 2 subprocess invocations regardless
   }
 });
 
-// #2852: every prior readClaimBlobsGitBatch test above drives the batch call
-// through this file's own `realRunner` fixture helper, which hardcodes
-// `encoding: 'utf8'` on every execFileSync call and so silently drops the
-// production `defaultRunner`'s `...opts` passthrough of the caller's
-// `encoding: 'buffer'` override — the fixture can't reproduce the bug it's
-// supposed to guard against. This test runs through the real, exported
-// `defaultRunner` (cwd-bound the same way the fixtures above bind
-// `realRunner`) against a real registry tree instead, so it actually
-// exercises the `cat-file --batch` call's `input`/`encoding` combination
-// production code hits. Pre-fix, Node's execFileSync throws
-// `ERR_UNKNOWN_ENCODING` on the plain-string `input` (confirmed directly:
-// `execFileSync('cat', [], { input: 'x\n', encoding: 'buffer' })`), the
-// catch maps that to `markTransportFailure()`, and every result below comes
-// back `failure: 'transport-failure'` instead of its real content.
+// #2852: the `realRunner` fixture above hardcodes `encoding: 'utf8'`, dropping
+// the caller's `encoding: 'buffer'` override, so it can't reproduce the
+// `cat-file --batch` input/encoding bug. This test uses the exported
+// `defaultRunner` instead. Pre-fix, execFileSync threw ERR_UNKNOWN_ENCODING on
+// the plain-string `input`, which surfaced as `failure: 'transport-failure'`.
 test('readClaimBlobsGitBatch: real defaultRunner (not the fake/fixture runner) returns content, not transport-failure', () => {
   const { cloneDir } = makeBareOriginAndClone();
   const runner = (args, opts) => defaultRunner(args, { ...opts, cwd: cloneDir });
