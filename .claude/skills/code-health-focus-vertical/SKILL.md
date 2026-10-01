@@ -25,6 +25,15 @@ A vertical is not shipped until every row below lands in the same change. A key 
 
 `tests/code-health-prelaunch-wiring.test.js` asserts that the pinning table and `FOCUS_GENERATORS` name exactly the same foci, in both directions. It catches a missing pinning row. It does not catch a missing Coverage pointer, fragment, or getting-started entry, so check those by hand.
 
+**Two more rows, only for a vertical that also participates in `/review`** (`security-hardening` #2624 and `agent-trust-scope` #2749 both do; `dead-code`/`abstraction-police`/`test-hygiene`/`experiment-cleanup`/`prelaunch` don't — this is a per-vertical decision, not every shipped vertical's obligation):
+
+| Site | What it gets |
+|---|---|
+| `plugin/skills/review/code-mode-steps.md` | A new Step 6.X pass mirroring the existing Step 6.6 pattern (pre-check, invocation, result-handling table, Routing line), plus an update to every sibling Step 6.5/6.6/6.7 "Routing (optional)" sentence and the Step 6.7 heading/category table so they name the new step |
+| `plugin/skills/review/review-summary-template.md` | A new summary section mirroring Step 6.6's (Include/Omit conditions, a findings table, an advisory footnote) |
+
+A wiring test for this pair follows the same shape as the generator-registration test above — see `tests/code-health-agent-trust-scope-wiring.test.js` for the worked example (it also pins the `docs/getting-started.md` vertical count, so one test file covers both halves of the registration set).
+
 ## Four pitfalls
 
 1. **Require `./focus-generators` before `./candidates-dead-code`.** The registry autoloads every vertical. A vertical that requires `candidates-dead-code` first, and is then loaded directly (as its own test does), gets a half-built exports object from Node's circular require, so the shared helpers bind to `undefined`. `candidates-abstraction-police.js`'s require block documents the order. #2693 shipped it reversed.
