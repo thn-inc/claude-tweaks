@@ -115,12 +115,18 @@ above), not necessarily every phase this run actually completed.
    (see `flow/multispec-pr-checklist.md`). A single-record run never reaches this branch — its
    row was already removed or checked at polish's own would-be exit.
 <!-- when: integration-model=pr-first -->
-3. **Rewrite the `Fixes` block from `manifest.yml` outcomes (#2015).** Pass parent
-   `manifest.yml`'s `multispec.specs` (`bin/lib/flow/manifest.js`'s `readManifest`) to
-   `composeFixesBlock`, replacing the fixes span with its output: one `Fixes #{m}` per
-   `complete` spec, one `Refs #{m} — not run/failed: {reason}` otherwise. Log: `AUTO {time} —
-   PR-early run lifecycle: rewrote Fixes block for PR #{number} — {c} complete, {r}
-   not-run/failed. Reversibility: high (gh pr edit).`
+3. **Rewrite the `Fixes` block from `manifest.yml` outcomes (#2015).** Read parent
+   `manifest.yml`'s `multispec.specs` (`bin/lib/flow/manifest.js`'s `readManifest`), then pass
+   both the parent run dir and that `specs` list to `readDeferredClosures` — it reads every
+   `spec-{id}/decisions.md` for a logged deferred-closure entry (`_shared/pr-early-run-lifecycle.md`'s
+   "Deferred-closure decisions" section defines the one shape it recognizes) and returns a Map of
+   spec id -> reason. Pass `specs` and that Map to `composeFixesBlock`, replacing the fixes span
+   with its output: one `Fixes #{m}` per `complete` spec with no deferred-closure entry, one
+   `Refs #{m} — deferred: {reason}` for a spec carrying one (even when `complete` — the
+   deferred-closure check overrides the status check), one `Refs #{m} — not run/failed: {reason}`
+   for every other non-complete spec. Log: `AUTO {time} — PR-early run lifecycle: rewrote Fixes
+   block for PR #{number} — {c} complete, {d} deferred, {r} not-run/failed. Reversibility: high
+   (gh pr edit).`
 <!-- /when -->
 4. Read the record's current title (`gh issue view {n} --json title -q .title` for the
    lowest-numbered record). If it no longer matches the PR's own title (the record was retitled
