@@ -227,7 +227,8 @@ own repair-loop guidance asks for elsewhere in this plugin.
 
 **Log the correction when it changes anything.** When either merge actually advances the
 worktree's branch (`git rev-parse HEAD` differs before and after — not a no-op), the calling
-procedure appends an entry to the run's `decisions.md` under its own heading:
+procedure appends an entry to the run's `decisions.md` under its own heading (no run dir:
+`_shared/worktree-catchup-no-run-dir.md`):
 `AUTO {time} — Post-creation catch-up: worktree branch advanced from {before short} to {after
 short} ({N} commit(s) from {origin/{integration-branch} or EXPECTED_BASE}). Reversibility: high
 (worktree has no other commits yet).` A no-op merge (branch tip unchanged) writes nothing — this

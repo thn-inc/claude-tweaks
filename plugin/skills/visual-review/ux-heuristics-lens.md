@@ -1,6 +1,6 @@
 # UX Heuristics Lens
 
-Shared, criteria-only checklist — what to flag when applying the UX-heuristics lens during a visual review pass or a UI-affecting code review (#2655). No workflow, no Next Actions: this file is the checklist itself, invoked from `page-mode.md`'s Step 4 (Structured Analysis) and available to `/claude-tweaks:review`'s Code-Mode Procedure for UI-affecting diffs. Source: a ~20-item social-media Reel (hook-only caption, unsourced) — treat every row as a manual-inspection prompt to check for, not a hard rule to enforce mechanically; some rows (e.g. sub-400ms interactions) can't be measured without instrumentation this repo doesn't have, so judge them from lived interaction feel, not a stopwatch.
+Shared, criteria-only checklist — what to flag when applying the UX-heuristics lens during a visual review pass or a UI-affecting code review (#2655). No workflow, no Next Actions: this file is the checklist itself, invoked from `page-mode.md`'s Step 4 (Structured Analysis) and available to `/claude-tweaks:review`'s Code-Mode Procedure for UI-affecting diffs. Source: a ~20-item social-media Reel (hook-only caption, unsourced) — treat every row as a manual-inspection prompt to check for, not a hard rule to enforce mechanically; some rows (e.g. sub-400ms interactions) can't be measured without instrumentation this repo doesn't have, so judge them from lived interaction feel, not a stopwatch. Rows added later name their own source: the three badge rows (#2706) come from a Reel on notification-badge design (https://www.instagram.com/reel/Dcnuc60NbeO/), and the three typography rows (#2707) from a Reel on typographic systems (https://www.instagram.com/reel/Ddd04e2tQWx/).
 
 ## When this lens applies
 
@@ -10,16 +10,16 @@ Gate invocation on `Surface: web/mobile/desktop` (per `design-wrapper/frontend-d
 
 | Heuristic | What it flags | Example violation |
 |---|---|---|
-| Reduce choices per screen | More top-level options/actions than a user can scan at a glance | A settings screen with 15+ ungrouped toggles in one flat list |
-| Use large targets | Interactive elements sized or spaced too small/tight for comfortable tapping/clicking | A 16px icon-only button with no surrounding padding, adjacent to another tappable element |
-| Favor familiar patterns | A novel interaction where a well-established convention exists and would serve just as well | A custom swipe-to-delete gesture with no visible affordance, replacing a standard delete icon |
-| Group related info | Visually or spatially separated content that belongs together | A form's error message rendered far from the field it refers to |
-| Chunk content | A long unbroken block of text/fields with no visual segmentation | A 12-field signup form with no section headers or grouping |
+| Reduce choices per screen (Hick's law) | More top-level options/actions than a user can scan at a glance | A settings screen with 15+ ungrouped toggles in one flat list |
+| Use large targets (Fitts's law) | Interactive elements sized or spaced too small/tight for comfortable tapping/clicking | A 16px icon-only button with no surrounding padding, adjacent to another tappable element |
+| Favor familiar patterns (Jakob's law) | A novel interaction where a well-established convention exists and would serve just as well | A custom swipe-to-delete gesture with no visible affordance, replacing a standard delete icon |
+| Group related info (law of common region / proximity) | Visually or spatially separated content that belongs together | A form's error message rendered far from the field it refers to |
+| Chunk content (Miller's law) | A long unbroken block of text/fields with no visual segmentation | A 12-field signup form with no section headers or grouping, or a 16-digit card or license code shown as one unbroken run of digits instead of groups of four |
 | Keep interactions under ~400ms | A click/tap/keystroke response that feels sluggish (manual-inspection prompt — no stopwatch available; judge from lived feel, not a measured threshold) | A button press with a visible lag before any feedback appears |
-| Highlight the primary action | No clear visual distinction between the primary action and secondary/tertiary ones | Three same-weight buttons ("Save", "Cancel", "Delete") with no visual hierarchy |
+| Highlight the primary action (Von Restorff effect) | No clear visual distinction between the primary action and secondary/tertiary ones | Three same-weight buttons ("Save", "Cancel", "Delete") with no visual hierarchy |
 | Keep key actions nearby | A frequently-needed action requires excessive scrolling or navigation to reach | The "Submit" button is off-screen below a long form with no sticky footer |
 | Put essentials first | Critical information or actions buried below less important content | A dashboard's most-used metric appears third, after two decorative widgets |
-| End flows memorably | A multi-step flow ends abruptly with no confirmation, summary, or next-step guidance | A checkout flow that just redirects to the homepage after payment with no confirmation screen |
+| End flows memorably (peak-end rule) | A multi-step flow ends abruptly with no confirmation, summary, or next-step guidance | A checkout flow that just redirects to the homepage after payment with no confirmation screen |
 | Show visible progress | A long-running operation gives no indication it's working | A file upload with no progress bar or spinner — the UI just appears frozen |
 | Simplify complex interfaces | A screen exposes more configuration/complexity than the common case needs | An "advanced" option always visible instead of behind a disclosure toggle |
 | Use sensible defaults | A field/setting ships with no default, or a default that fits nobody | A "results per page" selector defaulting to 1 instead of a reasonable common value |
@@ -30,10 +30,16 @@ Gate invocation on `Surface: web/mobile/desktop` (per `design-wrapper/frontend-d
 | Reduce task time | A flow requires more steps or re-entry of the same information than necessary | Asking for the same email address twice with no autofill/carry-forward between steps |
 | Reveal complexity gradually | All configuration options are shown at once instead of progressively disclosed as needed | A "create project" form showing 20 fields upfront instead of starting with just name + type |
 | Make completion feel close | A multi-step flow gives no sense of how much remains | A 6-step wizard with no step indicator ("Step 3 of 6") or progress bar |
+| One signal per element | A status dot and a count badge on the same element. A dot says something changed and a number says how much, so one element needs one of them. Two signals for one event read as noise, and users shown redundant badges learn to ignore both | A chat avatar with a green "online" dot and a red "3" count in the same corner |
+| Tie badge color to meaning | A badge color that maps to no stated convention (red = act now, green = online), or badges on so many elements that color stops meaning anything. "Badge everything" dilutes the one badge that is urgent | Every nav item carries a red badge, including Settings and Help, so the unread-inbox count no longer stands out |
+| Clear badges on view | A badge that lingers after the user has viewed the item, or a count that resets to zero instead of ticking down as items are read. A badge that never clears stops being read as information | The inbox still shows "5" after all five messages were opened, or opening one of five unread messages drops the count straight to 0 |
+| Bound the type scale | Font sizes not derived from one ratio (hand-picked pixel sizes), more font families than the design needs (usually two at most), more weights than the scale uses (around three), or one line-height shared by headings and body text. Name which of these the screen breaks | Headings at 31, 27, 22 and 19px with no common ratio, and the h1 and body both at line-height 1.5 |
+| Cap line length | Paragraph text measuring outside roughly 45-75 characters per line. Long lines lose the reader at each line break, and short ones chop sentences apart | Article text spanning a 1440px window at about 160 characters per line |
+| Use tabular figures for numbers | Numeric, price, or timer UI set in proportional digits (no `font-variant-numeric: tabular-nums`), so columns misalign and values jitter as they update | A countdown whose width shifts every second, or a price column whose decimal points don't line up |
 
 ## Reporting a finding
 
-When a screen violates a heuristic, name the specific heuristic (not a vague "UX could be better") and cite the concrete evidence — an `eN` ref plus description (per `browser-review.md`'s Element-reference convention) or a screenshot path. Findings from this lens fold into the same Step 6 Report & Route table as every other visual-review lens, with `Source = UX Heuristics`.
+When a screen violates a heuristic, name the specific heuristic (not a vague "UX could be better") and cite the concrete evidence — an `eN` ref plus description (per `browser-review.md`'s Element-reference convention) or a screenshot path. Findings from this lens fold into the same Step 6 Report & Route table as every other visual-review lens, with `Source = UX Heuristics`. When the violated row names a law (Hick's law, Fitts's law, and so on), cite that law by name in the finding, so the violation documents itself. The name identifies the principle; it does not make a manual-inspection row any more mechanical.
 
 ## What NOT to flag
 

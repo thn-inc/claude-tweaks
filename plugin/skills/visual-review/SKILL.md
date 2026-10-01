@@ -146,7 +146,7 @@ Read `browser-review.md` in this skill's directory first — it holds what every
 
 Then read the one file matching the resolved mode — each names a single file, so a run never loads another mode's procedure:
 
-- **Page mode** — read `page-mode.md` (warm-up, then Steps 1-6: health check, first impressions, use it, analyze, reimagine, report). Step 4's structured analysis applies the UX Heuristics checklist (`ux-heuristics-lens.md` in this skill's directory, #2655) — a ~20-item policy-row lens gated on `Surface: web/mobile/desktop`.
+- **Page mode** — read `page-mode.md` (warm-up, then Steps 1-6: health check, first impressions, use it, analyze, reimagine, report). Step 4's structured analysis applies the UX Heuristics checklist (`ux-heuristics-lens.md` in this skill's directory, #2655) — a policy-row lens gated on `Surface: web/mobile/desktop`.
 - **Journey mode** — read `journey-mode.md` (loads the journey, assembles the batch, walks per-step, assesses the arc, then reports against the shared contract).
 - **Discover mode** — read `discover-mode.md` (Phases 1-6: codebase scan → candidates → browser walkthrough → write journey files → coverage report → handoff).
 

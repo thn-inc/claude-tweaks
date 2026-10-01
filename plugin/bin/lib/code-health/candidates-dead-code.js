@@ -399,8 +399,12 @@ function isFileOrphan(relFile, allFiles, contentsByFile) {
 // `--cached` (tracked/staged) + `--others --exclude-standard` (untracked
 // but not ignored) together, so a fixture tree needs only `git init` and a
 // `.gitignore` on disk; nothing needs to be `git add`ed or committed for
-// exclusion to take effect. Filters to JS/TS source extensions and sorts
-// for deterministic ordering.
+// exclusion to take effect. No extension filter — every tracked/untracked-
+// unignored path, sorted for deterministic ordering. `listTrackedSourceFiles`
+// below layers the JS/TS extension filter on top for this vertical's own
+// use; `candidates-prelaunch.js` (#2693) calls this extension-agnostic form
+// directly, since a pre-launch checklist needs non-source files too
+// (`robots.txt`, `sitemap.xml`, image assets).
 //
 // Returns `{ files, discoveryFailed, reason? }`, never a bare array —
 // `discoveryFailed` distinguishes "git itself failed" (timeout, permission
@@ -413,7 +417,7 @@ function isFileOrphan(relFile, allFiles, contentsByFile) {
 // is present only when `discoveryFailed` is true. `maxBuffer` is set
 // explicitly (Node's execFileSync default is ~1MB) since a large consumer
 // repo's `git ls-files` output can exceed that on the default.
-function listTrackedSourceFiles(rootDir) {
+function listTrackedFiles(rootDir) {
   let raw;
   try {
     raw = execFileSync(
@@ -429,9 +433,16 @@ function listTrackedSourceFiles(rootDir) {
   const files = raw
     .split('\0')
     .filter(Boolean)
-    .filter((f) => SOURCE_EXTS.has(path.extname(f)))
     .sort();
   return { files, discoveryFailed: false };
+}
+
+// JS/TS-only view of listTrackedFiles, for this vertical's own dead-export/
+// orphan-file scan.
+function listTrackedSourceFiles(rootDir) {
+  const discovery = listTrackedFiles(rootDir);
+  if (discovery.discoveryFailed) return discovery;
+  return { files: discovery.files.filter((f) => SOURCE_EXTS.has(path.extname(f))), discoveryFailed: false };
 }
 
 function hasNulByte(buffer) {
@@ -556,6 +567,7 @@ module.exports = {
   isFileOrphan,
   isGlobDiscoveredTestFile,
   referencedFileSpecifiers,
+  listTrackedFiles,
   listTrackedSourceFiles,
   scanDeadCode,
   candidatesDeadCode,

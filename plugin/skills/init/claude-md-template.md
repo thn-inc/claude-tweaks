@@ -206,7 +206,8 @@ Two rules of thumb:
 
 - **How to work here, not what's missing** — every entry should help someone working in the codebase right now. Improvements belong in the backlog.
 - **Observed, not aspirational** — document what the codebase actually does, not what it should do
-- **Under 150 lines (default; override via `harness-health-always-loaded-budget` in `.claude-tweaks/policy.yml`)** — if it doesn't fit, it belongs in a skill or rule
+- **Under 150 lines (default; override via `harness-health-always-loaded-budget` in `.claude-tweaks/policy.yml`)** — if it doesn't fit, it belongs in a skill or rule. No single `##` section should hold most of the file either; `/claude-tweaks:harness-health` flags one past 40% of its lines or bytes
+- **Each rule names a specific past failure, not a vague preference** — "run `db:generate` after editing `schema.prisma`; a stale client silently drops new columns" earns its always-loaded cost, while "write clean code" does not. A named failure tells the model when the rule applies, so it can judge rather than obey. Sources: Anthropic, "The new rules of context engineering for Claude 5 generation models" (claude.com blog, 2026-07-24), which trades rules for judgement and targets CLAUDE.md at under 200 lines; Alireza Rezvani, "A global CLAUDE.md and its best pieces" (Medium), which states the specific-failure principle
 - **Commands must work** — verify scripts exist before listing them
 - **Don'ts are guardrails, not wishes** — they describe existing patterns that should not be violated, never infrastructure that doesn't exist yet
 - **Philosophy adapts to maturity** — the same principle stated differently for greenfield vs established projects prevents both reckless breaking changes and unnecessary conservatism
