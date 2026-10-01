@@ -44,6 +44,13 @@ finding: judge it holistically, the same as any other criterion.
   path literally named `secret`/`secrets`). An unattended agent that can read these can harvest
   credentials for use well outside the current task.
 
+When a candidate's `file` is `.claude-tweaks/policy.yml`, no `.claude/settings.json` was read —
+check `skippedFiles` for which case applies. Absent file: note in the finding that the project has
+made no explicit permission decision whatsoever, a different (arguably worse) state than an
+explicit allow with no matching deny; don't understate it as equivalent to a merely-incomplete deny
+list. Skipped as `unparseable-json`: say the committed permission config is broken, not absent —
+its intended deny rules could not be checked at all.
+
 ## What NOT to flag
 
 - A project with no `.claude-tweaks/policy.yml` at all (`notApplicable: true`) — it doesn't use
@@ -54,10 +61,6 @@ finding: judge it holistically, the same as any other criterion.
   `supervised`, or any other value) — a human confirms every action at that level, so the standing
   reach this criterion audits is not exercised unattended. Zero candidates here is a genuine clean
   result, not a missed check.
-- A candidate whose `file` is `.claude-tweaks/policy.yml` (no `.claude/settings.json` present at
-  all) — flag it, but note in the finding that the project has made no explicit permission
-  decision whatsoever, which is a different (arguably worse) state than an explicit allow with no
-  matching deny; don't understate it as equivalent to a merely-incomplete deny list.
 - A deny rule that doesn't match the generator's recognized patterns but is still substantively
   equivalent (e.g. a broader `Bash(*)` deny that happens to cover registry/network/credential
   commands as a side effect) — read `.claude/settings.json`'s actual `permissions.deny` array
@@ -99,7 +102,7 @@ already reads.
 > `.claude/settings.json` for its `permissions.deny` list. If autonomy is `unattended` or
 > `trusted`, check whether the deny list covers three dimensions: package-registry-mutating
 > commands (`npm publish`, `npm login`, etc.), outbound network access (`WebFetch`, `curl`,
-> `wget`), and secret-shaped paths (`.env`, `credentials`, `id_rsa`, `.pem`, `.aws`, `.ssh`). For
+> `wget`), and secret-shaped paths (`.env`, `credentials`, `id_rsa`, `.pem`, `.netrc`, `.aws`, `.ssh`). For
 > each dimension with no covering deny rule, report it as a gap and suggest the specific
 > `permissions.deny` entry that would close it.
 

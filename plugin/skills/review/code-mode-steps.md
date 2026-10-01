@@ -357,7 +357,7 @@ node -e "const {scanAgentTrustScope}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/code
 
 | Outcome | Review behavior |
 |---|---|
-| `notApplicable: true` (no `.claude-tweaks/policy.yml`) | Omit the section entirely — not applicable, not a pass. No footer note (mirrors Step 6.6's non-frontend skip). |
+| `notApplicable: true` (no `.claude-tweaks/policy.yml`) | Omit the section entirely — not applicable, not a pass. No footer note (same as Step 6.5's non-frontend skip). |
 | One or more candidates judged as real findings | Include them in the summary as an "Agent Trust Scope" section (dimension, file, severity per the criteria fragment's calibration). Findings are advisory — same posture as Step 6.5's design findings and Step 6.6's security-hardening findings. |
 | Candidates found but none survive judgment (per the criteria fragment's "What NOT to flag") | Omit the section; note in the summary footer that the pass ran and found nothing actionable. |
 | Zero candidates, `notApplicable: false` (autonomy not elevated, or deny list already covers all three dimensions) | Omit the section; note in the summary footer that the pass ran clean. |

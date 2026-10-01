@@ -78,6 +78,26 @@ const CREDENTIAL_PATH_PATTERNS = [
   /\.ssh\b/,
 ];
 
+// One row per audited dimension: the candidate `kind`, the deny-list
+// patterns that count as covering it, and the evidence phrase naming the gap.
+const DIMENSIONS = [
+  {
+    kind: 'registry-access',
+    patterns: REGISTRY_PATTERNS,
+    gap: 'covering package-registry-mutating commands (npm publish/login/adduser, etc.)',
+  },
+  {
+    kind: 'network-egress',
+    patterns: NETWORK_PATTERNS,
+    gap: 'restricting WebFetch/curl/wget',
+  },
+  {
+    kind: 'credential-scope',
+    patterns: CREDENTIAL_PATH_PATTERNS,
+    gap: 'protecting secret-shaped paths (.env, credentials, id_rsa, .pem, .aws, .ssh, etc.)',
+  },
+];
+
 const SETTINGS_REL = '.claude/settings.json';
 const POLICY_REL = '.claude-tweaks/policy.yml';
 
@@ -146,34 +166,22 @@ function scanAgentTrustScope(rootDir) {
 
   const candidates = [];
 
-  if (autonomy && AUTONOMY_ELEVATED.has(autonomy)) {
+  if (AUTONOMY_ELEVATED.has(autonomy)) {
     const denyText = denyListText(settings);
-    // Anchor to settings.json when it exists (even empty/absent deny list)
-    // — it's the file a fix actually lands in. Fall back to the policy file
-    // only when settings.json doesn't exist at all, so the anchor is always
-    // a real, already-scanned file (code-health anchor rule).
+    // Anchor to settings.json when it was parsed (even with an empty/absent
+    // deny list) — it's the file a fix actually lands in. Fall back to the
+    // policy file when settings.json is missing or unparseable, so the anchor
+    // is always a real, already-scanned file (code-health anchor rule).
     const anchorFile = settings !== null ? SETTINGS_REL : POLICY_REL;
 
-    if (!matchesAny(REGISTRY_PATTERNS, denyText)) {
-      candidates.push({
-        file: anchorFile,
-        kind: 'registry-access',
-        evidence: `autonomy: ${autonomy} (${POLICY_REL}) with no permissions.deny entry in ${SETTINGS_REL} covering package-registry-mutating commands (npm publish/login/adduser, etc.)`,
-      });
-    }
-    if (!matchesAny(NETWORK_PATTERNS, denyText)) {
-      candidates.push({
-        file: anchorFile,
-        kind: 'network-egress',
-        evidence: `autonomy: ${autonomy} (${POLICY_REL}) with no permissions.deny entry in ${SETTINGS_REL} restricting WebFetch/curl/wget`,
-      });
-    }
-    if (!matchesAny(CREDENTIAL_PATH_PATTERNS, denyText)) {
-      candidates.push({
-        file: anchorFile,
-        kind: 'credential-scope',
-        evidence: `autonomy: ${autonomy} (${POLICY_REL}) with no permissions.deny entry in ${SETTINGS_REL} protecting secret-shaped paths (.env, credentials, id_rsa, .pem, .aws, .ssh, etc.)`,
-      });
+    for (const { kind, patterns, gap } of DIMENSIONS) {
+      if (!matchesAny(patterns, denyText)) {
+        candidates.push({
+          file: anchorFile,
+          kind,
+          evidence: `autonomy: ${autonomy} (${POLICY_REL}) with no permissions.deny entry in ${SETTINGS_REL} ${gap}`,
+        });
+      }
     }
   }
 
