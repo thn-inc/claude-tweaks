@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-01T21:33:50.894Z",
+  "computedAt": "2026-10-01T22:16:09.784Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -170,7 +170,7 @@
       },
       {
         "number": 2770,
-        "updatedAt": "2026-10-01T16:12:25Z",
+        "updatedAt": "2026-10-01T21:48:11Z",
         "state": "OPEN"
       },
       {
@@ -5061,84 +5061,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: consolidated Review Console — run `2026-09-21T213441-spec-2697-2757-2758-2759`, ledger row #31\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n**`bin/stage-item.js` silently destroyed two staged Review Console proposals in this run.** The\nfilename counter that allocates `build-deviation-{n}` restarts **per writer**, not per run\ndirectory, so a later writer in the same `spec-{N}/staged/` reuses `build-deviation-1` /\n`build-deviation-2` and overwrites whatever an earlier writer had already put there.\n\nConcretely, in `spec-2758/staged/`:\n\n| Written | File | Content |\n|---|---|---|\n| 07:59:24 | `build-deviation-1.md` | agent-browser -> playwright-cli tooling premise correction |\n| 07:59:24 | `build-deviation-2.md` | inline Interaction-style directive (forbidden since #1909) |\n| 11:13 | `build-deviation-1.md` | skill-graph reverse-edge deviation — **overwrote the 07:59 file** |\n| 11:13 | `build-deviation-2.md` | AC7 no-running-app deviation — **overwrote the 07:59 file** |\n\n`spec-2758/decisions.md` records all four `STAGED` lines under those two names, so the audit trail\nsaid four proposals existed while the directory held two. The consolidated Review Console reads\n`staged/` — it would have rendered **3** items for #2758 instead of the real **5**, and the two lost\nfindings would never have reached a human.\n\nThey survived only because a worktree shadow copy existed; `hooks.js sweep-shadow` recovered them\nnon-destructively as `build-deviation-1.md.shadow-dup` / `build-deviation-2.md.shadow-dup`. That is\nluck, not a mechanism — the same sweep found 7 collisions across the run, 5 of them (all in\n`spec-2757/`) byte-identical and harmless, and exactly these 2 divergent.\n\nThis is silent data loss in a sanctioned run-directory writer whose entire job is to make a proposal\ndurable until a human sees it.\n\n## Deliverables\n\n- Allocate staged-item ids against the **target run directory's existing contents**, not against\n  per-writer state: read `staged/` and pick the next free `{kind}-{n}`.\n- Make a collision impossible to lose silently regardless: refuse to overwrite an existing\n  `staged/{name}` (non-zero exit with the existing path named), or write to the next free suffix and\n  report the adjusted name on stdout. Never a blind clobber.\n- Audit the other sanctioned run-dir writers (`log-decision.js`, `set-config.js`) for the same\n  per-writer-state assumption.\n\n## Acceptance Criteria\n\nTwo `stage-item.js` invocations from different processes, staging the same `--id` kind into the same\nrun directory, produce **two** files; neither is lost. Pinned by a regression test that fails against\nthe current allocator.\n\nAn attempted overwrite of an existing `staged/{name}` is a reported outcome (non-zero exit, or a\nrenamed write echoed on stdout), never a silent success.\n\n`hooks.js sweep-shadow`'s collision report distinguishes duplicate from divergence, as it did here —\nkeep that, but it must stop being the only thing standing between a proposal and the void.\n\n_Filed by the consolidated Review Console (`flow/multispec-review-console.md`)._\n\n## Release Note\n\nFixed staged Review Console proposals being silently overwritten when two writers picked the same name.\n",
-        "createdAt": "2026-09-22T13:25:58Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          }
-        ],
-        "number": 2770,
-        "state": "OPEN",
-        "title": "stage-item.js's per-writer filename counter silently overwrote two staged Review Console proposals — allocate ids per run dir and never clobber",
-        "updatedAt": "2026-10-01T16:12:25Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
           "stage": "ready",
           "grants": {
             "build": true,
