@@ -1,6 +1,7 @@
 {
-  "released": true,
   "runId": "2026-10-02T110307-record-2740-2724-2714-2667-2550-2547-2546-2544-2543",
-  "reason": "failed: worktree-locked",
-  "releasedAt": "2026-10-02T13:48:50.155Z"
+  "sessionId": "6ccd43b3-f322-4848-b923-9c7fc33d8c03",
+  "claimedAt": "2026-10-02T13:54:23.055Z",
+  "ttlHours": 72,
+  "host": "Thomass-MacBook-Pro-3376.local"
 }
