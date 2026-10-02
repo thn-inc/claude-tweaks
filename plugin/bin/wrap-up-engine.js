@@ -362,12 +362,12 @@ function runRender(args) {
   // missing from `results` — and name it, rather than let the absence of
   // output stand for the absence of a diagnostic. A run where `record` ran
   // (even producing zero findings) is unaffected: at least one open row's id
-  // is present in `results` by then, so `missingOpenRows` is empty.
+  // is present in `results` by then, so `neverRecorded` is false.
   if (section === 'console') {
     const rows = worklistRows(state.worklist) || [];
     const openRows = rows.filter((row) => row.gate !== 'closed');
-    const missingOpenRows = openRows.filter((row) => check.missing.includes(row.id));
-    if (openRows.length > 0 && missingOpenRows.length === openRows.length) {
+    const neverRecorded = openRows.length > 0 && openRows.every((row) => check.missing.includes(row.id));
+    if (neverRecorded) {
       process.stderr.write(
         `wrap-up-engine.js render: no recorded results in ${args.runDir} — `
         + `\`record\` was never run for any open row (ran \`plan\` only). `
