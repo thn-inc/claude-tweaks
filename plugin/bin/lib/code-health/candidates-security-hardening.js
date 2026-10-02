@@ -143,7 +143,10 @@ const ROTATION_AUTOMATION_RE = /\b(cron|node-cron|scheduled?|setInterval|EventBr
 
 // Privacy-policy accuracy (#2663): third-party service vs. policy-doc check.
 const PRIVACY_POLICY_FILE_RE = /(^|\/)(privacy-?policy|privacy)\.(md|mdx|html?|txt)$/i;
-const SOURCE_FILE_FOR_POLICY_SCAN_RE = /\.(jsx?|tsx?|mjs|cjs)$/i;
+// JS/TS extension test — shared by the main per-file scan loop (which
+// files below) and scanPrivacyPolicyMismatch's own need to recognize source
+// files among the unfiltered tracked-files list.
+const JS_TS_SOURCE_FILE_RE = /\.(jsx?|tsx?|mjs|cjs)$/i;
 const THIRD_PARTY_SERVICES = [
   { name: 'Google Analytics', codeRe: /\b(gtag\(|google-analytics|GoogleAnalytics)\b/i, policyRe: /google analytics|\bga4\b/i },
   { name: 'Segment', codeRe: /@segment\/analytics|\bsegment\.(io|com)\b/i, policyRe: /segment/i },
@@ -205,10 +208,9 @@ function scanClientSecrets(rel, text, candidates) {
 
 function scanMissingOwnership(rel, text, candidates) {
   if (!ROUTE_DIR_RE.test(rel)) return;
-  const re = new RegExp(QUERY_SIGNAL_RE.source, QUERY_SIGNAL_RE.flags);
-  re.lastIndex = 0;
+  QUERY_SIGNAL_RE.lastIndex = 0;
   let m;
-  while ((m = re.exec(text))) {
+  while ((m = QUERY_SIGNAL_RE.exec(text))) {
     const win = windowAround(text, m.index, m[0].length);
     if (!OWNERSHIP_SIGNAL_RE.test(win)) {
       const line = lineOf(text, m.index);
@@ -218,7 +220,7 @@ function scanMissingOwnership(rel, text, candidates) {
         evidence: `query site at ${rel}:${line} has no ownership predicate (user_id/owner_id/req.user/RLS) within ${WINDOW} chars`,
       });
     }
-    if (m.index === re.lastIndex) re.lastIndex += 1;
+    if (m.index === QUERY_SIGNAL_RE.lastIndex) QUERY_SIGNAL_RE.lastIndex += 1;
   }
 }
 
@@ -246,10 +248,9 @@ function scanUnguardedAiEndpoint(rel, text, candidates) {
 
 function scanJwtValidation(rel, text, candidates) {
   if (CLIENT_DIR_RE.test(rel) && !SERVER_DIR_RE.test(rel)) return; // JWT verification/issuance is a server-side concern
-  const verifyRe = new RegExp(JWT_VERIFY_CALL_RE.source, JWT_VERIFY_CALL_RE.flags);
-  verifyRe.lastIndex = 0;
+  JWT_VERIFY_CALL_RE.lastIndex = 0;
   let m;
-  while ((m = verifyRe.exec(text))) {
+  while ((m = JWT_VERIFY_CALL_RE.exec(text))) {
     const win = windowAround(text, m.index, m[0].length);
     if (!JWT_ALGORITHMS_OPTION_RE.test(win)) {
       const line = lineOf(text, m.index);
@@ -259,12 +260,11 @@ function scanJwtValidation(rel, text, candidates) {
         evidence: `JWT verify call at ${rel}:${line} has no explicit algorithms allowlist within ${WINDOW} chars — vulnerable to alg:none / algorithm-confusion attacks`,
       });
     }
-    if (m.index === verifyRe.lastIndex) verifyRe.lastIndex += 1;
+    if (m.index === JWT_VERIFY_CALL_RE.lastIndex) JWT_VERIFY_CALL_RE.lastIndex += 1;
   }
 
-  const signRe = new RegExp(JWT_SIGN_CALL_RE.source, JWT_SIGN_CALL_RE.flags);
-  signRe.lastIndex = 0;
-  while ((m = signRe.exec(text))) {
+  JWT_SIGN_CALL_RE.lastIndex = 0;
+  while ((m = JWT_SIGN_CALL_RE.exec(text))) {
     const win = windowAround(text, m.index, m[0].length);
     if (!JWT_EXPIRES_OPTION_RE.test(win)) {
       const line = lineOf(text, m.index);
@@ -274,23 +274,22 @@ function scanJwtValidation(rel, text, candidates) {
         evidence: `JWT sign call at ${rel}:${line} has no expiresIn/exp option within ${WINDOW} chars — token may never expire`,
       });
     }
-    if (m.index === signRe.lastIndex) signRe.lastIndex += 1;
+    if (m.index === JWT_SIGN_CALL_RE.lastIndex) JWT_SIGN_CALL_RE.lastIndex += 1;
   }
 }
 
 function scanSecretsLifecycle(rel, text, candidates) {
   if (CLIENT_DIR_RE.test(rel) && !SERVER_DIR_RE.test(rel)) return; // credential-env access is a server-side concern
   const hasManager = SECRETS_MANAGER_IMPORT_RE.test(text);
-  const credRe = new RegExp(CREDENTIAL_ENV_RE.source, CREDENTIAL_ENV_RE.flags);
-  credRe.lastIndex = 0;
+  CREDENTIAL_ENV_RE.lastIndex = 0;
   let credMatch = null;
   let m;
-  while ((m = credRe.exec(text))) {
+  while ((m = CREDENTIAL_ENV_RE.exec(text))) {
     if (!SAFE_CREDENTIAL_NAME_RE.test(m[1])) {
       credMatch = m;
       break;
     }
-    if (m.index === credRe.lastIndex) credRe.lastIndex += 1;
+    if (m.index === CREDENTIAL_ENV_RE.lastIndex) CREDENTIAL_ENV_RE.lastIndex += 1;
   }
   if (!credMatch) return; // no credential-shaped env access in this file at all
 
@@ -332,7 +331,7 @@ function scanSecretsLifecycle(rel, text, candidates) {
 // document's own content to compare against, so it runs once per
 // `scanSecurityHardening` call rather than once per discovered file.
 // `cachedText` (optional) is a Map of already-read `rel -> text` for files
-// matching `SOURCE_FILE_FOR_POLICY_SCAN_RE` — `scanSecurityHardening` below
+// matching `JS_TS_SOURCE_FILE_RE` — `scanSecurityHardening` below
 // passes the content its own main loop already read, so this check doesn't
 // re-read and re-decode the whole JS/TS tree a second time. Omit it (as
 // every direct unit-test call below does) to have this function read the
@@ -350,7 +349,7 @@ function scanPrivacyPolicyMismatch(files, rootDir, candidates, cachedText) {
 
   const flaggedServices = new Set();
   for (const rel of files) {
-    if (rel === policyFile || !SOURCE_FILE_FOR_POLICY_SCAN_RE.test(rel)) continue;
+    if (rel === policyFile || !JS_TS_SOURCE_FILE_RE.test(rel)) continue;
     let text = cachedText && cachedText.get(rel);
     if (text === undefined) {
       let buf;
@@ -400,7 +399,7 @@ function scanSecurityHardening(rootDir) {
       discoveryReason: allTracked.reason,
     };
   }
-  const sourceFiles = allTracked.files.filter((f) => SOURCE_FILE_FOR_POLICY_SCAN_RE.test(f));
+  const sourceFiles = allTracked.files.filter((f) => JS_TS_SOURCE_FILE_RE.test(f));
 
   const skippedFiles = [];
   const candidates = [];
