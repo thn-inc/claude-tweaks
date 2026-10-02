@@ -200,4 +200,6 @@ function strictCheck(state) {
   return { ok: missing.length === 0, missing };
 }
 
-module.exports = { renderTrace, renderConsoleSections, renderConsoleSectionsMulti, strictCheck, FORBIDDEN_VOCABULARY };
+module.exports = {
+  renderTrace, renderConsoleSections, renderConsoleSectionsMulti, strictCheck, worklistRows, FORBIDDEN_VOCABULARY,
+};
