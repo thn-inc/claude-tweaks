@@ -1,0 +1,5 @@
+# Open Items — harness-health validate-findings local-only cursor
+
+| # | Phase | Item | Status | Resolution |
+|---|-------|------|--------|------------|
+| 1 | review | Standalone/headless `/claude-tweaks:harness-health`'s own Step 6 `validate-findings` call never calls the new `push-cursor` publish step this record introduced — since `validate-findings` now records the audit/gap-scan cursor on a local-only branch by default (never pushing `health-state` itself), the skill's primary headless run path (`Headless run flow: SELECT → JUDGE → validate-findings → file`) silently stops persisting its cursor and declined/remembered caches to the remote `health-state` branch once this record merges. Confirmed by direct source read: `push-cursor` is invoked only from `wrap-up/skill-curation.md`'s controller note — `plugin/skills/harness-health/SKILL.md` has no call to it anywhere. This is exactly the risk the spec's own Gotchas section flagged ("Confirm no other caller of `validate-findings` relies on its current always-push behavior before flipping the default") and that fast-lane's Step 1 skip left unverified. | open | — |

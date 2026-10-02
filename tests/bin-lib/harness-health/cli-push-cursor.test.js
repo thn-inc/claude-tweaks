@@ -15,6 +15,7 @@ const path = require('path');
 // and cli-validate-findings.test.js's seedDurableRuns already use.
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'harness-health.js');
+const SKILLS = ['skill-a', 'skill-b', 'skill-c'];
 
 function tmpRepoWithOrigin() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-push-cursor-'));
@@ -31,10 +32,10 @@ function remoteHealthStateSha(bareDir) {
   return line ? line.split(/\s+/)[0] : null;
 }
 
-function runValidateFindings(root, extraArgs = []) {
+function runValidateFindings(root, skill) {
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([]));
-  return spawnSync('node', [CLI, 'validate-findings', findingsFile, '--root', root, ...extraArgs], { encoding: 'utf8' });
+  return spawnSync('node', [CLI, 'validate-findings', findingsFile, '--root', root, '--target', skill, '--kind', 'skill'], { encoding: 'utf8' });
 }
 
 function runPushCursor(root) {
@@ -49,7 +50,7 @@ function cursorsAtRemote(bareDir) {
 test('validate-findings records the cursor locally and pushes nothing to origin', () => {
   const { root, bareDir } = tmpRepoWithOrigin();
 
-  const result = runValidateFindings(root, ['--target', 'skill-a', '--kind', 'skill']);
+  const result = runValidateFindings(root, 'skill-a');
   assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
   assert.strictEqual(remoteHealthStateSha(bareDir), null, 'origin must carry no health-state branch at all after a local-only write');
 });
@@ -57,8 +58,8 @@ test('validate-findings records the cursor locally and pushes nothing to origin'
 test('N sequential validate-findings calls in one row produce zero remote pushes, verified by an unchanged (absent) ref across all N calls', () => {
   const { root, bareDir } = tmpRepoWithOrigin();
 
-  for (const skill of ['skill-a', 'skill-b', 'skill-c']) {
-    const result = runValidateFindings(root, ['--target', skill, '--kind', 'skill']);
+  for (const skill of SKILLS) {
+    const result = runValidateFindings(root, skill);
     assert.strictEqual(result.status, 0, `stderr for ${skill}: ${result.stderr}`);
     assert.strictEqual(remoteHealthStateSha(bareDir), null, `origin ref must stay absent after recording ${skill}`);
   }
@@ -76,8 +77,8 @@ test('push-cursor against nothing locally recorded is a successful no-op', () =>
 test('push-cursor ships every locally-accumulated skill in exactly one remote push, carrying all of their cursor data', () => {
   const { root, bareDir } = tmpRepoWithOrigin();
 
-  for (const skill of ['skill-a', 'skill-b', 'skill-c']) {
-    const result = runValidateFindings(root, ['--target', skill, '--kind', 'skill']);
+  for (const skill of SKILLS) {
+    const result = runValidateFindings(root, skill);
     assert.strictEqual(result.status, 0, `stderr for ${skill}: ${result.stderr}`);
   }
   assert.strictEqual(remoteHealthStateSha(bareDir), null, 'precondition: nothing pushed yet');
@@ -90,7 +91,7 @@ test('push-cursor ships every locally-accumulated skill in exactly one remote pu
   assert.ok(shaAfterPush, 'origin must now carry a health-state ref — the one push advanced it from absent to present');
 
   const cursors = cursorsAtRemote(bareDir);
-  for (const skill of ['skill-a', 'skill-b', 'skill-c']) {
+  for (const skill of SKILLS) {
     assert.ok(cursors[`skill:${skill}`], `pushed cursors.json must carry ${skill}'s cursor from its local recording`);
     assert.strictEqual(typeof cursors[`skill:${skill}`].lastAuditedMs, 'number');
   }
@@ -99,7 +100,7 @@ test('push-cursor ships every locally-accumulated skill in exactly one remote pu
 test('a second push-cursor call after one already landed advances the ref again only when something new was recorded locally', () => {
   const { root, bareDir } = tmpRepoWithOrigin();
 
-  runValidateFindings(root, ['--target', 'skill-a', '--kind', 'skill']);
+  runValidateFindings(root, 'skill-a');
   const first = runPushCursor(root);
   assert.strictEqual(first.status, 0, `stderr: ${first.stderr}`);
   const shaAfterFirstPush = remoteHealthStateSha(bareDir);
@@ -115,7 +116,7 @@ test('a second push-cursor call after one already landed advances the ref again 
   // A further skill recorded locally, then pushed, must ship in ITS OWN
   // single push (ref advances exactly once more), still carrying skill-a's
   // earlier-pushed cursor alongside the new one.
-  runValidateFindings(root, ['--target', 'skill-b', '--kind', 'skill']);
+  runValidateFindings(root, 'skill-b');
   const third = runPushCursor(root);
   assert.strictEqual(third.status, 0, `stderr: ${third.stderr}`);
   assert.deepStrictEqual(JSON.parse(third.stdout), { pushed: true });
