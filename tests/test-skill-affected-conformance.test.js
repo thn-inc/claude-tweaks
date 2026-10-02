@@ -23,28 +23,22 @@ test('test/SKILL.md redefines `affected` onto verify.js --changed-files and drop
   assert.ok(hits >= 2, `expected --changed-files at least twice, got ${hits}`);
 });
 
-test('test/SKILL.md pipeline behavior carries the QA skip literal and the frontend-surface exception (#1923 AC4)', () => {
+test('test/SKILL.md pipeline behavior carries the QA skip literal and always consults the Layer 3 sniff on zero matches (#2745)', () => {
   const skill = read('plugin/skills/test/SKILL.md');
   const list = skill.slice(skill.indexOf('**Pipeline behavior:**'), skill.indexOf('## Step 1: Resolve Scope and Execute'));
   assert.ok(list.includes('QA: skipped — no affected stories'));
-  // The surface decides on zero matches: a frontend surface always runs the
-  // full story set (#808); anything else falls to the Layer 3 sniff.
-  assert.match(list, /`web`\/`mobile`\/`desktop` → run the full story set/);
-  assert.match(list, /Layer 3 sniff/);
-  // Discriminate inversion (re-review N2): the frontend arm must run
-  // unconditionally — never gated behind a "Layer 3 sniff"/"unless"
-  // qualifier that would make it fall through like the non-frontend arm.
-  // (Bare "skip" is excluded from the qualifier check: the frontend arm's
-  // own parenthetical legitimately reads "never skip QA there" (#808).)
-  const frontendArm = list.slice(
-    list.indexOf('`web`/`mobile`/`desktop` → run the full story set'),
-    list.indexOf('any other surface'),
-  );
-  assert.ok(frontendArm.length > 0);
-  assert.ok(!/unless|Layer 3/i.test(frontendArm), 'the frontend arm carries no qualifier');
+  // #2745: a materialized `surface: web`/`mobile`/`desktop` no longer
+  // short-circuits straight to the full story set on zero `source_files`
+  // matches — every surface (including no header) goes through the same
+  // Layer 3 sniff against the changed-file set first.
+  assert.match(list, /Layer 3 sniff.*regardless of the record's materialized `surface:`/);
+  // #808's original concern (a brand-new UI story with no `source_files`
+  // yet must not be skipped) is preserved as a parenthetical, not as a
+  // separate surface-gated branch that bypasses the sniff.
+  assert.match(list, /#808/);
   assert.ok(
-    list.indexOf('`web`/`mobile`/`desktop` → run the full story set') < list.indexOf('any other surface'),
-    'the frontend arm is decided before the non-frontend fallback',
+    !/`web`\/`mobile`\/`desktop` → run the full story set/.test(list),
+    'the surface must no longer bypass the Layer 3 sniff on its own',
   );
 });
 
