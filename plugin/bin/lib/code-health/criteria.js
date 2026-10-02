@@ -138,10 +138,12 @@ const CRITERIA = [
   // (skills/code-health/focus-mode.md), never selected via criteriaForArea.
   { id: 'experiment-cleanup', appliesTo: ['frontend', 'backend'], confidenceFloor: 'medium', fragment: 'criteria-experiment-cleanup.md' },
   // Domain: security-hardening → pre-launch AI-app failure patterns (client
-  // secrets, missing per-user ownership checks, unguarded AI endpoints).
-  // Area-gated to the surfaces the three checks actually touch (frontend for
-  // client-bundle secrets; backend/cli/infra for routes/handlers); pinned
-  // directly by code-health's focus=security-hardening
+  // secrets, missing per-user ownership checks, unguarded AI endpoints),
+  // extended by sibling records with JWT validation (#2657), secrets-
+  // manager/rotation (#2666), and privacy-policy accuracy (#2663) checks.
+  // Area-gated to the surfaces these checks actually touch (frontend for
+  // client-bundle secrets; backend/cli/infra for routes/handlers/config);
+  // pinned directly by code-health's focus=security-hardening
   // (skills/code-health/focus-mode.md), never selected via criteriaForArea.
   { id: 'security-hardening', appliesTo: ['frontend', 'backend', 'cli', 'infra'], confidenceFloor: 'high', fragment: 'criteria-security-hardening.md' },
   // Domain: prelaunch → the pre-launch checklist for a website (sitemap,

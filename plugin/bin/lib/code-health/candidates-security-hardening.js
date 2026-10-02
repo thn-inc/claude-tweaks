@@ -2,26 +2,37 @@
 
 // candidates-security-hardening.js — deterministic pre-launch security
 // hardening candidate generator for code-health's `focus=security-hardening`
-// scoping mode (see skills/code-health/focus-mode.md). Flags three AI-app
-// failure patterns (#2624): (a) secret-shaped literals in client-side
-// source, (b) user-data routes/handlers with no visible per-user ownership
-// predicate nearby, (c) AI-model-calling routes/handlers with no visible
-// auth/rate-limit/spend-guard signal nearby. Candidates are INPUT to the
-// judge (skills/code-health/SKILL.md Step 5) — this generator never
+// scoping mode (see skills/code-health/focus-mode.md). Originally flagged
+// three AI-app failure patterns (#2624): (a) secret-shaped literals in
+// client-side source, (b) user-data routes/handlers with no visible
+// per-user ownership predicate nearby, (c) AI-model-calling routes/handlers
+// with no visible auth/rate-limit/spend-guard signal nearby. Extended by
+// three sibling records that each add further checks to this same
+// vertical rather than standing up their own: (d)/(e) JWT algorithm-
+// confusion and long-lived-token checks (#2657), (f)/(g)/(h) secrets-
+// manager usage and key-rotation checks (#2666), and (i) a privacy-policy
+// third-party-service accuracy check (#2663). All nine checks are INPUT to
+// the judge (skills/code-health/SKILL.md Step 5) — this generator never
 // concludes anything on its own, never fixes anything.
 //
-// Scope boundary vs. sibling records (deliverable 5 of #2624): this vertical
-// owns exactly the three checks above. #2622's pre-scale hardening (query/
-// background-job/caching/pooling/monitoring) and #2625's GDPR/backup-
-// retention check are out of scope here — no overlapping category is
-// claimed by more than one of the three. See `criteria-security-hardening.md`
-// for the judging side of this same boundary statement.
+// Scope boundary vs. sibling records (deliverable 5 of #2624, extended by
+// #2657/#2663/#2666): this vertical owns exactly the checks named above.
+// #2622's pre-scale hardening (query/background-job/caching/pooling/
+// monitoring) and #2625's GDPR/backup-retention check remain out of scope
+// here — no overlapping category is claimed by more than one vertical. The
+// terms-of-service and cyber-liability-insurance items #2663 also names are
+// explicitly NOT automated here (and never will be — they are not code-
+// inspectable); see `criteria-security-hardening.md`'s Manual items section.
+// See that same file for the judging side of every boundary statement here.
 //
 // Coverage (stated explicitly, never implied total — IL-110):
-//   - JS/TS files only (reuses candidates-dead-code.js's
-//     listTrackedSourceFiles — same git-ls-files discovery, same extension
-//     set, same .gitignore handling, same discoveryFailed/discoveryReason
-//     IL-115 distinction).
+//   - JS/TS files only for every per-file scan (reuses
+//     candidates-dead-code.js's listTrackedSourceFiles — same git-ls-files
+//     discovery, same extension set, same .gitignore handling, same
+//     discoveryFailed/discoveryReason IL-115 distinction). The privacy-
+//     policy-mismatch check (i) additionally reads the unfiltered tracked-
+//     file list (listTrackedFiles) since a privacy-policy document is
+//     rarely a .js/.ts file.
 //   - "Client-side" is a path heuristic (CLIENT_DIR_RE below, minus
 //     SERVER_DIR_RE) — a repo whose client code lives outside those
 //     directory names is invisible to check (a); a repo that mixes client
@@ -47,10 +58,37 @@
 //     the OpenAI/Anthropic SDK call shapes and a few generic "chat
 //     completion"-style method names; a bespoke or unlisted provider SDK is
 //     invisible to check (c).
+//   - JWT checks (d)/(e) recognize `jsonwebtoken`-shaped (`jwt.verify(`/
+//     `jwt.sign(`) and `jose`-shaped (`jwtVerify(`) call sites only, scanned
+//     repo-wide rather than gated to ROUTE_DIR_RE (JWT validation commonly
+//     lives in a dedicated auth/middleware module outside a routes/
+//     handlers directory name) — a bespoke or unlisted JWT library, or a
+//     `jose` `SignJWT` builder-chain sign call, is invisible to either
+//     check. Each is a text-window presence check for an `algorithms:`
+//     option (d) or an `expiresIn`/`exp` option (e) — it cannot verify the
+//     option's *value* is actually safe (e.g. `algorithms: ['none']`
+//     explicitly listed still reads as "pinned").
+//   - Secrets-lifecycle checks (f)/(g)/(h) are a single-file text heuristic:
+//     a credential-shaped `process.env.*` access with no secrets-manager
+//     SDK import pattern anywhere in the same file flags (f); given a
+//     manager import, no "rotat*" mention anywhere in the file flags (g);
+//     given both, no automation-scheduling signal (cron/schedule/
+//     EventBridge/etc.) near the rotation mention flags (h). A real
+//     secrets-manager usage or documented rotation procedure that lives in
+//     a *different* file (a shared config module, a separate ops doc) is
+//     invisible to all three — this is explicitly a flag-for-human-review
+//     heuristic, consistent with this record's own Gotchas.
+//   - Privacy-policy-mismatch (i) only runs when a file matching
+//     PRIVACY_POLICY_FILE_RE exists in the tracked tree; a repo with no
+//     such file produces no candidate for this check (missing-policy is
+//     the `focus=prelaunch` vertical's `privacy-policy` manual item, not
+//     this check's job — see Scope boundary). Third-party-service
+//     detection is pattern-based (THIRD_PARTY_SERVICES) — an unlisted
+//     service, or one referenced only via a generic wrapper, is invisible.
 
 const fs = require('fs');
 const path = require('path');
-const { listTrackedSourceFiles } = require('./candidates-dead-code');
+const { listTrackedSourceFiles, listTrackedFiles } = require('./candidates-dead-code');
 const { registerGenerator } = require('./focus-generators');
 
 const CLIENT_DIR_RE = /(^|\/)(client|frontend|web|public|src\/(components|pages|app))(\/|$)/i;
@@ -83,6 +121,33 @@ const AI_CALL_PATTERNS = [
 ];
 
 const AI_GUARD_SIGNAL_RE = /(rate ?limit|rateLimit|requireAuth|authenticate|isAuthenticated|middleware\([^)]*auth|maxTokens|max_tokens|spend|budget|quota)/i;
+
+// JWT validation (#2657): alg-confusion / alg:none / long-lived-token checks.
+const JWT_VERIFY_CALL_RE = /\b(?:jwt|jsonwebtoken)\.verify\(|\bjwtVerify\(/g;
+const JWT_SIGN_CALL_RE = /\b(?:jwt|jsonwebtoken)\.sign\(/g;
+const JWT_ALGORITHMS_OPTION_RE = /\balgorithms?\s*:/i;
+const JWT_EXPIRES_OPTION_RE = /\bexpiresIn\s*:|\bexp\s*:/i;
+
+// Secrets lifecycle (#2666): secrets-manager usage + rotation checks.
+const CREDENTIAL_ENV_RE = /process\.env\.([A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD)[A-Z0-9_]*)\b/g;
+const SAFE_CREDENTIAL_NAME_RE = /PUBLIC|PUBLISHABLE/i;
+const SECRETS_MANAGER_IMPORT_RE = /(\bdoppler\b|\binfisical\b|@aws-sdk\/client-secrets-manager|aws-sdk\/clients\/secretsmanager|@google-cloud\/secret-manager|\bnode-vault\b|hashicorp[-/]vault|@azure\/keyvault-secrets)/i;
+const ROTATION_KEYWORD_RE = /\brotat(e|ion|ing|ed)\b/i;
+const ROTATION_AUTOMATION_RE = /\b(cron|node-cron|scheduled?|setInterval|EventBridge|CloudWatch\s*Events?)\b/i;
+
+// Privacy-policy accuracy (#2663): third-party service vs. policy-doc check.
+const PRIVACY_POLICY_FILE_RE = /(^|\/)(privacy-?policy|privacy)\.(md|mdx|html?|txt)$/i;
+const SOURCE_FILE_FOR_POLICY_SCAN_RE = /\.(jsx?|tsx?|mjs|cjs)$/i;
+const THIRD_PARTY_SERVICES = [
+  { name: 'Google Analytics', codeRe: /\b(gtag\(|google-analytics|GoogleAnalytics)\b/i, policyRe: /google analytics|\bga4\b/i },
+  { name: 'Segment', codeRe: /@segment\/analytics|\bsegment\.(io|com)\b/i, policyRe: /segment/i },
+  { name: 'Mixpanel', codeRe: /\bmixpanel\b/i, policyRe: /mixpanel/i },
+  { name: 'Sentry', codeRe: /@sentry\/|\bSentry\.init\b/i, policyRe: /sentry/i },
+  { name: 'Intercom', codeRe: /\bintercom\b/i, policyRe: /intercom/i },
+  { name: 'Stripe', codeRe: /\bstripe\b/i, policyRe: /stripe/i },
+  { name: 'Hotjar', codeRe: /\bhotjar\b/i, policyRe: /hotjar/i },
+  { name: 'Facebook Pixel', codeRe: /\bfbq\(/i, policyRe: /facebook|\bmeta\b/i },
+];
 
 const WINDOW = 400; // chars, each direction, for co-occurrence checks
 
@@ -173,6 +238,123 @@ function scanUnguardedAiEndpoint(rel, text, candidates) {
   }
 }
 
+function scanJwtValidation(rel, text, candidates) {
+  if (CLIENT_DIR_RE.test(rel) && !SERVER_DIR_RE.test(rel)) return; // JWT verification/issuance is a server-side concern
+  const verifyRe = new RegExp(JWT_VERIFY_CALL_RE.source, JWT_VERIFY_CALL_RE.flags);
+  verifyRe.lastIndex = 0;
+  let m;
+  while ((m = verifyRe.exec(text))) {
+    const win = windowAround(text, m.index, m[0].length);
+    if (!JWT_ALGORITHMS_OPTION_RE.test(win)) {
+      const line = lineOf(text, m.index);
+      candidates.push({
+        file: rel,
+        kind: 'jwt-alg-not-pinned',
+        evidence: `JWT verify call at ${rel}:${line} has no explicit algorithms allowlist within ${WINDOW} chars — vulnerable to alg:none / algorithm-confusion attacks`,
+      });
+    }
+    if (m.index === verifyRe.lastIndex) verifyRe.lastIndex += 1;
+  }
+
+  const signRe = new RegExp(JWT_SIGN_CALL_RE.source, JWT_SIGN_CALL_RE.flags);
+  signRe.lastIndex = 0;
+  while ((m = signRe.exec(text))) {
+    const win = windowAround(text, m.index, m[0].length);
+    if (!JWT_EXPIRES_OPTION_RE.test(win)) {
+      const line = lineOf(text, m.index);
+      candidates.push({
+        file: rel,
+        kind: 'jwt-long-lived-token',
+        evidence: `JWT sign call at ${rel}:${line} has no expiresIn/exp option within ${WINDOW} chars — token may never expire`,
+      });
+    }
+    if (m.index === signRe.lastIndex) signRe.lastIndex += 1;
+  }
+}
+
+function scanSecretsLifecycle(rel, text, candidates) {
+  if (CLIENT_DIR_RE.test(rel) && !SERVER_DIR_RE.test(rel)) return; // credential-env access is a server-side concern
+  const hasManager = SECRETS_MANAGER_IMPORT_RE.test(text);
+  const credRe = new RegExp(CREDENTIAL_ENV_RE.source, CREDENTIAL_ENV_RE.flags);
+  credRe.lastIndex = 0;
+  let credMatch = null;
+  let m;
+  while ((m = credRe.exec(text))) {
+    if (!SAFE_CREDENTIAL_NAME_RE.test(m[1])) {
+      credMatch = m;
+      break;
+    }
+    if (m.index === credRe.lastIndex) credRe.lastIndex += 1;
+  }
+  if (!credMatch) return; // no credential-shaped env access in this file at all
+
+  if (!hasManager) {
+    const line = lineOf(text, credMatch.index);
+    candidates.push({
+      file: rel,
+      kind: 'secrets-no-manager',
+      evidence: `credential-shaped env access at ${rel}:${line} with no dedicated secrets-manager SDK import in this file`,
+    });
+    return; // rotation checks only meaningful once a manager is actually in use
+  }
+
+  if (!ROTATION_KEYWORD_RE.test(text)) {
+    candidates.push({
+      file: rel,
+      kind: 'no-rotation-procedure',
+      evidence: `${rel} imports a secrets-manager SDK but names no rotation procedure (no "rotat*" mention in file)`,
+    });
+    return;
+  }
+
+  if (!ROTATION_AUTOMATION_RE.test(text)) {
+    candidates.push({
+      file: rel,
+      kind: 'no-rotation-schedule',
+      evidence: `${rel} mentions key rotation but no automation signal (cron/schedule/EventBridge) is present — rotation appears manual-only`,
+    });
+  }
+}
+
+// Whole-repo check (unlike the per-file scans above): needs the policy
+// document's own content to compare against, so it runs once per
+// `scanSecurityHardening` call rather than once per discovered file.
+function scanPrivacyPolicyMismatch(files, rootDir, candidates) {
+  const policyFile = files.find((f) => PRIVACY_POLICY_FILE_RE.test(f));
+  if (!policyFile) return; // nothing to compare against — missing-policy is prelaunch's job, not this check's
+
+  let policyText;
+  try {
+    policyText = fs.readFileSync(path.join(rootDir, policyFile), 'utf8');
+  } catch {
+    return;
+  }
+
+  const flaggedServices = new Set();
+  for (const rel of files) {
+    if (rel === policyFile || !SOURCE_FILE_FOR_POLICY_SCAN_RE.test(rel)) continue;
+    let buf;
+    try {
+      buf = fs.readFileSync(path.join(rootDir, rel));
+    } catch {
+      continue;
+    }
+    if (buf.includes(0)) continue;
+    const text = buf.toString('utf8');
+    for (const svc of THIRD_PARTY_SERVICES) {
+      if (flaggedServices.has(svc.name)) continue;
+      if (svc.codeRe.test(text) && !svc.policyRe.test(policyText)) {
+        candidates.push({
+          file: rel,
+          kind: 'privacy-policy-mismatch',
+          evidence: `${svc.name} integration found in ${rel} but not named in privacy policy (${policyFile})`,
+        });
+        flaggedServices.add(svc.name);
+      }
+    }
+  }
+}
+
 // The rich-shape scan — registered under 'security-hardening' in
 // FOCUS_GENERATORS. No policy config (unlike experiment-cleanup); every
 // pattern here is a shipped default, not project-configurable, since these
@@ -208,6 +390,16 @@ function scanSecurityHardening(rootDir) {
     scanClientSecrets(rel, text, candidates);
     scanMissingOwnership(rel, text, candidates);
     scanUnguardedAiEndpoint(rel, text, candidates);
+    scanJwtValidation(rel, text, candidates);
+    scanSecretsLifecycle(rel, text, candidates);
+  }
+
+  // Privacy-policy-mismatch needs the unfiltered tracked-file list (the
+  // policy document itself is rarely a .js/.ts file) — a separate,
+  // whole-repo pass rather than a per-file scan folded into the loop above.
+  const allFiles = listTrackedFiles(rootDir);
+  if (!allFiles.discoveryFailed) {
+    scanPrivacyPolicyMismatch(allFiles.files, rootDir, candidates);
   }
 
   candidates.sort((a, b) => (a.file === b.file ? a.evidence.localeCompare(b.evidence) : a.file.localeCompare(b.file)));
@@ -235,9 +427,13 @@ module.exports = {
   scanClientSecrets,
   scanMissingOwnership,
   scanUnguardedAiEndpoint,
+  scanJwtValidation,
+  scanSecretsLifecycle,
+  scanPrivacyPolicyMismatch,
   SECRET_PATTERNS,
   CLIENT_DIR_RE,
   SERVER_DIR_RE,
   ROUTE_DIR_RE,
   SAFE_PREFIX_RE,
+  THIRD_PARTY_SERVICES,
 };

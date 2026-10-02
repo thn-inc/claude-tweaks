@@ -28,6 +28,9 @@ const {
   scanClientSecrets,
   scanMissingOwnership,
   scanUnguardedAiEndpoint,
+  scanJwtValidation,
+  scanSecretsLifecycle,
+  scanPrivacyPolicyMismatch,
 } = require('../../../plugin/bin/lib/code-health/candidates-security-hardening');
 
 // Assembled at runtime, never as a contiguous source-file literal: GitHub push protection's
@@ -178,6 +181,150 @@ test('scanUnguardedAiEndpoint: does not flag an AI SDK call with a rate-limit gu
   const candidates = [];
   scanUnguardedAiEndpoint('routes/chat.js', "rateLimit(req); const r = await anthropic.messages.create({ model: 'claude' });", candidates);
   assert.strictEqual(candidates.length, 0);
+});
+
+// ── JWT validation (#2657): alg-confusion / alg:none / long-lived-token ────
+
+test('scanJwtValidation: flags a verify call with no algorithms allowlist (AC: alg:none / algorithm-confusion)', () => {
+  const candidates = [];
+  scanJwtValidation('server/routes/auth.js', 'const payload = jwt.verify(req.headers.authorization, SECRET);', candidates);
+  const kinds = candidates.map((c) => c.kind);
+  assert.ok(kinds.includes('jwt-alg-not-pinned'));
+});
+
+test('scanJwtValidation: does not flag a verify call with an explicit algorithms allowlist', () => {
+  const candidates = [];
+  scanJwtValidation('server/routes/auth.js', 'const payload = jwt.verify(req.headers.authorization, SECRET, { algorithms: ["HS256"] });', candidates);
+  assert.strictEqual(candidates.filter((c) => c.kind === 'jwt-alg-not-pinned').length, 0);
+});
+
+test('scanJwtValidation: flags a sign call with no expiresIn option (AC: long-lived token)', () => {
+  const candidates = [];
+  scanJwtValidation('server/routes/auth.js', 'const token = jwt.sign({ userId: user.id }, SECRET);', candidates);
+  const kinds = candidates.map((c) => c.kind);
+  assert.ok(kinds.includes('jwt-long-lived-token'));
+});
+
+test('scanJwtValidation: does not flag a sign call with an expiresIn option (AC: short-lived + refresh flow)', () => {
+  const candidates = [];
+  scanJwtValidation('server/routes/auth.js', 'const token = jwt.sign({ userId: user.id }, SECRET, { expiresIn: "15m" });', candidates);
+  assert.strictEqual(candidates.filter((c) => c.kind === 'jwt-long-lived-token').length, 0);
+});
+
+test('scanJwtValidation: a correctly-guarded sample (both algorithms and expiresIn pinned) produces no false positives', () => {
+  const candidates = [];
+  scanJwtValidation(
+    'server/routes/auth.js',
+    'const payload = jwt.verify(token, SECRET, { algorithms: ["HS256"] });\nconst fresh = jwt.sign({ userId: 1 }, SECRET, { expiresIn: "15m" });',
+    candidates,
+  );
+  assert.deepStrictEqual(candidates, []);
+});
+
+test('scanJwtValidation: does not scan a pure client-dir file', () => {
+  const candidates = [];
+  scanJwtValidation('client/src/auth.js', 'const payload = jwt.verify(token, SECRET);', candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+// ── Secrets lifecycle (#2666): manager / rotation-procedure / rotation-schedule ─
+
+test('scanSecretsLifecycle: flags credential env access with no secrets-manager SDK import (AC: .env-only app)', () => {
+  const candidates = [];
+  scanSecretsLifecycle('server/config.js', 'const apiKey = process.env.THIRD_PARTY_API_KEY;', candidates);
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'secrets-no-manager');
+});
+
+test('scanSecretsLifecycle: does not flag a known-public env var name (e.g. *_PUBLIC_KEY)', () => {
+  const candidates = [];
+  scanSecretsLifecycle('server/config.js', 'const key = process.env.STRIPE_PUBLISHABLE_KEY;', candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+test('scanSecretsLifecycle: a secrets-manager import with no rotation mention flags no-rotation-procedure', () => {
+  const candidates = [];
+  scanSecretsLifecycle(
+    'server/config.js',
+    'const { SecretsManagerClient } = require("@aws-sdk/client-secrets-manager");\nconst apiKey = process.env.THIRD_PARTY_API_KEY;',
+    candidates,
+  );
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'no-rotation-procedure');
+});
+
+test('scanSecretsLifecycle: a rotation mention with no automation signal flags no-rotation-schedule', () => {
+  const candidates = [];
+  scanSecretsLifecycle(
+    'server/config.js',
+    'const { SecretsManagerClient } = require("@aws-sdk/client-secrets-manager");\nconst apiKey = process.env.THIRD_PARTY_API_KEY;\n// manual dual-key rotation: new key verified, old key revoked',
+    candidates,
+  );
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'no-rotation-schedule');
+});
+
+test('scanSecretsLifecycle: a sample app with manager + documented + scheduled rotation produces no findings (AC: clean pass)', () => {
+  const candidates = [];
+  scanSecretsLifecycle(
+    'server/config.js',
+    'const { SecretsManagerClient } = require("@aws-sdk/client-secrets-manager");\nconst apiKey = process.env.THIRD_PARTY_API_KEY;\n// dual-key rotation runs on a scheduled cron job every 30 days',
+    candidates,
+  );
+  assert.deepStrictEqual(candidates, []);
+});
+
+test('scanSecretsLifecycle: does not scan a pure client-dir file', () => {
+  const candidates = [];
+  scanSecretsLifecycle('client/src/config.js', 'const apiKey = process.env.THIRD_PARTY_API_KEY;', candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+// ── Privacy-policy accuracy (#2663) ─────────────────────────────────────────
+
+test('scanPrivacyPolicyMismatch: flags a third-party service used in code but not named in the privacy policy', () => {
+  const root = tmpGitRepo();
+  write(root, 'PRIVACY.md', 'We do not sell your data. We use cookies for session management.');
+  write(root, 'server/routes/chat.js', 'const mixpanel = require("mixpanel"); mixpanel.track("signup");');
+  const candidates = [];
+  scanPrivacyPolicyMismatch(['PRIVACY.md', 'server/routes/chat.js'], root, candidates);
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'privacy-policy-mismatch');
+  assert.match(candidates[0].evidence, /Mixpanel/);
+});
+
+test('scanPrivacyPolicyMismatch: produces no false-positive flag when the policy correctly names the integrated service', () => {
+  const root = tmpGitRepo();
+  write(root, 'PRIVACY.md', 'We use Mixpanel for product analytics.');
+  write(root, 'server/routes/chat.js', 'const mixpanel = require("mixpanel"); mixpanel.track("signup");');
+  const candidates = [];
+  scanPrivacyPolicyMismatch(['PRIVACY.md', 'server/routes/chat.js'], root, candidates);
+  assert.deepStrictEqual(candidates, []);
+});
+
+test('scanPrivacyPolicyMismatch: no candidate at all when the repo has no privacy-policy file (existence is prelaunch\'s job, not this check\'s)', () => {
+  const root = tmpGitRepo();
+  write(root, 'server/routes/chat.js', 'const mixpanel = require("mixpanel"); mixpanel.track("signup");');
+  const candidates = [];
+  scanPrivacyPolicyMismatch(['server/routes/chat.js'], root, candidates);
+  assert.deepStrictEqual(candidates, []);
+});
+
+// ── End-to-end: all three sibling-record checks surface through scanSecurityHardening ─
+
+test('scanSecurityHardening: a fixture carrying the three new violation patterns flags all three kinds', () => {
+  const root = tmpGitRepo();
+  write(root, 'server/routes/auth.js', 'const payload = jwt.verify(req.headers.authorization, SECRET);');
+  write(root, 'server/config.js', 'const apiKey = process.env.THIRD_PARTY_API_KEY;');
+  write(root, 'PRIVACY.md', 'We do not sell your data.');
+  write(root, 'server/routes/chat.js', 'const mixpanel = require("mixpanel"); mixpanel.track("signup");');
+
+  const result = scanSecurityHardening(root);
+  assert.strictEqual(result.discoveryFailed, false);
+  const kinds = new Set(result.candidates.map((c) => c.kind));
+  assert.ok(kinds.has('jwt-alg-not-pinned'), 'expected a jwt-alg-not-pinned finding');
+  assert.ok(kinds.has('secrets-no-manager'), 'expected a secrets-no-manager finding');
+  assert.ok(kinds.has('privacy-policy-mismatch'), 'expected a privacy-policy-mismatch finding');
 });
 
 // ── Discovery-failure passthrough (IL-115 shape, matches sibling verticals) ─
