@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-02T04:15:41.130Z",
+  "computedAt": "2026-10-02T05:25:23.183Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -521,11 +521,6 @@
       {
         "number": 2546,
         "updatedAt": "2026-10-01T16:16:17Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2545,
-        "updatedAt": "2026-10-01T16:16:21Z",
         "state": "OPEN"
       },
       {
@@ -7154,102 +7149,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n`skills/wrap-up/skill-curation.md`'s Skills curation row mandates running `bin/harness-health.js validate-findings` once per analysed skill. That command records its health-state cursor by pushing a commit directly to the remote `health-state` ref on every call. In a standalone `/claude-tweaks:wrap-up` run whose Skills row analysed 4 candidate skills, this produced four separate remote pushes as a side effect of what is meant to be a read/judge step — confirmed by `git ls-remote origin health-state` advancing once per call. The Skills curation judge is otherwise a fan-out agent forbidden any git mutation, so this remote-write side effect is inconsistent with the row's own no-mutation contract, and adds latency plus remote noise proportional to the number of skills analysed in a single row.\n\n## Deliverables\n1. Change `bin/harness-health.js validate-findings`'s default behavior to record the health-state cursor locally only (no remote push).\n2. Add an explicit way to push the accumulated cursor once — either a `--push` flag on `validate-findings` or a separate `harness-health.js push-cursor` subcommand.\n3. Update `skills/wrap-up/skill-curation.md` so the Skills curation row's per-skill judge calls `validate-findings` without pushing, and the controller (row end, or Phase 4) performs exactly one push of the accumulated cursor state.\n\n## Acceptance Criteria\n- Running `bin/harness-health.js validate-findings` against N candidate skills in a single wrap-up Skills row produces zero remote pushes to `health-state`, verified by `git ls-remote origin health-state` showing no change in ref sha across the N calls.\n- The new push mechanism (`--push` flag or `push-cursor` subcommand), invoked once after the row completes, produces exactly one remote push carrying the accumulated cursor state from all N local recordings — verified by `git ls-remote origin health-state` advancing exactly once and the pushed commit containing the same cursor data the N local calls would have produced individually.\n- `skills/wrap-up/skill-curation.md`'s Skills curation row text is updated to reflect the new no-push-by-default call, plus the single controller-side push call and where in the row's lifecycle (row end, or Phase 4) it happens.\n- A fan-out Skills curation judge, run per this updated procedure, performs zero git mutations of any kind (matching the existing no-mutation contract already asserted for that judge in other respects).\n\n## Release Note\n\nStopped the skills curation step from pushing health-state updates to the remote once per skill.\n\n## Technical Approach\nAdd a local-only cursor write path to `bin/harness-health.js validate-findings` (or confirm one already exists and simply stop the remote push from firing on that path), gated behind a default now flipped away from pushing. Add the explicit push mechanism as a thin wrapper around the existing git-push logic already implemented for the remote `health-state` ref. Update `skill-curation.md`'s prescribed step text to call the non-pushing form per-skill and the pushing form once, at the row's natural end point.\n\n### Key Files\n- `plugin/bin/harness-health.js` — `validate-findings` subcommand; flip the default to local-only recording, add `--push` flag or `push-cursor` subcommand\n- `plugin/skills/wrap-up/skill-curation.md` — Skills curation row prescribed steps; update per-skill call to the non-pushing form, add the single controller-side push call\n\n## Gotchas\n- Confirm no other caller of `validate-findings` relies on its current always-push behavior before flipping the default — a sweep of call sites is warranted (`grep -r \"validate-findings\" plugin/`).\n- If the local cursor recording mechanism doesn't already exist independent of the push, this may require adding local persistence, not just suppressing an existing push — check `bin/harness-health.js`'s current implementation before assuming the local-write path is already there.\n- The single controller-side push must aggregate cursor state from all N per-skill local recordings correctly — verify the pushed commit reflects all N skills' findings, not just the last one recorded.\n\n## Original request\n\nharness-health validate-findings: a Skills curation judge pushes the health-state cursor to the remote once per analysed skill\n\n**Summary:** The Skills curation row's judge file mandates running the harness-health audit recorder per analysed skill; that recorder pushes its cursor commit to the remote `health-state` ref each time, so a single wrap-up judge produced four remote pushes as a side effect of judging.\n\n**Kind:** Defect\n\n**Affected component:** `bin/harness-health.js validate-findings` (health-state cursor), as invoked by `skills/wrap-up/skill-curation.md`\n\n**Objective:** Automation efficiency\n\n**Cost this session:** four remote pushes from inside a curation row; latency and remote noise, otherwise unclear.\n\n**Repro steps:**\n1. Run a standalone `/claude-tweaks:wrap-up` whose Skills row opens (`.claude/skills/` exists) with 4+ candidate skills.\n2. The dispatched Skills judge follows `skill-curation.md` and runs `harness-health.js validate-findings` once per skill it analyses.\n3. Observe `git ls-remote origin health-state` advancing once per call (the judge reported \"pushed its own cursor commits to the remote health-state ref four times as a side effect\").\n\n**Expected vs. actual:**\nExpected: a judge is a read/judge step with no remote writes; the cursor is recorded locally and pushed once at row end, or by Phase 4.\nActual: one remote push per analysed skill, from a fan-out agent that is otherwise forbidden any git mutation.\n\nProposed fix: make `validate-findings` record the cursor locally by default and add a `--push` (or a separate `harness-health.js push-cursor`) that the controller runs once after the row's payload is recorded.\n\n**Definition:** Clear\n\n**Plugin version:** 6.126.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-ee37feaa -->\n",
-        "createdAt": "2026-09-17T12:48:43Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2545,
-        "state": "OPEN",
-        "title": "harness-health validate-findings: a Skills curation judge pushes the health-state cursor to the remote once per analysed skill",
-        "updatedAt": "2026-10-01T16:16:21Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
           "stage": "ready",
           "grants": {
             "build": true,
