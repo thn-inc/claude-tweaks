@@ -45,7 +45,7 @@ never a general license to downgrade an unrelated failure.
 
 Render VERBATIM from the helper — do not compose these facts from memory:
 
-Paste `pack.state.value.rendered` from `{run-dir}/wrap-up-pack.json` (#1930) verbatim — that field is byte-identical to what the command below prints, and it is the ONLY field of `pack.state` this block reads. Never compose the block from the sibling `state`/`ops`/`since` fields: doing so is the from-memory reconstruction the VERBATIM rule above exists to forbid, dressed as a JSON read. Run the command only when the pack file is absent; an `ok: false` field takes the re-derive-`{base}`-and-retry-once path below.
+Paste `pack.state.value.rendered` from `{run-dir}/wrap-up-pack.json` (#1930) verbatim — that field is byte-identical to what the command below prints, and it is the ONLY field of `pack.state` this block reads. Never compose the block from the sibling `state`/`ops`/`since` fields: doing so is the from-memory reconstruction the VERBATIM rule above exists to forbid, dressed as a JSON read. To read just this field, `node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-pack.js" --run "$PIPELINE_RUN_DIR" --print state` (#2544) prints only `pack.state`. Run the command only when the pack file is absent; an `ok: false` field takes the re-derive-`{base}`-and-retry-once path below.
 
     node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-state.js" --since {base}
 

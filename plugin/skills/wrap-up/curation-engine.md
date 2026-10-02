@@ -48,7 +48,7 @@ Signal keys, all optional (absent reads as zero/false):
 printf '%s' "$PAYLOAD" | node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-engine.js" record --run-dir "$PIPELINE_RUN_DIR"
 ```
 
-`record` reads one payload JSON from stdin, validates it, appends the row's `SCANNED` line to `decisions.md` and one telemetry line, updates `engine-state.json`, and echoes the `SCANNED` line it wrote. `--dry-run` suppresses the telemetry append only. A row may be recorded once; a second payload for the same `rowId` is rejected.
+`record` reads one payload JSON from stdin, validates it, appends the row's `SCANNED` line to `decisions.md` and one telemetry line, updates `engine-state.json`, and echoes the `SCANNED` line it wrote. `--dry-run` suppresses the telemetry append only. A row may be recorded once; a second payload for the same `rowId` is rejected. Several judged rows at once: write their payloads as one JSON array to a file and pass `record --run-dir "$PIPELINE_RUN_DIR" --batch <file>` (#2544) — one call, same per-row validation.
 
 **Ordering is not advisory.** `Memory` and `Upstream feedback` are judged **last**, after every earlier row has been recorded — including `Broken references`, which sits before them in registry order. Their input is the set of learnings *no earlier row claimed*, so judging them early routes a learning to memory that CLAUDE.md, a decision record, or a skill update was about to absorb.
 
