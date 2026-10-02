@@ -1,6 +1,7 @@
 {
-  "released": true,
-  "runId": "2026-09-23T061755-record-2705",
-  "reason": "failed: not-spec-shaped (missing Release Note)",
-  "releasedAt": "2026-09-23T06:22:47.436Z"
+  "runId": "2026-10-02T082147-record-2701",
+  "sessionId": "ba4aad03-5c6d-5505-8148-7356f2d5ebaa",
+  "claimedAt": "2026-10-02T08:27:36.000Z",
+  "ttlHours": 72,
+  "host": "vm"
 }
