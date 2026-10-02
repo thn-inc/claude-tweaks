@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-02T03:37:38.045Z",
+  "computedAt": "2026-10-02T04:15:41.130Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -545,7 +545,7 @@
       },
       {
         "number": 2401,
-        "updatedAt": "2026-10-01T16:16:37Z",
+        "updatedAt": "2026-10-02T03:40:17Z",
         "state": "OPEN"
       },
       {
@@ -7154,96 +7154,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nInvestigating record #2329's own claim state during its `/claude-tweaks:review`/`/wrap-up` pass\nturned up an anomaly worth a dedicated look, separate from #2329's own fix.\n\n- `claims/issue-2329.json` has **never existed** on the `claims-registry` branch, at any point:\n  `git log --all -- claims/issue-2329.json` returns zero commits. No claim comment was ever\n  posted on issue #2329, and `bot:in-progress` was never applied.\n- Yet the record was fully built: worktree `worktree-record-2329`, commits `19641f1f9`\n  (materialize) and `03233821d` (the fix itself), pushed branch, draft PR #2399, and a full\n  passing `npm test` (8783/8783) -- all present and real.\n- This **rules out** the \"unverified-claim leak\" scenario #2329 itself fixes: that requires the\n  write to have actually landed as a real commit (just not confirmed by the read-back). A landed\n  write always leaves a commit + blob; here neither exists. So this is not an instance of the bug\n  #2329/PR #2399 fixes -- it's a distinct gap in whatever process claimed (or should have claimed)\n  this record before building it.\n- Per `plugin/skills/flow/claim-targets.md`, any non-zero `claim-targets.js` exit (3/4/5) should\n  stop the pipeline **before** the Config Manifesto -- no worktree, no build. Since the build\n  demonstrably happened, the claim step must have either reported success without a real write\n  landing, or never run at all for this target.\n- A related irregularity in the same run directory\n  (`.claude-tweaks/pipelines/2026-09-14T040051-record-2329/`): `config.yml` was **never written**\n  despite `decisions.md` already showing populated `/build` and `/test` entries (recovered via\n  `steps-and-gates.md`'s adoption \"case 3\" during this review/wrap-up pass). `events.jsonl` shows\n  a `pre-compact` event and a `session-end` (`reason: clear`, a different `sessionId`) in the\n  ~6-minute window right after build+test completed and before this review/wrap-up pass started\n  -- consistent with session-boundary instability around this specific run, though not confirmed\n  as the root cause.\n\n## Deliverables\n\n- Determine how record #2329 was actually dispatched/built: did something invoke\n  `bin/claim-targets.js` for it at all, and if so, what did it report? (No surviving process\n  logs from the original session were available for this investigation -- this may require\n  instrumenting the claim step, or catching the failure mode live on a future occurrence.)\n- If the claim step can silently be skipped (e.g., a caller invoking `/flow` directly with a\n  hand-set `PIPELINE_RUN_DIR` shaped like a dispatch-minted one, bypassing `/dispatch`'s own\n  claim-then-hand-off flow), consider whether `claim-targets.md`'s skip-guard or `/flow`'s Step\n  2.8 needs a stronger invariant here.\n- If it's a session-boundary/compaction interaction (the `config.yml`-never-written symptom),\n  consider whether Manifesto writes need to be more robust to a mid-pipeline session\n  interruption, beyond the existing case-3 recovery path (which handled it retroactively here\n  but didn't prevent the underlying gap).\n\n## Acceptance Criteria\n\n- A documented explanation (or a reproduction) of how a record can reach a full build without a\n  landed claim, OR a mechanical safeguard added that would have caught this case (e.g., `/build`\n  or `/test` refusing to proceed past a certain point without a verified live claim under the\n  invoking run's own identity).\n\n## Release Note\n\nNo user-visible change: investigated a record that was built without a recorded claim.\n\n## Technical Approach\n\nStart from the two candidate root causes the Current State already narrows this to: (1) a bypass\npath that reaches `/flow`'s build steps without ever calling `bin/claim-targets.js` for this\ntarget -- audit every caller that can set `PIPELINE_RUN_DIR` to a dispatch-shaped value without\ngoing through `/dispatch`'s own claim-then-hand-off flow; (2) a session-boundary/compaction\ninteraction around the Manifesto write -- the `pre-compact`/`session-end` events in the same\nwindow are circumstantial, not confirmed, so reproducing that timing (or instrumenting the claim\nstep to log unconditionally, including a no-op/skip) is the concrete next step for either avenue.\nThis is explicitly open-ended: the Acceptance Criteria accepts either a root-cause explanation\nor a mechanical safeguard, since the root cause may not be reproducible from historical evidence\nalone.\n\n### Key Files\n\n- `plugin/bin/claim-targets.js` / `plugin/bin/lib/claim-targets/claim-targets.js` -- the claim\n  step whose non-zero-exit-stops-the-pipeline invariant this record questions\n- `plugin/skills/flow/claim-targets.md` -- the documented stop-before-Manifesto contract\n- `plugin/skills/flow/steps-and-gates.md` -- adoption case 3, which recovered this run\n  retroactively but didn't prevent the gap\n\n## Gotchas\n\n- No surviving process logs from the original session were available for this investigation at\n  filing time -- root-causing this may require catching the failure mode live on a future\n  occurrence rather than purely historical forensics.\n- Not a blocker for #2329/PR #2399 -- that fix is correct for the bug it targets, and this\n  record's own release-claim step at wrap-up handles an absent claim gracefully\n  (`already-released`, per `bin/lib/release-claim/release.js`).\n\n## Original request\n\nInvestigate: record #2329 built with no landed claims-registry claim (not the #2329 race itself)\n\nFound during `/claude-tweaks:flow #2329 review,polish,wrap-up`, which was dispatched with an\nexplicit flag: \"no live claim blob exists for issue #2329 ... investigate this before finishing.\"\nThis issue captures that investigation's conclusion (a distinct bookkeeping gap, not the #2329\nrace) and hands off the open root-cause question. Not a blocker for #2329/PR #2399 -- its fix is\ncorrect for the bug it targets, and this record's own release-claim step at wrap-up handles an\nabsent claim gracefully (`already-released`, per `bin/lib/release-claim/release.js`).\n",
-        "createdAt": "2026-09-14T04:30:21Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2401,
-        "state": "OPEN",
-        "title": "Investigate: record #2329 built with no landed claims-registry claim (not the #2329 race itself)",
-        "updatedAt": "2026-10-01T16:16:37Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
           "stage": "ready",
           "grants": {
             "build": true,
