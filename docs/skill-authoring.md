@@ -154,6 +154,21 @@ A session working inside a worktree created by `EnterWorktree` (or entered into 
 
 For the empirically observed boundary of what Bash commands pass and fail in a worktree session, see `plugin/skills/_shared/scratch-worktree.md`'s "## 7. Shell constraint" — that is the canonical, detailed statement that skill implementers will actually encounter in their dispatch context.
 
+## Harness-level skill re-invocation vs. batched Skill calls (#2728)
+
+A second same-session `Skill` tool invocation of a skill the harness has already flagged as
+previously loaded re-injects only a short "already loaded" acknowledgment, not the skill's full
+body — **but only when that invocation is its own message.** Batching several `Skill` tool calls
+into one assistant message each re-injects its target's full text, even for a skill invoked
+earlier in the same conversation; one `Skill` call per message is what gets the short
+already-loaded form. This is harness behavior — which skills invocation form a given message
+produces is not something a `SKILL.md`, `_shared/*.md`, or any plugin hook controls or can change.
+The actionable, plugin-side consequence is a calling-convention rule for anything that
+programmatically re-invokes the same skill more than once in a session (a dispatch prompt, a loop
+body, an orchestrating skill step): issue each repeat `Skill` invocation as its own message/turn,
+never batched alongside other tool calls in one message, if avoiding the full re-injection cost
+matters for that call site.
+
 ## Interaction style directive
 
 Every skill follows this identical directive, but it is no longer restated inline in any `SKILL.md` (#1909): the SessionStart hook injects it into every session's context once, from a single source (`plugin/bin/lib/hooks/interaction-style.js`, wired in `session-start.js`). A new skill needs no frontmatter block for this — the directive already applies to it. Do not add a `> **Interaction style:**` line to a `SKILL.md`; `tests/skill-conventions.test.js` and `tests/bin-lib/skill-audit/house-structure.test.js` fail a skill that does.
