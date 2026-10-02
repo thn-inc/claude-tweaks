@@ -72,12 +72,18 @@ function readDescriptionPayload(verb) {
   return payload;
 }
 
+// Shared by runLookup/runRecordDecline: the fingerprint both verbs key
+// their store lookup/write on.
+function computeFingerprint(source, description) {
+  return createFingerprint(source, ['description']).fingerprint({ description });
+}
+
 function runLookup(args) {
   if (!args.source) { usageExit(); return; }
   const payload = readDescriptionPayload('lookup');
   if (!payload) return;
 
-  const fingerprint = createFingerprint(args.source, ['description']).fingerprint({ description: payload.description });
+  const fingerprint = computeFingerprint(args.source, payload.description);
   const decline = lookupDecline(fingerprint);
   process.stdout.write(`${JSON.stringify({ fingerprint, decline }, null, 2)}\n`);
 }
@@ -87,7 +93,7 @@ function runRecordDecline(args) {
   const payload = readDescriptionPayload('record-decline');
   if (!payload) return;
 
-  const fingerprint = createFingerprint(args.source, ['description']).fingerprint({ description: payload.description });
+  const fingerprint = computeFingerprint(args.source, payload.description);
   let entry;
   try {
     // subject: the same description text the fingerprint was computed from

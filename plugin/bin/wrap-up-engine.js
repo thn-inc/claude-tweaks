@@ -29,6 +29,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const wtDetect = require('./lib/hooks/worktree-detect');
+const { readRunState } = require('./lib/hooks/context');
 
 // The plugin payload root — the directory with `skills/` directly beneath it
 // (this repo: `plugin/`; an installed consumer: `${CLAUDE_PLUGIN_ROOT}`).
@@ -593,9 +594,7 @@ function runFinishConsole(args) {
   // Step 3: ledger flips — skipped entirely (not an error) when the payload
   // named no ledger updates.
   if (ledgerUpdates.length > 0) {
-    const worktree = (() => {
-      try { return JSON.parse(fs.readFileSync(path.join(args.runDir, 'run-state.json'), 'utf8')).worktree || process.cwd(); } catch { return process.cwd(); }
-    })();
+    const worktree = readRunState(args.runDir)?.worktree || process.cwd();
     const resolved = resolveLedgerPath({ runDir: args.runDir, worktree, explicit: args.ledger || null });
     if (!resolved.ok) {
       const detail = resolved.reason === 'ambiguous'
