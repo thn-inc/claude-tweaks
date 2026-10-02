@@ -238,5 +238,9 @@
   "plugin/bin/lib/release-note-repair": {
     "lastSweptMs": 1790824140386,
     "lastHash": "52bdd2cefdd5b531f4d611a4d5b295aa6b033f1a"
+  },
+  "plugin/bin/lib/residue/probes": {
+    "lastSweptMs": 1790910575886,
+    "lastHash": "da680e86986eda5d4e2c9d8518b67a582a1b598f"
   }
 }
