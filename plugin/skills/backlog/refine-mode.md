@@ -179,6 +179,18 @@ Bound the grant-check LLM pass independently of Step 2's budget. Read `.grantSli
 `.blocked` from `session-scoped backlog-refine-worklist.json` — no separate script runs here. Below, `selected`
 and `blocked` refer to these two fields.
 
+**Grant-check is sequential-only (#2720) — never hand-parallelize this loop.** The dispatch below
+runs once per record, in order, each invocation fetching and caching that record's body at
+`assess-grant-{n}.json` (Step 3.5's cache, above) before moving to the next. This is what bounds
+the whole grant-check + Step 3.5 pipeline to exactly one `gh issue view`/body-fetch round trip per
+record: Step 3.5 reuses this cache instead of re-fetching. A caller that instead fans this loop out
+by hand — e.g. several parallel Task-agent dispatches, one per record slice — breaks that bound:
+each dispatch's own ephemeral context fetches independently, and none of them ever populates this
+run's session-scoped cache, so Step 3.5 re-fetches every record a second time. A large batch should
+reduce via `--budget {N}` (re-run to continue past `.grantSlice.remaining`, already reported above)
+rather than parallelize this loop — the sequential cache-reuse property is the point, not an
+incidental side effect of today's implementation.
+
 For every record in `selected`, invoke `/claude-tweaks:assess-agent-autonomy` in `grant-check` mode, once per record, every backlog refine session — never pre-filtered to "borderline" records:
 
 ```
