@@ -109,8 +109,9 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    open") before this cleanup step is reached. Calling `/superpowers:finishing-a-development-branch`
    here too would re-ask a decision already made — the same improvised-third-stop pattern
    `_shared/auto-mode-contract.md` forbids, mirroring the split `flow/worktree-merge.md` and
-   `flow/multispec-review-console.md`'s Shared teardown already state. Proceed to step 4 with
-   whichever outcome the Review Console's merge step produced.
+   `flow/multispec-review-console.md`'s Shared teardown already state. Print a one-line FYI instead
+   of a question — `Integration model: pr-first — merge already routed by the Review Console` (record
+   #2701) — then proceed to step 4 with whichever outcome the Review Console's merge step produced.
 
    **`integration-model: local-merge`:** verify the feature branch reached an outcome (merged, PR
    created, discarded, or explicitly kept as-is) via `/superpowers:finishing-a-development-branch`:

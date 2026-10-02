@@ -350,11 +350,15 @@ the result:
 6. **Command succeeded**: confirm which of the two happened —
 
    ```bash
-   gh pr view {pr-number} --repo {owner}/{repo} --json state,mergedAt,autoMergeRequest
+   gh pr view {pr-number} --repo {owner}/{repo} --json state,mergedAt,autoMergeRequest,statusCheckRollup
    ```
 
-   - `state: MERGED` (checks were already green, or this was the no-`--auto` immediate-merge
-     degrade branch): outcome `merged`. Go to Step 4.
+   - `state: MERGED`: outcome `merged`. **Read `statusCheckRollup` before reporting it green
+     (#2705) — never infer "merged once CI passed" from `state` alone.** All entries
+     `COMPLETED`+`SUCCESS`/`NEUTRAL`/`SKIPPED` → report "merged, {names} concluded {conclusions}";
+     any entry still non-`COMPLETED` → report "merged — {name} had not concluded at merge time;
+     this repo has no required checks (see Signatures below), so `--auto` did not wait on it";
+     empty rollup → "merged — no status checks on this PR." Go to Step 4.
    - `state: OPEN` with `autoMergeRequest` present (checks still pending, auto-merge armed):
      outcome `armed`. **Do not poll or wait** — this call is done. The reconciler
      (`bin/lib/reconcile`) completes cleanup later, on merged-PR evidence, the same convergent

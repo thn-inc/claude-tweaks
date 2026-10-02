@@ -48,6 +48,10 @@ logged outcome (`merged` or `pending-review`) — never a bare pass-through.
 
 ## Procedure
 
+Print a one-line FYI before starting — `Integration model: local-merge — merging locally` (record
+#2701) — never a question: the Precondition above already establishes nobody is present to answer
+one, and `_shared/integration-model.md` has already resolved which model applies.
+
 Reuses the git mechanics `wrap-up/auto-merge-short-circuit.md`'s own `integration-model: local-merge`
 branch (lines 123-207 as of this writing) already proved for its grant-gated fast-lane path — this
 file reaches the same mechanics through a different, ungated gate (the Precondition above, not a
