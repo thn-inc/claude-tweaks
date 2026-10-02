@@ -50,8 +50,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const { listTrackedFiles } = require('./candidates-dead-code');
 const { registerGenerator } = require('./focus-generators');
+const { listTrackedFiles } = require('./candidates-dead-code');
 
 const WINDOW = 400; // chars, each direction, for co-occurrence checks
 
