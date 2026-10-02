@@ -40,6 +40,24 @@ second bookkeeping channel:
    34 priority set · 2 Related updated · 7 granted · 5 flagged back · 1 dependency-repair · 1 needs-decision · 0 skipped · 0 failed
    ```
 
+   **Disclose a substituted detection method inline (#2721).** A lane whose documented detection
+   has more than one implementation path — dependency-repair's `findUnresolvedDependencyProse`
+   native-link+prose-scan pipeline (`refine-mode.md`'s "Dependency-repair rows") is the one lane
+   this applies to today — can diverge in confidence depending on which path actually ran: a
+   mechanized pass and a manual body read can both find nothing, but they do not warrant the same
+   trust in that "nothing." When this run's dependency-repair count was produced by reading record
+   bodies manually instead of running the documented mechanism (a human/agent substitution, not
+   the probe-unavailability degrade already narrated inline per-record above), state that inline
+   next to the count rather than rendering the same bare number a fully-mechanized run would
+   produce:
+
+   ```
+   0 dependency-repair (manual body read, not the native-link+prose-scan pipeline)
+   ```
+
+   A run that executed the documented mechanism in full renders the bare count unchanged — this
+   disclosure exists only to flag a divergence, never to annotate the common case.
+
 2. **One line per failed write** — the record ref and the error, followed by a paste-ready retry
    command on its own line (this repo's report-line convention: no inline/same-line comments).
    The retry command reproduces that write type's own Step 5 mechanics above, not a generic
