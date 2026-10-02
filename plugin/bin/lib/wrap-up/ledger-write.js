@@ -19,13 +19,28 @@ const TERMINAL_STATUSES = ['fixed', 'deferred', 'accepted', 'acknowledged', 'obs
 // `{ ok: true, path }` or `{ ok: false, reason: 'not-found' | 'ambiguous',
 // candidates? }` — never guesses among 2+ docs/plans/ candidates (unlike the
 // read-only probe in ./pack.js, a write needs a single certain target; the
-// caller passes `explicit` to disambiguate instead).
+// caller passes `explicit` to disambiguate instead). An `explicit` path is
+// confined: it must be named `ledger.md` or `*-ledger.md` and its real path
+// must sit under `runDir` or `worktree` — otherwise `{ ok: false, reason:
+// 'rejected', detail }`, since callers unlink or overwrite whatever it names.
 function resolveLedgerPath({ runDir, worktree, explicit, deps = {} } = {}) {
   const existsSync = deps.existsSync || fs.existsSync;
   const readdirSync = deps.readdirSync || fs.readdirSync;
+  const realpathSync = deps.realpathSync || fs.realpathSync;
 
   if (explicit) {
-    return existsSync(explicit) ? { ok: true, path: explicit } : { ok: false, reason: 'not-found', candidates: [explicit] };
+    const base = path.basename(explicit);
+    if (base !== 'ledger.md' && !base.endsWith('-ledger.md')) {
+      return { ok: false, reason: 'rejected', detail: 'not a ledger file name (expected ledger.md or *-ledger.md)', candidates: [explicit] };
+    }
+    if (!existsSync(explicit)) return { ok: false, reason: 'not-found', candidates: [explicit] };
+    const real = (p) => { try { return realpathSync(p); } catch { return null; } };
+    const target = real(explicit);
+    const roots = [runDir, worktree].filter(Boolean).map(real).filter(Boolean);
+    if (!target || !roots.some((r) => target.startsWith(r + path.sep))) {
+      return { ok: false, reason: 'rejected', detail: 'outside the run directory and worktree', candidates: [explicit] };
+    }
+    return { ok: true, path: explicit };
   }
 
   const runDirLedger = path.join(runDir, 'ledger.md');

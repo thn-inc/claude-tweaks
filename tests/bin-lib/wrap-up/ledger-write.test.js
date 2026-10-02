@@ -53,16 +53,35 @@ test('resolveLedgerPath reports ambiguous with every candidate when 2+ exist, ne
   assert.strictEqual(r.candidates.length, 2);
 });
 
-test('resolveLedgerPath honors an explicit path override unconditionally', () => {
-  const deps = { existsSync: (p) => p === '/explicit/ledger.md' };
-  const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', explicit: '/explicit/ledger.md', deps });
-  assert.deepStrictEqual(r, { ok: true, path: '/explicit/ledger.md' });
+test('resolveLedgerPath honors an explicit ledger path inside the worktree', () => {
+  const deps = { existsSync: (p) => p === '/wt/docs/plans/x-ledger.md', realpathSync: (p) => p };
+  const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', explicit: '/wt/docs/plans/x-ledger.md', deps });
+  assert.deepStrictEqual(r, { ok: true, path: '/wt/docs/plans/x-ledger.md' });
+});
+
+test('resolveLedgerPath rejects an explicit path outside the run dir and worktree', () => {
+  const deps = { existsSync: () => true, realpathSync: (p) => p };
+  const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', explicit: '/elsewhere/ledger.md', deps });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'rejected');
+});
+
+test('resolveLedgerPath rejects an explicit path whose symlink resolves outside the run dir and worktree', () => {
+  const deps = { existsSync: () => true, realpathSync: (p) => (p === '/wt/ledger.md' ? '/etc/ledger.md' : p) };
+  const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', explicit: '/wt/ledger.md', deps });
+  assert.strictEqual(r.reason, 'rejected');
+});
+
+test('resolveLedgerPath rejects an explicit path not named like a ledger', () => {
+  const deps = { existsSync: () => true, realpathSync: (p) => p };
+  const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', explicit: '/wt/package.json', deps });
+  assert.strictEqual(r.reason, 'rejected');
 });
 
 test('resolveLedgerPath with an explicit path that does not exist reports not-found naming it', () => {
   const deps = { existsSync: () => false };
-  const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', explicit: '/nope.md', deps });
-  assert.deepStrictEqual(r, { ok: false, reason: 'not-found', candidates: ['/nope.md'] });
+  const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', explicit: '/wt/nope-ledger.md', deps });
+  assert.deepStrictEqual(r, { ok: false, reason: 'not-found', candidates: ['/wt/nope-ledger.md'] });
 });
 
 test('parseLedgerTable throws when no header row is present', () => {

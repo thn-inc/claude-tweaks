@@ -99,6 +99,17 @@ test('delete-ledger: --ledger explicitly overrides resolution, deleting the name
   assert.ok(fs.existsSync(path.join(root, 'docs', 'plans', 'b-ledger.md')));
 });
 
+test('delete-ledger: --ledger naming a file outside the run dir and worktree is refused, nothing deleted', () => {
+  const root = gitRoot();
+  const runDir = runDirFixture(root);
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-delledger-outside-')));
+  const victim = path.join(outside, 'victim-ledger.md');
+  fs.writeFileSync(victim, '# keep me\n');
+  const result = runHook(['delete-ledger', '--run', runDir, '--ledger', victim], { cwd: root });
+  assert.match(result.stdout, /rejected \(outside the run directory and worktree\)/);
+  assert.ok(fs.existsSync(victim));
+});
+
 test('delete-ledger: no --run exits cleanly with a clear message, nothing deleted', () => {
   const root = gitRoot();
   fs.mkdirSync(path.join(root, 'docs', 'plans'), { recursive: true });

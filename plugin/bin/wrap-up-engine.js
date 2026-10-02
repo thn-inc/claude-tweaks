@@ -599,7 +599,9 @@ function runFinishConsole(args) {
     if (!resolved.ok) {
       const detail = resolved.reason === 'ambiguous'
         ? `${resolved.candidates.length} candidate ledgers found, cannot pick one — pass --ledger <path> explicitly:\n${resolved.candidates.map((c) => `  ${c}`).join('\n')}`
-        : 'no ledger found';
+        : resolved.reason === 'rejected'
+          ? `--ledger ${resolved.candidates[0]} rejected (${resolved.detail})`
+          : 'no ledger found';
       process.stderr.write(`wrap-up-engine.js finish-console: step 3 (ledger flips) failed: ${detail} — steps 1-2 already completed\n`);
       process.exitCode = 1;
       return;

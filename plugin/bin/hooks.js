@@ -986,6 +986,8 @@ async function main(argv) {
       const resolved = resolveLedgerPath({ runDir, worktree, explicit: ledgerArg || null });
       if (!resolved.ok && resolved.reason === 'ambiguous') {
         process.stdout.write(`claude-tweaks: delete-ledger: ${resolved.candidates.length} candidate ledgers found, cannot pick one — pass --ledger <path> explicitly:\n${resolved.candidates.map((c) => `  ${c}`).join('\n')}\nLedger not deleted.\n`);
+      } else if (!resolved.ok && resolved.reason === 'rejected') {
+        process.stdout.write(`claude-tweaks: delete-ledger: --ledger ${resolved.candidates[0]} rejected (${resolved.detail}) — ledger not deleted\n`);
       } else if (!resolved.ok) {
         process.stdout.write(`claude-tweaks: delete-ledger: no ledger found for ${path.basename(runDir)} — not found\n`);
       } else {
