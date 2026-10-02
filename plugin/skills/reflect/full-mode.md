@@ -95,6 +95,24 @@ unaffected: its own `PIPELINE_RUN_DIR` is set (or `record-worktree` stamps owner
 trigger fires, so `stampAdHocRunDir` sees an already-owned run and never mints a second, competing
 one.
 
+**Main-checkout denial coverage (#2351, confirmed still current by #2543).** The fallback above
+fires only on an `EnterWorktree` call or `ctx.cwd` resolving to a worktree distinct from the main
+repo root — deliberately excluding the main checkout itself, since firing on every ordinary
+main-checkout `PostToolUse` call would be pure noise. A session doing `/claude-tweaks:wrap-up`
+cleanup entirely in the main checkout (no worktree at all) still needs its `wd-deny`/`gate-denial`
+events to land somewhere, so a second, narrower mechanism covers exactly that case:
+`bin/lib/hooks/context.js`'s `stampAdHocRunDirForDenial`, called from `pre-tool-use.js`'s own
+denial sites (`checkWorktreeRequired`, `checkTeardownGate`, `checkPipelineShadowGuard`) immediately
+before an `appendEvent` call whose target run dir would otherwise be null. It keys the stamp's
+`worktree` field on whatever `ctx.cwd` resolves to in `git worktree list` — main checkout
+included, unlike the fallback above — which is safe specifically because the trigger is an actual
+denial, never ordinary activity: it cannot fire on a benign `git status` or read. `friction-events.js`
+finds it back the identical way, via `findRunsByWorktreePath`, so a later run dir created in the
+same session (this wrap-up run itself, or an earlier interrupted one) still surfaces it. Together,
+these two mechanisms mean an empty array from this lens's input command is not a false all-clear
+for a session that ran entirely in the main checkout and never entered a worktree — a genuine
+denial there is logged too, confirmed end-to-end by `tests/friction-main-checkout-denial-coverage.test.js`.
+
 **Lifecycle: surviving the orphan-mint sweep (#1117).** An ad-hoc dir never gets a `config.yml` in
 practice either (`/flow`'s Manifesto is what writes one; `bin/set-config.js`'s `setConfigLever`
 also creates the file in whatever run dir its `--run` names, but no caller ever points it at an
