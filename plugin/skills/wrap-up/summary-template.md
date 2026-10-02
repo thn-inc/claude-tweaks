@@ -21,6 +21,26 @@ conversation mode and for legacy spec-file-mode runs.}
 push status from the State block's own measurement — never assert "it
 landed" from memory.}
 
+**Reporting a structural verify fail that's out of this run's own reach (#2550).**
+`wrap-up-engine.js verify`'s `worktree-removed` and `run-dir-archived` checks
+can legitimately still read `fail` for a standalone (non-`/flow`, non-multi-spec)
+worktree-mode run at the moment this report renders — the session composing
+this report is still physically inside the worktree it would need to remove to
+pass `worktree-removed`, and `run-dir-archived` only happens after that removal.
+That is a real, expected state for a run that has not yet finished exiting, not
+evidence the run is blocked. When the ONLY failing rows are `worktree-removed`
+and/or `run-dir-archived`, AND no `deferred` expectation already routes them
+through the `skip` path (a genuine multi-spec defer is unaffected — it already
+reports `skip`, never reaches this clause), render the Verdict's opening line
+normally (e.g. "Everything shipped") and list those specific rows as "not
+applicable — pending this session's own worktree exit" instead of forcing an
+overall BLOCKED verdict beneath it. Any OTHER failing check (`carrier-commit`,
+`memory-updates`, `acceptance-labeling`, `reference-repairs`,
+`upstream-feedback`, or either of these two alongside a different failing
+check) still blocks exactly as before — this carve-out is narrowly scoped to
+the two checks a live, not-yet-exited session can never pass by construction,
+never a general license to downgrade an unrelated failure.
+
 ### State
 
 Render VERBATIM from the helper — do not compose these facts from memory:
@@ -32,6 +52,22 @@ Paste `pack.state.value.rendered` from `{run-dir}/wrap-up-pack.json` (#1930) ver
 If the helper exits non-zero, `{base}` was not a resolvable commit-ish —
 re-derive it by the rule below and retry once. If it still fails, render the
 State block's fields as `unknown` and say so; never omit the block.
+
+**Snapshot staleness note (#2550).** The pasted block is a Phase 3 snapshot —
+`wrap-up-pack.js` gathers every probe once, concurrently, before Phase 4's own
+curation commits land (the same single-gather-point design that keeps the
+merge-size probe out of the pack entirely, per that file's own comment).
+Before finalizing this section, compare the pasted block's own commit count /
+push status / branch position against what Phase 4 and the Verdict line above
+already know happened since (a curation commit landed, the branch was pushed,
+the PR was merged). Agreement needs nothing further — render the pasted block
+as-is. On a mismatch — most commonly a pasted "N commits, UNPUSHED" sitting
+beside a Verdict line that reports "PR merged" — label the pasted block
+explicitly as a Phase 3 snapshot and append one reconciling delta line
+directly beneath it: "Note: the block above is a Phase 3 snapshot, taken
+before this run's own curation commit(s). Since then: {what happened — e.g.
+'N commit(s) pushed; PR #{n} merged'}." Never juxtapose a stale snapshot
+against a contradicting Verdict with no reconciling text.
 
 Resolve `{base}` — a commit-ish, never a date — by the first rule that applies.
 `{integration-branch}` is the branch this project integrates work into, resolved

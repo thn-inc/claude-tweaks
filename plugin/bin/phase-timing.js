@@ -87,9 +87,31 @@ function extraCols(bucket, blank) {
   return blank ? ' — | — | — |' : tokenCols(bucket);
 }
 
+// #2550: a standalone run with no recorded phase events renders every row
+// `source: 'unattributed'` — a 12-row table whose only information content
+// is "nothing was recorded," padding the report with zero-value noise.
+// Collapse to one line instead, using whatever token/round-trip data is
+// available (`--auto-transcript` still reads the real transcript even with
+// no phase events to attribute it to).
+function allPhasesUnattributed(out) {
+  return out.phases.length > 0 && out.phases.every((p) => p.source === 'unattributed');
+}
+
+function renderCollapsedSummary(tokens, notes) {
+  const lines = [];
+  for (const n of notes) lines.push(n);
+  if (tokens && tokens.totals.rows > 0) {
+    lines.push(`no phase events; ${tokens.totals.toolRoundTrips} tool round-trips, ${tokens.totals.tokens.input}/${tokens.totals.tokens.output} tokens`);
+  } else {
+    lines.push('no phase events; no tool-use data available');
+  }
+  return lines.join('\n') + '\n';
+}
+
 // out: derivePhases result; tokens: joinTokens result or null (no transcript
 // requested); notes: lines printed before the table.
 function renderMarkdown(out, tokens = null, guard = null, notes = []) {
+  if (allPhasesUnattributed(out)) return renderCollapsedSummary(tokens, notes);
   const withTokens = tokens !== null;
   const lines = [];
   for (const n of notes) lines.push(n);
