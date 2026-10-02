@@ -152,6 +152,28 @@ Read `merge-lane-reset.md` in this skill's directory and follow it, before the g
 runs — a best-effort breaker read (#311) and, only when tripped, the one `AskUserQuestion` that is
 the sole path back to a clear breaker.
 
+### Pre-dispatch freshness check (#2718)
+
+Immediately before dispatching any grant-check judgment call below — not just before Step 5's
+write — re-check whether `.grantSlice.selected`'s population is still current. A concurrent
+actor (another session, a scheduled Routine) can fully process the same `ready`+ungranted queue
+during the window between Step 1's fetch and this sub-stage's dispatch; spending the judgment
+budget on records already resolved is pure waste. One cheap, mechanical check, not a second
+judgment pass:
+
+```bash
+gh issue list --label ready --state open --json number -q '[.[].number]'
+```
+
+Intersect this freshly-fetched number list with `.grantSlice.selected`. An empty intersection
+means every originally-selected record has since lost `ready` (granted, closed, or relabeled by
+someone else) — skip the grant-check dispatch entirely for this sub-stage and report plainly:
+"Pre-dispatch freshness check: 0 of `{N}` originally-selected records are still ready — skipping
+grant-check (population already processed since Step 1's fetch)." A non-empty intersection
+narrows `selected` to just the still-current numbers (dropping any that fell out) and proceeds
+to the dispatch below unchanged — the common case, costing exactly one list call against the N
+judgment calls it guards, never a second per-record fetch.
+
 Bound the grant-check LLM pass independently of Step 2's budget. Read `.grantSlice.selected` and
 `.grantSlice.remaining` (already bounded to `--budget`, default 40, by Step 1's compute block) and
 `.blocked` from `session-scoped backlog-refine-worklist.json` — no separate script runs here. Below, `selected`
