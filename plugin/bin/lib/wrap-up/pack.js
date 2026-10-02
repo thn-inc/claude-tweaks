@@ -387,7 +387,18 @@ function ledgerProbe(inputs, deps) {
   // present does the record-number boundary disambiguate a leftover
   // stranger ledger from an earlier, uncleaned run (#1930 review M5's
   // original false-positive fix) from this run's own.
-  const files = candidates.length <= 1 ? candidates : candidates.filter((f) => inputs.records.some((n) => namesRecord(f, n)));
+  let files = candidates.length <= 1 ? candidates : candidates.filter((f) => inputs.records.some((n) => namesRecord(f, n)));
+  // When 2+ candidates exist and NONE names any of this run's records at a
+  // boundary — the common case, since a real topic-slug ledger (the #2563
+  // AC1 shape) has no record-number convention for `namesRecord` to match —
+  // the filter above can't disambiguate at all. Reporting zero here would
+  // silently hide every one of this run's own open items behind an unrelated
+  // stray ledger (e.g. a fully-resolved file left over from an earlier,
+  // already-merged run). Fail toward over-counting instead: include every
+  // candidate, so a human reviewing `files` sees exactly what was counted
+  // and can correct it, rather than the gate silently passing on a false
+  // "nothing open."
+  if (candidates.length > 1 && files.length === 0) files = candidates;
   const totals = {
     open: 0, total: 0, byPhase: {}, files: files.map((f) => path.posix.join('docs', 'plans', f)),
     unrecognized: 0, unrecognizedValues: [],

@@ -79,5 +79,10 @@ module.exports = {
   writeCache: core.writeCache,
   readDurableState: durable.readState,
   writeDurableState: durable.writeState,
+  // Local-only recording + the explicit once-per-row push (#2545) — only
+  // cmdValidateFindings uses these; cmdMark keeps writeDurableState's
+  // existing push-every-call behavior unchanged (out of this change's scope).
+  writeDurableStateLocal: durable.writeStateLocal,
+  pushDurableState: durable.pushState,
   buildValidateFindingsUpdate,
 };

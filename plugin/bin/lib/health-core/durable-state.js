@@ -148,12 +148,32 @@ function defaultRun(cmd, args, opts = {}) {
 function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep = defaultSleep } = {}) {
   const specs = Array.isArray(fileSpecs) ? fileSpecs : [];
 
-  function showFile(root, relPath, fallback) {
+  // `git show <ref>:<path>` works identically whether <ref> is a branch ref
+  // (origin/<branch>) or a bare commit sha (LOCAL_REF's tip), so the
+  // origin-tip read and the local-only write path share this one reader.
+  function showFileAt(root, ref, relPath, fallback) {
     try {
-      const out = run('git', ['-C', root, 'show', `origin/${HEALTH_STATE_BRANCH}:${relPath}`]);
+      const out = run('git', ['-C', root, 'show', `${ref}:${relPath}`]);
       return JSON.parse(out);
     } catch {
       return fallback;
+    }
+  }
+
+  // namespace-local branch ref used ONLY to stage writeStateLocal's
+  // accumulated-but-unpushed commits — never fetched from or pushed to by
+  // anything outside this namespace's own writeStateLocal/pushState pair.
+  // Namespaced (not a single shared `health-state` local branch) so a
+  // future second caller of writeStateLocal/pushState on the same root never
+  // collides with this one, the same isolation the remote branch's
+  // per-namespace subtree already gives every caller today.
+  const LOCAL_REF = `refs/heads/${HEALTH_STATE_BRANCH}-local-${namespace}`;
+
+  function localRefSha(root) {
+    try {
+      return run('git', ['-C', root, 'rev-parse', '--verify', '-q', LOCAL_REF]).trim();
+    } catch {
+      return null;
     }
   }
 
@@ -188,9 +208,17 @@ function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep =
   // overwriting the branch's real content even though the push's
   // fast-forward check has no way to catch a bad-but-valid write like that.
   function readFilesAtFetchedTip(root) {
+    return readFilesAt(root, `origin/${HEALTH_STATE_BRANCH}`);
+  }
+
+  // Same read at an arbitrary ref/sha (or falsy for "nothing to read yet" —
+  // the brand-new-namespace case, where every spec resolves straight to its
+  // default with no git call at all). writeStateLocal/pushState use it to
+  // read this namespace's state at the LOCAL branch's own tip.
+  function readFilesAt(root, ref) {
     const values = {};
     for (const spec of specs) {
-      values[spec.key] = showFile(root, statePath(namespace, spec.file), spec.default);
+      values[spec.key] = ref ? showFileAt(root, ref, statePath(namespace, spec.file), spec.default) : spec.default;
     }
     return values;
   }
@@ -378,7 +406,87 @@ function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep =
     return { ok: false, error: lastError && lastError.message };
   }
 
-  return { readState, writeState, readStateWithMeta };
+  // Local-only counterpart to writeState: commits the mutation onto this
+  // namespace's own LOCAL_REF (never origin) and never calls pushRef, so a
+  // caller invoking this repeatedly (e.g. once per analysed skill in a
+  // single wrap-up row) accumulates every write on LOCAL_REF with zero
+  // remote pushes. Each call's base is LOCAL_REF's own current tip when one
+  // already exists (so it builds on this session's own prior local writes),
+  // falling back to origin/<branch>'s tip to seed the very first local write
+  // of a session. No CAS retry loop: unlike writeState, this never contends
+  // with a remote push, so a failure here (not a git repo, I/O error) is
+  // deterministic and retrying would just fail identically every time.
+  function writeStateLocal(root, mutatorFn) {
+    try {
+      try { run('git', ['-C', root, 'fetch', 'origin', HEALTH_STATE_BRANCH]); } catch { /* tolerant — see writeState's own comment */ }
+      const localSha = localRefSha(root);
+      const baseSha = localSha || currentCommitSha(root);
+      const current = readFilesAt(root, baseSha);
+      const next = mutatorFn(current);
+      const files = buildFiles(next);
+      const rootTreeSha = buildRootTree(root, baseSha, files);
+      const commitSha = writeCommit(root, rootTreeSha, baseSha, `health-state: ${namespace} update (local)`);
+      // Atomic local compare-and-swap — guards only against a concurrent
+      // same-checkout writer racing this same namespace between the read
+      // above and this update; there is no remote race to guard against,
+      // since this never touches origin.
+      const updateRefArgs = ['-C', root, 'update-ref', LOCAL_REF, commitSha];
+      if (localSha) updateRefArgs.push(localSha);
+      run('git', updateRefArgs);
+      return { ok: true, local: true };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  }
+
+  // Ships everything writeStateLocal has accumulated on LOCAL_REF to origin
+  // in exactly one `git push` (one ref-advance event), the counterpart half
+  // of the local/push split. A no-op, successful return when nothing has
+  // been locally recorded since the last push — either LOCAL_REF was never
+  // set (nothing ever recorded), or it already equals origin's current tip
+  // (a prior pushState call already shipped it and nothing new has been
+  // recorded since). Re-anchors this namespace's locally-accumulated FINAL
+  // state onto origin's current tip at push time — never the local ref's own
+  // (possibly stale) base — so a different namespace's write that landed on
+  // origin while this one was accumulating locally is preserved rather than
+  // clobbered by a stale local snapshot of it (the same per-namespace-subtree
+  // isolation buildRootTree already gives writeState's own CAS loop).
+  function pushState(root) {
+    const localSha = localRefSha(root);
+    if (!localSha) return { ok: true, pushed: false };
+    let lastError = null;
+    for (let attempt = 1; attempt <= MAX_CAS_ATTEMPTS; attempt++) {
+      let commitSha = null;
+      try {
+        try { run('git', ['-C', root, 'fetch', 'origin', HEALTH_STATE_BRANCH]); } catch { /* tolerant — see writeState's own comment */ }
+        const origin = currentRefShas(root);
+        if (localSha === origin.commitSha) return { ok: true, pushed: false };
+        const files = buildFiles(readFilesAt(root, localSha));
+        const rootTreeSha = buildRootTree(root, origin.treeSha, files);
+        commitSha = writeCommit(root, rootTreeSha, origin.commitSha, `health-state: ${namespace} update`);
+        pushRef(root, commitSha);
+        run('git', ['-C', root, 'update-ref', LOCAL_REF, commitSha]);
+        return { ok: true, pushed: true };
+      } catch (err) {
+        lastError = err;
+        // Same ambiguous-failure handling as writeState's own retry loop —
+        // see its comment for why this re-check is necessary before retrying.
+        if (commitSha) {
+          try { run('git', ['-C', root, 'fetch', 'origin', HEALTH_STATE_BRANCH]); } catch { /* see tolerant-fetch comment above */ }
+          if (currentCommitSha(root) === commitSha) {
+            run('git', ['-C', root, 'update-ref', LOCAL_REF, commitSha]);
+            return { ok: true, pushed: true };
+          }
+        }
+        if (attempt < MAX_CAS_ATTEMPTS) sleep(casBackoffMs(attempt));
+      }
+    }
+    return { ok: false, error: lastError && lastError.message };
+  }
+
+  return {
+    readState, writeState, readStateWithMeta, writeStateLocal, pushState,
+  };
 }
 
 // Thin wrapper over createNamespacedState, fixing the four health skills'
@@ -406,8 +514,12 @@ function createDurableState(skillName, {
   if (includeRemembered) fileSpecs.push({ key: 'remembered', file: 'remembered.json', default: {} });
   if (includeDeclined) fileSpecs.push({ key: 'declined', file: 'declined.json', default: {} });
 
-  const { readState, writeState } = createNamespacedState(skillName, fileSpecs, { run, sleep });
-  return { readState, writeState };
+  const {
+    readState, writeState, writeStateLocal, pushState,
+  } = createNamespacedState(skillName, fileSpecs, { run, sleep });
+  return {
+    readState, writeState, writeStateLocal, pushState,
+  };
 }
 
 module.exports = {

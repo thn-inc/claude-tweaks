@@ -673,6 +673,38 @@ test('gatherPack: the ledger probe locates a topic-slug-named ledger with no rec
   assert.strictEqual(pack.ledger.value.total, 3);
 });
 
+// #2545 wrap-up finding: when 2+ topic-slug ledgers exist and NEITHER names
+// this run's record at a boundary (the realistic case — a stray,
+// fully-resolved ledger left over from an unrelated, already-merged run,
+// alongside this run's own topic-slug ledger), the record-number
+// disambiguator used to filter BOTH out, silently reporting zero open items
+// even though this run's own ledger genuinely had some.
+test('gatherPack: two topic-slug ledgers where neither names the record falls back to counting both, never silently zero', async () => {
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
+  // A fully-resolved stray ledger from an unrelated, already-merged run.
+  fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-30-flow-spec-2704-2709-ledger.md'), [
+    '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
+    '| 1 | review | a | accepted | reason |',
+  ].join('\n'));
+  // This run's own topic-slug ledger, with genuinely open items.
+  fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-10-02-harness-health-validate-findings-local-only-ledger.md'), [
+    '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
+    '| 1 | review | b | open | — |', '| 2 | wrap-up | c | open | — |',
+  ].join('\n'));
+  const runDir = fixtureRunDir({ records: [2545] });
+  const state = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+  state.worktree = tree;
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(state));
+  const pack = await gatherPack({ runDir, cwd: tree, only: ['ledger'], deps: okDeps() });
+  assert.strictEqual(pack.ledger.value.open, 2, 'this run\'s own 2 open items must not be silently hidden by the stray ledger');
+  assert.strictEqual(pack.ledger.value.total, 3);
+  assert.deepStrictEqual(pack.ledger.value.files.sort(), [
+    'docs/plans/2026-09-30-flow-spec-2704-2709-ledger.md',
+    'docs/plans/2026-10-02-harness-health-validate-findings-local-only-ledger.md',
+  ]);
+});
+
 // #2563 AC4: _shared/ledger-format.md's resolution rule — when {run-dir}/
 // ledger.md exists (the gated no-worktree case), that file is authoritative
 // and the docs/plans/ glob is never consulted, even when a stray docs/plans
