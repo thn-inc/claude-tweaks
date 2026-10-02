@@ -166,6 +166,14 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/harness-health.js" validate-findings "${FINDINGS
 
 `TARGET_ID`/`TARGET_KIND` are `target.id`/`target.kind` from Step 1 (omit both if Step 1 returned `target: null` and only the gap scan ran — pass both together or neither, since cursor recording needs the namespaced `kind:id` key). `GAP_SCAN_RAN` is passed whenever Step 4 actually ran this firing. `FINDINGS_FILE` is the target-scoped, session-scoped path from Step 3 (Step 1's Findings-file naming section) — `harness-health-findings.json` for a single-target run; `harness-health-findings-{target.id}.json` per target, or `harness-health-findings-gapscan.json`, for a multi-target run — run this whole command once per target for a `--budget > 1` firing, per Step 1's multi-target instructions, never once for a shared file covering multiple targets. `MIN_CONFIDENCE` is only ever set from an explicit human `--min-confidence` request; a Routine's default headless firing omits it (see Routine Configuration below). The command validates each finding, fingerprints via `assetType + target + section + normalizedDescription`, dedups against open `by:harness-health` issues and the local cache, drops any finding below `--min-confidence` into the durable `remembered` cache instead of filing it, records the audit cursor for `${TARGET_KIND}:${TARGET_ID}` (and the gap-scan cursor when `--gap-scan` was passed) unless `--dry-run`, and emits gh-ready payloads on stdout.
 
+**Publish the cursor.** Since #2545, `validate-findings` records the audit/gap-scan cursor on a local-only branch — it never pushes `health-state` itself (the Skills-curation-row concurrency problem that changed this applies here too: this step's own cursor write must not silently depend on a push nobody then makes). Once every target's Step 6 call this firing has completed, publish the accumulated state in exactly one call — never once per target, the same "once per firing" rule Step 5's issue-gather already follows for a `--budget > 1` run:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/harness-health.js" push-cursor --root "${ROOT:-$PWD}"
+```
+
+Skip this call on a `--dry-run` firing — Step 6 recorded nothing locally to publish.
+
 **Step 7 — FILE.**
 
 **Subject check before filing.** Apply the "Subject check (health sweeps)" section of `skills/_shared/learning-routing.md` — a finding about a claude-tweaks skill is a D5 learning routed to `/claude-tweaks:feedback`, not a project issue.
@@ -184,7 +192,7 @@ Report: which target(s) were audited (or that only the gap scan ran), how many f
 /claude-tweaks:routine create harness-health
 ```
 
-**Headless run flow:** SELECT(`next-target`) → JUDGE → validate-findings → file. A firing with nothing due (`target: null`, `gapScanDue: false`) is a cheap no-op.
+**Headless run flow:** SELECT(`next-target`) → JUDGE → validate-findings → push-cursor → file. A firing with nothing due (`target: null`, `gapScanDue: false`) is a cheap no-op.
 
 Report-only, matching `/code-health` — every finding files as a `by:harness-health`-labelled, born-`ready` GitHub issue, with no `Edit` call anywhere in its documented workflow. Rotation cursors and the filing retry queue live on the durable `health-state` branch (`_shared/health-state.md`), surviving container recycling across scheduled firings — a skipped or failed firing does not lose progress.
 
