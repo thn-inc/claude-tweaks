@@ -34,6 +34,19 @@ A vertical is not shipped until every row below lands in the same change. A key 
 
 A wiring test for this pair follows the same shape as the generator-registration test above — see `tests/code-health-agent-trust-scope-wiring.test.js` for the worked example (it also pins the `docs/getting-started.md` vertical count, so one test file covers both halves of the registration set).
 
+## Extending an existing vertical
+
+Adding a candidate `kind` to a shipped generator adds no `FOCUS_GENERATORS` key, so `tests/code-health-prelaunch-wiring.test.js` has nothing to catch, and no test pins the prose kind lists to the generator's emitted literals. Derive the site list by grepping an existing kind of that vertical across `plugin/` (`grep -rln 'unguarded-ai-endpoint' plugin` for `security-hardening`), then update every hit in the same change:
+
+| Site | What it gets |
+|---|---|
+| The generator's module header | The new check in its check list, plus a Coverage bullet for it |
+| `plugin/skills/_shared/criteria-{vertical}.md` | The `kind` list, a What-to-flag and a What-NOT-to-flag entry, a Severity calibration placement, and a copy-paste prompt where the fragment has that section |
+| `plugin/skills/review/review-summary-template.md` (`/review` verticals only) | The new kind in that vertical's section's Kind column |
+| The vertical's Step 6.X pre-check in `plugin/skills/review/code-mode-steps.md` (`/review` verticals only) | A re-derivation of whether its path gate still admits the files the new check targets |
+
+The last row is pitfall 5 one level up. Step 6.6 skips unless the diff touches a `CLIENT_DIR_RE` or `ROUTE_DIR_RE` path, but the #2657/#2666 JWT and secrets-lifecycle checks scan repo-wide because their targets (`src/auth/jwt.js`, `config/secrets.js`) match neither gate, so a review of a diff touching only those files never runs them.
+
 ## Five pitfalls
 
 1. **Require `./focus-generators` before `./candidates-dead-code`.** The registry autoloads every vertical. A vertical that requires `candidates-dead-code` first, and is then loaded directly (as its own test does), gets a half-built exports object from Node's circular require, so the shared helpers bind to `undefined`. `candidates-abstraction-police.js`'s require block documents the order. #2693 shipped it reversed.
