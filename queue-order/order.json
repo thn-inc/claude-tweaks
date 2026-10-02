@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-01T23:09:15.240Z",
+  "computedAt": "2026-10-02T03:37:38.045Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -495,7 +495,7 @@
       },
       {
         "number": 2553,
-        "updatedAt": "2026-10-01T16:15:55Z",
+        "updatedAt": "2026-10-02T02:24:56Z",
         "state": "OPEN"
       },
       {
@@ -550,7 +550,7 @@
       },
       {
         "number": 2051,
-        "updatedAt": "2026-10-01T16:10:27Z",
+        "updatedAt": "2026-10-02T01:34:35Z",
         "state": "OPEN"
       },
       {
@@ -3376,100 +3376,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\nThe hook event log (`events.jsonl`, written by `bin/lib/hooks/*.js` and consumed by `bin/friction-events.js`, `bin/phase-timing.js`, and `reflect/full-mode.md`'s Friction lens) under-reports what actually happened during a session, in five distinct ways observed in one run:\n\n1. `pre-tool-use.js`'s worktree gate has a \"too complex to verify\" refusal branch that never calls `appendEvent` — 0 of 7 denials were logged in the observed run, even though 4 of them occurred inside a worktree already recorded on the run via `record-worktree`.\n2. `post-tool-use.js`'s `ask-user-question` logging captured only 1 of 2 `AskUserQuestion` stops in the run, and the one it did capture recorded `\"response\": null` instead of the chosen option.\n3. `subagent-stop.js`'s contract-violation detector logged a `contract-violation` (`variant: lenient`) for 3 of 4 curation-judge dispatches whose first line was actually a conformant `DONE`/`DONE_WITH_CONCERNS: …` status line — a false-positive rate of 75% in the observed run.\n4. The merge commit and its corresponding push were each logged twice in `events.jsonl` (no dedup on repeated breadcrumbs).\n5. The ExitWorktree/close teardown path emitted a `close-without-wrapup` event for a run whose `run-state.json` already read `status: clean` and which the wrap-up flow itself was in the process of archiving — a false terminal-state signal.\n\nBecause `reflect/full-mode.md`'s Friction lens and the closure's guard-denial line both read directly from `events.jsonl`, these gaps caused the lens to file a narrower finding than the session's actual friction supported (reporting 1 of 7 real denials, 14%), and left the false contract-violation records for a future reader to triage by hand.\n\n## Deliverables\n1. `pre-tool-use.js`'s \"too complex to verify\" refusal branch calls `appendEvent` with a `wd-deny`/`gate-denial` record on every refusal, matching the logging already done by the gate's other deny branches.\n2. `post-tool-use.js`'s `ask-user-question` event logging captures every `AskUserQuestion` stop in the session (not just some), and records the actual chosen option rather than `null`.\n3. `subagent-stop.js`'s contract-violation detector parses the first non-empty line of a dispatched agent's reply against the four valid contract statuses (`DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, `BLOCKED`) before logging a violation, and when it does log one, names the specific clause violated.\n4. Commit and push breadcrumb events dedupe on the tuple `(action, hash, dir)` so a single commit/push is never logged twice.\n5. The close/teardown path checks `run-state.status !== \"clean\"` before emitting `close-without-wrapup`, so a run already marked clean and mid-archival does not get a false terminal-state event.\n6. `reflect/full-mode.md`'s Friction lens: when `friction-events.js` returns `[]`, fall back to a grep of the resolved transcript for the deny-message signatures (\"Refusing to run it\", \"requires an isolated worktree\") so the lens still counts denials the log missed.\n\n## Acceptance Criteria\n1. Given a worktree-gate refusal on a heredoc classified \"too complex to verify,\" `events.jsonl` gains a `wd-deny`/`gate-denial` record for that refusal — verified by triggering the refusal inside a `record-worktree`-tracked worktree and inspecting the log.\n2. Given two `AskUserQuestion` stops in one session, `events.jsonl` contains two `ask-user-question` records, each with a non-null `response` field matching the option actually chosen.\n3. Given a dispatched Task agent whose first reply line is exactly `DONE_WITH_CONCERNS: <reason>`, `subagent-stop.js` does NOT log a `contract-violation` for that dispatch.\n4. Given a dispatched Task agent whose first reply line does not match any of the four valid statuses, `subagent-stop.js` DOES log a `contract-violation`, and the logged record names which clause (e.g. \"no recognized status line\") was violated.\n5. Given a merge commit and its push occurring once each, `events.jsonl` contains exactly one event per `(action, hash, dir)` tuple — no duplicate pairs.\n6. Given a run whose `run-state.json` already reads `status: clean` at the time ExitWorktree/close runs, no `close-without-wrapup` event is emitted for that run.\n7. Given a run where `friction-events.js` returns `[]` but the resolved transcript contains at least one deny-message signature string, `reflect/full-mode.md`'s Friction lens reports that denial via the transcript-grep fallback rather than reporting zero friction.\n8. A run with a genuine contract violation (first line matches none of the four statuses) and a genuine `close-without-wrapup` condition (run-state not clean at close) still logs those events — the fix narrows false positives/omissions without suppressing true ones.\n\n## Release Note\n\nFixed several gaps and duplicates in hook event logging.\n\n## Technical Approach\n- `pre-tool-use.js`: locate the \"too complex to verify\" refusal branch and add the same `appendEvent(...)` call pattern used by the gate's other deny branches, with a `wd-deny`/`gate-denial` event type.\n- `post-tool-use.js`: audit the `ask-user-question` event-emission path for why some stops aren't captured (likely a missed hook-invocation point or an early-return before logging) and why `response` isn't populated (likely reading the wrong field from the tool result); fix both.\n- `subagent-stop.js`: replace or harden the contract-violation detector's line-matching logic so it correctly recognizes `DONE_WITH_CONCERNS: …`-prefixed lines (and the other three valid statuses) as conformant before flagging a violation; when it does flag one, include the specific unmatched-clause reason in the logged record.\n- Commit/push breadcrumb logging: add a dedup check (in-memory or by re-reading the tail of `events.jsonl`) keyed on `(action, hash, dir)` before appending a new commit/push event.\n- Close/teardown path: read `run-state.json`'s `status` field before emitting `close-without-wrapup`, and skip the emission when it already reads `clean`.\n- `reflect/full-mode.md`'s Friction lens: add the transcript-grep fallback step for the deny-message signatures, gated on `friction-events.js` returning an empty array.\n\n### Key Files\n- `plugin/bin/lib/hooks/pre-tool-use.js` — complexity-refusal branch; add `appendEvent` call.\n- `plugin/bin/lib/hooks/post-tool-use.js` — `ask-user-question` logging and commit/push breadcrumb logging; fix capture completeness, response field, and dedup.\n- `plugin/bin/lib/hooks/subagent-stop.js` — contract-violation detector; fix first-line parsing against the four valid statuses.\n- `plugin/bin/friction-events.js` — consumer of `events.jsonl`; no logic change expected, but confirm it surfaces the corrected event shapes.\n- `plugin/bin/phase-timing.js` — consumer of `events.jsonl`; confirm dedup doesn't break its own event counting.\n- `plugin/skills/reflect/full-mode.md` — Friction lens; add the transcript-grep fallback for the empty-array case.\n\n## Gotchas\n- The contract-violation detector fix must not become so lenient that it stops catching genuine violations (a first line that truly doesn't match any of the four statuses) — AC 8 above is the negative control.\n- The `close-without-wrapup` fix must not suppress the event for a run that is genuinely closing without a wrap-up having run — only the specific \"already clean and archiving\" false-positive case should be suppressed.\n- Commit/push dedup keyed on `(action, hash, dir)` assumes hash+dir is a reliable uniqueness key; verify this holds even for a run that legitimately re-pushes the same commit to a different remote/branch (which should NOT be deduped away if that's a real, distinct event).\n- The transcript-grep fallback in the Friction lens is a screening heuristic, not a replacement for fixing the underlying logging gaps — it should be framed as a stopgap that stays useful even after the five logging fixes land, for any future logging gap not yet caught.\n\n## Original request\n\nhook event logging: complexity refusals never append wd-deny, ask-user-question is logged without the answer, contract-violation false-positives on conformant judges, duplicate commit/push events, close-without-wrapup on a clean run\n\n**Summary:** The run's `events.jsonl` under-reports what happened, so the Friction lens and the closure's guard-denial line certified a mostly clean run over a session with seven blocked commands: (1) the worktree gate's \"too complex to verify\" refusal branch never calls `appendEvent`, so 0 of 7 denials were logged even though 4 occurred inside a worktree already recorded on the run via `record-worktree`; (2) only 1 of 2 `AskUserQuestion` stops was logged, with `\"response\": null`; (3) `subagent-stop.js` logged a `contract-violation` (`variant: lenient`) for 3 of 4 curation judges whose first line was a conformant `DONE`/`DONE_WITH_CONCERNS: …`; (4) the merge commit and its push were each logged twice; (5) the ExitWorktree/close path emitted `close-without-wrapup` for a run whose `run-state.json` was already `status: clean` and which the wrap-up itself was archiving.\n\n**Kind:** Defect\n\n**Affected component:** `bin/lib/hooks/pre-tool-use.js` (complexity-refusal branch), `bin/lib/hooks/post-tool-use.js` (`ask-user-question`, commit/push breadcrumbs), `bin/lib/hooks/subagent-stop.js` (contract-violation detector), the close/teardown path that emits `close-without-wrapup`; consumers `bin/friction-events.js`, `bin/phase-timing.js`, `reflect/full-mode.md` Friction lens\n\n**Objective:** Report fidelity; Instruction efficacy\n\n**Measurement:** denials reported 1 of 7 (14%); denials logged 0 of 7; AskUserQuestion stops logged 1 of 2; contract-violation false positives 3 of 4 dispatches; duplicate commit/push events 2 pairs; 1 mislabelled terminal event.\n\n**Cost this session:** the Friction lens filed a narrower finding than the evidence supports and the closure under-reported denials 7→1; a future reader of the log must triage the false violations by hand.\n\n**Repro steps:**\n1. In a worktree recorded on a run (`hooks.js record-worktree`), run a Python heredoc the gate refuses as \"too complex to verify\"; check `events.jsonl` — no `wd-deny`/`gate-denial` record.\n2. Answer two `AskUserQuestion` calls in the session; check `events.jsonl` — one `ask-user-question` record, `response: null`.\n3. Dispatch a Task agent whose reply starts with `DONE_WITH_CONCERNS: <why>`; check `events.jsonl` — a `contract-violation` record with `firstLine` equal to that conformant line.\n\n**Expected vs. actual:**\nExpected: every deny branch logs; each stop logs with the chosen option; the detector parses the first non-empty line against the four statuses and names the violated clause; commit/push events dedupe on `(action, hash, dir)`; `close-without-wrapup` checks `run-state.status !== \"clean\"` first.\nActual: as summarised.\n\nProposed fix: as in Expected; additionally, in `reflect/full-mode.md`, when `friction-events.js` returns `[]`, instruct a fallback grep of the resolved transcript for the deny-message signatures (\"Refusing to run it\", \"requires an isolated worktree\") so the lens counts what the log missed.\n\n**Definition:** Clear\n\n**Plugin version:** 6.126.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-f1de47e2 -->\n",
-        "createdAt": "2026-09-17T12:52:06Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2553,
-        "state": "OPEN",
-        "title": "hook event logging: complexity refusals never append wd-deny, ask-user-question is logged without the answer, contract-violation false-positives on conformant judges, duplicate commit/push events, close-without-wrapup on a clean run",
-        "updatedAt": "2026-10-01T16:15:55Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -7352,78 +7258,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "# Reflect — staged finding 2\n\n**Category:** tangential\n\nOrigin: reflect full mode from #1875\nDefer-reason: tangential\n\n## Current State\n\n`dispatch/mcp-transport.md` already documents, as an accepted gap, that `bin/resolve-linked-prs.js`\n(the #1224 open-linked-PR exclusion) has no confirmed MCP mapping and fails open (no exclusions)\nwhen `gh` is absent. This run hit that gap for real, not hypothetically: of the 27 candidates in\nthe eligible queue, record #1594 already had an open PR (#1908, \"Fixes #1594\") that the automated\ncheck could not detect on this transport. It was caught only because the dispatching session\nindependently ran a manual, targeted subagent scan of open PR bodies/titles for closing-keyword\nreferences before finalizing the group selection — a step the documented protocol does not\nactually specify or require anywhere. Without that improvised check, #1594 could have been\nre-dispatched to a second build in parallel with the already-open PR #1908, producing conflicting\nwork on the same record.\n\n## Deliverables\n\n- [ ] Treat this as evidence for prioritizing a real MCP mapping for the #1224 check (a batched\n      equivalent of `closedByPullRequestsReferences`, or an open-PR title/body scan folded\n      directly into `queue-pull-script.md`'s MCP branch) rather than leaving it \"accepted for now\"\n      indefinitely.\n- [ ] Until a real mapping exists, consider making the manual verification this run improvised a\n      documented, required step in `dispatch/mcp-transport.md`'s Step 2 section for the `gh`-absent\n      path, so a future firing doesn't have to independently rediscover the same gap and the same\n      workaround.\n\n## Acceptance Criteria\n\n1. Either the #1224 check gets a real MCP mapping, or the manual verification workaround is\n   promoted from this run's improvisation to a documented, required step for the `gh`-absent\n   transport.\n\n_Filed by `reflect` via specShapedBody._\n\n## Release Note\n\nNo user-visible change: recorded evidence for closing a gap in the open-pull-request exclusion over MCP.\n",
-        "createdAt": "2026-09-08T03:10:18Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          }
-        ],
-        "number": 2051,
-        "state": "OPEN",
-        "title": "Concrete near-miss on the #1224 open-linked-PR exclusion's documented MCP-transport gap",
-        "updatedAt": "2026-10-01T16:10:27Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
         }
       }
     ],
