@@ -57,6 +57,15 @@ test('computeClosingTally: an unrecognized "Backlog refine:" line surfaces as un
   assert.match(unclassified[0], /collision-reconciled/);
 });
 
+test('computeClosingTally: ignores other steps\' own "Backlog refine:"-prefixed narration (batch auto-applied, circuit breaker RESET) rather than flagging it as drift', () => {
+  const text = '## /backlog\n'
+    + '- AUTO 10:00:00 — Backlog refine: batch auto-applied — 12 rows across 3 lanes, all recommended values.\n'
+    + '- AUTO 10:00:01 — Backlog refine: merge-lane circuit breaker RESET by alice (was tripped by #7: too many merges).\n';
+  const { counts, unclassified } = computeClosingTally(text);
+  for (const field of FIELDS) assert.equal(counts[field], 0, field);
+  assert.deepEqual(unclassified, []);
+});
+
 test('renderTallyLine: matches refine-closing-summary.md\'s documented tally-line shape', () => {
   const { counts } = computeClosingTally(FIXTURE_DECISIONS);
   assert.equal(

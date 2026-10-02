@@ -42,6 +42,19 @@ const PATTERNS = [
   { field: 'failed', re: /Backlog refine: .* write failed on #/ },
 ];
 
+// "Backlog refine:"-prefixed lines written by OTHER steps within the same
+// skill, not by refine-closing-summary.md's own per-write outcome logging
+// this tally counts: refine-lanes.md's unattended-branch batch-summary line,
+// and merge-lane-reset.md's circuit-breaker reset bookkeeping. Both share the
+// generic "Backlog refine:" prefix the scan filters on, but neither is a
+// per-write outcome, drift, or a genuinely new write type — recognized and
+// silently excluded here so they don't surface as false `unclassified`
+// drift caveats in the closing summary.
+const IGNORED_PATTERNS = [
+  /Backlog refine: batch auto-applied/,
+  /Backlog refine: merge-lane circuit breaker RESET/,
+];
+
 // One decisions.md line -> field name, or null when the line isn't a
 // recognized Backlog-refine tally line at all (every other decisions.md
 // entry — claim logs, Manifesto lines, other skills' sections — is simply
@@ -51,6 +64,13 @@ function classifyLine(line) {
     if (re.test(line)) return field;
   }
   return null;
+}
+
+// True when a "Backlog refine:"-prefixed line is known non-tally narration
+// from another step (see IGNORED_PATTERNS above) rather than a drifted or
+// genuinely new per-write outcome line.
+function isIgnoredLine(line) {
+  return IGNORED_PATTERNS.some((re) => re.test(line));
 }
 
 // decisions.md text -> { counts: {field: n, ...}, unclassified: [line, ...] }.
@@ -67,6 +87,7 @@ function computeClosingTally(decisionsText) {
     const line = raw.trim();
     if (!line) continue;
     if (!/Backlog refine:/.test(line)) continue;
+    if (isIgnoredLine(line)) continue;
     const field = classifyLine(line);
     if (field) counts[field] += 1;
     else unclassified.push(line);
