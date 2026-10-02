@@ -97,7 +97,7 @@ function allPhasesUnattributed(out) {
   return out.phases.length > 0 && out.phases.every((p) => p.source === 'unattributed');
 }
 
-function renderCollapsedSummary(tokens, notes) {
+function renderCollapsedSummary(tokens, notes, guard) {
   const lines = [];
   for (const n of notes) lines.push(n);
   if (tokens && tokens.totals.rows > 0) {
@@ -105,13 +105,18 @@ function renderCollapsedSummary(tokens, notes) {
   } else {
     lines.push('no phase events; no tool-use data available');
   }
+  // A real guard denial is still worth surfacing on a run with no phase
+  // events (e.g. a main-checkout run) — only an all-zero count collapses away.
+  if (guard && (guard.gateDenial || guard.wdAmbiguous || guard.wdDeny)) {
+    lines.push(`Guard denials: ${guard.gateDenial} gate · ${guard.wdAmbiguous} wd-ambiguous · ${guard.wdDeny} wd-deny`);
+  }
   return lines.join('\n') + '\n';
 }
 
 // out: derivePhases result; tokens: joinTokens result or null (no transcript
 // requested); notes: lines printed before the table.
 function renderMarkdown(out, tokens = null, guard = null, notes = []) {
-  if (allPhasesUnattributed(out)) return renderCollapsedSummary(tokens, notes);
+  if (allPhasesUnattributed(out)) return renderCollapsedSummary(tokens, notes, guard);
   const withTokens = tokens !== null;
   const lines = [];
   for (const n of notes) lines.push(n);

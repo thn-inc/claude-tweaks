@@ -153,6 +153,16 @@ test('#2550 (was #1929 whole-branch review fix 8): a run with no phase events bu
   assert.equal(r.stdout, 'no phase events; 0 tool round-trips, 3/4 tokens\n');
 });
 
+test('#2550 review fix: the collapsed one-line summary still carries a Guard-denials line when the run recorded real denials', () => {
+  const dir = tmpRun(false); // no phase events
+  fs.appendFileSync(path.join(dir, 'events.jsonl'), '{"ts":"2026-09-05T12:00:00.000Z","type":"gate-denial"}\n{"ts":"2026-09-05T12:01:00.000Z","type":"wd-deny"}\n');
+  const early = path.join(os.tmpdir(), 'ct-timing-guard-collapsed-transcript.jsonl');
+  fs.writeFileSync(early, '{"type":"assistant","timestamp":"2026-09-05T12:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":3,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n');
+  const r = run(['--run', dir, '--transcript', early, '--markdown']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, 'no phase events; 0 tool round-trips, 3/4 tokens\nGuard denials: 1 gate · 0 wd-ambiguous · 1 wd-deny\n');
+});
+
 test('#1929 whole-branch review fix 2: a --transcript file whose stat succeeds but whose read fails (mode 000) degrades to a note, exit 0', skipUnderRoot('root ignores file permissions'), () => {
   const dir = tmpRun(true);
   const unreadable = path.join(os.tmpdir(), 'ct-timing-unreadable-transcript.jsonl');
