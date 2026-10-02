@@ -26,13 +26,13 @@
 // See that same file for the judging side of every boundary statement here.
 //
 // Coverage (stated explicitly, never implied total — IL-110):
-//   - JS/TS files only for every per-file scan (reuses
-//     candidates-dead-code.js's listTrackedSourceFiles — same git-ls-files
-//     discovery, same extension set, same .gitignore handling, same
-//     discoveryFailed/discoveryReason IL-115 distinction). The privacy-
-//     policy-mismatch check (i) additionally reads the unfiltered tracked-
-//     file list (listTrackedFiles) since a privacy-policy document is
-//     rarely a .js/.ts file.
+//   - JS/TS files only for every per-file scan — one unfiltered
+//     `listTrackedFiles` discovery call (candidates-dead-code.js's
+//     git-ls-files helper), filtered here to the same extension set
+//     `listTrackedSourceFiles` would use, shared with the privacy-policy-
+//     mismatch check (i)'s own need for the unfiltered list (a privacy-policy
+//     document is rarely a .js/.ts file) so both draw from the one discovery
+//     pass rather than each triggering its own `git ls-files` subprocess.
 //   - "Client-side" is a path heuristic (CLIENT_DIR_RE below, minus
 //     SERVER_DIR_RE) — a repo whose client code lives outside those
 //     directory names is invisible to check (a); a repo that mixes client
@@ -67,16 +67,22 @@
 //     check. Each is a text-window presence check for an `algorithms:`
 //     option (d) or an `expiresIn`/`exp` option (e) — it cannot verify the
 //     option's *value* is actually safe (e.g. `algorithms: ['none']`
-//     explicitly listed still reads as "pinned").
+//     explicitly listed still reads as "pinned"). Both checks (and (f)-(h)
+//     below) still skip a CLIENT_DIR_RE-matching path the same way check (a)
+//     does (deliberate — see the tests pinning this), so a framework
+//     convention that places server-side code under a CLIENT_DIR_RE-matching
+//     directory name (e.g. Next.js App Router's `src/app` tree, used for both
+//     client and server files) is invisible to (d)-(h) as well as (a).
 //   - Secrets-lifecycle checks (f)/(g)/(h) are a single-file text heuristic:
 //     a credential-shaped `process.env.*` access with no secrets-manager
 //     SDK import pattern anywhere in the same file flags (f); given a
 //     manager import, no "rotat*" mention anywhere in the file flags (g);
 //     given both, no automation-scheduling signal (cron/schedule/
-//     EventBridge/etc.) near the rotation mention flags (h). A real
-//     secrets-manager usage or documented rotation procedure that lives in
-//     a *different* file (a shared config module, a separate ops doc) is
-//     invisible to all three — this is explicitly a flag-for-human-review
+//     EventBridge/etc.) within the same text window as the rotation mention
+//     flags (h). A real secrets-manager usage or documented rotation
+//     procedure that lives in a *different* file (a shared config module, a
+//     separate ops doc) is invisible to all three — this is explicitly a
+//     flag-for-human-review
 //     heuristic, consistent with this record's own Gotchas.
 //   - Privacy-policy-mismatch (i) only runs when a file matching
 //     PRIVACY_POLICY_FILE_RE exists in the tracked tree; a repo with no
@@ -88,7 +94,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { listTrackedSourceFiles, listTrackedFiles } = require('./candidates-dead-code');
+const { listTrackedFiles } = require('./candidates-dead-code');
 const { registerGenerator } = require('./focus-generators');
 
 const CLIENT_DIR_RE = /(^|\/)(client|frontend|web|public|src\/(components|pages|app))(\/|$)/i;
@@ -129,7 +135,7 @@ const JWT_ALGORITHMS_OPTION_RE = /\balgorithms?\s*:/i;
 const JWT_EXPIRES_OPTION_RE = /\bexpiresIn\s*:|\bexp\s*:/i;
 
 // Secrets lifecycle (#2666): secrets-manager usage + rotation checks.
-const CREDENTIAL_ENV_RE = /process\.env\.([A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD)[A-Z0-9_]*)\b/g;
+const CREDENTIAL_ENV_RE = /process\.env\.([A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD)[A-Z0-9_]*)\b/gi;
 const SAFE_CREDENTIAL_NAME_RE = /PUBLIC|PUBLISHABLE/i;
 const SECRETS_MANAGER_IMPORT_RE = /(\bdoppler\b|\binfisical\b|@aws-sdk\/client-secrets-manager|aws-sdk\/clients\/secretsmanager|@google-cloud\/secret-manager|\bnode-vault\b|hashicorp[-/]vault|@azure\/keyvault-secrets)/i;
 const ROTATION_KEYWORD_RE = /\brotat(e|ion|ing|ed)\b/i;
@@ -298,7 +304,8 @@ function scanSecretsLifecycle(rel, text, candidates) {
     return; // rotation checks only meaningful once a manager is actually in use
   }
 
-  if (!ROTATION_KEYWORD_RE.test(text)) {
+  const rotationMatch = ROTATION_KEYWORD_RE.exec(text);
+  if (!rotationMatch) {
     candidates.push({
       file: rel,
       kind: 'no-rotation-procedure',
@@ -307,11 +314,16 @@ function scanSecretsLifecycle(rel, text, candidates) {
     return;
   }
 
-  if (!ROTATION_AUTOMATION_RE.test(text)) {
+  // Windowed near the rotation mention (not whole-file) — an unrelated
+  // automation signal elsewhere in a large file (a cron job for something
+  // else entirely) must not silently clear a genuinely manual-only rotation
+  // procedure, matching this file's header comment and the criteria doc.
+  const win = windowAround(text, rotationMatch.index, rotationMatch[0].length);
+  if (!ROTATION_AUTOMATION_RE.test(win)) {
     candidates.push({
       file: rel,
       kind: 'no-rotation-schedule',
-      evidence: `${rel} mentions key rotation but no automation signal (cron/schedule/EventBridge) is present — rotation appears manual-only`,
+      evidence: `${rel} mentions key rotation but no automation signal (cron/schedule/EventBridge) is present within ${WINDOW} chars — rotation appears manual-only`,
     });
   }
 }
@@ -319,7 +331,13 @@ function scanSecretsLifecycle(rel, text, candidates) {
 // Whole-repo check (unlike the per-file scans above): needs the policy
 // document's own content to compare against, so it runs once per
 // `scanSecurityHardening` call rather than once per discovered file.
-function scanPrivacyPolicyMismatch(files, rootDir, candidates) {
+// `cachedText` (optional) is a Map of already-read `rel -> text` for files
+// matching `SOURCE_FILE_FOR_POLICY_SCAN_RE` — `scanSecurityHardening` below
+// passes the content its own main loop already read, so this check doesn't
+// re-read and re-decode the whole JS/TS tree a second time. Omit it (as
+// every direct unit-test call below does) to have this function read the
+// files itself, unchanged from its original standalone behavior.
+function scanPrivacyPolicyMismatch(files, rootDir, candidates, cachedText) {
   const policyFile = files.find((f) => PRIVACY_POLICY_FILE_RE.test(f));
   if (!policyFile) return; // nothing to compare against — missing-policy is prelaunch's job, not this check's
 
@@ -333,14 +351,17 @@ function scanPrivacyPolicyMismatch(files, rootDir, candidates) {
   const flaggedServices = new Set();
   for (const rel of files) {
     if (rel === policyFile || !SOURCE_FILE_FOR_POLICY_SCAN_RE.test(rel)) continue;
-    let buf;
-    try {
-      buf = fs.readFileSync(path.join(rootDir, rel));
-    } catch {
-      continue;
+    let text = cachedText && cachedText.get(rel);
+    if (text === undefined) {
+      let buf;
+      try {
+        buf = fs.readFileSync(path.join(rootDir, rel));
+      } catch {
+        continue;
+      }
+      if (buf.includes(0)) continue;
+      text = buf.toString('utf8');
     }
-    if (buf.includes(0)) continue;
-    const text = buf.toString('utf8');
     for (const svc of THIRD_PARTY_SERVICES) {
       if (flaggedServices.has(svc.name)) continue;
       if (svc.codeRe.test(text) && !svc.policyRe.test(policyText)) {
@@ -361,20 +382,30 @@ function scanPrivacyPolicyMismatch(files, rootDir, candidates) {
 // are provider-shaped literals and framework-generic middleware names
 // rather than a project-specific idiom.
 function scanSecurityHardening(rootDir) {
-  const discovery = listTrackedSourceFiles(rootDir);
-  if (discovery.discoveryFailed) {
+  // A single unfiltered discovery call serves both the per-file source scans
+  // below and privacy-policy-mismatch's own file-list need (the policy
+  // document itself is rarely a .js/.ts file, so it needs the unfiltered
+  // list) — avoids a second `git ls-files` subprocess per sweep, and means
+  // a discovery failure here has exactly one place to propagate rather than
+  // two (the privacy-policy pass used to swallow its own, separate
+  // discovery call's failure silently — IL-110 forbids implying coverage
+  // that didn't happen).
+  const allTracked = listTrackedFiles(rootDir);
+  if (allTracked.discoveryFailed) {
     return {
       candidates: [],
       scannedFiles: 0,
       skippedFiles: [],
       discoveryFailed: true,
-      discoveryReason: discovery.reason,
+      discoveryReason: allTracked.reason,
     };
   }
+  const sourceFiles = allTracked.files.filter((f) => SOURCE_FILE_FOR_POLICY_SCAN_RE.test(f));
 
   const skippedFiles = [];
   const candidates = [];
-  for (const rel of discovery.files) {
+  const sourceTextByFile = new Map();
+  for (const rel of sourceFiles) {
     let buf;
     try {
       buf = fs.readFileSync(path.join(rootDir, rel));
@@ -387,6 +418,7 @@ function scanSecurityHardening(rootDir) {
       continue;
     }
     const text = buf.toString('utf8');
+    sourceTextByFile.set(rel, text);
     scanClientSecrets(rel, text, candidates);
     scanMissingOwnership(rel, text, candidates);
     scanUnguardedAiEndpoint(rel, text, candidates);
@@ -394,19 +426,15 @@ function scanSecurityHardening(rootDir) {
     scanSecretsLifecycle(rel, text, candidates);
   }
 
-  // Privacy-policy-mismatch needs the unfiltered tracked-file list (the
-  // policy document itself is rarely a .js/.ts file) — a separate,
-  // whole-repo pass rather than a per-file scan folded into the loop above.
-  const allFiles = listTrackedFiles(rootDir);
-  if (!allFiles.discoveryFailed) {
-    scanPrivacyPolicyMismatch(allFiles.files, rootDir, candidates);
-  }
+  // Reuses the source-file content the loop above already read — see
+  // scanPrivacyPolicyMismatch's `cachedText` param.
+  scanPrivacyPolicyMismatch(allTracked.files, rootDir, candidates, sourceTextByFile);
 
   candidates.sort((a, b) => (a.file === b.file ? a.evidence.localeCompare(b.evidence) : a.file.localeCompare(b.file)));
 
   return {
     candidates,
-    scannedFiles: discovery.files.length,
+    scannedFiles: sourceFiles.length,
     skippedFiles,
     discoveryFailed: false,
   };

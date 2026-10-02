@@ -264,6 +264,26 @@ test('scanSecretsLifecycle: a rotation mention with no automation signal flags n
   assert.strictEqual(candidates[0].kind, 'no-rotation-schedule');
 });
 
+test('scanSecretsLifecycle: a distant, unrelated automation signal does not suppress a genuinely manual-only rotation (windowed, not whole-file)', () => {
+  const candidates = [];
+  const text =
+    'const { SecretsManagerClient } = require("@aws-sdk/client-secrets-manager");\n' +
+    'const apiKey = process.env.THIRD_PARTY_API_KEY;\n' +
+    '// Rotation of the API key must be done manually by an on-call engineer.\n' +
+    'x'.repeat(500) +
+    '\ncron.schedule("0 0 * * *", unrelatedJob);';
+  scanSecretsLifecycle('server/config.js', text, candidates);
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'no-rotation-schedule');
+});
+
+test('scanSecretsLifecycle: a lowercase/camelCase credential-shaped env name is recognized (case-insensitive)', () => {
+  const candidates = [];
+  scanSecretsLifecycle('server/config.js', 'const apiKey = process.env.thirdPartyApiKey;', candidates);
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'secrets-no-manager');
+});
+
 test('scanSecretsLifecycle: a sample app with manager + documented + scheduled rotation produces no findings (AC: clean pass)', () => {
   const candidates = [];
   scanSecretsLifecycle(
