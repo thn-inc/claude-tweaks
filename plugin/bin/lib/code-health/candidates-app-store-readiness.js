@@ -65,6 +65,23 @@ function windowAround(text, index, matchLen) {
   return text.slice(start, end);
 }
 
+// Shared shape for five of the ten checks below (Apple sign-in parity,
+// external payment, demo login, iPad layout, restore purchases): flag the
+// first file where `triggerRe` matches, but only when `counterRe` matches
+// nowhere in the repo. Each caller supplies its own regex pair, candidate
+// kind, and evidence text.
+function scanPresenceWithoutCounterpart(fileTexts, candidates, { triggerRe, counterRe, kind, evidence }) {
+  let triggerHit = null;
+  let counterHit = false;
+  for (const { rel, text } of fileTexts) {
+    if (!triggerHit && triggerRe.test(text)) triggerHit = rel;
+    if (counterRe.test(text)) counterHit = true;
+  }
+  if (triggerHit && !counterHit) {
+    candidates.push({ file: triggerHit, kind, evidence: evidence(triggerHit) });
+  }
+}
+
 // ── Mobile-project detection (the notApplicable gate) ───────────────────────
 
 const MOBILE_PROJECT_FILE_RE = /(^|\/)(app\.json|android\/app\/build\.gradle)$/;
@@ -92,19 +109,12 @@ const GOOGLE_SIGNIN_RE = /\b(GoogleSignin|GoogleSignIn|expo-auth-session\/provid
 const APPLE_SIGNIN_RE = /\b(AppleAuthentication|expo-apple-authentication|SignInWithAppleButton|ASAuthorizationAppleIDProvider|react-native-apple-authentication)\b/;
 
 function scanAppleSigninParity(fileTexts, candidates) {
-  let googleHit = null;
-  let appleHit = false;
-  for (const { rel, text } of fileTexts) {
-    if (!googleHit && GOOGLE_SIGNIN_RE.test(text)) googleHit = rel;
-    if (APPLE_SIGNIN_RE.test(text)) appleHit = true;
-  }
-  if (googleHit && !appleHit) {
-    candidates.push({
-      file: googleHit,
-      kind: 'missing-apple-signin-parity',
-      evidence: `Google sign-in SDK referenced in ${googleHit}, no Apple sign-in SDK found anywhere in the repo`,
-    });
-  }
+  scanPresenceWithoutCounterpart(fileTexts, candidates, {
+    triggerRe: GOOGLE_SIGNIN_RE,
+    counterRe: APPLE_SIGNIN_RE,
+    kind: 'missing-apple-signin-parity',
+    evidence: (file) => `Google sign-in SDK referenced in ${file}, no Apple sign-in SDK found anywhere in the repo`,
+  });
 }
 
 // ── 2. External payment instead of IAP ──────────────────────────────────────
@@ -113,19 +123,12 @@ const STRIPE_CHECKOUT_RE = /\b(redirectToCheckout|createCheckoutSession|stripe\.
 const IAP_RE = /\b(StoreKit|react-native-iap|RevenueCat|react-native-purchases|expo-in-app-purchases|SKPaymentQueue)\b/;
 
 function scanExternalPaymentNoIap(fileTexts, candidates) {
-  let stripeHit = null;
-  let iapHit = false;
-  for (const { rel, text } of fileTexts) {
-    if (!stripeHit && STRIPE_CHECKOUT_RE.test(text)) stripeHit = rel;
-    if (IAP_RE.test(text)) iapHit = true;
-  }
-  if (stripeHit && !iapHit) {
-    candidates.push({
-      file: stripeHit,
-      kind: 'external-payment-no-iap',
-      evidence: `Stripe Checkout call in ${stripeHit}, no StoreKit/RevenueCat/react-native-iap/expo-in-app-purchases import found anywhere in the repo`,
-    });
-  }
+  scanPresenceWithoutCounterpart(fileTexts, candidates, {
+    triggerRe: STRIPE_CHECKOUT_RE,
+    counterRe: IAP_RE,
+    kind: 'external-payment-no-iap',
+    evidence: (file) => `Stripe Checkout call in ${file}, no StoreKit/RevenueCat/react-native-iap/expo-in-app-purchases import found anywhere in the repo`,
+  });
 }
 
 // ── 3. Missing account deletion ─────────────────────────────────────────────
@@ -161,19 +164,12 @@ const LOGIN_SIGNAL_RE = /\b(LoginScreen|SignInScreen|AuthProvider|LoginForm|Sign
 const DEMO_CREDENTIAL_RE = /\b(DEMO_ACCOUNT|REVIEWER_LOGIN|reviewer@|demo@|APPLE_REVIEW_NOTES|review_notes)\b/i;
 
 function scanIncompleteDemoLogin(fileTexts, candidates) {
-  let loginHit = null;
-  let demoHit = false;
-  for (const { rel, text } of fileTexts) {
-    if (!loginHit && LOGIN_SIGNAL_RE.test(text)) loginHit = rel;
-    if (DEMO_CREDENTIAL_RE.test(text)) demoHit = true;
-  }
-  if (loginHit && !demoHit) {
-    candidates.push({
-      file: loginHit,
-      kind: 'incomplete-demo-login',
-      evidence: `login screen found in ${loginHit}, no demo/reviewer credential reference (DEMO_ACCOUNT/REVIEWER_LOGIN/reviewer@/review notes) found anywhere in the repo`,
-    });
-  }
+  scanPresenceWithoutCounterpart(fileTexts, candidates, {
+    triggerRe: LOGIN_SIGNAL_RE,
+    counterRe: DEMO_CREDENTIAL_RE,
+    kind: 'incomplete-demo-login',
+    evidence: (file) => `login screen found in ${file}, no demo/reviewer credential reference (DEMO_ACCOUNT/REVIEWER_LOGIN/reviewer@/review notes) found anywhere in the repo`,
+  });
 }
 
 // ── 5. Unverified iPad layout ────────────────────────────────────────────────
@@ -182,19 +178,12 @@ const TABLET_DECLARED_RE = /"supportsTablet"\s*:\s*true|UISupportedInterfaceOrie
 const TABLET_LAYOUT_RE = /\b(isPad|isTablet|userInterfaceIdiom|DeviceInfo\.isTablet|useWindowDimensions)\b/;
 
 function scanUnverifiedIpadLayout(fileTexts, candidates) {
-  let declaredFile = null;
-  let layoutHit = false;
-  for (const { rel, text } of fileTexts) {
-    if (!declaredFile && TABLET_DECLARED_RE.test(text)) declaredFile = rel;
-    if (TABLET_LAYOUT_RE.test(text)) layoutHit = true;
-  }
-  if (declaredFile && !layoutHit) {
-    candidates.push({
-      file: declaredFile,
-      kind: 'unverified-ipad-layout',
-      evidence: `iPad/tablet support declared in ${declaredFile}, no tablet-conditional layout code (isPad/isTablet/userInterfaceIdiom/useWindowDimensions) found anywhere in the repo`,
-    });
-  }
+  scanPresenceWithoutCounterpart(fileTexts, candidates, {
+    triggerRe: TABLET_DECLARED_RE,
+    counterRe: TABLET_LAYOUT_RE,
+    kind: 'unverified-ipad-layout',
+    evidence: (file) => `iPad/tablet support declared in ${file}, no tablet-conditional layout code (isPad/isTablet/userInterfaceIdiom/useWindowDimensions) found anywhere in the repo`,
+  });
 }
 
 // ── 6. Unlabeled paid-feature screenshot ────────────────────────────────────
@@ -298,19 +287,12 @@ const RESTORE_BUTTON_TEXT_RE = /restore purchases?/i;
 const RESTORE_API_RE = /\b(restorePurchases|getAvailablePurchases|clearTransactionIOS|restoreCompletedTransactions)\b/;
 
 function scanBrokenRestorePurchases(fileTexts, candidates) {
-  let buttonHit = null;
-  let apiHit = false;
-  for (const { rel, text } of fileTexts) {
-    if (!buttonHit && RESTORE_BUTTON_TEXT_RE.test(text)) buttonHit = rel;
-    if (RESTORE_API_RE.test(text)) apiHit = true;
-  }
-  if (buttonHit && !apiHit) {
-    candidates.push({
-      file: buttonHit,
-      kind: 'broken-restore-purchases',
-      evidence: `"Restore Purchases" button text found in ${buttonHit}, no restore-purchases API call (restorePurchases/getAvailablePurchases/restoreCompletedTransactions) found anywhere in the repo`,
-    });
-  }
+  scanPresenceWithoutCounterpart(fileTexts, candidates, {
+    triggerRe: RESTORE_BUTTON_TEXT_RE,
+    counterRe: RESTORE_API_RE,
+    kind: 'broken-restore-purchases',
+    evidence: (file) => `"Restore Purchases" button text found in ${file}, no restore-purchases API call (restorePurchases/getAvailablePurchases/restoreCompletedTransactions) found anywhere in the repo`,
+  });
 }
 
 // ── Top-level scan ───────────────────────────────────────────────────────────
