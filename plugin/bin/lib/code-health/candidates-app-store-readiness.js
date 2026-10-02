@@ -216,7 +216,6 @@ const PLACEHOLDER_URL_RE = /(example\.com|yourapp\.com|TODO|changeme|^$)/i;
 function scanDeadSupportPrivacyLink(fileTexts, candidates) {
   for (const { rel, text } of fileTexts) {
     const re = new RegExp(LINK_CONFIG_RE.source, LINK_CONFIG_RE.flags);
-    re.lastIndex = 0;
     let m;
     while ((m = re.exec(text))) {
       const url = m[2];
@@ -242,7 +241,6 @@ function scanComingSoonPlaceholder(fileTexts, candidates) {
   for (const { rel, text } of fileTexts) {
     if (TEST_DIR_RE.test(rel)) continue;
     const re = new RegExp(COMING_SOON_RE.source, COMING_SOON_RE.flags);
-    re.lastIndex = 0;
     let m;
     while ((m = re.exec(text))) {
       const line = lineOf(text, m.index);
@@ -264,7 +262,6 @@ const REPORT_SIGNAL_RE = /\b(report|flagContent|moderation|reportComment|flagCom
 function scanMissingUgcReportPath(fileTexts, candidates) {
   for (const { rel, text } of fileTexts) {
     const re = new RegExp(COMMENT_FEATURE_RE.source, COMMENT_FEATURE_RE.flags);
-    re.lastIndex = 0;
     let m;
     while ((m = re.exec(text))) {
       const win = windowAround(text, m.index, m[0].length);
