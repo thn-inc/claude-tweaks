@@ -316,11 +316,16 @@ Priority → Dependency repair → Needs you. Resolve and Re-authorize are the o
 proposal never resolves a co-occurring `bot:blocked`, and vice versa), so a record carrying both
 renders once in each (#1887).
 
-Read `refine-lanes.md` in this skill's directory for the full rendering procedure — the lane tables
-and paste-block templates, the consequence-line trust and `solution:unjustified` annotation templates, the
-count-summary line, the Needs-you lane, the ceiling/skip-case footers, the closing `Next:` line
-rule, and the confirm gate (`<!-- refine-confirm-gate -->`). For the Resolve lane specifically,
-`refine-lanes.md` points at `refine-record.md`'s own batch-table render and Step 4's per-choice
+`refine-lanes.md` in this skill's directory holds the full rendering procedure, organized one `##`
+section per lane (`Resolve`, `Re-authorize`, `Grant`, `Flag-back`, `Needs-decision`, `Priority`,
+`Dependency repair`, `Needs you`) plus the shared count-summary line, ceiling/skip-case footers,
+closing `Next:` line rule, and confirm gate (`<!-- refine-confirm-gate -->`) that apply regardless
+of which lanes rendered (#2722). **Read only the sections for lanes with at least one row this
+run** — a run whose population landed entirely in one lane (e.g. an `#N`-filtered run touching
+only Priority) has no rendering decision to make for a lane with zero rows, so its section's
+table/template/annotation prose never needs opening. Always read the shared sections above
+regardless of population. For the Resolve lane specifically, `refine-lanes.md` points at
+`refine-record.md`'s own batch-table render and Step 4's per-choice
 write mechanics rather than restating them — read that file for the choices, evidence column, and
 apply mechanics; only the *population* (whole-queue or `#N`-filtered, above) is new here.
 
