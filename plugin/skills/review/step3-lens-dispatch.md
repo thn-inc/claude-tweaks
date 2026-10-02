@@ -174,6 +174,7 @@ Never delete anything here — report only. A path under `{ctx-dir}` is a siblin
 - No secrets or sensitive data in code?
 - OWASP top 10 considerations?
 - Does every path-based allow/exemption decision resolve the real path (leaf symlink followed, `..` normalized) before deciding, and fail closed when the path is unprovable? (#1678, `[IL-150]` — a raw-path exemption let a symlink bypass a worktree protection; see `docs/donts.md`'s matching rule.)
+- For any path/URI/hostname/identity-keyed guard decision, has it actually been probed against the adversarial-input checklist `specify/red-team.md`'s path/URI/hostname/identity-guard detection step requires at shaping time (dot segments pre/post normalization, mount/scheme variants, uppercase schemes, percent-encoding, trailing slashes, substring-in-wrong-component) — cited from there rather than restated here so the shaping gate and this lens never drift into two separately-maintained lists? (#2777)
 
 ### 3c: Error Handling
 

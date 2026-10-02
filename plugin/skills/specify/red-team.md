@@ -2,6 +2,21 @@
 
 Loaded by `/specify` Step 5 at dispatch time. The Template A block below is inlined verbatim into each agent's prompt (per the Subagent Contract — agents only see what's in their prompt; references to sibling files don't reach them). Dispatched once per sub-issue record — never for the parent, which is never built directly.
 
+## Path/URI/hostname/identity-guard detection (deterministic, runs before persona dispatch)
+
+Before dispatching the personas below, scan the sub-issue's composed Acceptance Criteria and Deliverables text for language that keys an allow/deny decision on a path, URI, hostname, or identity string — containment checks ("contains segment X"), prefix/segment matching ("starts with", "under X root"), or "must be under X root" / "must resolve under Y" phrasing. This trigger is deliberately narrower than "mentions a path": a record that merely takes a path as an input, writes to one, or names one as a Key File does not fire it — only AC/Deliverables text that itself prescribes the *test* for a guard decision keyed on that path/URI/hostname/identity string does. (Over-triggering here adds checklist ceremony to every record that merely mentions a file path and trains users to ignore it — the same anti-pattern `challenge/SKILL.md`'s framing-check warns against for its own signal.)
+
+When the trigger fires, check whether the AC already enumerates this adversarial-input checklist — the same set `review/step3-lens-dispatch.md`'s Security lens (3b) probes against at review time, cited here rather than restated twice so the two stay in sync:
+
+- Dot segments (`.` / `..`), both before and after normalization
+- Mount/scheme variants (e.g. a mounted-storage prefix treated as a local path, or vice versa)
+- Uppercase schemes (e.g. `HTTPS://` vs `https://`)
+- Percent-encoding (e.g. `%2e%2e` for `..`, `%2f` for `/`)
+- Trailing slashes
+- Substring in the wrong component (the guard string appearing in an account/host name rather than the path segment it's meant to gate — the one case this red-team already covered)
+
+If any case is missing from the AC, emit a finding into the same findings table the personas below produce — persona column reads `Adversarial-Input Check`, severity `critical` (fixing it changes the AC's own test list — a Deliverables-scope change, not a copy-edit) — and let it flow through the write-back procedure exactly like a persona finding: dedup, precise-location-or-Open-Questions placement, and (a `critical` severity is always decision-worthy) stage-or-ask per write-back step 5.
+
 ## Parallel dispatch
 
 **Persona selection by tier** (`ceremony:*` label, stamped on the sub-issue in Step 3 — rationale
