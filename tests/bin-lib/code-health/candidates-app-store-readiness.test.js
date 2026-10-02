@@ -50,6 +50,7 @@ test('scanAppStoreReadiness: notApplicable on a repo with no mobile-app signal',
   const result = scanAppStoreReadiness(root);
   assert.strictEqual(result.discoveryFailed, false);
   assert.strictEqual(result.notApplicable, true);
+  assert.strictEqual(result.notApplicableReason, 'no mobile-app signal detected');
   assert.deepStrictEqual(result.candidates, []);
 });
 
@@ -79,7 +80,7 @@ test('AC1: a vibecoded mobile-app fixture with all ten gaps flags all ten distin
 
   const result = scanAppStoreReadiness(root);
   assert.strictEqual(result.discoveryFailed, false);
-  assert.strictEqual(result.notApplicable, undefined);
+  assert.strictEqual(result.notApplicable, false);
 
   const kinds = new Set(result.candidates.map((c) => c.kind));
   const expectedKinds = [
@@ -121,7 +122,7 @@ test('AC2: a clean mobile-app fixture with all ten protections produces zero fin
 
   const result = scanAppStoreReadiness(root);
   assert.strictEqual(result.discoveryFailed, false);
-  assert.strictEqual(result.notApplicable, undefined);
+  assert.strictEqual(result.notApplicable, false);
   assert.deepStrictEqual(result.candidates, []);
 });
 

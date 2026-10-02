@@ -22,7 +22,7 @@ node -e "const {scanSecurityHardening}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/co
 | Candidates found but none survive judgment (false positives per the criteria fragment's "What NOT to flag") | Omit the section; note in the summary footer that the pass ran and found nothing actionable. |
 | Pre-check skipped (no client/route files in scope) | Omit the section entirely — no footer note, same as Step 6.5's non-frontend skip. |
 
-**Routing (optional):** actionable security-hardening findings the user wants to action inline route through Step 6.7 below, in the same consolidated pass as Step 6's visual findings, Step 6.5's design findings, and Step 6.65's agent-trust-scope findings. When the user opts not to action them inline, they remain in the Security Hardening summary section as informational — a finding the user declines is a signal for a follow-up record, not proof the risk isn't real, per this repo's "no implicit deferrals" convention (CLAUDE.md).
+**Routing (optional):** actionable security-hardening findings the user wants to action inline route through Step 6.7 below, in the same consolidated pass as Step 6's visual findings, Step 6.5's design findings, Step 6.65's agent-trust-scope findings, and Step 6.66's app-store-readiness findings. When the user opts not to action them inline, they remain in the Security Hardening summary section as informational — a finding the user declines is a signal for a follow-up record, not proof the risk isn't real, per this repo's "no implicit deferrals" convention (CLAUDE.md).
 
 ## Step 6.65: Agent Trust Scope Pass (#2749)
 
@@ -46,7 +46,7 @@ node -e "const {scanAgentTrustScope}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/code
 | Zero candidates, `notApplicable: false` (autonomy not elevated, or deny list already covers all three dimensions) | Omit the section; note in the summary footer that the pass ran clean. |
 | Pre-check skipped (diff touches neither config file) | Omit the section entirely — no footer note. |
 
-**Routing (optional):** actionable agent-trust-scope findings the user wants to action inline route through Step 6.7 below, in the same consolidated pass as Step 6's visual findings, Step 6.5's design findings, and Step 6.6's security-hardening findings. When the user opts not to action them inline, they remain in the Agent Trust Scope summary section as informational — a finding the user declines is a signal for a follow-up record, not proof the risk isn't real, per this repo's "no implicit deferrals" convention (CLAUDE.md).
+**Routing (optional):** actionable agent-trust-scope findings the user wants to action inline route through Step 6.7 below, in the same consolidated pass as Step 6's visual findings, Step 6.5's design findings, Step 6.6's security-hardening findings, and Step 6.66's app-store-readiness findings. When the user opts not to action them inline, they remain in the Agent Trust Scope summary section as informational — a finding the user declines is a signal for a follow-up record, not proof the risk isn't real, per this repo's "no implicit deferrals" convention (CLAUDE.md).
 
 ## Step 6.66: App Store Readiness Pass (#2628)
 

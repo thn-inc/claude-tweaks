@@ -340,6 +340,7 @@ function scanAppStoreReadiness(rootDir) {
       skippedFiles,
       discoveryFailed: false,
       notApplicable: true,
+      notApplicableReason: 'no mobile-app signal detected',
     };
   }
 
@@ -362,6 +363,7 @@ function scanAppStoreReadiness(rootDir) {
     scannedFiles,
     skippedFiles,
     discoveryFailed: false,
+    notApplicable: false,
   };
 }
 
