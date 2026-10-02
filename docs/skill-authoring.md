@@ -161,7 +161,7 @@ previously loaded re-injects only a short "already loaded" acknowledgment, not t
 body — **but only when that invocation is its own message.** Batching several `Skill` tool calls
 into one assistant message each re-injects its target's full text, even for a skill invoked
 earlier in the same conversation; one `Skill` call per message is what gets the short
-already-loaded form. This is harness behavior — which skills invocation form a given message
+already-loaded form. This is harness behavior — which invocation form a given message
 produces is not something a `SKILL.md`, `_shared/*.md`, or any plugin hook controls or can change.
 The actionable, plugin-side consequence is a calling-convention rule for anything that
 programmatically re-invokes the same skill more than once in a session (a dispatch prompt, a loop
