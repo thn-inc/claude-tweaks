@@ -99,20 +99,39 @@ function longPathRemovalTarget(real, platform = process.platform) {
   return platform === 'win32' ? `\\\\?\\${real}` : real;
 }
 
+// #2566 follow-up (review finding) — `platform === 'win32'` alone only
+// excludes POSIX from the fallback; it does nothing to stop the fallback
+// from engaging on Windows itself for a `git worktree remove` failure that
+// has NOTHING to do with path length (a locked worktree, a dirty worktree
+// git's own safety check refused to discard). Gate on the candidate path's
+// own length instead of trying to pattern-match git's wrapped OS error text
+// (fragile across git-for-windows versions/locales): Windows's traditional
+// `MAX_PATH` is 260 characters, so a path that hasn't even reached that
+// neighborhood was never going to fail removal for a path-length reason in
+// the first place, regardless of platform. 240 is deliberately conservative
+// headroom below the real ceiling — it only needs to exclude ordinary
+// short paths (an everyday locked/dirty worktree), never to pinpoint the
+// exact OS limit.
+const LONG_PATH_THRESHOLD = 240;
+function looksLikeLongPath(real) {
+  return typeof real === 'string' && real.length >= LONG_PATH_THRESHOLD;
+}
+
 // Tried once, only after `git worktree remove` has already failed — never
-// instead of it, and gated to `win32` only: a non-Windows `git worktree
-// remove` failure (a locked worktree, a permissions error) is a REAL
+// instead of it, and gated to `win32` AND a long candidate path: a failure
+// on a short path (a locked worktree, a permissions error) is a REAL
 // failure this fallback cannot safely paper over by force-deleting a
 // directory git itself refused to touch, so it falls through to the
 // existing removal-failed escalation path unchanged, exactly as before this
-// fix (confirmed against this file's own test suite, which simulates
-// `removal-failed` via a `git worktree lock` that `fs.rmSync` would
-// otherwise happily bulldoze). On `win32`, also verifies the directory is
+// fix — on win32 now, not only off it (confirmed against this file's own
+// test suite, which simulates `removal-failed` via a `git worktree lock`
+// at an ordinary-length path that `fs.rmSync` would otherwise happily
+// bulldoze). On `win32` with a long path, also verifies the directory is
 // actually gone (`force: true` only swallows ENOENT, not other errors, but
 // the extra check costs nothing) before running `git worktree prune` to
 // clear git's own registration.
 function attemptLongPathRemoval(real, root, { fsRmSync = fs.rmSync, platform = process.platform } = {}) {
-  if (platform !== 'win32') return { succeeded: false, lastError: null };
+  if (platform !== 'win32' || !looksLikeLongPath(real)) return { succeeded: false, lastError: null };
   try {
     fsRmSync(longPathRemovalTarget(real, platform), { recursive: true, force: true, maxRetries: 3 });
   } catch (err) {
@@ -243,4 +262,6 @@ function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault, r
   return { reaped, skipped, portsRelease };
 }
 
-module.exports = { reapMerged, decideReap, isOwnCwd, trackReapResidue, attemptLongPathRemoval, longPathRemovalTarget };
+module.exports = {
+  reapMerged, decideReap, isOwnCwd, trackReapResidue, attemptLongPathRemoval, longPathRemovalTarget, looksLikeLongPath, LONG_PATH_THRESHOLD,
+};

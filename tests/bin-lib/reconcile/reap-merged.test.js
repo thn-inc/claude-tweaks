@@ -62,7 +62,7 @@ function installGitPorcelainSpy() {
 // the only domain reapMerged ever considers), plus a pipeline run dir whose
 // run-state.json names that worktree — the join reapMerged's own audit-trail
 // write (review finding) needs to find the owning run.
-function buildReapableFixture() {
+function buildReapableFixture({ worktreeDirName = 'issue-1' } = {}) {
   // realpathSync immediately, like every other fixture root in this suite
   // (e.g. tests/run-integrity.test.js, tests/reconcile.test.js) — on macOS
   // os.tmpdir() resolves through the /var -> /private/var symlink, and
@@ -80,7 +80,10 @@ function buildReapableFixture() {
   git(root, 'add', 'a.txt');
   git(root, 'commit', '-q', '-m', 'init');
 
-  const wtPath = path.join(root, '.claude', 'worktrees', 'issue-1');
+  // `worktreeDirName` is overridable (#2566 follow-up) so a test can pad
+  // `wtPath` well past `LONG_PATH_THRESHOLD` without touching every other
+  // test in this suite that relies on the default ordinary-length path.
+  const wtPath = path.join(root, '.claude', 'worktrees', worktreeDirName);
   git(root, 'worktree', 'add', '-q', '-b', 'worktree-issue-1', wtPath);
 
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-test-run');
@@ -567,9 +570,20 @@ test('reconcile(): the real dispatcher never reaps the worktree the caller is st
 // hooks-post-tool-use-worktree-staleness.test.js's own note) — `platform` is
 // passed explicitly instead, the same per-call injection seam that file
 // established.
+//
+// Review finding (#2566 follow-up): `platform === 'win32'` alone was the
+// ONLY gate in the original fix — it excludes POSIX, but on win32 itself it
+// cannot tell a genuine path-length failure apart from a locked/dirty
+// worktree's REAL refusal, so it would force-delete those too. The fallback
+// is now also gated on the candidate path's own length
+// (`LONG_PATH_THRESHOLD`). `LONG_DIR_NAME` below pads a test's `wtPath` well
+// past that threshold using several short path segments (each far under a
+// typical 255-byte filesystem name limit) so this suite never risks a REAL
+// name-too-long error on whatever POSIX host runs it.
+const LONG_DIR_NAME = path.join(...Array(5).fill('x'.repeat(50)));
 
-test('attemptLongPathRemoval: on win32, invokes fsRmSync with the \\\\?\\-prefixed target and removes the directory', () => {
-  const { root, wtPath } = buildReapableFixture();
+test('attemptLongPathRemoval: on win32 with a long path, invokes fsRmSync with the \\\\?\\-prefixed target and removes the directory', () => {
+  const { root, wtPath } = buildReapableFixture({ worktreeDirName: LONG_DIR_NAME });
   execFileSync('git', ['worktree', 'lock', wtPath, '--reason', 'stuck'], { cwd: root, stdio: 'ignore' });
   const calls = [];
   const fsRmSync = (p, opts) => { calls.push(p); fs.rmSync(wtPath, opts); };
@@ -581,7 +595,7 @@ test('attemptLongPathRemoval: on win32, invokes fsRmSync with the \\\\?\\-prefix
 });
 
 test('attemptLongPathRemoval: a non-win32 platform is a pure no-op — fsRmSync is never called', () => {
-  const { root, wtPath } = buildReapableFixture();
+  const { root, wtPath } = buildReapableFixture({ worktreeDirName: LONG_DIR_NAME });
   let called = false;
   const result = attemptLongPathRemoval(wtPath, root, { fsRmSync: () => { called = true; }, platform: 'darwin' });
   assert.equal(result.succeeded, false);
@@ -590,8 +604,19 @@ test('attemptLongPathRemoval: a non-win32 platform is a pure no-op — fsRmSync 
   assert.equal(fs.existsSync(wtPath), true);
 });
 
-test('#2566: reapMerged falls back to fs.rmSync + git worktree prune on win32 when git worktree remove fails, and the worktree is reaped', () => {
-  const { root, wtPath, runDir } = buildReapableFixture();
+test('attemptLongPathRemoval: on win32 with an ORDINARY-length path, is a pure no-op — the platform gate alone never triggers it (review finding, #2566 follow-up)', () => {
+  const { root, wtPath } = buildReapableFixture();
+  execFileSync('git', ['worktree', 'lock', wtPath, '--reason', 'stuck'], { cwd: root, stdio: 'ignore' });
+  let called = false;
+  const result = attemptLongPathRemoval(wtPath, root, { fsRmSync: () => { called = true; }, platform: 'win32' });
+  assert.equal(result.succeeded, false);
+  assert.equal(result.lastError, null);
+  assert.equal(called, false, 'fsRmSync must never be invoked for a path under the long-path threshold, even on win32');
+  assert.equal(fs.existsSync(wtPath), true);
+});
+
+test('#2566: reapMerged falls back to fs.rmSync + git worktree prune on win32 when git worktree remove fails on a long path, and the worktree is reaped', () => {
+  const { root, wtPath, runDir } = buildReapableFixture({ worktreeDirName: LONG_DIR_NAME });
   const wrapper = installGhWrapper([{ number: 55, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   // An untracked file forces a genuine (non-lock) `git worktree remove`
   // failure: "contains modified or untracked files, use --force to delete
@@ -625,8 +650,26 @@ test('#2566: reapMerged falls back to fs.rmSync + git worktree prune on win32 wh
   assert.ok(!list.includes(wtPath), 'git worktree prune must clear the now-missing worktree registration — no longer prunable');
 });
 
-test('#2566: when the long-path fallback itself also fails on win32, the existing removal-failed escalation still fires', () => {
+test('#2566: a locked worktree at an ORDINARY-length path on win32 is never force-removed — the real failure still escalates (review finding, #2566 follow-up)', () => {
   const { root, wtPath } = buildReapableFixture();
+  const wrapper = installGhWrapper([{ number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
+  execFileSync('git', ['worktree', 'lock', wtPath, '--reason', 'stuck'], { cwd: root, stdio: 'ignore' });
+  let fsRmSyncCalled = false;
+  const fsRmSync = () => { fsRmSyncCalled = true; };
+  let result;
+  try {
+    result = reapMerged({ cwd: root, platform: 'win32', fsRmSync });
+  } finally {
+    wrapper.restore();
+  }
+  assert.equal(result.reaped.length, 0);
+  assert.equal(result.skipped[0].reason, 'removal-failed', `expected removal-failed, got: ${JSON.stringify(result)}`);
+  assert.equal(fsRmSyncCalled, false, 'fsRmSync must never be invoked for an ordinary-length locked worktree, even on win32 — this is the exact "false success" a platform-only gate would have allowed');
+  assert.equal(fs.existsSync(wtPath), true, 'a correctly-refused fallback must never touch the worktree the lock protects');
+});
+
+test('#2566: when the long-path fallback itself also fails on win32, the existing removal-failed escalation still fires', () => {
+  const { root, wtPath } = buildReapableFixture({ worktreeDirName: LONG_DIR_NAME });
   const wrapper = installGhWrapper([{ number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   execFileSync('git', ['worktree', 'lock', wtPath, '--reason', 'stuck'], { cwd: root, stdio: 'ignore' });
   const fsRmSync = () => { throw new Error('EPERM: permission denied, unrelated to path length'); };
@@ -646,7 +689,7 @@ test('#2566: when the long-path fallback itself also fails on win32, the existin
 });
 
 test('#2566: the long-path fallback is never attempted on a non-win32 platform — no behavior change from before this fix', () => {
-  const { root, wtPath } = buildReapableFixture();
+  const { root, wtPath } = buildReapableFixture({ worktreeDirName: LONG_DIR_NAME });
   const wrapper = installGhWrapper([{ number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   execFileSync('git', ['worktree', 'lock', wtPath, '--reason', 'stuck'], { cwd: root, stdio: 'ignore' });
   let fsRmSyncCalled = false;
