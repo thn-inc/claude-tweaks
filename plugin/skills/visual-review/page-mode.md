@@ -193,6 +193,10 @@ Check for overflow, cramped layouts, or hidden content at each size. Only test r
 
 Apply the checklist in `ux-heuristics-lens.md` (this skill's directory) against the current screen. Report findings with `Source = UX Heuristics` in the Step 6 table, naming the specific heuristic and citing an `eN` ref or screenshot path as evidence — see that file's "Reporting a finding" section.
 
+#### AI Design Tells (#2667)
+
+Apply the checklist in `ai-design-tells-lens.md` (this skill's directory) against the current screen, right after the UX Heuristics pass above. Report findings with `Source = AI Design Tells` in the Step 6 table, naming the specific tell and citing an `eN` ref or screenshot path as evidence — see that file's "Reporting a finding" section.
+
 #### Accessibility (quick check)
 - Can you tab through interactive elements in a logical order?
 - Are form inputs labeled (check the snapshot)?
