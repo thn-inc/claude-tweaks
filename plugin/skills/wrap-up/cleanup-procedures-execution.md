@@ -213,6 +213,20 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    either — it returns `in-use` and skips, correctly, because a session's own worktree at
    wrap-up time always has a live pid. `ExitWorktree` is the only remedy for that case.
 
+   **A session standing in a worktree it did not create via `EnterWorktree(name=...)` this
+   session** (resumed after compaction, or entered via `path=...`) has no `ExitWorktree` remedy at
+   all — that tool's own scope excludes it (`#2687`). Once that worktree's branch is verifiably
+   merged, run `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" reconcile` directly instead: **not**
+   blocked by the worktree-isolation guard, since the guard only inspects the literal text of a
+   Bash-tool call, never what a spawned subprocess does internally — `reap-merged.js`'s own `git
+   worktree remove` runs via `execFileSync` inside the reconcile process (same exemption
+   `scratch-worktree.md`'s `complete`-token workaround already relies on). `reap` only acts once
+   the branch clears the merged-proof bar (`docs/reconcile-checks.md`) and may skip under budget
+   constraints — both are "not yet," not a failed escape hatch. **Unverified caveat:** a session's
+   own *currently-standing* worktree may still carry the same live lock named above regardless of
+   invocation method; if `reconcile` skips it for any other reason after a genuine merge, that lock
+   is the likely cause, and a future session's `SessionStart` background pass remains the fallback.
+
    **Prove it before passing `discard_changes: true` — the ancestry check, not a bare SHA
    match.** Run `_shared/scratch-worktree.md`'s "Tearing down" (§6) ancestry check —
    `git merge-base --is-ancestor HEAD origin/{integration-branch}` — against the branch this
