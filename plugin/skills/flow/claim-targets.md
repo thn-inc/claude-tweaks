@@ -161,24 +161,28 @@ Review Console, a `/tidy` sweep, or a human auditing `decisions.md`) can tell "S
 claimed cleanly" apart from "Step 2.8 was silently skipped" without a live registry read, and so a
 future mechanical gate (see the gap note below) has a local signal to check against.
 
-**Known gap: this step has no mechanical backstop today.** Unlike its sibling bookkeeping
-stamps — `record-worktree` and, under `integration-model: pr-first` (`_shared/integration-model.md`),
-the PR-early draft-PR open — which `bin/lib/hooks/pre-tool-use.js`'s `checkBookkeepingStampsGate` denies the next covered write
-until it sees the stamp, nothing in this codebase mechanically verifies that this step's
-`bin/claim-targets.js` call (or its MCP equivalent) actually ran before a build proceeds. #2492
-confirmed this the hard way: a `/flow #{n} build,test` dispatch completed a full build and test
-pass with no `claims/issue-{n}.json` blob ever written on `claims-registry`, and none of this
-file's own skip-guard conditions applied to that dispatch shape — the call was simply never made.
-`bin/claim-targets.js`'s own write path is not the gap (`tests/bin-lib/claim-targets/claim-targets.test.js`
+**Mechanical backstop (closed by #2526).** Unlike its sibling bookkeeping stamps —
+`record-worktree` and, under `integration-model: pr-first` (`_shared/integration-model.md`),
+the PR-early draft-PR open — `bin/lib/hooks/pre-tool-use.js`'s `checkBookkeepingStampsGate`
+also denies the next covered write (and in particular the phase-exit `git push`) until it sees
+this step's `decisions.md` claim-log line, via its `hasLoggedClaim` check (added in #2526,
+shortly after #2492 below first documented the gap — both landed 2026-09-20). A materialize
+commit with no matching `claims/issue-{n}.json` claim recorded for its target therefore cannot
+reach a covered push today.
+
+**Historical gap (pre-#2526, confirmed root cause of #2401's investigation).** Before #2526
+landed, this step was prose-only, with no code path enforcing it independent of the
+orchestrating agent's own compliance — #2492 confirmed this the hard way: a
+`/flow #{n} build,test` dispatch completed a full build and test pass with no
+`claims/issue-{n}.json` blob ever written on `claims-registry`, and none of this file's own
+skip-guard conditions applied to that dispatch shape — the call was simply never made.
+Record #2329 is a second, earlier instance of the identical failure mode: its materialize
+commit landed 2026-09-14 (run `2026-09-14T040051-record-2329`), six days before #2526's fix
+(2026-09-20) — at build time there was no mechanical gate to have caught the missing claim.
+`bin/claim-targets.js`'s own write path was never the gap (`tests/bin-lib/claim-targets/claim-targets.test.js`
 already covers the create-only/conditional/contested/transient/unverified-write-back cases in
-depth, including the exact write-then-verify race #2073 closed); the gap is that this step is
-prose-only, with no code path enforcing it independent of the orchestrating agent's own
-compliance. A mechanical fix — extending `checkBookkeepingStampsGate` to require this section's
-new log line (mirroring its existing `hasLoggedPrDegrade` PR-stamp check) before allowing the
-materialize commit's first covered follow-up write — is scoped and tracked separately rather than
-folded into this doc-only pass, since that gate's own incident history (`IL-131`, its recurrence
-on #893, the `prExempt`/`hasNoUpstreamYet` caching it already carries) means it deserves its own
-dedicated build and review, not a rider on an unrelated fix.
+depth, including the exact write-then-verify race #2073 closed) — the gap was purely the
+absence of a mechanical check *downstream* of that CLI, which #2526 closed.
 
 This CLI is the `gh` transport only — its `deps.gh`/`deps.ghApi` shell to real `gh` (per
 `gh-api-module-pattern`'s injectable-runner convention). In a `gh`-absent environment
