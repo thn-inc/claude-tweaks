@@ -28,6 +28,8 @@ const {
   scanClientSecrets,
   scanMissingOwnership,
   scanUnguardedAiEndpoint,
+  scanSharedAgentIdentity,
+  scanUnauditedDelegation,
 } = require('../../../plugin/bin/lib/code-health/candidates-security-hardening');
 
 // Assembled at runtime, never as a contiguous source-file literal: GitHub push protection's
@@ -178,6 +180,67 @@ test('scanUnguardedAiEndpoint: does not flag an AI SDK call with a rate-limit gu
   const candidates = [];
   scanUnguardedAiEndpoint('routes/chat.js', "rateLimit(req); const r = await anthropic.messages.create({ model: 'claude' });", candidates);
   assert.strictEqual(candidates.length, 0);
+});
+
+// ── #2751: shared-agent-identity (identity/delegation-audit gaps) ─────────
+
+test('scanSharedAgentIdentity: flags a credential identifier reused across two distinct agent-like call sites', () => {
+  const candidates = [];
+  scanSharedAgentIdentity('lib/agents.js', `
+const AGENT_API_TOKEN = process.env.AGENT_API_TOKEN;
+callAgentA(AGENT_API_TOKEN);
+callAgentB(AGENT_API_TOKEN);
+`, candidates);
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'shared-agent-identity');
+});
+
+test('scanSharedAgentIdentity: does not flag a credential identifier used at only one call site', () => {
+  const candidates = [];
+  scanSharedAgentIdentity('lib/agents.js', `
+const AGENT_API_TOKEN = process.env.AGENT_API_TOKEN;
+callAgentA(AGENT_API_TOKEN);
+`, candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+test('scanSharedAgentIdentity: does not flag a credential reused across non-agent-like callees', () => {
+  const candidates = [];
+  scanSharedAgentIdentity('lib/agents.js', `
+const AGENT_API_TOKEN = process.env.AGENT_API_TOKEN;
+logRequest(AGENT_API_TOKEN);
+formatHeader(AGENT_API_TOKEN);
+`, candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+test('scanUnauditedDelegation: flags a delegation call with no log/trace/audit signal nearby', () => {
+  const candidates = [];
+  scanUnauditedDelegation('lib/orchestrator.js', "agent.call(subAgentId, payload);", candidates);
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'shared-agent-identity');
+});
+
+test('scanUnauditedDelegation: does not flag a delegation call with a logger signal nearby', () => {
+  const candidates = [];
+  scanUnauditedDelegation('lib/orchestrator.js', "logger.info('delegating'); agent.call(subAgentId, payload);", candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+test('AC (#2751): a fixture with a shared-identity pattern produces a shared-agent-identity finding via the full scan', () => {
+  const root = tmpGitRepo();
+  write(root, 'lib/agents.js', `
+const AGENT_API_TOKEN = process.env.AGENT_API_TOKEN;
+function callAgentA(token) { return dispatchToAgentA(token); }
+function callAgentB(token) { return dispatchToAgentB(token); }
+callAgentA(AGENT_API_TOKEN);
+callAgentB(AGENT_API_TOKEN);
+`);
+
+  const result = scanSecurityHardening(root);
+  assert.strictEqual(result.discoveryFailed, false);
+  const kinds = new Set(result.candidates.map((c) => c.kind));
+  assert.ok(kinds.has('shared-agent-identity'), 'expected a shared-agent-identity finding');
 });
 
 // ── Discovery-failure passthrough (IL-115 shape, matches sibling verticals) ─

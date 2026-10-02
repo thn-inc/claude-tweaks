@@ -2,20 +2,26 @@
 
 // candidates-security-hardening.js — deterministic pre-launch security
 // hardening candidate generator for code-health's `focus=security-hardening`
-// scoping mode (see skills/code-health/focus-mode.md). Flags three AI-app
-// failure patterns (#2624): (a) secret-shaped literals in client-side
-// source, (b) user-data routes/handlers with no visible per-user ownership
-// predicate nearby, (c) AI-model-calling routes/handlers with no visible
-// auth/rate-limit/spend-guard signal nearby. Candidates are INPUT to the
-// judge (skills/code-health/SKILL.md Step 5) — this generator never
-// concludes anything on its own, never fixes anything.
+// scoping mode (see skills/code-health/focus-mode.md). Flags four AI-app
+// failure patterns: the original three (#2624) — (a) secret-shaped literals
+// in client-side source, (b) user-data routes/handlers with no visible
+// per-user ownership predicate nearby, (c) AI-model-calling routes/handlers
+// with no visible auth/rate-limit/spend-guard signal nearby — plus a fourth
+// (#2751): (d) agent/tool identity and delegation-audit gaps — a credential
+// or token identifier reused verbatim across distinct call sites that look
+// like separate callers/agents (no per-caller scoping), or a delegation call
+// (one agent/tool invoking another) with no accompanying log/trace/audit
+// signal nearby. Candidates are INPUT to the judge (skills/code-health/
+// SKILL.md Step 5) — this generator never concludes anything on its own,
+// never fixes anything.
 //
-// Scope boundary vs. sibling records (deliverable 5 of #2624): this vertical
-// owns exactly the three checks above. #2622's pre-scale hardening (query/
-// background-job/caching/pooling/monitoring) and #2625's GDPR/backup-
-// retention check are out of scope here — no overlapping category is
-// claimed by more than one of the three. See `criteria-security-hardening.md`
-// for the judging side of this same boundary statement.
+// Scope boundary vs. sibling records (deliverable 5 of #2624, extended by
+// #2751 to admit the fourth check above): this vertical owns exactly the
+// four checks above. #2622's pre-scale hardening (query/background-job/
+// caching/pooling/monitoring) and #2625's GDPR/backup-retention check are
+// out of scope here — no overlapping category is claimed by more than one
+// of the four. See `criteria-security-hardening.md` for the judging side of
+// this same boundary statement.
 //
 // Coverage (stated explicitly, never implied total — IL-110):
 //   - JS/TS files only (reuses candidates-dead-code.js's
@@ -47,6 +53,18 @@
 //     the OpenAI/Anthropic SDK call shapes and a few generic "chat
 //     completion"-style method names; a bespoke or unlisted provider SDK is
 //     invisible to check (c).
+//   - Shared-identity/delegation-audit detection (check (d), #2751) is
+//     text-pattern only, same tradeoff as (b)/(c): a credential/token
+//     identifier (naming-convention match, CREDENTIAL_NAME_RE) reused as an
+//     argument across two or more distinct call-site callee names is a
+//     heuristic for "separate callers/agents share one identity" — it
+//     cannot tell a genuinely shared, intentionally-scoped utility token
+//     from a broad-access one actually spanning agents; a delegation call
+//     (DELEGATION_CALL_PATTERNS) with no log/trace/audit signal
+//     (DELEGATION_AUDIT_SIGNAL_RE) within the usual text window is likewise
+//     only the apparent *absence* of an audit trail, never proof one is
+//     missing at a layer the generator doesn't scan (a wrapping middleware,
+//     a centralized logger call elsewhere in the module).
 
 const fs = require('fs');
 const path = require('path');
@@ -83,6 +101,33 @@ const AI_CALL_PATTERNS = [
 ];
 
 const AI_GUARD_SIGNAL_RE = /(rate ?limit|rateLimit|requireAuth|authenticate|isAuthenticated|middleware\([^)]*auth|maxTokens|max_tokens|spend|budget|quota)/i;
+
+// Fourth check (#2751): agent/tool identity and delegation-audit gaps.
+//
+// (d.1) Shared identity — a credential/token identifier, declared once by
+// naming convention (not value shape, unlike SECRET_PATTERNS above), then
+// passed as an argument into two or more call sites whose callee names
+// differ — the text-level proxy for "distinct callers/agents reuse one
+// broad-access identity instead of each holding a scoped one."
+const CREDENTIAL_NAME_RE = /token|api[_-]?key|credential|secret/i;
+const CREDENTIAL_DECL_RE = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/g;
+
+// Callee names that look like an agent/tool/delegate invocation rather than
+// an unrelated utility call — narrows the shared-identity check so a token
+// merely passed to, say, a logger twice doesn't itself read as cross-agent
+// sharing.
+const AGENT_CALLEE_RE = /agent|bot|worker|tool|delegate|dispatch/i;
+
+// (d.2) Delegation call with no nearby audit/log/trace signal — one agent or
+// tool invoking another with nothing recording who delegated to whom.
+const DELEGATION_CALL_PATTERNS = [
+  /\b(?:agents?|tools?)\.(?:call|invoke|run|execute|dispatch)\(/gi,
+  /\bdelegateTo\(/gi,
+  /\bcallAgent\(/gi,
+  /\binvokeAgent\(/gi,
+];
+
+const DELEGATION_AUDIT_SIGNAL_RE = /(\blog\b|logger|\btrace\b|\baudit\b|\brecord\(|emit\(|console\.(log|info|warn|error))/i;
 
 const WINDOW = 400; // chars, each direction, for co-occurrence checks
 
@@ -173,6 +218,59 @@ function scanUnguardedAiEndpoint(rel, text, candidates) {
   }
 }
 
+function scanSharedAgentIdentity(rel, text, candidates) {
+  const declRe = new RegExp(CREDENTIAL_DECL_RE.source, CREDENTIAL_DECL_RE.flags);
+  declRe.lastIndex = 0;
+  let decl;
+  const seenNames = new Set();
+  while ((decl = declRe.exec(text))) {
+    const name = decl[1];
+    if (seenNames.has(name) || !CREDENTIAL_NAME_RE.test(name)) continue;
+    seenNames.add(name);
+
+    const usageRe = new RegExp(`([A-Za-z_$][\\w$]*)\\s*\\([^()]*\\b${name}\\b[^()]*\\)`, 'g');
+    usageRe.lastIndex = 0;
+    const calleesByName = new Map();
+    let use;
+    while ((use = usageRe.exec(text))) {
+      const callee = use[1];
+      if (callee === name) continue; // the declaration's own RHS, if it happens to be call-shaped
+      if (!calleesByName.has(callee)) calleesByName.set(callee, use.index);
+    }
+    const distinctCallees = [...calleesByName.keys()];
+    const agentLike = distinctCallees.filter((c) => AGENT_CALLEE_RE.test(c));
+    if (distinctCallees.length >= 2 && agentLike.length >= 1) {
+      const firstIndex = Math.min(...calleesByName.values());
+      const line = lineOf(text, firstIndex);
+      candidates.push({
+        file: rel,
+        kind: 'shared-agent-identity',
+        evidence: `credential identifier "${name}" reused across distinct call sites (${distinctCallees.join(', ')}) starting at ${rel}:${line} — possible shared identity instead of per-caller scoping`,
+      });
+    }
+  }
+}
+
+function scanUnauditedDelegation(rel, text, candidates) {
+  for (const pat of DELEGATION_CALL_PATTERNS) {
+    const re = new RegExp(pat.source, pat.flags);
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      const win = windowAround(text, m.index, m[0].length);
+      if (!DELEGATION_AUDIT_SIGNAL_RE.test(win)) {
+        const line = lineOf(text, m.index);
+        candidates.push({
+          file: rel,
+          kind: 'shared-agent-identity',
+          evidence: `delegation call at ${rel}:${line} has no audit/log/trace signal within ${WINDOW} chars`,
+        });
+      }
+      if (m.index === re.lastIndex) re.lastIndex += 1;
+    }
+  }
+}
+
 // The rich-shape scan — registered under 'security-hardening' in
 // FOCUS_GENERATORS. No policy config (unlike experiment-cleanup); every
 // pattern here is a shipped default, not project-configurable, since these
@@ -208,6 +306,8 @@ function scanSecurityHardening(rootDir) {
     scanClientSecrets(rel, text, candidates);
     scanMissingOwnership(rel, text, candidates);
     scanUnguardedAiEndpoint(rel, text, candidates);
+    scanSharedAgentIdentity(rel, text, candidates);
+    scanUnauditedDelegation(rel, text, candidates);
   }
 
   candidates.sort((a, b) => (a.file === b.file ? a.evidence.localeCompare(b.evidence) : a.file.localeCompare(b.file)));
@@ -235,9 +335,14 @@ module.exports = {
   scanClientSecrets,
   scanMissingOwnership,
   scanUnguardedAiEndpoint,
+  scanSharedAgentIdentity,
+  scanUnauditedDelegation,
   SECRET_PATTERNS,
   CLIENT_DIR_RE,
   SERVER_DIR_RE,
   ROUTE_DIR_RE,
   SAFE_PREFIX_RE,
+  CREDENTIAL_NAME_RE,
+  AGENT_CALLEE_RE,
+  DELEGATION_AUDIT_SIGNAL_RE,
 };
