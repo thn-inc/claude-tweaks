@@ -33,12 +33,24 @@ shell print of the tally does not satisfy this):** after the apply pass above co
 a closing block from the same per-write outcomes already logged to `decisions.md` above — no
 second bookkeeping channel:
 
-1. **Per-type tally line** — one count per write type applied this run, with `skipped` and `failed` always
+1. **Per-type tally line (mechanical, #2729) — never hand-composed.** Run
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/closing-tally.js" --run "$PIPELINE_RUN_DIR"` against this run's
+   own `decisions.md` (the file just written above) and render its JSON envelope's `line` field
+   verbatim as this bullet's tally line — one count per write type, `skipped` and `failed` always
    present, even at zero:
 
    ```
    34 priority set · 2 Related updated · 7 granted · 5 flagged back · 1 dependency-repair · 1 needs-decision · 0 skipped · 0 failed
    ```
+
+   The CLI's field set (`plugin/bin/lib/closing-tally/closing-tally.js`'s `FIELDS`/`LABELS`) is the
+   only vocabulary this bullet may ever render — a count for anything not in that list (e.g. a
+   `collision-reconciled` field) requires updating that module (and this file) first, never
+   inventing a field ad hoc in the rendered text. The envelope's `unclassified` array lists any
+   `decisions.md` line that reads as a Backlog-refine action but matched no known field — a
+   drifted log template or a genuinely new write type; surface it as a one-line caveat under the
+   tally ("`{n}` logged action(s) did not match a known tally field — see `{line text}`") rather
+   than silently omitting it from the count.
 
    **Disclose a substituted detection method inline (#2721).** A lane whose documented detection
    has more than one implementation path — dependency-repair's `findUnresolvedDependencyProse`
@@ -115,6 +127,15 @@ directory so resume/reconcile paths can classify it as terminal instead of `stat
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run <absolute-run-dir>
 ```
+
+**Narrate completion only after the call actually ran and exited 0 (#2729) — never
+preemptively.** A sentence claiming a specific action completed ("closing the run," "writing the
+watermark," or any equally specific past-tense claim) must describe an action this step already
+executed, confirmed by this command's own exit code — not a planned or assumed next step stated
+before it runs. This matters most on the self-assessment degradation path (fewer of the usual
+actions actually execute there), where it's easiest for a generic closing narration template to
+outrun what was actually done. If the call fails or is skipped, say so plainly instead of claiming
+closure.
 
 Always pass an explicit `--run <absolute-run-dir>` — the run directory itself: the closing summary's
 audit-trail line above names the `decisions.md` *file* inside it, so strip the trailing
