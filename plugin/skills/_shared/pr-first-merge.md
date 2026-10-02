@@ -18,13 +18,6 @@ scratch-worktree conflict procedure — all four existed only because a *local* 
 `git push` needed the main checkout. `local-merge` projects keep all four; see each converted
 file's own local-merge fallback section.
 
-**This repository's branch protection (record #2705, verified `gh api repos/{owner}/{repo}/branches/main/protection` → HTTP 404 "Branch not protected"; `…/rules/branches/main` → `[]`):
-no required status checks on `main`.** `gh pr merge --auto` therefore does not wait for the `test`
-check (or any other) to conclude before merging — see "Why `--auto` alone is not a wait" in Step
-2.5 below for the mechanism, and Step 3 item 6 for how this procedure reads and reports the
-check's actual conclusion rather than inferring "merged once CI passed" from the PR's `state`
-alone. Re-verify this fact directly (don't assume it still holds) before relying on it.
-
 ## Precondition
 
 `run-state.json` carries a `pr` object (`_shared/pr-run-comments.md`'s gate) AND
@@ -360,17 +353,12 @@ the result:
    gh pr view {pr-number} --repo {owner}/{repo} --json state,mergedAt,autoMergeRequest,statusCheckRollup
    ```
 
-   - `state: MERGED` (checks were already green, or this was the no-`--auto` immediate-merge
-     degrade branch): outcome `merged`. **Read the actual check conclusion before reporting it
-     green (record #2705) — never infer "merged once CI passed" from `state` alone.** Inspect
-     `statusCheckRollup`: a non-empty rollup whose entries are all `COMPLETED` with `conclusion` in
-     `SUCCESS`/`NEUTRAL`/`SKIPPED` reports "merged, {check names} concluded {conclusions}"; any
-     entry still non-`COMPLETED` (or a `conclusion` other than those three) at the moment of this
-     read reports "merged — {check name} had not concluded ({status}/{conclusion}) at merge time;
-     this repo has no required checks, so `gh pr merge --auto` did not wait on it" (this repo's own
-     branch-protection state — see the `Signatures` note below); an **empty** rollup reports
-     "merged — no status checks on this PR." Go to Step 4 with whichever of these three the read
-     produced.
+   - `state: MERGED`: outcome `merged`. **Read `statusCheckRollup` before reporting it green
+     (#2705) — never infer "merged once CI passed" from `state` alone.** All entries
+     `COMPLETED`+`SUCCESS`/`NEUTRAL`/`SKIPPED` → report "merged, {names} concluded {conclusions}";
+     any entry still non-`COMPLETED` → report "merged — {name} had not concluded at merge time;
+     this repo has no required checks (see Signatures below), so `--auto` did not wait on it";
+     empty rollup → "merged — no status checks on this PR." Go to Step 4.
    - `state: OPEN` with `autoMergeRequest` present (checks still pending, auto-merge armed):
      outcome `armed`. **Do not poll or wait** — this call is done. The reconciler
      (`bin/lib/reconcile`) completes cleanup later, on merged-PR evidence, the same convergent
