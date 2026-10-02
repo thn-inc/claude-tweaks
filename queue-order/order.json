@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-02T05:25:23.183Z",
+  "computedAt": "2026-10-02T05:55:12.159Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -225,7 +225,7 @@
       },
       {
         "number": 2745,
-        "updatedAt": "2026-10-01T16:13:27Z",
+        "updatedAt": "2026-10-02T05:27:48Z",
         "state": "OPEN"
       },
       {
@@ -490,7 +490,7 @@
       },
       {
         "number": 2554,
-        "updatedAt": "2026-10-01T16:15:51Z",
+        "updatedAt": "2026-10-02T05:27:41Z",
         "state": "OPEN"
       },
       {
@@ -5375,184 +5375,6 @@
           "grants": {
             "build": true,
             "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nThree small, related defects from the same session, bundled in one report:\n\n1. `plan-audit.js` Check A flags a plan whose task creates a single new file in a new directory as \"lone new file\" — the controller had to pre-create empty directories to silence it. Spot-checked during shaping: `plugin/bin/lib/plan-audit/checks.js`'s Check A section has no visible special-case for a new-directory-plus-single-file shape, and this matches a standing workaround already known in this project (\"mkdir the new module dir before auditing\") — this defect still appears live, not already fixed.\n2. On a record materialized with `surface: web` whose diff has no UI trigger file (a loader + route + config record), the pipeline story selection's \"web surface → run the full story set\" rule fires instead of reading the Layer 3 sniff first — wasting a full QA pass on a non-UI diff.\n3. `node --test \"<abs file>\"` on Windows globs a path containing `[id]` (a Next.js dynamic-segment directory) and finds no test; the single-file invocation had to go through `tsx --test` with a quoted path as a workaround.\n\n## Deliverables\n\n- [ ] `plan-audit.js` Check A: count a new directory's files together, or explicitly accept a task whose only change is creating a new directory plus one file within it, rather than flagging the single file as a \"lone new file\" false positive.\n- [ ] `/test`'s pipeline story selection: read the Layer 3 frontend-detection sniff (the same one Surface: web/mobile/desktop/backend/infra resolution already uses elsewhere) before defaulting a `surface: web` record with no UI trigger file to the full story set — a web-surface record whose actual diff carries no UI signal should not automatically run every QA story.\n- [ ] `skills/test/verification.md`'s single-file test invocation: document (or escape) bracketed path segments (e.g. Next.js `[id]` dynamic-segment directories) so `node --test` globbing doesn't silently find zero tests on Windows — either a documented escaping convention or a fallback invocation path (the filer's own workaround used `tsx --test` with a quoted path).\n\n## Acceptance Criteria\n\n1. A plan task that creates exactly one new file inside a newly-created directory passes Check A without requiring the directory to be pre-created empty.\n2. A `surface: web` record whose diff has no UI trigger file does not automatically run the full QA story set — the Layer 3 sniff's result is consulted first.\n3. A single-file `node --test` invocation against a path containing a bracketed segment (`[id]`-style) finds and runs its test correctly on Windows, or `verification.md` documents the required escaping/fallback clearly enough that a controller doesn't have to rediscover the `tsx --test` workaround independently.\n4. `npm test` passes.\n\n## Release Note\n\nFixed plan audit false positives on new directories, full QA running on non-UI changes, and test globs with brackets.\n\n## Technical Approach\n\nThree independent, small fixes sharing no code path — safe to land as one record (small, related, same session's evidence) or split at build time if that reads cleaner, but nothing here requires sequencing. (1) is a Check A classification-logic fix in `plan-audit/checks.js`. (2) reuses the existing Layer 3 sniff mechanism (`design-wrapper/frontend-detection.md`'s Layer 2/3 signal, already used elsewhere per root CLAUDE.md's Auto-Mode Contract citation) rather than inventing new detection logic — call the existing sniff from the story-selection rule instead of defaulting past it. (3) is either a doc fix (state the escaping convention) or a small invocation-path change in `verification.md`'s single-file test command — prefer the doc fix first, since introducing a `tsx` dependency for this narrow case is a bigger footprint than documenting the existing workaround clearly.\n\n### Key Files\n\n- `plugin/bin/lib/plan-audit/checks.js` — Check A's new-file/new-directory classification logic\n- `plugin/skills/test/SKILL.md` — the pipeline story selection rule defaulting to the full set on `surface: web`\n- `plugin/skills/design-wrapper/frontend-detection.md` — the existing Layer 2/3 sniff mechanism the story-selection rule should consult\n- `plugin/skills/test/verification.md` — the single-file test invocation needing the bracket-path documentation/fix\n\n## Gotchas\n\n- Don't let (2)'s fix silently skip QA on a record that genuinely does need the full story set — the Layer 3 sniff should inform the decision, not replace human/build judgment entirely; a record with an ambiguous or borderline diff should still default toward running stories, not skipping them, per this project's general caution-toward-more-checking posture.\n- (3) is Windows-specific (the filer's evidence names Windows explicitly) — verify the fix doesn't change behavior on macOS/Linux where the bracket-globbing issue may not reproduce the same way.\n\n## Original request\n\nUpstream defect report — plan-audit Check A false positive on lone new files; `/test` web-surface full-QA rule on a non-UI diff; `node --test` bracket-path globs\n\nComponent: `bin/plan-audit.js` (Check A), `skills/test/SKILL.md` (story selection), `skills/test/verification.md` (single-file test invocation)\nKind: defect (three small)\nVersion: claude-tweaks 6.126.0\n\n## Symptom\n\n(1) `plan-audit.js` Check A flags a plan whose task creates a single new file in a new directory as \"lone new file\" — the controller pre-creates empty directories to silence it. (2) On a record materialized with `surface: web` whose diff has no UI trigger file (a loader + route + config record), the pipeline story selection's \"web surface → run the full story set\" rule fires; the controller logged a reasoned skip instead. (3) `node --test \"<abs file>\"` on Windows globs a path containing `[id]` (a Next dynamic segment directory) and finds no test; the single-file invocation had to go through `tsx --test` with a quoted path.\n\n## Expected\n\n(1) Check A should count a new directory's files together (or accept a task that creates the directory and one file). (2) The web-surface rule should read the Layer 3 sniff before defaulting to the full set. (3) Document (or escape) bracketed paths for the single-file test invocation.\n\n## Evidence\n\nRun 2026-09-20T195550-spec-497-498-499, spec #497: `spec-497/decisions.md` (build step plan-audit note; `/test` QA selection entry), `staged/reflect-2.md` in spec-497.\n\nFiled from djoef/recommender-system run 2026-09-20T195550-spec-497-498-499 (claude-tweaks 6.126.0, unattended).\n<!-- fingerprint: feedback-1ef6b5fb -->\n",
-        "createdAt": "2026-09-21T10:20:40Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2745,
-        "state": "OPEN",
-        "title": "Upstream defect report — plan-audit Check A false positive on lone new files; `/test` web-surface full-QA rule on a non-UI diff; `node --test` bracket-path globs",
-        "updatedAt": "2026-10-01T16:13:27Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\nA `ready` record whose every Deliverable is an operational action (dispatch a deploy workflow, trigger a job run through an API, apply infrastructure, then verify the live result) with no source file changes has no dedicated lane in `/claude-tweaks:build` or `/claude-tweaks:flow`:\n- `build/SKILL.md`'s Spec Step 2.5 (\"Classify and Seed Manual Steps\") is written assuming a spec has a `## Manual Steps` section. When the record's `## Deliverables` list *is* the operational work (no separate Manual Steps section), the executor has to infer both that the Deliverables are the triage input and that inline auto-execution with `decisions.md` logging is the licensed path — `execution-mode-policy.md` otherwise forbids main-thread execution, and nothing in the current prose states the ops-only case explicitly.\n- Spec Step 3 and Common Steps 1.5, 1.7, 2, 3, 6, 6.5 then all resolve to `SKIP`, producing nine degrade-trace lines for a run with no plan to write and no task to dispatch.\n- Common Step 5 verifies the tree and stamps the materialized commit. The build phase's own exit then commits the run ledger (`docs/plans/*-ledger.md`), which changes `HEAD`, so the verification stamp's sha no longer matches. `/claude-tweaks:test`'s Skip-if-recent (`test/verification.md`) sees this mismatch and re-runs the full suite. Observed on one run in a private project: two separate ~10-minute full verifications triggered by a diff whose only change was two markdown files (the ledger and one plan file).\n\n## Deliverables\n1. Update `build/SKILL.md`'s Spec Step 2.5 to state explicitly: when a record carries no `## Manual Steps` section but its `## Deliverables` are wholly operational actions, the Deliverables list itself is the triage input for inline auto-execution (with `decisions.md` logging), and a record whose Deliverables are *all* operational proceeds directly to Common Step 5 with one consolidated SKIP entry instead of one SKIP per code-oriented step.\n2. Update `test/verification.md`'s Skip-if-recent logic so a stamp still verifies `HEAD` when every commit between the stamped sha and `HEAD` touches only pipeline-bookkeeping paths (`docs/plans/*-ledger.md`, `.claude-tweaks/pipelines/**/work/*.md`) — reusing the same \"bookkeeping-only delta\" classification the multi-spec `test` step already applies elsewhere (classified `none`).\n3. (Optional, if scoped in during build) a `/claude-tweaks:flow` fast path for wholly-operational records: build (materialize + inline ops execution + one verification) → test (skip by stamp, using the widened Skip-if-recent from Deliverable 2) → review (spec compliance judged against the live operational evidence, not a diff) → wrap-up.\n\n## Acceptance Criteria\n- A record whose `## Deliverables` are all operational actions and carries no `## Manual Steps` section, run through `/claude-tweaks:build`, produces exactly one consolidated SKIP entry in the degrade trace for the code-oriented steps (Spec Step 3, Common Steps 1.5/1.7/2/3/6/6.5) instead of one per step.\n- The same record's Spec Step 2.5 output shows the Deliverables list was read as the triage input for inline auto-execution, with corresponding `decisions.md` log entries for each operational action taken.\n- After Common Step 5's verification stamp and the build phase's own ledger commit, a subsequent `/claude-tweaks:test` run recognizes the ledger-commit-only delta as bookkeeping-only (per the widened Skip-if-recent logic) and does NOT re-run the full suite — verified by comparing wall-clock duration or an explicit skip-reason log entry against the pre-fix two-full-verification behavior.\n- The bookkeeping-only-delta classification in `test/verification.md` matches the same classification already used by the multi-spec `test` step for `none`-classified deltas, confirmed by reading both code paths and checking they resolve to the same path-pattern set (or a documented superset).\n- If Deliverable 3 is included: a wholly-operational record run through `/flow` completes build→test→review→wrap-up with zero SKIP-triggered full-suite re-runs caused solely by the ledger commit.\n\n## Release Note\n\nAdded a lighter build path for records whose work is entirely operational.\n\n## Technical Approach\nThis is a documentation/prose change to two skill files (`build/SKILL.md`, `test/verification.md`) plus, optionally, a fast-path addition if scoped into Deliverable 3. No new code artifacts are required for Deliverables 1-2 — both are skill-authoring changes to existing markdown prescribing agent behavior. Deliverable 2's path-pattern set should be derived from (or a superset of) whatever pattern the multi-spec `test` step already uses for its `none` classification, to avoid two divergent definitions of \"bookkeeping-only.\"\n\n### Key Files\n- `plugin/skills/build/SKILL.md` — Spec Step 2.5 (\"Classify and Seed Manual Steps\"); add the ops-only Deliverables-as-triage-input case and the consolidated-SKIP behavior\n- `plugin/skills/test/verification.md` — Skip-if-recent logic; widen the stamp-still-valid condition to tolerate a bookkeeping-only delta between stamped sha and `HEAD`\n- `plugin/skills/flow/SKILL.md` (or its materialize/phase sub-files) — only if Deliverable 3 is scoped in, add the fast-path sequencing for wholly-operational records\n\n## Gotchas\n- Confirm the exact path-pattern set the multi-spec `test` step already uses for its `none` (bookkeeping-only) classification before writing a new one for Skip-if-recent — duplicating a slightly different pattern set risks the two mechanisms disagreeing on what counts as bookkeeping-only.\n- Widening Skip-if-recent must not create a hole where a real code change disguised as touching only `docs/plans/*-ledger.md`/`.claude-tweaks/pipelines/**/work/*.md` paths escapes verification — those paths should genuinely never carry source-code changes, but worth a sanity check against the path patterns' actual scope.\n- Deliverable 3 (the `/flow` fast path) is explicitly optional in the original request — scope it in only if the maintainer wants the full lane, not just the two prose fixes that address the immediate double-verification cost.\n\n## Original request\n\nbuild: records whose Deliverables are wholly operational have no lane — zero-code runs pay materialize/plan/PR ceremony and two full verifications\n\n**Summary:** A record whose Deliverables are wholly operational (no code change) has no lane in `/claude-tweaks:build` or `/claude-tweaks:flow`: it pays the materialize/plan/draft-PR ceremony, logs a SKIP for every code step, and gets verified twice on a zero-code tree because a ledger commit invalidates the pass stamp.\n\n**Kind:** Gap\n\n**Affected component:** `skills/build/SKILL.md` (Spec Step 2.5 \"Classify and Seed Manual Steps\", Spec Step 3, Common Step 5) and `skills/test/verification.md` (Skip-if-recent)\n\n**Use case:**\nA `ready` record's every Deliverable is an operational action — dispatch a deploy workflow, trigger a job run through an API, apply infrastructure, then verify the live result — and no source file changes. Running it under `/claude-tweaks:flow`:\n\n- Spec Step 2.5 is written for a spec that has a `Manual Steps` section. When the `## Deliverables` list *is* the operational work, the executor has to infer that the Deliverables are the Manual Steps input and that inline auto-execution (with `decisions.md` logging) is the licensed path — `execution-mode-policy.md` otherwise forbids main-thread execution, and nothing states the ops-only case.\n- Spec Step 3 and Common Steps 1.5, 1.7, 2, 3, 6, 6.5 then all resolve to `SKIP` entries — nine degrade-trace lines for a run with no plan to write and no task to dispatch.\n- Common Step 5 verifies the tree and the runner stamps the materialized commit. The build phase exit then commits the run ledger (`docs/plans/*-ledger.md`), so the stamp's sha no longer matches `HEAD`; `/claude-tweaks:test`'s Skip-if-recent sees the mismatch and re-runs the full suite on a tree whose only delta is a pipeline-bookkeeping markdown file. Observed on one run in a private project: two ~10-minute full verifications for a diff of two markdown files.\n\nWhat would close the gap:\n\n1. In `build/SKILL.md` Spec Step 2.5, state that when a record carries no `Manual Steps` section but its Deliverables are operational actions, the Deliverables list is the triage input and inline auto-execution is the licensed path — and that a record whose Deliverables are *all* operational proceeds to Common Step 5 with one consolidated SKIP instead of one per code step.\n2. In `test/verification.md`'s Skip-if-recent, let a stamp still verify `HEAD` when every commit between the stamped sha and `HEAD` touches only pipeline-bookkeeping paths (`docs/plans/*-ledger.md`, `.claude-tweaks/pipelines/**/work/*.md`) — the same \"bookkeeping-only delta\" the multi-spec `test` step already recognises as `none`.\n3. Optionally a `/flow` fast path for such records: build (materialize + inline ops execution + one verification), test (skip by stamp), review (spec compliance against the live evidence), wrap-up.\n\n**Definition:** Clear\n\n**Plugin version:** 6.126.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-2ef3c2a4 -->\n",
-        "createdAt": "2026-09-17T13:55:07Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2554,
-        "state": "OPEN",
-        "title": "build: records whose Deliverables are wholly operational have no lane — zero-code runs pay materialize/plan/PR ceremony and two full verifications",
-        "updatedAt": "2026-10-01T16:15:51Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
           },
           "bot": {
             "inProgress": false,
