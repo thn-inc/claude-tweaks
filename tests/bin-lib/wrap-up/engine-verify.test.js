@@ -723,7 +723,7 @@ test('carrier-commit check skips when no resolved issues found (conversation-bas
 // ---- resolvedIssueNumbers' verify-expectations.json `issues` fallback (#1223) ----
 //
 // No materialized header under work/ -- a current-branch (non-materialized) record run.
-// review-console.md's step 10 now populates `issues` in this case; these tests pin the
+// review-console.md's step 11 now populates `issues` in this case; these tests pin the
 // read side (resolvedIssueNumbers) actually consuming it, no longer dead code.
 
 test('carrier-commit check resolves issue numbers from verify-expectations.json issues key when no materialized header exists', () => {

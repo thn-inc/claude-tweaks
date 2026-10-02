@@ -236,7 +236,32 @@ Collect all insights from the five lenses and the tradeoff review into a single 
 | 4 | {description} | {terminal/systemic/—} | Capture — needs brainstorming |
 ```
 
-The table renders as markdown, as above. Immediately below it, call `AskUserQuestion` with:
+The table renders as markdown, as above.
+
+**Under `--source wrap-up` (#2547) — stage instead of asking.** `/claude-tweaks:wrap-up` passes
+`--source wrap-up` on every run, standalone included (`reflect/SKILL.md`'s dispatch-rule
+paragraph) — its own Review Console (`wrap-up/review-console.md`) already re-presents this exact
+table as a terminal decision, so asking here too decides nothing a second stop doesn't decide
+again. When this signal is present — the same signal `reflect/SKILL.md` already uses to gate Next
+Actions and Step 2's dispatch; this branch is `--source wrap-up` only, never `--source review` —
+skip the `AskUserQuestion` call below entirely. Still render the table above (the Hard gate below
+still applies) and still classify every insight through the Routing guide exactly as this section
+already does, but write the composed table — each insight's resolved recommendation, not yet
+applied — to `{run-dir}/staged/wrap-up-reflect-insights.md` (overwrite if a prior reflect pass in
+this same run already wrote one) instead of asking. Do not apply any "Implement now" insight, do
+not file any Defer/Capture record, and do not record a Don't-capture decline yet — leave every
+non-D4/D5 outcome unapplied. `wrap-up/review-console.md`'s own Pending-review rendering (Hard
+requirement: every file in `staged/` renders) picks up this file, and its own terminal Approve all
+/ Override decision is what actually applies each row, exactly as the `AskUserQuestion` answer
+would have applied it here. D4 (Memory) and D5 (Upstream) rows are listed in the staged file for
+visibility only — nothing about this branch changes how those two destinations are gated; they
+still go through the console's own separate `M#`/`U#` rows regardless of what this row's Approve
+all resolves (`review-console-interactive.md`'s "a different table's approval never satisfies this
+gate" rule, unchanged by this fix). Return control to the parent once the staged file is written —
+no `AskUserQuestion`, no Next Actions (the parent already omits that block under this signal).
+
+Otherwise — standalone, or `--source review` — immediately below the table, call
+`AskUserQuestion` with:
 
 - `question`: `"How do you want to handle these insights?"`, `header`: `"Insights"`, `multiSelect`: `false`
 - Option 1 — `label`: `"Apply all (Recommended)"`, `description`: `"Apply all recommendations"`
@@ -277,6 +302,6 @@ that genuinely serves two audiences is two insights, stated separately.
 - **Capture** — the insight is complex or uncertain and needs brainstorming/exploration before it can be acted on. Routes to `/claude-tweaks:capture`, which files it as a fresh backlog work record — the recommendation names its reason the same way (`Capture — tangential`), invoked with the shaped body and `--defer-reason={value} --source reflect` (capture's Shaped-body branch — `capture/SKILL.md`). An insight with no valid reason cannot be recommended Capture. A Capture recommendation's `Defer-reason:` is usually `tangential`, which `_shared/materiality-floor.md`'s override always clears — a Capture-routed insight with reason `tangential` renders "Capture — tangential" as above, never a "Digest" recommendation. A Capture-routed insight carrying a different `Defer-reason:` (the rarer case) is still subject to the same materiality-floor test as the Defer bullet above, and may render "Digest — below floor" instead.
 - **Don't capture** — only for insights that are genuinely not actionable (one-off observations, context-specific facts, things already documented elsewhere). Must state why. Record the decline via `bin/lib/declined-learning/store.js`'s `recordDecline(fingerprint, { reason, source: 'reflect', subject: description })` — `fingerprint` from the Prior-decline annotation step above, `reason` the stated why, `subject` (#1033) the insight's own one-line `description` text (the same text the fingerprint was computed from), so a later run's subject-scan step above has something to compare against for an insight that re-surfaces reworded rather than byte-identical. `source: 'reflect'` names this skill regardless of whether it ran standalone or from `/claude-tweaks:wrap-up` (#1399) — every reader below filters on this same literal. A decline write failure degrades open — log a one-line note and continue; never block the batch resolution over it.
 
-If any insight is "Implement now", handle it after the user approves the batch table, before returning control to the parent or presenting Next Actions — **except a D4 outcome**, whose write is gated separately as described above; do not write a memory file at this point.
+**Standalone / `--source review` path only** (the "otherwise" branch above): if any insight is "Implement now", handle it after the user approves the batch table, before returning control to the parent or presenting Next Actions — **except a D4 outcome**, whose write is gated separately as described above; do not write a memory file at this point. **Under `--source wrap-up`**, none of this section's outcomes (Implement now, Defer, Capture, Don't capture) are applied here at all — they are written to the staged file above and applied later by the Review Console's own Approve all / Override decision, per the `--source wrap-up` branch described there.
 
-> **Always present the batch table in interactive mode**, even when every insight routes to "Implement now." Interactive mode means *ask the user* — the confirmation is the contract, not a formality. Skipping it (because the routing looks uniform or obvious) would be contract drift: auto-apply behavior belongs in auto mode, governed by the `Reflect insight routing` row of `_shared/auto-mode-contract.md`'s silences table.
+> **Always present the batch table**, even when every insight routes to "Implement now" — under `--source wrap-up` this means staging it (the branch above), under every other path it means asking. Skipping presentation entirely (because the routing looks uniform or obvious) would be contract drift: auto-apply behavior belongs in auto mode, governed by the `Reflect insight routing` row of `_shared/auto-mode-contract.md`'s silences table.
