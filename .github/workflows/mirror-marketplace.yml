@@ -4,6 +4,9 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: write
+
 jobs:
   mirror:
     runs-on: ubuntu-latest
@@ -40,3 +43,26 @@ jobs:
             -f "content=${ENCODED}" \
             -f "sha=${BLOB_SHA}" \
             -f "branch=main"
+      # pr-first post-publish step (#2582): release-please has no knowledge of
+      # this repo's own `Release-Note:` trailer, so it never renders a
+      # Highlights block — this step walks the just-published commit range,
+      # extracts those trailers, and appends the rendered block to both the
+      # just-published GitHub Release body and the matching CHANGELOG.md
+      # entry, after the event that fires this workflow has already landed.
+      - name: Checkout for release notes publish
+        uses: actions/checkout@v4
+        with:
+          # Full history: the step walks `git log --first-parent
+          # {previous-tag}..{new-tag}`, and pushes the follow-up CHANGELOG
+          # commit straight back onto the default branch.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Publish release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          node plugin/bin/release-notes-publish.js
