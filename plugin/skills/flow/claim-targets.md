@@ -158,17 +158,16 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sta
 This does not itself guarantee the CLI/procedure was invoked — an agent that skips the claim call
 above skips this log line too, for the same reason. It exists so a **later** phase (`/wrap-up`'s
 Review Console, a `/tidy` sweep, or a human auditing `decisions.md`) can tell "Step 2.8 ran and
-claimed cleanly" apart from "Step 2.8 was silently skipped" without a live registry read, and so a
-future mechanical gate (see the gap note below) has a local signal to check against.
+claimed cleanly" apart from "Step 2.8 was silently skipped" without a live registry read, and so
+`checkBookkeepingStampsGate` (see the backstop note below) has a local signal to check against.
 
-**Mechanical backstop (closed by #2526).** Unlike its sibling bookkeeping stamps —
+**Mechanical backstop (closed by #2526).** Like its sibling bookkeeping stamps —
 `record-worktree` and, under `integration-model: pr-first` (`_shared/integration-model.md`),
-the PR-early draft-PR open — `bin/lib/hooks/pre-tool-use.js`'s `checkBookkeepingStampsGate`
-also denies the next covered write (and in particular the phase-exit `git push`) until it sees
-this step's `decisions.md` claim-log line, via its `hasLoggedClaim` check (added in #2526,
-shortly after #2492 below first documented the gap — both landed 2026-09-20). A materialize
-commit with no matching `claims/issue-{n}.json` claim recorded for its target therefore cannot
-reach a covered push today.
+the PR-early draft-PR open — this step's `decisions.md` claim-log line is enforced by
+`bin/lib/hooks/pre-tool-use.js`'s `checkBookkeepingStampsGate`: once the run's materialize commit
+lands, its `hasLoggedClaim` check denies the next covered write (and in particular the
+phase-exit `git push`) until every materialized record carries that line (added in #2526,
+shortly after #2492 below first documented the gap — both landed 2026-09-20).
 
 **Historical gap (pre-#2526, confirmed root cause of #2401's investigation).** Before #2526
 landed, this step was prose-only, with no code path enforcing it independent of the
@@ -181,8 +180,7 @@ commit landed 2026-09-14 (run `2026-09-14T040051-record-2329`), six days before 
 (2026-09-20) — at build time there was no mechanical gate to have caught the missing claim.
 `bin/claim-targets.js`'s own write path was never the gap (`tests/bin-lib/claim-targets/claim-targets.test.js`
 already covers the create-only/conditional/contested/transient/unverified-write-back cases in
-depth, including the exact write-then-verify race #2073 closed) — the gap was purely the
-absence of a mechanical check *downstream* of that CLI, which #2526 closed.
+depth, including the exact write-then-verify race #2073 closed).
 
 This CLI is the `gh` transport only — its `deps.gh`/`deps.ghApi` shell to real `gh` (per
 `gh-api-module-pattern`'s injectable-runner convention). In a `gh`-absent environment
