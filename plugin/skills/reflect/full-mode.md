@@ -55,9 +55,16 @@ variants before this lens ever sees them (the identical precedent #2350 establis
 `'lenient'`) — **judge this lens's aggregate `contract-violation` volume as the genuine count**,
 not a mix of three unrelated populations. One population `friction-events.js` cannot filter:
 mid-turn/non-final narration graded as if it were the dispatch's terminal reply
-(claude-code#27755's unreliable firing) — that population's own fix is #2041's scope, not this
-lens's; until it lands, treat a surprisingly high genuine count as a prompt to sample a few
-entries' `firstLine` before concluding the run was actually non-compliant that often.
+(claude-code#27755's unreliable firing) — that population's own fix is #2041's/#2714's scope, not
+this lens's. #2041 suppresses a narration turn immediately reacting to an async signal (a launch
+ack or a sibling's task-notification); #2714 extends that to a nested dispatcher's own interim
+progress-update reply composed *after* intervening tool calls, via the dispatching agent's own
+`INTERIM_STATUS: {note}` trailing marker (`_shared/subagent-output-contract.md`'s Implementer
+Status Protocol) — a dispatch following that convention produces zero `contract-violation` events
+for its interim turns. Until every dispatch site in a run reliably uses the marker, treat a
+surprisingly high genuine count as a prompt to sample a few entries' `firstLine` before concluding
+the run was actually non-compliant that often — an unmarked interim reply from a nested dispatcher
+still shows up here as a false positive.
 
 **`zero-tool-use-verdict` (#2345).** A dispatched agent's verdict/findings/pass-fail reply whose
 transcript carries zero tool-use blocks anywhere — it read nothing, so its content is a failed
