@@ -70,7 +70,15 @@ function fetchLinkedPRs({
       .map((item) => item && item.source)
       .filter((pr) => pr && pr.repository && pr.repository.nameWithOwner === nameWithOwner)
       .map((pr) => ({ number: pr.number, title: pr.title, state: pr.state, merged: !!pr.merged, mergedAt: pr.mergedAt || null }));
-    result.set(n, { openPR: openPR ? openPR.number : null, mentions });
+    // #2676 — wrap-up's carrier-commit ground-truth fallback needs to know
+    // whether ANY closing-PR reference exists for this issue (regardless of
+    // that PR's own state), not just whether one is currently OPEN —
+    // `closedByPullRequestsReferences` is itself GitHub's own evidence that
+    // a PR referenced this issue with a recognized closing keyword, so a
+    // non-empty connection is exactly the "closing commit/PR reference"
+    // signal engine-verify.js's registerCheck('carrier-commit', ...) needs
+    // to trust a CLOSED issue state on its own.
+    result.set(n, { openPR: openPR ? openPR.number : null, mentions, hasClosingPRReference: nodes.length > 0 });
   }
   return result;
 }
