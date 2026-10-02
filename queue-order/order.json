@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-02T14:46:15.097Z",
+  "computedAt": "2026-10-02T16:03:51.895Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -426,11 +426,6 @@
       {
         "number": 2634,
         "updatedAt": "2026-09-30T12:19:19Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2628,
-        "updatedAt": "2026-10-01T16:10:14Z",
         "state": "OPEN"
       },
       {
@@ -4702,90 +4697,6 @@
           "origin": null,
           "risk": "low",
           "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\nAI-built/vibecoded mobile apps commonly get rejected by Apple App Store review for a recurring cluster of well-known, documented reasons: Stripe checkout instead of in-app purchase, Google sign-in present but no Apple sign-in, no way for a user to delete their account, a broken or incomplete demo/reviewer login, broken iPad layout, screenshots that don't match the shipped app or show paid features without labeling them as paid, dead support/privacy links, \"coming soon\" placeholder screens, comment/UGC features with no report path, and a broken restore-purchases button. No existing claude-tweaks check walks a codebase through Apple App Store submission requirements specifically; the existing pre-scale and security work (#2622, #2624, #2625) covers backend scaling and data handling, not store-review compliance.\n\n## Deliverables\n1. Add an \"App Store submission readiness\" checklist — either as a new skill or as policy rows on an existing review skill (whichever integration point exists once this is built) — covering: Apple sign-in parity with any other social sign-in, in-app purchase vs. external payment links, account-deletion flow, demo/reviewer login completeness, iPad layout, screenshot accuracy including paid-feature labeling, live support/privacy links, no coming-soon placeholders, a moderation/report path for UGC comment features, and a working restore-purchases button.\n2. Ship a copy-paste prompt, matching this pipeline's existing pattern for this class of check, that scans a mobile app's codebase/config for each of the ten gaps above.\n\n## Acceptance Criteria\n1. Running the check against a sample mobile app codebase flags any of the ten gaps that are present.\n2. Documentation distinguishes this store-review checklist's scope from the existing pre-launch/pre-scale hardening checks (#2622, #2624, #2625) so a reader doesn't confuse app-store compliance with backend scaling/security.\n3. The check (and its copy-paste prompt) works standalone and as a step within `/claude-tweaks:review` or `/claude-tweaks:build`.\n4. Each of the ten checklist items maps to a specific, checkable condition in a codebase or app config (e.g. \"grep for a Stripe checkout SDK call alongside no `StoreKit`/`RevenueCat` import\" for the payment-method item), not a vague prose reminder.\n\n## Release Note\n\nAdded an App Store submission readiness checklist for generated apps.\n\n## Technical Approach\nAdd the checklist as a new prompt/heuristic in the same style as this pipeline's other copy-paste-prompt checks, choosing the integration point (new skill vs. rows on an existing review skill) based on whichever shape the existing review-skill surface supports by the time this is built. Each of the ten items becomes one checkable row: a description of the Apple-review failure mode, and a concrete signal to grep/inspect for in a mobile codebase (SDK imports, Info.plist/AndroidManifest entries, presence/absence of an account-deletion API call, screenshot metadata, etc.).\n\n### Key Files\n- Whichever file the App Store readiness checklist lands in (a new skill directory, or an existing review skill's policy file) — to be determined based on the review-skill surface's shape at build time\n- A documentation note distinguishing this checklist's scope from #2622/#2624/#2625\n\n## Gotchas\nThis is a mobile-specific (iOS App Store) checklist; it does not cover Google Play's parallel review criteria, which differ in several respects (e.g. Play doesn't mandate Apple/Google sign-in parity the same way). Scope this record to Apple App Store review only, and treat Play Store review as a separate future record if pursued. The exact integration point (new skill vs. existing skill's policy rows) can't be pinned until whatever review-skill surface exists at build time is inspected.\n\n## Original request\n\nAdd App Store rejection checklist for vibecoded apps\n\nCurrent State:\n- AI-built/vibecoded apps commonly get rejected by Apple review for a recurring cluster of reasons: Stripe checkout instead of in-app purchase, Google sign-in present but no Apple sign-in, no way for a user to delete their account, a broken or incomplete demo/reviewer login, broken iPad layout, screenshots that don't match the shipped app or show paid features without labeling them as paid, dead support/privacy links, \"coming soon\" placeholder screens, comment/UGC features with no report path, and a broken restore-purchases button.\n- No existing claude-tweaks check walks a codebase through Apple App Store submission requirements specifically; the existing pre-scale and security work (#2622, #2624, #2625) covers backend scaling and data handling, not store-review compliance.\n\nDeliverables:\n- Add an \"App Store submission readiness\" checklist (a skill or policy rows on an existing review skill) covering: Apple sign-in parity with any other social sign-in, in-app purchase vs. external payment links, account-deletion flow, demo/reviewer login completeness, iPad layout, screenshot accuracy including paid-feature labeling, live support/privacy links, no coming-soon placeholders, a moderation/report path for UGC comment features, and a working restore-purchases button.\n- Ship a copy-paste prompt, matching the pipeline's existing pattern, that scans a mobile app's codebase/config for each gap.\n\nAcceptance Criteria:\n- Running the check against a sample app flags any of the gaps that are present.\n- Docs distinguish this store-review checklist from the existing pre-launch/pre-scale hardening checks (#2622, #2624, #2625).\n- Works standalone and as a step within /review or /build.\n\nSource: https://www.instagram.com/reel/Dc_D90BBGG7/\n",
-        "createdAt": "2026-09-19T22:42:48Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2628,
-        "state": "OPEN",
-        "title": "Add App Store rejection checklist for vibecoded apps",
-        "updatedAt": "2026-10-01T16:10:14Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
           "ceremony": "standard",
           "solutionUnjustified": false,
           "breaking": false,
