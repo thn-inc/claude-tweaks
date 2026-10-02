@@ -125,7 +125,7 @@ On a `base:{ref}` scope, `{base}` is the given ref and `{branch}` is `origin/{in
 Before analyzing the diff, detect whether the base branch was merged into this branch mid-history — content that arrived that way is not work this branch introduced and must not be reviewed as such. `{base}`/`{branch}` reuse whatever base-branch resolution the rest of this step already uses.
 
 ```bash
-git log --merges {base}..{branch} --oneline                                      # detect
+git log --merges {base}..{branch} --oneline # detect
 ```
 
 - **No merge commits detected** (the common case) — this check is a no-op: no further computation, no new output section. The rest of Step 2 proceeds exactly as before, against the full diff.
@@ -140,7 +140,7 @@ The Merge-Provenance Check above fires only on `git log --merges`. A cherry-pick
 Run alongside the merge detect above, unconditionally:
 
 ```bash
-git log {base}..{branch} --no-merges --format='%H %s'                            # this branch's own commits
+git log {base}..{branch} --no-merges --format='%H %s' # this branch's own commits
 gh pr list --state open --json number,url,headRefName,title                      # live open PRs
 ```
 
@@ -203,13 +203,14 @@ The severity scale, category enum, per-lens floors, and the CALIBRATION filter a
 | 3d Performance | high | Critical only when a measured regression exists (real query, real benchmark); never speculative. |
 | 3e Architecture | high | Critical only when a layering violation will break a near-term feature; otherwise medium. |
 | 3f Test quality | medium | Tests are not production code; flag only when a missing test would have caught a real bug. |
+| 3g Ownability | medium | Comprehension risk only. |
 | 3g-cov Coverage | low / informational | Never blocks the review. |
 | 3h UX (when QA data) | high | Capable profile — judgment-heavy synthesis. |
 | 3i Doc freshness | low / informational | Never blocks the review. |
 
 **3a skill-routed entries.** Lens 3a records a `review/skill` ledger entry rather than choosing a destination; `/claude-tweaks:wrap-up`'s Skills curation row classifies it via `skills/_shared/learning-routing.md`, where a finding about a claude-tweaks skill resolves to D5 (upstream) rather than a project skill update. Do not inline this note into the 3a agent prompt — that agent's job is to record, not to route.
 
-**Lens scope, the dispatch contract, the canonical agent prompt, and the 3a-3f lens definitions live in `step3-lens-dispatch.md`** in this skill's directory — read it before dispatching. It holds: which lenses each `review-effort` tier puts in scope (fewer at `low` and `medium`, every applicable lens at `high` and above), the low-tier single-read dispatch rule, and the `xhigh`/`max` reasoning nudge; the Working Directory Discipline rule for every `Task()` dispatch in Steps 3, 3.5, and 3.6; the `build-review-context.js` shared context bundle that keeps full diff content out of this thread; the reproduction-pair dispatch and its `review-coordination.js categorise-reproduction` call; per-lens model profiles; the canonical agent prompt to inline (its "Per-lens Calibration + Output template" section — Calibration block + OUTPUT FORMAT, moved there from `step3-routing.md` so that file loads only when findings exist); and the question list each of lenses 3a-3f reviews against.
+**Lens scope, the dispatch contract, the canonical agent prompt, and the 3a-3g lens definitions live in `step3-lens-dispatch.md`** in this skill's directory — read it before dispatching. It holds: which lenses each `review-effort` tier puts in scope (fewer at `low` and `medium`, every applicable lens at `high` and above), the low-tier single-read dispatch rule, and the `xhigh`/`max` reasoning nudge; the Working Directory Discipline rule for every `Task()` dispatch in Steps 3, 3.5, and 3.6; the `build-review-context.js` shared context bundle that keeps full diff content out of this thread; the reproduction-pair dispatch and its `review-coordination.js categorise-reproduction` call; per-lens model profiles; the canonical agent prompt to inline (its "Per-lens Calibration + Output template" section — Calibration block + OUTPUT FORMAT, moved there from `step3-routing.md` so that file loads only when findings exist); and the question list each of lenses 3a-3g reviews against.
 
 ### 3g-cov: Journey-Story Coverage (when journeys and stories exist)
 
