@@ -148,12 +148,9 @@ function defaultRun(cmd, args, opts = {}) {
 function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep = defaultSleep } = {}) {
   const specs = Array.isArray(fileSpecs) ? fileSpecs : [];
 
-  // Generalized over an arbitrary ref/sha (origin/<branch>, a local commit
-  // sha, or null) so both the origin-tip read path (showFile below) and the
-  // local-only write path (writeStateLocal) share one implementation instead
-  // of two copies that could drift. `git show <ref>:<path>` works identically
-  // whether <ref> is a branch ref or a bare commit sha — no separate
-  // tree-resolution step needed.
+  // `git show <ref>:<path>` works identically whether <ref> is a branch ref
+  // (origin/<branch>) or a bare commit sha (LOCAL_REF's tip), so the
+  // origin-tip read and the local-only write path share this one reader.
   function showFileAt(root, ref, relPath, fallback) {
     try {
       const out = run('git', ['-C', root, 'show', `${ref}:${relPath}`]);
@@ -161,10 +158,6 @@ function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep =
     } catch {
       return fallback;
     }
-  }
-
-  function showFile(root, relPath, fallback) {
-    return showFileAt(root, `origin/${HEALTH_STATE_BRANCH}`, relPath, fallback);
   }
 
   // namespace-local branch ref used ONLY to stage writeStateLocal's
@@ -215,19 +208,13 @@ function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep =
   // overwriting the branch's real content even though the push's
   // fast-forward check has no way to catch a bad-but-valid write like that.
   function readFilesAtFetchedTip(root) {
-    const values = {};
-    for (const spec of specs) {
-      values[spec.key] = showFile(root, statePath(namespace, spec.file), spec.default);
-    }
-    return values;
+    return readFilesAt(root, `origin/${HEALTH_STATE_BRANCH}`);
   }
 
-  // Same read, generalized to an arbitrary ref/sha (or falsy for "nothing to
-  // read yet" — the brand-new-namespace case, where every spec resolves
-  // straight to its default with no git call at all). Used by
-  // writeStateLocal/pushState to read this namespace's state at the LOCAL
-  // branch's own tip instead of the always-origin tip readFilesAtFetchedTip
-  // is hardcoded to.
+  // Same read at an arbitrary ref/sha (or falsy for "nothing to read yet" —
+  // the brand-new-namespace case, where every spec resolves straight to its
+  // default with no git call at all). writeStateLocal/pushState use it to
+  // read this namespace's state at the LOCAL branch's own tip.
   function readFilesAt(root, ref) {
     const values = {};
     for (const spec of specs) {
@@ -433,14 +420,12 @@ function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep =
     try {
       try { run('git', ['-C', root, 'fetch', 'origin', HEALTH_STATE_BRANCH]); } catch { /* tolerant — see writeState's own comment */ }
       const localSha = localRefSha(root);
-      const origin = currentRefShas(root);
-      const baseCommitSha = localSha || origin.commitSha;
-      const baseRef = localSha || origin.commitSha;
-      const current = readFilesAt(root, baseRef);
+      const baseSha = localSha || currentCommitSha(root);
+      const current = readFilesAt(root, baseSha);
       const next = mutatorFn(current);
       const files = buildFiles(next);
-      const rootTreeSha = buildRootTree(root, baseRef, files);
-      const commitSha = writeCommit(root, rootTreeSha, baseCommitSha, `health-state: ${namespace} update (local)`);
+      const rootTreeSha = buildRootTree(root, baseSha, files);
+      const commitSha = writeCommit(root, rootTreeSha, baseSha, `health-state: ${namespace} update (local)`);
       // Atomic local compare-and-swap — guards only against a concurrent
       // same-checkout writer racing this same namespace between the read
       // above and this update; there is no remote race to guard against,
