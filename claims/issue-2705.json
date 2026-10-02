@@ -1,7 +1,7 @@
 {
+  "released": true,
   "runId": "2026-10-02T082147-record-2701",
-  "sessionId": "ba4aad03-5c6d-5505-8148-7356f2d5ebaa",
-  "claimedAt": "2026-10-02T08:27:36.000Z",
-  "ttlHours": 72,
-  "host": "vm"
+  "reason": "merged: PR #2899",
+  "releasedAt": "2026-10-02T09:12:55.935Z",
+  "link": "https://github.com/thn-inc/claude-tweaks/pull/2899"
 }
