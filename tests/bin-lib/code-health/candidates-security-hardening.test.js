@@ -30,6 +30,9 @@ const {
   scanUnguardedAiEndpoint,
   scanSharedAgentIdentity,
   scanUnauditedDelegation,
+  scanUnescapedOutput,
+  scanUnrestrictedUpload,
+  scanUnverifiedWebhook,
 } = require('../../../plugin/bin/lib/code-health/candidates-security-hardening');
 
 // Assembled at runtime, never as a contiguous source-file literal: GitHub push protection's
@@ -241,6 +244,141 @@ callAgentB(AGENT_API_TOKEN);
   assert.strictEqual(result.discoveryFailed, false);
   const kinds = new Set(result.candidates.map((c) => c.kind));
   assert.ok(kinds.has('shared-agent-identity'), 'expected a shared-agent-identity finding');
+});
+
+// ── #2668: unescaped-output (XSS via unsanitized raw-HTML sinks) ──────────
+
+test('scanUnescapedOutput: flags dangerouslySetInnerHTML with no sanitizer signal nearby', () => {
+  const candidates = [];
+  scanUnescapedOutput('client/src/Comment.jsx', "function Comment({ body }) { return <div dangerouslySetInnerHTML={{ __html: body }} />; }", candidates);
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'unescaped-output');
+});
+
+test('scanUnescapedOutput: does not flag dangerouslySetInnerHTML with a DOMPurify sanitizer nearby', () => {
+  const candidates = [];
+  scanUnescapedOutput('client/src/Comment.jsx', "const clean = DOMPurify.sanitize(body); function Comment() { return <div dangerouslySetInnerHTML={{ __html: clean }} />; }", candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+test('AC (#2668): a vulnerable unescaped-output fixture is flagged and a mitigated one is not', () => {
+  const vulnRoot = tmpGitRepo();
+  write(vulnRoot, 'client/src/Comment.jsx', `
+export function Comment({ body }) {
+  return <div dangerouslySetInnerHTML={{ __html: body }} />;
+}
+`);
+  const vulnResult = scanSecurityHardening(vulnRoot);
+  assert.ok(new Set(vulnResult.candidates.map((c) => c.kind)).has('unescaped-output'), 'expected an unescaped-output finding');
+
+  const cleanRoot = tmpGitRepo();
+  write(cleanRoot, 'client/src/Comment.jsx', `
+import DOMPurify from 'dompurify';
+export function Comment({ body }) {
+  const clean = DOMPurify.sanitize(body);
+  return <div dangerouslySetInnerHTML={{ __html: clean }} />;
+}
+`);
+  const cleanResult = scanSecurityHardening(cleanRoot);
+  assert.ok(!new Set(cleanResult.candidates.map((c) => c.kind)).has('unescaped-output'), 'sanitized output must not be flagged');
+});
+
+// ── #2668: unrestricted-upload (no type/size-limit guard on an upload handler) ─
+
+test('scanUnrestrictedUpload: flags a multer handler with no type/size-limit signal nearby', () => {
+  const candidates = [];
+  scanUnrestrictedUpload('server/routes/uploads.js', "const upload = multer({ dest: 'uploads/' });", candidates);
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'unrestricted-upload');
+});
+
+test('scanUnrestrictedUpload: does not flag a multer handler with a fileFilter and limits nearby', () => {
+  const candidates = [];
+  scanUnrestrictedUpload('server/routes/uploads.js', "const upload = multer({ dest: 'uploads/', fileFilter, limits: { fileSize: 1024 * 1024 } });", candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+test('AC (#2668): a vulnerable unrestricted-upload fixture is flagged and a mitigated one is not', () => {
+  const vulnRoot = tmpGitRepo();
+  write(vulnRoot, 'server/routes/uploads.js', `
+const multer = require('multer');
+const upload = multer({ dest: 'uploads/' });
+router.post('/upload', upload.single('file'), (req, res) => res.sendStatus(200));
+`);
+  const vulnResult = scanSecurityHardening(vulnRoot);
+  assert.ok(new Set(vulnResult.candidates.map((c) => c.kind)).has('unrestricted-upload'), 'expected an unrestricted-upload finding');
+
+  const cleanRoot = tmpGitRepo();
+  write(cleanRoot, 'server/routes/uploads.js', `
+const multer = require('multer');
+const upload = multer({
+  dest: 'uploads/',
+  fileFilter: (req, file, cb) => cb(null, allowedExtensions.includes(extname(file.originalname))),
+  limits: { fileSize: 2 * 1024 * 1024 },
+});
+router.post('/upload', upload.single('file'), (req, res) => res.sendStatus(200));
+`);
+  const cleanResult = scanSecurityHardening(cleanRoot);
+  assert.ok(!new Set(cleanResult.candidates.map((c) => c.kind)).has('unrestricted-upload'), 'validated upload must not be flagged');
+});
+
+// ── #2668: unverified-webhook (no signature-verification signal on a webhook route) ─
+
+test('scanUnverifiedWebhook: flags a webhook-named-file route handler with no signature-verification signal nearby', () => {
+  const candidates = [];
+  scanUnverifiedWebhook('server/routes/webhooks/stripe.js', "router.post('/webhooks/stripe', async (req, res) => { const event = req.body; res.sendStatus(200); });", candidates);
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'unverified-webhook');
+});
+
+test('scanUnverifiedWebhook: does not flag a webhook handler with constructEvent signature verification nearby', () => {
+  const candidates = [];
+  scanUnverifiedWebhook('server/routes/webhooks/stripe.js', "router.post('/webhooks/stripe', async (req, res) => { const event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], secret); res.sendStatus(200); });", candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+test('scanUnverifiedWebhook: does not scan a file outside any recognized webhook path', () => {
+  const candidates = [];
+  scanUnverifiedWebhook('server/routes/orders.js', "router.post('/orders', async (req, res) => { res.sendStatus(200); });", candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+test('AC (#2668): a vulnerable unverified-webhook fixture is flagged and a mitigated one is not', () => {
+  const vulnRoot = tmpGitRepo();
+  write(vulnRoot, 'server/routes/webhooks/stripe.js', `
+const router = require('express').Router();
+router.post('/webhooks/stripe', async (req, res) => {
+  const event = req.body;
+  if (event.type === 'payment_intent.succeeded') {
+    await markOrderPaid(event.data.object.id);
+  }
+  res.sendStatus(200);
+});
+module.exports = router;
+`);
+  const vulnResult = scanSecurityHardening(vulnRoot);
+  assert.ok(new Set(vulnResult.candidates.map((c) => c.kind)).has('unverified-webhook'), 'expected an unverified-webhook finding');
+
+  const cleanRoot = tmpGitRepo();
+  write(cleanRoot, 'server/routes/webhooks/stripe.js', `
+const router = require('express').Router();
+router.post('/webhooks/stripe', async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    return res.sendStatus(400);
+  }
+  if (event.type === 'payment_intent.succeeded') {
+    await markOrderPaid(event.data.object.id);
+  }
+  res.sendStatus(200);
+});
+module.exports = router;
+`);
+  const cleanResult = scanSecurityHardening(cleanRoot);
+  assert.ok(!new Set(cleanResult.candidates.map((c) => c.kind)).has('unverified-webhook'), 'signature-verified webhook must not be flagged');
 });
 
 // ── Discovery-failure passthrough (IL-115 shape, matches sibling verticals) ─

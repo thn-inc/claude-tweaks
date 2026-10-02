@@ -2,26 +2,32 @@
 
 // candidates-security-hardening.js — deterministic pre-launch security
 // hardening candidate generator for code-health's `focus=security-hardening`
-// scoping mode (see skills/code-health/focus-mode.md). Flags four AI-app
+// scoping mode (see skills/code-health/focus-mode.md). Flags seven AI-app
 // failure patterns: the original three (#2624) — (a) secret-shaped literals
 // in client-side source, (b) user-data routes/handlers with no visible
 // per-user ownership predicate nearby, (c) AI-model-calling routes/handlers
-// with no visible auth/rate-limit/spend-guard signal nearby — plus a fourth
+// with no visible auth/rate-limit/spend-guard signal nearby — a fourth
 // (#2751): (d) agent/tool identity and delegation-audit gaps — a credential
 // or token identifier reused verbatim across distinct call sites that look
 // like separate callers/agents (no per-caller scoping), or a delegation call
 // (one agent/tool invoking another) with no accompanying log/trace/audit
-// signal nearby. Candidates are INPUT to the judge (skills/code-health/
-// SKILL.md Step 5) — this generator never concludes anything on its own,
-// never fixes anything.
+// signal nearby — plus three more (#2668): (e) raw-HTML output sinks
+// (dangerouslySetInnerHTML, innerHTML =, v-html, Blade {!! !!}, a `| safe`
+// filter) with no sanitizer signal nearby, (f) upload middleware/handlers
+// (multer, formidable, busboy, request.files, UploadFile) with no
+// type/size-limit signal nearby, (g) webhook route files with no
+// signature-verification signal nearby. Candidates are INPUT to the judge
+// (skills/code-health/SKILL.md Step 5) — this generator never concludes
+// anything on its own, never fixes anything.
 //
 // Scope boundary vs. sibling records (deliverable 5 of #2624, extended by
-// #2751 to admit the fourth check above): this vertical owns exactly the
-// four checks above. #2622's pre-scale hardening (query/background-job/
-// caching/pooling/monitoring) and #2625's GDPR/backup-retention check are
-// out of scope here — no overlapping category is claimed by more than one
-// of the four. See `criteria-security-hardening.md` for the judging side of
-// this same boundary statement.
+// #2751 to admit the fourth check above and by #2668 to admit checks
+// (e)-(g)): this vertical owns exactly the seven checks above. #2622's
+// pre-scale hardening (query/background-job/caching/pooling/monitoring) and
+// #2625's GDPR/backup-retention check are out of scope here — no
+// overlapping category is claimed by more than one of the seven. See
+// `criteria-security-hardening.md` for the judging side of this same
+// boundary statement.
 //
 // Coverage (stated explicitly, never implied total — IL-110):
 //   - JS/TS files only (reuses candidates-dead-code.js's
@@ -65,6 +71,29 @@
 //     only the apparent *absence* of an audit trail, never proof one is
 //     missing at a layer the generator doesn't scan (a wrapping middleware,
 //     a centralized logger call elsewhere in the module).
+//   - Unescaped-output/XSS sink detection (check (e), #2668) is
+//     pattern-based across several templating conventions
+//     (UNESCAPED_OUTPUT_SINK_PATTERNS) — but since this generator only
+//     scans JS/TS-extension files (SOURCE_EXTS, in candidates-dead-code.js),
+//     a Vue `.vue` single-file component, a Laravel `.blade.php` view, or a
+//     Jinja/Django/Nunjucks `.html`/`.jinja2` template is invisible to this
+//     check entirely; only an occurrence of one of these sink shapes
+//     written inside a `.js`/`.ts`/`.jsx`/`.tsx` file is visible. No
+//     directory restriction is applied — a sink can appear in any scanned
+//     file.
+//   - Unrestricted-upload detection (check (f), #2668) is pattern-based
+//     (UPLOAD_HANDLER_PATTERNS) with no directory restriction — a
+//     type/size-limit guard (UPLOAD_GUARD_SIGNAL_RE) expressed outside the
+//     text window, or enforced at a reverse-proxy/API-gateway layer the
+//     generator never reads, is indistinguishable from a guard that's
+//     genuinely absent.
+//   - Unverified-webhook detection (check (g), #2668) is gated on a path
+//     heuristic (WEBHOOK_FILE_RE: the file or a parent directory must name
+//     itself "webhook"/"webhooks") — a webhook handler living in a file or
+//     directory that doesn't name itself that way is invisible to this
+//     check; a signature-verification call (WEBHOOK_VERIFY_SIGNAL_RE)
+//     performed in a shared middleware or verifier utility outside the text
+//     window reads as absent.
 
 const fs = require('fs');
 const path = require('path');
@@ -128,6 +157,42 @@ const DELEGATION_CALL_PATTERNS = [
 ];
 
 const DELEGATION_AUDIT_SIGNAL_RE = /(\blog\b|logger|\btrace\b|\baudit\b|\brecord\(|emit\(|console\.(log|info|warn|error))/i;
+
+// Fifth check (#2668): XSS via unescaped output. Raw-HTML sinks across
+// several framework conventions — stack-agnostic by design (Gotchas,
+// #2668) rather than one vendor's API.
+const UNESCAPED_OUTPUT_SINK_PATTERNS = [
+  /\bdangerouslySetInnerHTML\b/i, // React
+  /\.innerHTML\s*=(?!=)/, // vanilla DOM assignment (not ==/===)
+  /\bv-html\b/i, // Vue
+  /\{!!.*?!!\}/, // Laravel Blade unescaped-output directive
+  /\|\s*safe\b/i, // Jinja2/Django/Nunjucks "| safe" filter
+];
+
+const SANITIZER_SIGNAL_RE = /(DOMPurify|sanitize-html|sanitizeHtml|sanitize\(|escapeHtml|encodeHTML|he\.encode|xss\(|striptags|escapeHTML|\bpurify\()/i;
+
+// Sixth check (#2668): unrestricted file uploads. Upload middleware/handler
+// shapes across several frameworks.
+const UPLOAD_HANDLER_PATTERNS = [
+  /\bmulter\s*\(/i,
+  /\bformidable\s*\(/i,
+  /\bbusboy\s*\(/i,
+  /\brequest\.files\b/i,
+  /\breq\.files\b/i,
+  /\bUploadFile\b/,
+];
+
+const UPLOAD_GUARD_SIGNAL_RE = /(fileFilter|mimetype|mime[_-]?type|allowed[_-]?(?:types|extensions|mimetypes)|file[_-]?size|maxFileSize|limits\s*:|\.size\s*[<>]|content[-_]?type\s*===|extname\(|allowedExtensions)/i;
+
+// Seventh check (#2668): unverified payment/webhook callbacks. Gated on a
+// path heuristic (a webhook route file names itself that way) rather than a
+// directory-name heuristic like ROUTE_DIR_RE, since webhook endpoints are
+// usually distinguished by name, not by living under routes?/api/ alone.
+const WEBHOOK_FILE_RE = /(^|\/)[\w.-]*webhooks?[\w.-]*(\/|$)/i;
+
+const WEBHOOK_HANDLER_SIGNAL_RE = /(\.(?:post|put|all)\(|router\.(?:post|put)\(|exports\.handler\s*=|module\.exports\s*=|export\s+(?:default|const\s+handler)|functions\.https\.onRequest\()/i;
+
+const WEBHOOK_VERIFY_SIGNAL_RE = /(constructEvent|verifySignature|verifyWebhookSignature|timingSafeEqual|createHmac|stripe-signature|x-hub-signature|svix-signature|[\w-]*-signature['"`]|signature\s*header)/i;
 
 const WINDOW = 400; // chars, each direction, for co-occurrence checks
 
@@ -271,6 +336,67 @@ function scanUnauditedDelegation(rel, text, candidates) {
   }
 }
 
+function scanUnescapedOutput(rel, text, candidates) {
+  for (const pat of UNESCAPED_OUTPUT_SINK_PATTERNS) {
+    const flags = pat.flags.includes('g') ? pat.flags : `${pat.flags}g`;
+    const re = new RegExp(pat.source, flags);
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      const win = windowAround(text, m.index, m[0].length);
+      if (!SANITIZER_SIGNAL_RE.test(win)) {
+        const line = lineOf(text, m.index);
+        candidates.push({
+          file: rel,
+          kind: 'unescaped-output',
+          evidence: `raw-HTML output sink at ${rel}:${line} has no sanitizer signal within ${WINDOW} chars`,
+        });
+      }
+      if (m.index === re.lastIndex) re.lastIndex += 1;
+    }
+  }
+}
+
+function scanUnrestrictedUpload(rel, text, candidates) {
+  for (const pat of UPLOAD_HANDLER_PATTERNS) {
+    const flags = pat.flags.includes('g') ? pat.flags : `${pat.flags}g`;
+    const re = new RegExp(pat.source, flags);
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      const win = windowAround(text, m.index, m[0].length);
+      if (!UPLOAD_GUARD_SIGNAL_RE.test(win)) {
+        const line = lineOf(text, m.index);
+        candidates.push({
+          file: rel,
+          kind: 'unrestricted-upload',
+          evidence: `upload handler at ${rel}:${line} has no type/size-limit signal within ${WINDOW} chars`,
+        });
+      }
+      if (m.index === re.lastIndex) re.lastIndex += 1;
+    }
+  }
+}
+
+function scanUnverifiedWebhook(rel, text, candidates) {
+  if (!WEBHOOK_FILE_RE.test(rel)) return;
+  const re = new RegExp(WEBHOOK_HANDLER_SIGNAL_RE.source, 'gi');
+  re.lastIndex = 0;
+  let m;
+  while ((m = re.exec(text))) {
+    const win = windowAround(text, m.index, m[0].length);
+    if (!WEBHOOK_VERIFY_SIGNAL_RE.test(win)) {
+      const line = lineOf(text, m.index);
+      candidates.push({
+        file: rel,
+        kind: 'unverified-webhook',
+        evidence: `webhook handler at ${rel}:${line} has no signature-verification signal within ${WINDOW} chars`,
+      });
+    }
+    if (m.index === re.lastIndex) re.lastIndex += 1;
+  }
+}
+
 // The rich-shape scan — registered under 'security-hardening' in
 // FOCUS_GENERATORS. No policy config (unlike experiment-cleanup); every
 // pattern here is a shipped default, not project-configurable, since these
@@ -308,6 +434,9 @@ function scanSecurityHardening(rootDir) {
     scanUnguardedAiEndpoint(rel, text, candidates);
     scanSharedAgentIdentity(rel, text, candidates);
     scanUnauditedDelegation(rel, text, candidates);
+    scanUnescapedOutput(rel, text, candidates);
+    scanUnrestrictedUpload(rel, text, candidates);
+    scanUnverifiedWebhook(rel, text, candidates);
   }
 
   candidates.sort((a, b) => (a.file === b.file ? a.evidence.localeCompare(b.evidence) : a.file.localeCompare(b.file)));
@@ -337,6 +466,9 @@ module.exports = {
   scanUnguardedAiEndpoint,
   scanSharedAgentIdentity,
   scanUnauditedDelegation,
+  scanUnescapedOutput,
+  scanUnrestrictedUpload,
+  scanUnverifiedWebhook,
   SECRET_PATTERNS,
   CLIENT_DIR_RE,
   SERVER_DIR_RE,
@@ -345,4 +477,5 @@ module.exports = {
   CREDENTIAL_NAME_RE,
   AGENT_CALLEE_RE,
   DELEGATION_AUDIT_SIGNAL_RE,
+  WEBHOOK_FILE_RE,
 };
