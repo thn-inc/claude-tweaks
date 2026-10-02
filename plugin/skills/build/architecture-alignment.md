@@ -45,7 +45,7 @@ After resolution, apply each row's classification per the table above. "Benefici
 
 ## In `auto` mode
 
-Apply the `Architecture alignment (/build Common Step 4.5)` row from the silences table in `_shared/auto-mode-contract.md`. Stage non-AUTO rows to `staged/build-deviation-{N}.md` and surface them at the Wrap-Up Review Console. Log every auto-applied and staged row to the auto-decision log per the standard skill-integration pattern.
+Apply the `Architecture alignment (/build Common Step 4.5)` row from the silences table in `_shared/auto-mode-contract.md`. Stage non-AUTO rows via `bin/stage-item.js --run "$PIPELINE_RUN_DIR" --id "build-deviation-{N}" --file {path} --allocate` and surface them at the Wrap-Up Review Console — `--allocate` is required here: `{N}` is a per-invocation counter (starts at 1 for this run's own findings), not a stable key, so a later invocation in the same run dir must never silently clobber an earlier one's `build-deviation-{N}.md` (#2770) — a collision reallocates to the next free `build-deviation-{N}` instead. Log every auto-applied and staged row to the auto-decision log per the standard skill-integration pattern.
 
 ## Skip this step if
 

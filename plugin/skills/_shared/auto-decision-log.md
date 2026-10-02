@@ -210,6 +210,15 @@ that every existing `staged/` writer already goes through this CLI; several pre-
 `test/SKILL.md`'s `test-fix-*.patch`, `reflect/SKILL.md`'s `reflect-*.md`) and migrate on their own
 schedule.
 
+By default `<n>` is the caller's own responsibility and a collision silently overwrites — correct
+when `<n>` is a stable identity key (e.g. materialize.js's `premise-satisfied-{issueNumber}`, where
+re-staging the same issue is an intentional update). Pass `--allocate` when `<n>` is instead a
+per-invocation counter that a sibling invocation in the same run dir could independently compute
+too (#2770: `build/architecture-alignment.md`'s `build-deviation-{N}` restarted at 1 per
+invocation and a second invocation clobbered the first's findings) — a collision then reallocates
+to the next free `{kind}-{n}` in that run dir's `staged/` instead of clobbering. See
+`bin/lib/stage-item/write.js`'s `writeStagedItem` for the full contract.
+
 **Regardless of worktree state.** `bin/log-decision.js` (above) is the sole append path for `decisions.md` — unconditional, regardless of whether the session sits in a worktree or the main checkout. The run directory is always anchored to the main checkout (`_shared/pipeline-run-dir.md`'s Anchoring section); a worktree session's `Edit`/`Write`/heredoc/redirect attempts against a file under it are refused by the harness regardless of whether a worktree exists for this run — worktree existence was never the deciding factor, and there is no separate append shape for the worktree case.
 
 ## Reading the log (for /wrap-up Review Console)
