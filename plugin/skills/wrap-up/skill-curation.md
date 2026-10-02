@@ -53,6 +53,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/harness-health.js" validate-findings <findings-f
 
 An empty findings array is valid here — it still records `lastAuditedSha`/`lastAuditedMs` for that skill.
 
+**This call is local-only by default (#2545)** — it records the cursor on a local-only branch in this checkout and never touches the network, so a judge calling it once per analyzed skill performs zero remote pushes regardless of how many skills this row covers. This judge never pushes `health-state` itself — doing so would be the one remote-write side effect the row's no-mutation contract (`curation-engine.md`'s fan-out rule) exists to rule out. Publishing the accumulated cursor state is **controller-side, not judge-side**: at row end — immediately after this row's judge returns its payload to `record` (`curation-engine.md` section 2/3), before the next row's judge runs — the controller runs `node "${CLAUDE_PLUGIN_ROOT}/bin/harness-health.js" push-cursor --root .` exactly once, shipping every skill's locally-recorded cursor from this row in a single push.
+
 ## 7.6: Stage or Present
 
 **Staging (every mode — Phase 1 guarantees a run directory):**

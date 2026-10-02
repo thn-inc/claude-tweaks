@@ -4,7 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const { fingerprint } = require('./lib/harness-health/fingerprint');
 const {
-  readCache, writeCache, readDurableState, writeDurableState, buildValidateFindingsUpdate,
+  readCache, writeCache, readDurableState, writeDurableState,
+  writeDurableStateLocal, pushDurableState, buildValidateFindingsUpdate,
 } = require('./lib/harness-health/cache');
 const { computeChurn } = require('./lib/health-core/runs');
 const { makeRetryQueueCommands } = require('./lib/health-core/retry-cli');
@@ -312,7 +313,11 @@ function cmdValidateFindings(args) {
       rememberCandidates: remembered.map((f) => ({ id: f.id, confidence: f.confidence })),
       wontfixSuppressed,
     };
-    const result = writeDurableState(root, (current) => buildValidateFindingsUpdate(current, mutatorInput));
+    // #2545: local-only by default — a fan-out Skills curation judge calling
+    // this once per analysed skill must not push to the remote health-state
+    // ref as a side effect of a read/judge step. Accumulates on this
+    // namespace's own local branch; `push-cursor` ships it in one push.
+    const result = writeDurableStateLocal(root, (current) => buildValidateFindingsUpdate(current, mutatorInput));
     if (!result.ok) {
       process.stderr.write(`[harness-health] validate-findings: health-state persistence failed after retries: ${result.error}\n`);
     }
@@ -325,11 +330,28 @@ function cmdValidateFindings(args) {
   );
 }
 
+// #2545: ships every cursor/run-record `validate-findings` has accumulated
+// locally (writeDurableStateLocal) to the remote health-state ref in one
+// push — the controller-side counterpart a Skills curation row calls exactly
+// once, after its per-skill validate-findings calls are done, instead of
+// each of those calls pushing on its own.
+function cmdPushCursor(args) {
+  const root = path.resolve(args.root || process.cwd());
+  const result = pushDurableState(root);
+  if (!result.ok) {
+    process.stderr.write(`[harness-health] push-cursor: health-state push failed after retries: ${result.error}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  process.stdout.write(JSON.stringify({ pushed: result.pushed }, null, 2) + '\n');
+}
+
 function main(argv) {
   const args = parseArgs(argv);
   const cmd = args._[0];
   if (cmd === 'next-target') return cmdNextTarget(args);
   if (cmd === 'validate-findings') return cmdValidateFindings(args);
+  if (cmd === 'push-cursor') return cmdPushCursor(args);
   if (cmd === 'churn-report') { const code = cmdChurnReport(args); if (code) process.exitCode = code; return; }
   if (cmd === 'mark') { const code = cmdMark(args); if (code) process.exitCode = code; return; }
   if (cmd === 'status') return cmdStatus(args);
@@ -349,6 +371,8 @@ function main(argv) {
     'usage: harness-health.js <command> [options]\n' +
     'commands: next-target [--target <id>] [--kind <skill|rule|claude-md|design-artifact|memory>] [--memory-dir <path>] [--budget <n>] [--force-gap-scan], ' +
     'validate-findings <file> [--target <id>] [--kind <skill|rule|claude-md|design-artifact|memory>] [--memory-dir <path>] [--gap-scan] [--min-confidence <low|med|high>], ' +
+    '(validate-findings records the health-state cursor locally only — run push-cursor once to publish it), ' +
+    'push-cursor [--root <dir>], ' +
     'churn-report [--fail-on-high-churn <r>], mark <fingerprint> <declined>, status, ' +
     'retry-queue drain, retry-queue update <results.json>\n',
   );
@@ -358,5 +382,5 @@ function main(argv) {
 if (require.main === module) main(process.argv.slice(2));
 
 module.exports = {
-  parseArgs, cmdNextTarget, cmdValidateFindings, cmdChurnReport, cmdMark, cmdStatus, CONFIDENCE_RANK, main,
+  parseArgs, cmdNextTarget, cmdValidateFindings, cmdPushCursor, cmdChurnReport, cmdMark, cmdStatus, CONFIDENCE_RANK, main,
 };
