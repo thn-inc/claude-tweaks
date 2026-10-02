@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-02T14:05:18.123Z",
+  "computedAt": "2026-10-02T14:46:15.097Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -431,11 +431,6 @@
       {
         "number": 2628,
         "updatedAt": "2026-10-01T16:10:14Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2582,
-        "updatedAt": "2026-10-01T16:15:43Z",
         "state": "OPEN"
       },
       {
@@ -4810,84 +4805,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Overview\n\n`pr-first` projects (this repo, post-#2259 migration) run release-please,\nwhich has no knowledge of this repo's custom `Release-Note:` trailer and will\nnot render it anywhere. This sub-issue adds a new step, triggered on\n`release: published` (the same event #2259's forthcoming\n`mirror-marketplace.yml` uses), that walks the just-published commit range,\nextracts every `Release-Note:` trailer, renders them with the shared\n`release-notes.js` module (the sibling local-merge sub-issue's deliverable),\nand applies the rendered block to both the already-published GitHub Release\nbody and a follow-up commit appending the same block into CHANGELOG.md's\njust-written entry for that version.\n\nThis design deliberately runs **after** publish, against the final merged\ncommit range, rather than editing release-please's own PR branch mid-flight —\nediting that branch would depend on undocumented release-please internal\nbehavior (untested, and this design makes no claim about whether such an\nedit would survive into the eventual published release body). Running\npost-publish means the only dependencies are `git log` and the `gh` CLI, both\nalready used elsewhere in this repo's tooling.\n\n**This sub-issue is externally blocked on #2259.** #2259 has not yet\nintroduced the `release: published` workflow trigger (or\n`mirror-marketplace.yml`) this sub-issue attaches to — do not start this\nsub-issue's build until #2259 has landed and that trigger/file actually\nexists in the checkout.\n\n**Complexity:** Medium\n**Estimated tasks:** 8\n\n## Non-Goals\n\n- Depending on or editing release-please's own PR branch mid-flight — this\n  design explicitly rejects that approach (see Overview) because it is\n  undocumented, untested behavior with no guarantee an edit there survives\n  into the published release body.\n- Grouping the rendered list under type-derived headings — same non-goal as\n  the local-merge sub-issue; this step reuses `renderReleaseNotes` unchanged,\n  it does not re-implement or extend its rendering logic.\n- Running this step, or any variant of it, as a live release-engine test.\n  Per this repo's own convention against invoking a live release engine as a\n  test, the fixture test for this sub-issue runs against a fixture repo,\n  never a real GitHub release.\n- Deciding definitively whether the new step lives inside #2259's\n  `mirror-marketplace.yml` or a sibling workflow file — the design doc\n  leaves this an open item for the implementation to resolve once #2259's\n  actual file layout exists (see Gotchas).\n\n## Current State\n\n- release-please: this repo does not yet run it — #2259 is the migration\n  that introduces it, and `.github/workflows/mirror-marketplace.yml` (the\n  `release: published`-triggered workflow this sub-issue's step attaches to)\n  does not exist in this checkout yet. Verify #2259 has actually landed and\n  that file (or its equivalent) actually exists before starting this\n  sub-issue's build — do not assume the design doc's description of it is\n  current.\n- Rendering: `plugin/bin/lib/release-notes.js`'s `renderReleaseNotes(commits)`\n  (the local-merge sub-issue's deliverable) is the shared pure function this\n  step must reuse, not duplicate.\n- Footer extraction: `plugin/bin/lib/release-local/commits.js`'s\n  `Release-Note: ?(.*)` regex (the local-merge sub-issue's deliverable) is\n  the extraction pattern this step must reuse — same regex shape, applied to\n  `git log --first-parent` output instead of the local-merge engine's\n  already-parsed commit objects.\n- GitHub Release editing and CHANGELOG commits both already happen\n  elsewhere in this repo's tooling via `gh` and `git`, but no existing module\n  performs the specific \"walk range → extract → render → dual-apply\" flow\n  this sub-issue introduces.\n\n## Deliverables\n\n- [ ] Confirm #2259 has landed and identify its actual `release: published`\n      trigger file (`.github/workflows/mirror-marketplace.yml` or whatever\n      it turned out to be named) — this is a blocking precondition, not\n      optional context-gathering; do not proceed past this point until\n      confirmed.\n- [ ] Add a new step to that workflow (or a new sibling workflow file\n      triggered on the same `release: published` event — pick based on\n      #2259's actual file layout, since the design doc explicitly defers\n      this call). Resolve the previous/new tag pair via\n      `gh release list --json tagName,publishedAt --limit 2` run at step\n      time: the two most-recently-published releases, ordered by\n      `publishedAt`, are the just-published one (newest) and the previous\n      one (second-newest) — this anchors to actual publish order rather\n      than a semver or chronological-tag-creation guess. When the call\n      returns fewer than 2 releases (this is the first-ever published\n      release), treat the step as a no-op on both write targets — the same\n      no-op path as \"zero `Release-Note:` trailers found,\" not an error.\n- [ ] Once a previous/new tag pair resolves, walk first-parent commits\n      between them via `git log --first-parent {previous}..{new}`, extract\n      `Release-Note:` footers using the `RELEASE_NOTE_FOOTER_RE` constant\n      imported from `plugin/bin/lib/release-notes.js` (the sibling\n      local-merge sub-issue's export — never a second hand-typed copy of\n      the pattern), and render the result via that same module's\n      `renderReleaseNotes` (reused, not duplicated).\n- [ ] Create the script module implementing the commit-range-walk →\n      extract → render logic above (e.g.\n      `plugin/bin/lib/release-notes-publish.js` or an equivalent name —\n      implementation's call), taking the previous/new tag pair and returning\n      the rendered block (or `null` when no commit in range carries a\n      `Release-Note:` footer, or when the first-release no-op above\n      applies).\n- [ ] Apply the rendered block to the already-published GitHub Release body\n      by fetching the current body first (`gh release view <tag> --json\n      body -q .body`), checking whether it already contains the exact\n      rendered block (idempotency guard — see below), and, when it doesn't,\n      concatenating `\\n\\n### Highlights\\n{rendered block}` onto the fetched\n      body and writing it back via `gh release edit <tag> --notes-file -`\n      (or the equivalent API call) — append via read-then-concatenate-\n      then-write, never a bare `--notes` call that would replace the\n      release-please-generated body outright. The heading text\n      (`### Highlights`) matches the local-merge sub-issue's own pinned\n      heading.\n- [ ] Apply the same rendered block to CHANGELOG.md via a small follow-up\n      commit: locate the just-written entry for this version as the\n      content between the first `## ` heading in CHANGELOG.md and the next\n      `## ` heading (or end of file) — release-please always prepends its\n      newest entry at the top, so this is always the first entry at the\n      time this step runs — check whether that entry already contains the\n      exact rendered block (the same idempotency guard as the Release body\n      above), and when it doesn't, append `\\n\\n### Highlights\\n{rendered\n      block}` to the end of that entry and commit the change. Commit using\n      the workflow's own `GITHUB_TOKEN` — the same credential class\n      release-please's own bot already uses to land its Release PR's merge\n      commit directly on the default branch; this follow-up commit is the\n      same class of automated, non-human-reviewed maintenance commit, not a\n      new precedent for this repo.\n- [ ] Add a fixture test exercising the full commit-range-walk → render →\n      dual-apply flow against a fixture repo (never a live release) —\n      covering: a range with `Release-Note:` trailers present, a range with\n      none (a true no-op on both targets), a first-release case (fewer\n      than 2 published releases — a no-op), and a re-run of the same tag\n      pair (the idempotency guard must skip re-applying to a target that\n      already contains the rendered block, on both targets independently).\n\n## Acceptance Criteria\n\n1. Given a fixture commit range containing one or more `Release-Note:`\n   trailers, the new script module renders the correct block (identical to\n   what `renderReleaseNotes` would produce over the equivalent parsed-commit\n   array), fetches each target's current content first, and appends\n   `### Highlights\\n{block}` to both the fixture GitHub Release body and\n   the fixture CHANGELOG.md entry (never replacing existing content).\n2. Given a fixture commit range with zero `Release-Note:` trailers, the step\n   is a no-op on both targets — no empty block, no error, no CHANGELOG\n   commit created, no `gh release edit` call made.\n3. Given a fixture `gh release list` response with fewer than 2 published\n   releases (first-ever release), the step is a no-op on both targets,\n   identical to the zero-trailers case — no previous tag is resolved and no\n   commit-range walk is attempted.\n4. Given a fixture Release body or CHANGELOG entry that **already contains**\n   the exact rendered block (simulating a retried or re-fired\n   `release: published` event), the step skips re-applying to that target —\n   verified independently for each of the two targets, so a re-run applies\n   to neither, one, or both depending on which already carry the block.\n5. The fixture test exercising the cases above runs entirely against a\n   fixture repo (a local git repo and mocked/fixture `gh` responses, or\n   equivalent) and never invokes a live GitHub release or a live `gh\n   release edit`/`git push` against this repo or any real repo.\n6. The commit-range walk uses `git log --first-parent {previous}..{new}`\n   (not a plain `git log`, which would include merge-commit-internal\n   history the first-parent walk is meant to exclude) between the tag pair\n   resolved from `gh release list`'s two most-recently-published entries.\n7. The `Release-Note:` extraction in the new script module imports\n   `RELEASE_NOTE_FOOTER_RE` from `plugin/bin/lib/release-notes.js` rather\n   than declaring a second copy of the pattern — verified by a grep/code\n   check that no second `Release-Note:`-matching regex literal exists in\n   the new module.\n8. The new script module imports and calls\n   `plugin/bin/lib/release-notes.js`'s `renderReleaseNotes` rather than\n   reimplementing its filter/map/join logic inline — verified by a code\n   review / grep check that no second flat-list-rendering implementation\n   exists in the new module.\n9. The CHANGELOG.md entry-location logic identifies \"the just-written\n   entry\" as the content between the first `## ` heading and the next\n   `## ` heading (or end of file) — verified by a fixture CHANGELOG.md with\n   at least two version entries, confirming the block lands in the first\n   one only.\n\n## Release Note\n\nPublished release notes automatically after each release goes out.\n\n## Technical Approach\n\nThis step is intentionally the mirror image of the local-merge sub-issue's\nwiring, applied to a different data source (a `git log --first-parent` walk\nover a tag range, rather than already-parsed local-merge commit objects) and\na different pair of write targets (a published GitHub Release body plus a\nfollow-up CHANGELOG.md commit, rather than an in-memory CHANGELOG render).\nReusing `renderReleaseNotes` unchanged, rather than re-deriving rendering\nlogic here, is the point of extracting it into its own shared module in the\nlocal-merge sub-issue.\n\n### Key Files\n\n- A new or extended workflow step — either inside #2259's\n  `.github/workflows/mirror-marketplace.yml` or a new sibling workflow file,\n  both triggered on `release: published` (implementation's call, once\n  #2259's actual file layout exists).\n- A new script module (e.g. `plugin/bin/lib/release-notes-publish.js`) —\n  implementation's call on exact naming — implementing the commit-range-walk\n  → extract → render → dual-apply flow.\n- `plugin/bin/lib/release-notes.js` — reused from the local-merge sub-issue,\n  not duplicated.\n- A new fixture test (e.g.\n  `tests/bin-lib/release-notes-publish.test.js`) exercising the full flow\n  against a fixture repo.\n\n## Gotchas\n\n- **Externally blocked on #2259.** The `release: published` trigger this\n  sub-issue attaches to does not exist in this repo until #2259 lands — do\n  not assume `.github/workflows/mirror-marketplace.yml` exists; verify it\n  (or whatever #2259 actually shipped) before starting. Once #2259's actual\n  file layout is known and this step's home file is chosen, record that\n  decision back into this sub-issue's own `## Key Files` list (edit this\n  record) rather than leaving the choice undocumented in git history alone.\n- Never invoke a live release engine as a test — this repo's own existing\n  convention (cited directly in the design doc's Testing section). The\n  fixture test for this sub-issue must run entirely against fixture/mocked\n  state.\n- Reuse `plugin/bin/lib/release-notes.js`'s `renderReleaseNotes` **and**\n  `RELEASE_NOTE_FOOTER_RE` unchanged — do not reimplement either in the new\n  script module, even partially.\n- `gh release edit` replaces the entire release body — there is no native\n  \"append\" operation. The fetch-current-body-then-concatenate-then-write\n  sequence in the Deliverables above is mandatory, not optional; a bare\n  `gh release edit <tag> --notes \"...\"` call would silently destroy the\n  release-please-generated body.\n- **Idempotency matters because both write targets are appends, not\n  replaces.** A retried or manually re-triggered `release: published` event\n  must not double-append the same block — the containment check in the\n  Deliverables above (skip a target that already has the exact rendered\n  block) is what makes a re-run safe, independently per target.\n- The follow-up CHANGELOG.md commit lands directly on the default branch\n  using the workflow's own `GITHUB_TOKEN`, the same credential class\n  release-please's own bot commit already uses — this is not a new\n  precedent for direct-to-main automation in this repo.\n- This sub-issue is blocked by both sibling sub-issues: the authoring\n  contract (Unit 1, defines the `Release-Note:` trailer format) and the\n  local-merge rendering unit (Unit 2, provides the shared\n  `plugin/bin/lib/release-notes.js` module — both the renderer and the\n  exported regex constant — this step reuses) — build order is Unit 1,\n  then Unit 2, then this one, and only once #2259 has also landed.\n\n\n<!-- work-fingerprint: release-notes-design:release-notes-pr-first-post-publish-step -->\nwork-fingerprint: release-notes-design:release-notes-pr-first-post-publish-step",
-        "createdAt": "2026-09-18T05:29:24Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          }
-        ],
-        "number": 2582,
-        "state": "OPEN",
-        "title": "Release notes: pr-first post-publish step",
-        "updatedAt": "2026-10-01T16:15:43Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
         }
       }
     ],
