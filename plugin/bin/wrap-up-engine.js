@@ -30,10 +30,17 @@ const path = require('node:path');
 
 const wtDetect = require('./lib/hooks/worktree-detect');
 
+// The plugin payload root — the directory with `skills/` directly beneath it
+// (this repo: `plugin/`; an installed consumer: `${CLAUDE_PLUGIN_ROOT}`).
+// Resolved from this script's own location, never from `process.cwd()`, so
+// `render --section procedure:<name>` finds the real skill files regardless
+// of which directory it's invoked from (#2546).
+const PLUGIN_ROOT = path.join(__dirname, '..');
+
 const { gatherFacts } = require('./lib/wrap-up/facts');
 const { buildWorklist } = require('./lib/wrap-up/engine-plan');
 const { initState, recordResult, amendResult } = require('./lib/wrap-up/engine-record');
-const { renderTrace, renderConsoleSections, renderConsoleSectionsMulti, strictCheck } = require('./lib/wrap-up/engine-render');
+const { renderTrace, renderConsoleSections, renderConsoleSectionsMulti, strictCheck, resolveProcedureHeadPath } = require('./lib/wrap-up/engine-render');
 const { runVerify, renderVerifyTable, resolveArchivedRunDir } = require('./lib/wrap-up/engine-verify');
 
 const USAGE = [
@@ -41,6 +48,7 @@ const USAGE = [
   '       wrap-up-engine.js record --run-dir <dir> [--dry-run]   (payload JSON on stdin)',
   '       wrap-up-engine.js amend --run-dir <dir>   (payload JSON on stdin)',
   '       wrap-up-engine.js render --run-dir <dir> [--strict] [--section trace|console] [--start-at n]',
+  '       wrap-up-engine.js render --section procedure:<name>   (no --run-dir, no --spec-state, no --strict)',
   '       wrap-up-engine.js render --section console --spec-state <id>=<path> [--spec-state <id>=<path> ...] [--start-at n] [--strict]   (no --run-dir)',
   '       wrap-up-engine.js verify --run-dir <dir> --base <ref>',
   '',
@@ -276,9 +284,41 @@ function runAmend(args) {
 
 function runRender(args) {
   const section = args.section || 'trace';
-  if (section !== 'trace' && section !== 'console') {
-    process.stderr.write(`wrap-up-engine.js render: --section must be 'trace' or 'console'\n`);
+  const procedureName = section.startsWith('procedure:') ? section.slice('procedure:'.length) : null;
+  if (section !== 'trace' && section !== 'console' && procedureName === null) {
+    process.stderr.write(`wrap-up-engine.js render: --section must be 'trace', 'console', or 'procedure:<name>'\n`);
     process.exitCode = 2;
+    return;
+  }
+
+  // #2546: `procedure:<name>` emits a registered split-file's operative-head
+  // excerpt verbatim — no engine-state.json, no --run-dir, no --strict. A
+  // caller that currently reads one of the four split files whole can read
+  // this excerpt instead, lowering per-run read volume without requiring a
+  // pipeline run to exist at all.
+  if (procedureName !== null) {
+    if (procedureName === '') {
+      process.stderr.write(`wrap-up-engine.js render: --section procedure:<name> requires a name\n`);
+      process.exitCode = 2;
+      return;
+    }
+    if (args.runDir || args.specStates.length > 0 || args.strict) { usageExit(); return; }
+    const relPath = resolveProcedureHeadPath(procedureName);
+    if (!relPath) {
+      process.stderr.write(`wrap-up-engine.js render: unknown procedure '${procedureName}'\n`);
+      process.exitCode = 2;
+      return;
+    }
+    const fullPath = path.join(PLUGIN_ROOT, relPath);
+    let markdown;
+    try {
+      markdown = fs.readFileSync(fullPath, 'utf8');
+    } catch (e) {
+      process.stderr.write(`wrap-up-engine.js render: could not read procedure '${procedureName}' at ${fullPath}: ${e.message}\n`);
+      process.exitCode = 2;
+      return;
+    }
+    process.stdout.write(markdown.endsWith('\n') ? markdown : `${markdown}\n`);
     return;
   }
 

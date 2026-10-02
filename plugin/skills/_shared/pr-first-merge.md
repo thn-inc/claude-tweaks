@@ -417,17 +417,12 @@ Replaces `ready-to-merge` (folded into `merged`/`armed` — see Step 3.6) and `p
 
 ## Comment ordering
 
-Anything that must land on the PR posts **before** the merge call (Step 3) — the verdict/brief
-comments from `_shared/pr-run-comments.md` already do, per their own citing sites' phase-exit
-ordering. Anything this procedure itself posts (the conflict/degrade comment) is
-**after**-the-fact information about why the merge didn't complete, so it posts once the outcome
-is known, never speculatively before.
+See `pr-first-merge-appendix.md`'s "Comment ordering" section for the posting-order rule
+governing anything this procedure comments on the PR.
 
 ## Local-merge fallback
 
 <!-- when: integration-model=local-merge -->
-Not this file's concern — `local-merge` projects keep each citing file's own pre-#411 procedure
-in substance: the branch-switch guard, the `close-run` E1 relief, the push-from-worktree rule,
-and (for `flow/worktree-merge.md`) the scratch-worktree conflict procedure. Each citing file
-keeps a compact section stating this rather than duplicating the old prose here.
+Not this file's concern under `pr-first` — see `pr-first-merge-appendix.md`'s "Local-merge
+fallback" section for what `local-merge` projects keep instead.
 <!-- /when -->

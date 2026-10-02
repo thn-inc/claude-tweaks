@@ -388,3 +388,68 @@ test('unknown verb exits 2 with usage', () => {
   assert.strictEqual(r.status, 2);
   assert.match(r.stderr, /usage: wrap-up-engine\.js/);
 });
+
+// --- #2546: render --section procedure:<name> ---
+
+test('render --section procedure:review-console emits the head file verbatim and excludes the appendix content', () => {
+  const r = run(['render', '--section', 'procedure:review-console']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /# Wrap-Up Review Console — Phase 4 \(CLOSE\)/);
+  // The appendix-only content (the Multi-spec defer protocol's 6-step body)
+  // must not appear in the head's own output — proves the split, not just
+  // that *some* markdown was printed.
+  assert.doesNotMatch(r.stdout, /Do NOT present the console/);
+});
+
+test('render --section procedure:curation-engine emits the head file and excludes its appendix content', () => {
+  const r = run(['render', '--section', 'procedure:curation-engine']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /# Curation Engine — the Phase 2 mechanism/);
+  assert.doesNotMatch(r.stdout, /Engine failure is never permission to skip a row/);
+});
+
+test('render --section procedure:cleanup-procedures-execution emits the head file and excludes its appendix content', () => {
+  const r = run(['render', '--section', 'procedure:cleanup-procedures-execution']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /# Wrap-Up Cleanup Procedures — execution detail/);
+  assert.doesNotMatch(r.stdout, /Delete unconditionally after \*\*2026-11-07\*\*/);
+});
+
+test('render --section procedure:pr-first-merge emits the head file and excludes its appendix content', () => {
+  const r = run(['render', '--section', 'procedure:pr-first-merge']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /# PR-First Merge — the one canonical merge procedure/);
+  assert.doesNotMatch(r.stdout, /keep each citing file's own pre-#411 procedure/);
+});
+
+test('render --section procedure:<unknown> exits 2 naming the unrecognized procedure, not a stack trace', () => {
+  const r = run(['render', '--section', 'procedure:not-a-real-one']);
+  assert.strictEqual(r.status, 2);
+  assert.match(r.stderr, /unknown procedure 'not-a-real-one'/);
+});
+
+test('render --section procedure: with an empty name exits 2 with a clear message', () => {
+  const r = run(['render', '--section', 'procedure:']);
+  assert.strictEqual(r.status, 2);
+  assert.match(r.stderr, /requires a name/);
+});
+
+test('render --section procedure:<name> combined with --run-dir exits 2 with usage', () => {
+  const runDir = planFreshRunDir();
+  const r = run(['render', '--section', 'procedure:review-console', '--run-dir', runDir]);
+  assert.strictEqual(r.status, 2);
+  assert.match(r.stderr, /usage: wrap-up-engine\.js/);
+});
+
+test('render --section procedure:<name> combined with --strict exits 2 with usage', () => {
+  const r = run(['render', '--section', 'procedure:review-console', '--strict']);
+  assert.strictEqual(r.status, 2);
+  assert.match(r.stderr, /usage: wrap-up-engine\.js/);
+});
+
+test('render --section with a bare unrecognized value (no procedure: prefix) still rejects with the original usage-error shape', () => {
+  const runDir = planFreshRunDir();
+  const r = run(['render', '--run-dir', runDir, '--section', 'bogus']);
+  assert.strictEqual(r.status, 2);
+  assert.match(r.stderr, /--section must be 'trace', 'console', or 'procedure:<name>'/);
+});
