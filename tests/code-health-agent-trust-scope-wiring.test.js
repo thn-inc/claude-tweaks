@@ -70,8 +70,15 @@ test('review wires in Step 6.65 and consolidates Step 6.7 routing', () => {
   assert.match(steps, /Agent Trust Scope`\s*\(from Step 6\.65\)/);
 });
 
-test('docs/getting-started.md counts seven shipped verticals including agent-trust-scope', () => {
+test('docs/getting-started.md counts the shipped verticals including agent-trust-scope', () => {
+  // The exact count (originally "seven" at #2749) bumps as new verticals
+  // ship (#2628 made it eight) — this test only pins that the prose and the
+  // actual count stay in sync, not a frozen historical number.
   const docs = fs.readFileSync(path.join(ROOT, 'docs/getting-started.md'), 'utf8');
-  assert.match(docs, /seven verticals shipped/);
+  const { FOCUS_GENERATORS } = require('../plugin/bin/lib/code-health/focus-generators');
+  const countWords = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+  const expectedWord = countWords[Object.keys(FOCUS_GENERATORS).length];
+  assert.match(docs, new RegExp(`${expectedWord} verticals shipped`));
   assert.match(docs, /`agent-trust-scope`/);
+  assert.match(docs, /`app-store-readiness`/);
 });
