@@ -103,4 +103,4 @@ Produce findings in the standard format for Step 3 Routing integration. Each fin
 - **Medium** — usability gaps (too many tabs without search, missing breadcrumbs on deep pages, large forms without validation)
 - **Low** — consistency observations (cross-page pattern mismatches), minor polish (spacing, visual hierarchy)
 
-UX findings are routed through the same fix/defer/capture mechanism as code review findings in Step 3 Routing. They appear in the batch table with category "UX" alongside findings from lenses 3a-3f.
+UX findings are routed through the same fix/defer/capture mechanism as code review findings in Step 3 Routing. They appear in the batch table with category "UX" alongside findings from lenses 3a-3g.
