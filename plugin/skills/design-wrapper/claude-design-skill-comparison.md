@@ -69,15 +69,16 @@ decision depends on:
   the Skill tool — that is the entire reason `design-wrapper` can wrap it. A human typing
   `/design` directly cannot work for callers that need a return value to consume.
 - **Partially version-pinned where it matters most:** The wrapper verifies an exact
-  plugin-version pin before dispatching Impeccable's bundled scripts (`doctor`, `explore`'s
-  `concept-seed.mjs`) and its CLI (`test` mode) — see `SKILL.md`'s Step 2 availability
-  check. `explore`'s own lock-in step, `document --seed`, is dispatched via the Skill tool
-  like any LLM command (`review`, `polish`, and others) and is unpinned by design, same as
-  those. Native `/design` has no pinning story at all — it's an unversioned research
-  preview.
-- **Deterministic tooling:** Impeccable provides deterministic CLI commands (`test` mode —
-  see `impeccable-cli.md`) and LLM-dispatched critique/audit/refinement (`review`, `polish`
-  modes). The wrapper depends on this contract.
+  plugin-version pin before dispatching Impeccable's bundled scripts (`doctor`'s
+  `doctor.mjs`, `explore`'s `concept-seed.mjs`) and, via its own `test` mode, Impeccable's
+  CLI binary — see `SKILL.md`'s Step 2 availability check. `explore`'s own lock-in step,
+  `document --seed`, is dispatched via the Skill tool like any LLM command (`review`,
+  `polish`, and others) and is unpinned by design, same as those. Native `/design` has no
+  pinning story at all — it's an unversioned research preview.
+- **Deterministic tooling:** `design-wrapper`'s own `test` mode dispatches Impeccable's CLI
+  binary deterministically (see `impeccable-cli.md`); its `review` and `polish` modes
+  dispatch Impeccable's LLM-driven critique/audit/refinement commands. The wrapper depends
+  on this contract.
 - **Browser-based worlds/layout tournament:** `design-wrapper`'s own `explore` mode —
   which deals competing directions via Impeccable's `concept-seed.mjs` and locks the pick
   through Impeccable's `document --seed` — offers the closest analog to native `/design`'s
