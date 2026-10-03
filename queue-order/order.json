@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-03T05:16:37.464Z",
+  "computedAt": "2026-10-03T06:05:13.588Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -220,7 +220,7 @@
       },
       {
         "number": 2730,
-        "updatedAt": "2026-10-01T16:14:04Z",
+        "updatedAt": "2026-10-03T05:56:15Z",
         "state": "OPEN"
       },
       {
@@ -2625,102 +2625,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\nOrigin: by:feedback (self-referential session evaluation, /claude-tweaks:feedback bare invocation)\n\n## Current State\n\n#679 (\"no evaluation watermark — a second bare /feedback re-judges the whole transcript\") shipped a full watermark mechanism (`bin/lib/transcript-judge/watermark.js`, the offset-clause prompt item, `--full`) for the dispatched-judge path. `_shared/transcript-judge.md`'s Degradation section explicitly states: \"The self-assessment path never reads or writes a watermark — there is no resolved transcript path to key one on\" — carving the self-assessment path out of #679's fix by design. In a session on 2026-09-20/21, the first /claude-tweaks:backlog + /claude-tweaks:feedback sequence's judge dispatch hard-errored on a Fable usage-limit (429) and degraded to self-assessment, which found and filed real findings but wrote no watermark. A second bare /claude-tweaks:feedback invocation later in the same session therefore had no watermark to read, dispatched a fresh judge (this time succeeding, on a resolver-degraded model) against the entire ~3.1MB transcript from byte zero — re-discovering much of the same ground the self-assessment pass had already covered and filed, relying entirely on Step 4's per-item dedup search to avoid re-filing duplicates.\n\n## Deliverables\n\n- Let the self-assessment path write a watermark too, using the same `bytesAtDispatch`/`evaluatedAt`/`filedRecords`/`issueUrls` shape #679 already defined, plus a `mode: \"self-assessment\"` field so a later consumer (or a human reading the watermark file) can tell it apart from a dispatched judgment — the stated rationale for the current exclusion (\"there is no resolved transcript path to key one on\") does not actually hold once a transcript did resolve and only the judge dispatch itself failed; that's exactly the scenario this session hit.\n- Update `_shared/transcript-judge.md`'s Degradation section and `session-evaluation.md`'s watermark-payload note to reflect the narrower true carve-out (no watermark only when no transcript path resolves at all) rather than the current blanket \"self-assessment never writes one.\"\n\n## Acceptance Criteria\n\n- A self-assessment run that resolves a real transcript path writes a watermark on completion, keyed the same way a dispatched judge's watermark is.\n- A subsequent bare /feedback invocation against the same transcript reads that self-assessment-written watermark and scopes its own dispatch via the offset clause, rather than re-judging from byte zero.\n- The one true no-watermark case (no transcript path resolves at all — e.g., a sandbox with no accessible transcript store) is still explicitly documented and exempted.\n\n## Release Note\n\nStopped a failed judge dispatch from forcing a full transcript re-evaluation on the next feedback run.\n\n## Technical Approach\n\nBoth `bin/lib/transcript-judge/watermark.js` (confirmed present) and `_shared/transcript-judge.md`'s Degradation section (confirmed carrying the current blanket exclusion at line ~170) already exist and are the two things this record edits — no new mechanism needed. In the self-assessment degradation branch (wherever `session-evaluation.md`'s flow currently checks \"judge dispatch failed → degrade to self-assessment\"), call the same watermark-write function #679's dispatched path already calls, passing the same `bytesAtDispatch`/`evaluatedAt`/`filedRecords`/`issueUrls` fields plus a new `mode: \"self-assessment\"` field, gated only on a transcript path having actually resolved (the one true exclusion case: no transcript path resolves at all). Narrow `_shared/transcript-judge.md`'s Degradation section wording from \"never reads or writes a watermark\" to state the actual, narrower condition, and update `session-evaluation.md`'s watermark-payload note to describe the new `mode` field.\n\n### Key Files\n\n- `plugin/bin/lib/transcript-judge/watermark.js` — the existing watermark read/write shape this record extends to a second caller, not replaces\n- `plugin/skills/_shared/transcript-judge.md` — Degradation section (line ~170) carrying the blanket exclusion to narrow\n- `plugin/skills/_shared/session-evaluation.md` — the self-assessment degradation flow that needs the new watermark-write call, and the watermark-payload note describing the new `mode` field\n\n## Gotchas\n\n- The `mode: \"self-assessment\"` field is additive to an existing, already-consumed watermark shape — a later reader (the offset-clause logic) must treat an absent `mode` field as the pre-existing dispatched-judge case, not as a new failure mode, so existing watermark files written before this change keep working unread-modified.\n- Confirm at build time whether any other consumer of the watermark file (besides the offset-clause read this record's AC exercises) branches on watermark *absence* as a signal that self-assessment happened — if so, that consumer's own logic needs updating in the same pass, since this record makes watermark-absence no longer synonymous with \"was self-assessment.\"\n\n## Original request\n\nfeedback session-evaluation: the self-assessment degradation path was excluded from #679's watermark fix, so a judge-dispatch failure still forces a full transcript re-judge on the next invocation\n\nOrigin: by:feedback (self-referential session evaluation, /claude-tweaks:feedback bare invocation)\n\n## Current State\n\n#679 (\"no evaluation watermark — a second bare /feedback re-judges the whole transcript\") shipped a full watermark mechanism (`bin/lib/transcript-judge/watermark.js`, the offset-clause prompt item, `--full`) for the dispatched-judge path. `_shared/transcript-judge.md`'s Degradation section explicitly states: \"The self-assessment path never reads or writes a watermark — there is no resolved transcript path to key one on\" — carving the self-assessment path out of #679's fix by design. In a session on 2026-09-20/21, the first /claude-tweaks:backlog + /claude-tweaks:feedback sequence's judge dispatch hard-errored on a Fable usage-limit (429) and degraded to self-assessment, which found and filed real findings but wrote no watermark. A second bare /claude-tweaks:feedback invocation later in the same session therefore had no watermark to read, dispatched a fresh judge (this time succeeding, on a resolver-degraded model) against the entire ~3.1MB transcript from byte zero — re-discovering much of the same ground the self-assessment pass had already covered and filed, relying entirely on Step 4's per-item dedup search to avoid re-filing duplicates.\n\n## Deliverables\n\n- Let the self-assessment path write a watermark too, using the same `bytesAtDispatch`/`evaluatedAt`/`filedRecords`/`issueUrls` shape #679 already defined, plus a `mode: \"self-assessment\"` field so a later consumer (or a human reading the watermark file) can tell it apart from a dispatched judgment — the stated rationale for the current exclusion (\"there is no resolved transcript path to key one on\") does not actually hold once a transcript did resolve and only the judge dispatch itself failed; that's exactly the scenario this session hit.\n- Update `_shared/transcript-judge.md`'s Degradation section and `session-evaluation.md`'s watermark-payload note to reflect the narrower true carve-out (no watermark only when no transcript path resolves at all) rather than the current blanket \"self-assessment never writes one.\"\n\n## Acceptance Criteria\n\n- A self-assessment run that resolves a real transcript path writes a watermark on completion, keyed the same way a dispatched judge's watermark is.\n- A subsequent bare /feedback invocation against the same transcript reads that self-assessment-written watermark and scopes its own dispatch via the offset clause, rather than re-judging from byte zero.\n- The one true no-watermark case (no transcript path resolves at all — e.g., a sandbox with no accessible transcript store) is still explicitly documented and exempted.\n\n## Original request\n\nSurfaced by /claude-tweaks:feedback's bare-invocation session evaluation (Recovery quality objective), judging this session's own two /claude-tweaks:feedback bare invocations. Evidence: the first invocation's judge dispatch hard-errored (Fable 429) and degraded to self-assessment, which filed #2718-#2722 but wrote no watermark (`_shared/transcript-judge.md`'s stated design); the second invocation's readWatermark call returned null, forcing a fresh ~3.1MB full-transcript judge dispatch that substantially re-covered the same ground.\n",
-        "createdAt": "2026-09-21T04:52:37Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAAC2-eqcQ",
-            "name": "by:feedback",
-            "description": "Origin: filed via /claude-tweaks:feedback's session-evaluation (self-referential)",
-            "color": "ededed"
-          }
-        ],
-        "number": 2730,
-        "state": "OPEN",
-        "title": "feedback session-evaluation: the self-assessment degradation path was excluded from #679's watermark fix, so a judge-dispatch failure still forces a full transcript re-judge on the next invocation",
-        "updatedAt": "2026-10-01T16:14:04Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
