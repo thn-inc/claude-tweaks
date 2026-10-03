@@ -354,6 +354,20 @@ function checkOneFixture(fixture, cwd, runFixture) {
   }
 
   const wanted = expect.stream;
+
+  // Text-mode assertion (#2573): a substring match on the named stream, for
+  // a command whose expected output is plain text rather than JSON (e.g. a
+  // failure path that writes a plain-text message and a non-zero exit).
+  // Mutually exclusive with the JSON-mode `keys` assertion below —
+  // manifest.js's validation enforces that exactly one mode is specified
+  // per fixture, so this function never sees both on the same fixture.
+  if (typeof expect.textMatch === 'string') {
+    if (!streams[wanted].includes(expect.textMatch)) {
+      return mismatch(`expected ${wanted} to contain ${JSON.stringify(expect.textMatch)}, but it did not (observed ${wanted}: ${JSON.stringify(streams[wanted].slice(0, 200))})`);
+    }
+    return { run: fixture.run, status: 'ok', detail: 'observed output matched expect', observed };
+  }
+
   const other = wanted === 'stderr' ? 'stdout' : 'stderr';
 
   const parsed = tryParseJson(streams[wanted].trim());
