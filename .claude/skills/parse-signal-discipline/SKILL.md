@@ -107,6 +107,19 @@ When mechanizing a prose heuristic into a deterministic check:
    whole-branch review caught it by running the CLI twice — once with a declaration, once without —
    and diffing the stamp. Pass `null`, or another shape the callee branches on explicitly; never the
    same empty collection the populated-but-empty case produces.
+5. **A comparison between two fallibly-read values owes the "couldn't read" guard on every operand,
+   not just one.** The rule reaches past parsing to any classifier that compares inputs it had to
+   read, each of which comes back `null` when the read fails. An equality check turns an unread
+   side into a confident verdict: `null === 'anchor text'` reports "different", and `null === null`
+   would report "identical". `plugin/bin/lib/console/resolve.js`'s `classifyStagedItem` (#2773)
+   compares a `.shadow-dup` copy's text against its anchor's and has three outcomes:
+   `shadow-dup-duplicate`, `shadow-dup-divergent`, and the conservative `shadow-dup-collision` when
+   it can't tell. The first version guarded only the anchor's `siblingText`. A shadow copy whose
+   own read failed, while its anchor read fine, reached the comparison and came back
+   `shadow-dup-divergent`. Whole-branch review caught it, and `116707a7a` added the guard on `text`
+   too. Write the guard over every operand before the comparison, and pin the one-side-unreadable
+   case with its own test assertion, because tests that only cover "both readable" and "neither
+   supplied" pass with the one-sided guard.
 
 ## When to use
 
