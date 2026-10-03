@@ -46,11 +46,11 @@ to call downstream skills. That dispatch path is blocked for native `/design`.
 The only way to actually run native `/design` is for a human to type the `/design` command
 directly themselves, outside of and independent from any `design-wrapper` dispatch — which
 breaks `design-wrapper`'s return-value contract (every mode returns a structured result its
-caller or the human consumes) and breaks `explore`'s lock-in mechanism (the wrapper's
-`explore` mode reaches into Impeccable's own browser-based worlds tournament to compare
-competing visual-identity directions; upstream's `document --seed` writes `DESIGN.md`
-directly from the wrapper's tournament flow). A native `/design` invocation from outside
-`design-wrapper` cannot feed results back into the wrapper's own contracts or state.
+caller or the human consumes) and breaks `explore`'s lock-in mechanism (the wrapper's own
+`explore` mode runs a browser-based worlds tournament, dealing competing visual-identity
+directions via Impeccable's `concept-seed.mjs`; upstream's `document --seed` writes
+`DESIGN.md` directly from the wrapper's tournament flow). A native `/design` invocation from
+outside `design-wrapper` cannot feed results back into the wrapper's own contracts or state.
 
 The mismatch is not "agent-only callers vs. human-only skill" — it's "a dispatch performed
 via the Skill tool vs. a skill that refuses Skill-tool invocation entirely," which applies
