@@ -201,7 +201,10 @@ payload fields (parameterization point 4), and one addition: `mode: "self-assess
 payload, so a later reader (or a human inspecting the watermark file) can tell a
 self-assessment-written watermark apart from a dispatched judge's. A reader written before this
 field existed treats its absence as the pre-existing dispatched-judge case, never as a new failure
-mode.
+mode. The write rests on the self-assessment having evaluated the session's own conversational
+context; a consumer whose fallback evaluates something else (reflect's inline lens procedure reads
+gathered repo artifacts, not the session) opts out and writes no watermark on this route — its own
+file states the opt-out.
 
 ## After the judge returns
 

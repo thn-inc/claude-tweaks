@@ -120,6 +120,12 @@ test('transcript-judge.md Watermark write section also fires for the terminal-di
   assert.match(SHARED, /mode,\s*\/\/ "self-assessment" on the terminal-dispatch-failure route above/);
 });
 
+test('transcript-judge.md lets a consumer whose fallback does not evaluate the session opt out, and reflect states that opt-out', () => {
+  assert.match(SHARED, /opts out and writes no watermark on this route — its own\nfile states the opt-out/);
+  const REFLECT = read('plugin', 'skills', 'reflect', 'SKILL.md');
+  assert.match(REFLECT, /reflect opts out of `_shared\/transcript-judge\.md`'s self-assessment watermark write/);
+});
+
 // --- 4. Self-assessment degradation + record-failure clause moved verbatim ---
 
 test('transcript-judge.md documents the (self-assessment) header-tag mitigation', () => {
