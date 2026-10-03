@@ -1,6 +1,6 @@
 ---
 name: shared-contract-extraction
-description: Use when extracting a cross-skill contract into a new `plugin/skills/_shared/*.md` file and migrating existing consumers to cite it, or when consolidating a set of ad hoc per-reason runtime sidecar files into one `bin/lib/` module and migrating its call sites — the consumer-list derivation, what each consumer keeps versus surrenders, the retirement sweep, and the conformance suite that pins the migration. Keywords - shared contract, `_shared`, extraction, consolidation, consumer migration, citation sweep, retired clause, conformance suite, runtime sidecar consolidation, entry lifecycle, IL-66, IL-70.
+description: Use when extracting a cross-skill contract into a new `plugin/skills/_shared/*.md` file and migrating existing consumers to cite it, or when consolidating a set of ad hoc per-reason runtime sidecar files into one `bin/lib/` module and migrating its call sites, or when splitting a section out of an existing `_shared/*.md` file into a pointer-stub sibling to cut its size or context cost. Covers the consumer-list derivation, what each consumer keeps versus surrenders, the retirement sweep, and the conformance suite that pins the migration. Keywords - shared contract, `_shared`, extraction, consolidation, consumer migration, citation sweep, retired clause, conformance suite, runtime sidecar consolidation, entry lifecycle, pointer-stub split, skill-graph edge, IL-66, IL-70.
 ---
 
 # Shared contract extraction
