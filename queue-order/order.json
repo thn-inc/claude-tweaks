@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-03T19:53:29.995Z",
+  "computedAt": "2026-10-03T22:31:53.784Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -185,7 +185,7 @@
       },
       {
         "number": 2691,
-        "updatedAt": "2026-10-01T16:15:06Z",
+        "updatedAt": "2026-10-03T19:55:41Z",
         "state": "OPEN"
       },
       {
@@ -1300,90 +1300,6 @@
           "grants": {
             "build": true,
             "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nclaude-tweaks' `harness-health`, `reflect`, and `wrap-up` skills each look at recent work, but none mines the full session corpus for mistakes repeating across sessions. A described \"/dream\" skill pattern: a nightly pass over every stored session that finds patterns no single session could see, proposes (never applies) a fix, and requires a two-session evidence bar with quoted turns before touching always-loaded context.\n\n## Deliverables\n\n- Prototype a corpus-wide pass (in `harness-health`, or a new scheduled routine) that surfaces repeated cross-session failures as dated proposals.\n- Carry over the read-only/propose-only safety model and the two-session evidence bar before anything lands in CLAUDE.md or a skill.\n\n## Acceptance Criteria\n\n- Run against this account's own session history and produce at least one real proposal with quoted evidence.\n- Proposals are reviewable and rejectable, never auto-applied.\n\n## Release Note\n\nAdded a cross-session pass that proposes fixes for failures that keep repeating across sessions.\n\n## Technical Approach\n\nPrototype as a new pass rather than folding into an existing skill initially, given the distinct evidence-bar requirement (two independent sessions, quoted turns) that `harness-health`/`reflect`/`wrap-up` don't currently carry. Scope the prototype to a bounded session-history window first (not the full corpus unbounded) to keep the pass tractable, and enforce the read-only/propose-only model structurally — the pass writes proposals to a staged location for human review, never edits CLAUDE.md or a skill file directly, mirroring this repo's existing staged-proposal pattern (`_shared/staged-patch.md`).\n\n### Key Files\n\n- `plugin/skills/harness-health/` — natural home if folded in, or the reference pattern for a new sibling routine\n- `plugin/skills/_shared/staged-patch.md` — the existing staged-proposal pattern to reuse for propose-only output\n\n## Gotchas\n\n- The two-session evidence bar is load-bearing — a single-session anomaly should never produce a proposal; verify the prototype actually enforces this rather than treating it as documentation-only guidance.\n- This scans real session transcripts, which may contain sensitive content — confirm what's in scope for the corpus scan (this account's own sessions only, per the Acceptance Criteria) and don't widen it without an explicit decision.\n\n## Original request\n\nAdd a cross-session self-healing pass (a /dream-style skill)\n\nCurrent State:\n- claude-tweaks' harness-health, reflect, and wrap-up skills each look at recent work, but none mines the full session corpus for mistakes repeating across sessions.\n- A reel describes a \"/dream\" skill: a nightly pass over every stored session that finds patterns no single session could see, proposes (never applies) a fix, and requires a two-session evidence bar with quoted turns before touching always-loaded context.\n\nDeliverables:\n- Prototype a corpus-wide pass (in harness-health, or a new scheduled routine) that surfaces repeated cross-session failures as dated proposals.\n- Carry over the read-only/propose-only safety model and the two-session evidence bar before anything lands in CLAUDE.md or a skill.\n\nAcceptance Criteria:\n- Run against this account's own session history and produce at least one real proposal with quoted evidence.\n- Proposals are reviewable and rejectable, never auto-applied.\n\nSource: https://www.instagram.com/reel/DbS8PgjEsVm/\n",
-        "createdAt": "2026-09-20T19:00:54Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2691,
-        "state": "OPEN",
-        "title": "Add a cross-session self-healing pass (a /dream-style skill)",
-        "updatedAt": "2026-10-01T16:15:06Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
           },
           "bot": {
             "inProgress": false,
