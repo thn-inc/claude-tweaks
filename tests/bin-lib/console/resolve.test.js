@@ -6,7 +6,8 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'resolve');
-const { classifyStagedItem, resolveAll, SECTION_STANCES, SECTION_MAP } = require(MOD);
+const { classifyStagedItem, resolveAll, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS } = require(MOD);
+const ROOT = path.join(__dirname, '..', '..', '..');
 
 function fixture({
   decisions = '', staged = {}, engineState = null, pack = null, headers = [], manifest = null, specHeaders = {},
@@ -48,6 +49,8 @@ const EVERY_SECTION = {
   'polish-suggestion-1.md': 'polish',
   'wrap-up-skill-1.md': 'skill',
   'wrap-up-doc-1.md': 'doc',
+  'wrap-up-claude-md-1.md': 'claude-md',
+  'wrap-up-adr-1.md': 'adr',
   'wrap-up-journey-1.md': 'journey',
   'tidy-claude-md-rule-1.md': 'rule',
   'reflect-1.md': 'reflect',
@@ -63,6 +66,7 @@ test('classifyStagedItem maps every known prefix to its console section and unkn
     'polish-suggestion-1.md': 'Pending review', 'visual-review-skipped.md': 'Pending review', 'design-decision-2.md': 'Pending review', 'build-deviation-1.md': 'Pending review',
     'wrap-up-skill-1.md': 'Skill updates', 'wrap-up-skill-new-auth.md': 'Skill updates', 'wrap-up-skill-restructure.md': 'Skill updates',
     'wrap-up-doc-1.md': 'Documentation updates', 'tidy-doc-1.md': 'Documentation updates',
+    'wrap-up-claude-md-1.md': 'Configuration updates', 'wrap-up-adr-1.md': 'Configuration updates',
     'wrap-up-journey-1.md': 'Journey updates', 'journeys-convention.md': 'Journey updates',
     'tidy-claude-md-rule-1.md': 'Queue writes',
     'reflect-1.md': 'Queue writes', 'digest-promotion-1.md': 'Queue writes', 'leftover-add-oauth.md': 'Queue writes', 'ledger-record-1.md': 'Queue writes',
@@ -94,6 +98,8 @@ test('resolveAll resolves one item per section per the short-circuit stances and
   assert.strictEqual(by['polish-suggestion-1.md'].resolution, 'apply');
   assert.strictEqual(by['wrap-up-skill-1.md'].resolution, 'approve');
   assert.strictEqual(by['wrap-up-doc-1.md'].resolution, 'approve');
+  assert.strictEqual(by['wrap-up-claude-md-1.md'].resolution, 'approve');
+  assert.strictEqual(by['wrap-up-adr-1.md'].resolution, 'approve');
   assert.strictEqual(by['wrap-up-journey-1.md'].resolution, 'approve');
   assert.strictEqual(by['tidy-claude-md-rule-1.md'].resolution, 'apply');
   assert.strictEqual(by['reflect-1.md'].resolution, 'apply');
@@ -104,6 +110,68 @@ test('resolveAll resolves one item per section per the short-circuit stances and
   assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
   assert.strictEqual(r.items.length, Object.keys(EVERY_SECTION).length);
   assert.strictEqual(r.ceiling, 'unattended');
+});
+
+test('a .shadow-dup file is classified duplicate when byte-identical to its anchor, divergent otherwise, and falls back to shadow-dup-collision with no anchor to compare (#2773)', () => {
+  assert.deepStrictEqual(
+    classifyStagedItem('build-deviation-1.md.shadow-dup', 'same text', 'same text'),
+    { section: 'Pending review', reason: 'shadow-dup-duplicate' },
+  );
+  assert.deepStrictEqual(
+    classifyStagedItem('build-deviation-2.md.shadow-dup', 'shadow text', 'anchor text'),
+    { section: 'Pending review', reason: 'shadow-dup-divergent' },
+  );
+  // No sibling supplied at all — the pre-existing conservative fallback,
+  // unchanged for callers that don't (or can't) supply anchor text.
+  assert.deepStrictEqual(
+    classifyStagedItem('wrap-up-memory-1.md.shadow-dup', 'x'),
+    { section: 'Pending review', reason: 'shadow-dup-collision' },
+  );
+  assert.deepStrictEqual(
+    classifyStagedItem('review-2.patch.shadow-dup-2'),
+    { section: 'Pending review', reason: 'shadow-dup-collision' },
+  );
+
+  // End-to-end via resolveAll: one byte-identical pair, one divergent pair,
+  // in the same run — two distinguishable reasons, same resolution.
+  const runDir = fixture({
+    staged: {
+      'build-deviation-1.md': 'identical content',
+      'build-deviation-1.md.shadow-dup': 'identical content',
+      'build-deviation-2.md': 'original content',
+      'build-deviation-2.md.shadow-dup': 'different content — recovered from a clobbering write',
+    },
+    headers: [7],
+  });
+  const r = resolveAll({ runDir, policy: 'console-auto', deps: deps() });
+  const by = Object.fromEntries(r.items.map((i) => [i.id, i]));
+  assert.strictEqual(by['build-deviation-1.md.shadow-dup'].reason, 'shadow-dup-duplicate');
+  assert.strictEqual(by['build-deviation-2.md.shadow-dup'].reason, 'shadow-dup-divergent');
+  assert.strictEqual(by['build-deviation-1.md.shadow-dup'].resolution, 'pending');
+  assert.strictEqual(by['build-deviation-2.md.shadow-dup'].resolution, 'pending');
+  // The anchors themselves are unaffected — still plain Pending review items.
+  assert.strictEqual(by['build-deviation-1.md'].resolution, 'apply');
+});
+
+test('every registry row whose own judge file documents a literal staged/{prefix}-{n} naming convention resolves through SECTION_MAP, into that row\'s own ENGINE_ROW_SECTIONS section when one exists (#2773)', () => {
+  const { REGISTRY } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'wrap-up', 'registry'));
+  const SKILLS_DIR = path.join(ROOT, 'plugin', 'skills', 'wrap-up');
+  const PREFIX_RE = /staged\/([a-zA-Z][a-zA-Z0-9-]*-)\{[nN]\}/;
+  let checked = 0;
+  for (const row of REGISTRY) {
+    const judgeText = fs.readFileSync(path.join(SKILLS_DIR, row.judge), 'utf8');
+    const m = PREFIX_RE.exec(judgeText);
+    if (!m) continue; // this row's judge documents no standalone staged-file naming convention — nothing to audit for it
+    checked += 1;
+    const prefix = m[1];
+    const result = classifyStagedItem(`${prefix}1.md`);
+    assert.notStrictEqual(result.reason, 'unmapped-prefix', `${row.id}'s documented prefix "${prefix}" has no SECTION_MAP row`);
+    const expectedSection = ENGINE_ROW_SECTIONS[row.id];
+    if (expectedSection) {
+      assert.strictEqual(result.section, expectedSection, `${row.id}'s staged prefix "${prefix}" must classify into its own ENGINE_ROW_SECTIONS section`);
+    }
+  }
+  assert.ok(checked >= 3, 'expected at least skills/memory/upstream to document a literal convention in their own judge files — the scan itself may be broken if this is 0');
 });
 
 test('a staged item named on a REFUSED line in decisions.md resolves to refused, never its section stance (#1932 I2)', () => {

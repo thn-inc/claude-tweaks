@@ -38,12 +38,13 @@ const SECTIONS = {
 // so a new producer can never slip past the console. A row's optional third
 // element is a classification reason: a matched item carrying one resolves to
 // `pending` regardless of its section's stance.
+//
+// A sweep-shadow collision copy — `bin/lib/hooks/sweep-shadow.js` names them
+// `{preferred}.shadow-dup` / `{preferred}.shadow-dup-{n}` — is handled before
+// this table is ever consulted (see SHADOW_DUP_RE below), not as a row here:
+// classifying it needs the anchor file's own content, which no other row
+// needs and which this table has no way to carry.
 const SECTION_MAP = [
-  // A sweep-shadow collision copy — `bin/lib/hooks/sweep-shadow.js` names them
-  // `{preferred}.shadow-dup` / `{preferred}.shadow-dup-{n}` — is a duplicate of
-  // some other staged file, not a proposal of its own. First row so it wins over
-  // whatever prefix the copied name still carries; never auto-applied.
-  [/\.shadow-dup(-\d+)?$/, SECTIONS.PENDING, 'shadow-dup-collision'],
   [/^review-unconfirmed-/, SECTIONS.LOW],
   [/^review-(contested|debate)-/, SECTIONS.CONTESTED],
   [/\.patch$/, SECTIONS.PENDING],
@@ -52,11 +53,33 @@ const SECTION_MAP = [
   // release-backfill- retired #2257 (git describe --contains replaced the
   // staged-backfill mechanism entirely — nothing stages that prefix anymore).
   [/^(wrap-up-doc|tidy-doc)-/, SECTIONS.DOC],
+  // wrap-up-claude-md-/wrap-up-adr- (#2773): the curation engine's `claude-md`
+  // and `decision-records` registry rows (bin/lib/wrap-up/registry.js) stage
+  // their proposals under these prefixes — claude-md-curation.md and
+  // adr-curation.md name the exact filenames. Routes to the same
+  // SECTIONS.CONFIG the engine-row path (ENGINE_ROW_SECTIONS below) already
+  // uses for an `applied` finding from either registry row.
+  [/^(wrap-up-claude-md|wrap-up-adr)-/, SECTIONS.CONFIG],
   [/^(wrap-up-journey|journeys)(-|\b)/, SECTIONS.JOURNEY],
   [/^(reflect|digest-promotion|leftover|ledger-record|upstream-unfiled|red-team|specify-overlap|specify-redteam|flaky-allowlist|tidy|plan-retention|feedback-drafts)(-|\b)/, SECTIONS.QUEUE],
   [/^wrap-up-memory-/, SECTIONS.MEMORY],
   [/^wrap-up-upstream-/, SECTIONS.UPSTREAM],
 ];
+
+// `{preferred}.shadow-dup` / `{preferred}.shadow-dup-{n}` — bin/lib/hooks/
+// sweep-shadow.js's name for a collision copy when the preferred destination
+// was already taken. Checked before SECTION_MAP so it always wins over
+// whatever prefix the copied name still carries; never auto-applied. A
+// `.shadow-dup` file is not always a duplicate of its anchor (#2773) — a
+// clobbering write can leave two real, different proposals behind — so
+// classifyStagedItem compares the shadow copy's own text against its
+// anchor's (when both are readable) instead of guessing: byte-identical
+// reports `shadow-dup-duplicate`, anything else reports
+// `shadow-dup-divergent`. `siblingText` absent (no anchor found, or its
+// content couldn't be read) falls back to the conservative
+// `shadow-dup-collision` — "can't tell" is a distinct outcome from
+// "confirmed a duplicate," never guessed as one.
+const SHADOW_DUP_RE = /\.shadow-dup(-\d+)?$/;
 
 // The short-circuit's stances, verbatim from review-console.md:
 // - every batch section resolves as "Approve all" — Pending review patches
@@ -106,7 +129,13 @@ function parseCategory(text) {
 // existing reason-forces-pending mechanism below; a file with no `Category:` line at all (every
 // other QUEUE-bucket producer — `digest-promotion-*`, `leftover-*`, etc. — none of which carry
 // this field) is unaffected and keeps today's Queue writes/`apply` classification.
-function classifyStagedItem(filename, text) {
+function classifyStagedItem(filename, text, siblingText) {
+  if (SHADOW_DUP_RE.test(filename)) {
+    if (siblingText === undefined || siblingText === null) {
+      return { section: SECTIONS.PENDING, reason: 'shadow-dup-collision' };
+    }
+    return { section: SECTIONS.PENDING, reason: text === siblingText ? 'shadow-dup-duplicate' : 'shadow-dup-divergent' };
+  }
   for (const [re, section, reason] of SECTION_MAP) {
     if (!re.test(filename)) continue;
     if (section === SECTIONS.QUEUE && !reason) {
@@ -155,7 +184,7 @@ function readSnapshot({ runDir, deps }) {
   const staged = deps.readdir(stagedDir).filter((n) => !n.startsWith('.')).sort().map((name) => ({
     name,
     path: path.join(stagedDir, name),
-    text: (name.endsWith('.patch') || name.endsWith('.md')) ? readText(deps, path.join(stagedDir, name)) : null,
+    text: (name.endsWith('.patch') || name.endsWith('.md') || SHADOW_DUP_RE.test(name)) ? readText(deps, path.join(stagedDir, name)) : null,
   }));
   const engineState = readJson(deps, path.join(runDir, 'engine-state.json'));
   const members = readMembers(deps, runDir);
@@ -261,9 +290,15 @@ function stagedItems(snapshot) {
   // Refusal is a decisions.md fact about the item, not a fact about its name —
   // so it is decided before SECTION_MAP ever runs and outranks every stance.
   const refused = refusedStagedNames(snapshot.decisions);
+  // Anchor lookup for the shadow-dup divergence check: `{preferred}.shadow-dup`
+  // compares against `{preferred}`'s own text, when that anchor is also a
+  // staged item in this same snapshot.
+  const textByName = new Map(snapshot.staged.map((s) => [s.name, s.text]));
   return snapshot.staged.map((s) => {
     if (refused.has(s.name)) return { id: s.name, section: SECTIONS.REFUSED, ...SECTION_STANCES[SECTIONS.REFUSED] };
-    const { section, reason } = classifyStagedItem(s.name, s.text);
+    const anchorMatch = /^(.*)\.shadow-dup(?:-\d+)?$/.exec(s.name);
+    const siblingText = anchorMatch && textByName.has(anchorMatch[1]) ? textByName.get(anchorMatch[1]) : undefined;
+    const { section, reason } = classifyStagedItem(s.name, s.text, siblingText);
     if (reason) return { id: s.name, section, resolution: 'pending', reason };
     const stance = SECTION_STANCES[section];
     if (s.name.endsWith('.patch')) {
@@ -373,4 +408,4 @@ function resolveAll({ runDir, policy, deps }) {
   return result;
 }
 
-module.exports = { SECTIONS, SECTION_MAP, SECTION_STANCES, classifyStagedItem, readSnapshot, resolveAll, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { SECTIONS, SECTION_MAP, SECTION_STANCES, ENGINE_ROW_SECTIONS, classifyStagedItem, readSnapshot, resolveAll, renderTable, renderStoredTable, drainOverlapHoldPrs };
