@@ -80,6 +80,30 @@ Three conventions follow from how this repo works, and all are visible below:
 * Three pre-existing test failures observed on [#2595](https://github.com/thn-inc/claude-tweaks/issues/2595)'s… ([#2762](https://github.com/thn-inc/claude-tweaks/issues/2762)) ([77882ee](https://github.com/thn-inc/claude-tweaks/commit/77882ee55cf687b6f9ad99db8fd91bd89f180ce4))
 * Upstream gap report — `design-wrapper polish` has no way… ([#2743](https://github.com/thn-inc/claude-tweaks/issues/2743)) ([8d92cac](https://github.com/thn-inc/claude-tweaks/commit/8d92cacf2fc25dc2dbbe34ce6ecebb57838ac52c))
 
+### Highlights
+* Fixed the post-publish release-notes step failing on every release that carries release notes.
+* Bounded GIF encoding time and memory on high-detail walkthrough recordings.
+* Fixed prose-checking tests that fail on Windows checkouts with CRLF line endings.
+* No user-visible change: investigated a record that was built without a recorded claim.
+* No user-visible change: resolved three long-standing test failures seen on every local run.
+* Added a check that flags skills and subagents whose definitions cost more context than they need.
+* Added a way for design polish to leave spec-pinned copy unchanged.
+* Stopped the worktree guard from refusing non-git commands with runtime variables and GitHub GraphQL calls.
+* Added a lighter build path for records whose work is entirely operational.
+* Fixed native issue types failing on the current GitHub CLI when capturing a record.
+* Fixed multi-record pull requests closing a record that was deliberately left open.
+* Published release notes automatically after each release goes out.
+* Clarified the dispatch prompt's warning about waiting on background work.
+* Logged guard denials that happen in the main checkout before a run directory exists.
+* Added security checklist items that catch JWT algorithm-confusion attacks.
+* Fixed decision log headings being mangled into Windows paths under Git Bash.
+* Updated the prose conformance test guidance to run a snippet directly before falling back to byte-pinning it.
+* Stopped a failed judge dispatch from forcing a full transcript re-evaluation on the next feedback run.
+* Added an App Store submission readiness checklist for generated apps.
+* Fixed worktree cleanup failing on Windows when paths are too long.
+* No user-visible change: made room in the feedback skill before its next edit hits the size ceiling.
+* Stopped skills from re-asking decisions that earlier input or project policy already answered.
+
 ## [6.133.0](https://github.com/thn-inc/claude-tweaks/compare/v6.132.0...v6.133.0) (2026-10-02)
 
 
