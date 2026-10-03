@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-03T12:04:40.298Z",
+  "computedAt": "2026-10-03T13:28:21.608Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -120,7 +120,7 @@
       },
       {
         "number": 2773,
-        "updatedAt": "2026-10-01T16:12:16Z",
+        "updatedAt": "2026-10-03T12:06:50Z",
         "state": "OPEN"
       },
       {
@@ -1334,84 +1334,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: consolidated Review Console — run `2026-09-21T213441-spec-2697-2757-2758-2759`; found while executing `flow/multispec-review-console.md`'s Auto-resolution short-circuit against this run's five run directories\n\nDefer-reason: tangential\n\n## Current State\n\nTwo defects in `plugin/bin/lib/console/resolve.js`'s `SECTION_MAP`, both observed live on this run's\nparent run directory.\n\n### 1. The curation engine's own staged prefixes are not in `SECTION_MAP`\n\n`bin/wrap-up-engine.js`'s `claude-md` and `decision-records` registry rows stage their findings as\n`staged/wrap-up-claude-md-{n}.md` and `staged/wrap-up-adr-{n}.md`. Neither prefix appears in\n`SECTION_MAP`, so `classifyStagedItem` falls through to its catch-all and the resolver reported:\n\n```\n| 5 | Pending review | wrap-up-adr-1.md       | AUTO-RESOLVED: pending | unmapped-prefix |\n| 6 | Pending review | wrap-up-claude-md-1.md | AUTO-RESOLVED: pending | unmapped-prefix |\n| 7 | Pending review | wrap-up-claude-md-2.md | AUTO-RESOLVED: pending | unmapped-prefix |\n```\n\nAll three belong in **Configuration updates** — `ENGINE_ROW_SECTIONS` already maps `claude-md` and\n`decision-records` to `SECTIONS.CONFIG`, and the console's own \"On approval\" step 5 says config\nupdates (CLAUDE.md, rules, ADRs) apply under Approve-all. The engine-row path only emits rows whose\n`action` is `applied`, so a `staged` engine finding reaches the console **only** through the\nstaged-file path — which is exactly the path that does not recognize it.\n\nConsequence: at `unattended`, a `consoleAutoResolve` run silently leaves every engine-staged\nCLAUDE.md/Don'ts/ADR proposal unapplied and merges anyway. The `unmapped-prefix` fallback is\nfail-safe by design (\"a new producer can never slip past the console\"), and it did its job here — but\nthese are not new producers, they are the engine's own, and the mismatch means the curation engine's\n`claude-md` and `decision-records` rows are effectively inert under auto-resolution. This run had to\napply all three by hand against the skill's own prose.\n\n### 2. A `.shadow-dup` is not always a duplicate\n\n`SECTION_MAP`'s first row classifies any `*.shadow-dup` as `shadow-dup-collision` with the comment\n\"is a duplicate of some other staged file, not a proposal of its own.\" That is a guess, and on this\nrun it was wrong for 2 of 7: `spec-2758/staged/build-deviation-1.md.shadow-dup` and\n`build-deviation-2.md.shadow-dup` hold **different findings** from their anchored namesakes — real\nproposals recovered from a clobbering write (see the `stage-item.js` id-allocation record). The other\n5 (all in `spec-2757/`) were byte-identical, as the comment assumes.\n\nResolving to `pending` is the right *stance* either way, so nothing was lost here. The defect is the\nstated **reason**: it tells a reader the file is redundant when it may be the only surviving copy of a\nfinding. `hooks.js sweep-shadow` already computes duplicate-vs-divergence; the resolver throws that\naway and re-guesses.\n\n## Deliverables\n\n- Add `wrap-up-claude-md-` and `wrap-up-adr-` to `SECTION_MAP`, both routing to `SECTIONS.CONFIG`.\n  Audit every staged prefix the engine and the skill corpus can actually write against the table, and\n  add a test that fails when a producer writes a prefix the table does not know.\n- Make the `.shadow-dup` row's reason honest: compare against the anchored file (or read\n  `sweep-shadow`'s own verdict) and report `shadow-dup-duplicate` vs `shadow-dup-divergent`. A\n  divergent copy must read as a real proposal awaiting a human, not as a redundant copy.\n\n## Acceptance Criteria\n\nA run directory containing `wrap-up-claude-md-1.md` and `wrap-up-adr-1.md` resolves them under\nConfiguration updates with an `approve` resolution, not `pending — unmapped-prefix`. Pinned by a test.\n\nA test walks the producer set (engine row ids plus the skill corpus's staged filenames) against\n`SECTION_MAP` and fails on any prefix with no row — so the next producer added cannot reintroduce\nthis.\n\nGiven one byte-identical and one divergent `.shadow-dup` beside their anchors, the resolver reports\ntwo distinguishable reasons.\n\n_Filed by the consolidated Review Console (`flow/multispec-review-console.md`)._\n\n## Release Note\n\nFixed unattended Review Consoles silently skipping staged CLAUDE.md and decision-record proposals.\n",
-        "createdAt": "2026-09-22T13:27:15Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          }
-        ],
-        "number": 2773,
-        "state": "OPEN",
-        "title": "console/resolve.js SECTION_MAP: the curation engine's own wrap-up-claude-md-/wrap-up-adr- staged prefixes are unmapped (silently never applied at unattended), and .shadow-dup is reported as a duplicate even when divergent",
-        "updatedAt": "2026-10-01T16:12:16Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
         }
       }
     ],
