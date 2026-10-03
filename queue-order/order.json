@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-03T06:53:52.957Z",
+  "computedAt": "2026-10-03T07:35:02.089Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -185,7 +185,7 @@
       },
       {
         "number": 2742,
-        "updatedAt": "2026-10-01T16:13:38Z",
+        "updatedAt": "2026-10-03T06:56:09Z",
         "state": "OPEN"
       },
       {
@@ -200,7 +200,7 @@
       },
       {
         "number": 2739,
-        "updatedAt": "2026-10-01T16:13:52Z",
+        "updatedAt": "2026-10-03T06:56:15Z",
         "state": "OPEN"
       },
       {
@@ -2169,190 +2169,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n**Related:** #2739\n\n## Current State\n\n**Premise correction (verified during shaping, same finding as #2739's shaping pass).** The reported \"Component: `bin/lib/hooks/pre-tool-use.js`\" is wrong — the quoted denial text (\"this command is too complex to verify that it stays inside the worktree\") does not appear anywhere in `pre-tool-use.js`, `git-command.js`, or any file under `plugin/bin/`. It is the Claude Code CLI harness's own compound-Bash verification guard, explicitly disclaimed in this repo's own docs: `docs/hooks.md` — \"this is harness code, not a module in `plugin/bin/lib/hooks/`, and nothing here can alter it\" — and `docs/skill-authoring.md`'s dedicated \"Harness-level worktree Bash guard vs. the plugin's PreToolUse gate\" section, created because this exact misattribution already happened once (`#174`). The record's own title (\"Upstream defect report\") half-recognizes this, but the Component field still names the plugin file. This record and #2739 describe the same underlying harness behavior from different angles — #2739 covers `sed`/`gh api graphql`/`for`-loop trigger shapes with a documentation-only fix; this record's own five trigger shapes are a distinct, non-overlapping contribution worth its own addendum, so it stays a separate record (cross-referenced via `**Related:**` above) rather than being absorbed.\n\n`plugin/skills/_shared/scratch-worktree.md`'s \"## 7. Shell constraint\" section is the actively-maintained empirical reference for this harness behavior (dated addenda #1651, #1876, #1785, each recording newly-discovered trigger shapes). Checked during shaping: the `eval`-as-substring trigger this record reports is **not yet documented there** (grepped for \"eval\" — zero hits) — a genuinely new finding worth adding. The other four reported shapes (variable-holding-a-literal, heredoc+`cd &&` chain, git+non-git compound via `&&`, and a `bash script && bash script` chain) may already be partially covered by the existing \"2-command `&&` chains of simple commands... pass\" / \"any `for`/`while` loop... refused\" observations, but this record's specific combinations (especially the reported *failure* of a `&&` chain the existing doc says should pass) are worth verifying fresh and adding as their own dated entries if the boundary has shifted or the existing description doesn't actually cover these exact shapes.\n\n## Deliverables\n\n- Add a dated addendum to `scratch-worktree.md`'s \"## 7. Shell constraint\" documenting the `eval`-as-substring trigger (a third-party CLI argument literally containing the word \"eval\", refused even though `eval` isn't in shell-builtin/command position) — confirmed genuinely new, not yet covered.\n- Re-verify each of the other four reported shapes against the current harness build (empirically, the same way every existing addendum was derived) before adding entries for them — the existing 2-command-`&&`-chain \"pass\" observation may already cover some of these, or the harness's boundary may have shifted since the 2026-08-15/08-25/08-30/09-07/09-14 observations; don't assume all five need new entries without checking which are already covered or have since changed.\n- No change to `pre-tool-use.js` or any other plugin code — same as #2739, there is nothing to fix there.\n\n## Acceptance Criteria\n\n- `scratch-worktree.md`'s Shell constraint section documents the `eval`-as-substring trigger shape with a workaround (e.g. avoid the literal token in argument text where practical, or route through a script file / the `Write` tool the way other substring-triggered false positives already recommend).\n- Each of the other four reported shapes is either confirmed already covered by an existing observation (cite which one) or added as its own new dated entry, with an empirical re-check noted rather than assumed.\n- No code in `plugin/bin/lib/hooks/` changes.\n- `npm test` passes.\n\n## Release Note\n\nDocumented and fixed the worktree guard refusing compound commands and anything containing the word eval.\n\n## Technical Approach\n\nSame documentation-only approach as #2739 — extend `scratch-worktree.md`'s existing dated-addendum pattern rather than touching plugin code. Where practical, actually re-run the five reported repro shapes live in a worktree session (the same empirical method every existing addendum used) rather than accepting the original report's claims at face value — this record's own evidence comes from a different project's session (`djoef/recommender-system`), so a fresh confirmation in this repo strengthens the addendum before it's added.\n\n### Key Files\n\n- `plugin/skills/_shared/scratch-worktree.md` — \"## 7. Shell constraint\" section, where the new addenda belong\n- `docs/hooks.md`, `docs/skill-authoring.md` — already correctly document the harness-vs-plugin distinction; no changes expected\n\n## Gotchas\n\n- Do not let a build agent \"fix\" `pre-tool-use.js` for this record either — same premise correction as #2739.\n- This record's evidence originates from a different consuming project's session, not this repo's own — the empirical re-check step in Deliverables exists specifically because that evidence hasn't been independently confirmed against this repo's own harness build yet.\n- Consider, at build time, whether #2739 and this record's addenda should land in one combined PR (they touch the same file's same section) rather than two separate ones — a build-time judgment call, not decided here.\n\n## Original request\n\nUpstream defect report — worktree guard refuses in-worktree compound commands and matches `eval` as a substring\n\nComponent: `bin/lib/hooks/pre-tool-use.js` (the worktree-isolation guard on Bash)\nKind: defect\nVersion: claude-tweaks 6.126.0, Windows 11, Git Bash\n\n## Symptom\n\nOn a worktree-isolated session the guard refused at least fifteen Bash commands whose every path was inside the worktree, with \"this command is too complex to verify that it stays inside the worktree\": (1) `A=\"…literal…\"; node … --files \"$A\"` (a shell variable holding a literal), (2) `cd \"<worktree>\" && python - <<'EOF' … EOF` heredocs feeding python, (3) `git -C \"<worktree>\" diff … > \"<worktree>/file.diff\" && printf … >> \"<worktree>/progress.md\"`, (4) `bash \"<script>\" \"<plan>\" 1 && bash \"<script>\" \"<plan>\" 2 …` chains of plain calls, and (5) any command containing the substring `eval` — a QA subagent's `agent-browser --session x eval \"document.activeElement…\"` was blocked although `eval` was an argument to a third-party CLI, not the shell builtin. Each refusal cost a re-issue as separate plain commands or a script file; two subagents hit the same wall independently.\n\n## Expected\n\nAllow a compound command when every path literal (after variable substitution of literals assigned in the same command) resolves under the worktree, allow heredocs whose only consumer is a non-git interpreter, and match `eval` as a shell builtin token (word-boundary, command position), not as a substring of an argument.\n\n## Evidence\n\nRun 2026-09-20T195550-spec-497-498-499 (multi-spec, auto): the refusals appear in the session transcript around the review-package + ledger append chain, the design-detect file-list loop and the QA report heredoc; the qa-agent's note is in spec-499/decisions.md (\"a worktree-isolation guard in this environment blocks any Bash command containing the literal substring eval\"). Cost: roughly twenty re-issued commands (~15 min) and one subagent workaround.\n\nFiled from djoef/recommender-system run 2026-09-20T195550-spec-497-498-499 (claude-tweaks 6.126.0, unattended).\n<!-- fingerprint: feedback-28331785 -->\n",
-        "createdAt": "2026-09-21T10:19:47Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2742,
-        "state": "OPEN",
-        "title": "Upstream defect report — worktree guard refuses in-worktree compound commands and matches `eval` as a substring",
-        "updatedAt": "2026-10-01T16:13:38Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\n**Premise correction (verified during shaping — this changes the record's whole shape).** The original report's \"Affected component: worktree isolation guard (`bin/lib/hooks/pre-tool-use.js`, the wd-deny / 'cannot be shown not to be git' branch)\" is factually wrong. Grepped `pre-tool-use.js` and `git-command.js` for the quoted denial phrasing (\"cannot be shown not to be git\", \"too complex to verify\", \"computed at runtime\") — zero matches in either file, or anywhere in `plugin/bin/`. The phrasing exists only in documentation: `docs/hooks.md` states explicitly — \"**Not covered here: the harness's own compound-Bash refusal.**... this is harness code, not a module in `plugin/bin/lib/hooks/`, and nothing here can alter it\" — and `docs/skill-authoring.md` has a dedicated section, \"Harness-level worktree Bash guard vs. the plugin's PreToolUse gate,\" built specifically because this exact misattribution happened once before: \"The two are easy to conflate when triaging feedback (`#174` was originally filed against the wrong one).\" This record repeats that same misattribution.\n\nThe friction itself is real, but it's the Claude Code CLI harness's own Bash-verification guard for worktree-isolated sessions — not this plugin's code, and not fixable from within this repo. All three of the original report's repro cases are already empirically documented, with working workarounds, in `plugin/skills/_shared/scratch-worktree.md`'s \"## 7. Shell constraint\" section (an actively-maintained reference with dated addenda — #1651, #1876, #1785 — each independently discovering and recording a new trigger shape as real work hit it):\n- Repro 1 (`F=\"/tmp/notes.md\"; sed -n '4,60p' \"$F\"`, refused as \"runs sed with a value computed at runtime\") — already documented near-verbatim in the 2026-09-14 (#1785) addendum's `sed -n 'a,bp' \"$P/…\"` example, with the workaround: use `Read({file_path, offset, limit})` instead.\n- Repro 3 (a `for` loop with no git in it) — already covered by the original 2026-08-15 observation: \"any `for`/`while` loop (even with no filesystem access or all-read body)\" is refused.\n- Repro 2 (`gh api graphql --hostname ... -f query=... -F body=@file.md`) — the *closest* existing addendum (\"`gh api` call inside `if RAW=$(...)`\") covers a `gh api` REST call inside a compound construct, but not literally a `gh api graphql` mutation carrying `-f`/`-F` value arguments — this specific shape is not yet an explicit worked example in the reference, even though the same general mechanism (a `gh` invocation with runtime-computed argument text) plainly applies. `_shared/worktree-setup.md`'s post-creation catch-up already proactively points every worktree-provisioned session at this reference section (lines 10, 111-116) — the discoverability gap the original report implicitly assumed doesn't exist either; the reference is already surfaced early, not hidden.\n\n## Deliverables\n\n- [ ] Add a `gh api graphql` worked-example addendum to `scratch-worktree.md`'s \"## 7. Shell constraint\" section, following the file's own established dated-addendum pattern — the one repro shape from this report not already covered verbatim. Workaround to document: write the GraphQL query and any variable payload to files first, pass the mutation via `-F name=@file` (per this session's own memory-note precedent for the identical pattern), never inline a computed variable directly into the `gh api graphql` argument text.\n- [ ] No change to `pre-tool-use.js` or any other plugin code — there is nothing to fix there; this is a documentation-only record.\n\n## Acceptance Criteria\n\n1. `scratch-worktree.md`'s Shell constraint section names the `gh api graphql` trigger shape and its file-based workaround, in the same style as its existing dated addenda.\n2. No code in `plugin/bin/lib/hooks/` changes — a build that touches `pre-tool-use.js`'s wd-deny branch for this record has misread this shaping pass's premise correction.\n3. `npm test` passes.\n\n## Release Note\n\nStopped the worktree guard from refusing non-git commands with runtime variables and GitHub GraphQL calls.\n\n## Technical Approach\n\nPure documentation addition, following the exact established pattern of `scratch-worktree.md`'s existing addenda (dated, referencing the record number, one or more worked repro→refusal-text→workaround entries). No code changes are in scope — the whole point of this record, once correctly shaped, is that the underlying behavior lives outside this repo's control.\n\n### Key Files\n\n- `plugin/skills/_shared/scratch-worktree.md` — \"## 7. Shell constraint\" section, where the new `gh api graphql` addendum belongs\n- `docs/hooks.md` and `docs/skill-authoring.md` — already correctly document the harness-vs-plugin distinction; cited as evidence above, not expected to need changes unless the build turns up a gap in them specifically\n\n## Gotchas\n\n- Do not let a build agent \"fix\" `pre-tool-use.js` for this record — that premise is wrong, confirmed by direct grep against the actual denial text and the plugin's own docs explicitly disclaiming responsibility for this behavior.\n- If a future review of this record wants to also correct the misattribution more visibly (e.g., a comment on the original issue, or checking whether other open records carry the same `bin/lib/hooks/pre-tool-use.js` misattribution), that's a reasonable scope addition to raise at build time — not required by this record's own Acceptance Criteria as shaped.\n\n## Original request\n\nworktree guard: refuses non-git commands whose arguments are runtime variables, and gh graphql calls\n\n**Summary:** Under `worktree-always`, the worktree-isolation guard denies plain non-git commands (`sed`, `gh api graphql`, `node` loops) whenever an argument is a runtime-computed variable or the command text is \"too complex to verify\", even though none of them can invoke git.\n\n**Kind:** Defect\n\n**Affected component:** worktree isolation guard (`bin/lib/hooks/pre-tool-use.js`, the wd-deny / \"cannot be shown not to be git\" branch)\n\n**Repro steps:**\n1. In a worktree-isolated session (`worktree-always: ON`), run a Bash call that sets a variable and uses it in a non-git command in the same line: `F=\"/tmp/notes.md\"; sed -n '4,60p' \"$F\"`.\n2. Run `gh api graphql --hostname <ghe-host> -f query='mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}' -f id=... -F body=@file.md`.\n3. Run a loop with no git in it: `for d in a b c; do node \"<plugin>/bin/friction-events.js\" --run \"$P/$d\"; done`.\n\n**Expected vs. actual:**\nExpected: all three are allowed — the executable is `sed`/`gh`/`node`, the text contains no `git` token, and nothing in them can target another checkout.\nActual: each is refused: \"this command runs sed with a value computed at runtime (the variable F) in a plain command, so what it runs cannot be shown not to be git. Refusing to run it\"; \"runs gh with the text query=mutation(...) inside a construct too complex to verify, so what it runs cannot be shown not to be git\"; the loop is refused as a compound construct. The only way through is to move each into a script file and run that — one extra round-trip per denial (about six this run; a multi-spec wrap-up reads many long procedure files with `sed -n` ranges, which is exactly where it bites).\n\n**Definition:** Clear\n\n**Plugin version:** 6.126.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-5329b3a9 -->\n",
-        "createdAt": "2026-09-21T05:41:50Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2739,
-        "state": "OPEN",
-        "title": "worktree guard: refuses non-git commands whose arguments are runtime variables, and gh graphql calls",
-        "updatedAt": "2026-10-01T16:13:52Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
