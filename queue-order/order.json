@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-03T16:02:59.497Z",
+  "computedAt": "2026-10-03T16:38:06.619Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -85,7 +85,7 @@
       },
       {
         "number": 2796,
-        "updatedAt": "2026-10-01T16:11:56Z",
+        "updatedAt": "2026-10-03T16:06:21Z",
         "state": "OPEN"
       },
       {
@@ -225,7 +225,7 @@
       },
       {
         "number": 2573,
-        "updatedAt": "2026-10-01T16:10:19Z",
+        "updatedAt": "2026-10-03T16:06:14Z",
         "state": "OPEN"
       },
       {
@@ -1851,6 +1851,90 @@
     ],
     [
       {
+        "body": "Surface: backend\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule\nsentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`,\n18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its\npersonas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent`\ntool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a\nstatic `node --test` assertion; it can only be confirmed by observing an actual future `/specify`\ndecomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that\npersona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s\nfan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the\nobservation (transcript excerpt or note) against this item, or file a defect against\n`red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use\ncalls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of\nsub-issues) assistant messages.\n\n## Release Note\n\nNo user-visible change: verified that spec red-team reviews batch correctly across several sub-issues.\n\n## Technical Approach\n\nWait for (or trigger) a `/claude-tweaks:specify` decomposition-mode run that produces 2 or more\n`ceremony:standard` sub-issue records — `ceremony-check` (`assess-agent-autonomy/ceremony-check.md`)\nresolves the tier per sub-issue during that run's own Step 3, so the tier isn't knowable until the\nrun happens. Once such a run occurs, inspect that session's stored transcript for the Step 5\nred-team dispatch (`specify/red-team.md`'s Parallel dispatch section): locate the `Agent` tool_use\nblocks for each dispatched persona and group them by the assistant message id each block belongs\nto. Confirm the number of distinct assistant message ids covering all persona dispatches for a\ngiven sub-issue is ≤ the number of sub-issues in that batch. Use the same read-only transcript\ninspection method `transcript-payload-verification` documents for reading this session's own\nlocally-stored transcript, rather than instrumenting or modifying `red-team.md` itself.\n\nIf the count exceeds the bound, file a defect issue against `red-team.md`'s dispatch prose\n(quoting the transcript grouping that violates the rule) instead of editing the file directly from\nthis record — this record's own deliverable is the observation, not the fix.\n\n### Key Files\n\n- `plugin/skills/specify/red-team.md` — the per-sub-issue persona dispatch procedure being observed\n- `plugin/skills/_shared/subagent-output-contract.md` — the fan-out single-assistant-message rule this observation verifies compliance with\n- `tests/subagent-contract-clauses.test.js` — AC1's existing static test coverage (unaffected by this record)\n\n## Gotchas\n\n- This record's acceptance criterion depends on an external event (a live `/specify` decomposition\n  run over 2+ `ceremony:standard` sub-issues happening) that this record cannot itself trigger on a\n  fixed schedule — it may sit open for some time until a qualifying run occurs naturally, or until\n  someone deliberately runs one to close it out.\n- A qualifying run must be observed via its own transcript at the time it happens; this record\n  cannot be resolved from historical data if no already-completed run's transcript is still\n  available.\n\n## Original request\n\nVerify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)\n\nOrigin: ledger resolve gate\n\nDefer-reason: needs-human-decision\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule sentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`, 18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its personas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent` tool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a static `node --test` assertion; it can only be confirmed by observing an actual future `/specify` decomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that persona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s fan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the observation (transcript excerpt or note) against this item, or file a defect against `red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use calls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of sub-issues) assistant messages.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
+        "createdAt": "2026-08-24T03:21:25Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: ready for dispatch",
+            "color": "0e8a16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "E99695"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAAC0IWj4w",
+            "name": "fix-on-worktree-worktree-dispatch-record-1350",
+            "description": "Fixed on worktree-worktree-dispatch-record-1350, not yet on the default branch",
+            "color": "FBCA04"
+          }
+        ],
+        "number": 1350,
+        "state": "OPEN",
+        "title": "Verify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)",
+        "updatedAt": "2026-10-01T16:10:32Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
         "body": "Surface: infra\n\n**Related:** #2744, #2748 (same shape — pure verification-and-close findings, already-resolved by the time of shaping)\n\n## Current State\n\nThis is a dispatch-filed self-report from a `/flow` Step 2.8 claim contest: a dispatch firing (run `2026-09-21T102115-record-1982`) re-selected a file-overlap group (`#2568, #2565, #2346, #2330, #1982`) that was already claimed by an earlier run (`2026-09-21T002427-record-1982`), found the claim contested (stale-looking, TTL expiring `2026-09-24`), claimed nothing (all-or-abort), and stopped before Step 3 — a clean, correct no-op per `flow/claim-targets.md`'s own procedure. The report recommended `/claude-tweaks:tidy` to sweep and reclaim, or waiting for the TTL to expire.\n\n**Verified during shaping — this is now fully resolved, not a live issue.** The claims-registry blob for `#1982` (`gh api repos/thn-inc/claude-tweaks/contents/claims/issue-1982.json?ref=claims-registry`) shows `{\"released\": true, \"runId\": \"2026-09-21T002427-record-1982\", \"reason\": \"issue-closed: reconciled from #1982\", \"releasedAt\": \"2026-09-23T18:37:15.498Z\"}` — the claim was properly released via reconciliation nearly a week before this shaping pass. `#1982` itself is `CLOSED` (confirmed via `gh issue view 1982 --json state`). The TTL this report flagged (`2026-09-24`) has also long since passed. There is no remaining stale claim, no group to reclaim, and no code defect to fix — this record's entire purpose (surface a contested claim for a human/tidy to resolve) has already been served by the ordinary reconciliation machinery, independent of this record.\n\n## Deliverables\n\n- Confirm the claim/contest state is still resolved at build time (re-check the claims-registry blob and `#1982`'s state — this shaping pass's snapshot could theoretically be stale if something re-contested the same group, though nothing suggests that).\n- Close this self-report with a comment citing the resolution evidence (the released claim blob, `#1982`'s closed state) — no code change, no reclaim action needed.\n\n## Acceptance Criteria\n\n- A fresh check confirms the claim is released and `#1982` is closed (or reports a genuine surprise if not, rather than assuming this shaping pass's finding still holds).\n- The record is closed with an explanatory comment, not left open as if still actionable.\n- `npm test` passes (no test-affecting change expected).\n\n## Release Note\n\nNo user-visible change: closed out a resolved claim contest reported by a headless dispatch.\n\n## Technical Approach\n\nPure verification-and-close — the same shape as #2744's already-resolved finding. No code investigation needed beyond re-confirming the claims-registry state via `gh api` and the target issue's state via `gh issue view`.\n\n### Key Files\n\n- None — no code change. The claims-registry blob (`claims/issue-1982.json` on the `claims-registry` branch) and issue `#1982`'s state are the only things to re-verify.\n\n## Gotchas\n\n- Don't mistake this for a genuine unresolved claim-contest needing a `/tidy` reclaim sweep — the evidence gathered during shaping shows it was already reconciled independently, five to six days before this shaping pass ran.\n- If re-verification at build time contradicts this (the claim shows live again, or `#1982` is reopened), stop and report that explicitly — it would mean something unusual happened since this shaping pass, worth surfacing rather than silently re-closing.\n\n## Original request\n\nDispatch headless self-report: flow-step-2.8-claim-contest\n\n## Flow: Claim contested\n\n#2568, #2565, #2346, #2330, #1982 (this dispatch bundle, file-overlap group keyed to record 1982)\nare already claimed by run 2026-09-21T002427-record-1982 (session\n1522dc69-eb55-5ecb-8312-e2ac906cf0c4, host: vm, claimed 2026-09-21T00:32:49.141Z, expires\n2026-09-24T00:32:49.141Z).\n\nStale holder — no activity since unknown (no transcript found at\n~/.claude/projects/-home-user-claude-tweaks/1522dc69-eb55-5ecb-8312-e2ac906cf0c4.jsonl or\n~/.claude/projects/-home-user-claude-tweaks--claude-worktrees-dispatch-next/1522dc69-eb55-5ecb-8312-e2ac906cf0c4.jsonl;\nsame host (vm) as this firing, so not a Remote holder; no git worktree in this checkout's\n`git worktree list` matches the holder's bare `record-1982` runId token, so no in-progress worktree\nwas found to inspect). Next: `/claude-tweaks:tidy` to sweep and reclaim, or wait for the TTL to\nexpire.\n\nThis dispatch firing (run 2026-09-21T102115-record-1982, PIPELINE_RUN_DIR\n/home/user/claude-tweaks/.claude-tweaks/pipelines/2026-09-21T102115-record-1982) re-selected the\nsame file-overlap group ~10 hours after the still-live claim above was written, never claimed any\nof the 5 targets itself (all-or-abort: the first target checked was already contested, so nothing\nwas claimed and nothing needs releasing), and stopped before Step 3 (Config Manifesto) per\n`flow/claim-targets.md`'s group-claim-all-or-abort procedure. No build or test ran for this\nfiring.\n\nResolved build: claude-tweaks v6.126.0 @ /root/.claude/plugins/cache/claude-tweaks-marketplace/claude-tweaks/6.126.0\n\n<!-- dispatch-preflight-marker: flow-step-2.8-claim-contest -->\n\n",
         "createdAt": "2026-09-21T10:26:31Z",
         "labels": [
@@ -2114,266 +2198,6 @@
           "shapedHeadless": false
         }
       }
-    ],
-    [
-      {
-        "body": "Surface: backend\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule\nsentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`,\n18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its\npersonas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent`\ntool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a\nstatic `node --test` assertion; it can only be confirmed by observing an actual future `/specify`\ndecomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that\npersona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s\nfan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the\nobservation (transcript excerpt or note) against this item, or file a defect against\n`red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use\ncalls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of\nsub-issues) assistant messages.\n\n## Release Note\n\nNo user-visible change: verified that spec red-team reviews batch correctly across several sub-issues.\n\n## Technical Approach\n\nWait for (or trigger) a `/claude-tweaks:specify` decomposition-mode run that produces 2 or more\n`ceremony:standard` sub-issue records — `ceremony-check` (`assess-agent-autonomy/ceremony-check.md`)\nresolves the tier per sub-issue during that run's own Step 3, so the tier isn't knowable until the\nrun happens. Once such a run occurs, inspect that session's stored transcript for the Step 5\nred-team dispatch (`specify/red-team.md`'s Parallel dispatch section): locate the `Agent` tool_use\nblocks for each dispatched persona and group them by the assistant message id each block belongs\nto. Confirm the number of distinct assistant message ids covering all persona dispatches for a\ngiven sub-issue is ≤ the number of sub-issues in that batch. Use the same read-only transcript\ninspection method `transcript-payload-verification` documents for reading this session's own\nlocally-stored transcript, rather than instrumenting or modifying `red-team.md` itself.\n\nIf the count exceeds the bound, file a defect issue against `red-team.md`'s dispatch prose\n(quoting the transcript grouping that violates the rule) instead of editing the file directly from\nthis record — this record's own deliverable is the observation, not the fix.\n\n### Key Files\n\n- `plugin/skills/specify/red-team.md` — the per-sub-issue persona dispatch procedure being observed\n- `plugin/skills/_shared/subagent-output-contract.md` — the fan-out single-assistant-message rule this observation verifies compliance with\n- `tests/subagent-contract-clauses.test.js` — AC1's existing static test coverage (unaffected by this record)\n\n## Gotchas\n\n- This record's acceptance criterion depends on an external event (a live `/specify` decomposition\n  run over 2+ `ceremony:standard` sub-issues happening) that this record cannot itself trigger on a\n  fixed schedule — it may sit open for some time until a qualifying run occurs naturally, or until\n  someone deliberately runs one to close it out.\n- A qualifying run must be observed via its own transcript at the time it happens; this record\n  cannot be resolved from historical data if no already-completed run's transcript is still\n  available.\n\n## Original request\n\nVerify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)\n\nOrigin: ledger resolve gate\n\nDefer-reason: needs-human-decision\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule sentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`, 18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its personas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent` tool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a static `node --test` assertion; it can only be confirmed by observing an actual future `/specify` decomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that persona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s fan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the observation (transcript excerpt or note) against this item, or file a defect against `red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use calls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of sub-issues) assistant messages.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
-        "createdAt": "2026-08-24T03:21:25Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAAC0IWj4w",
-            "name": "fix-on-worktree-worktree-dispatch-record-1350",
-            "description": "Fixed on worktree-worktree-dispatch-record-1350, not yet on the default branch",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 1350,
-        "state": "OPEN",
-        "title": "Verify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)",
-        "updatedAt": "2026-10-01T16:10:32Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n`checkOneFixture` in `tools/upstream-drift/checks.js` (lines 330-380) replays a manifest fixture command and asserts its observed output against `expect`. The function hard-requires the named stream (`expect.stream`, `stdout` or `stderr`) to parse as JSON — `tryParseJson(streams[wanted].trim())` — and returns a mismatch if it doesn't, including a special case that names when the JSON payload landed on the other stream instead. This makes it impossible to write a fixture for a command whose failure output is plain text rather than JSON. This was discovered while auditing #2480 (Impeccable CLI Rust-engine shim): the engine-locate/download failure path writes a plain-text message to stderr and exits 127, but there is no way to assert that exact behavior as a fixture today — only a JSON-shaped stderr/stdout payload is expressible.\n\n## Deliverables\n1. Extend `checkOneFixture` to support a plain-text/substring assertion mode on a named stream, as an alternative to the existing JSON-parse assertion — expressible via a new `expect` field (e.g. `expect.contains` or `expect.textMatch`) that, when present, asserts a substring match on `streams[expect.stream]` instead of requiring JSON parse.\n2. Update the manifest schema/validation (`tools/upstream-drift/manifest.js`) to accept the new field alongside the existing `exit`/`stream`/`keys` fields, validating that a fixture specifies either the JSON-mode fields or the new text-mode field, not an ambiguous mix.\n3. Add a fixture to `tools/upstream-drift/manifest.yml` (or a test-only manifest) exercising the plain-text stderr case from #2480 (or an equivalent), to prove the new mode round-trips a real plain-text failure.\n\n## Acceptance Criteria\n1. A fixture whose `expect` includes the new text-mode field and a substring that appears in the named stream's actual output passes `checkOneFixture`.\n2. A fixture whose `expect` includes the new text-mode field and a substring that does NOT appear in the named stream's actual output returns a `mismatch` result with a detail naming the expected substring and which stream was checked.\n3. Existing JSON-mode fixtures (using `expect.keys`) are unaffected — `checkOneFixture`'s existing JSON-parse path and its stdout/stderr swap detection continue to work exactly as before for fixtures that don't use the new field.\n4. The manifest validation in `manifest.js` accepts fixtures using the new text-mode field without requiring the JSON-mode `keys` field, and still validates `exit`/`stream` are present as it does today.\n5. A fixture reproducing the #2480 plain-text-stderr/exit-127 case round-trips correctly (passes when the actual behavior matches, fails with an informative detail when it regresses).\n\n## Release Note\n\nAdded a plain-text assertion mode to upstream-drift fixtures, so a command that fails with plain-text output can be checked like one that emits JSON.\n\n## Technical Approach\nAdd a new optional `expect` field for text/substring assertion, checked in `checkOneFixture` before or alongside the existing JSON-parse branch: if the text-mode field is present, skip the JSON-parse requirement entirely and instead check `streams[wanted].includes(expectedSubstring)`, returning a `mismatch` with a clear detail (naming the expected substring and observed stream) on failure. Keep the existing JSON-parse path unchanged for fixtures that don't opt into the new field — the two modes should be mutually exclusive per fixture, decided by which `expect` fields are present. Update `manifest.js`'s fixture validation to allow this new field and to require that a fixture uses exactly one assertion mode (JSON-mode via `keys`, or text-mode via the new field) rather than allowing both or neither silently.\n\n### Key Files\n- `tools/upstream-drift/checks.js` — `checkOneFixture` (lines 330-380): add the text/substring assertion branch, keep the JSON-parse path unchanged for non-opted-in fixtures\n- `tools/upstream-drift/manifest.js` — fixture schema validation: accept the new `expect` field, enforce mutually-exclusive assertion mode\n- `tools/upstream-drift/manifest.yml` — add or extend a fixture exercising the plain-text-stderr case from #2480\n- `tools/upstream-drift/tests/manifest.test.js` — add test coverage for the new field's validation\n- `tools/upstream-drift/tests/checks.test.js` (if it exists; otherwise the relevant checks test file) — add test coverage for the new text-mode assertion branch in `checkOneFixture`\n\n## Gotchas\nThe two assertion modes (JSON-parse vs. text/substring) must stay mutually exclusive per fixture — allowing both to be specified together would create ambiguous validation semantics. The existing stdout/stderr-swap detection in the JSON-parse path is a load-bearing anti-regression check (comment at checks.js:361-366 calls it \"the single most important case this function exists to catch\"); the new text-mode path does not need to replicate that specific swap-detection logic unless a plain-text payload swap becomes a realized failure mode worth catching, but should not regress the existing JSON-mode swap detection.\n\n## Original request\n\nupstream-drift checkOneFixture cannot assert plain-text stderr, only JSON\n\n**Related:** #2480\n\nContext: Discovered auditing #2480 (Impeccable CLI Rust-engine shim) -- the engine-locate/download failure writes a plain-text message to stderr and exits 127, but checkOneFixture (tools/upstream-drift/checks.js:359-369) hard-requires the asserted stream to parse as JSON.\n\nScope: Extend checkOneFixture (or add a sibling assertion mode) to support a text/substring match on a named stream, so a plain-text failure like this becomes expressible as a fixture.\n",
-        "createdAt": "2026-09-17T20:11:46Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2573,
-        "state": "OPEN",
-        "title": "upstream-drift checkOneFixture cannot assert plain-text stderr, only JSON",
-        "updatedAt": "2026-10-01T16:10:19Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\nclaude-tweaks currently distributes via its own marketplace (`README.md`: `/plugin marketplace add thn-inc/claude-tweaks-marketplace` then `/plugin install claude-tweaks@claude-tweaks-marketplace`). Claude Code Templates (the Mods catalog at aitmpl.com) now installs function-hook plugins with one command from a live catalog — a different distribution surface this project doesn't currently participate in.\n\n## Deliverables\n\nInvestigate the Mods catalog's listing mechanism and decide one of two outcomes:\n1. List claude-tweaks in the Mods catalog alongside its existing marketplace distribution (a lighter-weight addition — participate in an existing catalog rather than building new infrastructure), or\n2. Determine that participation isn't worthwhile (licensing terms, catalog scope mismatch, maintenance burden) and document why, so the question doesn't get silently re-raised later without the answer already on record.\n\n## Acceptance Criteria\n\n- The Mods catalog's actual listing requirements (submission process, format, any terms) are investigated and stated, not assumed.\n- A decision is made and recorded: either claude-tweaks is listed in the catalog (with the listing itself as evidence), or a documented reason states why not — in `README.md` or a relevant docs file.\n- If listed, installing claude-tweaks via the catalog's one-command flow is verified to actually work end-to-end, not just submitted and assumed functional.\n\n## Release Note\n\nNo user-visible change: evaluated listing claude-tweaks in the Mods catalog alongside its own marketplace.\n\n## Technical Approach\n\nResearch the Mods catalog (aitmpl.com) directly — its submission mechanism, what metadata it requires from a plugin, and whether it wraps the existing marketplace install path or requires a separate distribution format. This is investigation-first: the record intentionally doesn't presuppose which of the two Deliverable outcomes is correct.\n\n### Key Files\n\n- `README.md` — where the distribution instructions live today, and where a catalog listing (or the documented decision not to pursue one) would be noted\n- `plugin/.claude-plugin/plugin.json` — the plugin manifest a catalog listing would likely reference\n\n## Gotchas\n\n- Don't assume the catalog requires new distribution infrastructure — it may simply wrap the existing `/plugin marketplace add` + `/plugin install` flow with a friendlier one-command UX, in which case listing might be nearly free. Investigate before assuming either direction is more work.\n- If listing requires ongoing maintenance (keeping catalog metadata in sync with plugin.json/version bumps), factor that recurring cost into the decision, not just the one-time listing effort.\n\n## Original request\n\nEvaluate the Mods catalog (aitmpl.com) for claude-tweaks distribution\n\nContext: Claude Code Templates now installs function-hook plugins with one command from a live catalog.\n\nScope: Whether claude-tweaks should adopt similar one-command distribution or just list itself in the catalog.\n",
-        "createdAt": "2026-09-29T01:23:31Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2796,
-        "state": "OPEN",
-        "title": "Evaluate the Mods catalog (aitmpl.com) for claude-tweaks distribution",
-        "updatedAt": "2026-10-01T16:11:56Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
     ]
   ],
   "excluded": [
@@ -2390,13 +2214,6 @@
         2746,
         2802,
         2844
-      ]
-    },
-    {
-      "records": [
-        1350,
-        2573,
-        2796
       ]
     }
   ]
