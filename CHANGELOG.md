@@ -60,6 +60,9 @@ Three conventions follow from how this repo works, and all are visible below:
 
 * capture: work-types: native branch uses… ([#2932](https://github.com/thn-inc/claude-tweaks/issues/2932)) ([2de5713](https://github.com/thn-inc/claude-tweaks/commit/2de571361c190585b50dea655f6dd8e398a81a65))
 
+### Highlights
+* Fixed `/capture`'s native issue-type filing being refused inside worktree sessions and silently passing failures.
+
 ## [6.134.0](https://github.com/thn-inc/claude-tweaks/compare/v6.133.0...v6.134.0) (2026-10-03)
 
 
