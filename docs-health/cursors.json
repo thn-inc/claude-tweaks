@@ -184,5 +184,8 @@
   },
   "doc:decisions/0020-intent-file-evaluation": {
     "lastAuditedMs": 1790922305939
+  },
+  "doc:plans/2026-09-30-flow-spec-2704-2709-ledger": {
+    "lastAuditedMs": 1791008381371
   }
 }
