@@ -27,7 +27,7 @@ The stated reason is the load-bearing half — a bare `skip: true` makes an unfe
 **Normalize the base haystack exactly as the live one — a line-based baseline check is vacuous for every literal that wraps.**
 The `grep -c -F` form above matches per *line*, and shipped skill prose is hard-wrapped, so a pinned literal that spans a
 line break can never be found in the baseline whatever the base file actually contains: the check returns 0 for the wrong
-reason and certifies a go-red it never exercised. This is `[IL-66]` one level up from the Project Conventions bullet above —
+reason and certifies a go-red it never exercised. This is `[IL-66]` one level up from SKILL.md's Project Conventions bullet —
 that bullet collapses the *live* haystack and needle; this one says the baseline needs the same normalizer, not a raw `grep`.
 Run the `git show` output through the suite's own collapse helper and count on the collapsed string.
 `tests/untrusted-record-content-conformance.test.js`'s `baseFileGrepCount` shipped the line-based form
@@ -49,4 +49,3 @@ Rows *reworded in place* change no count and need no bump — but they still bel
 ## Choosing a pin/sniff signal empirically
 
 When a test or a skill procedure must *detect* a document class (a heading, a marker, a body shape), run a corpus scan over the live population before committing to the signal: count exactly which documents each candidate signal matches, and reject any candidate that matches a document it must not. Record #1071's scan of all 234 open records proved the line-anchored `## Leaves` heading matched exactly the four real legacy parents — while the plausible alternatives ("decomposition parent" phrase, "(parent)" title/body match) false-positived on the very bug report describing the defect. The scan result belongs in the record/spec as evidence, so the accepted residual risk is grounded rather than guessed.
-
