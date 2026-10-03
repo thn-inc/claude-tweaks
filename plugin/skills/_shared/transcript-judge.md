@@ -105,14 +105,18 @@ after the watermark, when one exists. This skip check and the offset clause are 
 redundant: the offset clause narrows an unavoidable dispatch; this check avoids the dispatch
 altogether when narrowing it would leave nothing to evaluate.
 
-**Self-assessment is exempted, explicitly (not an oversight).** The Degradation section below
-states self-assessment "never reads or writes a watermark — there is no resolved transcript path
-to key one on." This skip check inherits that same exemption rather than inventing a parallel
-mechanism for it: self-assessment only fires when no transcript file resolves at all, so there is
-no `currentBytes` to compare and no stamp to check. A self-assessment run therefore always runs in
-full and never writes a stamp on this check's account — duplicate-filing guards across repeated
-self-assessment runs are the consumer's own concern, the same safety net that already covers a
-transcript-judged run's non-duplicate findings.
+**Self-assessment is exempted, explicitly (not an oversight).** This skip check only runs on the
+branch where a transcript path resolved, before any dispatch is attempted — so for the
+no-transcript-resolves route into self-assessment (Degradation section below) it is a non-event,
+not an exemption: there is no `currentBytes` to compare and no stamp to check when no transcript
+ever resolved. The *other* route into self-assessment — a terminal judge-dispatch failure — already
+passed through this same skip check earlier in the same invocation (the dispatch it went on to fail
+was reached only because this check returned `false`), so there is nothing left for this check to
+do on that route either by the time self-assessment degradation fires. Either way, this check never
+re-runs on self-assessment's account — duplicate-filing guards across repeated self-assessment runs
+are the consumer's own concern, the same safety net that already covers a transcript-judged run's
+non-duplicate findings. Whether a given self-assessment run reads or writes a watermark is the
+Degradation section's own concern below, not this check's.
 
 ## The judge dispatch
 
@@ -187,8 +191,20 @@ The `(self-assessment)` tag is the full mitigation, deliberately. No separate co
 machinery, no lowered evidentiary bar — findings from this mode pass through the consumer's own
 human-gated confirmation exactly like a transcript-judged finding does.
 
-The self-assessment path never reads or writes a watermark — there is no resolved transcript path
-to key one on.
+**Watermark — narrower than a blanket exclusion.** The one true no-watermark case is the
+no-transcript-resolves route above: there is genuinely no resolved transcript path to key a
+watermark on, so none is written. The terminal-dispatch-failure route is different — a transcript
+path *did* resolve (resolution has to succeed before a dispatch can even be attempted), so there is
+exactly the same `transcriptPath` + `bytesAtDispatch` a successful dispatch would have written
+against. On that route, once the self-assessment evaluation completes, call `writeWatermark` the
+same way the Watermark write section below describes — reusing the `bytesAtDispatch` already
+captured before the failed dispatch attempt (never re-stat after; the same append-while-running
+race that section's own comment warns about) — with `evaluatedAt` as now, the consumer's own
+payload fields (parameterization point 4), and one addition: `mode: "self-assessment"` on the
+payload, so a later reader (or a human inspecting the watermark file) can tell a
+self-assessment-written watermark apart from a dispatched judge's. A reader written before this
+field existed treats its absence as the pre-existing dispatched-judge case, never as a new failure
+mode.
 
 ## After the judge returns
 
@@ -205,8 +221,10 @@ Model Selection section, then degrades to the self-assessment path above, noted 
 summary: the evaluation is never silently dropped.
 
 **Watermark write.** On a `DONE` or `DONE_WITH_CONCERNS` return from the judge (not
-`NEEDS_CONTEXT`/`BLOCKED`, and not the self-assessment degradation path above), call
-`writeWatermark` (with the consumer's own `{ consumer }` key) with:
+`NEEDS_CONTEXT`/`BLOCKED`) — or on completing a self-assessment evaluation reached via a terminal
+judge-dispatch failure, per the Degradation section's "Watermark — narrower than a blanket
+exclusion" paragraph above — call `writeWatermark` (with the consumer's own `{ consumer }` key)
+with:
 
 ```
 {
@@ -215,6 +233,9 @@ summary: the evaluation is never silently dropped.
                            // to the transcript while it runs, so re-stat-ing after return
                            // would race
   evaluatedAt,             // now
+  mode,                    // "self-assessment" on the terminal-dispatch-failure route above;
+                           // omitted (undefined) on an ordinary dispatched-judge write — a
+                           // reader treats an absent field as the pre-existing dispatched case
   ...consumer-owned payload fields (parameterization point 4's "watermark payload" note above)
 }
 ```

@@ -95,6 +95,31 @@ test('transcript-judge.md documents the watermark write is gated on DONE\\/DONE_
   assert.match(SHARED, /On a `DONE` or `DONE_WITH_CONCERNS` return from the judge \(not/);
 });
 
+// --- 3b. #2730: self-assessment writes a watermark too, when a transcript path resolved ---
+
+test('transcript-judge.md narrows the self-assessment watermark exclusion to the no-transcript-resolves route only', () => {
+  assert.match(SHARED, /\*\*Watermark — narrower than a blanket exclusion\.\*\*/);
+  assert.match(SHARED, /The one true no-watermark case is the\nno-transcript-resolves route/);
+  assert.doesNotMatch(SHARED, /The self-assessment path never reads or writes a watermark/);
+});
+
+test('transcript-judge.md documents the self-assessment write reuses bytesAtDispatch captured before the failed dispatch', () => {
+  assert.match(SHARED, /reusing the `bytesAtDispatch` already\ncaptured before the failed dispatch attempt/);
+});
+
+test('transcript-judge.md documents the mode: "self-assessment" payload field and its absent-field fallback', () => {
+  assert.match(SHARED, /mode: "self-assessment"` on the\npayload/);
+  assert.match(SHARED, /treats its absence as the pre-existing dispatched-judge case, never as a new failure\nmode/);
+});
+
+test('transcript-judge.md Watermark write section also fires for the terminal-dispatch-failure self-assessment route', () => {
+  assert.match(
+    SHARED,
+    /or on completing a self-assessment evaluation reached via a terminal\njudge-dispatch failure/,
+  );
+  assert.match(SHARED, /mode,\s*\/\/ "self-assessment" on the terminal-dispatch-failure route above/);
+});
+
 // --- 4. Self-assessment degradation + record-failure clause moved verbatim ---
 
 test('transcript-judge.md documents the (self-assessment) header-tag mitigation', () => {
