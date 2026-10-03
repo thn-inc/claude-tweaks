@@ -187,7 +187,11 @@ test('AC2: gh absent renders acceptance-labeling unknown, exit code reflects onl
   const repoRoot = makeCleanRepoRoot();
   try {
     const throwingGh = () => { throw new Error('command not found: gh'); };
-    const cleanGit = (args) => (args[0] === 'log' ? 'abc1234 fix\n' : '');
+    // carrier-commit's own textual match must pass via the branch log alone
+    // here -- gh is entirely absent in this fixture, so carrier-commit's
+    // ground-truth fallback (which also calls gh) would otherwise degrade
+    // to a 'fail' row this test isn't exercising.
+    const cleanGit = (args) => (args[0] === 'log' ? 'Fix wrap-up verify verb\n\nFixes #900\n' : '');
     const result = runVerify({ runDir: originalPath, base: 'main', repoRoot, cwd: repoRoot, deps: { git: cleanGit, gh: throwingGh } });
     const acceptanceRow = result.rows.find((r) => r.check === 'acceptance-labeling');
     assert.strictEqual(acceptanceRow.result, 'unknown');
@@ -218,7 +222,11 @@ test('acceptance-labeling check renders unknown -- not fail -- when a parent-res
   writeExpectations(runDir, { version: 1, memory: [], upstream: [], deferred: ['run-dir-archival'] });
   const cleanGit = (args) => {
     if (args[0] === 'remote') return 'https://github.com/org/repo.git';
-    if (args[0] === 'log' && args.some((a) => typeof a === 'string' && a.includes('Fixes #900'))) return 'abc1234 fix\n';
+    // carrier-commit's own textual match must pass here so this fixture's
+    // GraphQL-throwing gh fake (below) exercises acceptance-labeling's own
+    // parent-resolution failure in isolation, never carrier-commit's
+    // ground-truth fallback (which also calls gh api graphql).
+    if (args[0] === 'log') return 'Fix wrap-up verify verb\n\nFixes #900\n';
     return '';
   };
   const fakeGh = (args) => {
@@ -694,10 +702,7 @@ function writeSpecFile(runDir, specId, record) {
 test('carrier-commit check passes when a Fixes #{n} commit exists in range for every resolved issue', () => {
   const runDir = makeTmpDir('verify-carrier-pass-');
   writeSpecFile(runDir, '900', 900);
-  const fakeGit = (args) => {
-    if (args[0] === 'log' && args.some((a) => a.includes('Fixes #900'))) return 'abc1234 Fix wrap-up verify verb\n';
-    return '';
-  };
+  const fakeGit = (args) => (args[0] === 'log' ? 'Fix wrap-up verify verb\n\nFixes #900\n' : '');
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
   const row = result.rows.find((r) => r.check === 'carrier-commit');
   assert.strictEqual(row.result, 'pass');
@@ -729,7 +734,7 @@ test('carrier-commit check skips when no resolved issues found (conversation-bas
 test('carrier-commit check resolves issue numbers from verify-expectations.json issues key when no materialized header exists', () => {
   const runDir = makeTmpDir('verify-carrier-expissues-pass-');
   writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [900] });
-  const fakeGit = (args) => (args.some((a) => a.includes('Fixes #900')) ? 'abc1234 Fix wrap-up verify verb\n' : '');
+  const fakeGit = (args) => (args[0] === 'log' ? 'Fix wrap-up verify verb\n\nFixes #900\n' : '');
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
   const row = result.rows.find((r) => r.check === 'carrier-commit');
   assert.strictEqual(row.result, 'pass');
@@ -748,7 +753,7 @@ test('carrier-commit check prefers a materialized header over expectations issue
   const runDir = makeTmpDir('verify-carrier-header-priority-');
   writeSpecFile(runDir, '901', 901);
   writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [900] });
-  const fakeGit = (args) => (args.some((a) => a.includes('Fixes #901')) ? 'abc1234 Fix wrap-up verify verb\n' : '');
+  const fakeGit = (args) => (args[0] === 'log' ? 'Fix wrap-up verify verb\n\nFixes #901\n' : '');
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
   const row = result.rows.find((r) => r.check === 'carrier-commit');
   assert.strictEqual(row.result, 'pass', row.detail);
@@ -811,7 +816,7 @@ test('carrier-commit check passes from the branch log alone without ever calling
   const runDir = makeTmpDir('verify-carrier-branchlog-nogh-');
   writeSpecFile(runDir, '900', 900);
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ pr: { number: 1199 } }));
-  const fakeGit = (args) => (args.some((a) => a === '--grep=Fixes #900') ? 'abc1234 Fix wrap-up verify verb\n' : '');
+  const fakeGit = (args) => (args[0] === 'log' ? 'Fix wrap-up verify verb\n\nFixes #900\n' : '');
   const prBodyCalls = [];
   const fakeGh = (args) => {
     if (args[0] === 'pr' && args[1] === 'view') prBodyCalls.push(args);
@@ -821,6 +826,141 @@ test('carrier-commit check passes from the branch log alone without ever calling
   const row = result.rows.find((r) => r.check === 'carrier-commit');
   assert.strictEqual(row.result, 'pass');
   assert.deepStrictEqual(prBodyCalls, [], 'carrier-commit must never fetch a PR body when the branch log already carries the commit');
+});
+
+// ---- carrier-commit widened closing-keyword set + ground-truth fallback (#2676) ----
+
+test('carrier-commit check passes on a "Closes #N" commit (previously only "Fixes #N" matched)', () => {
+  const runDir = makeTmpDir('verify-carrier-closes-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = (args) => (args[0] === 'log' ? 'Widen carrier-commit keywords\n\nCloses #900\n' : '');
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('carrier-commit check passes on a "Resolves #N" commit', () => {
+  const runDir = makeTmpDir('verify-carrier-resolves-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = (args) => (args[0] === 'log' ? 'Widen carrier-commit keywords\n\nResolves #900\n' : '');
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('carrier-commit check matches case-insensitively ("FIXES #N")', () => {
+  const runDir = makeTmpDir('verify-carrier-case-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = (args) => (args[0] === 'log' ? 'Widen carrier-commit keywords\n\nFIXES #900\n' : '');
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('carrier-commit check matches an owner/repo#N-qualified closing keyword', () => {
+  const runDir = makeTmpDir('verify-carrier-ownerrepo-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = (args) => (args[0] === 'log' ? 'Widen carrier-commit keywords\n\nFixes org/repo#900\n' : '');
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('carrier-commit check never matches #N as a substring of a larger issue number', () => {
+  const runDir = makeTmpDir('verify-carrier-substring-');
+  writeSpecFile(runDir, '12', 12);
+  const fakeGit = (args) => (args[0] === 'log' ? 'Closes #123, unrelated to #12\n' : '');
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'fail', 'Closes #123 must never satisfy issue #12');
+});
+
+test('carrier-commit check passes via the ground-truth fallback: a CLOSED issue with a real closing-PR reference, even with no textual match anywhere', () => {
+  const runDir = makeTmpDir('verify-carrier-groundtruth-pass-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = fakeOriginGit(); // 'remote' resolves; 'log' (and everything else) returns '' -- no textual match at all
+  const calls = [];
+  const fakeGh = (args) => {
+    calls.push(args);
+    if (isGraphqlCall(args)) {
+      return JSON.stringify({
+        data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [{ number: 2000, state: 'MERGED' }] } } } },
+      });
+    }
+    if (args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ state: 'CLOSED' });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'pass', row.detail);
+  assert.ok(calls.some((a) => isGraphqlCall(a)), 'expected the ground-truth fallback to have run a linked-PR GraphQL call');
+});
+
+test('carrier-commit check still fails via the ground-truth fallback when the issue is CLOSED but has no closing-PR reference', () => {
+  const runDir = makeTmpDir('verify-carrier-groundtruth-noref-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = fakeOriginGit();
+  const fakeGh = (args) => {
+    if (isGraphqlCall(args)) {
+      return JSON.stringify({ data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [] } } } } });
+    }
+    if (args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ state: 'CLOSED' });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'fail', 'a manually-closed issue with no closing-PR reference must still be a genuine fail');
+  assert.match(row.detail, /900/);
+});
+
+test('carrier-commit check still fails via the ground-truth fallback when a closing-PR reference exists but the issue is still OPEN', () => {
+  const runDir = makeTmpDir('verify-carrier-groundtruth-open-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = fakeOriginGit();
+  const fakeGh = (args) => {
+    if (isGraphqlCall(args)) {
+      return JSON.stringify({
+        data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [{ number: 2000, state: 'OPEN' }] } } } },
+      });
+    }
+    if (args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ state: 'OPEN' });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'fail', 'an open issue must still fail even with an (unmerged) closing-PR reference');
+});
+
+test('carrier-commit check never runs the ground-truth fallback when the textual match already succeeded (no gh call at all)', () => {
+  const runDir = makeTmpDir('verify-carrier-groundtruth-skip-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = (args) => (args[0] === 'log' ? 'Closes #900\n' : '');
+  const calls = [];
+  const fakeGh = (args) => { calls.push(args); return ''; };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'pass');
+  // Other checks in this same runVerify pass (e.g. acceptance-labeling) also
+  // probe `gh --version` -- scope this assertion to carrier-commit's own
+  // ground-truth calls (a linked-PR GraphQL call or an `issue view`), never
+  // all gh calls in the pass.
+  assert.ok(!calls.some((a) => isGraphqlCall(a) || (a[0] === 'issue' && a[1] === 'view')),
+    `the ground-truth fallback must never fire when the textual match already succeeded, got: ${JSON.stringify(calls)}`);
+});
+
+test('carrier-commit check: a genuinely missing carrier commit (no text match, no closing-PR reference, no CLOSED state) still fails -- the existing coverage is not weakened', () => {
+  const runDir = makeTmpDir('verify-carrier-groundtruth-genuine-fail-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = fakeOriginGit();
+  const fakeGh = (args) => {
+    if (isGraphqlCall(args)) return JSON.stringify({ data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [] } } } } });
+    if (args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ state: 'OPEN' });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /900/);
 });
 
 test('reference-repairs check skips when engine-state.json has no applied references findings', () => {
@@ -906,7 +1046,13 @@ test('acceptance-labeling check skips (never fails) an issue listed in verify-ex
     // exempted issue must never reach gh at all.
     throw new Error(`unexpected gh call: ${JSON.stringify(args)}`);
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  // carrier-commit's own textual match must pass via the branch log alone --
+  // this fixture's assertion below is about acceptance-labeling never
+  // calling gh beyond the probe, and carrier-commit's ground-truth fallback
+  // (triggered only when its own textual match fails) also calls gh.
+  const result = runVerify({
+    runDir, base: 'main', deps: { git: fakeOriginGit((args) => (args[0] === 'log' ? 'Fix wrap-up verify verb\n\nFixes #900\n' : '')), gh: fakeGh },
+  });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'skip', row.detail);
   assert.match(row.detail, /oversight floor/);
@@ -1347,7 +1493,7 @@ test('carrier-commit check runs git log against the injected cwd, not repoRoot',
   const fakeGit = (args, callCwd) => { calls.push({ args, cwd: callCwd }); return ''; };
   try {
     runVerify({ runDir, base: 'main', repoRoot, cwd, deps: { git: fakeGit, gh: () => '' } });
-    const call = calls.find((c) => c.args[0] === 'log' && c.args.some((a) => a.includes('Fixes #900')));
+    const call = calls.find((c) => c.args[0] === 'log' && c.args.includes('--format=%B'));
     assert.ok(call, 'expected a git log call for the resolved issue');
     assert.strictEqual(call.cwd, cwd);
     assert.notStrictEqual(call.cwd, repoRoot);

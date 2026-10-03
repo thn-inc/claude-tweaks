@@ -26,6 +26,7 @@ const { execFileSync } = require('node:child_process');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve');
 const { fetchNativeParent } = require('../issues/native-dependencies');
+const { fetchLinkedPRs } = require('../issues/linked-prs');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
@@ -311,29 +312,53 @@ function resolvedIssueNumbers(runDir) {
 // ---- carrier commit -----------------------------------------------------------
 //
 // Under `worktree` mode + `integration-model: pr-first`, there is
-// deliberately no `Fixes #{n}` commit on the branch -- the run's draft PR
+// deliberately no closing-keyword commit on the branch -- the run's draft PR
 // body carries that line instead (execution-and-verification.md's
 // worktree/pr-first note). Only fall back to the PR body when a PR number
 // actually resolves for this run (resolvePrNumber); local-merge /
 // current-branch runs have no PR, and the branch-log commit is their only
 // carrier -- missing there stays a genuine `fail`, unchanged from before.
+//
+// #2676 -- GitHub recognizes a broader closing-keyword set than the literal
+// `Fixes #N` this check used to grep for: close/closes/closed, fix/fixes/
+// fixed, resolve/resolves/resolved, case-insensitive, optionally qualified
+// with an `owner/repo` prefix before the `#N`. Built once (shared by the
+// branch-log match and the PR-body fallback, per the record's Technical
+// Approach) rather than inlined twice. `\b` on both sides of `#${n}` makes
+// it a WHOLE reference match -- `#12` never matches inside `#123`, since a
+// digit is a word character and `\b` requires a class transition.
+const CLOSING_KEYWORDS_PATTERN = 'close[sd]?|fix(?:e[sd])?|resolve[sd]?';
+function closingKeywordMatches(text, n) {
+  const re = new RegExp(`\\b(?:${CLOSING_KEYWORDS_PATTERN})\\s+(?:[\\w.-]+/[\\w.-]+)?#${n}\\b`, 'i');
+  return re.test(text || '');
+}
+
 registerCheck('carrier-commit', ({ runDir, base, deps, cwd }) => {
   const issues = resolvedIssueNumbers(runDir);
   if (!issues.length) return { result: 'skip', detail: 'no resolved issue numbers found (conversation-based work, or no materialized headers and no expectations issues)' };
   const prNumber = resolvePrNumber(runDir);
+  let commitMessages;
+  try {
+    // One read for the whole range, matched in JS against every issue's own
+    // keyword regex below -- not one `--grep` call per issue (N `git log`
+    // spawns, and ties the match to the system regex engine's own ERE/BRE
+    // dialect rather than this module's own JS regex, the single source of
+    // truth the PR-body fallback below also matches against). `%B` (raw
+    // subject + body), not `%s` (subject only) -- the old `--grep=Fixes
+    // #{n}` matched against a commit's FULL message, and narrowing to the
+    // subject line here would silently stop catching a closing keyword
+    // placed in a commit's body instead.
+    commitMessages = deps.git(['log', `${base}..HEAD`, '--format=%B'], cwd);
+  } catch (err) {
+    return { result: 'unknown', detail: `git log failed: ${err.message}` };
+  }
   let prBody = null; // cached across issues once fetched -- never re-fetched per issue
   let prBodyFetched = false;
-  const missing = [];
+  const missingTextual = [];
   for (const n of issues) {
-    let out;
-    try {
-      out = deps.git(['log', `--grep=Fixes #${n}`, `${base}..HEAD`, '--oneline'], cwd);
-    } catch (err) {
-      return { result: 'unknown', detail: `git log failed: ${err.message}` };
-    }
-    if (out.trim()) continue;
+    if (closingKeywordMatches(commitMessages, n)) continue;
 
-    if (!prNumber) { missing.push(n); continue; }
+    if (!prNumber) { missingTextual.push(n); continue; }
     if (!prBodyFetched) {
       prBodyFetched = true;
       try {
@@ -342,9 +367,43 @@ registerCheck('carrier-commit', ({ runDir, base, deps, cwd }) => {
         return { result: 'unknown', detail: `gh pr view failed for PR #${prNumber}: ${err.message}` };
       }
     }
-    if (!prBody.includes(`Fixes #${n}`)) missing.push(n);
+    if (!closingKeywordMatches(prBody, n)) missingTextual.push(n);
   }
-  if (missing.length) return { result: 'fail', detail: `no carrier commit found for #${missing.join(', #')}` };
+  if (!missingTextual.length) return { result: 'pass', detail: '' };
+
+  // #2676 Deliverable 3 -- ground-truth fallback, scoped to only the issues
+  // the textual match above couldn't confirm (never run unconditionally for
+  // every issue -- the common case where the textual match already
+  // succeeded costs nothing extra). An issue the ground truth itself can't
+  // reach (no repo slug, a gh-absent environment, a network/GraphQL
+  // failure) degrades silently back into `stillMissing` below -- the same
+  // `fail` this check would already have produced before this fallback
+  // existed, never a new `unknown`: the fallback only ever adds passes, it
+  // never weakens the textual match's own `fail` signal into something
+  // softer.
+  let repoSpec = null;
+  try {
+    repoSpec = parseRepo(deps.git(['remote', 'get-url', 'origin'], cwd));
+  } catch { /* degrades to stillMissing below */ }
+  let linked = new Map();
+  if (repoSpec) {
+    try {
+      linked = fetchLinkedPRs({
+        numbers: missingTextual, owner: repoSpec.owner, repo: repoSpec.repo, runner: (args) => deps.gh(args, cwd),
+      });
+    } catch { /* gh-absent/network/GraphQL failure -- degrades to stillMissing below */ }
+  }
+  const stillMissing = [];
+  for (const n of missingTextual) {
+    const entry = linked.get(n);
+    if (!entry || !entry.hasClosingPRReference) { stillMissing.push(n); continue; }
+    let state = null;
+    try {
+      state = JSON.parse(deps.gh(['issue', 'view', String(n), '--json', 'state'], cwd)).state;
+    } catch { /* degrades to stillMissing below */ }
+    if (state !== 'CLOSED') stillMissing.push(n);
+  }
+  if (stillMissing.length) return { result: 'fail', detail: `no carrier commit found for #${stillMissing.join(', #')}` };
   return { result: 'pass', detail: '' };
 });
 

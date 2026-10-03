@@ -14,6 +14,7 @@
 // exact guard (`here === real || here.startsWith(...)`, "never our own
 // ground") — mirrored here rather than restated with different wording.
 'use strict';
+const fs = require('fs');
 const path = require('path');
 const { runGit } = require('../hooks/git-exec');
 const { mainCheckoutRoot, safeReal } = require('../hooks/worktree-detect');
@@ -81,6 +82,71 @@ function trackReapResidue(cacheTarget, repoSlug, real, { failed, lastError, dirt
   trackResidue(cacheTarget, repoSlug, 'removal-failed', real, { failed, lastError, dirtyFiles }, { escalate, runner });
 }
 
+// #2566 — Windows's MAX_PATH limit frequently makes `git worktree remove`
+// fail with "Filename too long" on a deep pnpm/Node `node_modules` tree,
+// leaving git's own worktree registration half-unregistered (`prunable`)
+// while the directory stays on disk. The `\\?\` extended-length prefix lets
+// `fs.rmSync` bypass that limit — but it is Windows-only: on POSIX, `\` is
+// an ordinary filename character rather than a path-separator escape, so
+// prepending it would make `fs.rmSync` look for a literal path that doesn't
+// exist and silently no-op under `force: true` instead of actually removing
+// anything. `platform` defaults to `process.platform` but is an explicit
+// param (not stubbed globally) — same per-call injection seam
+// `hooks-post-tool-use-worktree-staleness.test.js` already established for
+// this exact reason: `process.platform` is process-global and stubbing it
+// would leak across tests run in the same worker.
+function longPathRemovalTarget(real, platform = process.platform) {
+  return platform === 'win32' ? `\\\\?\\${real}` : real;
+}
+
+// #2566 follow-up (review finding) — `platform === 'win32'` alone only
+// excludes POSIX from the fallback; it does nothing to stop the fallback
+// from engaging on Windows itself for a `git worktree remove` failure that
+// has NOTHING to do with path length (a locked worktree, a dirty worktree
+// git's own safety check refused to discard). Gate on the candidate path's
+// own length instead of trying to pattern-match git's wrapped OS error text
+// (fragile across git-for-windows versions/locales): Windows's traditional
+// `MAX_PATH` is 260 characters, so a path that hasn't even reached that
+// neighborhood was never going to fail removal for a path-length reason in
+// the first place, regardless of platform. 240 is deliberately conservative
+// headroom below the real ceiling — it only needs to exclude ordinary
+// short paths (an everyday locked/dirty worktree), never to pinpoint the
+// exact OS limit.
+const LONG_PATH_THRESHOLD = 240;
+function looksLikeLongPath(real) {
+  return typeof real === 'string' && real.length >= LONG_PATH_THRESHOLD;
+}
+
+// Tried once, only after `git worktree remove` has already failed — never
+// instead of it, and gated to `win32` AND a long candidate path: a failure
+// on a short path (a locked worktree, a permissions error) is a REAL
+// failure this fallback cannot safely paper over by force-deleting a
+// directory git itself refused to touch, so it falls through to the
+// existing removal-failed escalation path unchanged, exactly as before this
+// fix — on win32 now, not only off it (confirmed against this file's own
+// test suite, which simulates `removal-failed` via a `git worktree lock`
+// at an ordinary-length path that `fs.rmSync` would otherwise happily
+// bulldoze). On `win32` with a long path, also verifies the directory is
+// actually gone (`force: true` only swallows ENOENT, not other errors, but
+// the extra check costs nothing) before running `git worktree prune` to
+// clear git's own registration.
+function attemptLongPathRemoval(real, root, { fsRmSync = fs.rmSync, platform = process.platform } = {}) {
+  if (platform !== 'win32' || !looksLikeLongPath(real)) return { succeeded: false, lastError: null };
+  try {
+    fsRmSync(longPathRemovalTarget(real, platform), { recursive: true, force: true, maxRetries: 3 });
+  } catch (err) {
+    return { succeeded: false, lastError: (err && err.message) || String(err) };
+  }
+  if (fs.existsSync(real)) {
+    return { succeeded: false, lastError: 'fs.rmSync completed without removing the directory' };
+  }
+  const prune = runGit(['worktree', 'prune'], root);
+  if (prune.failure) {
+    return { succeeded: false, lastError: prune.stderr || prune.failure };
+  }
+  return { succeeded: true };
+}
+
 // A candidate worktree the CALLING process is standing inside (or under),
 // resolved from `cwd`/`process.cwd()` rather than any lock file — see the
 // module header comment for why `isWorktreeLocked` alone doesn't catch this.
@@ -93,7 +159,7 @@ function isOwnCwd(here, real) {
   return isPathContained(here, real, { orEqual: true });
 }
 
-function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault, runner } = {}) {
+function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault, runner, fsRmSync, platform } = {}) {
   const reaped = [];
   const skipped = [];
   // See worktree-reap.js's reapWorktrees for the shape rationale: only ever
@@ -144,6 +210,23 @@ function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault, r
     const owningRunDir = resolveOwningRunDir(root, real);
     const rm = runGit(['worktree', 'remove', real], root);
     if (rm.failure) {
+      // #2566 — before escalating, try the long-path fallback: it succeeds
+      // exactly where a deep `node_modules` tree made `git worktree remove`
+      // fail with Windows's "Filename too long", and is a harmless no-op
+      // attempt on a failure `git worktree prune` can't itself resolve
+      // (e.g. a genuine permissions error still falls through below).
+      const fallback = attemptLongPathRemoval(real, root, { fsRmSync, platform });
+      if (fallback.succeeded) {
+        trackReapResidue(cacheBatch, repoSlug, real, { failed: false }, { runner });
+        logReapEvent(owningRunDir, 'worktree-reaped', { prNumber: prState.number });
+        reaped.push(real);
+        try {
+          releasePorts(real);
+        } catch (err) {
+          portsRelease.push({ path: real, note: `failed: ${(err && err.message) || err}` });
+        }
+        continue;
+      }
       skipped.push({ path: real, reason: 'removal-failed', prNumber: prState.number });
       logReapEvent(owningRunDir, 'worktree-reap-skipped', { reason: 'removal-failed', prNumber: prState.number });
       // #1796 — one `git status --porcelain` read against the worktree that
@@ -157,8 +240,10 @@ function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault, r
       const dirtyFiles = capDirtyFiles(readPorcelainStatus(real));
       // #1341 — carry git's real stderr as lastError, falling back to the
       // bare category only when git produced no stderr at all (e.g. an
-      // indeterminate timeout/spawn failure with nothing to say).
-      trackReapResidue(cacheBatch, repoSlug, real, { failed: true, lastError: rm.stderr || rm.failure, dirtyFiles }, { runner });
+      // indeterminate timeout/spawn failure with nothing to say). The
+      // long-path fallback's own lastError (above) takes precedence when it
+      // ran and still failed — it is the more specific, more recent signal.
+      trackReapResidue(cacheBatch, repoSlug, real, { failed: true, lastError: fallback.lastError || rm.stderr || rm.failure, dirtyFiles }, { runner });
       continue;
     }
     // A path that just succeeded has no more residue to track (#644) — clear
@@ -177,4 +262,6 @@ function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault, r
   return { reaped, skipped, portsRelease };
 }
 
-module.exports = { reapMerged, decideReap, isOwnCwd, trackReapResidue };
+module.exports = {
+  reapMerged, decideReap, isOwnCwd, trackReapResidue, attemptLongPathRemoval, longPathRemovalTarget, looksLikeLongPath, LONG_PATH_THRESHOLD,
+};
