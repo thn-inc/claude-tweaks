@@ -30,14 +30,12 @@ test('#1928 AC4: --markdown prints the table and writes timing.json', () => {
   assert.equal(json.totals.verifyRuns, 2);
 });
 
-test('#1928 AC4: an events file with only session-end prints every phase unattributed and exits 0', () => {
+test('#2550: an events file with only session-end collapses to a one-line summary instead of a 12-row all-unattributed table, and exits 0', () => {
   const dir = tmpRun(false);
   fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"ts":"2026-09-05T14:13:00.000Z","type":"session-end"}\n');
   const r = run(['--run', dir, '--markdown']);
   assert.equal(r.status, 0, r.stderr);
-  const rows = r.stdout.trim().split('\n').slice(2);
-  assert.equal(rows.length, 10);
-  for (const row of rows) assert.match(row, /\| 0 \| unattributed \|$/);
+  assert.equal(r.stdout, 'no phase events; no tool-use data available\n');
 });
 
 test('#1928: a malformed line is skipped, not fatal; a missing events file is an empty run', () => {
@@ -146,13 +144,23 @@ test('#1929 whole-branch review fix 3: a transcript row timestamped before every
   assert.equal(visible.output + json.unattributed.tokens.output, json.totals.tokens.output);
 });
 
-test('#1929 whole-branch review fix 8: a run with a transcript but no minutes/verify still prints a total row', () => {
+test('#2550 (was #1929 whole-branch review fix 8): a run with no phase events but a transcript collapses to a one-line summary naming the token/round-trip counts, not a total row in an otherwise-empty table', () => {
   const dir = tmpRun(false); // no events.jsonl copied — an empty run
   const early = path.join(os.tmpdir(), 'ct-timing-notimes-transcript.jsonl');
   fs.writeFileSync(early, '{"type":"assistant","timestamp":"2026-09-05T12:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":3,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n');
   const r = run(['--run', dir, '--transcript', early, '--markdown']);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /^\| total \| 0 \| 0 run\(s\) \| 3\/4 \| 0\.0 \| 0 \|$/m);
+  assert.equal(r.stdout, 'no phase events; 0 tool round-trips, 3/4 tokens\n');
+});
+
+test('#2550 review fix: the collapsed one-line summary still carries a Guard-denials line when the run recorded real denials', () => {
+  const dir = tmpRun(false); // no phase events
+  fs.appendFileSync(path.join(dir, 'events.jsonl'), '{"ts":"2026-09-05T12:00:00.000Z","type":"gate-denial"}\n{"ts":"2026-09-05T12:01:00.000Z","type":"wd-deny"}\n');
+  const early = path.join(os.tmpdir(), 'ct-timing-guard-collapsed-transcript.jsonl');
+  fs.writeFileSync(early, '{"type":"assistant","timestamp":"2026-09-05T12:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":3,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n');
+  const r = run(['--run', dir, '--transcript', early, '--markdown']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, 'no phase events; 0 tool round-trips, 3/4 tokens\nGuard denials: 1 gate · 0 wd-ambiguous · 1 wd-deny\n');
 });
 
 test('#1929 whole-branch review fix 2: a --transcript file whose stat succeeds but whose read fails (mode 000) degrades to a note, exit 0', skipUnderRoot('root ignores file permissions'), () => {

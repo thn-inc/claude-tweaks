@@ -131,3 +131,56 @@ test('run: a missing --run is exit 2 with usage (#1930)', async () => {
   assert.strictEqual(code, 2);
   assert.match(err, /usage: wrap-up-pack\.js --run/);
 });
+
+// --- #2546: --print <probe> ---
+
+test('parseArgs: --print accepts only a known probe name; --print and --only are mutually exclusive', () => {
+  assert.strictEqual(parseArgs(['--run', '/r', '--print', 'residue']).print, 'residue');
+  assert.throws(() => parseArgs(['--run', '/r', '--print', 'nope']), /unknown probe/);
+  assert.throws(() => parseArgs(['--run', '/r', '--print', 'residue', '--only', 'pr']), /mutually exclusive/);
+});
+
+test('run: --print residue prints only that probe\'s value, matching the shape inside the full pack\'s field', async () => {
+  const { root, runDir } = mainCheckoutWithRun();
+  let out = '';
+  const full = await run(['--run', runDir], { cwd: () => root, mainRoot: root, stdout: (s) => { out = s; }, stderr: () => {}, packDeps: okProbeDeps });
+  assert.strictEqual(full, 0);
+  const fullPack = JSON.parse(out);
+
+  let printed = '';
+  const code = await run(['--run', runDir, '--print', 'residue'], { cwd: () => root, mainRoot: root, stdout: (s) => { printed = s; }, stderr: () => {}, packDeps: okProbeDeps });
+  assert.strictEqual(code, 0);
+  // durationMs is a real per-call timing measurement, not part of the
+  // probe's "shape" — the two separate run() calls each measure their own.
+  const { durationMs: _a, ...printedRest } = JSON.parse(printed);
+  const { durationMs: _b, ...fullRest } = fullPack.residue;
+  assert.deepStrictEqual(printedRest, fullRest);
+});
+
+test('run: --print state and --print blastRadius each print just that probe', async () => {
+  const { root, runDir } = mainCheckoutWithRun();
+  for (const probe of ['state', 'blastRadius']) {
+    let printed = '';
+    const code = await run(['--run', runDir, '--print', probe], { cwd: () => root, mainRoot: root, stdout: (s) => { printed = s; }, stderr: () => {}, packDeps: okProbeDeps });
+    assert.strictEqual(code, 0, `probe ${probe} should exit 0`);
+    const value = JSON.parse(printed);
+    assert.ok(Object.prototype.hasOwnProperty.call(value, 'ok'), `--print ${probe} should emit the probe's {ok, ...} field shape`);
+  }
+});
+
+test('run: --print still writes the (narrowed) pack to wrap-up-pack.json as a side effect, same as --only', async () => {
+  const { root, runDir } = mainCheckoutWithRun();
+  const code = await run(['--run', runDir, '--print', 'state'], { cwd: () => root, mainRoot: root, stdout: () => {}, stderr: () => {}, packDeps: okProbeDeps });
+  assert.strictEqual(code, 0);
+  const file = JSON.parse(fs.readFileSync(path.join(runDir, 'wrap-up-pack.json'), 'utf8'));
+  assert.ok(Object.prototype.hasOwnProperty.call(file, 'state'));
+  assert.ok(!Object.prototype.hasOwnProperty.call(file, 'residue'), '--print state should narrow gatherPack to just that probe');
+});
+
+test('run: --print with an unknown probe name exits 2 (caught at parseArgs, never reaches gatherPack)', async () => {
+  const { root, runDir } = mainCheckoutWithRun();
+  let err = '';
+  const code = await run(['--run', runDir, '--print', 'nope'], { cwd: () => root, mainRoot: root, stdout: () => {}, stderr: (s) => { err += s; }, packDeps: okProbeDeps });
+  assert.strictEqual(code, 2);
+  assert.match(err, /unknown probe/);
+});

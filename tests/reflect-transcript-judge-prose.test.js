@@ -269,5 +269,8 @@ test('full-mode.md clears the matched listDeclined entry\'s own fingerprint on a
 });
 
 test('full-mode.md\'s Don\'t-capture resolution passes subject: description to recordDecline', () => {
-  assert.match(FULL_MODE, /recordDecline\(fingerprint, \{ reason, source: 'reflect', subject: description \}\)/);
+  // #2544: the prose cites the CLI, which makes the recordDecline call itself.
+  assert.match(FULL_MODE, /declined-learning\.js" record-decline --source reflect/);
+  const CLI = read('plugin', 'bin', 'declined-learning.js');
+  assert.match(CLI, /recordDecline\(fingerprint, \{[^}]*subject: payload\.description,/);
 });
