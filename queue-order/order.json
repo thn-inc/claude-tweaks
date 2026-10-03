@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-03T07:35:02.089Z",
+  "computedAt": "2026-10-03T08:19:43.069Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -190,7 +190,7 @@
       },
       {
         "number": 2741,
-        "updatedAt": "2026-10-01T16:13:43Z",
+        "updatedAt": "2026-10-03T07:37:41Z",
         "state": "OPEN"
       },
       {
@@ -2159,90 +2159,6 @@
         "facets": {
           "origin": null,
           "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nA HarnessTax study found harness choice alone can move inference cost up to 5x for the same model on the same task, with no comparable change in success rate. A minimal four-tool harness (read/write/edit/bash) reached the study's cost-success Pareto frontier on two benchmarks; richer harnesses added cost without matching accuracy gains. Models did not consistently perform best inside their own vendor's harness (an alternative harness won 9 of 12 comparisons across Anthropic and OpenAI models).\n\n**Verified during shaping:** no existing claude-tweaks mechanism already covers this — grepped `harness-health/`, `code-health/`, and `review/` skill directories for \"footprint\"/\"overhead\"/\"per-invocation load\" and found nothing; this is a genuinely new capability, not a duplicate of an existing lens.\n\n**Evidence caveat, worth noting for the build:** the cited study measures cost/harness effects on *other* harnesses generically, not claude-tweaks' own skills specifically — no internal measurement yet exists showing any particular claude-tweaks skill or subagent definition is actually disproportionately overhead-heavy. This record's own external-evidence basis justifies building a measurement tool; it does not yet establish that any specific finding it would surface is real. The lens's own first real output (run against this repo's own skills) is what turns the general external claim into project-specific evidence — treat the initial run's findings as hypotheses to verify, not confirmed problems.\n\n## Deliverables\n\n- A claude-tweaks lens or skill that estimates a session's context/tool-definition overhead versus a minimal baseline, so bloated skill or subagent definitions are visible.\n- A policy row usable by `/code-health` or `/review` flagging skills whose tool definitions or context load are disproportionate to the task.\n\n## Acceptance Criteria\n\n- Running the lens against an existing claude-tweaks skill reports its estimated per-call overhead versus a minimal-harness baseline.\n- The check integrates as a step in `/review` or `/harness-health` without requiring a new standalone command.\n- `npm test` passes.\n\n## Release Note\n\nAdded a check that flags skills and subagents whose definitions cost more context than they need.\n\n## Technical Approach\n\nDefine \"minimal baseline\" concretely before implementing the estimator — the cited study's four-tool (read/write/edit/bash) reference point is a reasonable starting definition, but claude-tweaks' own skills routinely need more than those four (Skill, Agent, AskUserQuestion, etc.), so the baseline needs a claude-tweaks-specific interpretation rather than a literal four-tool floor. Measure what's actually knowable statically — a skill's own file size, its tool-definition count/verbosity, and its `_shared/*.md` citation depth (files it pulls in) — rather than attempting to measure live per-call token cost, which varies by conversation and isn't reproducible from the skill file alone. Decide the integration point (`/review` vs `/harness-health`) based on which existing skill's own scan cadence and audience best fits a \"is this skill bloated\" finding — `/harness-health`'s own charter (skill/rule/template drift) is the closer match on its face, but confirm against that skill's actual scope before assuming.\n\n### Key Files\n\n- `plugin/skills/harness-health/` — the more likely integration point (skill/rule drift is its existing charter); confirm scope fit here first\n- `plugin/skills/review/` — the alternative integration point if harness-health's scope doesn't fit\n- `plugin/skills/code-health/` — checked during shaping and ruled out as already covering this (no existing footprint/overhead mechanism found)\n\n## Gotchas\n\n- Don't treat the cited study's specific numbers (5x cost swing, 9-of-12 comparison) as claims about claude-tweaks itself — they're motivation from a third-party study of different harnesses, not a measurement of this codebase. The build's own first real findings are what actually validate (or don't) whether this repo has the problem the study describes elsewhere.\n- The study source has \"no stable article URL\" (per the original filer) — cite it as motivating context only, never as a verifiable reference a reader could follow up on directly.\n\n## Original request\n\nAdd a harness cost-efficiency lens to claude-tweaks\n\nCurrent State:\n- A HarnessTax study found harness choice alone can move inference cost up to 5x for the same model on the same task, with no comparable change in success rate.\n- A minimal four-tool harness (read/write/edit/bash) reached the study's cost-success Pareto frontier on two benchmarks; richer harnesses added cost without matching accuracy gains.\n- Models did not consistently perform best inside their own vendor's harness (an alternative harness won 9 of 12 comparisons across Anthropic and OpenAI models).\n\nDeliverables:\n- A claude-tweaks lens or skill that estimates a session's context/tool-definition overhead versus a minimal baseline, so bloated skill or subagent definitions are visible.\n- A policy row usable by /code-health or /review flagging skills whose tool definitions or context load are disproportionate to the task.\n\nAcceptance Criteria:\n- Running the lens against an existing claude-tweaks skill reports its estimated per-call overhead versus a minimal-harness baseline.\n- The check integrates as a step in /review or /harness-health without requiring a new standalone command.\n\nSource: AlphaSignal newsletter, 2026-09-20, summarizing the HarnessTax study (no stable article URL).\n",
-        "createdAt": "2026-09-21T09:51:18Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2741,
-        "state": "OPEN",
-        "title": "Add a harness cost-efficiency lens to claude-tweaks",
-        "updatedAt": "2026-10-01T16:13:43Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
           "size": "medium",
           "ceremony": "standard",
           "solutionUnjustified": false,
