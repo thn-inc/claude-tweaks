@@ -93,12 +93,13 @@ function parseWorktreeList(porcelain) {
     const val = sp === -1 ? '' : line.slice(sp + 1);
     if (key === 'worktree') {
       flush();
-      cur = { path: val, branch: null, bare: false, locked: false, lockReason: null, pid: null };
+      cur = { path: val, branch: null, bare: false, locked: false, lockReason: null, pid: null, prunable: false };
       continue;
     }
     if (!cur) continue;
     if (key === 'branch') cur.branch = val.replace(/^refs\/heads\//, '');
     else if (key === 'bare') cur.bare = true;
+    else if (key === 'prunable') cur.prunable = true;
     else if (key === 'locked') {
       cur.locked = true;
       cur.lockReason = val || null;
