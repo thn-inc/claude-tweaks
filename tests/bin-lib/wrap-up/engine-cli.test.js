@@ -3,11 +3,11 @@
 // end to end: `plan` against a real fixture git repo (same builder shape as
 // facts.test.js), `record` reading a payload off stdin, and `render`
 // including the --strict completeness gate. Spawns the CLI as a real child
-// process (execFileSync) so exit codes are asserted the way a caller would
-// actually observe them, not by calling internals in-process.
+// process (spawnSync) so exit codes AND stderr are asserted the way a caller
+// would actually observe them, not by calling internals in-process.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -21,17 +21,16 @@ function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 }
 
+// #2688: spawnSync (not execFileSync) so stderr is captured on a 0 exit too —
+// execFileSync only surfaces stderr via its throw path on a non-zero exit,
+// which silently discarded any stderr a *successful* run also wrote.
 function run(args, { cwd, input } = {}) {
-  try {
-    const stdout = execFileSync(process.execPath, [CLI, ...args], {
-      cwd: cwd || repoDir,
-      input: input !== undefined ? input : undefined,
-      encoding: 'utf8',
-    });
-    return { status: 0, stdout, stderr: '' };
-  } catch (e) {
-    return { status: e.status, stdout: e.stdout || '', stderr: e.stderr || '' };
-  }
+  const r = spawnSync(process.execPath, [CLI, ...args], {
+    cwd: cwd || repoDir,
+    input: input !== undefined ? input : undefined,
+    encoding: 'utf8',
+  });
+  return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
 }
 
 before(() => {
@@ -257,6 +256,41 @@ test('render --strict exits 2 while open rows are unrecorded, and 0 once all are
 
   const strictAfter = run(['render', '--run-dir', runDir, '--strict']);
   assert.strictEqual(strictAfter.status, 0, strictAfter.stderr);
+});
+
+// #2688: `render --section console` against a run dir where `plan` ran but
+// `record` was never invoked for any open row used to produce nothing at
+// all — empty stdout, and (under --strict) a bare exit 2 with no stderr
+// message naming what was missing.
+test('render --section console --strict against a freshly-planned run dir (record never invoked) exits non-zero with an actionable message', () => {
+  const runDir = planFreshRunDir();
+
+  const r = run(['render', '--run-dir', runDir, '--section', 'console', '--strict']);
+  assert.notStrictEqual(r.status, 0);
+  assert.notStrictEqual(r.stderr, '');
+  assert.match(r.stderr, /record/);
+});
+
+test('render --section console (no --strict) against a freshly-planned run dir also reports the missing precondition, not silent empty output', () => {
+  const runDir = planFreshRunDir();
+
+  const r = run(['render', '--run-dir', runDir, '--section', 'console']);
+  assert.notStrictEqual(r.stderr, '');
+  assert.match(r.stderr, /record/);
+});
+
+test('render --section console is unaffected once every open row has been recorded', () => {
+  const runDir = planFreshRunDir();
+  const openRows = recordAllOpenRowsClean(runDir);
+  assert.ok(openRows.length > 0, 'fixture must have at least one open row');
+
+  const strict = run(['render', '--run-dir', runDir, '--section', 'console', '--strict']);
+  assert.strictEqual(strict.status, 0, strict.stderr);
+  assert.strictEqual(strict.stderr, '');
+
+  const plain = run(['render', '--run-dir', runDir, '--section', 'console']);
+  assert.strictEqual(plain.status, 0, plain.stderr);
+  assert.strictEqual(plain.stderr, '');
 });
 
 test('render --section console with two --spec-state flags prints one merged table and exits 0', () => {
