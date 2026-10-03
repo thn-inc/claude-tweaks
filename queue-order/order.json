@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-03T17:38:51.532Z",
+  "computedAt": "2026-10-03T18:25:20.427Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -191,11 +191,6 @@
       {
         "number": 2690,
         "updatedAt": "2026-10-01T16:15:10Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2689,
-        "updatedAt": "2026-10-01T16:15:14Z",
         "state": "OPEN"
       },
       {
@@ -1466,96 +1461,6 @@
         "state": "OPEN",
         "title": "Assess native /design skill vs. Impeccable in design-wrapper",
         "updatedAt": "2026-10-01T16:15:10Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nclaude-tweaks' `/specify` and `/visualize` skills produce text-based specs and standalone diagrams, not a unified visual plan. A described \"/visual-plan\" skill for Claude Code/Codex generates rich, visual implementation plans alongside the text.\n\n## Deliverables\n\n- Evaluate folding visual-plan-style diagramming into `/specify` or `/writing-plans` output, rather than only a post-hoc `/visualize` call.\n- Prototype on one in-flight record to see whether it improves review speed over the current text-only plan.\n\n## Acceptance Criteria\n\n- A sample plan renders both the text spec and an accompanying visual-plan artifact.\n- A decision is recorded on whether this becomes a standing step in `/specify` or stays opt-in via `/visualize`.\n\n## Release Note\n\nAdded richer diagrams to implementation plans as they are written.\n\n## Technical Approach\n\nThis is an evaluate-then-prototype record: first judge whether `/visualize`'s existing diagram-suggestion capability (already enabled in this repo's own CLAUDE.md — \"diagram-suggestions: enabled\") already covers most of the described value before building anything new. Prototype by running `/specify` on one real in-flight record, then generating a `/visualize`-style diagram for the same record's plan, and comparing review speed/clarity against the text-only version. The Acceptance Criteria's \"sample plan renders both\" is the concrete prototype output; the Deliverables' fold-in-or-stay-opt-in decision is the record's actual verdict.\n\n### Key Files\n\n- `plugin/skills/specify/` — where a standing visual-plan step would be added, if adopted\n- `plugin/skills/visualize/` — the existing diagram capability to compare against and potentially reuse\n\n## Gotchas\n\n- `/visualize` already exists and diagram-suggestions are already enabled project-wide — verify this isn't substantially already-solved before prototyping a parallel mechanism.\n- Keep the prototype scoped to one record; this is a feasibility/value judgment, not a commitment to ship a standing feature regardless of outcome.\n\n## Original request\n\nAdd a /visual-plan-style skill for richer implementation plans\n\nCurrent State:\n- claude-tweaks' /specify and /visualize skills produce text-based specs and standalone diagrams, not a unified visual plan.\n- A reel describes a \"/visual-plan\" skill for Claude Code/Codex that generates rich, visual implementation plans.\n\nDeliverables:\n- Evaluate folding visual-plan-style diagramming into /specify or /writing-plans output, rather than only a post-hoc /visualize call.\n- Prototype on one in-flight record to see whether it improves review speed over the current text-only plan.\n\nAcceptance Criteria:\n- A sample plan renders both the text spec and an accompanying visual-plan artifact.\n- A decision is recorded on whether this becomes a standing step in /specify or stays opt-in via /visualize.\n\nSource: https://www.instagram.com/reel/DZpqsjsOqiR/\n",
-        "createdAt": "2026-09-20T19:00:52Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2689,
-        "state": "OPEN",
-        "title": "Add a /visual-plan-style skill for richer implementation plans",
-        "updatedAt": "2026-10-01T16:15:14Z",
         "facets": {
           "origin": null,
           "risk": "low",
