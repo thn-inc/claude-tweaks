@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-03T08:19:43.069Z",
+  "computedAt": "2026-10-03T09:13:39.187Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -51,11 +51,6 @@
       {
         "number": 2840,
         "updatedAt": "2026-10-01T16:18:26Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2838,
-        "updatedAt": "2026-10-02T07:03:41Z",
         "state": "OPEN"
       },
       {
@@ -139,11 +134,6 @@
         "state": "OPEN"
       },
       {
-        "number": 2766,
-        "updatedAt": "2026-10-02T07:03:33Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2764,
         "updatedAt": "2026-10-01T16:12:47Z",
         "state": "OPEN"
@@ -179,11 +169,6 @@
         "state": "OPEN"
       },
       {
-        "number": 2743,
-        "updatedAt": "2026-10-01T16:13:35Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2742,
         "updatedAt": "2026-10-03T06:56:09Z",
         "state": "OPEN"
@@ -194,43 +179,13 @@
         "state": "OPEN"
       },
       {
-        "number": 2740,
-        "updatedAt": "2026-10-02T13:53:53Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2739,
         "updatedAt": "2026-10-03T06:56:15Z",
         "state": "OPEN"
       },
       {
-        "number": 2738,
-        "updatedAt": "2026-10-03T06:47:12Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2737,
-        "updatedAt": "2026-10-03T06:13:15Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2732,
         "updatedAt": "2026-09-29T16:56:58Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2730,
-        "updatedAt": "2026-10-03T05:56:15Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2729,
-        "updatedAt": "2026-10-02T07:03:26Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2728,
-        "updatedAt": "2026-10-02T07:03:19Z",
         "state": "OPEN"
       },
       {
@@ -244,43 +199,8 @@
         "state": "OPEN"
       },
       {
-        "number": 2724,
-        "updatedAt": "2026-10-02T13:54:00Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2722,
-        "updatedAt": "2026-10-02T07:03:12Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2721,
-        "updatedAt": "2026-10-02T07:03:05Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2720,
-        "updatedAt": "2026-10-02T07:02:58Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2718,
-        "updatedAt": "2026-10-02T07:02:51Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2717,
         "updatedAt": "2026-10-02T20:32:12Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2714,
-        "updatedAt": "2026-10-02T13:54:08Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2710,
-        "updatedAt": "2026-10-02T05:58:27Z",
         "state": "OPEN"
       },
       {
@@ -344,11 +264,6 @@
         "state": "OPEN"
       },
       {
-        "number": 2676,
-        "updatedAt": "2026-10-02T05:58:20Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2675,
         "updatedAt": "2026-10-01T16:15:26Z",
         "state": "OPEN"
@@ -359,11 +274,6 @@
         "state": "OPEN"
       },
       {
-        "number": 2667,
-        "updatedAt": "2026-10-02T13:54:15Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2634,
         "updatedAt": "2026-09-30T12:19:19Z",
         "state": "OPEN"
@@ -371,11 +281,6 @@
       {
         "number": 2573,
         "updatedAt": "2026-10-01T16:10:19Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2566,
-        "updatedAt": "2026-10-02T05:58:14Z",
         "state": "OPEN"
       },
       {
@@ -401,36 +306,6 @@
       {
         "number": 2552,
         "updatedAt": "2026-10-01T20:23:46Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2550,
-        "updatedAt": "2026-10-02T13:54:22Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2549,
-        "updatedAt": "2026-10-02T07:02:44Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2547,
-        "updatedAt": "2026-10-02T13:54:30Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2546,
-        "updatedAt": "2026-10-02T13:54:37Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2544,
-        "updatedAt": "2026-10-02T13:54:44Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2543,
-        "updatedAt": "2026-10-02T13:54:51Z",
         "state": "OPEN"
       },
       {
@@ -2085,90 +1960,6 @@
           "grants": {
             "build": true,
             "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nThe polish phase dispatches Impeccable's refinement set (`polish`, `clarify`, `harden`) and every suggestion-driven command over the changed UI files. On a record whose spec pins its copy (\"See demo\", \"Play demo\", \"Open the page\", \"What's new\", \"How to\") and whose e2e suite asserts those strings with `exact: true`, `clarify` (UX copy) and `onboard`/`distill` would rewrite exactly the strings the suite and the spec fix, and `polish` would restyle reviewed pages that the record's Non-Goals say may only gain one element. The controller had to replace the documented dispatch with a hand-scoped fix wave to keep the pipeline green — the polish step is unusable as written on any spec with asserted copy.\n\nVerified during shaping: `skills/design-wrapper/modes/polish.md`, `skills/flow/polish-execution.md`, and `skills/design-wrapper/command-map.md` all exist as named — the premise is confirmed against this repo's own file layout, not just the filer's claim.\n\n## Deliverables\n\n- A pinned-copy constraint mechanism: `polish` mode (and the other Impeccable dispatch commands it fans out to — `clarify`, `harden`, `onboard`/`distill`) accepts, or derives from the run, a list of strings no dispatched command may change — sourced from the record's spec-quoted strings and/or e2e assertions using `exact: true` (`ADMIN_STRINGS`-style constants, per the filer's example) — passed as a fixed suffix/constraint on every Impeccable dispatch this phase makes.\n- A way to skip `clarify` (or any dispatched command) entirely when the spec pins copy that command would otherwise rewrite.\n- A scope option restricting the refinement set to files the record actually created, rather than every UI file the diff touched — so an unrelated already-reviewed page isn't restyled by `polish` just because it happened to be in the changed-files list.\n\n## Acceptance Criteria\n\n- A record whose spec pins specific copy strings (verified via its own text or `exact: true` e2e assertions) completes the polish phase with those exact strings unchanged.\n- A record can opt out of `clarify` (or another named Impeccable command) for a run where its spec's pinned copy makes that command's rewrite behavior unsafe.\n- The refinement set's default scope can be restricted to record-created files, not the full changed-file diff, when a record's Non-Goals call for it.\n- `npm test` passes.\n\n## Release Note\n\nAdded a way for design polish to leave spec-pinned copy unchanged.\n\n## Technical Approach\n\nExtract the pinned-copy string list from two sources the filer's own evidence names: the record spec's quoted strings (parseable from Deliverables/Acceptance Criteria text — look for quoted literals) and, where present, `exact: true` e2e assertions in the record's own test files. Thread this list through `flow/polish-execution.md`'s dispatch composition as a constraint every Impeccable command invocation in `design-wrapper/command-map.md` receives — the constraint should read as a hard \"do not change\" list each dispatched command's own prompt states explicitly, not a post-hoc diff check (catching a rewrite after it happens is more expensive than preventing it via the dispatch prompt itself).\n\n### Key Files\n\n- `plugin/skills/design-wrapper/modes/polish.md` — polish mode's own dispatch logic, where the pinned-copy constraint and per-command skip option need to be added\n- `plugin/skills/flow/polish-execution.md` — the `/flow`-side orchestration of the polish phase, where the constraint list is likely derived from the run's own spec/e2e context\n- `plugin/skills/design-wrapper/command-map.md` — the Impeccable command dispatch mapping (`polish`, `clarify`, `harden`, `onboard`/`distill`) each command's prompt composition needs to accept and honor the constraint\n\n## Gotchas\n\n- The pinned-copy list should come from real spec content (quoted strings, `exact: true` assertions), not a manually-maintained separate config — deriving it wrong (too narrow) reproduces this bug in a new form; deriving it too broadly (treating every quoted word as pinned) could over-constrain polish on records that never intended copy pinning.\n- The file-scope restriction (record-created files only) is a real behavior change from today's \"every touched file\" default — confirm this doesn't silently skip a UI file a record legitimately modified (not just created) but that also needs polish attention; the restriction should be opt-in per the record's own Non-Goals signal, not a blanket default change.\n\n## Original request\n\nUpstream gap report — `design-wrapper polish` has no way to honour spec-pinned copy\n\nComponent: `skills/design-wrapper/modes/polish.md`, `skills/flow/polish-execution.md`, `skills/design-wrapper/command-map.md`\nKind: gap\nVersion: claude-tweaks 6.126.0\n\n## Symptom\n\nThe polish phase dispatches Impeccable's refinement set (`polish`, `clarify`, `harden`) and every suggestion-driven command over the changed UI files. On a record whose spec pins its copy (\"See demo\", \"Play demo\", \"Open the page\", \"What's new\", \"How to\") and whose e2e suite asserts those strings with `exact: true`, `clarify` (UX copy) and `onboard`/`distill` would rewrite exactly the strings the suite and the spec fix, and `polish` would restyle reviewed pages that the record's Non-Goals say may only gain one element. The controller had to replace the documented dispatch with a hand-scoped fix wave to keep the pipeline green — the polish step is unusable as written on any spec with asserted copy.\n\n## Expected\n\nA pinned-copy constraint: `polish` mode accepts (or derives from the run — e.g. `ADMIN_STRINGS`-style e2e assertions or the spec's quoted strings) a list of strings no dispatched command may change, passed as a fixed suffix on every Impeccable dispatch; a way to skip `clarify` when the spec pins copy; and a scope option restricting the refinement set to files the record created rather than every touched file.\n\n## Evidence\n\nRun 2026-09-20T195550-spec-497-498-499, spec #499: `spec-499/decisions.md` `## /flow` \"Polish phase\" entry (the substitution and its rationale); the spec's Deliverables pin the trigger and dialog copy; `admin-ui/e2e/help.spec.ts` and `auth-gate.spec.ts` assert the strings.\n\nFiled from djoef/recommender-system run 2026-09-20T195550-spec-497-498-499 (claude-tweaks 6.126.0, unattended).\n<!-- fingerprint: feedback-439afa89 -->\n",
-        "createdAt": "2026-09-21T10:20:07Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2743,
-        "state": "OPEN",
-        "title": "Upstream gap report — `design-wrapper polish` has no way to honour spec-pinned copy",
-        "updatedAt": "2026-10-01T16:13:35Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
           },
           "bot": {
             "inProgress": false,
