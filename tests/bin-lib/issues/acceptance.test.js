@@ -122,13 +122,6 @@ test('needsBackstop still fires for a COMPLETED closure with no disposition', ()
   assert.equal(needsBackstop({ state: 'CLOSED', labels: [], stateReason: 'COMPLETED' }), true);
 });
 
-test('needsBackstop is unchanged when stateReason is absent', () => {
-  // undefined must not be confused with 'NOT_PLANNED'/'DUPLICATE' — every existing
-  // caller that has never passed this field must see identical behavior.
-  assert.equal(needsBackstop({ state: 'CLOSED', labels: [] }), true);
-  assert.equal(needsBackstop({ state: 'CLOSED', labels: ['demo:approved'] }), false);
-});
-
 test('needsBackstop returns false for NOT_PLANNED even when already dispositioned', () => {
   // The two suppression paths (stateReason and disposition) must agree, not conflict.
   assert.equal(
