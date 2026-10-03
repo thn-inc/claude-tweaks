@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-03T09:13:39.187Z",
+  "computedAt": "2026-10-03T09:53:56.367Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -150,7 +150,7 @@
       },
       {
         "number": 2747,
-        "updatedAt": "2026-10-01T16:13:17Z",
+        "updatedAt": "2026-10-03T09:15:17Z",
         "state": "OPEN"
       },
       {
@@ -1861,96 +1861,6 @@
           "origin": "capture",
           "risk": "medium",
           "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nAfter a merged multi-spec run (`flow/multispec-review-console.md` Shared teardown step 7), `teardown-run --run <archived run> --merged` reported: `worktree: skipped — removal failed`, `branch: skipped — delete failed for <branch>`, `remote ref: skipped — Command failed: gh api --method DELETE repos/<owner>/<repo>/git/refs/heads/<branch>`. Two causes: (1) the `gh api` call carried no host argument, so on a GitHub Enterprise-hosted repo it targeted github.com and failed; (2) the worktree removal had half-reaped the worktree (its `.git` file was gone and `git worktree list` showed `prunable`) but reported failure, and the local branch delete then failed because git still considered the branch checked out there — a `git worktree prune` first would have let both succeed.\n\nVerified during shaping: `plugin/bin/lib/hooks/teardown-run.js`'s `ghApiDelete` helper (line ~30) calls `gh api --method DELETE ...args` with no host/hostname argument, and the branch-delete path (line ~235-236) shows no `git worktree prune` step ahead of it — both causes are confirmed present in the current code, not already fixed. `plugin/bin/lib/repo-resolve.js` exists and is the codebase's own existing mechanism for resolving `host/owner/repo` for a GHE remote — the fix should reuse it rather than inventing new host-resolution logic.\n\n## Deliverables\n\n- Resolve the forge host via `bin/lib/repo-resolve.js` (the existing mechanism) and pass it to every `gh` call `teardown-run` makes, including the `ghApiDelete` helper's `gh api --method DELETE` call — so a GHE-hosted repo's remote-ref deletion targets the correct host instead of defaulting to github.com.\n- Before attempting the local branch delete, check whether the worktree removal left the worktree registration in a `prunable` state (`git worktree list` porcelain output) and, if so, run `git worktree prune` first, then retry the branch delete — rather than reporting a failure that a simple prune would have resolved.\n- Report all three teardown outcomes (worktree, branch, remote ref) with their underlying error text on failure, not just a generic \"skipped\" — so a human diagnosing a teardown failure doesn't have to reproduce the command by hand to see the real `gh`/git error.\n\n## Acceptance Criteria\n\n- `teardown-run --merged` against a GitHub Enterprise-hosted repo successfully deletes the remote ref, using the correct host resolved via `repo-resolve.js`.\n- A worktree left in a `prunable` state by a partially-successful removal no longer blocks the subsequent branch delete — the prune-then-retry sequence resolves it automatically.\n- A teardown failure (any of the three steps) reports the underlying error text in its output, not just \"skipped.\"\n- `npm test` passes.\n\n## Release Note\n\nFixed run teardown on GitHub Enterprise remotes and made it remove the worktree before deleting the branch.\n\n## Technical Approach\n\nReuse `repo-resolve.js`'s existing host-resolution output directly in `teardown-run.js`'s `gh` invocations (the `ghApiDelete` helper and any other `gh` call site in that file) — this is a straightforward plumbing fix, not new logic, since the resolution mechanism already exists and is used elsewhere in the codebase. For the prune-before-retry fix, check the worktree's state via `git worktree list --porcelain` (or equivalent) immediately after a reported removal failure, and only retry the branch delete after a prune succeeds — don't blindly prune-and-retry on every failure without first confirming the `prunable` state, since a genuinely different failure (e.g. permissions) shouldn't be masked by an unconditional retry.\n\n### Key Files\n\n- `plugin/bin/lib/hooks/teardown-run.js` — `ghApiDelete` (host-resolution fix) and the branch-delete path (prune-before-retry fix)\n- `plugin/bin/lib/repo-resolve.js` — the existing host-resolution mechanism to reuse\n\n## Gotchas\n\n- Don't unconditionally retry the branch delete after any failure — only after confirming (via `git worktree list`) that the worktree is genuinely in a `prunable` state; a different underlying cause (e.g. a real permissions error) should still surface as a real failure, not be silently retried into a second, equally-doomed attempt.\n- This is a Windows + GHE-specific repro, but the host-resolution fix and the prune-before-retry fix are both platform-independent — verify the fix doesn't regress teardown on a plain github.com-hosted repo (the common case in this repo's own CI).\n\n## Original request\n\nUpstream defect report — `hooks.js teardown-run --merged` cannot finish on a GitHub Enterprise remote and orders the branch delete before the worktree removal\n\nComponent: `bin/hooks.js` `teardown-run` (`bin/lib/hooks/teardown-run` / `cleanup-procedures-execution.md` Section C mechanics)\nKind: defect\nVersion: claude-tweaks 6.126.0, Windows 11, GitHub Enterprise Server host\n\n## Symptom\n\nAfter a merged multi-spec run (`flow/multispec-review-console.md` Shared teardown step 7), `teardown-run --run <archived run> --merged` reported: `worktree: skipped — removal failed`, `branch: skipped — delete failed for <branch>`, `remote ref: skipped — Command failed: gh api --method DELETE repos/<owner>/<repo>/git/refs/heads/<branch>`. Causes observed: (1) the `gh api` call carried no `GH_HOST`, so on a GHE-hosted repo it targeted github.com and failed; (2) the worktree removal had half-reaped the worktree (its `.git` file was gone and `git worktree list` showed `prunable`) but reported failure, and the local branch delete then failed because git still considered the branch checked out there; a `git worktree prune` first would have let both succeed.\n\n## Expected\n\nResolve the forge host the way `bin/lib/repo-resolve.js` already does (`host/owner/repo` for a GHE remote) and pass it to every `gh` call in the teardown; on a removal failure whose registration is `prunable`, run `git worktree prune` and retry the branch delete; report the three outcomes with the underlying error text.\n\n## Evidence\n\ndjoef/recommender-system run 2026-09-20T195550-spec-497-498-499 close-out, 2026-09-21: the teardown-run output above, followed by the manual recovery (`git worktree prune`, `git branch -D`, `gh api … DELETE` with `GH_HOST` set). Cost: four extra commands.\n\nFiled from djoef/recommender-system standalone wrap-up 2026-09-21T112603 (claude-tweaks 6.126.0, unattended).\n<!-- fingerprint: feedback-f23e1e50 -->\n",
-        "createdAt": "2026-09-21T11:30:20Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2747,
-        "state": "OPEN",
-        "title": "Upstream defect report — `hooks.js teardown-run --merged` cannot finish on a GitHub Enterprise remote and orders the branch delete before the worktree removal",
-        "updatedAt": "2026-10-01T16:13:17Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "low",
           "ceremony": "standard",
           "solutionUnjustified": false,
           "breaking": false,
