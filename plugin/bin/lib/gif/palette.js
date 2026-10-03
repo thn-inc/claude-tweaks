@@ -74,6 +74,55 @@ function medianCut(colors, counts, maxColors) {
   });
 }
 
+// medianCut's widest-bucket scan re-examines every member of every bucket on each of up to
+// maxColors split iterations (O(distinctColors * maxColors)), and a split's sort/copy cost on a
+// degenerate (lopsided) bucket partition can approach the same bound again — both scale with
+// DISTINCT colour count, not pixel count, so an ordinary UI screenshot (low thousands to tens of
+// thousands of distinct colours) stays fast but a photo-, map-, or video-heavy walkthrough frame
+// can carry hundreds of thousands to low millions of distinct colours and blow past any wall-clock
+// budget. Pre-bucketing coarsens the distinct-colour set into a fixed-size grid of count-weighted
+// centroids before medianCut ever sees it once that count crosses PRE_BUCKET_THRESHOLD, bounding
+// medianCut's own input size — and therefore its time and memory — independent of how many
+// distinct colours (or pixels) the source frames actually contain. Below the threshold this is a
+// no-op: medianCut still runs on the exact distinct-colour set, so real screenshots are unaffected.
+const PRE_BUCKET_THRESHOLD = 150000; // distinct colours above this trigger coarsening — comfortably
+// above the "low thousands to tens of thousands" real-screenshot fast band, comfortably below the
+// ~260k+ adversarial range measured in #2769
+const PRE_BUCKET_BITS = 5; // bits retained per channel -> 32 levels/channel -> at most 32768 buckets
+
+function preBucketColors(colors, counts) {
+  const shift = 8 - PRE_BUCKET_BITS;
+  const byBucket = new Map();
+  const bucketColors = [];
+  const bucketCounts = [];
+  const sums = []; // parallel to bucketColors/bucketCounts — [rSum, gSum, bSum], weighted by count
+  for (let i = 0; i < colors.length; i++) {
+    const [r, g, b] = colors[i];
+    const key = ((r >> shift) << (PRE_BUCKET_BITS * 2)) | ((g >> shift) << PRE_BUCKET_BITS) | (b >> shift);
+    const w = counts[i];
+    let idx = byBucket.get(key);
+    if (idx === undefined) {
+      idx = bucketColors.length;
+      byBucket.set(key, idx);
+      bucketColors.push([0, 0, 0]);
+      bucketCounts.push(0);
+      sums.push([0, 0, 0]);
+    }
+    const sum = sums[idx];
+    sum[0] += r * w; sum[1] += g * w; sum[2] += b * w;
+    bucketCounts[idx] += w;
+  }
+  for (let i = 0; i < bucketColors.length; i++) {
+    const w = bucketCounts[i];
+    const sum = sums[i];
+    const color = bucketColors[i];
+    color[0] = Math.round(sum[0] / w);
+    color[1] = Math.round(sum[1] / w);
+    color[2] = Math.round(sum[2] / w);
+  }
+  return { colors: bucketColors, counts: bucketCounts };
+}
+
 function nearestIndex(palette, r, g, b) {
   let best = 0, bestDist = Infinity;
   for (let i = 0; i < palette.length; i++) {
@@ -87,7 +136,8 @@ function nearestIndex(palette, r, g, b) {
 
 function quantize(rgbaFrames, maxColors = 256) {
   const { colors, counts } = collectDistinctColors(rgbaFrames);
-  const paletteTriplets = medianCut(colors, counts, maxColors);
+  const bounded = colors.length > PRE_BUCKET_THRESHOLD ? preBucketColors(colors, counts) : { colors, counts };
+  const paletteTriplets = medianCut(bounded.colors, bounded.counts, maxColors);
   const palette = new Uint8Array(paletteTriplets.length * 3);
   paletteTriplets.forEach(([r, g, b], i) => { palette[i * 3] = r; palette[i * 3 + 1] = g; palette[i * 3 + 2] = b; });
 
