@@ -53,6 +53,13 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.134.1](https://github.com/thn-inc/claude-tweaks/compare/v6.134.0...v6.134.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* capture: work-types: native branch uses… ([#2932](https://github.com/thn-inc/claude-tweaks/issues/2932)) ([2de5713](https://github.com/thn-inc/claude-tweaks/commit/2de571361c190585b50dea655f6dd8e398a81a65))
+
 ## [6.134.0](https://github.com/thn-inc/claude-tweaks/compare/v6.133.0...v6.134.0) (2026-10-03)
 
 
