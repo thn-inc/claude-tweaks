@@ -87,19 +87,7 @@ When skill prose carries a shell snippet the reader is expected to execute, bind
 
 **Anchor the extraction on structure, not on a sentence.** `tests/blast-radius-snippet.test.js` anchors on the prose phrase "is one CLI call", which any rewording of that paragraph breaks — and the failure then reads as a test defect rather than as the procedure changing. A heading, a fence delimiter, or a table-row prefix survives ordinary editing; this is the extraction-side statement of the Project Conventions bullet below.
 
-Reach for **byte-pinning** when the probe has to wrap the snippet in fixture-specific surroundings — then assert it byte-identical **and** execute it. `tests/curation-judge-stagepath.test.js` holds the shadow sweep as a `SWEEP_SNIPPET` array joined on `\n`, asserts the fence matches byte-for-byte:
-
-```js
-assert.ok(s4.includes('```bash\n' + SWEEP_SNIPPET + '\n```'), 'sweep snippet present byte-for-byte inside a bash fence');
-```
-
-then runs the identical string against a fixture main-checkout plus linked worktree:
-
-```js
-spawnSync('bash', ['-c', SWEEP_SNIPPET], { cwd: main, encoding: 'utf8', timeout: 30_000, env: { ...process.env, PIPELINE_RUN_DIR: runDir, WORKTREE: wt } });
-```
-
-Documented procedure and exercised procedure are then the same bytes by construction, rather than by a reviewer's eye. `tests/staged-patch-contract.test.js` covers the other half — it probes `git apply --check`'s real accept/reject discrimination on this machine instead of asserting that the contract's sentence about it is true.
+Reach for **byte-pinning** when the probe has to wrap the snippet in fixture-specific surroundings — then assert it byte-identical **and** execute it. `tests/curation-judge-stagepath.test.js` no longer demonstrates this: #738 promoted the shadow sweep from a bash snippet embedded in `curation-engine.md` §4 to a first-party CLI verb (`bin/hooks.js sweep-shadow`, `bin/lib/hooks/sweep-shadow.js`), and the test's own header comment says its probes now spawn that verb directly against a fixture checkout instead of byte-pinning a `SWEEP_SNIPPET` string — a live-tool probe, not a byte-pinned snippet execution. `tests/staged-patch-contract.test.js` covers the other half — it probes `git apply --check`'s real accept/reject discrimination on this machine instead of asserting that the contract's sentence about it is true.
 
 **Lighter variant: pin only the flags, not the side effects.** When the goal is proving a documented snippet's *flags* parse cleanly against the CLI's real arg parser — not exercising the command's full side effects — tokenize the live snippet and feed the resulting argv straight through the parser directly, with no subprocess and no fixture repo. `tests/bin-lib/verify/snippet-conformance.test.js` is the instance: it extracts `verification.md`'s pinned `verify.js` invocation, tokenizes the argv after the script path, and calls `parseArgs` on it. Its go-red proof exercises the extractor itself, not just the assertion — it appends a bogus flag to the *extracted* snippet and asserts the whole extract-plus-parse pipeline throws, catching a broken tokenizer as well as a broken doc.
 
