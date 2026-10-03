@@ -214,12 +214,16 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
 
     # 3. Every PR, to reverse-join by closingIssuesReferences (the same field
     #    GitHub computes from a PR's own `Fixes #{n}` line — no marker regex
-    #    needed here, unlike item 9's plugin-created detection).
-    gh pr list --state all --json number,url,closingIssuesReferences,comments,commits --limit 200 \
+    #    needed here, unlike item 9's plugin-created detection). `comments`/
+    #    `commits` are excluded here — each costs ~10,000 GraphQL nodes per PR,
+    #    and both together across `--state all --limit 200` exceed GitHub's
+    #    500,000-node ceiling above ~50 PRs (reproduced live). Progress is
+    #    fetched per matched candidate only, below.
+    gh pr list --state all --json number,url,closingIssuesReferences --limit 200 \
       > "$PR_SCAN_UNSETTLED_PRS"
     ```
 
-    A live claim with `claimedAt` older than `unsettled-age-hours` qualifies; a `bot:in-progress` label with no matching claim entry above qualifies once its `updatedAt` clears the same threshold. For a qualifying candidate, find the PR whose `closingIssuesReferences` includes its issue number. **No PR found** qualifies unconditionally — there is nothing to check progress against. A PR found qualifies only when its progress — the later of its last head-branch commit date and its last comment date, any actor, bot comments included — is **no more recent than the claim's `claimedAt`** (nothing has happened since the claim was taken, however active the PR looked when it was first opened); a PR with newer activity is not unsettled; it does not report:
+    A live claim with `claimedAt` older than `unsettled-age-hours` qualifies; a `bot:in-progress` label with no matching claim entry above qualifies once its `updatedAt` clears the same threshold. For a qualifying candidate, find the PR whose `closingIssuesReferences` includes its issue number — a `refs #N`-only PR body is invisible to this field (GitHub populates it only from closing keywords) and reads as "no PR found" below (e.g. #2822 → #2805); not special-cased today. **No PR found** qualifies unconditionally — there is nothing to check progress against. A PR found qualifies only when its progress — the later of its last head-branch commit date and its last comment date, any actor, bot comments included — is **no more recent than the claim's `claimedAt`** (nothing has happened since the claim was taken, however active the PR looked when it was first opened); a PR with newer activity is not unsettled; it does not report:
 
     Re-resolve this fence's session-scoped paths (`_shared/session-tmp-root.md`; a fresh bash invocation does not inherit the prior fence's shell variables):
 
@@ -230,6 +234,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
       PR_SCAN_UNSETTLED_PRS=pr-scan-unsettled-prs.json)"
     node -e "
       const fs = require('fs');
+      const { execFileSync } = require('child_process');
       const AGE_HOURS = Number(process.env.UNSETTLED_AGE);
       const now = Date.now();
       const claimed = fs.existsSync('$PR_SCAN_UNSETTLED_CLAIMS')
@@ -244,9 +249,16 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
       function matchedPr(issueNumber) {
         return prs.find((pr) => (pr.closingIssuesReferences || []).some((i) => i.number === issueNumber));
       }
-      function progressOf(pr) {
-        const commitDates = (pr.commits || []).map((c) => c.committedDate || c.authoredDate).filter(Boolean);
-        const commentDates = (pr.comments || []).map((c) => c.createdAt).filter(Boolean);
+      // Per-candidate only — see the fetch comment above.
+      function progressOf(prNumber) {
+        let data;
+        try {
+          data = JSON.parse(execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'comments,commits'], { encoding: 'utf8' }));
+        } catch (e) {
+          return null;
+        }
+        const commitDates = (data.commits || []).map((c) => c.committedDate || c.authoredDate).filter(Boolean);
+        const commentDates = (data.comments || []).map((c) => c.createdAt).filter(Boolean);
         const all = commitDates.concat(commentDates);
         return all.length ? all.sort().pop() : null;
       }
@@ -258,14 +270,14 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
           console.log('[unsettled] #' + number + ': no PR found ' + Math.round(ageHours) + 'h after claim — resume: node \"\${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" reconcile, then re-run /claude-tweaks:dispatch or /claude-tweaks:flow #' + number);
           return;
         }
-        const progress = progressOf(pr);
+        const progress = progressOf(pr.number);
         if (progress && Date.parse(progress) > Date.parse(claimedAt)) return;
         console.log('[unsettled] #' + number + ': PR #' + pr.number + ' silent ' + Math.round(ageHours) + 'h after claim — resume: read the Resume line in ' + pr.url + \"'s body (PIPELINE_RUN_DIR=... /claude-tweaks:flow ...), per _shared/pr-early-run-lifecycle.md\");
       });
     "
     ```
 
-    `gh pr list`'s `commits`/`comments` fields are bounded per-PR (recent-first) — a PR whose activity list is long enough to truncate before reaching its true latest entry is not the failure mode this check guards against (truncation drops the *oldest* entries, and this check only ever needs the *newest* one), so no `--limit`-exhaustion warning applies here the way it does for the `acceptance-gap`/`parent-gate` scopes' parent-fetch truncations. The resume command comes from the PR body's own Resume line (`_shared/pr-early-run-lifecycle.md`'s `PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow "{target}" {next-step}`) when a PR exists — read and report it verbatim rather than reconstructing it, since only the PR body carries `{next-step}`. When no PR exists, the claim blob's own `runId` is all that is known — the reconstructed command above starts from `reconcile` rather than a specific `{next-step}`, since a claim with no PR is exactly the state `_shared/pr-early-run-lifecycle.md`'s reopen-or-create step is designed to repair on its own the next time anything touches that run.
+    `gh pr view`'s `commits`/`comments` fields are bounded per-PR (recent-first) — a PR whose activity list is long enough to truncate before reaching its true latest entry is not the failure mode this check guards against (truncation drops the *oldest* entries, and this check only ever needs the *newest* one), so no `--limit`-exhaustion warning applies here the way it does for the `acceptance-gap`/`parent-gate` scopes' parent-fetch truncations. The resume command comes from the PR body's own Resume line (`_shared/pr-early-run-lifecycle.md`'s `PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow "{target}" {next-step}`) when a PR exists — read and report it verbatim rather than reconstructing it, since only the PR body carries `{next-step}`. When no PR exists, the claim blob's own `runId` is all that is known — the reconstructed command above starts from `reconcile` rather than a specific `{next-step}`, since a claim with no PR is exactly the state `_shared/pr-early-run-lifecycle.md`'s reopen-or-create step is designed to repair on its own the next time anything touches that run.
 
 11. **Stale pending-review PR** (#2367) — a `pending-review` PR (`dispatch/reporting.md`'s parking outcome: an open, non-draft, plugin-created PR — the same `claude-tweaks-run` marker item 9 detects, housekeeping-marker PRs excluded since those are mechanical, never a parked record — that has never been armed, `autoMergeRequest` absent) has no proactive mergeability re-check while it waits for a human; it can go from clean to conflicting purely from *other* records merging into the integration branch, discovered only at merge time. This scope's own schedule (independent of any single dispatch firing) is what re-checks it.
 
