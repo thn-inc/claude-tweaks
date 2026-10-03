@@ -189,54 +189,51 @@ toward the grant.
    node "${CLAUDE_PLUGIN_ROOT}/bin/compose-record.js" "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-payload.json" --out "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md"
    ```
 
-   **Type expression branch.** Read the project's `work-types` config key once before filing and branch — never re-probe mid-flow (`_shared/work-record.md`'s config-key table; the key is written by `/init`). `work-types: native` applies `$TYPE` via GitHub's native Issue Type; `work-types: labels` adds the matching `type:$TYPE` label instead (the pairs live in `record.js`'s `TYPE_LABELS`):
+   **Type expression branch.** Read the project's `work-types` config key once before filing and branch — never re-probe mid-flow (`_shared/work-record.md`'s config-key table; the key is written by `/init`). `work-types: native` applies `$TYPE` via GitHub's native Issue Type; `work-types: labels` adds the matching `type:$TYPE` label instead (the pairs live in `record.js`'s `TYPE_LABELS`).
+
+   **`work-types: native`** — detect-then-fallback, never version-sniff `gh --version` (gh added `issue create --type` between 2.92.0 and 2.96.0; a fleet runs a mix of both, so presence of the flag is what matters, not the version string). Run each command below as its **own plain Bash call** and branch on what it returns: an `if VAR=$(gh …)` wrapper and an inline GraphQL mutation declaring two `$var`s inside a nested `input:{…}` are both refused by the worktree-session guard (`_shared/scratch-worktree.md`), and shell variables do not survive between calls — carry each returned value (issue number, node id, type id) forward as a literal.
+
+   a. File with the native type, stderr kept for the branch decision:
+
+      ```bash
+      gh issue create --title "$TITLE" --body-file "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md" --type "$TYPE" --label by:capture 2>"/tmp/capture-${CLAUDE_CODE_SESSION_ID}-create-err.txt"
+      ```
+
+      Exit `0` → the printed URL is the record; this branch is done. Non-zero → read `/tmp/capture-${CLAUDE_CODE_SESSION_ID}-create-err.txt`: when it names `unknown flag: --type`, this gh build predates the flag — go to (b). Any other failure (auth, network, validation) → **stop** and surface that stderr verbatim; it is never absorbed into the fallback, and nothing was filed.
+
+   b. File without the type:
+
+      ```bash
+      gh issue create --title "$TITLE" --body-file "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md" --label by:capture
+      ```
+
+      Non-zero → **stop** and surface gh's stderr; nothing was filed. Exit `0` → the record exists; take its number `N` from the printed URL, then set its type in (c).
+
+   c. Set the native type on `N`. Resolve the slug first (`gh api graphql`'s `-f`/`-F` never expands `{owner}/{repo}` — `.claude/skills/gh-api-module-pattern`'s own guidance), then the issue's node id, then the type's id — three plain calls:
+
+      ```bash
+      gh repo view --json owner,name -q '.owner.login + " " + .name'
+      gh issue view N --json id -q .id
+      gh api graphql -f query='query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){issueTypes(first:50){nodes{id name}}}}' -f owner=OWNER -f repo=REPO -q ".data.repository.issueTypes.nodes[] | select(.name | ascii_downcase == \"$TYPE\") | .id"
+      ```
+
+      An empty type id means the repo has no native type named `$TYPE` — skip the mutation and report `#N filed but untyped: no native issue type "$TYPE" in this repo`. Otherwise write the mutation to `/tmp/capture-${CLAUDE_CODE_SESSION_ID}-type-mutation.graphql` with the `Write` tool (the session id resolved to its literal value) — `mutation($id:ID!,$typeId:ID!){updateIssue(input:{id:$id,issueTypeId:$typeId}){issue{id}}}` — and pass it by file:
+
+      ```bash
+      gh api graphql -F query=@"/tmp/capture-${CLAUDE_CODE_SESSION_ID}-type-mutation.graphql" -f id=NODE_ID -f typeId=TYPE_ID -q .data.updateIssue.issue.id
+      ```
+
+      Non-zero or empty output → report `#N filed but untyped: {gh's stderr}` — the record stands, its type does not, and the report says so rather than passing as typed. Remove the `-create-err.txt` and `-type-mutation.graphql` temp files once the branch finishes.
+
+   **`work-types: labels`:**
 
    ```bash
-   # work-types: native — detect-then-fallback, never version-sniff `gh --version`
-   # (gh added `issue create --type` between 2.92.0 and 2.96.0; a fleet runs a mix
-   # of both, so presence of the flag is what matters, not the version string).
-   if ! ISSUE_URL=$(gh issue create \
-     --title "$TITLE" \
-     --body-file "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md" \
-     --type "$TYPE" \
-     --label by:capture 2>"/tmp/capture-${CLAUDE_CODE_SESSION_ID}-create-err.txt"); then
-     if grep -qi 'unknown flag: --type' "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-create-err.txt"; then
-       # This gh build predates --type on `issue create` — file without it, then
-       # set the native type via GraphQL: resolve the type's node id, then
-       # `updateIssue(issueTypeId:)`.
-       ISSUE_URL=$(gh issue create \
-         --title "$TITLE" \
-         --body-file "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md" \
-         --label by:capture)
-       ISSUE_NODE_ID=$(gh issue view "$(basename "$ISSUE_URL")" --json id -q .id)
-       # Resolve the slug locally first (`gh api graphql`'s -f/-F never expands a
-       # GraphQL variable from {owner}/{repo} — .claude/skills/gh-api-module-pattern's
-       # own guidance; the same `read -r OWNER REPO <<< ...` resolution
-       # `init/bootstrap/step-17-work-record-backend.md` and `_shared/github-pr-scan.md`
-       # already use), then pass the resolved strings with -f.
-       read -r OWNER REPO <<< "$(gh repo view --json owner,name -q '.owner.login + " " + .name')"
-       TYPE_ID=$(gh api graphql -f query='query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){issueTypes(first:50){nodes{id name}}}}' \
-         -f owner="$OWNER" -f repo="$REPO" -q ".data.repository.issueTypes.nodes[] | select(.name | ascii_downcase == \"$TYPE\") | .id")
-       gh api graphql -f query='mutation($id:ID!,$typeId:ID!){updateIssue(input:{id:$id,issueTypeId:$typeId}){issue{id}}}' \
-         -f id="$ISSUE_NODE_ID" -f typeId="$TYPE_ID" >/dev/null
-     else
-       cat "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-create-err.txt" >&2
-       exit 1
-     fi
-   fi
-   rm -f "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-create-err.txt"
-
-   # work-types: labels
    gh issue create \
      --title "$TITLE" \
      --body-file "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md" \
      --label by:capture \
      --label "type:$TYPE"
    ```
-
-   The unknown-flag detection above matches only the specific `unknown flag: --type` rejection —
-   any other `gh issue create` failure (auth, network, validation) falls through to the final
-   `else` branch and surfaces as-is, never silently absorbed into the fallback.
 
    Append `--label needs:definition` to whichever `gh issue create` call above ran, when
    `$NEEDS_DEFINITION` is `true`.
