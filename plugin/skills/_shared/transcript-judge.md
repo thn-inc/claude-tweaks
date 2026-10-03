@@ -105,18 +105,15 @@ after the watermark, when one exists. This skip check and the offset clause are 
 redundant: the offset clause narrows an unavoidable dispatch; this check avoids the dispatch
 altogether when narrowing it would leave nothing to evaluate.
 
-**Self-assessment is exempted, explicitly (not an oversight).** This skip check only runs on the
-branch where a transcript path resolved, before any dispatch is attempted — so for the
-no-transcript-resolves route into self-assessment (Degradation section below) it is a non-event,
-not an exemption: there is no `currentBytes` to compare and no stamp to check when no transcript
-ever resolved. The *other* route into self-assessment — a terminal judge-dispatch failure — already
-passed through this same skip check earlier in the same invocation (the dispatch it went on to fail
-was reached only because this check returned `false`), so there is nothing left for this check to
-do on that route either by the time self-assessment degradation fires. Either way, this check never
-re-runs on self-assessment's account — duplicate-filing guards across repeated self-assessment runs
-are the consumer's own concern, the same safety net that already covers a transcript-judged run's
-non-duplicate findings. Whether a given self-assessment run reads or writes a watermark is the
-Degradation section's own concern below, not this check's.
+**Self-assessment is exempted, explicitly (not an oversight).** This skip check runs only once a
+transcript path has resolved, and before any dispatch. Neither route into self-assessment
+(Degradation section below) leaves it anything to do: on the no-transcript-resolves route there is
+no `currentBytes` to compare and no stamp to check; on the terminal judge-dispatch-failure route
+this check already ran earlier in the same invocation and returned `false` — that is how the failed
+dispatch was reached. So it never re-runs on self-assessment's account — duplicate-filing guards
+across repeated self-assessment runs are the consumer's own concern, the same safety net that
+already covers a transcript-judged run's non-duplicate findings. Whether a self-assessment run
+writes a watermark is the Degradation section's concern, not this check's.
 
 ## The judge dispatch
 
