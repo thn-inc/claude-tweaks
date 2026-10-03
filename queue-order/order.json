@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-03T18:25:20.427Z",
+  "computedAt": "2026-10-03T19:53:29.995Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -190,7 +190,7 @@
       },
       {
         "number": 2690,
-        "updatedAt": "2026-10-01T16:15:10Z",
+        "updatedAt": "2026-10-03T18:28:55Z",
         "state": "OPEN"
       },
       {
@@ -1384,96 +1384,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`design-wrapper` currently routes all design-quality work through Impeccable's commands. Anthropic (via the official ClaudeDevs account) announced a native `/design` skill (research preview) with an artboard workflow built on artifacts.\n\n## Deliverables\n\n- Try the native `/design` skill on a sample UI task and compare output/workflow against Impeccable's.\n- Decide whether `design-wrapper` should route to native `/design` for artboard-style exploration and keep Impeccable for its deeper critique/audit passes, or stay Impeccable-only.\n\n## Acceptance Criteria\n\n- A short comparison note (strengths/gaps of each) checked into the `design-wrapper` skill or its docs.\n\n## Release Note\n\nNo user-visible change: compared Claude Code's native design skill with Impeccable for design work.\n\n## Technical Approach\n\nRun the native `/design` skill against one real or representative UI task, capturing its output and workflow shape. Compare against `design-wrapper`'s existing Impeccable-routed passes (`skills/design-wrapper/modes/`) on the same task where feasible. Write the comparison as a short note covering: what each is good at, where they overlap, and whether a routing split (native `/design` for artboard exploration, Impeccable for critique/audit) is worth implementing versus staying Impeccable-only.\n\n### Key Files\n\n- `plugin/skills/design-wrapper/` — where a routing decision would land if adopted\n- `plugin/skills/design-wrapper/modes/` — the existing Impeccable-routed passes to compare against\n\n## Gotchas\n\n- Native `/design` is explicitly a research preview — note its maturity/stability in the comparison, since a routing decision based on a preview feature may need revisiting as it matures.\n- This is a comparison-and-decide record, not a commitment to change `design-wrapper`'s routing — if the decision is \"stay Impeccable-only,\" that's a valid, complete outcome.\n\n## Original request\n\nAssess native /design skill vs. Impeccable in design-wrapper\n\nCurrent State:\n- design-wrapper currently routes all design-quality work through Impeccable's commands.\n- Anthropic (via the official ClaudeDevs account) announced a native /design skill (research preview) with an artboard workflow built on artifacts.\n\nDeliverables:\n- Try the native /design skill on a sample UI task and compare output/workflow against Impeccable's.\n- Decide whether design-wrapper should route to native /design for artboard-style exploration and keep Impeccable for its deeper critique/audit passes, or stay Impeccable-only.\n\nAcceptance Criteria:\n- A short comparison note (strengths/gaps of each) checked into the design-wrapper skill or its docs.\n\nSource: https://x.com/ClaudeDevs/status/2089471692762673408\n",
-        "createdAt": "2026-09-20T19:00:53Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2690,
-        "state": "OPEN",
-        "title": "Assess native /design skill vs. Impeccable in design-wrapper",
-        "updatedAt": "2026-10-01T16:15:10Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
