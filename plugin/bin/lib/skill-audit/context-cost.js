@@ -519,6 +519,7 @@ module.exports = {
   DESCRIPTION_CEILING_CHARS,
   DESCRIPTION_TOTAL_CEILING_CHARS,
   measuredBytes,
+  walkMarkdown,
   measureSkills,
   measureSubFiles,
   overCeiling,
