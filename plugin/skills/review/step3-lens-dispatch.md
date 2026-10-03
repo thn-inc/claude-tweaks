@@ -5,7 +5,7 @@ lens-scope mapping, the dispatch contract (context bundle, reproduction pairs, m
 the canonical agent prompt (the "Per-lens Calibration + Output template" section below — moved
 here from `step3-routing.md` so that file's findings-conditional lazy-load actually holds; it
 used to be needed pre-dispatch, which made its "load only when findings exist" contract
-structurally false), and the question list for lenses 3a-3f. The severity floor per lens stays
+structurally false), and the question list for lenses 3a-3g. The severity floor per lens stays
 in `code-mode-steps.md`.
 
 "Above" in the next section means `code-mode-steps.md`'s Step 3 preamble — the "skip lenses that don't
@@ -37,7 +37,7 @@ apply to the type of change" rule and the severity-floor table.
 |------|------|
 | `low` | 3b, 3c |
 | `medium` | 3b, 3c, 3a, 3f |
-| `high` | 3b, 3c, 3a, 3f, 3d, 3e, 3h — every applicable lens. **Reproduces this skill's pre-existing default behavior.** |
+| `high` | 3b, 3c, 3a, 3f, 3d, 3e, 3g, 3h — every applicable lens. **Reproduces this skill's pre-existing default behavior** (plus 3g, added for #2750). |
 | `xhigh` | Same lens set as `high` |
 | `max` | Same lens set as `high` |
 
@@ -45,7 +45,7 @@ A lens outside the resolved tier's scope is never dispatched — it does not run
 
 **No executable content (`low` only).** At `low`, 3b and 3c are not dispatched when the diff ships nothing executable: every changed file is markdown or plain text, no changed line sits inside a fenced code block, and no changed line gives the reader a command to run (`node -e …`, a `git`, `gh`, or other shell invocation). A single such line keeps both lenses in scope, and so does any changed source, test, script, or config file. Log `SKIP {HH:MM:SS} — Step 3 lenses 3b, 3c (skipped): diff ships no executable content ({N} prose files) → acceptance criteria checked directly. Reversibility: n/a.` The line is executable content, not file type: #2684's markdown shipped a `node -e` snippet and lens 3c found a real bug in it, while #2685, a prose-only ADR, had nothing for either lens to read.
 
-Reproduction pairs (the 2-agent verification dispatch below) run for every lens that uses the reproduction-pair mechanism (3a-3f) and is in scope at the resolved tier, **at `medium` and above** — verification is never skipped there, only the initial lens set that gets a chance to flag something. (3h is never reproduction-paired, at any tier — see the "not dispatched as reproduction pairs" note below.)
+Reproduction pairs (the 2-agent verification dispatch below) run for every lens that uses the reproduction-pair mechanism (3a-3g) and is in scope at the resolved tier, **at `medium` and above** — verification is never skipped there, only the initial lens set that gets a chance to flag something. (3h is never reproduction-paired, at any tier — see the "not dispatched as reproduction pairs" note below.)
 
 **Low-tier single-read dispatch (`low` only).** At `low`, the reproduction mechanism does not run at all — dispatch **one** agent per in-scope lens (3b, 3c), not a pair. This is not "reproduction with N=1" (Mode 1 in `_shared/multi-agent-coordination.md` is N=2 always when it runs); it is the tier's economy trade, halving the cheapest tier's fixed cost. Every finding a single-read agent returns enters as `unconfirmed`, and the only path to `confirmed` is the Direct-verification override below applied deliberately: the reviewing agent reads the actual current source at each finding's `{path}:{line}` (the real file content, not the agent's report of it) and independently confirms it. Log a confirmation as `AUTO {HH:MM:SS} — Single-read (low tier): lens "{lens}" finding {path}:{line} confirmed via direct verification (source read independently). Reversibility: high.` A finding the reviewer cannot confirm this way stays `unconfirmed` — log `STAGED {HH:MM:SS} — Single-read (low tier): lens "{lens}" finding {path}:{line} not directly verified. Staged to Review Console as low-confidence. Reversibility: high.` — and routes to the Wrap-Up Console's Low-confidence subsection as usual. The correlated-misread protection a pair provides is deliberately traded away here; a review that warrants that protection warrants `medium` or above (Step 2.5's ambiguity rule already never defaults to `low`).
 
@@ -77,7 +77,7 @@ At `xhigh` and `max`, append the resolver's `effortLine` output to each dispatch
 >
 > Do **not** `Read` the changed files into this thread to "front-load" them. `Read` places their full content in main-thread context, and each dispatched agent still reads its own copy regardless — so the front-load saves no I/O and costs the entire diff plus every touched file, the exact cost Step 2 exists to avoid. An agent needing more than the bundle (imports, schemas, callers) reads those itself, in its own context window.
 
-> **Parallel execution (conditional):** At `medium` and above, when the diff spans 10+ files, dispatch each applicable lens (3a-3f) as a **reproduction pair** — 2 identical agents per lens (up to 12 Task agents total: 6 reproduction lenses × 2). When the diff is smaller, run each lens as a 2-agent reproduction pair sequentially in the main thread. At `low`, dispatch single agents per the Low-tier single-read rule above instead. Lenses 3g-cov, 3h, and 3i are not dispatched as reproduction pairs — they run as single agents (3h) or main-thread procedures (3g-cov, 3i). Dispatch shape: single-assistant-message rule (the composed review-dispatch bundle's, or standalone `_shared/subagent-dispatch-core.md`'s, fan-out section) applies.
+> **Parallel execution (conditional):** At `medium` and above, when the diff spans 10+ files, dispatch each applicable lens (3a-3g) as a **reproduction pair** — 2 identical agents per lens (up to 14 Task agents total: 7 reproduction lenses × 2, at `high`+ where 3g is in scope — fewer at `medium`, where 3g is not yet in scope). When the diff is smaller, run each lens as a 2-agent reproduction pair sequentially in the main thread. At `low`, dispatch single agents per the Low-tier single-read rule above instead. Lenses 3g-cov, 3h, and 3i are not dispatched as reproduction pairs — they run as single agents (3h) or main-thread procedures (3g-cov, 3i). Dispatch shape: single-assistant-message rule (the composed review-dispatch bundle's, or standalone `_shared/subagent-dispatch-core.md`'s, fan-out section) applies.
 >
 > **Reproduction dispatch (Mode 1 — per lens):** For each lens, dispatch 2 agents in one batch with **byte-identical prompts** (same scope, same Template-A contract, same model profile). Independent runs — no agent sees the other's output. After both return, write each agent's `findings` array to `{ctx-dir}/lens-{LENS}-agentA.json` / `{ctx-dir}/lens-{LENS}-agentB.json` and call:
 > ```bash
@@ -94,7 +94,7 @@ At `xhigh` and `max`, append the resolver's `effortLine` output to each dispatch
 >
 > **Direct-verification override.** An `unconfirmed` finding can still be elevated to `confirmed` — an *additional* path alongside reproduction-pair agreement above, never a replacement for it — when the reviewing agent itself reads the actual conflicting source text the finding is about (the real file content, not the reproduction agent's report of it) and independently confirms the finding. This applies only in interactive/hybrid mode, or when an auto-mode agent's own pass happens to read that source directly as part of its work — never as blanket license for an unattended auto run to wave through every `unconfirmed` finding. Merely agreeing with the single agent's report, without independently reading the source, does not qualify — the override exists because independent source-reading rules out two agents sharing the same misread, which agreement-with-a-report cannot rule out. On a docs-only or prose-precision diff (skill files, `_shared/*.md` contracts, CLAUDE.md), two agents independently misreading the same ambiguous prose the same way is common enough that strict reproduction-pair agreement is not a reliable filter — expect Direct-verification override to be the resolution path that actually confirms a real finding on this diff class, not merely an exceptional escape hatch. When it applies: re-emit the finding as `confirmed`, write `AUTO {HH:MM:SS} — Reproduction: lens "{lens}" finding {path}:{line} elevated via direct-verification override (source read independently). Confirmed. Reversibility: high.`, and let it enter Step 3 Routing as an ordinary `confirmed` row.
 >
-> **Model profile (per lens):** 3a (Convention) and 3f (Test Quality) → [Use: Fast] — mechanical convention checks on isolated files. 3b-3e (Security, Errors, Performance, Architecture) → [Use: Standard] — multi-file analysis and cross-cutting findings. 3h (UX Analysis) → [Use: Capable] — judgment-heavy synthesis. Resolve each via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" {profile}` (contract § Model Selection).
+> **Model profile (per lens):** 3a (Convention) and 3f (Test Quality) → [Use: Fast] — mechanical convention checks on isolated files. 3b-3e (Security, Errors, Performance, Architecture) and 3g (Ownability) → [Use: Standard] — multi-file analysis and cross-cutting findings. 3h (UX Analysis) → [Use: Capable] — judgment-heavy synthesis. Resolve each via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" {profile}` (contract § Model Selection).
 >
 > **Output template (each agent must follow exactly):** The Calibration block + OUTPUT FORMAT must be reproduced byte-identical in each dispatched agent's prompt — do NOT paraphrase. The canonical dispatch template is the "Per-lens Calibration + Output template" section below; inline it verbatim into every `Task()` call.
 
@@ -156,7 +156,7 @@ Never delete anything here — report only. A path under `{ctx-dir}` is a siblin
 
 **Agent-scratch cleanup check.** The `{ctx-dir}` exclusion above covers the skill's own scratch files (`lens-*.json`, `findings-by-lens.json`, the pre/post-fan-out status snapshots) — it does not exempt `{ctx-dir}/agent-scratch/**` from scrutiny, because the Scratch rule's "delete what it created before its status word" is a self-reported promise (`_shared/subagent-output-contract.md`) with no verification elsewhere. As part of this same sweep, run `find {ctx-dir}/agent-scratch -type f 2>/dev/null`: any file still present means a dispatched agent did not honor that promise. Report it exactly like an untracked leftover above — named in the `Fan-out leftovers` section, logged to `decisions.md`, and excluded as sole evidence for a `confirmed` finding — the only difference is the path lives under `agent-scratch/` instead of outside `{ctx-dir}`.
 
-## Lens definitions (3a-3f)
+## Lens definitions (3a-3g)
 
 ### 3a: Convention Compliance
 
@@ -174,6 +174,7 @@ Never delete anything here — report only. A path under `{ctx-dir}` is a siblin
 - No secrets or sensitive data in code?
 - OWASP top 10 considerations?
 - Does every path-based allow/exemption decision resolve the real path (leaf symlink followed, `..` normalized) before deciding, and fail closed when the path is unprovable? (#1678, `[IL-150]` — a raw-path exemption let a symlink bypass a worktree protection; see `docs/donts.md`'s matching rule.)
+- For any path/URI/hostname/identity-keyed guard decision, has it actually been probed against the adversarial-input checklist `specify/red-team.md`'s path/URI/hostname/identity-guard detection step requires at shaping time (dot segments pre/post normalization, mount/scheme variants, uppercase schemes, percent-encoding, trailing slashes, substring-in-wrong-component) — cited from there rather than restated here so the shaping gate and this lens never drift into two separately-maintained lists? (#2777)
 
 ### 3c: Error Handling
 
@@ -211,3 +212,12 @@ Never delete anything here — report only. A path under `{ctx-dir}` is a siblin
 - Test data is realistic and follows schemas?
 - No test pollution (shared mutable state)?
 - Mocks are minimal and at the right level? (Mocking internal collaborators is a smell — prefer real objects or interface-level stand-ins.)
+
+### 3g: Ownability
+
+Scope: comprehension/ownership risk only — distinct from Convention Compliance (3a, which checks pattern/style adherence) and Architecture (3e, which checks structural soundness/abstraction level). Reads the diff alongside the record's own Deliverables/Technical Approach/Gotchas for stated rationale, not just the code in isolation.
+
+- Does any non-obvious control flow, branching, or mechanism lack an explaining comment or a cross-reference to the spec/record section that motivates it?
+- Does the record's own Deliverables/Technical Approach/Gotchas give no stated reason for the specific mechanism chosen here — the diff works, but no artifact (comment, commit message, or spec text) explains *why this shape* was picked over a simpler one?
+- Is there a dense, multi-concern function or block with no narrative at all — the kind of code an on-call engineer paged at 3am would have to reverse-engineer from scratch, with no PR description or spec text to lean on?
+- A finding here must name the specific missing artifact (no comment at `path:line`, no spec cross-reference, no commit rationale) — "this is hard to read" alone is not a finding; which explanation is absent, and where a reader would expect to find it, is.
