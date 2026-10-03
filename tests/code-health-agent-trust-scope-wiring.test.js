@@ -5,11 +5,11 @@
 // the same way #2693's prelaunch wiring test pins its own vertical.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const FOCUS_MODE = fs.readFileSync(path.join(ROOT, 'plugin/skills/code-health/focus-mode.md'), 'utf8');
+const FOCUS_MODE = readText(path.join(ROOT, 'plugin/skills/code-health/focus-mode.md'));
 const { getCriterion } = require('../plugin/bin/lib/code-health/criteria');
 const { FOCUS_GENERATORS } = require('../plugin/bin/lib/code-health/focus-generators');
 
@@ -48,7 +48,7 @@ test('focus-mode.md F2 names the agent-trust-scope not-applicable message', () =
 });
 
 test('criteria-agent-trust-scope.md names all three candidate kinds', () => {
-  const fragment = fs.readFileSync(path.join(ROOT, 'plugin/skills/_shared/criteria-agent-trust-scope.md'), 'utf8');
+  const fragment = readText(path.join(ROOT, 'plugin/skills/_shared/criteria-agent-trust-scope.md'));
   for (const kind of ['registry-access', 'network-egress', 'credential-scope']) {
     assert.ok(fragment.includes(`\`${kind}\``), `fragment missing candidate kind \`${kind}\``);
   }
@@ -60,12 +60,12 @@ test('review wires in Step 6.65 and consolidates Step 6.7 routing', () => {
   // per-file byte ceiling (tests/ceremony-profile-roster.test.js's #1926 AC7
   // check) — step numbering and the Step 6.7 consolidated-routing table
   // (still in code-mode-steps.md) are unaffected by the split.
-  const passes = fs.readFileSync(path.join(ROOT, 'plugin/skills/review/focus-criterion-passes.md'), 'utf8');
+  const passes = readText(path.join(ROOT, 'plugin/skills/review/focus-criterion-passes.md'));
   assert.match(passes, /## Step 6\.65: Agent Trust Scope Pass/);
   assert.match(passes, /candidates-agent-trust-scope\.js/);
   assert.match(passes, /getCriterion\('agent-trust-scope'\)/);
 
-  const steps = fs.readFileSync(path.join(ROOT, 'plugin/skills/review/code-mode-steps.md'), 'utf8');
+  const steps = readText(path.join(ROOT, 'plugin/skills/review/code-mode-steps.md'));
   assert.match(steps, /focus-criterion-passes\.md/);
   assert.match(steps, /Agent Trust Scope`\s*\(from Step 6\.65\)/);
 });
@@ -74,7 +74,7 @@ test('docs/getting-started.md counts the shipped verticals including agent-trust
   // The exact count (originally "seven" at #2749) bumps as new verticals
   // ship (#2628 made it eight) — this test only pins that the prose and the
   // actual count stay in sync, not a frozen historical number.
-  const docs = fs.readFileSync(path.join(ROOT, 'docs/getting-started.md'), 'utf8');
+  const docs = readText(path.join(ROOT, 'docs/getting-started.md'));
   const { FOCUS_GENERATORS } = require('../plugin/bin/lib/code-health/focus-generators');
   const countWords = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
   const expectedWord = countWords[Object.keys(FOCUS_GENERATORS).length];

@@ -1,16 +1,16 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #683: scratch-worktree teardown ancestry check + pr-first-merge remote-branch
 // delete (Step 5). Prose-as-implementation, same convention as the other
 // pr-first sub-issues' test files (tests/pr-first-merge.test.js) — pin the key
 // claims against the actual file text rather than restating them elsewhere.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 const SCRATCH = read('plugin', 'skills', '_shared', 'scratch-worktree.md');
 const SETUP = read('plugin', 'skills', '_shared', 'worktree-setup.md');
 const MERGE = read('plugin', 'skills', '_shared', 'pr-first-merge.md');

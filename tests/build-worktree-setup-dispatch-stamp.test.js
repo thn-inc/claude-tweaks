@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #778: a dispatched /flow run's first commit was denied by the working-directory
 // hook (E1) because build/worktree-setup.md's "already in a linked worktree" skip
 // guard skipped its ENTIRE procedure — including Step 4.5's record-worktree stamp
@@ -18,7 +18,7 @@ const path = require('path');
 // even on the skip-creation path, and the guard must be worded to say so.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const WORKTREE_SETUP = read('plugin', 'skills', 'build', 'worktree-setup.md');
 

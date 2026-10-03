@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #295 (closing #155) removed the "every group is a parallel Task agent that creates
 // its own worktree" model from /claude-tweaks:dispatch Step 5: a Task-tool subagent is
 // always launched cwd-pinned to the DISPATCHING session's worktree, so it can never get
@@ -31,7 +31,7 @@ const path = require('path');
 // existing path via the prompt."
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const SKILL = read('plugin', 'skills', 'dispatch', 'SKILL.md');
 const SEQUENTIAL = read('plugin', 'skills', 'dispatch', 'sequential-execution.md');

@@ -1,16 +1,16 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #409: a pr-first run is born public — draft PR at run start, one push +
 // checklist flip per phase exit, thereafter. The procedure is prose, not
 // code, so prose is what has to be pinned — these tests catch the doc
 // drifting out from under the deliverables/ACs it was written to satisfy.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 const LIFECYCLE = read('plugin', 'skills', '_shared', 'pr-early-run-lifecycle.md');
 const GIT_DISCIPLINE = read('plugin', 'skills', '_shared', 'git-discipline.md');
 const WORKTREE_SETUP = read('plugin', 'skills', 'build', 'worktree-setup.md');

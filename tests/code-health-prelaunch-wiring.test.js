@@ -3,11 +3,11 @@
 // focus-mode.md per-vertical rows in the same change as its registry key.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const FOCUS_MODE = fs.readFileSync(path.join(ROOT, 'plugin/skills/code-health/focus-mode.md'), 'utf8');
+const FOCUS_MODE = readText(path.join(ROOT, 'plugin/skills/code-health/focus-mode.md'));
 const { getCriterion } = require('../plugin/bin/lib/code-health/criteria');
 const { FOCUS_GENERATORS } = require('../plugin/bin/lib/code-health/focus-generators');
 const { CHECKLIST_ITEMS } = require('../plugin/bin/lib/code-health/candidates-prelaunch');
@@ -29,14 +29,14 @@ test('the prelaunch criterion is registered with its fragment', () => {
 });
 
 test('criteria-prelaunch.md names every checklist item id', () => {
-  const fragment = fs.readFileSync(path.join(ROOT, 'plugin/skills/_shared/criteria-prelaunch.md'), 'utf8');
+  const fragment = readText(path.join(ROOT, 'plugin/skills/_shared/criteria-prelaunch.md'));
   for (const item of CHECKLIST_ITEMS) {
     assert.ok(fragment.includes(`\`${item.id}\``), `fragment missing checklist item \`${item.id}\``);
   }
 });
 
 test('criteria-prelaunch.md reconciles checklist rows with verdicts and names the site-level anchor', () => {
-  const fragment = fs.readFileSync(path.join(ROOT, 'plugin/skills/_shared/criteria-prelaunch.md'), 'utf8');
+  const fragment = readText(path.join(ROOT, 'plugin/skills/_shared/criteria-prelaunch.md'));
   assert.match(fragment, /`fail` whose candidates you all rejected → `pass \(N rejected: \{reason\}\)`/);
   assert.match(fragment, /anchor such a finding as `\{file\}#\{item id\}`/);
   assert.doesNotMatch(fragment, /`pass`\/`fail`, verified/);

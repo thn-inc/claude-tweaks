@@ -7,11 +7,11 @@
 // pipeline run directory exists).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 
+const { readText } = require('./helpers/read-skill');
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 test('CLAUDE.md names specify-auto-continue in the Superpowers overrides line', () => {
   const text = read('CLAUDE.md');
