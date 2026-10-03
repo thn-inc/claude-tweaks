@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-03T15:36:10.020Z",
+  "computedAt": "2026-10-03T16:02:59.497Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -231,11 +231,6 @@
       {
         "number": 2564,
         "updatedAt": "2026-09-30T06:25:08Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2556,
-        "updatedAt": "2026-10-01T16:15:47Z",
         "state": "OPEN"
       },
       {
@@ -1828,96 +1823,6 @@
         "state": "OPEN",
         "title": "Scope whether claude-tweaks needs a creative/image-workflow plugin",
         "updatedAt": "2026-10-01T16:15:26Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n#1826 (this record's parent) fixed the two specific silent-degrade gaps its own diagnosis confirmed: the Manifesto's `config.yml` write logged no absolute path (#1810's occurrence), and no conditional skip on that write path logged a `SKIP` entry, and `steps-and-gates.md`'s case 3 recomputed levers fresh from the precedence chain instead of preferring `decisions.md`'s own snapshot header, and its prose assumed interruption rather than also covering a completed-but-config-missing first call.\n\nWhat #1826 explicitly called for but this pass did not build: a genuine end-to-end regression test simulating a `/flow` two-call dispatch handoff (`build,test` then `review,polish,wrap-up` sharing one `PIPELINE_RUN_DIR`) against a real fixture repo — bare git remote for the push/PR half, `gh` mocked at the injectable-runner seam — asserting the anchored run directory's actual `config.yml`/`decisions.md`/`run-state.json` contents after call 1, and a companion fixture where the claim step is skipped and a build commit must never happen.\n\nInvestigation during #1826 found `tests/dispatch-flow-rundir-handoff.test.js` (the file #1826's own Gotchas assumed already had this fixture machinery) is entirely prose-conformance-based — it regex-matches skill `.md` files, with no bare-repo/mocked-`gh` runtime simulation anywhere in the suite. The underlying units this test would exercise are each already well-covered in isolation (`plugin/bin/lib/flow/preflight.js`'s `computeAdoption` case 3 logic — `tests/bin-lib/flow/preflight.test.js`; `bin/claim-targets.js`'s contest/all-or-abort handling — `tests/bin-lib/claim-targets/claim-targets.test.js`, including the exact \"second target live → first released, exit 3\" shape AC5 wants), but nothing ties them together end-to-end the way `/flow`'s own Step 1→2.8→3→4 sequence actually runs.\n\n## Deliverables\n\n- Build a fixture-repo harness (bare `origin` remote, a temp worktree-like checkout, `gh` faked at the same injectable-runner seam `tests/bin-lib/claim-targets/claim-targets.test.js` already uses) that runs the real sequence: `bin/materialize.js` → `bin/claim-targets.js` → `bin/set-config.js` (the Manifesto's batch write) → `bin/hooks.js record-worktree` → the PR-early push+draft-PR procedure (mocked `gh pr create`/`gh pr list`).\n- Assert the anchored run directory's `config.yml`, `decisions.md`, and `run-state.json` (with `worktree` and `pr` fields) all exist and carry correct content after this simulated \"call 1.\"\n- A companion fixture where the claim step (`bin/claim-targets.js`) exits non-zero (contested) — assert the harness never reaches the materialize/commit step for that case.\n- A companion fixture reproducing the shadow-write hypothesis: a `config.yml` written under `<worktree>/.claude-tweaks/pipelines/{run}/` instead of the anchored `$RUN_ROOT` path — assert this is detected (or made structurally impossible by the harness's own path construction).\n\n## Acceptance Criteria\n\n- The new fixture-repo test(s) actually exercise the real `bin/` CLIs listed above (not a re-statement of their own existing unit tests) and pass.\n- `npm test` passes.\n- The test(s) live alongside `tests/dispatch-flow-rundir-handoff.test.js` or in a clearly-named sibling file.\n\n## Release Note\n\nNo user-visible change: added an end-to-end test for how a flow run hands off its run directory.\n\n## Technical Approach\n\nReuse `tests/bin-lib/claim-targets/claim-targets.test.js`'s injectable-runner fake-`gh` pattern rather than inventing a new one. A real `git init --bare` temp directory as `origin`, plus a real temp working checkout, gives the push/PR half something real to push against without touching the network.\n\n### Key Files\n\n- `tests/dispatch-flow-rundir-handoff.test.js` — natural home, or a named sibling\n- `plugin/bin/materialize.js`, `plugin/bin/claim-targets.js`, `plugin/bin/set-config.js`, `plugin/bin/hooks.js` — the real CLIs to orchestrate\n- `tests/bin-lib/claim-targets/claim-targets.test.js` — the injectable-runner fake-`gh` pattern to reuse\n\n## Gotchas\n\n- This is genuinely new test infrastructure, not a small addition — size it as its own build, not a quick follow-up task.\n- Keep the fixture read-only against the real repo; everything happens in a temp directory.\n\n## Original request\n\nFixture-repo end-to-end regression test for /flow's two-call handoff run-dir bookkeeping (#1826 AC1/AC4/AC5 follow-up)\n\nFiled as a scoped follow-up from #1826's own AC1/AC4/AC5 (the end-to-end regression test its Deliverables called for), which #1826 itself did not build — see its own Current State for why (investigation found the fixture machinery its Gotchas assumed already existed does not).\n",
-        "createdAt": "2026-09-17T15:40:46Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2556,
-        "state": "OPEN",
-        "title": "Fixture-repo end-to-end regression test for /flow's two-call handoff run-dir bookkeeping (#1826 AC1/AC4/AC5 follow-up)",
-        "updatedAt": "2026-10-01T16:15:47Z",
         "facets": {
           "origin": null,
           "risk": "low",
