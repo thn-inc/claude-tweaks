@@ -328,6 +328,13 @@ hasParent}`, and a local record translates as `facets.closed === true` → `stat
 identical translation Shape 7 and `wrap-up/verification-brief.md`'s `local-files` paths already
 use), and `facets.parent !== null` → `hasParent`.
 
+`facets.notPlanned` → `stateReason: 'NOT_PLANNED'` is the same translation, added so a
+record closed not-planned (wontfix, duplicate, or absorbed — `_shared/work-record.md`'s
+lifecycle spine conflates all three into this one flag on this driver) is excluded from this
+shape exactly as its `github-issues` counterpart excludes a `NOT_PLANNED`/`DUPLICATE`
+`stateReason`. There is no separate local-files translation for `DUPLICATE` — this driver
+has no sub-classification of not-planned closures to translate into it.
+
 **Excluding decomposed sub-issues is load-bearing, not a refinement.** `needsBackstop` returns
 `false` for anything passed `hasParent: true`, because a sub-issue's acceptance lives on its parent
 issue — Shape 7's population — and never on the sub-issue. Drop that translation and every
@@ -360,6 +367,10 @@ node -e "
       state: r.facets.closed ? 'CLOSED' : 'OPEN',
       labels: r.facets.acceptance ? ['demo:' + r.facets.acceptance] : [],
       hasParent: r.facets.parent !== null,
+      // local-files has no native stateReason — facets.notPlanned already conflates
+      // wontfix/duplicate/absorbed into one flag (_shared/work-record.md's lifecycle
+      // spine), so it maps onto NOT_PLANNED only; there is no local-files DUPLICATE case.
+      stateReason: r.facets.notPlanned ? 'NOT_PLANNED' : undefined,
     }))
     .forEach((r) => console.log(r.path + '\t[acceptance-gap] ' + r.id + ': ' + r.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo ' + r.id));
 " "$RISK_FLOOR" "$SIZE_FLOOR"
