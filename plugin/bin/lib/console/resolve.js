@@ -79,7 +79,7 @@ const SECTION_MAP = [
 // content couldn't be read) falls back to the conservative
 // `shadow-dup-collision` — "can't tell" is a distinct outcome from
 // "confirmed a duplicate," never guessed as one.
-const SHADOW_DUP_RE = /\.shadow-dup(-\d+)?$/;
+const SHADOW_DUP_RE = /^(.*)\.shadow-dup(?:-\d+)?$/;
 
 // The short-circuit's stances, verbatim from review-console.md:
 // - every batch section resolves as "Approve all" — Pending review patches
@@ -296,7 +296,7 @@ function stagedItems(snapshot) {
   const textByName = new Map(snapshot.staged.map((s) => [s.name, s.text]));
   return snapshot.staged.map((s) => {
     if (refused.has(s.name)) return { id: s.name, section: SECTIONS.REFUSED, ...SECTION_STANCES[SECTIONS.REFUSED] };
-    const anchorMatch = /^(.*)\.shadow-dup(?:-\d+)?$/.exec(s.name);
+    const anchorMatch = SHADOW_DUP_RE.exec(s.name);
     const siblingText = anchorMatch && textByName.has(anchorMatch[1]) ? textByName.get(anchorMatch[1]) : undefined;
     const { section, reason } = classifyStagedItem(s.name, s.text, siblingText);
     if (reason) return { id: s.name, section, resolution: 'pending', reason };
