@@ -53,6 +53,22 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.133.0](https://github.com/thn-inc/claude-tweaks/compare/v6.132.0...v6.133.0) (2026-10-02)
+
+
+### Features
+
+* Add a reachability audit lens for skill/MCP routine… ([#2674](https://github.com/thn-inc/claude-tweaks/issues/2674)) ([5a6f137](https://github.com/thn-inc/claude-tweaks/commit/5a6f137ffe1d9368a424e0a7bdf10e6bab25939e))
+* Add an autonomous-agent blast-radius check to hardening… ([#2749](https://github.com/thn-inc/claude-tweaks/issues/2749)) ([693b28f](https://github.com/thn-inc/claude-tweaks/commit/693b28f0b7e17d1049594c6184c312a43177a28c))
+* worktree.always / ExitWorktree: no path for a session to… ([#2687](https://github.com/thn-inc/claude-tweaks/issues/2687)) ([fb968f7](https://github.com/thn-inc/claude-tweaks/commit/fb968f79bfe9341e89b640884707a28fb78feff0)), closes [#2696](https://github.com/thn-inc/claude-tweaks/issues/2696) [#2731](https://github.com/thn-inc/claude-tweaks/issues/2731)
+
+
+### Bug Fixes
+
+* harness-health validate-findings: a Skills curation judge… ([#2545](https://github.com/thn-inc/claude-tweaks/issues/2545)) ([482922b](https://github.com/thn-inc/claude-tweaks/commit/482922b45ffd1bfdca840f0096212fe50709a61f))
+* readClaimBlobsGitBatch's default runner rejects string… ([#2852](https://github.com/thn-inc/claude-tweaks/issues/2852)) ([de9873a](https://github.com/thn-inc/claude-tweaks/commit/de9873ad87791d4ada955921d2a49d6f10745dfd))
+* stage-item.js's per-writer filename counter silently… ([#2770](https://github.com/thn-inc/claude-tweaks/issues/2770)) ([1752ae7](https://github.com/thn-inc/claude-tweaks/commit/1752ae7093743667a32bdf46a1c375ae884629b8))
+
 ## [6.132.0](https://github.com/thn-inc/claude-tweaks/compare/v6.131.0...v6.132.0) (2026-10-01)
 
 
