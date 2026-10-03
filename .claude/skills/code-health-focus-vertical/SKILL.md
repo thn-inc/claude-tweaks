@@ -22,6 +22,7 @@ A vertical is not shipped until every row below lands in the same change. A key 
 | `focus-mode.md` `## Criterion pinning` | One `` | `{focus}` | `{criterion}` | `{fragment}` | `` row |
 | `docs/getting-started.md` | The `/claude-tweaks:code-health` entry counts and names every shipped vertical |
 | `tests/bin-lib/code-health/candidates-{vertical}.test.js` | Generator tests (see the test matrix below) |
+| `focus-mode.md` `## F2` | Only for a generator that sets `notApplicable: true` (with its `notApplicableReason`): an exact `` focus={vertical}: not applicable — {reason} `` line and a stop, as `prelaunch`, `agent-trust-scope` and `app-store-readiness` have. Without it the firing falls through to the generic "no candidates" line and reads as a clean pass. #2628 missed this row |
 
 `tests/code-health-prelaunch-wiring.test.js` asserts that the pinning table and `FOCUS_GENERATORS` name exactly the same foci, in both directions. It catches a missing pinning row. It does not catch a missing Coverage pointer, fragment, or getting-started entry, so check those by hand.
 

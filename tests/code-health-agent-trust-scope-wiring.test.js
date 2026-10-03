@@ -54,16 +54,31 @@ test('criteria-agent-trust-scope.md names all three candidate kinds', () => {
   }
 });
 
-test('review code-mode-steps.md wires in Step 6.65 and consolidates Step 6.7 routing', () => {
+test('review wires in Step 6.65 and consolidates Step 6.7 routing', () => {
+  // #2628 split the Step 6.6/6.65/6.66 component-pass bodies out of
+  // code-mode-steps.md into focus-criterion-passes.md to stay under the
+  // per-file byte ceiling (tests/ceremony-profile-roster.test.js's #1926 AC7
+  // check) — step numbering and the Step 6.7 consolidated-routing table
+  // (still in code-mode-steps.md) are unaffected by the split.
+  const passes = fs.readFileSync(path.join(ROOT, 'plugin/skills/review/focus-criterion-passes.md'), 'utf8');
+  assert.match(passes, /## Step 6\.65: Agent Trust Scope Pass/);
+  assert.match(passes, /candidates-agent-trust-scope\.js/);
+  assert.match(passes, /getCriterion\('agent-trust-scope'\)/);
+
   const steps = fs.readFileSync(path.join(ROOT, 'plugin/skills/review/code-mode-steps.md'), 'utf8');
-  assert.match(steps, /## Step 6\.65: Agent Trust Scope Pass/);
-  assert.match(steps, /candidates-agent-trust-scope\.js/);
-  assert.match(steps, /getCriterion\('agent-trust-scope'\)/);
+  assert.match(steps, /focus-criterion-passes\.md/);
   assert.match(steps, /Agent Trust Scope`\s*\(from Step 6\.65\)/);
 });
 
-test('docs/getting-started.md counts seven shipped verticals including agent-trust-scope', () => {
+test('docs/getting-started.md counts the shipped verticals including agent-trust-scope', () => {
+  // The exact count (originally "seven" at #2749) bumps as new verticals
+  // ship (#2628 made it eight) — this test only pins that the prose and the
+  // actual count stay in sync, not a frozen historical number.
   const docs = fs.readFileSync(path.join(ROOT, 'docs/getting-started.md'), 'utf8');
-  assert.match(docs, /seven verticals shipped/);
+  const { FOCUS_GENERATORS } = require('../plugin/bin/lib/code-health/focus-generators');
+  const countWords = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+  const expectedWord = countWords[Object.keys(FOCUS_GENERATORS).length];
+  assert.match(docs, new RegExp(`${expectedWord} verticals shipped`));
   assert.match(docs, /`agent-trust-scope`/);
+  assert.match(docs, /`app-store-readiness`/);
 });

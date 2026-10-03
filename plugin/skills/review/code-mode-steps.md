@@ -287,7 +287,7 @@ The simplify skill handles scope resolution, running the code-simplifier subagen
 - **Code mode:** Delegate to `/claude-tweaks:visual-review --mode=recommendation` — it detects UI changes via `git diff` and identifies affected journeys, returning a structured recommendation without opening a browser (no `agent-browser` dependency). Do not stop to ask; note any recommendation in the summary (Step 7). This is `recommendation` mode, not `discover` mode — `discover` actually opens a browser and walks the app, which would contradict this step's "recommendation only, non-blocking" design.
 - **Full mode:** Invoke `/claude-tweaks:visual-review` with the target URL/journey and QA data (if available). The visual review owns UI/journey detection and the procedure. Findings feed into the summary (Step 7) as the "UI / Visual" lens with their own severity classifications. When the diff has zero UI-file matches (the same trigger-extension check `/claude-tweaks:visual-review` already uses for its own detection), fall back to `--mode=recommendation` instead — same as code mode above — rather than opening a full browser mode on a diff with nothing to visually review.
 
-**Routing (optional):** actionable full-mode visual findings the user wants to action inline route through Step 6.7 below, in one consolidated pass with Step 6.5's design findings, Step 6.6's security-hardening findings, and Step 6.65's agent-trust-scope findings — Step 3 Routing has already completed by this point. When the user opts not to action a finding inline, it remains in the Step 7 summary's "Visual Review" section as informational. (`/claude-tweaks:visual-review`'s own Step 5 Boost fix/defer/accept flow does not apply here — it runs only when `/claude-tweaks:visual-review` is standalone and interactive, never when invoked BY `/claude-tweaks:review`.)
+**Routing (optional):** actionable full-mode visual findings the user wants to action inline route through Step 6.7 below, in one consolidated pass with Step 6.5's design findings, Step 6.6's security-hardening findings, Step 6.65's agent-trust-scope findings, and Step 6.66's app-store-readiness findings — Step 3 Routing has already completed by this point. When the user opts not to action a finding inline, it remains in the Step 7 summary's "Visual Review" section as informational. (`/claude-tweaks:visual-review`'s own Step 5 Boost fix/defer/accept flow does not apply here — it runs only when `/claude-tweaks:visual-review` is standalone and interactive, never when invoked BY `/claude-tweaks:review`.)
 
 Invocation:
 
@@ -317,59 +317,17 @@ See `_shared/design-wrapper-handling.md` for the canonical return-shape contract
 
 **Why findings are advisory (review-specific):** Impeccable critiques are LLM-generated and opinionated. The user judges which findings to action. The wrapper's `review` mode is read-only — code-modifying behavior lives in `polish` (invoked separately). Surfacing findings is the value-add; the user routes them to fixes, deferrals, or accepted decisions through Step 6.7 if they choose.
 
-**Routing (optional):** actionable design findings the user wants to action inline route through Step 6.7 below, in one consolidated pass with Step 6's visual findings, Step 6.6's security-hardening findings, and Step 6.65's agent-trust-scope findings. When the user opts not to action them inline, they remain in the Design Quality summary section as informational.
+**Routing (optional):** actionable design findings the user wants to action inline route through Step 6.7 below, in one consolidated pass with Step 6's visual findings, Step 6.6's security-hardening findings, Step 6.65's agent-trust-scope findings, and Step 6.66's app-store-readiness findings. When the user opts not to action them inline, they remain in the Design Quality summary section as informational.
 
-## Step 6.6: Security Hardening Pass (#2624)
+## Steps 6.6, 6.65, 6.66: Focus-Criterion Component Passes
 
-Pre-check: skip this step entirely (no section in the summary) when this review's diff scope (Step 2's own-work file list, or the full `git diff --name-only` set) touches no file matching `bin/lib/code-health/candidates-security-hardening.js`'s `CLIENT_DIR_RE` or `ROUTE_DIR_RE` path heuristics — a review with no client-side or route/handler files in scope has nothing this pass could find.
+Read `focus-criterion-passes.md` in this skill's directory now and follow its three steps in order: Step 6.6 (Security Hardening Pass, #2624), Step 6.65 (Agent Trust Scope Pass, #2749), and Step 6.66 (App Store Readiness Pass, #2628) — split into that file to keep this one under its byte ceiling. Each is a `code-health` focus-criterion reused directly as a component skill (own pre-check, own result-handling table, own optional routing into Step 6.7 below); step numbering is unaffected by the split.
 
-Otherwise, invoke the `security-hardening` focus criterion as a component skill: run the generator directly against this repo's working tree —
+## Step 6.7: Late Findings Routing (design + visual + security + agent-trust-scope + app-store-readiness, consolidated)
 
-```bash
-node -e "const {scanSecurityHardening}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/code-health/candidates-security-hardening.js'); console.log(JSON.stringify(scanSecurityHardening(process.cwd())))"
-```
+Runs **at most once** per review, after Steps 6, 6.5, 6.6, 6.65, and 6.66 have all completed — and only when at least one of them produced actionable findings (Step 6 in full mode with actionable "UI / Visual" findings; Step 6.5 with `{result: "advisory", findings: [...]}`; Step 6.6, Step 6.65, or Step 6.66 with one or more judged findings) AND the user opts to action findings inline. This replaces what were two sequential passes (a design-findings pass and a visual-findings pass), each with its own batch table and its own `AskUserQuestion` — one stop now covers all five categories.
 
-— then judge each returned candidate against `_shared/criteria-security-hardening.md` (loaded via `getCriterion('security-hardening')`, `bin/lib/code-health/criteria.js`), scoped to the files this review's diff actually touches (a candidate outside the diff scope is noise for a per-review pass, even if the generator found it repo-wide — this is a lighter-weight invocation than a full `/claude-tweaks:code-health focus=security-hardening` sweep, which scans and files issues repo-wide on its own schedule; this step never files a GitHub issue itself).
-
-**Result handling:**
-
-| Outcome | Review behavior |
-|---|---|
-| One or more candidates judged as real findings | Include them in the summary as a "Security Hardening" section (kind, file:line, severity per the criteria fragment's calibration). Findings are advisory — same posture as Step 6.5's design findings. |
-| Candidates found but none survive judgment (false positives per the criteria fragment's "What NOT to flag") | Omit the section; note in the summary footer that the pass ran and found nothing actionable. |
-| Pre-check skipped (no client/route files in scope) | Omit the section entirely — no footer note, same as Step 6.5's non-frontend skip. |
-
-**Routing (optional):** actionable security-hardening findings the user wants to action inline route through Step 6.7 below, in the same consolidated pass as Step 6's visual findings, Step 6.5's design findings, and Step 6.65's agent-trust-scope findings. When the user opts not to action them inline, they remain in the Security Hardening summary section as informational — a finding the user declines is a signal for a follow-up record, not proof the risk isn't real, per this repo's "no implicit deferrals" convention (CLAUDE.md).
-
-## Step 6.65: Agent Trust Scope Pass (#2749)
-
-Pre-check: skip this step entirely (no section in the summary) when this review's diff scope (Step 2's own-work file list, or the full `git diff --name-only` set) touches neither `.claude/settings.json` nor `.claude-tweaks/policy.yml` — a review that touches neither file has nothing this pass could find, since those are the only two files `candidates-agent-trust-scope.js` reads.
-
-Otherwise, invoke the `agent-trust-scope` focus criterion as a component skill: run the generator directly against this repo's working tree —
-
-```bash
-node -e "const {scanAgentTrustScope}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/code-health/candidates-agent-trust-scope.js'); console.log(JSON.stringify(scanAgentTrustScope(process.cwd())))"
-```
-
-— then judge each returned candidate against `_shared/criteria-agent-trust-scope.md` (loaded via `getCriterion('agent-trust-scope')`, `bin/lib/code-health/criteria.js`). Unlike Step 6.6's per-file candidates, this generator's output already reflects the whole project's current config (it reads exactly two repo-root files, never diff-scoped) — this step never files a GitHub issue itself, and is a lighter-weight invocation than a full `/claude-tweaks:code-health focus=agent-trust-scope` sweep, which runs on its own schedule.
-
-**Result handling:**
-
-| Outcome | Review behavior |
-|---|---|
-| `notApplicable: true` (no `.claude-tweaks/policy.yml`) | Omit the section entirely — not applicable, not a pass. No footer note (same as Step 6.5's non-frontend skip). |
-| One or more candidates judged as real findings | Include them in the summary as an "Agent Trust Scope" section (dimension, file, severity per the criteria fragment's calibration). Findings are advisory — same posture as Step 6.5's design findings and Step 6.6's security-hardening findings. |
-| Candidates found but none survive judgment (per the criteria fragment's "What NOT to flag") | Omit the section; note in the summary footer that the pass ran and found nothing actionable. |
-| Zero candidates, `notApplicable: false` (autonomy not elevated, or deny list already covers all three dimensions) | Omit the section; note in the summary footer that the pass ran clean. |
-| Pre-check skipped (diff touches neither config file) | Omit the section entirely — no footer note. |
-
-**Routing (optional):** actionable agent-trust-scope findings the user wants to action inline route through Step 6.7 below, in the same consolidated pass as Step 6's visual findings, Step 6.5's design findings, and Step 6.6's security-hardening findings. When the user opts not to action them inline, they remain in the Agent Trust Scope summary section as informational — a finding the user declines is a signal for a follow-up record, not proof the risk isn't real, per this repo's "no implicit deferrals" convention (CLAUDE.md).
-
-## Step 6.7: Late Findings Routing (design + visual + security + agent-trust-scope, consolidated)
-
-Runs **at most once** per review, after Steps 6, 6.5, 6.6, and 6.65 have all completed — and only when at least one of them produced actionable findings (Step 6 in full mode with actionable "UI / Visual" findings; Step 6.5 with `{result: "advisory", findings: [...]}`; Step 6.6 or Step 6.65 with one or more judged findings) AND the user opts to action findings inline. This replaces what were two sequential passes (a design-findings pass and a visual-findings pass), each with its own batch table and its own `AskUserQuestion` — one stop now covers all four categories.
-
-1. Render every actionable finding from all four sources as a row in **one** batch table with a Category column, recommended actions pre-filled:
+1. Render every actionable finding from all five sources as a row in **one** batch table with a Category column, recommended actions pre-filled:
 
 | Category | Severity source |
 |---|---|
@@ -377,10 +335,11 @@ Runs **at most once** per review, after Steps 6, 6.5, 6.6, and 6.65 have all com
 | `UI / Visual` (from Step 6) | `/claude-tweaks:visual-review`'s own report classification |
 | `Security Hardening` (from Step 6.6) | `criteria-security-hardening.md`'s Severity calibration section |
 | `Agent Trust Scope` (from Step 6.65) | `criteria-agent-trust-scope.md`'s Severity calibration section |
+| `App Store Readiness` (from Step 6.66) | `criteria-app-store-readiness.md`'s Severity calibration section |
 
 2. Apply the routing rules from `step3-routing.md` to the combined table — when a pipeline run directory exists, resolve `review-auto-apply-ceiling` exactly as Step 3 Routing's own "Auto mode" section does, and route each finding per that file's ceiling-keyed table (`none`/`low`/`medium` columns) under the resolved ceiling — never hardcode the `low`-ceiling mapping (low → AUTO, medium → STAGED, high → STAGED, critical → KEPT-PROMPT) as if it applied under every ceiling. Otherwise (no run directory), use the interactive batch-table flow (one `AskUserQuestion` for apply-all/override).
 3. **Write the disposition back to the audit cache.** This is what makes review's routing authoritative over `design-wrapper polish`'s blind suggestion-driven dispatch of the same finding — without it, polish's Step 5 can re-derive and auto-apply a finding this step just staged for a human, bypassing the ceiling entirely. For each "Design Quality" finding whose source is `audit` (never a `craft-critic`-only entry — `craft-critic` findings have no suggestion-driven dispatch path in polish's Step 5 to guard against; see `design-wrapper/modes/polish.md`'s four-way consumption table), read the audit findings cache `design-wrapper/modes/review.md` Step 5 wrote (resolve the same Primary/Fallback path that file documents — never re-derive a separate rule), find the matching entry by `id`, and set `dispositionByReview: {status: "applied"|"staged"|"accepted"|"deferred"|"kept-prompt", at: "<ISO timestamp>"}` on that entry only — an in-place read-modify-write: read the existing JSON, set the field on the targeted entry, write the whole file back, never a blind overwrite that drops other entries' existing fields. Map this step's routing outcome to `status`: AUTO → `applied`, STAGED → `staged`, KEPT-PROMPT → `kept-prompt` (auto mode); Fix now → `applied`, Defer → `deferred`, Don't fix → `accepted` (interactive mode). If the cache file is absent (Step 6.5 was skipped this run, or the wrapper's own cache write failed), skip this write entirely — there is no cache entry for polish to guard against.
-4. After resolution, fold each finding back into its own Step 7 summary section ("Design Quality" / "Visual Review" / "Security Hardening" / "Agent Trust Scope"), noting its final status (fixed / deferred / accepted).
+4. After resolution, fold each finding back into its own Step 7 summary section ("Design Quality" / "Visual Review" / "Security Hardening" / "Agent Trust Scope" / "App Store Readiness"), noting its final status (fixed / deferred / accepted).
 
 This pass never replays Step 3.5 (each source's findings have no peers to debate against) and never re-dispatches reproduction pairs — every source's output is already filtered/classified before it reaches this routing. Step 3 Routing itself is untouched by this consolidation: code findings still resolve before Steps 4-5, because fixes must land before hindsight and simplification run.
 

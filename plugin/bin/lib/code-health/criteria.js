@@ -159,6 +159,18 @@ const CRITERIA = [
   // pinned directly by code-health's focus=agent-trust-scope
   // (skills/code-health/focus-mode.md), never selected via criteriaForArea.
   { id: 'agent-trust-scope', appliesTo: ['infra'], confidenceFloor: 'medium', fragment: 'criteria-agent-trust-scope.md' },
+  // Domain: app-store-readiness → the Apple App Store submission readiness
+  // checklist for AI-built mobile apps (Stripe-instead-of-IAP, missing
+  // Apple sign-in parity, no account deletion, incomplete demo login,
+  // unverified iPad layout, unlabeled paid screenshots, dead support/
+  // privacy links, "coming soon" placeholders, UGC with no report path,
+  // broken restore-purchases). Area-gated to frontend, the surface a
+  // mobile app's client code lives in; pinned directly by code-health's
+  // focus=app-store-readiness (skills/code-health/focus-mode.md), never
+  // selected via criteriaForArea. Distinct scope from #2622 (pre-scale),
+  // #2624 (security-hardening), and #2625 (GDPR/backup-retention) — see
+  // criteria-app-store-readiness.md's Scope boundary section.
+  { id: 'app-store-readiness', appliesTo: ['frontend'], confidenceFloor: 'medium', fragment: 'criteria-app-store-readiness.md' },
 ];
 
 // Build a lookup map once on load for O(1) getCriterion.
