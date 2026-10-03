@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-03T17:02:58.937Z",
+  "computedAt": "2026-10-03T17:38:51.532Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -75,7 +75,7 @@
       },
       {
         "number": 2800,
-        "updatedAt": "2026-10-01T16:11:44Z",
+        "updatedAt": "2026-10-03T17:05:10Z",
         "state": "OPEN"
       },
       {
@@ -205,7 +205,7 @@
       },
       {
         "number": 2679,
-        "updatedAt": "2026-10-01T16:15:22Z",
+        "updatedAt": "2026-10-03T17:05:04Z",
         "state": "OPEN"
       },
       {
@@ -795,178 +795,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nProse-correcting Claude (asking it to fix a bad response by describing the correction) burns tokens and leaves the bad version in conversation history; Claude Code's `/rewind` command undoes to a prior state at no token cost, but claude-tweaks' own skill/doc guidance never mentions it as the preferred alternative to a prose-based correction. A search of `plugin/` and `docs/` confirms no existing \"session hygiene\" section or `/rewind` mention exists anywhere in this repo's own guidance.\n\n## Deliverables\n\nAdd a brief `/rewind`-over-prose-correction recommendation to the most relevant existing guidance location — likely root `CLAUDE.md`'s Working Approach section (which already covers how to execute tasks generally) or a skill whose scope already touches session-level hygiene/recovery, rather than inventing a new standalone doc for one short tip.\n\n## Acceptance Criteria\n\n- The recommendation is added in one clear, findable location (not duplicated across multiple files) and states the concrete guidance: when a response needs correcting, prefer `/rewind` over a prose-described fix, since it undoes at no token cost and doesn't leave the bad version in history.\n- The addition is brief — a few sentences, consistent with `docs/skill-authoring.md`'s general conciseness conventions (this repo already has a documented preference against verbose additions, per the CLAUDE.md conciseness pattern observed elsewhere in this session's own shaping work).\n\n## Release Note\n\nAdded guidance to prefer rewinding a session over correcting it in prose.\n\n## Technical Approach\n\nConfirm the best home before writing: check root `CLAUDE.md`'s existing sections (Working Approach is the most likely fit, since it already governs how tasks get executed) against any skill whose scope more specifically covers session-level correction/recovery patterns. Add the recommendation as a short addition to whichever location is the better fit — do not create a new file or section for a tip this size.\n\n### Key Files\n\n- `CLAUDE.md` — most likely location (Working Approach section), pending confirmation against any more specific existing home\n\n## Gotchas\n\n- This is a small, low-risk documentation addition — resist the temptation to expand it into a broader \"session hygiene\" guide beyond the one concrete recommendation the record asks for. A few sentences is the right size.\n- Confirm `/rewind` is indeed the currently correct Claude Code command name before writing it into guidance — platform command names can change across versions, and stale guidance naming a renamed/removed command would be worse than no guidance.\n\n## Original request\n\nRecommend /rewind over prose corrections in session hygiene guidance\n\nContext: Prose-correcting Claude burns tokens and leaves the bad version in history; /rewind undoes at no cost but claude-tweaks never mentions it.\n\nScope: Add a /rewind recommendation to the relevant lifecycle skill(s).\n",
-        "createdAt": "2026-09-29T01:23:49Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2800,
-        "state": "OPEN",
-        "title": "Recommend /rewind over prose corrections in session hygiene guidance",
-        "updatedAt": "2026-10-01T16:11:44Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Current State\n\nclaude-tweaks' skills and CLAUDE.md guidance encode verification/self-check instructions written for older Claude model defaults. Anthropic's own April 23, 2026 postmortem documents that reasoning-effort defaults, response-length system-prompt instructions, and idle-session context-clearing behavior all swing coding quality independent of model weights — and that its own upgrade guidance for newer, higher-effort models is to remove old verification instructions rather than add more, since new models can over-verify and burn extra turns when stale instructions remain. No current claude-tweaks process re-checks skill/CLAUDE.md verification instructions when the underlying Claude model version changes.\n\n## Deliverables\n\n- A checklist step that, on a tracked model version bump, reviews existing verification/self-check instructions in skills and CLAUDE.md for redundancy with the new model's own built-in verification behavior.\n- A short reference doc summarizing the effort/verbosity levers (reasoning effort, response-length prompt instructions, idle-session context-clearing) known to swing coding quality independent of model weights.\n\n## Acceptance Criteria\n\n- Running the review after a tracked model bump produces a keep/trim decision for each verification instruction in a sampled skill.\n- The reference doc is linked from wherever CLAUDE.md guidance is authored.\n\n## Release Note\n\nAdded a checklist for re-auditing verification instructions after a Claude model upgrade.\n\n## Technical Approach\n\nAdd the checklist as a new practice referenced from wherever this repo already tracks maintenance practices tied to external events (comparable in shape to a release checklist item, but triggered by a model version bump rather than a code release). The reference doc is a short, standalone `docs/` file summarizing the three named levers (reasoning-effort defaults, response-length instructions, idle-session context-clearing) and citing the Anthropic postmortem as its source; link it from CLAUDE.md's own guidance-authoring section so a future skill author encounters it before adding a new verification instruction.\n\n### Key Files\n\n- `docs/` — new reference doc summarizing the effort/verbosity levers\n- `CLAUDE.md` — link to the new reference doc from the guidance-authoring section; add the checklist-step practice reference\n\n## Gotchas\n\n- This creates a recurring, human-triggered practice, not an automated check — a \"tracked model version bump\" has no mechanized detection point in this repo today, so the checklist step needs a clear trigger (e.g. \"run this the next time you update the model reference in CLAUDE.md's Environment section\") rather than assuming automation will invoke it.\n- Verify the cited Anthropic postmortem's actual content directly (not just via the secondary Medium-article citation) before writing the reference doc, since the reference doc will be treated as authoritative guidance for future skill authors.\n\n## Original request\n\nAdd a practice: re-audit verification prompts on Claude model bumps\n\nCurrent State:\n- claude-tweaks' skills and CLAUDE.md guidance encode verification/self-check instructions written for older Claude model defaults.\n- Anthropic's own April 23, 2026 postmortem (cited in the sourced article, with a full reader-proxy fetch confirming the citation) documents that reasoning-effort defaults, response-length system-prompt instructions, and idle-session context-clearing behavior all swing coding quality independent of model weights -- and that its own upgrade guidance for newer, higher-effort models is to remove old verification instructions rather than add more, since new models can over-verify and burn extra turns when stale instructions remain.\n- No current claude-tweaks process re-checks skill/CLAUDE.md verification instructions when the underlying Claude model version changes.\n\nDeliverables:\n- A checklist step that, on a tracked model version bump, reviews existing verification/self-check instructions in skills and CLAUDE.md for redundancy with the new model's own built-in verification behavior.\n- A short reference doc summarizing the effort/verbosity levers (reasoning effort, response-length prompt instructions, idle-session context-clearing) known to swing coding quality independent of model weights.\n\nAcceptance Criteria:\n- Running the review after a tracked model bump produces a keep/trim decision for each verification instruction in a sampled skill.\n- The reference doc is linked from wherever CLAUDE.md guidance is authored.\n\nSource: https://medium.com/@sumit.ai/why-claude-is-getting-worse-day-by-day-e3853f87d24d (citing Anthropic, \"An update on recent Claude Code quality reports\", https://www.anthropic.com/engineering/april-23-postmortem, April 23, 2026)\n",
-        "createdAt": "2026-09-20T18:24:53Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2679,
-        "state": "OPEN",
-        "title": "Add a practice: re-audit verification prompts on Claude model bumps",
-        "updatedAt": "2026-10-01T16:15:22Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
