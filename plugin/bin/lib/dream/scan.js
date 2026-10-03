@@ -112,7 +112,6 @@ function normalizeErrorLine(text) {
   // all (an empty stderr), and "exit code N" alone is still a real,
   // groupable signal in that case, not nothing.
   const first = (lines.length > 1 && /^Exit code \d+$/i.test(lines[0])) ? lines[1] : lines[0];
-  if (!first) return '';
   return truncate(redactPaths(first).toLowerCase().replace(/\s+/g, ' ').trim(), MAX_NORMALIZED_CHARS);
 }
 
@@ -130,21 +129,24 @@ function extractErrorFindings({ filePath, sessionId, deps = fs }) {
   for (const line of lines) {
     let o;
     try { o = JSON.parse(line); } catch { continue; }
+    const content = o.message && o.message.content;
+    if (!Array.isArray(content)) continue;
 
-    if (o.type === 'assistant' && Array.isArray(o.message && o.message.content)) {
-      for (const block of o.message.content) {
+    if (o.type === 'assistant') {
+      for (const block of content) {
         if (block && block.type === 'tool_use' && block.id) {
           toolUseById.set(block.id, { name: block.name, input: block.input });
         }
       }
     }
 
-    if (o.type === 'user' && Array.isArray(o.message && o.message.content)) {
-      for (const block of o.message.content) {
+    if (o.type === 'user') {
+      for (const block of content) {
         if (!block || block.type !== 'tool_result' || !block.is_error) continue;
         const tool = toolUseById.get(block.tool_use_id) || {};
         const toolName = tool.name || 'unknown';
-        const commandVerb = toolName === 'Bash' ? bashCommandVerb(tool.input && tool.input.command) : toolName;
+        const command = tool.input && tool.input.command;
+        const commandVerb = toolName === 'Bash' ? bashCommandVerb(command) : toolName;
         const errorText = toolResultText(block.content);
         const normalized = normalizeErrorLine(errorText);
         if (!normalized) continue;
@@ -155,7 +157,7 @@ function extractErrorFindings({ filePath, sessionId, deps = fs }) {
           sessionId,
           filePath,
           timestamp: o.timestamp || null,
-          command: tool.input && typeof tool.input.command === 'string' ? truncate(tool.input.command, MAX_COMMAND_CHARS) : null,
+          command: typeof command === 'string' ? truncate(command, MAX_COMMAND_CHARS) : null,
           errorExcerpt: truncate(redactPaths(errorText.trim()), MAX_ERROR_CHARS),
         });
       }
@@ -252,8 +254,7 @@ function composeReportMarkdown({
   if (proposals.length === 0) {
     lines.push('No repeating cross-session pattern met the evidence bar this run.');
   } else {
-    lines.push('## Staged proposals');
-    lines.push('');
+    lines.push('## Staged proposals', '');
     for (const p of proposals) {
       lines.push(`- \`staged/${p.id}.md\` — ${p.group.toolName}/${p.group.commandVerb}, ${p.group.sessionIds.size} sessions`);
     }

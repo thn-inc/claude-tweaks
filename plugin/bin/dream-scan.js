@@ -28,6 +28,7 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const {
   resolveTarget: resolveStageTarget, writeStagedItem,
@@ -62,7 +63,7 @@ const realDeps = {
   cwd: () => process.cwd(),
   mainRoot: undefined,
   now: () => Date.now(),
-  configDir: () => process.env.CLAUDE_CONFIG_DIR || path.join(require('os').homedir(), '.claude'),
+  configDir: () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
   writeFileSync: (p, c) => fs.writeFileSync(p, c),
@@ -103,9 +104,8 @@ function run(argv, deps = realDeps) {
     configDir, windowDays: o.windowDays, minSessions: o.minSessions, now: deps.now(),
   });
 
-  const toStage = qualifying.slice(0, o.maxProposals);
   const proposals = [];
-  for (const group of toStage) {
+  for (const group of qualifying.slice(0, o.maxProposals)) {
     const content = composeProposalMarkdown(group, { windowDays: o.windowDays });
     let staged;
     try {
