@@ -28,6 +28,10 @@ A consumer may also supply a **watermark payload** shape beyond `bytesAtDispatch
 (e.g. feedback's `filedRecords`/`dismissedSubjects`) — that shape is entirely consumer-owned
 and named in the consumer's own file, never here.
 
+A consumer may also **opt out of the self-assessment watermark write** (Degradation section below)
+when its fallback evaluates something other than the session's own conversational context —
+stated in the consumer's own file (reflect does).
+
 ## Transcript resolution
 
 Runs in the main thread, before dispatch.
