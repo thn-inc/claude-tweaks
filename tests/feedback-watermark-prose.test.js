@@ -104,6 +104,25 @@ test('session-evaluation.md watermark payload documents sessionId/findingsFiled/
   assert.match(SESSION_EVAL, /issueUrls,\s*\/\/ the URLs Step 8's `gh issue create` calls produced/);
 });
 
+// --- 2c. #2730: self-assessment (reached via a terminal judge-dispatch failure) writes a watermark too ---
+
+test('session-evaluation.md documents the watermark payload is also written on a terminal-dispatch-failure self-assessment', () => {
+  assert.match(
+    SESSION_EVAL,
+    /or on completing a self-assessment evaluation reached via\na terminal judge-dispatch failure/,
+  );
+  assert.match(SESSION_EVAL, /mode,\s*\/\/ "self-assessment" when this payload was written from the/);
+});
+
+test('session-evaluation.md no longer claims no stamp is written on a failed Gather-2 dispatch', () => {
+  assert.doesNotMatch(SESSION_EVAL, /No stamp is\nwritten at all when Gather 2's dispatch was reported as failed/);
+  assert.match(
+    SESSION_EVAL,
+    /still writes a stamp when self-assessment resolved a real transcript path/,
+  );
+  assert.match(SESSION_EVAL, /The one true no-stamp case is the no-transcript-resolves route/);
+});
+
 test('bare-invocation.md Gather 2 paragraph points to the Skip check before describing dispatch', () => {
   assert.match(BARE_INVOCATION, /its \*\*Skip check\*\* runs first/);
 });
