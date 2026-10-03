@@ -15,7 +15,7 @@ notes: >
   nothing auto-applies. Light-tier checks only (file-existence, self-review,
   coverage scan); the deep tier is interactive-only (`--deep`) until a
   validation spike confirms cloud-Routine feasibility for a background dev
-  server + agent-browser session. See journey-health/SKILL.md's Step 3.5
+  server + playwright-cli session. See journey-health/SKILL.md's Step 3.5
   for details. `--min-confidence high` keeps a scheduled firing quiet by
   default (only confidence:high findings file automatically) — see
   journey-health/SKILL.md's Routine Configuration section.
