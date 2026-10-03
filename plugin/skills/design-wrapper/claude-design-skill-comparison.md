@@ -85,7 +85,8 @@ decision depends on:
   tournament handles both genesis-moment direction pick and layout-variant comparison once
   a direction is locked, integrating the winner directly into the spec's own `DESIGN.md`
   and design history. This is the wrapper's actual competing feature against native
-  `/design`'s artboard workflow, and it is already in production and pinned.
+  `/design`'s artboard workflow, and it is already in production, with the partial
+  version-pinning described above.
 
 ## Decision
 
