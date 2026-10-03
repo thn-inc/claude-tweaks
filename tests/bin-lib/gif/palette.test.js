@@ -86,18 +86,19 @@ test('quantize: a large, high-color-count frame (mimicking a real screenshot) co
 // it can never exercise the slow-band pathology, since medianCut's cost scales with DISTINCT
 // colour count, not pixel count. This fixture produces a high-entropy, high-distinct-colour-count
 // 8-frame 1280x720 walkthrough (gradient + bounded per-pixel noise on two channels) — the same
-// shape of adversarial input (photo/map/video-heavy content) #2769 measured the pre-fix quantizer
-// at 6.2s / ~278MB RSS for (deterministic across runs: ~982,011 distinct colours, well above
-// PRE_BUCKET_THRESHOLD). Proven red against the pre-fix quantizer (pre-fix measured ~6.2s against
-// this same budget) before the colour-count-bounded path (`preBucketColors`, palette.js) landed.
+// shape of adversarial input (photo/map/video-heavy content) #2769 reports (deterministic across
+// runs: ~982,011 distinct colours, well above PRE_BUCKET_THRESHOLD). Proven red against the
+// pre-fix quantizer (~6.2s / ~278MB RSS, over this test's budget) before the colour-count-bounded
+// path (`preBucketColors`, palette.js) landed.
 function gradientNoiseFrame(w, h, seed, noiseAmp) {
   const rgba = new Uint8Array(w * h * 4);
   let s = seed;
   function rnd(n) { s = (s * 1103515245 + 12345) & 0x7fffffff; return s % n; }
+  function withNoise(base) { return Math.min(255, Math.max(0, base + rnd(noiseAmp) - (noiseAmp >> 1))); }
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     const i = (y * w + x) * 4;
-    rgba[i] = Math.min(255, Math.max(0, Math.floor((x / w) * 255) + rnd(noiseAmp) - (noiseAmp >> 1)));
-    rgba[i + 1] = Math.min(255, Math.max(0, Math.floor((y / h) * 255) + rnd(noiseAmp) - (noiseAmp >> 1)));
+    rgba[i] = withNoise(Math.floor((x / w) * 255));
+    rgba[i + 1] = withNoise(Math.floor((y / h) * 255));
     rgba[i + 2] = (x * 7 + y * 13) % 256;
     rgba[i + 3] = 255;
   }

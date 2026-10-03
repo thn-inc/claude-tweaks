@@ -85,41 +85,36 @@ function medianCut(colors, counts, maxColors) {
 // medianCut's own input size — and therefore its time and memory — independent of how many
 // distinct colours (or pixels) the source frames actually contain. Below the threshold this is a
 // no-op: medianCut still runs on the exact distinct-colour set, so real screenshots are unaffected.
-const PRE_BUCKET_THRESHOLD = 150000; // distinct colours above this trigger coarsening — comfortably
-// above the "low thousands to tens of thousands" real-screenshot fast band, comfortably below the
-// ~260k+ adversarial range measured in #2769
+//
+// The threshold sits comfortably above the "low thousands to tens of thousands" real-screenshot
+// fast band and comfortably below the ~260k+ adversarial range measured in #2769.
+const PRE_BUCKET_THRESHOLD = 150000;
 const PRE_BUCKET_BITS = 5; // bits retained per channel -> 32 levels/channel -> at most 32768 buckets
 
 function preBucketColors(colors, counts) {
   const shift = 8 - PRE_BUCKET_BITS;
   const byBucket = new Map();
-  const bucketColors = [];
+  const sums = []; // per bucket: [rSum, gSum, bSum], each channel weighted by pixel count
   const bucketCounts = [];
-  const sums = []; // parallel to bucketColors/bucketCounts — [rSum, gSum, bSum], weighted by count
   for (let i = 0; i < colors.length; i++) {
     const [r, g, b] = colors[i];
     const key = ((r >> shift) << (PRE_BUCKET_BITS * 2)) | ((g >> shift) << PRE_BUCKET_BITS) | (b >> shift);
     const w = counts[i];
     let idx = byBucket.get(key);
     if (idx === undefined) {
-      idx = bucketColors.length;
+      idx = sums.length;
       byBucket.set(key, idx);
-      bucketColors.push([0, 0, 0]);
-      bucketCounts.push(0);
       sums.push([0, 0, 0]);
+      bucketCounts.push(0);
     }
     const sum = sums[idx];
     sum[0] += r * w; sum[1] += g * w; sum[2] += b * w;
     bucketCounts[idx] += w;
   }
-  for (let i = 0; i < bucketColors.length; i++) {
+  const bucketColors = sums.map((sum, i) => {
     const w = bucketCounts[i];
-    const sum = sums[i];
-    const color = bucketColors[i];
-    color[0] = Math.round(sum[0] / w);
-    color[1] = Math.round(sum[1] / w);
-    color[2] = Math.round(sum[2] / w);
-  }
+    return [Math.round(sum[0] / w), Math.round(sum[1] / w), Math.round(sum[2] / w)];
+  });
   return { colors: bucketColors, counts: bucketCounts };
 }
 
