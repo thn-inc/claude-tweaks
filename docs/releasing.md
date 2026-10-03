@@ -10,6 +10,8 @@ This repo dogfoods the same release engine every consumer project uses: `/claude
 
 **The marketplace mirror** is now `.github/workflows/mirror-marketplace.yml`, triggered on `release: published` — the same catalog write `plugin/bin/lib/release/mirror.js` used to perform by hand, preserving its two invariants: the catalog entry is pinned by `sha` (never `ref`), and carries no `version` field (the payload's own `plugin/.claude-plugin/plugin.json` is the single version authority).
 
+**Post-publish release notes.** The same `mirror-marketplace.yml` job runs a second step, `plugin/bin/release-notes-publish.js` (#2582), after the mirror write: release-please has no knowledge of this repo's `Release-Note:` commit trailer, so it never renders a Highlights block. This step walks the just-published commit range, extracts every `Release-Note:` trailer, renders them via `plugin/bin/lib/release-notes.js`, and idempotently appends a `### Highlights` block to both the just-published GitHub Release body and CHANGELOG.md's matching entry (a follow-up commit, pushed with the workflow's own `GITHUB_TOKEN` — the `contents: write` permission this step needs is declared at the workflow level, but `mirror-marketplace.yml` has only the one `mirror` job and only fires on `release: published`, so it cannot reach any other trigger or job).
+
 ## Manual Steps
 
 Two PATs, both required — their failure modes differ. Without `RELEASE_PLEASE_TOKEN` the mirror silently never runs at all (no workflow run, no error — the release still ships, its catalog entry just doesn't update). Without `MARKETPLACE_TOKEN` it runs and fails loudly, with the explicit error named below.
