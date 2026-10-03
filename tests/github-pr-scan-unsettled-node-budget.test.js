@@ -23,8 +23,6 @@ const content = fs.readFileSync(FILE, 'utf8');
 // line (shell `\` continuations count as one line for this purpose), matching how
 // the fetch is actually written in this file.
 function hasOverBudgetBulkFetch(text) {
-  // Join explicit backslash-newline continuations so a wrapped `gh pr list ... \`
-  // command is inspected as one unit, the same way the shell sees it.
   const joined = text.replace(/\\\r?\n\s*/g, ' ');
   const lines = joined.split('\n');
   return lines.some((line) => {
@@ -66,6 +64,6 @@ test('detector does not flag the fixed bulk fetch (no comments/commits)', () => 
 });
 
 test('item 10 still fetches per-candidate progress via gh pr view with comments,commits', () => {
-  assert.match(content, /gh',\s*\[\s*'pr',\s*'view'/s);
+  assert.match(content, /gh',\s*\[\s*'pr',\s*'view'/);
   assert.match(content, /'comments,commits'/);
 });

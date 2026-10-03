@@ -255,10 +255,8 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
         try {
           data = JSON.parse(execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'comments,commits'], { encoding: 'utf8' }));
         } catch (e) {
-          // A gh failure here (rate limit, auth, network, deleted PR) is not the same as
-          // "this PR legitimately has no comments/commits" — both fall through to the same
-          // conservative 'silent' report below, but this line keeps that collapse visible
-          // in the scan's own output instead of indistinguishable from genuine staleness.
+          // A gh failure (rate limit, auth, network, deleted PR) falls through to the same
+          // 'silent' report as genuine staleness — log it so the two stay distinguishable.
           console.error('[unsettled] gh pr view failed for #' + prNumber + ': ' + (e.message || e));
           return null;
         }
