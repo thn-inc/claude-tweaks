@@ -29,6 +29,10 @@ function read(p) {
   return fs.readFileSync(p, 'utf8');
 }
 
+function section(text, startMarker, endMarker) {
+  return text.slice(text.indexOf(startMarker), text.indexOf(endMarker));
+}
+
 test('polish.md has a Step 2.5 resolving pinned-copy list, Polish-skip:, and Polish-scope:', () => {
   const text = read(POLISH_MD);
   assert.match(text, /### Step 2\.5: Resolve record-declared polish constraints \(#2743\)/);
@@ -48,7 +52,7 @@ test('polish.md Step 2.5 is positioned between Step 2 and Step 3', () => {
 
 test('polish.md documents the skip check and that a skip is staged, never silently dropped', () => {
   const text = read(POLISH_MD);
-  const step = text.slice(text.indexOf('### Step 2.5'), text.indexOf('### Step 3'));
+  const step = section(text, '### Step 2.5', '### Step 3');
   assert.match(step, /\*\*Skip check \(every step\)\.\*\*/);
   assert.match(step, /kind: "skipped-by-record"/);
   assert.match(step, /This is never a silent drop/);
@@ -56,7 +60,7 @@ test('polish.md documents the skip check and that a skip is staged, never silent
 
 test('polish.md documents the pinned-copy suffix text and that it is appended last', () => {
   const text = read(POLISH_MD);
-  const step = text.slice(text.indexOf('### Step 2.5'), text.indexOf('### Step 3'));
+  const step = section(text, '### Step 2.5', '### Step 3');
   assert.match(step, /Pinned copy — do not change these exact strings/);
   assert.match(step, /pinned-copy is always last/i);
   assert.match(step, /not a post-hoc diff check/);
@@ -64,7 +68,7 @@ test('polish.md documents the pinned-copy suffix text and that it is appended la
 
 test('polish.md Step 4 applies the Polish-scope: record-created filter and the skip+suffix checks', () => {
   const text = read(POLISH_MD);
-  const step4 = text.slice(text.indexOf('### Step 4:'), text.indexOf('### Step 5:'));
+  const step4 = section(text, '### Step 4:', '### Step 5:');
   assert.match(step4, /`Polish-scope: record-created` filter/);
   assert.match(step4, /status `A`/);
   assert.match(step4, /No refinement set — all resolved files pre-dated this record \(Polish-scope: record-created\)/);
@@ -73,13 +77,13 @@ test('polish.md Step 4 applies the Polish-scope: record-created filter and the s
 
 test('polish.md Step 5 rule 4 applies the skip check before dispatching normally', () => {
   const text = read(POLISH_MD);
-  const step5 = text.slice(text.indexOf('### Step 5:'), text.indexOf('### Step 6:'));
+  const step5 = section(text, '### Step 5:', '### Step 6:');
   assert.match(step5, /apply Step 2\.5's skip check first/);
 });
 
 test('polish.md Step 6 applies the skip check and pinned-copy suffix to intent-driven dispatch', () => {
   const text = read(POLISH_MD);
-  const step6 = text.slice(text.indexOf('### Step 6:'), text.indexOf('### Step 6.5:'));
+  const step6 = section(text, '### Step 6:', '### Step 6.5:');
   assert.match(step6, /apply Step 2\.5's skip check/);
   assert.match(step6, /appending Step 2\.5's pinned-copy suffix/);
 });
