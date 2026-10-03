@@ -35,7 +35,9 @@ when `{N}` is 1: `run /demo #{n1}`) — omit entirely when the count is 0.
 Finds closed records that carry no acceptance label at all — the case `acceptance-queue` above
 cannot see, since that scope only lists records already flagged `demo:pending`. A record closed
 without ever receiving a `demo:*` label is invisible to `acceptance-queue` and would otherwise
-disappear from the backlog with no disposition on record. Classification is entirely
+disappear from the backlog with no disposition on record. A record closed with GitHub's own
+`stateReason` of `NOT_PLANNED` or `DUPLICATE` is excluded from this scope entirely — a not-planned
+or duplicate closure has nothing to accept, so it is never a gap. Classification is entirely
 `needsBackstop`'s (`bin/lib/issues/acceptance.js`) — this scope does not reimplement the
 label taxonomy; see that module or `_shared/work-record.md` for what the labels mean.
 
@@ -43,7 +45,7 @@ label taxonomy; see that module or `_shared/work-record.md` for what the labels 
 `parent-gate` scope below does: it reads GitHub labels, and the Detection Ladder above skips this
 whole file whenever `gh` is unreachable — it checks remote/install/auth, never `work-backend`. The
 `local-files` twin of this sweep is `tidy/step-1-records.md`'s Shape 8, reading the record store
-through `queryRecords` and translating `facets.closed`/`facets.acceptance`/`facets.parent` into
+through `queryRecords` and translating `facets.closed`/`facets.acceptance`/`facets.parent`/`facets.notPlanned` into
 the same `needsBackstop` call. It emits the identical `[acceptance-gap]` row at the identical
 severity and recommends the identical `/claude-tweaks:demo` invocation, so no consumer
 distinguishes the two.

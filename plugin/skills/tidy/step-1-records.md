@@ -323,17 +323,21 @@ that path, and with no sweep here would stay invisible permanently.
 
 Classification is entirely `needsBackstop`'s (`bin/lib/issues/acceptance.js`) — do not reimplement
 the disposition taxonomy. That predicate is backend-agnostic: it reads `{state, labels,
-hasParent}`, and a local record translates as `facets.closed === true` → `state: 'CLOSED'`,
+hasParent, stateReason}`, and a local record translates as `facets.closed === true` → `state: 'CLOSED'`,
 `facets.acceptance` → the one-element `['demo:' + facets.acceptance]` and empty when unset (the
 identical translation Shape 7 and `wrap-up/verification-brief.md`'s `local-files` paths already
 use), and `facets.parent !== null` → `hasParent`.
 
 `facets.notPlanned` → `stateReason: 'NOT_PLANNED'` is the same translation, added so a
-record closed not-planned (wontfix, duplicate, or absorbed — `_shared/work-record.md`'s
-lifecycle spine conflates all three into this one flag on this driver) is excluded from this
-shape exactly as its `github-issues` counterpart excludes a `NOT_PLANNED`/`DUPLICATE`
-`stateReason`. There is no separate local-files translation for `DUPLICATE` — this driver
-has no sub-classification of not-planned closures to translate into it.
+record closed not-planned is excluded from this shape exactly as its `github-issues` counterpart
+excludes a `NOT_PLANNED`/`DUPLICATE` `stateReason`. `_shared/work-record.md`'s lifecycle spine
+names the conceptual closed-as-not-planned state (wontfix, duplicate, absorbed) but this driver
+has only the one `not-planned` frontmatter flag to represent all of it — there is no separate
+local-files translation for `DUPLICATE`, since the driver has no sub-classification to translate
+into it. In practice a local record reaches this flag only when set by hand: `tidy`'s own Delete
+and Absorb actions (`tidy/actions-local-files.md`) remove the record file outright rather than
+marking it not-planned, so this path exists for the manual case, not as this driver's primary
+not-planned route.
 
 **Excluding decomposed sub-issues is load-bearing, not a refinement.** `needsBackstop` returns
 `false` for anything passed `hasParent: true`, because a sub-issue's acceptance lives on its parent
