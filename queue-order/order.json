@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-03T14:32:58.961Z",
+  "computedAt": "2026-10-03T15:36:10.020Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -30,7 +30,7 @@
       },
       {
         "number": 2854,
-        "updatedAt": "2026-10-01T16:18:51Z",
+        "updatedAt": "2026-10-03T14:35:06Z",
         "state": "OPEN"
       },
       {
@@ -635,90 +635,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: /claude-tweaks:tidy run 2026-09-30T172538-tidy-standalone (approved Step 6 Capture)\n\nDefer-reason: tangential\n\n## Current State\n\n`needsBackstop` (`plugin/bin/lib/issues/acceptance.js`) returns true for any CLOSED, non-sub-issue\nrecord with no `demo:*` label, and `_shared/github-pr-scan-acceptance.md`'s acceptance-gap fetch\nnever reads `stateReason`. Against this repo on 2026-09-30: 653 records closed in the last 30 days,\n581 classified as gaps — 392 COMPLETED, 188 NOT_PLANNED, 1 DUPLICATE. A not-planned or duplicate\nclosure has nothing to accept, so roughly a third of the rows are noise; the remaining 392 still\ndwarf the 284 `demo:approved` records ever labelled, so the scope cannot converge and its\nper-record `/claude-tweaks:demo #N` recommendation is not actionable at this volume. The fetch\nalso hit its `backlog-fetch-limit` (1000), so its own truncation warning fired.\n\nEvidence: tidy run 2026-09-30T172538-tidy-standalone, scan/acceptance.txt.\n\n## Deliverables\n\n- Exclude `stateReason` NOT_PLANNED and DUPLICATE from `needsBackstop` (fetch `stateReason` in the\n  acceptance-gap `gh issue list`), with the same change on the local-files Shape 8 path.\n- Decide and document whether health-sweep (`by:*-health`) and capture-only records need a\n  disposition at all, or whether the backstop should scope to records a build actually shipped.\n\n## Acceptance Criteria\n\n- A NOT_PLANNED closed record with no `demo:*` label is not a gap; a COMPLETED one still is.\n- Unit tests in the acceptance.js suite cover both reasons.\n\n## Release Note\n\nTidy stops flagging records closed as not-planned or duplicate as missing an acceptance decision.\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-09-30T17:59:55Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          }
-        ],
-        "number": 2854,
-        "state": "OPEN",
-        "title": "acceptance-gap backstop counts NOT_PLANNED and DUPLICATE closures as missing an acceptance disposition",
-        "updatedAt": "2026-10-01T16:18:51Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
           "stage": "ready",
           "grants": {
             "build": true,
