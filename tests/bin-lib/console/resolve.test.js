@@ -166,12 +166,12 @@ test('every registry row whose own judge file documents a literal staged/{prefix
   const { REGISTRY } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'wrap-up', 'registry'));
   const SKILLS_DIR = path.join(ROOT, 'plugin', 'skills', 'wrap-up');
   const PREFIX_RE = /staged\/([a-zA-Z][a-zA-Z0-9-]*-)\{[nN]\}/;
-  let checked = 0;
+  const checkedIds = [];
   for (const row of REGISTRY) {
     const judgeText = fs.readFileSync(path.join(SKILLS_DIR, row.judge), 'utf8');
     const m = PREFIX_RE.exec(judgeText);
     if (!m) continue; // this row's judge documents no standalone staged-file naming convention — nothing to audit for it
-    checked += 1;
+    checkedIds.push(row.id);
     const prefix = m[1];
     const result = classifyStagedItem(`${prefix}1.md`);
     assert.notStrictEqual(result.reason, 'unmapped-prefix', `${row.id}'s documented prefix "${prefix}" has no SECTION_MAP row`);
@@ -180,7 +180,10 @@ test('every registry row whose own judge file documents a literal staged/{prefix
       assert.strictEqual(result.section, expectedSection, `${row.id}'s staged prefix "${prefix}" must classify into its own ENGINE_ROW_SECTIONS section`);
     }
   }
-  assert.ok(checked >= 3, 'expected at least skills/memory/upstream to document a literal convention in their own judge files — the scan itself may be broken if this is 0');
+  // Pin the exact set of rows this scan is expected to find a literal convention in today —
+  // a loose `checked >= 3` floor would still pass if a row's naming line regressed out of the
+  // scan (exactly the kind of drift #2773 fixed), as long as 3 others still matched.
+  assert.deepStrictEqual(checkedIds.sort(), ['claude-md', 'decision-records', 'memory', 'skills', 'upstream'], 'the set of registry rows documenting a literal staged/{prefix}-{n} convention changed — update this list deliberately, don\'t let it silently narrow');
 });
 
 test('a staged item named on a REFUSED line in decisions.md resolves to refused, never its section stance (#1932 I2)', () => {

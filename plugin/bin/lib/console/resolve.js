@@ -75,8 +75,9 @@ const SECTION_MAP = [
 // classifyStagedItem compares the shadow copy's own text against its
 // anchor's (when both are readable) instead of guessing: byte-identical
 // reports `shadow-dup-duplicate`, anything else reports
-// `shadow-dup-divergent`. `siblingText` absent (no anchor found, or its
-// content couldn't be read) falls back to the conservative
+// `shadow-dup-divergent`. Either side unreadable — `siblingText` absent (no
+// anchor found, or its content couldn't be read) or the shadow copy's own
+// `text` itself couldn't be read — falls back to the conservative
 // `shadow-dup-collision` — "can't tell" is a distinct outcome from
 // "confirmed a duplicate," never guessed as one.
 const SHADOW_DUP_RE = /^(.*)\.shadow-dup(?:-\d+)?$/;
