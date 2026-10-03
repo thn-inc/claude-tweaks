@@ -131,7 +131,7 @@ function parseCategory(text) {
 // this field) is unaffected and keeps today's Queue writes/`apply` classification.
 function classifyStagedItem(filename, text, siblingText) {
   if (SHADOW_DUP_RE.test(filename)) {
-    if (siblingText === undefined || siblingText === null) {
+    if (siblingText === undefined || siblingText === null || text === undefined || text === null) {
       return { section: SECTIONS.PENDING, reason: 'shadow-dup-collision' };
     }
     return { section: SECTIONS.PENDING, reason: text === siblingText ? 'shadow-dup-duplicate' : 'shadow-dup-divergent' };

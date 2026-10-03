@@ -131,6 +131,15 @@ test('a .shadow-dup file is classified duplicate when byte-identical to its anch
     classifyStagedItem('review-2.patch.shadow-dup-2'),
     { section: 'Pending review', reason: 'shadow-dup-collision' },
   );
+  // The shadow-dup file's own text unreadable (null) while the anchor's text IS
+  // readable falls back to shadow-dup-collision too — not shadow-dup-divergent.
+  // A naive `text === siblingText` check with no guard on `text` would report
+  // `null === 'anchor text'` as divergent, which is wrong: "can't tell" because
+  // this side couldn't be read is a different outcome from "confirmed different."
+  assert.deepStrictEqual(
+    classifyStagedItem('build-deviation-3.md.shadow-dup', null, 'anchor text'),
+    { section: 'Pending review', reason: 'shadow-dup-collision' },
+  );
 
   // End-to-end via resolveAll: one byte-identical pair, one divergent pair,
   // in the same run — two distinguishable reasons, same resolution.
