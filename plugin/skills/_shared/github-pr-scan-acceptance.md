@@ -57,7 +57,7 @@ Resolve session-scoped paths first (`_shared/session-tmp-root.md`, cited through
 eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" RAW=tidy-closed-records-raw.json CLOSED=tidy-closed-records.json)"
 LIMIT="{resolved-limit}"
 gh issue list --state closed --limit "$LIMIT" \
-  --json number,title,state,labels,closedAt \
+  --json number,title,state,labels,closedAt,stateReason \
   > "$RAW"
 node -e "
   const fs = require('fs');
@@ -286,7 +286,12 @@ node -e "
   const gaps = records
     .map(r => ({ ...r, labels: r.labels.map(l => l.name), hasParent: subIssues.has(r.number) }))
     .filter(r => exceedsOversightFloor(parseRecordFacets(r.labels), { riskFloor, sizeFloor }).exceeds)
-    .filter(r => needsBackstop({ state: 'CLOSED', labels: r.labels, hasParent: r.hasParent }));
+    .filter(r => needsBackstop({
+      state: 'CLOSED',
+      labels: r.labels,
+      hasParent: r.hasParent,
+      stateReason: r.stateReason,
+    }));
   gaps.forEach(r => console.log('[acceptance-gap] #' + r.number + ': ' + r.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo #' + r.number));
 " "$RISK_FLOOR" "$SIZE_FLOOR"
 ```
