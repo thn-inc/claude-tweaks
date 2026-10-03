@@ -155,7 +155,7 @@ function run(argv, deps) {
     remoteBranchExists = hasOrigin && deps.git(['ls-remote', '--heads', 'origin', branch]).trim() !== '';
 
     const history = conventionalHistory(deps.git);
-    const targets = manifest.resolveTargets(config);
+    const targets = manifest.resolveTargets(config, { listRoot: deps.listRoot });
     const current = manifest.currentVersion(targets, deps.readFile);
     // #2327: preMajor comes from the working tree's own current manifest
     // version — cheap (no network) and sufficient for a major-digit signal;
@@ -311,6 +311,18 @@ function defaultDeps(root) {
     git: (args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
     readFile: (p) => { try { return fs.readFileSync(abs(p), 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } },
     writeFile: (p, text) => writeInsideRoot(root, p, text),
+    // manifest.js's glob targets (ruby's `*.gemspec`, dotnet's `*.csproj` — the
+    // filename varies per repo) resolve against this root-level listing. A missing
+    // root reads as "nothing here" rather than throwing, matching listPlanFiles'
+    // own ENOENT-is-empty posture just below.
+    listRoot: () => {
+      try {
+        return fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name);
+      } catch (e) {
+        if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return [];
+        throw e;
+      }
+    },
     // precheck's plan-claim source, as plugin/bin/release.js provides it: a
     // project without docs/superpowers/plans simply has no plan claims. Read
     // and catch rather than exists-then-read — a sibling session can prune the
