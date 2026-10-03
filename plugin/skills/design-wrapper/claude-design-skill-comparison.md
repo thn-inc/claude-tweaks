@@ -70,10 +70,11 @@ decision depends on:
   `/design` directly cannot work for callers that need a return value to consume.
 - **Partially version-pinned where it matters most:** The wrapper verifies an exact
   plugin-version pin before dispatching Impeccable's bundled scripts (`doctor`, `explore`'s
-  `concept-seed.mjs` and `document --seed`) and its CLI (`test` mode) — see `SKILL.md`'s
-  Step 2 availability check. Its LLM-dispatched commands (`review`, `polish`, and others)
-  are unpinned by design, same as any Skill-tool invocation. Native `/design` has no
-  pinning story at all — it's an unversioned research preview.
+  `concept-seed.mjs`) and its CLI (`test` mode) — see `SKILL.md`'s Step 2 availability
+  check. `explore`'s own lock-in step, `document --seed`, is dispatched via the Skill tool
+  like any LLM command (`review`, `polish`, and others) and is unpinned by design, same as
+  those. Native `/design` has no pinning story at all — it's an unversioned research
+  preview.
 - **Deterministic tooling:** Impeccable provides deterministic CLI commands (`test` mode —
   see `impeccable-cli.md`) and LLM-dispatched critique/audit/refinement (`review`, `polish`
   modes). The wrapper depends on this contract.
@@ -92,8 +93,9 @@ decision depends on:
 judgment that native `/design` is worse than Impeccable — no such judgment could be made
 from this environment, since the native skill could not be exercised at all. It is a
 judgment that the Skill-tool invocation path (the only path `design-wrapper` has available)
-cannot reach native `/design`, while Impeccable already covers the artboard-workflow
-dimension via its own `explore` mode with full version pinning and state integration.
+cannot reach native `/design`, while `design-wrapper`'s own `explore` mode already covers
+the artboard-workflow dimension via Impeccable's `concept-seed.mjs`/`document --seed`, with
+partial version pinning and state integration.
 
 ## Maturity note
 
