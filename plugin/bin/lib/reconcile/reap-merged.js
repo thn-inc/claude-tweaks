@@ -99,39 +99,38 @@ function longPathRemovalTarget(real, platform = process.platform) {
   return platform === 'win32' ? `\\\\?\\${real}` : real;
 }
 
-// #2566 follow-up (review finding) — `platform === 'win32'` alone only
-// excludes POSIX from the fallback; it does nothing to stop the fallback
-// from engaging on Windows itself for a `git worktree remove` failure that
-// has NOTHING to do with path length (a locked worktree, a dirty worktree
-// git's own safety check refused to discard). Gate on the candidate path's
-// own length instead of trying to pattern-match git's wrapped OS error text
-// (fragile across git-for-windows versions/locales): Windows's traditional
-// `MAX_PATH` is 260 characters, so a path that hasn't even reached that
-// neighborhood was never going to fail removal for a path-length reason in
-// the first place, regardless of platform. 240 is deliberately conservative
-// headroom below the real ceiling — it only needs to exclude ordinary
-// short paths (an everyday locked/dirty worktree), never to pinpoint the
-// exact OS limit.
-const LONG_PATH_THRESHOLD = 240;
-function looksLikeLongPath(real) {
-  return typeof real === 'string' && real.length >= LONG_PATH_THRESHOLD;
+// #2566 follow-up — `platform === 'win32'` alone cannot tell a deletion git
+// started and could not finish (the "Filename too long" case) from a removal
+// git REFUSED for safety (a locked worktree, a dirty one). Neither can the
+// candidate's own path length: the reported failure is a deep `node_modules`
+// descendant under an ordinary-length `.claude/worktrees/{name}` root, and a
+// long root can just as well be locked or dirty. The discriminator is git's
+// own registration after the failed `git worktree remove`: a refusal exits
+// before touching anything, leaving the worktree registered and healthy; a
+// mid-deletion failure happens after git has already approved the removal,
+// leaving the entry gone from `git worktree list` or marked `prunable`
+// (observed against git 2.55: a refusal leaves it registered, a mid-delete
+// failure leaves it unregistered with the directory still on disk).
+// Finishing a deletion git itself already committed to is safe; touching a
+// worktree git refused is not. An unreadable list fails closed.
+function gitCommittedToRemoval(real, root) {
+  const list = runGit(['worktree', 'list', '--porcelain'], root);
+  if (list.failure) return false;
+  const entry = parseWorktreeList(list.stdout).find((wt) => (safeReal(wt.path) || wt.path) === real);
+  return !entry || entry.prunable;
 }
 
 // Tried once, only after `git worktree remove` has already failed — never
-// instead of it, and gated to `win32` AND a long candidate path: a failure
-// on a short path (a locked worktree, a permissions error) is a REAL
-// failure this fallback cannot safely paper over by force-deleting a
-// directory git itself refused to touch, so it falls through to the
-// existing removal-failed escalation path unchanged, exactly as before this
-// fix — on win32 now, not only off it (confirmed against this file's own
-// test suite, which simulates `removal-failed` via a `git worktree lock`
-// at an ordinary-length path that `fs.rmSync` would otherwise happily
-// bulldoze). On `win32` with a long path, also verifies the directory is
-// actually gone (`force: true` only swallows ENOENT, not other errors, but
-// the extra check costs nothing) before running `git worktree prune` to
-// clear git's own registration.
+// instead of it, and gated to `win32` AND a removal git had already
+// committed to (gitCommittedToRemoval above): a refused removal (locked,
+// dirty) is a REAL failure this fallback must never paper over by
+// force-deleting a directory git itself refused to touch, so it falls
+// through to the existing removal-failed escalation path unchanged. When it
+// does run, also verifies the directory is actually gone (`force: true`
+// only swallows ENOENT, not other errors, but the extra check costs nothing)
+// before running `git worktree prune` to clear any `prunable` registration.
 function attemptLongPathRemoval(real, root, { fsRmSync = fs.rmSync, platform = process.platform } = {}) {
-  if (platform !== 'win32' || !looksLikeLongPath(real)) return { succeeded: false, lastError: null };
+  if (platform !== 'win32' || !gitCommittedToRemoval(real, root)) return { succeeded: false, lastError: null };
   try {
     fsRmSync(longPathRemovalTarget(real, platform), { recursive: true, force: true, maxRetries: 3 });
   } catch (err) {
@@ -263,5 +262,5 @@ function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault, r
 }
 
 module.exports = {
-  reapMerged, decideReap, isOwnCwd, trackReapResidue, attemptLongPathRemoval, longPathRemovalTarget, looksLikeLongPath, LONG_PATH_THRESHOLD,
+  reapMerged, decideReap, isOwnCwd, trackReapResidue, attemptLongPathRemoval, longPathRemovalTarget, gitCommittedToRemoval,
 };

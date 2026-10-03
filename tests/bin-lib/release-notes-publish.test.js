@@ -174,3 +174,16 @@ test('AC8: the module imports and calls renderReleaseNotes rather than reimpleme
   // builds its own bullet string.
   assert.ok(!/`\*\s*\$\{/.test(src), 'expected no second bullet-template literal — reuse renderReleaseNotes instead');
 });
+
+// The step pushes its CHANGELOG commit with a bare `git push`, which the
+// tests above fake — so nothing else would notice that a `release` event
+// checks out the tag (detached HEAD) and the real push has no branch.
+test('the workflow step that runs release-notes-publish checks out the default branch, not the detached release tag', () => {
+  const wf = fs.readFileSync(path.join(__dirname, '../../.github/workflows/mirror-marketplace.yml'), 'utf8');
+  const runAt = wf.indexOf('node plugin/bin/release-notes-publish.js');
+  assert.ok(runAt > 0, 'expected the workflow to run release-notes-publish.js');
+  const checkoutAt = wf.lastIndexOf('uses: actions/checkout@', runAt);
+  assert.ok(checkoutAt > 0, 'expected a checkout step before the release-notes-publish run');
+  const checkoutStep = wf.slice(checkoutAt, wf.indexOf('- uses:', checkoutAt + 1));
+  assert.match(checkoutStep, /^\s+ref:\s*\$\{\{\s*github\.event\.repository\.default_branch\s*\}\}\s*$/m);
+});
