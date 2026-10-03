@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-03T11:03:12.795Z",
+  "computedAt": "2026-10-03T12:04:40.298Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -126,11 +126,6 @@
       {
         "number": 2772,
         "updatedAt": "2026-10-01T16:12:20Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2769,
-        "updatedAt": "2026-10-01T16:12:29Z",
         "state": "OPEN"
       },
       {
@@ -1481,84 +1476,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: consolidated Review Console — run `2026-09-21T213441-spec-2697-2757-2758-2759`, ledger row #17 (`deferred`; the row promised a staged Queue-write proposal that was never written — filed here at the console instead)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n`plugin/bin/lib/gif/palette.js` was rewritten during #2758's fix wave (`41dc8424f`) to fix an\nearlier pathology (224 s / 900 MB RSS on one real walkthrough) using distinct-colour dedup plus a\ncached nearest-index lookup. The re-review then measured what the rewrite actually made it bound by:\n**distinct colour count, not pixel count.**\n\n| Input | quantize | RSS |\n|---|---|---|\n| real 1280x720 UI screenshots (the shipped fixtures) | 58 ms | — |\n| adversarial 8-frame 1280x720 gradient + noise, 259,895 distinct colours | **482,135 ms** | **1,336 MB** |\n\nThat adversarial figure is worse than the original bug it replaced. UI screenshots sit in the fast\nband (low thousands to tens of thousands of distinct colours), so `/claude-tweaks:walkthrough` over\nan ordinary app is fine; a walkthrough over a photo-, map-, or video-heavy page falls off the cliff.\n\nThe shipped perf regression test does not bound this case: it runs at 400x300 against a <5000 ms\nbudget and measures 730 ms — entirely inside the fast band, so it can never go red for the failure\nmode above.\n\n## Deliverables\n\nA colour-count-bounded quantizer path — sampling, pre-bucketing, or an explicit distinct-colour cap\nthat degrades quality instead of time — so wall-clock and RSS stay bounded regardless of input\nentropy. Plus a perf test that actually exercises the slow band (a high-distinct-colour fixture), not\nonly the fast one.\n\n## Acceptance Criteria\n\nThe adversarial case above (8 frames, 1280x720, ~260k distinct colours) completes within a stated\nwall-clock and RSS budget — quote the measured numbers before and after.\n\nA committed perf test covers the high-distinct-colour band and is proven to go red against the\npre-fix quantizer.\n\nThe real-screenshot fast band does not regress (still ~tens of ms at 1280x720).\n\n_Filed by the consolidated Review Console (`flow/multispec-review-console.md`). Ledger row #17\nrecorded this as \"staged as a backlog candidate for the Wrap-Up Review Console's Queue writes\", but\nno staged file was ever written to `spec-2758/staged/` — the console found the gap and filed the\nrecord directly rather than letting the row close with nothing behind it._\n\n## Release Note\n\nBounded GIF encoding time and memory on high-detail walkthrough recordings.\n",
-        "createdAt": "2026-09-22T13:25:55Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          }
-        ],
-        "number": 2769,
-        "state": "OPEN",
-        "title": "GIF quantizer is distinct-colour-bound, not pixel-bound: 482s / 1.3 GB on a high-entropy walkthrough, and the shipped perf test only covers the fast band",
-        "updatedAt": "2026-10-01T16:12:29Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
           "stage": "ready",
           "grants": {
             "build": true,
