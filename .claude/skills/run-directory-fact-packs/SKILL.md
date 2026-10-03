@@ -54,6 +54,14 @@ Read them before writing a fourth.
   filtering (`--only ,`) is a usage error (exit 2) on both CLIs that accept the flag — it asks for
   zero probes, and gathering every probe instead would silently answer a different question than
   the one asked.
+- **`--print <probe>`** (`wrap-up-pack.js` only, #2544/#2546) is `--only` narrowed to one probe with
+  a different stdout: just that probe's `{ok, value | error}` envelope, so a prose step reads one
+  field without dumping the whole pack and extracting it by hand
+  (`plugin/skills/wrap-up/summary-template.md`'s `--print state` is the shipped call site). It
+  still writes the pack file, and that file now holds only the one probe — so a `--print` run
+  replaces an existing full pack with a one-probe subset, exactly as `--only` does. Call it only
+  when the pack file is absent, or accept that later readers fall back per the absent-field rule
+  below. An unknown probe name, or combining it with `--only`, is a usage error (exit 2).
 - **A pack proposes; it never decides.** Any field an engine or a forge will later own — a version,
   a merge state, a PR number — is labelled a *proposal* in the consumer's prose, is re-read from
   that engine after the engine acts, and the reconciliation is written **once**, at the consumer,

@@ -24,7 +24,7 @@ files:
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/phase-timing.js" --run "$PIPELINE_RUN_DIR" --markdown --auto-transcript`
 - **Action:** Render the Timing section exactly as the flow, wrap-up, and multi-spec summary templates now say — the flag is part of the pasted command.
 - **Should feel:** The same table as before with three more columns and a footer; nothing to configure.
-- **Should understand:** The locator reads only the run's own `run-state.json` — its worktree becomes the transcript directory's slug (every character outside letters, digits, and hyphens becomes a hyphen, so a worktree cwd yields `--claude`), and its session id names the file. It never looks in another session's directory or another user's home.
+- **Should understand:** The locator reads only the run's own `run-state.json` — its worktree becomes the transcript directory's slug (every character outside letters, digits, and hyphens becomes a hyphen, so a worktree cwd yields `--claude`), and its session id names the file. It never looks in another session's directory or another user's home. A run with no recorded phase events gets no table and no footer: one `no phase events; {n} tool round-trips, {in}/{out} tokens` line, with a `Guard denials:` line only when a count is non-zero.
 - **Red flags:** `tokens: transcript not found (no worktree or sessionId in run-state.json)` — the run was never stamped; the minutes are still right, the token columns are honestly blank.
 
 ### 2. Pass dispatch's two transcripts explicitly

@@ -99,7 +99,7 @@ The critical gate that prevents dropped work — three phases (Phase 1 fix-exhau
 
 ### Delete
 
-Delete the ledger file after all items are resolved. Called at `/claude-tweaks:wrap-up`'s Phase 4 execution step (planned in that phase's cleanup-planning step).
+Delete the ledger file after all items are resolved — `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" delete-ledger --run "$PIPELINE_RUN_DIR"` (#2544; exits 0, and reports `not found` rather than failing when the ledger is already gone). Called at `/claude-tweaks:wrap-up`'s Phase 4 execution step (planned in that phase's cleanup-planning step).
 
 Only delete when the resolve gate has passed — all items must have terminal statuses.
 

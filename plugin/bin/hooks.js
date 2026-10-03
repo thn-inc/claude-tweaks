@@ -83,6 +83,7 @@ const USAGE = {
   'record-pr': 'record-pr [--run <dir>] <number> <url>',
   'spec-status': 'spec-status --run <parent-dir> --spec <n> --status <pending|running|complete|failed|not-run> --phase <phase>',
   'close-run': 'close-run [--run <dir>]',
+  'delete-ledger': 'delete-ledger --run <dir> [--ledger <path>]',
   'teardown-run': 'teardown-run [--run <dir>] [--merged|--abandoned]',
   'archive-run': 'archive-run [--run <dir>]',
   'resolve-console': 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>]',
@@ -108,6 +109,7 @@ const HELP_FLAGS = new Set(['--help', '-h']);
 // ctxLib.resolveRunDir fallback, unchanged.
 const KNOWN_FLAGS = {
   'close-run': ['--run'],
+  'delete-ledger': ['--run', '--ledger'],
   'record-worktree': ['--run'],
   'record-pr': ['--run'],
   'spec-status': ['--run', '--spec', '--status', '--phase', '--now'],
@@ -118,7 +120,7 @@ const KNOWN_FLAGS = {
 // Declared flags that consume the following token as a value — the
 // unknown-flag scan below must skip that token rather than risk misreading
 // it as a flag itself (an argument value could itself start with "--").
-const VALUE_FLAGS = new Set(['--run', '--spec', '--status', '--phase', '--now', '--approve', '--decline']);
+const VALUE_FLAGS = new Set(['--run', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--ledger']);
 
 // First `--*`-shaped token in `args` that isn't declared for this verb, or
 // null when every `--*` token is declared (or there are none). Scans the
@@ -955,6 +957,47 @@ async function main(argv) {
       // chain. Without this branch, a call that can't resolve any run dir
       // printed nothing and exited 0, indistinguishable from success.
       process.stdout.write('claude-tweaks: no pipeline run dir found — run not closed\n');
+    }
+    return 0;
+  }
+  if (cmd === 'delete-ledger') {
+    // #2546: gives wrap-up cleanup item 2 (ledger deletion) a verb — before
+    // this, deleting the run's ledger file was a hand-run `rm`/Bash call with
+    // no sanctioned CLI path. --run mirrors record-pr/spec-status's shape
+    // (unambiguous-only resolution, explicit --run always wins); --ledger
+    // overrides resolveLedgerPath's own run-dir-first/docs-plans-fallback
+    // resolution for the rare case (2+ *-ledger.md candidates) it can't
+    // disambiguate on its own.
+    const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
+    const {
+      runDir, invalidRunArg, rest, worktreeLocalFallback, candidates,
+    } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
+    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+    const ledgerArg = flagVal(rest, '--ledger');
+    if (invalidRunArg) {
+      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — ledger not deleted\n`);
+    } else if (candidates) {
+      process.stdout.write(`${renderCandidateRefusal('delete-ledger', candidates)}\nLedger not deleted.\n`);
+    } else if (!runDir) {
+      process.stdout.write('claude-tweaks: no pipeline run dir found — ledger not deleted\n');
+    } else {
+      const { resolveLedgerPath } = require('./lib/wrap-up/ledger-write');
+      const worktree = ctxLib.readRunState(runDir)?.worktree || process.cwd();
+      const resolved = resolveLedgerPath({ runDir, worktree, explicit: ledgerArg || null });
+      if (!resolved.ok && resolved.reason === 'ambiguous') {
+        process.stdout.write(`claude-tweaks: delete-ledger: ${resolved.candidates.length} candidate ledgers found, cannot pick one — pass --ledger <path> explicitly:\n${resolved.candidates.map((c) => `  ${c}`).join('\n')}\nLedger not deleted.\n`);
+      } else if (!resolved.ok && resolved.reason === 'rejected') {
+        process.stdout.write(`claude-tweaks: delete-ledger: --ledger ${resolved.candidates[0]} rejected (${resolved.detail}) — ledger not deleted\n`);
+      } else if (!resolved.ok) {
+        process.stdout.write(`claude-tweaks: delete-ledger: no ledger found for ${path.basename(runDir)} — not found\n`);
+      } else {
+        try {
+          fs.unlinkSync(resolved.path);
+          process.stdout.write(`claude-tweaks: deleted ledger ${resolved.path}\n`);
+        } catch (e) {
+          process.stdout.write(`claude-tweaks: delete-ledger: failed to delete ${resolved.path} (${e.message})\n`);
+        }
+      }
     }
     return 0;
   }
