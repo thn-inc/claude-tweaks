@@ -28,7 +28,7 @@ A Claude Code plugin containing markdown skill files that guide Claude through a
 
 ### Skill authoring — moved
 
-SKILL.md structure, Interaction patterns (incl. the canonical CSC template), Frontmatter conventions, the Interaction style directive, and Parallel execution directives now live in `docs/skill-authoring.md`. Read it before creating or editing any `plugin/skills/**/*.md`.
+SKILL.md structure, Interaction patterns (incl. the canonical CSC template), Frontmatter conventions, the Interaction style directive, and Parallel execution directives now live in `docs/skill-authoring.md`. Read it before creating or editing any `plugin/skills/**/*.md`. Before adding or keeping a verification/self-check instruction, also run that file's Model-version prompting notes checklist against `docs/reference/claude-quality-levers.md`'s effort/verbosity levers.
 
 ### Versioning
 
