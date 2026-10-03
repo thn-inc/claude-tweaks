@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #857: reflect's standalone Frontier singleton reads the transcript via the
 // shared transcript-judge harness (skills/_shared/transcript-judge.md, #856).
 // Pins the dispatch-prompt additions, the watermark write timing/payload,
@@ -16,7 +16,7 @@ const path = require('path');
 // evolving in place, not content scheduled for deletion.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const SKILL = read('plugin', 'skills', 'reflect', 'SKILL.md');
 const FULL_MODE = read('plugin', 'skills', 'reflect', 'full-mode.md');

@@ -7,11 +7,11 @@
 // structural — pre-#2697 none of the sub-files existed, so every row was red.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
+const read = (rel) => readText(path.join(ROOT, rel));
 
 // Byte ceiling both routing stubs must stay under after the split. Pre-split they were
 // 35,407 (demo) and 35,525 (feedback) bytes; the five extractions remove 6.7 KB (demo:

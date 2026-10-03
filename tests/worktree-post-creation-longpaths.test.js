@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #1782: `_shared/worktree-setup.md`'s Post-creation catch-up unconditionally
 // merges into every freshly created worktree, and its "Fail open on
 // fetch/merge command failure" paragraph used to route EVERY non-conflict
@@ -23,7 +23,7 @@ const path = require('path');
 // separately from the recovery detail, which it pins against the sub-file.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const SHARED_WORKTREE_SETUP = read('plugin', 'skills', '_shared', 'worktree-setup.md');
 const LONGPATH_RECOVERY = read('plugin', 'skills', '_shared', 'worktree-setup-windows-longpath.md');

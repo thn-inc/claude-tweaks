@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #642: the Auto-resolution short-circuit paragraph in
 // skills/flow/multispec-review-console.md previously instructed both
 // "render every section below as an informational report (nothing dropped)"
@@ -20,7 +20,7 @@ const path = require('path');
 // clause).
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 const MULTISPEC_CONSOLE = read('plugin', 'skills', 'flow', 'multispec-review-console.md');
 const WRAP_UP_REVIEW_CONSOLE = read('plugin', 'skills', 'wrap-up', 'review-console.md');
 

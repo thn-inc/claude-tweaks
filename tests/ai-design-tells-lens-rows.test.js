@@ -7,11 +7,11 @@
 // lens.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 
+const { readText } = require('./helpers/read-skill');
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const LENS = read('plugin', 'skills', 'visual-review', 'ai-design-tells-lens.md');
 const PAGE_MODE = read('plugin', 'skills', 'visual-review', 'page-mode.md');

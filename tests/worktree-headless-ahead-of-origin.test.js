@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #1780: a `/claude-tweaks:dispatch`-originated firing runs `/flow` headless (nobody present to
 // judge whether a worktree's local-ahead-of-origin content belongs in a dispatched record's PR).
 // `worktree.baseRef: head` deliberately starts every worktree from local HEAD, which may
@@ -14,7 +14,7 @@ const path = require('path');
 // an analogous headless pre-flight condition.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const SHARED_WORKTREE_SETUP = read('plugin', 'skills', '_shared', 'worktree-setup.md');
 const CLAIM_TARGETS = read('plugin', 'skills', 'flow', 'claim-targets.md');
