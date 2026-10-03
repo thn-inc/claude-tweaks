@@ -372,7 +372,13 @@ checks 1 or 3 fail.
 
    (set `REMOVE_GRANTS=1` per step 6's rule.) The CLI wraps `gh` only — in a `gh`-absent environment
    run the same read-classify-write over the MCP tools per `_shared/github-write-transport.md`;
-   the MCP path stays the documented fallback rather than a second mode of the CLI.
+   the MCP path stays the documented fallback rather than a second mode of the CLI. **The grant
+   removals (step 6) and `bot:in-progress`/`parked` label edits (step 7) this CLI performs are
+   label writes** — on the MCP transport, `issue_write`'s labels field is a full replacement,
+   not a merge (`_shared/github-write-transport.md`'s **Full-replace hazard** section): read
+   current labels first (`issue_read`, `get_labels`), merge via `mergeLabelNames`
+   (`bin/lib/issues/label-write.js`), and write that full array — never a single- or few-label
+   array. The `gh`-CLI form (`--remove-label`/`--add-label`) needs no such merge.
 5. Exit `0` = released. Exit `3` = already released or swept — a 404 from the blob write, or a
    409/422 whose fresh re-read confirms the claim is gone or now held by a successor; the CLI
    still posts the release comment so the trail records the outcome. A 409/422 is no longer
