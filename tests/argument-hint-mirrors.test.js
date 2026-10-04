@@ -95,6 +95,11 @@ function parseTakesRows(card) {
   return rows;
 }
 
+// A restatement line opens with `$ARGUMENTS`, a connective, and one code
+// span holding the whole grammar. All three connectives are in use; the
+// longest is tried first so `is parsed as` is not read as `is`.
+const RESTATEMENT = /^`\$ARGUMENTS` (?:is parsed as|is|=) `([^`]+)`/;
+
 // One extractor per enumerated surface: (file content, skill name) -> every
 // grammar string that surface carries for that skill, unwrapped. An empty
 // array means "this surface is absent for this skill"; a surface that is
@@ -109,14 +114,22 @@ const EXTRACTORS = {
     if (body === null) return [];
     const found = [];
     for (const line of body.split('\n')) {
-      // Loose detection, strict extraction: a reworded restatement line
-      // must fail loudly rather than drop out of the walk as "absent".
-      if (!line.includes('$ARGUMENTS') || !/parsed as/i.test(line)) continue;
-      const m = line.match(/`\$ARGUMENTS` is parsed as `([^`]+)`/);
-      if (!m) throw new Error(`restatement line is not "\`$ARGUMENTS\` is parsed as \`<grammar>\`": ${line}`);
-      found.push(m[1]);
+      const m = line.match(RESTATEMENT);
+      if (m) {
+        found.push(m[1]);
+        continue;
+      }
+      // A line that talks about parsing `$ARGUMENTS` but is not shaped like
+      // a restatement must fail loudly, not drop out of the walk as absent.
+      if (line.includes('$ARGUMENTS') && /parsed as/i.test(line)) {
+        throw new Error(`restatement line is not "\`$ARGUMENTS\` is parsed as \`<grammar>\`": ${line}`);
+      }
     }
     return found;
+  },
+  'usage-line'(content, skill) {
+    const prefix = `usage: /claude-tweaks:${skill} `;
+    return content.split('\n').filter((l) => l.startsWith(prefix)).map((l) => l.slice(prefix.length).trimEnd());
   },
   'reference-card-takes'(content, skill) {
     const found = [];
@@ -174,21 +187,31 @@ function collectProblems({ rows, skills, read, exceptions }) {
 const ROWS = parseEnumeration(readRepoFile(ENUMERATION));
 const walk = (overrides = {}) => collectProblems({ rows: ROWS, skills: SKILLS, read: readRepoFile, exceptions: EXCEPTIONS, ...overrides });
 
-// Hand the walker one mutated file; every other read stays live.
-const readWith = (rel, mutate) => (p) => {
+// What a mutation adds on top of whatever the live corpus already reports,
+// so one real drift fails the corpus test alone rather than every probe too.
+const introduced = (overrides) => {
+  const baseline = new Set(walk());
+  return walk(overrides).filter((p) => !baseline.has(p));
+};
+
+// Hand the walker mutated copies of the named files; other reads stay live.
+const readWith = (mutations) => (p) => {
   const original = readRepoFile(p);
-  if (p !== rel) return original;
-  const mutated = mutate(original);
-  assert.notStrictEqual(mutated, original, `mutation of ${rel} was a no-op -- the probe would prove nothing`);
+  if (!Object.hasOwn(mutations, p)) return original;
+  const mutated = mutations[p](original);
+  assert.notStrictEqual(mutated, original, `mutation of ${p} was a no-op -- the probe would prove nothing`);
   return mutated;
 };
 
-// The skill the discrimination probes mutate: it carries all three surfaces
-// and its hint has no `|`, so the card cell holds the hint unescaped.
+// The skill the discrimination probes mutate: it carries every enumerated
+// surface, and its hint has no `|`, so the card cell holds it unescaped.
 const PROBE = 'release';
 const PROBE_SKILL_MD = `plugin/skills/${PROBE}/SKILL.md`;
 const PROBE_HINT = extractArgumentHint(readRepoFile(PROBE_SKILL_MD));
 const CARD = 'plugin/skills/help/reference-card.md';
+const GROWN = `${PROBE_HINT} [--zz-probe]`;
+const RESTATED = `\`$ARGUMENTS\` is parsed as \`${PROBE_HINT}\``;
+const keysOf = (problems) => [...new Set(problems.map((p) => p.split(': ')[0]))].sort();
 
 test('the enumeration table and the extractor registry name the same surfaces', () => {
   assert.deepStrictEqual(
@@ -199,7 +222,8 @@ test('the enumeration table and the extractor registry name the same surfaces', 
   assert.strictEqual(new Set(ROWS.map((r) => r.id)).size, ROWS.length, 'a surface id is enumerated twice');
   for (const row of ROWS) {
     assert.ok(PRESENCE.includes(row.presence), `${row.id}: Presence must be one of ${PRESENCE.join(' / ')}, got "${row.presence}"`);
-    assert.ok(fs.existsSync(path.join(ROOT, row.file.replace('{skill}', PROBE))), `${row.id}: File "${row.file}" does not resolve`);
+    const found = EXTRACTORS[row.id](readRepoFile(row.file.replace('{skill}', PROBE)), PROBE);
+    assert.ok(found.length > 0, `${row.id}: the probe skill (${PROBE}) must carry every surface, or the probes below prove nothing for it`);
   }
   assert.strictEqual(ROWS.find((r) => r.id === CANONICAL).presence, 'required', 'the canonical surface must be required');
 });
@@ -211,47 +235,55 @@ test('every skill carries the same grammar on every enumerated mirror surface', 
 });
 
 test('a flag added to argument-hint alone is reported on every other surface', () => {
-  const problems = walk({
-    read: readWith(PROBE_SKILL_MD, (md) => md.replace(/^(argument-hint: ")(.*)(")$/m, '$1$2 [--zz-probe]$3')),
+  const problems = introduced({
+    read: readWith({ [PROBE_SKILL_MD]: (md) => md.replace(/^(argument-hint: ")(.*)(")$/m, '$1$2 [--zz-probe]$3') }),
   });
   assert.deepStrictEqual(
-    [...new Set(problems.map((p) => p.split(': ')[0]))].sort(),
+    keysOf(problems),
     ROWS.filter((r) => r.id !== CANONICAL).map((r) => `${PROBE}:${r.id}`).sort(),
     `expected one stale mirror per non-canonical surface of ${PROBE}, got:\n${problems.join('\n')}`,
   );
 });
 
-test('a flag present only in the reference card Takes cell is reported', () => {
-  const problems = walk({
-    read: readWith(CARD, (card) => card.split(`\`${PROBE_HINT}\``).join(`\`${PROBE_HINT} [--zz-probe]\``)),
-  });
-  assert.ok(problems.length > 0, 'a Takes-only flag went unreported');
-  for (const p of problems) assert.ok(p.startsWith(`${PROBE}:reference-card-takes: `), `unexpected problem: ${p}`);
+test('a flag added to argument-hint and to every mirror is accepted', () => {
+  const grow = (text) => text.split(PROBE_HINT).join(GROWN);
+  const read = readWith({ [PROBE_SKILL_MD]: grow, [CARD]: grow });
+  assert.strictEqual(extractArgumentHint(read(PROBE_SKILL_MD)), GROWN, 'the probe did not reach the canonical surface');
+  assert.deepStrictEqual(introduced({ read }), []);
 });
 
-test('a flag present only in the Input parse line is reported', () => {
-  const problems = walk({
-    read: readWith(PROBE_SKILL_MD, (md) => md.replace(`is parsed as \`${PROBE_HINT}\``, `is parsed as \`${PROBE_HINT} [--zz-probe]\``)),
+// Each case drifts exactly one non-canonical surface and must be reported
+// on that surface and no other.
+const ONE_SURFACE_DRIFTS = [
+  ['reference-card-takes', 'a flag only in the Takes cell', CARD, (card) => card.split(`\`${PROBE_HINT}\``).join(`\`${GROWN}\``)],
+  ['input-parse-line', 'a flag only in the restatement line', PROBE_SKILL_MD, (md) => md.replace(RESTATED, `\`$ARGUMENTS\` is parsed as \`${GROWN}\``)],
+  ['input-parse-line', 'a stale restatement line written with "="', PROBE_SKILL_MD, (md) => md.replace(RESTATED, '`$ARGUMENTS` = `[--dry-run]`')],
+  ['input-parse-line', 'a stale restatement line written with "is"', PROBE_SKILL_MD, (md) => md.replace(RESTATED, '`$ARGUMENTS` is `[--dry-run]`')],
+  ['usage-line', 'a stale usage line', PROBE_SKILL_MD, (md) => md.replace(`usage: /claude-tweaks:${PROBE} ${PROBE_HINT}`, `usage: /claude-tweaks:${PROBE} [--dry-run]`)],
+];
+
+for (const [surface, label, file, mutate] of ONE_SURFACE_DRIFTS) {
+  test(`${label} is reported on ${surface} alone`, () => {
+    const problems = introduced({ read: readWith({ [file]: mutate }) });
+    assert.deepStrictEqual(keysOf(problems), [`${PROBE}:${surface}`], problems.join('\n'));
   });
-  assert.strictEqual(problems.length, 1, problems.join('\n'));
-  assert.ok(problems[0].startsWith(`${PROBE}:input-parse-line: `), problems[0]);
-});
+}
 
 test('a required surface that is missing for a skill is reported, not skipped', () => {
-  const problems = walk({
-    read: readWith(CARD, (card) => card.split('\n').filter((l) => !l.startsWith(`| \`/claude-tweaks:${PROBE}\``)).join('\n')),
+  const problems = introduced({
+    read: readWith({ [CARD]: (card) => card.split('\n').filter((l) => !l.startsWith(`| \`/claude-tweaks:${PROBE}\``)).join('\n') }),
   });
   assert.deepStrictEqual(problems, [`${PROBE}:reference-card-takes: required surface is absent`]);
 });
 
 test('a surface added to the enumeration is walked without touching the walker', () => {
-  const extra = { id: 'zz-fourth-surface', file: CARD, presence: 'required' };
-  assert.throws(() => walk({ rows: [...ROWS, extra] }), /"zz-fourth-surface" is enumerated in .* but has no extractor/);
+  const extra = { id: 'zz-added-surface', file: CARD, presence: 'required' };
+  assert.throws(() => walk({ rows: [...ROWS, extra] }), /"zz-added-surface" is enumerated in .* but has no extractor/);
   EXTRACTORS[extra.id] = () => ['not the hint'];
   try {
-    const problems = walk({ rows: [...ROWS, extra] });
+    const problems = introduced({ rows: [...ROWS, extra] });
     assert.strictEqual(problems.length, SKILLS.length, 'the added surface must be compared for every skill');
-    for (const p of problems) assert.match(p, /^[a-z0-9-]+:zz-fourth-surface: has "not the hint"/);
+    for (const p of problems) assert.match(p, /^[a-z0-9-]+:zz-added-surface: has "not the hint"/);
   } finally {
     delete EXTRACTORS[extra.id];
   }
@@ -266,10 +298,10 @@ test('an unreadable surface and a stale exception are each their own signal', ()
     () => EXTRACTORS['input-parse-line']('## Input\n\n$ARGUMENTS gets parsed as `[--x]`:\n'),
     /restatement line is not/,
   );
-  assert.deepStrictEqual(EXTRACTORS['input-parse-line']('## Input\n\n| Argument | Behavior |\n'), []);
+  assert.deepStrictEqual(EXTRACTORS['input-parse-line']('## Input\n\n`$ARGUMENTS` controls scope.\n\n| Argument | Behavior |\n'), []);
   assert.throws(() => parseEnumeration('# no such section\n'), /no "### Argument-hint mirror surfaces" heading/);
   const key = `${PROBE}:reference-card-takes`;
-  assert.deepStrictEqual(walk({ exceptions: { ...EXCEPTIONS, [key]: 'probe' } }), [
+  assert.deepStrictEqual(introduced({ exceptions: { ...EXCEPTIONS, [key]: 'probe' } }), [
     `${key}: listed in EXCEPTIONS but agrees with its argument-hint -- remove the entry`,
   ]);
 });
@@ -277,7 +309,7 @@ test('an unreadable surface and a stale exception are each their own signal', ()
 // The enumeration has one home. Scans whitespace-collapsed text so a phrase
 // that wraps across lines is still seen. docs/incident-log.md is history and
 // docs/superpowers/ holds run artifacts that quote what they replace.
-const SWEEP_ROOTS = ['plugin/skills', '.claude/skills', 'docs'];
+const SWEEP_ROOTS = ['plugin/skills', '.claude/skills', 'docs', 'README.md', 'CLAUDE.md'];
 const SWEEP_SKIP = ['docs/incident-log.md', 'docs/superpowers'];
 const RETIRED = [
   /two syntactic-mirror surfaces/i,
