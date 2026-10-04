@@ -41,9 +41,9 @@ function checkPrBookkeepingPrecondition({ runDir, cwd = process.cwd() }) {
   // for them. A per-spec dir carries its own status (and its own copy of the
   // stamps only when a skill passed that path as --run), so read it first
   // and fill a missing worktree/pr/prExempt -- and the PR-early degrade line
-  // below -- from the parent,
-  // through hooks/context.js's readRunStateWithParent
-  // (#2858), the one fallback pack.js's resolveState shares. Reading only the per-spec dir falsely denied a correctly-stamped
+  // below -- from the parent, through hooks/context.js's
+  // readRunStateWithParent (#2858), the one fallback pack.js's resolveState
+  // shares. Reading only the per-spec dir falsely denied a correctly-stamped
   // multi-spec run (exit 4 on run 2026-09-30T190052-spec-2633-2664).
   let runState;
   let parentRunDir = null;
