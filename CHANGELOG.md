@@ -67,6 +67,18 @@ Three conventions follow from how this repo works, and all are visible below:
 * console/resolve.js SECTION_MAP: the curation engine's own… ([#2773](https://github.com/thn-inc/claude-tweaks/issues/2773)) ([0b31553](https://github.com/thn-inc/claude-tweaks/commit/0b315536e562f9b872e3c2c1d21c46fbd2e4c10f))
 * github-pr-scan item 10's bulk PR fetch exceeds GitHub's… ([#2853](https://github.com/thn-inc/claude-tweaks/issues/2853)) ([1ae6e63](https://github.com/thn-inc/claude-tweaks/commit/1ae6e631c6d4ed09114ddfee3d7b35af510018f6))
 
+### Highlights
+* Added a cross-session pass that proposes fixes for failures that keep repeating across sessions.
+* No user-visible change: compared Claude Code's native design skill with Impeccable for design work.
+* Added a checklist for re-auditing verification instructions after a Claude model upgrade.
+* Added a plain-text assertion mode to upstream-drift fixtures, so a command that fails with plain-text output can be checked like one that emits JSON.
+* Tidy stops flagging records closed as not-planned or duplicate as missing an acceptance decision.
+* Fixed unattended Review Consoles silently skipping staged CLAUDE.md and decision-record proposals.
+* Added richer diagrams to implementation plans as they are written.
+* No user-visible change: scoped whether claude-tweaks needs an image and creative-workflow plugin.
+* No user-visible change: added an end-to-end test for how a flow run hands off its run directory.
+* Tidy's unsettled-run check completes on repositories with more than 50 pull requests instead of failing its PR fetch.
+
 ## [6.134.1](https://github.com/thn-inc/claude-tweaks/compare/v6.134.0...v6.134.1) (2026-10-03)
 
 
