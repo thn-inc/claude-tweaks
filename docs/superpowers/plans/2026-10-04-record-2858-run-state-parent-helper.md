@@ -36,6 +36,8 @@ The three copies disagreed. The helper's single rule:
 | Non-object JSON (array, string, number) | read as `null`. |
 | Return | `{ state, parentRunDir, filled }` — `state` is `null` when neither file contributed anything; `parentRunDir` is the parent path whenever the gate passed (even if the parent file is unreadable — precondition.js reads the parent `decisions.md` through it), else `null`; `filled` lists the field names taken from the parent. |
 
+**Amended after the whole-branch review (supersedes the `worktree`/`pr` rows above and the `sources.state` bullet below):** the per-spec side is judged by shape, the parent side only by truthiness — any truthy parent `worktree`/`pr` is copied as written, so `precondition.js` keeps failing open on a hand-corrupted parent stamp. `pack.js` `sources.state` reads `'parent'` whenever any field came from the parent.
+
 Known behaviour changes (each asserted in Task 2's tests):
 - `resolvePrNumber`: a per-spec file without a usable `pr` now finds the parent PR (the record's deliberate change); a directory whose basename is not `spec-*` no longer reads its parent at all (the gate it never had).
 - `pack.js` `sources.state` reads `'parent'` only when `worktree` or `pr` actually came from the parent (before: whenever the parent file was readable and the own state incomplete).

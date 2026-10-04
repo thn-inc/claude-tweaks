@@ -113,11 +113,15 @@ function readRunStateWithParent(runDir, { read = readRunState, requireRunIdParen
   if (!parent) return { state: own, parentRunDir, filled: [] };
   const state = { ...(own || {}) };
   const filled = [];
-  if (!(typeof state.worktree === 'string' && state.worktree) && typeof parent.worktree === 'string' && parent.worktree) {
+  // The per-spec side is judged by shape (a usable value wins); the parent
+  // side only by truthiness, so a hand-corrupted parent stamp still reaches
+  // the caller exactly as written and each caller keeps its own verdict on it
+  // (precondition.js fails open on one; resolvePrNumber returns it).
+  if (!(typeof state.worktree === 'string' && state.worktree) && parent.worktree) {
     state.worktree = parent.worktree;
     filled.push('worktree');
   }
-  if (!hasPrNumber(state) && hasPrNumber(parent)) {
+  if (!hasPrNumber(state) && parent.pr) {
     state.pr = parent.pr;
     filled.push('pr');
   }

@@ -617,3 +617,12 @@ test('readRunStateWithParent: reads through the injected reader, and a throwing 
   const thrown = ctx.readRunStateWithParent('/runs/x/spec-7', { read: () => { throw new Error('boom'); } });
   assert.deepStrictEqual(thrown, { state: null, parentRunDir: '/runs/x', filled: [] });
 });
+
+test('readRunStateWithParent: a truthy but malformed parent stamp is passed through as written, an empty one is not', () => {
+  const corrupt = mkSpecChild({ worktree: 5, pr: {} }, { status: 'active' });
+  const r = ctx.readRunStateWithParent(corrupt.child);
+  assert.deepStrictEqual(r.state, { status: 'active', worktree: 5, pr: {} });
+  assert.deepStrictEqual(r.filled, ['worktree', 'pr']);
+  const empty = mkSpecChild({ worktree: '', pr: null }, { status: 'active' });
+  assert.deepStrictEqual(ctx.readRunStateWithParent(empty.child), { state: { status: 'active' }, parentRunDir: empty.parent, filled: [] });
+});

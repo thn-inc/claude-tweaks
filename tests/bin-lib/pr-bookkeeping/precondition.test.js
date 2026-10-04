@@ -306,3 +306,26 @@ test('checkPrBookkeepingPrecondition (#2858): a status-only per-spec runDir hono
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.reason, 'pr-stamped-or-exempt');
 });
+
+test('checkPrBookkeepingPrecondition (#2858): a hand-corrupted parent stamp still fails open for a status-only per-spec runDir', () => {
+  const parentId = '2026-09-17T000021-spec-7-8';
+  const main = gitRepoWithCommit();
+  const wt = linkedWorktreeOf(main);
+  commitPerSpecMaterializeFile(wt, parentId, 7);
+  const parentRunDir = makeRunDir(parentId);
+  const runDir = path.join(parentRunDir, 'spec-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  writeRunState(runDir, { status: 'active' });
+
+  // A PR object with no usable number still reads as "a PR was recorded".
+  writeRunState(parentRunDir, { status: 'active', worktree: wt, pr: {} });
+  const shapeless = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
+  assert.strictEqual(shapeless.ok, true);
+  assert.strictEqual(shapeless.reason, 'pr-stamped-or-exempt');
+
+  // A non-string worktree cannot be resolved -- unreadable, not a missing stamp.
+  writeRunState(parentRunDir, { status: 'active', worktree: 5 });
+  const unresolvable = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
+  assert.strictEqual(unresolvable.ok, true);
+  assert.strictEqual(unresolvable.reason, 'unreadable-run-state');
+});

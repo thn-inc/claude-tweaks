@@ -220,13 +220,13 @@ function hasPrNumber(state) {
 // `spec-*/` run dir carries its own status but not the run's worktree or PR —
 // those live one level up, on the parent run's state (#1930 review C1). The
 // rule itself is hooks/context.js's readRunStateWithParent (#2858), read
-// here through `deps`; `source` is 'parent' only when a worktree or PR
-// actually came from there.
+// here through `deps`; `source` is 'parent' only when a field actually came
+// from there.
 function resolveState(deps, runDir) {
   const { state, filled } = readRunStateWithParent(runDir, {
     read: (dir) => readJson(deps, path.join(dir, 'run-state.json')),
   });
-  if (filled.includes('worktree') || filled.includes('pr')) return { state, source: 'parent' };
+  if (filled.length) return { state, source: 'parent' };
   return { state, source: state ? 'run-state.json' : 'unavailable' };
 }
 

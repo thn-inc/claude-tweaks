@@ -356,6 +356,16 @@ test('resolveInputs (#2858): a non-spec run dir never borrows a parent directory
   fs.mkdirSync(child, { recursive: true });
   fs.writeFileSync(path.join(child, 'run-state.json'), JSON.stringify({ status: 'active' }));
   assert.strictEqual(resolveInputs({ runDir: child, cwd: '/elsewhere', deps: okDeps() }).sources.state, 'run-state.json');
+
+  // No per-spec file at all: the only state there is came from the parent.
+  const exemptParent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-exemptparent-'));
+  fs.writeFileSync(path.join(exemptParent, 'run-state.json'), JSON.stringify({ prExempt: 'initial-publish' }));
+  const bare = path.join(exemptParent, 'spec-1930');
+  fs.mkdirSync(bare, { recursive: true });
+  assert.strictEqual(resolveInputs({ runDir: bare, cwd: '/elsewhere', deps: okDeps() }).sources.state, 'parent');
+  const noParent = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-noparent-')), 'spec-1930');
+  fs.mkdirSync(noParent, { recursive: true });
+  assert.strictEqual(resolveInputs({ runDir: noParent, cwd: '/elsewhere', deps: okDeps() }).sources.state, 'unavailable');
 });
 
 test('gatherPack: every probe ok → eight envelopes with ok:true, plus inputs/generatedAt/durationMs (#1930 AC2 shape)', async () => {
