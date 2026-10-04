@@ -35,7 +35,7 @@ skill.
   verb — passes through one `redact()` (`bin/lib/dream/scan.js`) before it reaches a staged
   proposal, `report.md`, or `decisions.md`: absolute paths become `<path>`, and well-known
   credential shapes (`Authorization`/`Bearer`/`Basic` values, `NAME=value` and `--name value`
-  where NAME contains TOKEN/SECRET/PASSWORD/API_KEY/ACCESS_KEY/PRIVATE_KEY/CREDENTIAL, and
+  where NAME contains TOKEN/SECRET/PASSWORD/PASSWD/API_KEY/ACCESS_KEY/PRIVATE_KEY/CREDENTIAL, and
   GitHub/`sk-`/Slack/AWS-key-id token prefixes) become `<secret>`. Secret redaction is
   pattern-based and best-effort — it over-redacts rather than under-redacts, and a credential of
   an unrecognized shape can still appear, so review a proposal before copying its evidence into a
