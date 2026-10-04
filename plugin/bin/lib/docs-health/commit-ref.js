@@ -27,9 +27,10 @@ const { execFileSync } = require('child_process');
 // fetch, or a clone still shallow afterwards, makes every hash unverifiable;
 // deepen:false skips the fetch and returns unverifiable outright.
 //
-// Known limit: not-found means absent from every ref this clone has fetched.
-// A non-shallow single-branch clone is not deepened and still lacks other
-// branches' commits.
+// Known limit: not-found means absent from every ref this clone has
+// fetched, as of its last fetch — a non-shallow clone is never fetched by
+// this module, so a commit pushed upstream since then reads not-found. A
+// non-shallow single-branch clone also still lacks other branches' commits.
 
 const OUTCOMES = Object.freeze([
   'reachable', 'exists-unreachable', 'not-found', 'unverifiable', 'ambiguous', 'invalid',
@@ -53,6 +54,7 @@ function defaultGit(args, opts = {}) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     ...(opts.timeout ? { timeout: opts.timeout } : {}),
+    ...(opts.env ? { env: opts.env } : {}),
   });
 }
 
@@ -62,7 +64,22 @@ function errorText(err) {
 }
 
 function isShallow(git, root) {
-  return git(['-C', root, 'rev-parse', '--is-shallow-repository']).trim() === 'true';
+  const out = git(['-C', root, 'rev-parse', '--is-shallow-repository']).trim();
+  if (out === 'true') return true;
+  if (out === 'false') return false;
+  throw new Error(`unexpected is-shallow-repository output: ${out}`);
+}
+
+// F1 (#2866 review): git rev-parse --disambiguate truncates an over-length
+// prefix to the repository's own hash length, so it cannot by itself tell an
+// over-long (and therefore malformed) hash from a real one. Read the object
+// format once, up front, so callers can classify any input longer than it
+// as invalid rather than letting a truncated match read as reachable.
+function objectHashLength(git, root) {
+  const out = git(['-C', root, 'rev-parse', '--show-object-format']).trim();
+  if (out === 'sha1') return 40;
+  if (out === 'sha256') return 64;
+  throw new Error(`unexpected object-format output: ${out}`);
 }
 
 function resolveIntegrationBranch(git, root, remote, explicit) {
@@ -93,7 +110,11 @@ function resolveIntegrationRef(git, root, remote, branch) {
 function commitCandidates(git, root, prefix) {
   const out = git(['-C', root, 'rev-parse', `--disambiguate=${prefix}`]);
   const shas = out.split('\n').map((l) => l.trim()).filter(Boolean);
-  return shas.filter((sha) => git(['-C', root, 'cat-file', '-t', sha]).trim() === 'commit').sort();
+  // Belt-and-braces against --disambiguate's own prefix truncation (I1):
+  // keep only candidates that actually start with the (lowercased) prefix.
+  return shas
+    .filter((sha) => sha.startsWith(prefix) && git(['-C', root, 'cat-file', '-t', sha]).trim() === 'commit')
+    .sort();
 }
 
 function classifyOne(git, root, input, integrationRef) {
@@ -147,11 +168,24 @@ function verifyCommits({
     return allUnverifiable(`not a git repository, or git unavailable: ${errorText(err)}`);
   }
 
+  // F5 (#2866 review M2): resolve the branch NAME before paying for the
+  // deepen fetch, so a run that cannot reach a verdict never pays for the
+  // network side effect. resolveIntegrationRef stays after the deepen below
+  // — the fetch can create the ref it needs.
+  const branch = resolveIntegrationBranch(git, root, remote, integrationBranch);
+  if (!branch || !NAME_RE.test(branch)) {
+    return allUnverifiable(`integration branch unresolved: pass --integration-branch or set ${remote}/HEAD`);
+  }
+  result.integrationBranch = branch;
+
   if (result.shallow.initial) {
     if (!deepen) return allUnverifiable('shallow clone: history is incomplete and deepening was disabled');
     try {
       git(['-C', root, 'fetch', '--quiet', '--unshallow', '--no-tags', remote,
-        `+refs/heads/*:refs/remotes/${remote}/*`], { timeout: DEEPEN_TIMEOUT_MS });
+        `+refs/heads/*:refs/remotes/${remote}/*`], {
+        timeout: DEEPEN_TIMEOUT_MS,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      });
     } catch (err) {
       result.shallow.error = errorText(err);
       return allUnverifiable(`shallow clone: deepening fetch from ${remote} failed (${result.shallow.error})`);
@@ -164,17 +198,25 @@ function verifyCommits({
     result.shallow.deepened = true;
   }
 
-  const branch = resolveIntegrationBranch(git, root, remote, integrationBranch);
-  if (!branch || !NAME_RE.test(branch)) {
-    return allUnverifiable(`integration branch unresolved: pass --integration-branch or set ${remote}/HEAD`);
-  }
-  result.integrationBranch = branch;
   const ref = resolveIntegrationRef(git, root, remote, branch);
   if (!ref) return allUnverifiable(`integration ref not found for branch ${branch}`);
   result.integrationRef = ref;
 
+  // F1 (#2866 review I1): --disambiguate truncates an over-length prefix to
+  // the repository's own hash length, so an input longer than that length
+  // can never be a real hash — classify it invalid before it ever reaches
+  // git, rather than letting it match a truncated candidate as reachable.
+  let hashLength;
+  try {
+    hashLength = objectHashLength(git, root);
+  } catch (err) {
+    return allUnverifiable(`could not determine the repository's object hash format: ${errorText(err)}`);
+  }
+
   result.commits = inputs.map((input) => (
-    HASH_RE.test(input) ? classifyOne(git, root, input, ref) : invalid(input)));
+    HASH_RE.test(input) && input.length <= hashLength
+      ? classifyOne(git, root, input, ref)
+      : invalid(input)));
   return result;
 }
 

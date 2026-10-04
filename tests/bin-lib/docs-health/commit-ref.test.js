@@ -114,3 +114,10 @@ test('not a git repository yields unverifiable, never a throw', () => {
   const r = verifyCommits({ root: tmpDir('plain'), hashes: ['abcd'], integrationBranch: 'main' });
   assert.strictEqual(r.commits[0].outcome, 'unverifiable');
 });
+
+test('an input one character longer than a full sha1 hash classifies invalid, not reachable', () => {
+  const origin = makeOriginRepo();
+  const over = `${origin.root}0`;
+  const r = verifyCommits({ root: origin.dir, hashes: [over], integrationBranch: 'main' });
+  assert.strictEqual(outcomeOf(r, over), 'invalid');
+});
