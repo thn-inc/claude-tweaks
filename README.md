@@ -17,6 +17,19 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 /claude-tweaks:init
 ```
 
+**Not listed in the Claude Code Templates "Mods" catalog (aitmpl.com)** — investigated (#2796) and
+decided against, not overlooked. A "Mod" there is a distinct, early-access packaging — a
+TypeScript `register(on, options)` function-hooks module under `.claude-plugin/plugin.json` +
+`hooks/hooks.json`, requiring Claude Code >= 2.1.259 with the non-default
+`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` flag set, and typechecked via the catalog's own `tsc`
+toolchain — not a thin wrapper around the `/plugin marketplace add` + `/plugin install` flow
+above. Listing would mean maintaining a second, structurally different plugin packaging (one
+with no TypeScript build step today) against an upstream API its own docs call unstable ("the
+`$` API may still change between releases"), submitted via PR into a third-party repository
+(`davila7/claude-code-templates`) under MIT license — ongoing dual-maintenance cost for a
+redundant distribution path, not a free listing. Revisit if the Mods format stabilizes and gains
+a way to wrap an existing marketplace plugin instead of requiring a rewrite.
+
 ## How it works
 
 ```
