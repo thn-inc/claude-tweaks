@@ -689,3 +689,13 @@ git commit -m "Require verify-commit on proposed commit citations in docs-health
 
 - Classifier: temporarily make `classifyOne` return `reachable` whenever `merge-base` throws, and separately make `verifyCommits` skip the shallow branch; run `node --test tests/bin-lib/docs-health/commit-ref.test.js` and confirm the exists-unreachable and both shallow tests go red; restore via `git checkout -- plugin/bin/lib/docs-health/commit-ref.js` on the uncommitted scratch edit only.
 - Conformance: delete the inserted point-6 paragraph on a scratch basis, run `node --test tests/bin-lib/docs-health/skill-md.test.js`, confirm red, restore.
+
+## As-built deviations (Common Step 4.5 architecture alignment, all Beneficial)
+
+| # | Deviation | Spec text | As built | Classification |
+|---|---|---|---|---|
+| 1 | Shallow-clone deepen scope | Gotcha: prefer a bounded fetch of the integration branch | one bounded fetch of every branch head (refs/heads/* only, no tags, no PR refs) — a targeted fetch leaves side-branch commits absent and they would read not-found, the exact #2785 error; proven by the real-input probe (41dc8424f exists-unreachable) | Beneficial |
+| 2 | Outcome set | Deliverable 1: four outcomes | four plus `ambiguous` (spec Gotcha mandates it as its own failure) and `invalid` (unparseable input distinct from not-found, parse-signal discipline; also catches an over-length hash the final review found classifying reachable) | Beneficial |
+| 3 | Integration branch resolution | Deliverable 2: `--integration-branch <name>` | explicit flag > `integration-branch` policy key > `<remote>/HEAD`, registered in `plugin/skills/_shared/integration-branch.md`'s consumer table (whole-branch review I2) | Beneficial |
+| 4 | Point 6 scope | Deliverable 3: hashes in the Proposed text | also verifies hashes the doc already cites (`oldString`) before a dangling-citation finding is filed — the spec's own trigger "whose Current text is a dangling-hash citation" (whole-branch review I3) | Beneficial |
+| 5 | CLI flags | Deliverable 2 example | adds `--remote` and `--no-deepen` (read-only opt-out); deepen fetch runs with GIT_TERMINAL_PROMPT=0 | Beneficial |
