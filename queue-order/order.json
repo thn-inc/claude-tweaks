@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-04T14:43:25.067Z",
+  "computedAt": "2026-10-04T14:50:37.171Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -40,7 +40,7 @@
       },
       {
         "number": 2840,
-        "updatedAt": "2026-10-01T16:18:26Z",
+        "updatedAt": "2026-10-04T14:48:13Z",
         "state": "OPEN"
       },
       {
@@ -711,12 +711,6 @@
             "color": "F9D0C4"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
             "id": "LA_kwDORUwzVM8AAAACsXHcvg",
             "name": "priority:low",
             "description": "Priority: dispatch picks last among prioritized records",
@@ -726,7 +720,7 @@
         "number": 2840,
         "state": "OPEN",
         "title": "Re-pin impeccable-plugin to the installed 4.4.0 and re-record its contract fixtures",
-        "updatedAt": "2026-10-01T16:18:26Z",
+        "updatedAt": "2026-10-04T14:48:13Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -739,7 +733,7 @@
           "stage": "ready",
           "grants": {
             "build": true,
-            "merge": true
+            "merge": false
           },
           "bot": {
             "inProgress": false,
