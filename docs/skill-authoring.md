@@ -205,6 +205,15 @@ written against. Run this checklist whenever a new Claude model version ships, n
 the Fable 5.1 delta below: re-read the model's own "Prompting Claude {version}" doc (when
 Anthropic publishes one) and re-check the deltas that apply to skill instructions specifically.
 
+**Verification/self-check instruction audit (record #2679).** Also part of this checklist:
+sample a skill's verification/self-check instructions (and CLAUDE.md's own) against the
+effort/verbosity levers in `docs/reference/claude-quality-levers.md` — reasoning-effort
+defaults, response-length system-prompt caps, and idle-session context-clearing behavior, none
+of which depend on model weights. For each sampled instruction, produce a keep (still
+compensating for a real gap) or trim (redundant with the new model's own default behavior)
+decision rather than assuming more verification is always safer — a stale instruction can cost
+extra turns on a model that already does the check unprompted.
+
 **Claude Fable 5.1 vs. Fable 5** (source:
 https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-1):
 

@@ -28,7 +28,7 @@ A Claude Code plugin containing markdown skill files that guide Claude through a
 
 ### Skill authoring — moved
 
-SKILL.md structure, Interaction patterns (incl. the canonical CSC template), Frontmatter conventions, the Interaction style directive, and Parallel execution directives now live in `docs/skill-authoring.md`. Read it before creating or editing any `plugin/skills/**/*.md`.
+SKILL.md structure, Interaction patterns (incl. the canonical CSC template), Frontmatter conventions, the Interaction style directive, and Parallel execution directives now live in `docs/skill-authoring.md`. Read it before creating or editing any `plugin/skills/**/*.md`. Before adding or keeping a verification/self-check instruction, also run that file's Model-version prompting notes checklist against `docs/reference/claude-quality-levers.md`'s effort/verbosity levers.
 
 ### Versioning
 
@@ -79,6 +79,7 @@ How to execute any task here. These apply project-wide unless a more specific ru
 - **Read before you write.** Before adding code, read the file's exports, immediate callers, and shared utilities — duplicate logic usually already exists nearby.
 - **Checkpoint multi-step work.** After each significant step, state what's done, what's verified, and what's left. Don't build on a state you can't describe back.
 - **Fail loud.** "Done" is wrong if anything was skipped; "tests pass" is wrong if any were skipped. Surface uncertainty and partial results — never hide them.
+- **Rewind, don't re-explain.** When a response needs correcting, prefer `/rewind` over describing the fix in prose — it undoes at no token cost and doesn't leave the bad response in history.
 
 ## Commands
 

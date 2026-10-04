@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Issue 2689 — Evaluate, Prototype, Decide</title>
+<style>
+  :root {
+    --graphite-ink: #1c1f24;
+    --graphite-ink-muted: #5b6472;
+    --graphite-surface: #f7f7f5;
+    --graphite-surface-muted: #ececea;
+    --graphite-border: #dcdcda;
+    --signal-amber: #b8720f;
+    --signal-amber-deep: #8f5a0c;
+    --font-body-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  :root[data-theme="dark"] {
+    --graphite-ink: #1c1f24;
+    --graphite-ink-muted: #5b6472;
+    --graphite-surface: #f7f7f5;
+    --graphite-surface-muted: #ececea;
+    --graphite-border: #dcdcda;
+    --signal-amber: #b8720f;
+    --signal-amber-deep: #8f5a0c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --graphite-ink: #1c1f24;
+      --graphite-ink-muted: #5b6472;
+      --graphite-surface: #f7f7f5;
+      --graphite-surface-muted: #ececea;
+      --graphite-border: #dcdcda;
+      --signal-amber: #b8720f;
+      --signal-amber-deep: #8f5a0c;
+    }
+  }
+  body { background: var(--graphite-surface); margin: 0; padding: 24px; }
+</style>
+</head>
+<body>
+<svg class="vz-2689-root" viewBox="0 0 880 220" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Evaluate, prototype, decide flow for issue 2689">
+  <style>
+    .vz-2689-root { font-family: var(--font-body-family); }
+    .vz-2689-box { fill: var(--graphite-surface-muted); stroke: var(--graphite-border); stroke-width: 1.5; rx: 8; }
+    .vz-2689-box--decision { fill: var(--signal-amber-deep); stroke: var(--signal-amber); }
+    .vz-2689-label { fill: var(--graphite-ink); font-size: 13px; font-weight: 500; }
+    .vz-2689-label--decision { fill: var(--graphite-surface); }
+    .vz-2689-arrow { stroke: var(--graphite-ink-muted); stroke-width: 2; marker-end: url(#vz-2689-arrowhead); fill: none; }
+  </style>
+  <defs>
+    <marker id="vz-2689-arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--graphite-ink-muted)" />
+    </marker>
+  </defs>
+
+  <rect class="vz-2689-box" x="10" y="70" width="190" height="80" />
+  <text class="vz-2689-label" x="105" y="104" text-anchor="middle">Evaluate</text>
+  <text class="vz-2689-label" x="105" y="124" text-anchor="middle">/visualize + /specify</text>
+  <text class="vz-2689-label" x="105" y="140" text-anchor="middle">coverage</text>
+
+  <line class="vz-2689-arrow" x1="200" y1="110" x2="235" y2="110" />
+
+  <rect class="vz-2689-box" x="240" y="70" width="190" height="80" />
+  <text class="vz-2689-label" x="335" y="104" text-anchor="middle">Prototype: diagram</text>
+  <text class="vz-2689-label" x="335" y="124" text-anchor="middle">for #2689's own</text>
+  <text class="vz-2689-label" x="335" y="140" text-anchor="middle">plan (this file)</text>
+
+  <line class="vz-2689-arrow" x1="430" y1="110" x2="465" y2="110" />
+
+  <rect class="vz-2689-box" x="470" y="70" width="190" height="80" />
+  <text class="vz-2689-label" x="565" y="104" text-anchor="middle">Record ADR</text>
+  <text class="vz-2689-label" x="565" y="124" text-anchor="middle">0021 — decision +</text>
+  <text class="vz-2689-label" x="565" y="140" text-anchor="middle">rationale</text>
+
+  <line class="vz-2689-arrow" x1="660" y1="110" x2="695" y2="110" />
+
+  <rect class="vz-2689-box vz-2689-box--decision" x="700" y="70" width="170" height="80" />
+  <text class="vz-2689-label vz-2689-label--decision" x="785" y="104" text-anchor="middle">Stays opt-in</text>
+  <text class="vz-2689-label vz-2689-label--decision" x="785" y="124" text-anchor="middle">via /visualize</text>
+  <text class="vz-2689-label vz-2689-label--decision" x="785" y="140" text-anchor="middle">(not standing)</text>
+</svg>
+<script>
+(function () {
+  if (window.parent === window) return;
+  function reportHeightNow() {
+    window.parent.postMessage(
+      { type: 'height', height: document.documentElement.scrollHeight },
+      window.location.origin
+    );
+  }
+  window.addEventListener('message', function (event) {
+    if (event.origin !== window.location.origin) return;
+    var data = event.data;
+    if (data && data.type === 'theme' && (data.theme === 'dark' || data.theme === 'light')) {
+      document.documentElement.dataset.theme = data.theme;
+      reportHeightNow();
+    }
+  });
+  var heightReportPending = false;
+  new ResizeObserver(function () {
+    if (heightReportPending) return;
+    heightReportPending = true;
+    requestAnimationFrame(function () {
+      heightReportPending = false;
+      reportHeightNow();
+    });
+  }).observe(document.body);
+})();
+</script>
+</body>
+</html>

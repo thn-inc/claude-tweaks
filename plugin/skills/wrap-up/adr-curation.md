@@ -28,7 +28,7 @@ For each decision that passes the gate, propose creating the resolved path, usin
 
 → On a `conflict` outcome, additionally collect exactly one row per run: `[adr-convention] docs/decisions/ — {plugin form} vs {found form} ({N} existing)`. This row requires per-item approval and is **not** covered by Approve all's own default (see `review-console.md`) — it belongs to `review-console-interactive.md`'s drills-individually class, so Approve all still fires its own three-way question for it as part of the same console stop rather than leaving it unanswered. Until it is answered, no `[adr]` row from this run may be written — the resolved path depends on the answer.
 
-Each collected item becomes one payload finding with `action: "staged"`: `targetPath` is the resolved ADR path (or `docs/decisions/` for the convention row), `summary` is the decision title (or the `{plugin form} vs {found form}` comparison), and `stagePath` is the `staged/` file holding the full proposal.
+Each collected item becomes one payload finding with `action: "staged"`: `targetPath` is the resolved ADR path (or `docs/decisions/` for the convention row), `summary` is the decision title (or the `{plugin form} vs {found form}` comparison), and `stagePath` is the `staged/` file holding the full proposal, named `staged/wrap-up-adr-{n}.md`.
 
 ## Zero is the normal outcome
 

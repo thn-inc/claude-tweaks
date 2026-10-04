@@ -65,6 +65,7 @@ How to execute any task here. These apply project-wide unless a more specific ru
 - **Read before you write.** Before adding code, read the file's exports, immediate callers, and shared utilities — duplicate logic usually already exists nearby.
 - **Checkpoint multi-step work.** After each significant step, state what's done, what's verified, and what's left. Don't build on a state you can't describe back.
 - **Fail loud.** "Done" is wrong if anything was skipped; "tests pass" is wrong if any were skipped. Surface uncertainty and partial results — never hide them.
+- **Rewind, don't re-explain.** When a response needs correcting, prefer `/rewind` over describing the fix in prose — it undoes at no token cost and doesn't leave the bad response in history.
 
 ## Testing
 
@@ -195,7 +196,7 @@ Established codebase with active users. Schema changes require migrations with r
 
 ## Working Approach (universal behavior block)
 
-`## Working Approach` is the one **standard, non-adaptive** section in the template — include it verbatim in every generated CLAUDE.md (like the `## claude-tweaks Pipeline` section). It encodes universal task-execution behavior (think-before-coding, honest-not-agreeable, simplicity, surgical changes, goal-driven, read-before-write, checkpointing, fail-loud) so that **ad-hoc work outside the pipeline** — where no skill gate fires — still gets the same guardrails the lifecycle skills enforce. Update Mode's conformance check byte-compares this section against the template, so a project that edits or trims it reports drifted on every pass — verbatim is enforced, not just advised.
+`## Working Approach` is the one **standard, non-adaptive** section in the template — include it verbatim in every generated CLAUDE.md (like the `## claude-tweaks Pipeline` section). It encodes universal task-execution behavior (think-before-coding, honest-not-agreeable, simplicity, surgical changes, goal-driven, read-before-write, checkpointing, fail-loud, rewind-not-re-explain) so that **ad-hoc work outside the pipeline** — where no skill gate fires — still gets the same guardrails the lifecycle skills enforce. Update Mode's conformance check byte-compares this section against the template, so a project that edits or trims it reports drifted on every pass — verbatim is enforced, not just advised.
 
 Two rules of thumb:
 
