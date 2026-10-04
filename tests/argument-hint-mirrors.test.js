@@ -273,3 +273,37 @@ test('an unreadable surface and a stale exception are each their own signal', ()
     `${key}: listed in EXCEPTIONS but agrees with its argument-hint -- remove the entry`,
   ]);
 });
+
+// The enumeration has one home. Scans whitespace-collapsed text so a phrase
+// that wraps across lines is still seen. docs/incident-log.md is history and
+// docs/superpowers/ holds run artifacts that quote what they replace.
+const SWEEP_ROOTS = ['plugin/skills', '.claude/skills', 'docs'];
+const SWEEP_SKIP = ['docs/incident-log.md', 'docs/superpowers'];
+const RETIRED = [
+  /two syntactic-mirror surfaces/i,
+  /treat these two as always in scope/i,
+  /the two places a flag appears/i,
+];
+
+function markdownFiles(rel) {
+  if (SWEEP_SKIP.includes(rel)) return [];
+  const abs = path.join(ROOT, rel);
+  if (fs.statSync(abs).isDirectory()) {
+    return fs.readdirSync(abs).sort().flatMap((name) => markdownFiles(`${rel}/${name}`));
+  }
+  return rel.endsWith('.md') ? [rel] : [];
+}
+
+test('the mirror-surface table has one home and the counted wording stays retired', () => {
+  const files = SWEEP_ROOTS.flatMap(markdownFiles);
+  assert.ok(files.includes(ENUMERATION), 'sanity check: the sweep must reach the enumeration file itself');
+  assert.deepStrictEqual(files.filter((f) => readRepoFile(f).includes(TABLE_HEADER)), [ENUMERATION]);
+  const hits = [];
+  for (const f of files) {
+    const flat = readRepoFile(f).replace(/\s+/g, ' ');
+    for (const re of RETIRED) if (re.test(flat)) hits.push(`${f}: ${re}`);
+  }
+  assert.deepStrictEqual(hits, [], `retired "exactly two surfaces" wording is back:\n${hits.join('\n')}`);
+  // The collapse is what lets a wrapped phrase match -- prove it does.
+  assert.match('has two syntactic-mirror\n  surfaces'.replace(/\s+/g, ' '), RETIRED[0]);
+});
