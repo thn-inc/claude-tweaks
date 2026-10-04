@@ -17,6 +17,7 @@ const {
   redactPaths,
   redactSecrets,
   redact,
+  SECRET_NAME,
   MIN_SESSIONS_FLOOR,
 } = require('../../../plugin/bin/lib/dream/scan');
 
@@ -282,4 +283,19 @@ test('redact: a huge keyword-bearing tool output stays fast (input is capped bef
   const out = redact(huge);
   assert.ok(Date.now() - started < 500, `redact took ${Date.now() - started} ms`);
   assert.ok(out.startsWith('TOKEN'), out.slice(0, 20));
+});
+
+test('dream-pass.md names exactly the credential words SECRET_NAME matches, and each one redacts', () => {
+  // Prose/code twin: the doc's word list and the regex alternation were born out of sync once (PASSWD, #2968).
+  const doc = fs.readFileSync(path.join(__dirname, '../../../plugin/skills/harness-health/dream-pass.md'), 'utf8').replace(/\s+/g, ' ');
+  const docMatch = doc.match(/where NAME contains ([A-Z_/]+),/);
+  assert.ok(docMatch, 'dream-pass.md credential-word list not found');
+  const docWords = docMatch[1].split('/').sort();
+  const alternation = SECRET_NAME.match(/\(\?:([^)]+)\)/);
+  assert.ok(alternation, 'SECRET_NAME alternation not found');
+  const codeWords = alternation[1].split('|').map((w) => w.replace('[_-]?', '_')).sort();
+  assert.deepStrictEqual(docWords, codeWords);
+  for (const word of docWords) {
+    assert.equal(redactSecrets(`MY_${word}=abc123`), `MY_${word}=<secret>`, word);
+  }
 });

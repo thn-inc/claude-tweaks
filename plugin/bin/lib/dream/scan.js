@@ -336,4 +336,5 @@ module.exports = {
   redactPaths,
   redactSecrets,
   redact,
+  SECRET_NAME,
 };
