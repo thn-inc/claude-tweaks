@@ -7,7 +7,7 @@
 // pins hold the two facts a reader must be able to find: SKILL.md's ## Input
 // documents the comma-list grammar, and shaping-mode.md states the per-record
 // loop. tests/argument-hint-input.test.js and
-// tests/reference-card-argument-hint.test.js pin hint<->Input and hint<->card
+// tests/argument-hint-mirrors.test.js pin hint<->Input and hint<->card
 // sync; this file pins the batch semantics themselves.
 
 const { test } = require('node:test');
