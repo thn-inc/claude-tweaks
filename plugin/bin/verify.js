@@ -224,6 +224,14 @@ async function main() {
   let cmds = parsed.cmds;
   let decl = null;
   let priorStamp = null;
+  // #2779: a check's --cmd-env variables, by check name — for the two spawns
+  // that are not a parsed --cmd entry itself (tool-scoped's synthesized
+  // `tests`, and a flaky retry of a check), so they run in the same
+  // environment as the check they stand in for.
+  const envOf = (name) => {
+    const declared = parsed.cmds.find((c) => c.name === name);
+    return declared && declared.env ? declared.env : null;
+  };
   if (parsed.scope) {
     // Every --scope usage error below shares this exit shape (message, then
     // USAGE, then exit code 2); pulled into one helper so the five sites
@@ -304,7 +312,10 @@ async function main() {
         return sel.suites === '*' || sel.suites.includes(c.name);
       });
       if (sel.mode === 'tool-scoped') {
-        cmds = cmds.concat([{ name: 'tests', command: decl.checks.tests.replace(/\{base\}/g, resolvedBase) }]);
+        const testsEnv = envOf('tests');
+        cmds = cmds.concat([{
+          name: 'tests', command: decl.checks.tests.replace(/\{base\}/g, resolvedBase), ...(testsEnv ? { env: testsEnv } : {}),
+        }]);
       }
     }
 
@@ -355,7 +366,7 @@ async function main() {
     if (!plan.retry) return { ...result, retryDecision: decision };
     const retried = await runRetries({
       check: result, plan, maxRetries: decl.flaky.maxRetries,
-      logDir: ctx.logDir, runOne, spawnImpl: ctx.spawnImpl, now: ctx.now, cwd: ctx.cwd,
+      logDir: ctx.logDir, runOne, spawnImpl: ctx.spawnImpl, now: ctx.now, cwd: ctx.cwd, env: envOf(result.name),
     });
     return { ...retried, retryDecision: decision };
   };
