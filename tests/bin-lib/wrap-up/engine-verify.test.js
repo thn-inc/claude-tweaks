@@ -1225,6 +1225,43 @@ test('resolvePrNumber returns null when run-state.json exists directly at runDir
   assert.strictEqual(resolvePrNumber(runDir), null);
 });
 
+test('resolvePrNumber (#2858): a per-spec run-state.json carrying only status still finds the parent PR', () => {
+  const parentDir = makeTmpDir('verify-prnum-statusonly-');
+  fs.writeFileSync(path.join(parentDir, 'run-state.json'), JSON.stringify({ pr: { number: 1199 } }));
+  const subDir = path.join(parentDir, 'spec-900');
+  fs.mkdirSync(subDir);
+  fs.writeFileSync(path.join(subDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  assert.strictEqual(resolvePrNumber(subDir), 1199);
+});
+
+test('resolvePrNumber (#2858): a per-spec pr wins over the parent pr; a null per-spec pr falls back to it', () => {
+  const parentDir = makeTmpDir('verify-prnum-precedence-');
+  fs.writeFileSync(path.join(parentDir, 'run-state.json'), JSON.stringify({ pr: { number: 1199 } }));
+  const subDir = path.join(parentDir, 'spec-900');
+  fs.mkdirSync(subDir);
+  fs.writeFileSync(path.join(subDir, 'run-state.json'), JSON.stringify({ pr: { number: 42 } }));
+  assert.strictEqual(resolvePrNumber(subDir), 42);
+  fs.writeFileSync(path.join(subDir, 'run-state.json'), JSON.stringify({ status: 'active', pr: null }));
+  assert.strictEqual(resolvePrNumber(subDir), 1199);
+});
+
+test('resolvePrNumber (#2858): a non-spec run dir with no run-state.json does not read a parent directory that happens to hold one', () => {
+  const parentDir = makeTmpDir('verify-prnum-gate-');
+  fs.writeFileSync(path.join(parentDir, 'run-state.json'), JSON.stringify({ pr: { number: 1199 } }));
+  const subDir = path.join(parentDir, '2026-10-04T000000-record-1');
+  fs.mkdirSync(subDir);
+  assert.strictEqual(resolvePrNumber(subDir), null);
+});
+
+test('resolvePrNumber (#2858): a parent carrying only prExempt resolves no PR', () => {
+  const parentDir = makeTmpDir('verify-prnum-exempt-');
+  fs.writeFileSync(path.join(parentDir, 'run-state.json'), JSON.stringify({ prExempt: 'initial-publish' }));
+  const subDir = path.join(parentDir, 'spec-900');
+  fs.mkdirSync(subDir);
+  fs.writeFileSync(path.join(subDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  assert.strictEqual(resolvePrNumber(subDir), null);
+});
+
 function writeExpectations(runDir, data) {
   fs.writeFileSync(path.join(runDir, 'verify-expectations.json'), JSON.stringify(data));
 }

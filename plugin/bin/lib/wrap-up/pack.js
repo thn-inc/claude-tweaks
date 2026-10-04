@@ -18,6 +18,7 @@ const { parseManifestYaml } = require('../flow/manifest');
 const { parseDependencies } = require('../issues/record');
 const { runWithConcurrency } = require('../reconcile/gh-pool');
 const { parseRepo, repoSlug } = require('../repo-resolve');
+const { readRunStateWithParent } = require('../hooks/context');
 
 const PROBE_NAMES = ['residue', 'state', 'blastRadius', 'pr', 'recordLabels', 'claim', 'ledger', 'unblocked'];
 const BIN = path.join(__dirname, '..', '..');
@@ -217,19 +218,16 @@ function hasPrNumber(state) {
 
 // run-state.json, with the parent fallback a per-spec subdirectory needs: a
 // `spec-*/` run dir carries its own status but not the run's worktree or PR —
-// those live one level up, on the parent run's state (#1930 review C1).
+// those live one level up, on the parent run's state (#1930 review C1). The
+// rule itself is hooks/context.js's readRunStateWithParent (#2858), read
+// here through `deps`; `source` is 'parent' only when a field actually came
+// from there.
 function resolveState(deps, runDir) {
-  const own = readJson(deps, path.join(runDir, 'run-state.json'));
-  const complete = own && typeof own.worktree === 'string' && hasPrNumber(own);
-  if (!/^spec-/.test(path.basename(runDir)) || complete) {
-    return { state: own, source: own ? 'run-state.json' : 'unavailable' };
-  }
-  const parent = readJson(deps, path.join(path.dirname(runDir), 'run-state.json'));
-  if (!parent) return { state: own, source: own ? 'run-state.json' : 'unavailable' };
-  const merged = { ...(own || {}) };
-  if (typeof merged.worktree !== 'string' && typeof parent.worktree === 'string') merged.worktree = parent.worktree;
-  if (!hasPrNumber(merged) && hasPrNumber(parent)) merged.pr = parent.pr;
-  return { state: merged, source: 'parent' };
+  const { state, filled } = readRunStateWithParent(runDir, {
+    read: (dir) => readJson(deps, path.join(dir, 'run-state.json')),
+  });
+  if (filled.length) return { state, source: 'parent' };
+  return { state, source: state ? 'run-state.json' : 'unavailable' };
 }
 
 // `_shared/integration-branch.md`'s canonical ladder, minus the two ranks
