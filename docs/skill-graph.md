@@ -535,7 +535,7 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | Target | Relationship |
 |---|---|
 | `/tidy` | Step 1 invokes `/claude-tweaks:tidy --source sweep` (forwarding `--scope`) in auto mode under the shared run dir — tidy's one sanctioned parent (tidy/SKILL.md's Component-Skill Contract): shared `decisions.md`/`staged/`, Next Actions and terminal approval suppressed. |
-| `/specify` | Step 2 invokes the bare drain as `/claude-tweaks:specify --source sweep` (forwarding `--budget`) under the shared run dir — headless drain, counts reported back (specify's Component-Skill Contract; `specify/next-mode.md`). |
+| `/specify` | Step 2 invokes the bare drain as `/claude-tweaks:specify --source sweep` (forwarding `--budget`) under the shared run dir — headless drain, counts reported back (specify's Component-Skill Contract; `specify/next-mode-closeout.md`). |
 | `/backlog` | Step 3 invokes `/claude-tweaks:backlog refine --source sweep` (headless posture, `backlog/refine-headless.md`); the close-out executes attention mode's render directly (`backlog/attention-mode.md`) as sweep's first output block. |
 | `/dispatch` | Recommended-line-only: sweep's Next Actions names `/claude-tweaks:dispatch` but never invokes it — sweep never claims, builds, or merges, the boundary that legalizes its parenting of the grant chain (`evals/scenarios/sweep-never-invokes-build-machinery.yaml` pins it). |
 | `_shared/record-queue-fetch.md` | Sweep invalidates the session-scoped record snapshot between steps and before close-out (`bin/lib/issues/record-snapshot.js`'s `invalidateSnapshot`) so each step reads its predecessor's mutations. |

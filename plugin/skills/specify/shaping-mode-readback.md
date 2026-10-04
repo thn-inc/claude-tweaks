@@ -3,8 +3,9 @@
 Continues `shaping-mode-stamping.md` (this skill's directory) — the metadata block through
 compose-then-write-once there, read-back verification and Actions Performed here (#2841's split).
 Read it once a record's write call in that file's Compose-then-write-once section has run —
-landed, been refused by the pre-write shape check, or failed — on every entry path that file
-names. Section names are unchanged across the split, so a cross-reference naming a section here
+landed, been refused by the pre-write shape check, or failed — or was never needed because the
+record was already shaped and fully stamped (skip Read-back verification then; its Actions
+Performed row still renders) — on every entry path that file names. Section names are unchanged across the split, so a cross-reference naming a section here
 still resolves regardless of which file it lands in; "above" in this file means this file's own
 earlier text where the thing named lives here (Read-back verification, the Actions Performed
 row), and otherwise `shaping-mode-stamping.md`'s sections (and, before them, `shaping-mode.md`'s),

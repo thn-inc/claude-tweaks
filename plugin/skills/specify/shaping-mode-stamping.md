@@ -211,5 +211,6 @@ Nothing to commit on the `github-issues` driver — the edit above already lande
 
 **Split across two files (#2841).** Read-back verification and Actions Performed live in
 `shaping-mode-readback.md`, this skill's directory. Once this record's write call above has run —
-landed, been refused by the pre-write shape check, or failed — read `shaping-mode-readback.md` and
+landed, been refused by the pre-write shape check, or failed — or was never needed (an
+`already shaped, no-op` record: nothing to write) — read `shaping-mode-readback.md` and
 continue there; shaping mode ends in that file, not here.
