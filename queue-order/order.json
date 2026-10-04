@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-03T22:31:53.784Z",
+  "computedAt": "2026-10-04T11:48:43.440Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -26,11 +26,6 @@
       {
         "number": 2858,
         "updatedAt": "2026-10-01T16:18:56Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2854,
-        "updatedAt": "2026-10-03T14:35:06Z",
         "state": "OPEN"
       },
       {
@@ -74,18 +69,8 @@
         "state": "OPEN"
       },
       {
-        "number": 2800,
-        "updatedAt": "2026-10-03T17:05:10Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2798,
         "updatedAt": "2026-10-02T20:32:15Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2796,
-        "updatedAt": "2026-10-03T16:06:21Z",
         "state": "OPEN"
       },
       {
@@ -111,11 +96,6 @@
       {
         "number": 2779,
         "updatedAt": "2026-10-01T16:12:07Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2773,
-        "updatedAt": "2026-10-03T12:06:50Z",
         "state": "OPEN"
       },
       {
@@ -175,7 +155,7 @@
       },
       {
         "number": 2694,
-        "updatedAt": "2026-10-01T16:15:02Z",
+        "updatedAt": "2026-10-04T11:41:40Z",
         "state": "OPEN"
       },
       {
@@ -184,23 +164,8 @@
         "state": "OPEN"
       },
       {
-        "number": 2691,
-        "updatedAt": "2026-10-03T19:55:41Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2690,
-        "updatedAt": "2026-10-03T18:28:55Z",
-        "state": "OPEN"
-      },
-      {
         "number": 2688,
         "updatedAt": "2026-10-02T06:24:20Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2679,
-        "updatedAt": "2026-10-03T17:05:04Z",
         "state": "OPEN"
       },
       {
@@ -211,11 +176,6 @@
       {
         "number": 2634,
         "updatedAt": "2026-09-30T12:19:19Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2573,
-        "updatedAt": "2026-10-03T16:06:14Z",
         "state": "OPEN"
       },
       {
@@ -1259,12 +1219,6 @@
             "color": "F9D0C4"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
             "id": "LA_kwDORUwzVM8AAAACsXHcvg",
             "name": "priority:low",
             "description": "Priority: dispatch picks last among prioritized records",
@@ -1286,7 +1240,7 @@
         "number": 2694,
         "state": "OPEN",
         "title": "Evaluate Taste/Web-Design-Guidelines skills for design-wrapper",
-        "updatedAt": "2026-10-01T16:15:02Z",
+        "updatedAt": "2026-10-04T11:41:40Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -1299,7 +1253,7 @@
           "stage": "ready",
           "grants": {
             "build": true,
-            "merge": true
+            "merge": false
           },
           "bot": {
             "inProgress": false,
