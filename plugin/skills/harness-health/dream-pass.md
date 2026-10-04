@@ -30,9 +30,16 @@ skill.
   data) and then confirms the evidence-bar filter still drops it.
 - **Scope is this account's own session history only** — `{config-dir}/projects/*/*.jsonl`, where
   `config-dir` defaults to `$CLAUDE_CONFIG_DIR` (falling back to `~/.claude`) — never widened to
-  another account's transcripts on a shared machine. Quoted excerpts are truncated (command to 200
-  chars, error text to 300) and absolute paths are redacted to `<path>` before they reach a staged
-  proposal or this file.
+  another account's transcripts on a shared machine. Every transcript-derived field — the quoted
+  command, the error excerpt, the grouping signature's error line, and a Bash command's leading
+  verb — passes through one `redact()` (`bin/lib/dream/scan.js`) before it reaches a staged
+  proposal, `report.md`, or `decisions.md`: absolute paths become `<path>`, and well-known
+  credential shapes (`Authorization`/`Bearer`/`Basic` values, `NAME=value` and `--name value`
+  where NAME contains TOKEN/SECRET/PASSWORD/API_KEY/ACCESS_KEY/PRIVATE_KEY/CREDENTIAL, and
+  GitHub/`sk-`/Slack/AWS-key-id token prefixes) become `<secret>`. Secret redaction is
+  pattern-based and best-effort — it over-redacts rather than under-redacts, and a credential of
+  an unrecognized shape can still appear, so review a proposal before copying its evidence into a
+  committed file. Quoted excerpts are then truncated (command to 200 chars, error text to 300).
 
 ## Running it
 
