@@ -134,8 +134,14 @@ function computeAdoption({ runDir, mainRoot, cwd, deps }) {
   const state = deps.readRunState(real);
   const specMaterialized = specOnBranch(deps, { mainRoot, runDirReal: real, state });
   // /flow Step 2.8 logs its claim before this runs, so claim-log-only is still
-  // a fresh mint (#2861); anything classifyDecisions cannot place is content.
-  const decisionsHasContent = classifyDecisions(readText(deps, path.join(real, 'decisions.md'))) === 'content';
+  // a fresh mint (#2861); anything classifyDecisions cannot place is content,
+  // and so is a decisions.md that exists but cannot be read (only ENOENT is absent).
+  let decisionsHasContent;
+  try {
+    decisionsHasContent = classifyDecisions(deps.readFile(path.join(real, 'decisions.md'))) === 'content';
+  } catch (err) {
+    decisionsHasContent = !(err && err.code === 'ENOENT');
+  }
   const hasOtherContent = decisionsHasContent || nonEmpty(deps, path.join(real, 'events.jsonl')) || specMaterialized === true;
   if (hasConfig) return { case: 1, note: ADOPTION_NOTES[1].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, specMaterialized, backfills: [] };
   if (!hasOtherContent) return { case: 2, note: ADOPTION_NOTES[2].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, specMaterialized, backfills: [] };

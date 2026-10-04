@@ -13,10 +13,14 @@ const CLAIM_LOG_STEP = 'Step 2.8';
 const STEP_SRC = CLAIM_LOG_STEP.replace(/\./g, '\\.');
 // One line per target (the documented form), or the single batch summary a
 // real multi-record run writes instead (#2636).
-const SINGLE_ACTION_SRC = 'claimed #\\d+\\b';
 const BATCH_ACTION_SRC = 'Claimed all \\d+ targets under run\\b';
-const ACTION_RE = new RegExp(`^(?:${SINGLE_ACTION_SRC}|${BATCH_ACTION_SRC})`);
 const BATCH_LOG_RE = new RegExp(`${STEP_SRC}: ${BATCH_ACTION_SRC}`);
+// isClaimLogEntry matches the WHOLE action, end-anchored, including the
+// `Reversibility:` suffix formatEntry always appends: a truncated line, or a
+// claim prefix with anything else riding behind it, is not a claim entry.
+const SINGLE_FULL_SRC = 'claimed #\\d+ \\(bin/claim-targets\\.js, transport: [a-z-]+\\)';
+const BATCH_FULL_SRC = `${BATCH_ACTION_SRC} \\S+ \\([^()]*\\)`;
+const ACTION_RE = new RegExp(`^(?:${SINGLE_FULL_SRC}|${BATCH_FULL_SRC})\\. Reversibility: [^.\\s][^.]*\\.$`);
 const SECTION_HEADING = `## ${CLAIM_LOG_SECTION}`;
 
 // The --text value claim-targets.md dictates for one claimed target.

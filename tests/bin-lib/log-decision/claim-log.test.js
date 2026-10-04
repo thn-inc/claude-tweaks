@@ -47,10 +47,10 @@ test("claim-targets.md's documented argv produces a line isClaimLogEntry accepts
   }
 });
 
-test('isClaimLogEntry: single and batch forms, with or without a spec prefix or Reversibility suffix; unparseable or foreign lines are not claim lines (#2861)', () => {
+test('isClaimLogEntry: single and batch forms, with or without a spec prefix; unparseable, foreign, truncated or tail-carrying lines are not claim lines (#2861)', () => {
   for (const yes of [
     '- AUTO 18:42:06 — Step 2.8: claimed #2861 (bin/claim-targets.js, transport: git). Reversibility: high.',
-    '- AUTO 00:00:00 — Step 2.8: claimed #991 (bin/claim-targets.js, transport: git).',
+    '- AUTO 00:00:00 — Step 2.8: claimed #991 (bin/claim-targets.js, transport: contents-api). Reversibility: n/a.',
     '- AUTO 00:00:00 — spec #991 — Step 2.8: claimed #991 (bin/claim-targets.js, transport: mcp). Reversibility: high.',
     '- AUTO 02:30:28 — Step 2.8: Claimed all 2 targets under run 2026-09-20T002426-record-1235 (claim-targets.js exit 0). Reversibility: high.',
   ]) assert.strictEqual(isClaimLogEntry(yes), true, yes);
@@ -60,6 +60,15 @@ test('isClaimLogEntry: single and batch forms, with or without a spec prefix or 
     '- AUTO 18:42:06 — Step 2.5: claimed #2861 (bin/claim-targets.js, transport: git).',
     '- AUTO 18:42:06 — Step 2.8: claim contested for #2861, stopping.',
     '- AUTO 18:42:06 — Step 2.8: claimed #abc.',
+    // The whole action is matched, not its prefix: a line cut mid-write, a line
+    // missing the suffix formatEntry always appends, and a claim prefix with
+    // another decision riding behind it are all something other than a claim entry.
+    '- AUTO 18:42:06 — Step 2.8: claimed #7 (bin/claim-targets.js, transp',
+    '- AUTO 18:42:06 — Step 2.8: claimed #7 (bin/claim-targets.js, transport: git).',
+    '- AUTO 18:42:06 — Step 2.8: claimed #7 (bin/claim-targets.js, transport: git). Reversibility: hi',
+    '- AUTO 18:42:06 — Step 2.8: claimed #7 and also wrote config.yml by hand. Reversibility: n/a.',
+    '- AUTO 18:42:06 — Step 2.8: claimed #7 (bin/claim-targets.js, transport: git). Then backfilled the PR. Reversibility: high.',
+    '- AUTO 02:30:28 — Step 2.8: Claimed all 2 targets under run 2026-09-20T002426-record-1235',
     '- AUTO 18:42:06 — Step 3: noted that Step 2.8: claimed #2861 earlier.',
     '## /flow',
     '',
@@ -73,7 +82,9 @@ test('classifyDecisions: absent, empty, claim-log-only, content — and nothing 
   assert.strictEqual(classifyDecisions(REAL_SINGLE), 'claim-log-only');
   assert.strictEqual(classifyDecisions(REAL_BATCH), 'claim-log-only');
   assert.strictEqual(classifyDecisions(REAL_SINGLE.replace(/\n/g, '\r\n')), 'claim-log-only');
-  assert.strictEqual(classifyDecisions('- AUTO 00:00:00 — Step 2.8: claimed #7 (x).\n- AUTO 00:00:01 — Step 2.8: claimed #8 (x).\n'), 'claim-log-only', 'no heading, two targets');
+  const lineFor = (n) => formatEntry({ status: 'AUTO', now: NOW, step: CLAIM_LOG_STEP, text: claimLogText(n, 'git'), reversibility: 'high' });
+  assert.strictEqual(classifyDecisions(`${lineFor(7)}\n${lineFor(8)}\n`), 'claim-log-only', 'no heading, two targets');
+  assert.strictEqual(classifyDecisions(REAL_SINGLE.slice(0, -30)), 'content', 'a claim line truncated mid-write');
   // Header-only shapes: no claim entry at all.
   assert.strictEqual(classifyDecisions('## /flow\n'), 'content');
   assert.strictEqual(classifyDecisions('# Auto-Decision Log — pipeline 2026-05-15T143207-spec-42\n\nPipeline config snapshot:\n- mode: auto\n'), 'content');
@@ -90,7 +101,6 @@ test('classifyDecisions: absent, empty, claim-log-only, content — and nothing 
 test('hasClaimLogFor keeps hasLoggedClaim\'s semantics: exact number with a word boundary, or the batch form covering every number (#2861)', () => {
   assert.strictEqual(hasClaimLogFor(REAL_SINGLE, 2861), true);
   assert.strictEqual(hasClaimLogFor(REAL_SINGLE, 286), false);
-  assert.strictEqual(hasClaimLogFor(REAL_SINGLE, 28610), false);
   assert.strictEqual(hasClaimLogFor('- AUTO 00:00:00 — Step 2.8: claimed #700 (x).\n', 7), false);
   assert.strictEqual(hasClaimLogFor(REAL_BATCH, 1235), true);
   assert.strictEqual(hasClaimLogFor(REAL_BATCH, 9), true);

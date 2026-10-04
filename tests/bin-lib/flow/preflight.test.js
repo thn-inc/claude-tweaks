@@ -371,6 +371,19 @@ test('any non-claim decisions.md content still classifies as case 3 with the sam
   }
 });
 
+test('a decisions.md that exists but cannot be read is content, never a fresh mint (#2861)', () => {
+  const fx = mainRoot();
+  const readFile = (p) => {
+    if (path.basename(p) === 'decisions.md') {
+      const e = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e;
+    }
+    return fs.readFileSync(p, 'utf8');
+  };
+  const a = computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: deps(fx, { ...NO_SPEC, readFile }) });
+  assert.strictEqual(a.case, 3);
+  assert.strictEqual(a.hasOtherContent, true);
+});
+
 test('claim-log-only decisions.md beside a non-empty events.jsonl is still case 3; with config.yml it is still case 1 (#2861)', () => {
   assert.strictEqual(adoptionFor(CLAIM_ONLY, { 'events.jsonl': '{"event":"x"}\n' }).a.case, 3);
   const withConfig = adoptionFor(CLAIM_ONLY, { 'config.yml': 'mode: auto\n' }).a;
