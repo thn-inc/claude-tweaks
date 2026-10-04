@@ -23,7 +23,7 @@ Generates a self-contained HTML+SVG diagram, themed from the project's own desig
 
 ## Input
 
-`$ARGUMENTS` is parsed as `<type> <topic>`:
+`$ARGUMENTS` is parsed as `<architecture|flowchart|sequence|state|er|timeline|swimlane|quadrant|nested|tree|org-chart|layers|venn|pyramid|record-graph> [topic] [--source <caller>] [--ephemeral]`:
 
 | Type | Diagram |
 |------|---------|
@@ -43,7 +43,7 @@ Generates a self-contained HTML+SVG diagram, themed from the project's own desig
 | `pyramid` | Stacked priority/maturity levels |
 | `record-graph` | This project's own live open work-record queue — stage columns, dependency edges, six-axis badges. No topic. |
 
-`<topic>` is free text describing what to diagram. If `$ARGUMENTS` is empty, ask the user for both — except `record-graph`, which takes no topic at all: `/claude-tweaks:visualize record-graph` alone is a complete invocation, and `$ARGUMENTS` being exactly `record-graph` should never trigger the "ask for both" fallback.
+`[topic]` is free text describing what to diagram. If `$ARGUMENTS` is empty, ask the user for both — except `record-graph`, which takes no topic at all: `/claude-tweaks:visualize record-graph` alone is a complete invocation, and `$ARGUMENTS` being exactly `record-graph` should never trigger the "ask for both" fallback.
 
 Flags:
 - `--source <caller>` — set by soft-hook callers (`journeys`, `specify`, `review`) to select default placement (Step 3) without prompting.
@@ -55,7 +55,7 @@ Routing shape: Steps 2-3 run for both the enhanced and baseline paths (resolved 
 
 ### Step 1: Resolve type, topic, and generation path
 
-Resolve `<type>` from Input. Assess content richness alongside it: judge how much source material actually backs this topic — a one-line description or a couple of sentences vs. several dense documents (specs, design docs, strategy/risk writeups) or a conversation that has already surfaced multiple workstreams and tradeoffs. Map the judgment to one of two density tiers, carried forward to Step 4 (baseline) or `d2-enhanced-path.md` (enhanced):
+Resolve the type from Input. Assess content richness alongside it: judge how much source material actually backs this topic — a one-line description or a couple of sentences vs. several dense documents (specs, design docs, strategy/risk writeups) or a conversation that has already surfaced multiple workstreams and tradeoffs. Map the judgment to one of two density tiers, carried forward to Step 4 (baseline) or `d2-enhanced-path.md` (enhanced):
 
 | Tier | Source material | Output density |
 |---|---|---|

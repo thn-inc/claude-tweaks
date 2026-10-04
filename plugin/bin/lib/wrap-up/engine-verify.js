@@ -27,6 +27,7 @@ const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve');
 const { fetchNativeParent } = require('../issues/native-dependencies');
 const { fetchLinkedPRs } = require('../issues/linked-prs');
+const { readRunStateWithParent } = require('../hooks/context');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
@@ -497,22 +498,16 @@ function resolveParent(n, deps, cwd) {
 }
 
 // `verify`'s --run-dir may be the parent pipeline run directory, or (in a
-// multi-spec run) a spec-{N}/ subdirectory with no run-state.json of its
-// own -- checks runDir first, then one directory up. Absence or a parse/
-// shape failure at whichever path is checked returns null, which correctly
-// degrades to "no PR" (local-merge / degraded-pr-first) behavior in the
-// caller -- it never falls further than one level up, and it never treats a
-// present-but-PR-less run-state.json as a reason to keep searching.
+// multi-spec run) a spec-{N}/ subdirectory whose own run-state.json carries
+// no PR -- the run's shared PR stamp lives one directory up. Resolved through
+// hooks/context.js's readRunStateWithParent (#2858): per-field fill behind
+// the /^spec-/ basename gate, a per-spec pr winning over the parent's. Absence
+// or a parse/shape failure returns null, which correctly degrades to "no PR"
+// (local-merge / degraded-pr-first) behavior in the caller -- it never falls
+// further than one level up.
 function resolvePrNumber(runDir) {
-  const direct = path.join(runDir, 'run-state.json');
-  const statePath = fs.existsSync(direct) ? direct : path.join(path.dirname(runDir), 'run-state.json');
-  if (!fs.existsSync(statePath)) return null;
-  try {
-    const data = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-    return data.pr && data.pr.number ? data.pr.number : null;
-  } catch {
-    return null;
-  }
+  const { state } = readRunStateWithParent(runDir);
+  return state && state.pr && state.pr.number ? state.pr.number : null;
 }
 
 // ---- acceptance labeling ---------------------------------------------------

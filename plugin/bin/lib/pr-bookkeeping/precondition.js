@@ -4,7 +4,7 @@ const path = require('path');
 const {
   hasMaterializeCommit, hasLoggedPrDegrade, resolveRunPinnedIntegrationModel,
 } = require('../hooks/pre-tool-use');
-const { readRunState, RUN_ID_RE } = require('../hooks/context');
+const { readRunStateWithParent } = require('../hooks/context');
 const { mainCheckoutRoot, repoInfo } = require('../hooks/worktree-detect');
 
 // checkPrBookkeepingPrecondition({ runDir, cwd }) -> { ok, reason, message? }
@@ -41,24 +41,19 @@ function checkPrBookkeepingPrecondition({ runDir, cwd = process.cwd() }) {
   // for them. A per-spec dir carries its own status (and its own copy of the
   // stamps only when a skill passed that path as --run), so read it first
   // and fill a missing worktree/pr/prExempt -- and the PR-early degrade line
-  // below -- from the parent, the same fallback pack.js's resolveState
-  // applies. Reading only the per-spec dir falsely denied a correctly-stamped
+  // below -- from the parent, through hooks/context.js's
+  // readRunStateWithParent (#2858), the one fallback pack.js's resolveState
+  // shares. Reading only the per-spec dir falsely denied a correctly-stamped
   // multi-spec run (exit 4 on run 2026-09-30T190052-spec-2633-2664).
   let runState;
   let parentRunDir = null;
   try {
-    runState = readRunState(runDir) || {};
     // Only a genuine multi-spec child -- a spec-* dir whose parent is itself
     // run-id-shaped, the same rule pre-tool-use.js's perSpecPathspec applies
     // -- may borrow the parent's stamps; any other parent is not this run's.
-    if (/^spec-/.test(path.basename(runDir)) && RUN_ID_RE.test(path.basename(path.dirname(runDir)))) {
-      parentRunDir = path.dirname(runDir);
-      const parent = readRunState(parentRunDir) || {};
-      runState = { ...runState };
-      if (!runState.worktree && parent.worktree) runState.worktree = parent.worktree;
-      if (!runState.pr && parent.pr) runState.pr = parent.pr;
-      if (!runState.prExempt && parent.prExempt) runState.prExempt = parent.prExempt;
-    }
+    const resolved = readRunStateWithParent(runDir, { requireRunIdParent: true });
+    runState = resolved.state || {};
+    parentRunDir = resolved.parentRunDir;
   } catch {
     return { ok: true, reason: 'unreadable-run-state' };
   }
