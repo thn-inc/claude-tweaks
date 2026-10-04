@@ -140,6 +140,7 @@ test('cli: a malformed --file payload is exit 2 and nothing is written', () => {
     [['--file', write('unknown.json', '{"version":1}')], /unknown field "version"/],
     [['--file', write('entry.json', '{"memory":[{"file":"m.md"}]}')], /memory\[0\]/],
     [['--file', write('dup.json', '{"issues":[1]}'), '--issues', '2'], /given by both --file and --issues/],
+    [['--file', write('proto.json', '{"__proto__":{"issues":"abc"}}')], /unknown field "__proto__"/],
     [['--file'], /--file requires a path/],
   ];
   for (const [args, pattern] of cases) {
@@ -160,6 +161,8 @@ test('cli: malformed invocations are exit 2 and nothing is written', () => {
     [['--run', singleDir, '--deferred', 'Not A Token'], /deferred\[0\]/],
     [['--run', singleDir, '--issues', '12,abc'], /--issues entries must be record numbers/],
     [['--run', singleDir, '--oversight-exempt', '0'], /oversightExempt\[0\] must be a positive integer/],
+    [['--run', singleDir, '--deferred', 'worktree', '--deferred', 'claim-release'], /--deferred given more than once/],
+    [['--run', singleDir, '--issues', '99999999999999999999'], /issues\[0\] must be a positive integer/],
   ];
   for (const [args, pattern] of cases) {
     const { deps, err } = fakeDeps(worktree);

@@ -25,8 +25,9 @@
 // Exit 0 on success (echoes the written file's path — the run dir's
 // realpath, which can differ from the --run input string); 2 on a malformed
 // invocation (missing --run, an unknown argument, a dangling or empty list
-// value, a non-numeric record number, an unreadable/unparseable/non-object
-// --file, an unknown or invalid field — nothing is written on this code);
+// value, a repeated list flag, a non-numeric or not-a-safe-positive-integer
+// record number, an unreadable/unparseable/non-object --file, an unknown or
+// invalid field — nothing is written on this code);
 // 3 when the run dir is missing or not anchored under the main checkout (a
 // worktree-local shadow — _shared/pipeline-run-dir.md's Anchoring section,
 // [IL-127]), or the file is unwritable. No exit 1, like its three siblings.
@@ -47,15 +48,17 @@ const LIST_FLAGS = Object.freeze({
 const NUMERIC_FIELDS = new Set(['issues', 'oversightExempt']);
 
 function parseArgs(argv) {
-  const o = { run: null, lists: {}, file: null, sawFile: false, help: false };
+  const o = { run: null, lists: {}, repeated: null, file: null, sawFile: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => argv[++i] ?? null;
     if (a === '--help' || a === '-h') o.help = true;
     else if (a === '--run') o.run = next();
     else if (a === '--file') { o.sawFile = true; o.file = next(); }
-    else if (Object.hasOwn(LIST_FLAGS, a)) o.lists[a] = next();
-    else return { error: `unknown argument: ${a}` };
+    else if (Object.hasOwn(LIST_FLAGS, a)) {
+      if (Object.hasOwn(o.lists, a) && !o.repeated) o.repeated = a;
+      o.lists[a] = next();
+    } else return { error: `unknown argument: ${a}` };
   }
   return o;
 }
@@ -74,8 +77,9 @@ function run(argv, deps = realDeps) {
   if (o.error) { deps.stderr(o.error + '\n' + USAGE); return 2; }
   if (o.help) { deps.stdout(USAGE); return 0; }
   if (!o.run) return usageError('--run <run-dir> is required');
+  if (o.repeated) return usageError(`${o.repeated} given more than once`);
 
-  const fields = {};
+  const fields = Object.create(null);
   for (const [flag, raw] of Object.entries(o.lists)) {
     const key = LIST_FLAGS[flag];
     if (raw === null || raw.trim() === '') return usageError(`${flag} requires a comma-separated value`);

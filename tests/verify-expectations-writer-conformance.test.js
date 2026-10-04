@@ -27,8 +27,9 @@ test('the multi-spec defer protocol writes the deferred shape through the sancti
 test('the Review Console names the sanctioned writer for its non-finish-console writes', () => {
   const consoleDoc = read('plugin', 'skills', 'wrap-up', 'review-console.md');
   const calls = consoleDoc.split(CLI_CALL).length - 1;
-  assert.ok(calls >= 2, `expected the CLI call in step 11 and in the nothing-to-review fast path, found ${calls}`);
+  assert.ok(calls >= 3, `expected the CLI call in step 11's --file form, step 11's --issues form, and the nothing-to-review fast path, found ${calls}`);
   assert.ok(consoleDoc.includes(`${CLI_CALL} --file`), 'step 11 must name the --file form for memory/upstream');
+  assert.ok(consoleDoc.includes(`${CLI_CALL} --issues {n}[,{m}]`), 'step 11 must name the --issues form for a non-materialized run');
 });
 
 test('pipeline-run-dir.md registers the fourth sanctioned writer in both places it lists the family', () => {

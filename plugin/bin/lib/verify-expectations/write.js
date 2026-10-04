@@ -40,7 +40,7 @@ const FIELD_KEYS = Object.freeze(['memory', 'upstream', 'deferred', 'issues', 'o
 // only ever looks tokens up in a Set, so an unknown token is inert.
 const SAFE_TOKEN = /^[a-z][a-z0-9-]*$/;
 
-const isPositiveInt = (n) => Number.isInteger(n) && n > 0;
+const isPositiveInt = (n) => Number.isSafeInteger(n) && n > 0;
 const isNonEmptyString = (s) => typeof s === 'string' && s !== '';
 
 // fields -> null when valid, else a one-line reason naming the offender.
@@ -94,7 +94,7 @@ function mergeExpectations(existing, fields = {}) {
 // { runDir, fields? } -> { file, data }. Throws when the file is unwritable.
 function writeExpectations({ runDir, fields = {} }) {
   const file = path.join(runDir, FILE_NAME);
-  return withLock(`${file}.lock`, () => {
+  return withLock(path.join(runDir, '.verify-expectations.lock'), () => {
     const data = mergeExpectations(readExisting(file), fields);
     writeFileAtomic(file, `${JSON.stringify(data, null, 2)}\n`);
     return { file, data };

@@ -79,7 +79,7 @@ Call `exceedsOversightFloor({ risk: facets.risk, size: facets.size }, { riskFloo
   `$PIPELINE_RUN_DIR/verify-expectations.json`'s `oversightExempt` array through the sanctioned
   writer (#2764) — it creates the file with the version-1 defaults when absent, unions `N` into
   the array, and preserves every other field, as the console's own later write
-  (`review-console.md` Step 10) does:
+  (`review-console.md` step 11) does:
 
   ```bash
   node "${CLAUDE_PLUGIN_ROOT}/bin/set-verify-expectations.js" --run "$PIPELINE_RUN_DIR" --oversight-exempt {N}
