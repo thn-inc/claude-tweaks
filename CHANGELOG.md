@@ -68,6 +68,19 @@ Three conventions follow from how this repo works, and all are visible below:
 * flow-preflight misclassifies a claim-log-only… ([#2861](https://github.com/thn-inc/claude-tweaks/issues/2861)) ([a5f50c1](https://github.com/thn-inc/claude-tweaks/commit/a5f50c117d304a370fefd5d7af38b798f9f07de2))
 * Upstream defect report — `hooks.js teardown-run --merged`… ([#2747](https://github.com/thn-inc/claude-tweaks/issues/2747)) ([cc3426a](https://github.com/thn-inc/claude-tweaks/commit/cc3426a571ff8392e851a59aa0218b1fd8aa3a7b))
 
+### Highlights
+* Dream-pass proposals redact absolute paths in the quoted command, not just the error text.
+* Fixed run teardown on GitHub Enterprise remotes and made it remove the worktree before deleting the branch.
+* Added a sanctioned way to record verification expectations from a worktree-isolated wrap-up.
+* No user-visible change: reorganized the /specify skill files so shaping-mode checks have room to grow.
+* Made the list of places a skill's argument hint must match canonical and checked automatically.
+* Fixed changed-file detection returning nothing when the verification stamp is at the latest commit.
+* No user-visible change: compared the Hallmark design skill against Impeccable for design reviews.
+* No user-visible change — internal consolidation of how multi-spec pipeline runs locate their shared worktree and PR.
+* Multi-spec pipeline runs keep every spec's review verdict on the shared PR instead of the last one overwriting the rest.
+* Freshly started /flow runs are no longer mistaken for resumed ones after claiming their records.
+* No user-visible change — documentation accuracy fix.
+
 ## [6.135.0](https://github.com/thn-inc/claude-tweaks/compare/v6.134.1...v6.135.0) (2026-10-04)
 
 
