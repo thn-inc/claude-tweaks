@@ -246,5 +246,9 @@
   "plugin/bin/lib/review-context": {
     "lastSweptMs": 1790996827244,
     "lastHash": "5b634c584665810bbc90d3ceb0f9fbd1fc1d63c1"
+  },
+  "plugin/bin/lib/closing-tally": {
+    "lastSweptMs": 1791083334579,
+    "lastHash": "8e0d875fb043c0654dc5e3c9fcbeaf860df55ece"
   }
 }
