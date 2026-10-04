@@ -125,7 +125,7 @@ against one before the review does.
 
 - A single read a single sentence needs — one `node -e` or one `git` call is not a pack.
 - Anything that mutates. A pack is read-only; a writer belongs with the sanctioned writers
-  (`log-decision.js`, `stage-item.js`, `set-config.js`).
+  (`log-decision.js`, `stage-item.js`, `set-config.js`, `set-verify-expectations.js`).
 
 ## Origin
 
