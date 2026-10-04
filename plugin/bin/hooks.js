@@ -731,12 +731,13 @@ async function main(argv) {
     // pattern-matches literal mkdir/cp/redirect shell syntax in a Bash
     // command's text — a plain Node CLI whose own invocation carries none
     // of those tokens sidesteps that guard the same way bin/log-decision.js/
-    // bin/stage-item.js/bin/set-config.js already do, without special-
-    // casing this procedure inside the guard itself. Unlike those three
-    // (anchored --run only), this verb also validates --worktree is a real
-    // linked worktree of THIS repo (worktree-detect.js's repoInfo(),
-    // _shared/worktree-setup.md's "Adopt-or-create" section), which is why
-    // it lives here as a hooks.js subcommand rather than a fourth
+    // bin/stage-item.js/bin/set-config.js/bin/set-verify-expectations.js
+    // already do, without special-casing this procedure inside the guard
+    // itself. Unlike those four (anchored --run only), this verb also
+    // validates --worktree is a real linked worktree of THIS repo
+    // (worktree-detect.js's repoInfo(), _shared/worktree-setup.md's
+    // "Adopt-or-create" section), which is why it lives here as a hooks.js
+    // subcommand rather than another
     // standalone sibling CLI (docs/hooks.md's "state genuinely coupled to
     // hook enforcement itself" carve-out).
     //

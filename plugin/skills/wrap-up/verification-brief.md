@@ -75,23 +75,19 @@ Call `exceedsOversightFloor({ risk: facets.risk, size: facets.size }, { riskFloo
   resolves a record carrying no `demo:pending` label, unchanged by this gate.
 
   Record the exemption (#2383) so `wrap-up-engine.js verify`'s `acceptance-labeling` check knows
-  this record was deliberately skipped, not silently missed: append `N` to
-  `$PIPELINE_RUN_DIR/verify-expectations.json`'s `oversightExempt` array (read-modify-write —
-  the console's own later write, `review-console.md` Step 10, preserves this field rather than
-  clobbering it; create the file with the version-1 defaults first when it doesn't exist yet):
+  this record was deliberately skipped, not silently missed: add `N` to
+  `$PIPELINE_RUN_DIR/verify-expectations.json`'s `oversightExempt` array through the sanctioned
+  writer (#2764) — it creates the file with the version-1 defaults when absent, unions `N` into
+  the array, and preserves every other field, as the console's own later write
+  (`review-console.md` step 11) does:
 
   ```bash
-  node -e "
-  const fs = require('fs');
-  const p = process.argv[1] + '/verify-expectations.json';
-  let data = { version: 1, memory: [], upstream: [] };
-  if (fs.existsSync(p)) { try { data = JSON.parse(fs.readFileSync(p, 'utf8')); } catch {} }
-  const s = new Set(data.oversightExempt || []);
-  s.add(Number(process.argv[2]));
-  data.oversightExempt = [...s].sort((a, b) => a - b);
-  fs.writeFileSync(p, JSON.stringify(data));
-  " "$PIPELINE_RUN_DIR" "{N}"
+  node "${CLAUDE_PLUGIN_ROOT}/bin/set-verify-expectations.js" --run "$PIPELINE_RUN_DIR" --oversight-exempt {N}
   ```
+
+  Exit 3 from that writer means the run dir is wrong — re-resolve `$RUN_ROOT` per
+  `_shared/pipeline-run-dir.md` and retry; exit 2 is a malformed call to fix, never a reason to
+  fall back to a direct Write.
 - **`exceeds: true`** (including `reason: 'unscored'` — a missing or out-of-vocabulary
   `risk`/`size` facet fails closed) — proceed to Step 1 exactly as before this gate existed.
 
