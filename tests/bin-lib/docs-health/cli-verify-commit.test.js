@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
+const fs = require('fs');
 const { execFileSync, spawnSync } = require('child_process');
 const { git, makeOriginRepo, cloneOf } = require('./commit-fixtures');
 
@@ -46,4 +47,15 @@ test('the no-argument usage line names verify-commit', () => {
   const r = spawnSync('node', [CLI], { encoding: 'utf8' });
   assert.strictEqual(r.status, 2);
   assert.match(r.stderr, /verify-commit <sha>\.\.\./);
+});
+
+test('verify-commit resolves the integration branch from policy.yml when no flag is passed', () => {
+  const origin = makeOriginRepo();
+  const dir = cloneOf(origin);
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'));
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-branch: side\n');
+  const out = execFileSync('node', [CLI, 'verify-commit', origin.sideOnly, '--root', dir], { encoding: 'utf8' });
+  const { result } = JSON.parse(out);
+  assert.strictEqual(result.integrationBranch, 'side');
+  assert.deepStrictEqual(result.commits.map((c) => c.outcome), ['reachable']);
 });

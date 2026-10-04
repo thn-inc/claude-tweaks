@@ -20,6 +20,7 @@ const path = require('path');
 const { computeInboundReferences } = require('./lib/docs-health/findability');
 const { checkTrackedFreshness } = require('./lib/docs-health/freshness');
 const { verifyCommits } = require('./lib/docs-health/commit-ref');
+const { readIntegrationBranch } = require('./lib/policy');
 
 const TOOL_NAME = 'docs-health';
 const retryQueueCommands = makeRetryQueueCommands({ readDurableState, writeDurableState });
@@ -344,10 +345,15 @@ function cmdVerifyCommit(args) {
     process.exitCode = 2;
     return;
   }
+  // Canonical resolution (_shared/integration-branch.md): an explicit flag
+  // wins; absent that, the integration-branch policy key; only when neither
+  // resolves does verifyCommits fall back to <remote>/HEAD itself (#2866 I2).
+  const root = args.root || process.cwd();
+  const integrationBranch = args.integrationBranch || readIntegrationBranch(root) || null;
   const result = verifyCommits({
-    root: args.root || process.cwd(),
+    root,
     hashes,
-    integrationBranch: args.integrationBranch || null,
+    integrationBranch,
     remote: args.remote || 'origin',
     deepen: !args.noDeepen,
   });
