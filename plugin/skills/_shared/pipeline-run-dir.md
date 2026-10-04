@@ -99,7 +99,9 @@ When that happens, use `bin/log-decision.js` (`_shared/auto-decision-log.md`'s c
 appender) for a `decisions.md` entry, or `bin/stage-item.js` for a new staged file; `bin/set-config.js`
 writes a `config.yml` policy lever (`--run <run-dir> --key <lever> --value <value>`, or the
 `--run <run-dir> --set <key1>=<value1>,...` batch form that writes every lever in one call,
-refs #1376/#1580) the same way — none of the three are
+refs #1376/#1580) the same way, and `bin/set-verify-expectations.js` writes or updates
+`verify-expectations.json` (`--run <run-dir>` plus `--deferred`/`--issues`/`--oversight-exempt`/`--file`,
+refs #2764) — none of the four are
 subject to this tool-level pinning, and all work identically from a worktree session or the
 main checkout. Reach for `bin/set-config.js` rather than a hand-rolled `sed -i` on `config.yml`
 even from a Bash call: a `sed -i` target built from a shell variable set in an earlier command
@@ -220,15 +222,15 @@ argument still holds there.
   CLIs' documented invocation-failure code — a deliberate, stated deviation from the family's
   exit 2.
 
-- **Sanctioned-write CLIs** — `bin/log-decision.js`, `bin/stage-item.js`, and `bin/set-config.js`
-  (`--run`, refs #1376) — the run-dir writers a worktree-isolated session invokes when tool-level
+- **Sanctioned-write CLIs** — `bin/log-decision.js`, `bin/stage-item.js`, `bin/set-config.js`
+  (`--run`, refs #1376), and `bin/set-verify-expectations.js` (`--run`, refs #2764) — the run-dir writers a worktree-isolated session invokes when tool-level
   pinning refuses the run dir (see the tool-level pinning note above). Each applies the same
   strict anchored-under-the-main-checkout rule, but through `bin/lib/stage-item/write.js`'s
   exported `resolveTarget` rather than `worktree-detect.js` directly, and refuses with exit **3**
   — their documented run-dir-failure code, kept distinct from their exit 2 (malformed
   invocation), with its own two messages ("run dir does not exist" versus "not anchored under
-  the main checkout (a worktree-local shadow)"). A fourth writer imports that `resolveTarget`
-  rather than re-deriving the predicate.
+  the main checkout (a worktree-local shadow)"). A further writer imports that `resolveTarget`
+  rather than re-deriving the predicate, as the third and fourth did.
 
 - **The composer CLI** — `bin/compose-context.js` (`--run`, #1988) — writes
   `{run}/context/{step}.md` yet takes the resolver family's anchored-or-outside rule

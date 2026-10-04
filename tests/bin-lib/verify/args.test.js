@@ -192,3 +192,60 @@ test('#1928: --run is a usage error with --stamp-status or --changed-files', () 
   assert.throws(() => parseArgs(['--stamp-status', '--run', '/tmp/run-x']), UsageError);
   assert.throws(() => parseArgs(['--changed-files', '--run', '/tmp/run-x']), UsageError);
 });
+
+test('#2779: --cmd-env attaches KEY=VALUE to the named check only, repeatable, in either argv order', () => {
+  const got = parseArgs([
+    '--cmd-env', 'foo=MY_VAR=1',
+    '--cmd', 'foo=node check.js',
+    '--cmd', 'bar=node other.js',
+    '--cmd-env', 'foo=OTHER=two',
+  ]);
+  assert.deepStrictEqual(got.cmds, [
+    { name: 'foo', command: 'node check.js', env: { MY_VAR: '1', OTHER: 'two' } },
+    { name: 'bar', command: 'node other.js' },
+  ]);
+});
+
+test('#2779: a --cmd-env VALUE keeps later = signs and may be empty', () => {
+  const got = parseArgs(['--cmd', 'foo=x', '--cmd-env', 'foo=OPTS=a=b=c', '--cmd-env', 'foo=EMPTY=']);
+  assert.deepStrictEqual(got.cmds[0].env, { OPTS: 'a=b=c', EMPTY: '' });
+});
+
+test('#2779: a --cmd-env naming a check no --cmd declares is a UsageError naming the check and the declared set', () => {
+  assert.throws(
+    () => parseArgs(['--cmd', 'foo=x', '--cmd', 'bar=y', '--cmd-env', 'baz=MY_VAR=1']),
+    (err) => err instanceof UsageError
+      && /--cmd-env "baz" names no declared --cmd \(declared: foo, bar\)/.test(err.message),
+  );
+});
+
+test('#2779: malformed --cmd-env values are UsageErrors', () => {
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-env', 'foo']), UsageError);
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-env', '=MY_VAR=1']), UsageError);
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-env', 'foo=MY_VAR']), UsageError);
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-env', 'foo==1']), UsageError);
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-env', 'foo=MY VAR=1']), UsageError);
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-env']), UsageError);
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-env', 'foo=A=1', '--cmd-env', 'foo=A=2']), UsageError);
+});
+
+test('#2779: --cmd-env is a usage error in the read-only modes, which declare no check', () => {
+  assert.throws(() => parseArgs(['--stamp-status', '--cmd-env', 'foo=A=1']), UsageError);
+  assert.throws(() => parseArgs(['--changed-files', '--cmd-env', 'foo=A=1']), UsageError);
+});
+
+test('#2779: a variable named __proto__ stays plain data', () => {
+  const got = parseArgs(['--cmd', 'foo=x', '--cmd-env', 'foo=__proto__=1']);
+  assert.ok(Object.prototype.hasOwnProperty.call(got.cmds[0].env, '__proto__'));
+  assert.strictEqual(Object.getPrototypeOf(got.cmds[0].env), Object.prototype);
+});
+
+test('#2779: without --cmd-env no check carries an env key (unchanged parse shape)', () => {
+  const got = parseArgs(['--cmd', 'foo=x', '--cmd', 'bar=y']);
+  assert.deepStrictEqual(got.cmds, [{ name: 'foo', command: 'x' }, { name: 'bar', command: 'y' }]);
+  for (const c of got.cmds) assert.ok(!('env' in c));
+});
+
+test('#2779: USAGE names --cmd-env', () => {
+  assert.ok(USAGE.includes('--cmd-env <name>=<KEY=VALUE>'));
+});

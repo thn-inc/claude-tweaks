@@ -106,7 +106,7 @@ Present a summary. The `Collapse outcome` line below renders in every decomposit
 - {one or two `**Diagram suggestion:** …` blocks emitted by Step 2.5d}
 ```
 
-`{ref}` is `#{N}` under `work-backend: github-issues`, the bare record id under `local-files` — same convention as Step 1's Overlap Analysis.
+`{ref}` is `#{N}` under `work-backend: github-issues`, the bare record id under `local-files` — same convention as Step 1's Overlap Analysis (`overlap-resolution.md`).
 
 **`needs:definition` origin closure.** When `$ORIGIN_RECORD_NUM` is set (this run was reached via the `needs:definition` redirect — `specify/SKILL.md`'s Resolve-the-input case 1), what happens to the origin record depends on this run's collapse decision (Step 2.6):
 

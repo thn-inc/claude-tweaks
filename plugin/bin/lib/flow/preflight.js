@@ -19,6 +19,7 @@ const { readRunState } = require('../hooks/context');
 const { resolvePolicyConfig } = require('../policy-schema');
 const { computeDerivedDefaults } = require('../policy-derived-defaults');
 const { resolveTarget } = require('../stage-item/write');
+const { classifyDecisions } = require('../log-decision/claim-log');
 
 const BIN = path.join(__dirname, '..', '..');
 const VERIFY_JS = path.join(BIN, 'verify.js');
@@ -132,7 +133,16 @@ function computeAdoption({ runDir, mainRoot, cwd, deps }) {
   const hasConfig = readText(deps, path.join(real, 'config.yml')) !== null;
   const state = deps.readRunState(real);
   const specMaterialized = specOnBranch(deps, { mainRoot, runDirReal: real, state });
-  const hasOtherContent = nonEmpty(deps, path.join(real, 'decisions.md')) || nonEmpty(deps, path.join(real, 'events.jsonl')) || specMaterialized === true;
+  // /flow Step 2.8 logs its claim before this runs, so claim-log-only is still
+  // a fresh mint (#2861); anything classifyDecisions cannot place is content,
+  // and so is a decisions.md that exists but cannot be read (only ENOENT is absent).
+  let decisionsHasContent;
+  try {
+    decisionsHasContent = classifyDecisions(deps.readFile(path.join(real, 'decisions.md'))) === 'content';
+  } catch (err) {
+    decisionsHasContent = !(err && err.code === 'ENOENT');
+  }
+  const hasOtherContent = decisionsHasContent || nonEmpty(deps, path.join(real, 'events.jsonl')) || specMaterialized === true;
   if (hasConfig) return { case: 1, note: ADOPTION_NOTES[1].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, specMaterialized, backfills: [] };
   if (!hasOtherContent) return { case: 2, note: ADOPTION_NOTES[2].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, specMaterialized, backfills: [] };
   const backfills = [];

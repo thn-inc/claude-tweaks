@@ -276,3 +276,56 @@ test('checkPrBookkeepingPrecondition (#2664): a spec-* dir whose parent is NOT r
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.reason, 'no-worktree-stamp');
 });
+
+test('checkPrBookkeepingPrecondition (#2858): a per-spec runDir whose own run-state.json carries only status borrows the parent\'s worktree and PR', () => {
+  const parentId = '2026-09-17T000019-spec-7-8';
+  const main = gitRepoWithCommit();
+  const wt = linkedWorktreeOf(main);
+  commitPerSpecMaterializeFile(wt, parentId, 7);
+  const parentRunDir = makeRunDir(parentId);
+  writeRunState(parentRunDir, { status: 'active', worktree: wt, pr: { number: 1, url: 'https://example.com/1' } });
+  const runDir = path.join(parentRunDir, 'spec-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  writeRunState(runDir, { status: 'active' });
+  const r = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.reason, 'pr-stamped-or-exempt');
+});
+
+test('checkPrBookkeepingPrecondition (#2858): a status-only per-spec runDir honors a prExempt stamped on the parent', () => {
+  const parentId = '2026-09-17T000020-spec-7-8';
+  const main = gitRepoWithCommit();
+  const wt = linkedWorktreeOf(main);
+  commitPerSpecMaterializeFile(wt, parentId, 7);
+  const parentRunDir = makeRunDir(parentId);
+  writeRunState(parentRunDir, { status: 'active', worktree: wt, prExempt: 'initial-publish' });
+  const runDir = path.join(parentRunDir, 'spec-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  writeRunState(runDir, { status: 'active', pr: null });
+  const r = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.reason, 'pr-stamped-or-exempt');
+});
+
+test('checkPrBookkeepingPrecondition (#2858): a hand-corrupted parent stamp still fails open for a status-only per-spec runDir', () => {
+  const parentId = '2026-09-17T000021-spec-7-8';
+  const main = gitRepoWithCommit();
+  const wt = linkedWorktreeOf(main);
+  commitPerSpecMaterializeFile(wt, parentId, 7);
+  const parentRunDir = makeRunDir(parentId);
+  const runDir = path.join(parentRunDir, 'spec-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  writeRunState(runDir, { status: 'active' });
+
+  // A PR object with no usable number still reads as "a PR was recorded".
+  writeRunState(parentRunDir, { status: 'active', worktree: wt, pr: {} });
+  const shapeless = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
+  assert.strictEqual(shapeless.ok, true);
+  assert.strictEqual(shapeless.reason, 'pr-stamped-or-exempt');
+
+  // A non-string worktree cannot be resolved -- unreadable, not a missing stamp.
+  writeRunState(parentRunDir, { status: 'active', worktree: 5 });
+  const unresolvable = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
+  assert.strictEqual(unresolvable.ok, true);
+  assert.strictEqual(unresolvable.reason, 'unreadable-run-state');
+});

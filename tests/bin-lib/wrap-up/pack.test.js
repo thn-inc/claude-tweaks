@@ -327,6 +327,47 @@ test('resolveInputs: a spec-* subdirectory whose own run-state.json lacks worktr
   assert.deepStrictEqual(inputs.records, [1930]);
 });
 
+test('resolveInputs (#2858): a per-spec worktree wins over the parent\'s while a null per-spec pr is filled from it', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-precedence-'));
+  fs.writeFileSync(path.join(parent, 'run-state.json'), JSON.stringify({ worktree: '/parent/tree', pr: { number: 1901 } }));
+  const child = path.join(parent, 'spec-1930');
+  fs.mkdirSync(child, { recursive: true });
+  fs.writeFileSync(path.join(child, 'run-state.json'), JSON.stringify({ status: 'active', worktree: '/own/tree', pr: null }));
+  const inputs = resolveInputs({ runDir: child, cwd: '/elsewhere', deps: okDeps() });
+  assert.strictEqual(inputs.worktree, '/own/tree');
+  assert.strictEqual(inputs.pr, 1901);
+  assert.strictEqual(inputs.sources.state, 'parent');
+});
+
+test('resolveInputs (#2858): a non-spec run dir never borrows a parent directory\'s run-state.json, and a parent that contributes nothing is not the source', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-gate-'));
+  fs.writeFileSync(path.join(parent, 'run-state.json'), JSON.stringify({ worktree: '/parent/tree', pr: { number: 1901 } }));
+  const plain = path.join(parent, '2026-10-04T000000-record-1');
+  fs.mkdirSync(plain, { recursive: true });
+  fs.writeFileSync(path.join(plain, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  const inputs = resolveInputs({ runDir: plain, cwd: '/elsewhere', deps: okDeps() });
+  assert.strictEqual(inputs.worktree, '/elsewhere');
+  assert.strictEqual(inputs.pr, null);
+  assert.strictEqual(inputs.sources.state, 'run-state.json');
+
+  const emptyParent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-emptyparent-'));
+  fs.writeFileSync(path.join(emptyParent, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  const child = path.join(emptyParent, 'spec-1930');
+  fs.mkdirSync(child, { recursive: true });
+  fs.writeFileSync(path.join(child, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  assert.strictEqual(resolveInputs({ runDir: child, cwd: '/elsewhere', deps: okDeps() }).sources.state, 'run-state.json');
+
+  // No per-spec file at all: the only state there is came from the parent.
+  const exemptParent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-exemptparent-'));
+  fs.writeFileSync(path.join(exemptParent, 'run-state.json'), JSON.stringify({ prExempt: 'initial-publish' }));
+  const bare = path.join(exemptParent, 'spec-1930');
+  fs.mkdirSync(bare, { recursive: true });
+  assert.strictEqual(resolveInputs({ runDir: bare, cwd: '/elsewhere', deps: okDeps() }).sources.state, 'parent');
+  const noParent = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-noparent-')), 'spec-1930');
+  fs.mkdirSync(noParent, { recursive: true });
+  assert.strictEqual(resolveInputs({ runDir: noParent, cwd: '/elsewhere', deps: okDeps() }).sources.state, 'unavailable');
+});
+
 test('gatherPack: every probe ok → eight envelopes with ok:true, plus inputs/generatedAt/durationMs (#1930 AC2 shape)', async () => {
   const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', deps: okDeps() });
   assert.deepStrictEqual(Object.keys(pack).filter((k) => !['inputs', 'generatedAt', 'durationMs'].includes(k)).sort(), [...PROBE_NAMES].sort());

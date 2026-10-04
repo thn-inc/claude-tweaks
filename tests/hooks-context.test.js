@@ -534,3 +534,95 @@ test('writeRunState under the fail-open path (budget=0) — every worker still e
   const raw = fs.readFileSync(path.join(run, 'run-state.json'), 'utf8');
   assert.doesNotThrow(() => JSON.parse(raw), 'run-state.json must always be valid JSON, even under a fully unlocked race');
 });
+
+// #2858: the one multi-spec parent fallback (per-field fill of worktree/pr/prExempt).
+function mkSpecChild(parentState, childState, parentName = '2026-07-01T090000-spec-7-8') {
+  const project = tmpProject();
+  const parent = mkRun(project, parentName, parentState);
+  const child = path.join(parent, 'spec-7');
+  fs.mkdirSync(child, { recursive: true });
+  if (childState !== undefined) fs.writeFileSync(path.join(child, 'run-state.json'), typeof childState === 'string' ? childState : JSON.stringify(childState));
+  return { parent, child };
+}
+
+test('readRunStateWithParent: a status-only per-spec state is filled per field from the parent', () => {
+  const { parent, child } = mkSpecChild({ worktree: '/w/tree', pr: { number: 12, url: 'u' }, prExempt: 'initial-publish' }, { status: 'active' });
+  const r = ctx.readRunStateWithParent(child);
+  assert.deepStrictEqual(r.state, { status: 'active', worktree: '/w/tree', pr: { number: 12, url: 'u' }, prExempt: 'initial-publish' });
+  assert.strictEqual(r.parentRunDir, parent);
+  assert.deepStrictEqual(r.filled, ['worktree', 'pr', 'prExempt']);
+});
+
+test('readRunStateWithParent: a usable per-spec value wins over the parent (precedence)', () => {
+  const { child } = mkSpecChild({ worktree: '/parent/tree', pr: { number: 12 }, prExempt: 'p' }, { worktree: '/own/tree', pr: { number: 99 }, prExempt: 'own' });
+  const r = ctx.readRunStateWithParent(child);
+  assert.deepStrictEqual(r.state, { worktree: '/own/tree', pr: { number: 99 }, prExempt: 'own' });
+  assert.deepStrictEqual(r.filled, []);
+});
+
+test('readRunStateWithParent: a present-but-unusable per-spec value (pr null, pr {}, a string pr.number, worktree "", a non-string worktree) is filled from the parent', () => {
+  for (const own of [{ pr: null, worktree: '' }, { pr: {}, worktree: '' }, { pr: { number: '12' }, worktree: 5 }]) {
+    const { child } = mkSpecChild({ worktree: '/w/tree', pr: { number: 12 } }, own);
+    const r = ctx.readRunStateWithParent(child);
+    assert.strictEqual(r.state.worktree, '/w/tree');
+    assert.deepStrictEqual(r.state.pr, { number: 12 });
+    assert.deepStrictEqual(r.filled, ['worktree', 'pr']);
+  }
+});
+
+test('readRunStateWithParent: a non-spec run dir never borrows from a parent directory that happens to hold a run-state.json', () => {
+  const project = tmpProject();
+  const parent = mkRun(project, '2026-07-01T090000-spec-1', { worktree: '/w/tree', pr: { number: 12 } });
+  const child = path.join(parent, 'not-a-spec');
+  fs.mkdirSync(child);
+  assert.deepStrictEqual(ctx.readRunStateWithParent(child), { state: null, parentRunDir: null, filled: [] });
+  fs.writeFileSync(path.join(child, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  assert.deepStrictEqual(ctx.readRunStateWithParent(child), { state: { status: 'active' }, parentRunDir: null, filled: [] });
+});
+
+test('readRunStateWithParent: requireRunIdParent refuses a spec-* dir whose parent is not run-id-shaped, and still borrows under a run-id-shaped parent', () => {
+  const loose = mkSpecChild({ worktree: '/w/tree', pr: { number: 12 } }, { status: 'active' }, 'not-a-run');
+  assert.deepStrictEqual(ctx.readRunStateWithParent(loose.child, { requireRunIdParent: true }), { state: { status: 'active' }, parentRunDir: null, filled: [] });
+  assert.deepStrictEqual(ctx.readRunStateWithParent(loose.child).filled, ['worktree', 'pr']);
+  const strict = mkSpecChild({ worktree: '/w/tree', pr: { number: 12 } }, { status: 'active' });
+  assert.deepStrictEqual(ctx.readRunStateWithParent(strict.child, { requireRunIdParent: true }).filled, ['worktree', 'pr']);
+});
+
+test('readRunStateWithParent: missing, malformed, and non-object files never throw', () => {
+  const neither = mkSpecChild(undefined, undefined);
+  assert.deepStrictEqual(ctx.readRunStateWithParent(neither.child), { state: null, parentRunDir: neither.parent, filled: [] });
+
+  const badChild = mkSpecChild({ worktree: '/w/tree', pr: { number: 12 } }, '{not json');
+  assert.deepStrictEqual(ctx.readRunStateWithParent(badChild.child).state, { worktree: '/w/tree', pr: { number: 12 } });
+
+  const badParent = mkSpecChild(undefined, { status: 'active' });
+  fs.writeFileSync(path.join(badParent.parent, 'run-state.json'), '{not json');
+  assert.deepStrictEqual(ctx.readRunStateWithParent(badParent.child), { state: { status: 'active' }, parentRunDir: badParent.parent, filled: [] });
+
+  const arrays = mkSpecChild(undefined, '[1,2]');
+  fs.writeFileSync(path.join(arrays.parent, 'run-state.json'), '"a string"');
+  assert.deepStrictEqual(ctx.readRunStateWithParent(arrays.child).state, null);
+
+  for (const bad of [undefined, null, 42, '']) {
+    assert.deepStrictEqual(ctx.readRunStateWithParent(bad), { state: null, parentRunDir: null, filled: [] });
+  }
+});
+
+test('readRunStateWithParent: reads through the injected reader, and a throwing reader degrades to null', () => {
+  const seen = [];
+  const read = (dir) => { seen.push(dir); return path.basename(dir) === 'spec-7' ? { status: 'active' } : { pr: { number: 5 } }; };
+  const r = ctx.readRunStateWithParent(path.join('/runs/2026-07-01T090000-spec-7-8', 'spec-7'), { read });
+  assert.deepStrictEqual(r.state, { status: 'active', pr: { number: 5 } });
+  assert.deepStrictEqual(seen, [path.join('/runs/2026-07-01T090000-spec-7-8', 'spec-7'), '/runs/2026-07-01T090000-spec-7-8']);
+  const thrown = ctx.readRunStateWithParent('/runs/x/spec-7', { read: () => { throw new Error('boom'); } });
+  assert.deepStrictEqual(thrown, { state: null, parentRunDir: '/runs/x', filled: [] });
+});
+
+test('readRunStateWithParent: a truthy but malformed parent stamp is passed through as written, an empty one is not', () => {
+  const corrupt = mkSpecChild({ worktree: 5, pr: {} }, { status: 'active' });
+  const r = ctx.readRunStateWithParent(corrupt.child);
+  assert.deepStrictEqual(r.state, { status: 'active', worktree: 5, pr: {} });
+  assert.deepStrictEqual(r.filled, ['worktree', 'pr']);
+  const empty = mkSpecChild({ worktree: '', pr: null }, { status: 'active' });
+  assert.deepStrictEqual(ctx.readRunStateWithParent(empty.child), { state: { status: 'active' }, parentRunDir: empty.parent, filled: [] });
+});
