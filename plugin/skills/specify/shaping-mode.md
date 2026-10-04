@@ -141,7 +141,8 @@ Before editing, keep the record's fetched title and body exactly as they were. A
 The shaped sections above are `/specify`'s editorial interpretation; `## Original request` is the record's ground truth if that interpretation ever needs to be checked or redone. The preserved copy is exempt from the spec-shaped-body placeholder check (#1240), so preservation stays byte-exact even when the original text carries a literal `TBD`/`TODO`/ambiguity marker.
 
 
-**Split across two files (#1346).** This file holds the record-body edit into spec shape, the
+**Split across three files (#1346, #2841).** This file holds the record-body edit into spec shape, the
 spec-shape template, and preserving the original request. The metadata block, scoring/stage-label
-stamping, compose-then-write-once, read-back verification, and Actions Performed live in
-`shaping-mode-stamping.md`, this skill's directory. Continue there now.
+stamping, and compose-then-write-once live in `shaping-mode-stamping.md`, this skill's directory;
+read-back verification and Actions Performed live in `shaping-mode-readback.md`, which that file
+hands off to. Continue in `shaping-mode-stamping.md` now.

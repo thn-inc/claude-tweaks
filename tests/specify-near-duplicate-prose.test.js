@@ -18,7 +18,8 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const SHAPING_MODE = read('plugin/skills/specify/shaping-mode.md');
-const SHAPING_STAMPING = read('plugin/skills/specify/shaping-mode-stamping.md');
+// Actions Performed moved to shaping-mode-readback.md (#2841's split).
+const SHAPING_STAMPING = read('plugin/skills/specify/shaping-mode-stamping.md') + read('plugin/skills/specify/shaping-mode-readback.md');
 const NEXT_MODE_SHAPE = read('plugin/skills/specify/next-mode-shape.md');
 const QUEUE_PULL = read('plugin/skills/dispatch/queue-pull-script.md');
 const DISPATCH_SKILL = read('plugin/skills/dispatch/SKILL.md');
