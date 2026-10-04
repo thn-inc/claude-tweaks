@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-04T15:51:28.860Z",
+  "computedAt": "2026-10-04T16:28:24.911Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -25,7 +25,7 @@
       },
       {
         "number": 2858,
-        "updatedAt": "2026-10-01T16:18:56Z",
+        "updatedAt": "2026-10-04T15:52:51Z",
         "state": "OPEN"
       },
       {
@@ -506,84 +506,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: reflect hindsight from #2664\n\nDefer-reason: tangential\n\n## Current State\n\nFour readers each carry their own copy of the multi-spec \"per-spec run dir falls back to its parent for the shared worktree/PR stamps\" rule:\n\n- `plugin/bin/lib/wrap-up/pack.js` `resolveState` (#1930 review C1) — fills `worktree`/`pr` from the parent.\n- `plugin/bin/lib/wrap-up/engine-verify.js` `resolvePrNumber` — reads the parent `run-state.json` when the per-spec one is absent (a different rule: whole-file fallback, not per-field).\n- `plugin/bin/lib/pr-bookkeeping/precondition.js` `checkPrBookkeepingPrecondition` (#2664) — per-field fill of `worktree`/`pr`/`prExempt` plus the parent `decisions.md` degrade line.\n- `plugin/skills/flow/multispec-review-console.md:88` — prose: reads `pr` on the parent `run-state.json`.\n\nThe three code copies already disagree on semantics (per-field fill vs whole-file fallback; `/^spec-/` basename gate in two, none in `resolvePrNumber`; `prExempt` honored in one). A fifth reader will copy whichever it finds first.\n\n## Deliverables\n\n1. One exported helper beside `readRunState` in `plugin/bin/lib/hooks/context.js` (e.g. `readRunStateWithParent(runDir)`) implementing the per-field fill for `worktree`/`pr`/`prExempt` behind the `/^spec-/` basename gate, returning `{ state, parentRunDir }`.\n2. Migrate `pack.js` `resolveState`, `engine-verify.js` `resolvePrNumber`, and `precondition.js` to it; keep each call site's existing tests green.\n3. `resolvePrNumber`'s whole-file fallback converges on the per-field rule (a per-spec `run-state.json` carrying only `status` must still find the parent PR) — add a test for that shape.\n\n## Acceptance Criteria\n\n- `grep -rn \"path.dirname(runDir), 'run-state.json'\" plugin/bin` returns no hits outside the new helper.\n- A per-spec dir with a status-only `run-state.json` resolves the parent PR in all three consumers (one test each).\n- `npm test` passes.\n\n## Release Note\n\nNo user-visible change — internal consolidation of how multi-spec pipeline runs locate their shared worktree and PR.\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-09-30T20:34:07Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2858,
-        "state": "OPEN",
-        "title": "Consolidate the multi-spec parent run-state fallback into one context.js helper",
-        "updatedAt": "2026-10-01T16:18:56Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
