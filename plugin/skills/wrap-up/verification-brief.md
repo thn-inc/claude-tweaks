@@ -84,6 +84,10 @@ Call `exceedsOversightFloor({ risk: facets.risk, size: facets.size }, { riskFloo
   ```bash
   node "${CLAUDE_PLUGIN_ROOT}/bin/set-verify-expectations.js" --run "$PIPELINE_RUN_DIR" --oversight-exempt {N}
   ```
+
+  Exit 3 from that writer means the run dir is wrong — re-resolve `$RUN_ROOT` per
+  `_shared/pipeline-run-dir.md` and retry; exit 2 is a malformed call to fix, never a reason to
+  fall back to a direct Write.
 - **`exceeds: true`** (including `reason: 'unscored'` — a missing or out-of-vocabulary
   `risk`/`size` facet fails closed) — proceed to Step 1 exactly as before this gate existed.
 
