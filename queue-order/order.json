@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-04T11:48:43.440Z",
+  "computedAt": "2026-10-04T12:04:16.940Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -150,7 +150,7 @@
       },
       {
         "number": 2695,
-        "updatedAt": "2026-10-01T16:14:58Z",
+        "updatedAt": "2026-10-04T11:50:06Z",
         "state": "OPEN"
       },
       {
@@ -1090,96 +1090,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`design-wrapper` routes all design-quality work to Impeccable; no comparison against alternative \"anti-slop\" design skills exists. A described skill, Hallmark, similar to Impeccable/Taste, strips AI-slop gradients/fonts and has a \"study\" command to pull styling from a reference screenshot or website and apply it to a build.\n\n## Deliverables\n\n- Trial Hallmark's study command (reference-screenshot styling) against a sample build alongside Impeccable's own asset/finish-review passes.\n- Decide whether Hallmark's reference-matching complements Impeccable or is redundant with it.\n\n## Acceptance Criteria\n\n- A short comparison note (overlap/gaps vs. Impeccable) checked into `design-wrapper`'s docs.\n\n## Release Note\n\nNo user-visible change: compared the Hallmark design skill against Impeccable for design reviews.\n\n## Technical Approach\n\nRun Hallmark's study command against a reference screenshot/website on the same sample build `design-wrapper`'s existing Impeccable passes cover, focusing specifically on whether Hallmark's reference-matching capability is something Impeccable's own `impeccable-asset-producer`/finish-reviewer roles already do, partially do, or don't do at all. Write the comparison as a short note landing in `design-wrapper`'s docs.\n\n### Key Files\n\n- `plugin/skills/design-wrapper/modes/` — the existing Impeccable-routed passes to compare against\n- `plugin/skills/design-wrapper/` docs — where the comparison note lands\n\n## Gotchas\n\n- Hallmark is an external skill this repo doesn't own — note its availability/version stability in the comparison.\n- This is related in spirit to #2694 (Taste/Web-Design-Guidelines comparison) — consider whether all three third-party design-skill evaluations (#2690, #2694, #2695) should share one consolidated comparison note rather than three separate docs additions, to avoid `design-wrapper`'s docs accumulating redundant one-off comparison files.\n\n## Original request\n\nCompare Hallmark skill against Impeccable for design-wrapper\n\nCurrent State:\n- design-wrapper routes all design-quality work to Impeccable; no comparison against alternative \"anti-slop\" design skills exists.\n- The reel's transcript (the caption alone was a bare hook) describes Hallmark, a skill similar to Impeccable/Taste that strips AI-slop gradients/fonts and has a \"study\" command to pull styling from a reference screenshot or website and apply it to a build.\n\nDeliverables:\n- Trial Hallmark's study command (reference-screenshot styling) against a sample build alongside Impeccable's own asset/finish-review passes.\n- Decide whether Hallmark's reference-matching complements Impeccable or is redundant with it.\n\nAcceptance Criteria:\n- A short comparison note (overlap/gaps vs. Impeccable) checked into design-wrapper's docs.\n\nSource: https://www.instagram.com/reel/Db9fLwkpvFC/\n",
-        "createdAt": "2026-09-20T19:00:57Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2695,
-        "state": "OPEN",
-        "title": "Compare Hallmark skill against Impeccable for design-wrapper",
-        "updatedAt": "2026-10-01T16:14:58Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
