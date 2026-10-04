@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-04T13:59:11.734Z",
+  "computedAt": "2026-10-04T14:43:25.067Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -100,7 +100,7 @@
       },
       {
         "number": 2772,
-        "updatedAt": "2026-10-01T16:12:20Z",
+        "updatedAt": "2026-10-04T14:00:33Z",
         "state": "OPEN"
       },
       {
@@ -731,84 +731,6 @@
           "origin": null,
           "risk": "low",
           "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: consolidated Review Console — run `2026-09-21T213441-spec-2697-2757-2758-2759`, ledger row #20 (residual scope; the reflect finding's plan-level half was already applied as a skill update at `301a7351b`)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\nAdding a flag to a skill requires updating every *syntactic mirror* of that skill's argument surface.\nThe count of those mirrors is currently carried in a plan author's head, and it has been wrong twice:\n\n- **#679** established \"a new flag has exactly two syntactic-mirror surfaces beyond the Input table\"\n  — the `argument-hint` frontmatter line and the Input parse line.\n- **#2759** proved that convention was itself an undercount. Task 3 updated both named surfaces;\n  Task 6's full-suite gate then found a **third**: `plugin/skills/help/reference-card.md`'s `Takes`\n  column, byte-pinned by `tests/reference-card-argument-hint.test.js` under #564. Fixed at `613e230`.\n\nIt was caught only by luck of two coincidences: that a byte-pinning suite happened to exist for that\nparticular surface, and that the run's gate compared failing-file **sets** per file rather than\ntotals (346 failures against a 395 baseline reads as an improvement; only the per-file diff exposed\nthe new red file).\n\nThe plan-authoring half of the fix has shipped: `plugin/skills/build/plan-authoring-checks.md` now\ncarries \"Derive a flag's mirror surfaces by grepping for an existing flag rather than from a\nremembered count\" (applied this run at `301a7351b`). That makes the next plan author less likely to\nundercount. It does **not** make the enumeration canonical, and it does not make an undercount\ndetectable — which is the residual this record covers.\n\n## Deliverables\n\n- One canonical enumeration of every `argument-hint` mirror surface — a named table in\n  `docs/skill-authoring.md`, or a new `plugin/skills/_shared/argument-hint-mirrors.md` — listing the\n  frontmatter line, the Input parse line, and `help/reference-card.md`'s `Takes` column as permanent\n  entries, with room for the next one.\n- One conformance test that walks that enumeration **mechanically** for every skill, so a skill whose\n  flag set disagrees across surfaces fails by construction rather than by whichever byte-pin happens\n  to exist.\n- Retire the \"exactly two surfaces\" wording wherever it still appears.\n\n## Acceptance Criteria\n\nAdding a flag to any skill's `argument-hint` and leaving `help/reference-card.md`'s `Takes` column\nstale fails the new conformance test — proven by making that exact change and showing the test red,\nthen green after the mirror is updated.\n\nThe enumeration lives in exactly one file; no other file restates the list (this repo's\nCross-references convention).\n\nEvery existing skill passes the new test at the time it lands, or the exceptions are named.\n\n_Filed by the consolidated Review Console (`flow/multispec-review-console.md`), from\n`spec-2759/staged/reflect-1.md`._\n\n## Release Note\n\nMade the list of places a skill's argument hint must match canonical and checked automatically.\n",
-        "createdAt": "2026-09-22T13:26:42Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2772,
-        "state": "OPEN",
-        "title": "Make the argument-hint mirror-surface set canonical and mechanically checked — the 'exactly two surfaces' convention was itself an undercount (third: reference-card.md Takes)",
-        "updatedAt": "2026-10-01T16:12:20Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
           "ceremony": null,
           "solutionUnjustified": false,
           "breaking": false,
