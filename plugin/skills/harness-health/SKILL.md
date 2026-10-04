@@ -208,6 +208,16 @@ Report-only, matching `/code-health` — every finding files as a `by:harness-he
 
 > **Billing note:** Routines run inside the subscription; verify automation-credit specifics against the live account. (Canonical text in `_shared/health-routine-notes.md` — shared with `/code-health`, `/docs-health`, and `/journey-health`.)
 
+## Dream Pass (cross-session failure mining)
+
+A separate, standalone-only pass (#2691): mines this account's own session transcripts for
+tool-call failures repeating across two or more DISTINCT sessions — the two-session evidence
+bar, enforced in code (`bin/lib/dream/scan.js`'s `filterByEvidenceBar`), not just prose — and
+stages propose-only writeups with quoted evidence under a `*-dream-standalone*` run directory.
+Read-only/propose-only: it never edits CLAUDE.md or a skill file, and nothing it stages is
+auto-applied. Full CLI invocation, scope, and review flow: `dream-pass.md` in this skill's
+directory.
+
 ## Next Actions
 
 Render as plain markdown (docs/skill-authoring.md's Skill handoffs convention). Bold the `/claude-tweaks:routine create harness-health` line and suffix it `(recommended)` once a first standalone run confirms the output looks right; before that, render all three lines unranked in the order below.
