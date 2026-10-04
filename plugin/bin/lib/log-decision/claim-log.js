@@ -16,6 +16,7 @@ const STEP_SRC = CLAIM_LOG_STEP.replace(/\./g, '\\.');
 const SINGLE_ACTION_SRC = 'claimed #\\d+\\b';
 const BATCH_ACTION_SRC = 'Claimed all \\d+ targets under run\\b';
 const ACTION_RE = new RegExp(`^(?:${SINGLE_ACTION_SRC}|${BATCH_ACTION_SRC})`);
+const BATCH_LOG_RE = new RegExp(`${STEP_SRC}: ${BATCH_ACTION_SRC}`);
 const SECTION_HEADING = `## ${CLAIM_LOG_SECTION}`;
 
 // The --text value claim-targets.md dictates for one claimed target.
@@ -36,7 +37,7 @@ function isClaimLogEntry(line) {
 function hasClaimLogFor(body, n) {
   const text = String(body || '');
   if (new RegExp(`${STEP_SRC}: claimed #${n}\\b`).test(text)) return true;
-  return new RegExp(`${STEP_SRC}: ${BATCH_ACTION_SRC}`).test(text);
+  return BATCH_LOG_RE.test(text);
 }
 
 // decisions.md text (null = file absent) -> 'absent' | 'empty' |
@@ -46,9 +47,10 @@ function hasClaimLogFor(body, n) {
 // parse failure never reads as "only claim lines".
 function classifyDecisions(text) {
   if (text === null || text === undefined) return 'absent';
-  if (!String(text).trim()) return 'empty';
+  const str = String(text);
+  if (!str.trim()) return 'empty';
   let claims = 0;
-  for (const raw of String(text).split(/\r?\n/)) {
+  for (const raw of str.split(/\r?\n/)) {
     const line = raw.trimEnd();
     if (!line) continue;
     if (line === SECTION_HEADING) continue;
