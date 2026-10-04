@@ -91,6 +91,23 @@ test('judge-procedure.md carries all ten numbered judgment points', () => {
   }
 });
 
+// #2866: a finding's proposed replacement text must not cite a commit hash
+// that was never checked against complete history (#2785 filed two wrong ones).
+test('judge-procedure.md point 6 runs verify-commit on every cited commit hash before emitting', () => {
+  const body = readJudgeBody();
+  const start = body.search(/^6\. /m);
+  const end = body.search(/^7\. /m);
+  assert.ok(start >= 0 && end > start, 'points 6 and 7 not found');
+  const point6 = body.slice(start, end);
+  assert.ok(
+    point6.includes('node "{plugin-root}/bin/docs-health.js" verify-commit'),
+    'point 6 must carry the verify-commit invocation',
+  );
+  assert.match(point6, /every commit hash/i, 'point 6 must cover every commit hash a finding cites');
+  assert.match(point6, /before emitting/i, 'point 6 must run the check before the finding is emitted');
+  assert.match(point6, /`unverifiable`[^.]*never[^.]*`not-found`/, 'point 6 must forbid reading unverifiable as not-found');
+});
+
 // This is the invariant the whole extraction rests on: the body is inlined
 // verbatim into clean-room Task agents, which see ONLY their own prompt. Any
 // reference to a sibling file or to SKILL.md's own numbering is unresolvable

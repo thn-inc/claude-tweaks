@@ -50,6 +50,15 @@ Throughout, the bar for flagging anything is "would this actually mislead a read
    ```
 
    For each path in the result's `missing` array, that's a broken dependency — a staleness finding on its own. For each entry in `stale`, judge whether the tracked file's change is substantive enough to actually invalidate what the doc claims (a trivial reformat doesn't; a rewritten function signature does). A mismatch (stated fact, broken dependency, substantive tracked-file drift, or a failing/contradicting executed command) is a `category: "staleness"` finding.
+
+   Before emitting any finding whose `newString` cites a commit hash — including the replacement for a commit-hash citation that no longer resolves — verify every commit hash in that `newString` against complete repository history:
+
+   ```bash
+   node "{plugin-root}/bin/docs-health.js" verify-commit <hash> [<hash> ...] --root "{root}"
+   ```
+
+   Each entry in the result's `commits` array carries an `outcome`: `reachable` (on the integration branch — safe to cite), `exists-unreachable` (a real commit that is not on the integration branch), `not-found`, `ambiguous` (an abbreviated hash matching several commits — re-run with the full hash), `invalid`, or `unverifiable` (history could not be completed, eg a shallow clone that could not be deepened — no verdict, and never read it as `not-found`). Cite a hash as fact only when its outcome is `reachable`; for any other outcome, either drop the hash from `newString` or state explicitly in `newString` that the commit is unreachable from the integration branch or could not be verified, and name the outcome in `reason`.
+
 7. For every finding, judge `misleads`: `"human"` (a skim-and-notice-caveat reader partially self-corrects), `"agent"` (retrieval-style consumption — a chunked search hit, not a full read-through — has no such safety net; weight this higher), or `"both"`.
 8. Judge `classification`: `"additive"` (a one-line fact correction, an added disclaimer) or `"restructural"` (reorganizing a doc that mixes genres, splitting a doc, moving a file).
 9. Judge `confidence`: `"high"` when the evidence is mechanical and directly checkable — a stated count/date/path/version contradicted by live `grep`/`find`/`git log` output, a `check-freshness` `missing` entry, or a genre that is self-evidently native (point 1); `"med"` when it rests on a judgment call a reasonable second reviewer could see differently — a depth-mismatch or genre-drift call resting on heading language, or an inbound-reference count judged as a genuine orphan vs. intentionally standalone; `"low"` when the evidence is circumstantial or the doc's own intent is ambiguous — a `check-freshness` `stale` entry whose substantiveness is itself a judgment call, or a placement-fit divergence in a doc that could plausibly belong to either genre. This value drives whether the finding is filed or merely captured, so calibrate honestly, not optimistically.
