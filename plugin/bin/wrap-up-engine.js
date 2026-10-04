@@ -46,6 +46,7 @@ const { runVerify, renderVerifyTable, resolveArchivedRunDir } = require('./lib/w
 const { resolveLedgerPath, flipLedgerRow, TERMINAL_STATUSES } = require('./lib/wrap-up/ledger-write');
 const { appendEntry, formatEntry } = require('./lib/log-decision/append');
 const { writeFileAtomic } = require('./lib/atomic-write');
+const { writeExpectations } = require('./lib/verify-expectations/write');
 
 const USAGE = [
   'usage: wrap-up-engine.js plan --run-dir <dir> --base <sha> [--ceremony <profile>] [--skill-budget n] [--doc-budget n] [--signals <json>] [--dry-run]',
@@ -549,16 +550,8 @@ function runFinishConsole(args) {
   // Step 1: verify-expectations.json (read-modify-write — preserve every
   // field this verb doesn't itself own, same discipline
   // review-console.md's step 11 documents for oversightExempt/issues).
-  const expectationsPath = path.join(args.runDir, 'verify-expectations.json');
-  let existing = {};
   try {
-    existing = JSON.parse(fs.readFileSync(expectationsPath, 'utf8'));
-  } catch { existing = {}; }
-  const expectations = {
-    ...existing, version: 1, memory, upstream,
-  };
-  try {
-    writeFileAtomic(expectationsPath, `${JSON.stringify(expectations, null, 2)}\n`);
+    writeExpectations({ runDir: args.runDir, fields: { memory, upstream } });
   } catch (e) {
     process.stderr.write(`wrap-up-engine.js finish-console: step 1 (verify-expectations.json) failed: ${e.message}\n`);
     process.exitCode = 1;
