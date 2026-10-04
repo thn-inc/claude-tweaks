@@ -335,6 +335,36 @@ test('runOne merges a check env into the spawn env option, over the inherited en
   }
 });
 
+test('runOne on win32 drops an inherited case variant of a check env name, so the check value is the one the child gets (#2779)', async () => {
+  // Windows env names are case-insensitive and spawn keeps only the
+  // lexicographically first of two case variants — an inherited upper-case
+  // name would otherwise beat the check's own lower-case spelling.
+  const prior = process.env.VERIFY_RUN_TEST_CASEVAR;
+  process.env.VERIFY_RUN_TEST_CASEVAR = 'inherited';
+  try {
+    const win = makeFakeSpawn({ 'run-x': { exit: 0 } });
+    await runOne({
+      name: 'foo', command: 'run-x', logDir: tmpLogDir(), spawnImpl: win.spawnImpl, now: Date.now,
+      env: { verify_run_test_casevar: 'mine' }, platform: 'win32',
+    });
+    assert.strictEqual(win.spawnedOpts[0].env.verify_run_test_casevar, 'mine');
+    assert.ok(!('VERIFY_RUN_TEST_CASEVAR' in win.spawnedOpts[0].env));
+    // Every other inherited name is untouched.
+    assert.strictEqual(win.spawnedOpts[0].env.PATH, process.env.PATH);
+
+    // Elsewhere names are case-sensitive: both spellings are distinct variables.
+    const posix = makeFakeSpawn({ 'run-x': { exit: 0 } });
+    await runOne({
+      name: 'foo', command: 'run-x', logDir: tmpLogDir(), spawnImpl: posix.spawnImpl, now: Date.now,
+      env: { verify_run_test_casevar: 'mine' }, platform: 'linux',
+    });
+    assert.strictEqual(posix.spawnedOpts[0].env.verify_run_test_casevar, 'mine');
+    assert.strictEqual(posix.spawnedOpts[0].env.VERIFY_RUN_TEST_CASEVAR, 'inherited');
+  } finally {
+    if (prior === undefined) delete process.env.VERIFY_RUN_TEST_CASEVAR; else process.env.VERIFY_RUN_TEST_CASEVAR = prior;
+  }
+});
+
 test('runChecks gives each check only its own env; a check without one spawns exactly as before (#2779)', async () => {
   const { spawnImpl, spawned, spawnedOpts } = makeFakeSpawn({ 'cmd-foo': { exit: 0 }, 'cmd-bar': { exit: 0 } });
   const results = await runChecks({
