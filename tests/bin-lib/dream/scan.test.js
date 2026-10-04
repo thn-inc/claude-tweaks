@@ -13,7 +13,11 @@ const {
   composeProposalMarkdown,
   runScan,
   bashCommandVerb,
+  normalizeErrorLine,
   redactPaths,
+  redactSecrets,
+  redact,
+  SECRET_NAME,
   MIN_SESSIONS_FLOOR,
 } = require('../../../plugin/bin/lib/dream/scan');
 
@@ -210,4 +214,88 @@ test('bashCommandVerb: strips a leading env-var assignment', () => {
 
 test('redactPaths: replaces absolute-path-looking tokens', () => {
   assert.equal(redactPaths('fatal: /Users/alice/repo/file.txt not found'), 'fatal: <path> not found');
+});
+
+test('redactSecrets: known credential shapes become <secret>, ordinary text is untouched', () => {
+  const cases = [
+    ['curl -H "Authorization: Bearer abcDEF1234567890xyz" x', 'curl -H "Authorization: Bearer <secret>" x'],
+    ['GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123 gh api user', 'GITHUB_TOKEN=<secret> gh api user'],
+    ['export AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"', 'export AWS_SECRET_ACCESS_KEY=<secret>'],
+    ['mysql --password=hunter22 -u root', 'mysql --password=<secret> -u root'],
+    ['tool --api-key sk-proj-abcdefghijklmnopqrstuvwx run', 'tool --api-key <secret> run'],
+    ['aws s3 ls # AKIAIOSFODNN7EXAMPLE', 'aws s3 ls # <secret>'],
+    ['git stash pop', 'git stash pop'],
+  ];
+  for (const [input, expected] of cases) assert.equal(redactSecrets(input), expected, input);
+});
+
+test('redact: applies secret redaction, then path redaction', () => {
+  assert.equal(
+    redact('GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123 node /Users/alice/repo/bin/x.js'),
+    'GITHUB_TOKEN=<secret> node <path>',
+  );
+});
+
+test('extractErrorFindings: the quoted command and a path-shaped verb are redacted', () => {
+  const dir = tmpConfigDir();
+  const file = path.join(dir, 'session-r.jsonl');
+  writeTranscript(file, [
+    assistantToolUse('t1', 'Bash', { command: 'GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123 /Users/alice/bin/deploy --to /Users/alice/repo/out' }, '2026-10-01T00:00:00Z'),
+    userToolResult('t1', 'Exit code 1\ndeploy: failed', '2026-10-01T00:00:01Z'),
+  ]);
+  const [finding] = extractErrorFindings({ filePath: file, sessionId: 'session-r' });
+  assert.ok(!finding.command.includes('/Users/alice'), finding.command);
+  assert.ok(!finding.command.includes('ghp_'), finding.command);
+  assert.ok(finding.command.includes('<path>') && finding.command.includes('<secret>'), finding.command);
+  assert.equal(finding.commandVerb, '<path>');
+  assert.ok(!finding.signature.includes('/Users/alice'), finding.signature);
+});
+
+test('normalizeErrorLine: a secret in the first error line never reaches the signature', () => {
+  const line = normalizeErrorLine('Exit code 1\nauth failed for GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123');
+  assert.ok(!line.includes('ghp_'), line);
+  assert.ok(line.includes('<secret>'), line);
+});
+
+test('composeProposalMarkdown: a proposal built from real findings quotes no raw path or token', () => {
+  const dir = tmpConfigDir();
+  const events = (sid) => [
+    assistantToolUse('t1', 'Bash', { command: 'curl -H "Authorization: Bearer abcDEF1234567890xyz" -o /Users/alice/tmp/out.json https://example.com' }, '2026-10-01T00:00:00Z'),
+    userToolResult('t1', 'Exit code 22\ncurl: (22) The requested URL returned error: 401', '2026-10-01T00:00:01Z'),
+  ];
+  writeTranscript(path.join(dir, 'a.jsonl'), events('a'));
+  writeTranscript(path.join(dir, 'b.jsonl'), events('b'));
+  const findings = [
+    ...extractErrorFindings({ filePath: path.join(dir, 'a.jsonl'), sessionId: 'a' }),
+    ...extractErrorFindings({ filePath: path.join(dir, 'b.jsonl'), sessionId: 'b' }),
+  ];
+  const [group] = groupFindings(findings);
+  const md = composeProposalMarkdown(group, { windowDays: 14 });
+  assert.ok(!md.includes('/Users/alice'), md);
+  assert.ok(!md.includes('abcDEF1234567890xyz'), md);
+  assert.ok(md.includes('Bearer <secret>'), md);
+});
+
+test('redact: a huge keyword-bearing tool output stays fast (input is capped before the secret regexes run)', () => {
+  // Uncapped, SECRET_NAME's unbounded runs backtrack quadratically here (~2 s at 120k chars).
+  const huge = 'TOKEN'.repeat(24000);
+  const started = Date.now();
+  const out = redact(huge);
+  assert.ok(Date.now() - started < 500, `redact took ${Date.now() - started} ms`);
+  assert.ok(out.startsWith('TOKEN'), out.slice(0, 20));
+});
+
+test('dream-pass.md names exactly the credential words SECRET_NAME matches, and each one redacts', () => {
+  // Prose/code twin: the doc's word list and the regex alternation were born out of sync once (PASSWD, #2968).
+  const doc = fs.readFileSync(path.join(__dirname, '../../../plugin/skills/harness-health/dream-pass.md'), 'utf8').replace(/\s+/g, ' ');
+  const docMatch = doc.match(/where NAME contains ([A-Z_/]+),/);
+  assert.ok(docMatch, 'dream-pass.md credential-word list not found');
+  const docWords = docMatch[1].split('/').sort();
+  const alternation = SECRET_NAME.match(/\(\?:([^)]+)\)/);
+  assert.ok(alternation, 'SECRET_NAME alternation not found');
+  const codeWords = alternation[1].split('|').map((w) => w.replace('[_-]?', '_')).sort();
+  assert.deepStrictEqual(docWords, codeWords);
+  for (const word of docWords) {
+    assert.equal(redactSecrets(`MY_${word}=abc123`), `MY_${word}=<secret>`, word);
+  }
 });
