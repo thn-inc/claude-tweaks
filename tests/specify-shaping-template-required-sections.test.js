@@ -45,3 +45,15 @@ test('shaping-mode-stamping.md runs compose-record.js --check before the write',
   assert.match(lines[writeLine - 1], /--check "\$SPECIFY_SHAPED_BODY" \|\| exit\s*$/, 'a failed --check must stop the write on the line before it, keeping its own exit code');
   assert.ok(src.includes('pre-write shape check failed:'), 'failed-row Detail wording missing');
 });
+
+test('shaping-mode-stamping.md runs compose-record.js --check before the local-files writeRecord', () => {
+  const src = read('plugin/skills/specify/shaping-mode-stamping.md');
+  const para = src.split('\n').find((l) => l.startsWith('**`work-backend: local-files`:** write `$SHAPED_BODY`'));
+  assert.ok(para, 'local-files compose-then-write-once paragraph missing');
+  const checkAt = para.indexOf('run the same `compose-record.js --check` first');
+  const writeAt = para.indexOf('`writeRecord` call');
+  assert.ok(checkAt >= 0, 'local-files pre-write --check line missing');
+  assert.ok(writeAt > checkAt, 'the --check must come before the writeRecord call');
+  // "same exit handling" binds this driver to the github-issues fence's rule: any non-zero exit writes nothing.
+  assert.match(para.slice(checkAt, writeAt), /same exit handling/, 'local-files --check must reuse the github-issues exit handling');
+});
