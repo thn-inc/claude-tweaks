@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-04T12:27:34.089Z",
+  "computedAt": "2026-10-04T12:49:34.739Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -30,7 +30,7 @@
       },
       {
         "number": 2844,
-        "updatedAt": "2026-10-01T16:18:34Z",
+        "updatedAt": "2026-10-04T12:41:24Z",
         "state": "OPEN"
       },
       {
@@ -65,7 +65,7 @@
       },
       {
         "number": 2802,
-        "updatedAt": "2026-10-01T16:11:36Z",
+        "updatedAt": "2026-10-04T12:34:55Z",
         "state": "OPEN"
       },
       {
@@ -115,7 +115,7 @@
       },
       {
         "number": 2746,
-        "updatedAt": "2026-10-01T16:13:23Z",
+        "updatedAt": "2026-10-04T12:32:59Z",
         "state": "OPEN"
       },
       {
@@ -1076,272 +1076,6 @@
           "shapedHeadless": false
         }
       }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n**Related:** #2744, #2748 (same shape — pure verification-and-close findings, already-resolved by the time of shaping)\n\n## Current State\n\nThis is a dispatch-filed self-report from a `/flow` Step 2.8 claim contest: a dispatch firing (run `2026-09-21T102115-record-1982`) re-selected a file-overlap group (`#2568, #2565, #2346, #2330, #1982`) that was already claimed by an earlier run (`2026-09-21T002427-record-1982`), found the claim contested (stale-looking, TTL expiring `2026-09-24`), claimed nothing (all-or-abort), and stopped before Step 3 — a clean, correct no-op per `flow/claim-targets.md`'s own procedure. The report recommended `/claude-tweaks:tidy` to sweep and reclaim, or waiting for the TTL to expire.\n\n**Verified during shaping — this is now fully resolved, not a live issue.** The claims-registry blob for `#1982` (`gh api repos/thn-inc/claude-tweaks/contents/claims/issue-1982.json?ref=claims-registry`) shows `{\"released\": true, \"runId\": \"2026-09-21T002427-record-1982\", \"reason\": \"issue-closed: reconciled from #1982\", \"releasedAt\": \"2026-09-23T18:37:15.498Z\"}` — the claim was properly released via reconciliation nearly a week before this shaping pass. `#1982` itself is `CLOSED` (confirmed via `gh issue view 1982 --json state`). The TTL this report flagged (`2026-09-24`) has also long since passed. There is no remaining stale claim, no group to reclaim, and no code defect to fix — this record's entire purpose (surface a contested claim for a human/tidy to resolve) has already been served by the ordinary reconciliation machinery, independent of this record.\n\n## Deliverables\n\n- Confirm the claim/contest state is still resolved at build time (re-check the claims-registry blob and `#1982`'s state — this shaping pass's snapshot could theoretically be stale if something re-contested the same group, though nothing suggests that).\n- Close this self-report with a comment citing the resolution evidence (the released claim blob, `#1982`'s closed state) — no code change, no reclaim action needed.\n\n## Acceptance Criteria\n\n- A fresh check confirms the claim is released and `#1982` is closed (or reports a genuine surprise if not, rather than assuming this shaping pass's finding still holds).\n- The record is closed with an explanatory comment, not left open as if still actionable.\n- `npm test` passes (no test-affecting change expected).\n\n## Release Note\n\nNo user-visible change: closed out a resolved claim contest reported by a headless dispatch.\n\n## Technical Approach\n\nPure verification-and-close — the same shape as #2744's already-resolved finding. No code investigation needed beyond re-confirming the claims-registry state via `gh api` and the target issue's state via `gh issue view`.\n\n### Key Files\n\n- None — no code change. The claims-registry blob (`claims/issue-1982.json` on the `claims-registry` branch) and issue `#1982`'s state are the only things to re-verify.\n\n## Gotchas\n\n- Don't mistake this for a genuine unresolved claim-contest needing a `/tidy` reclaim sweep — the evidence gathered during shaping shows it was already reconciled independently, five to six days before this shaping pass ran.\n- If re-verification at build time contradicts this (the claim shows live again, or `#1982` is reopened), stop and report that explicitly — it would mean something unusual happened since this shaping pass, worth surfacing rather than silently re-closing.\n\n## Original request\n\nDispatch headless self-report: flow-step-2.8-claim-contest\n\n## Flow: Claim contested\n\n#2568, #2565, #2346, #2330, #1982 (this dispatch bundle, file-overlap group keyed to record 1982)\nare already claimed by run 2026-09-21T002427-record-1982 (session\n1522dc69-eb55-5ecb-8312-e2ac906cf0c4, host: vm, claimed 2026-09-21T00:32:49.141Z, expires\n2026-09-24T00:32:49.141Z).\n\nStale holder — no activity since unknown (no transcript found at\n~/.claude/projects/-home-user-claude-tweaks/1522dc69-eb55-5ecb-8312-e2ac906cf0c4.jsonl or\n~/.claude/projects/-home-user-claude-tweaks--claude-worktrees-dispatch-next/1522dc69-eb55-5ecb-8312-e2ac906cf0c4.jsonl;\nsame host (vm) as this firing, so not a Remote holder; no git worktree in this checkout's\n`git worktree list` matches the holder's bare `record-1982` runId token, so no in-progress worktree\nwas found to inspect). Next: `/claude-tweaks:tidy` to sweep and reclaim, or wait for the TTL to\nexpire.\n\nThis dispatch firing (run 2026-09-21T102115-record-1982, PIPELINE_RUN_DIR\n/home/user/claude-tweaks/.claude-tweaks/pipelines/2026-09-21T102115-record-1982) re-selected the\nsame file-overlap group ~10 hours after the still-live claim above was written, never claimed any\nof the 5 targets itself (all-or-abort: the first target checked was already contested, so nothing\nwas claimed and nothing needs releasing), and stopped before Step 3 (Config Manifesto) per\n`flow/claim-targets.md`'s group-claim-all-or-abort procedure. No build or test ran for this\nfiring.\n\nResolved build: claude-tweaks v6.126.0 @ /root/.claude/plugins/cache/claude-tweaks-marketplace/claude-tweaks/6.126.0\n\n<!-- dispatch-preflight-marker: flow-step-2.8-claim-contest -->\n\n",
-        "createdAt": "2026-09-21T10:26:31Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACzC31wQ",
-            "name": "by:dispatch",
-            "description": "",
-            "color": "ededed"
-          }
-        ],
-        "number": 2746,
-        "state": "OPEN",
-        "title": "Dispatch headless self-report: flow-step-2.8-claim-contest",
-        "updatedAt": "2026-10-01T16:13:23Z",
-        "facets": {
-          "origin": "dispatch",
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n**Related:** #2799 (trim skill descriptions per newer-model guidance) — the more directly actionable lever for the same underlying concern (skill-listing context cost), since a plugin controls its own skill descriptions but not Claude Code's own skill-listing mechanism (see Current State).\n\n## Current State\n\nClaude Code lists every installed skill every session, capped at 1% of context — this is platform (harness) behavior, not something a plugin like claude-tweaks controls directly. `jev-skill-suggestion` reportedly gates that listing behind a fast classifier instead, but that would require either a harness-level feature claude-tweaks can't implement itself, or a wrapper/orchestration layer outside the plugin's own scope. What claude-tweaks *can* actually influence is the size and count of its own installed skills' descriptions — the same lever #2799 already targets.\n\n## Deliverables\n\nInvestigate what a plugin actually has leverage over here, given Claude Code's skill-listing mechanism is platform behavior:\n1. Confirm whether any plugin-level mechanism exists (today, or documented as planned) to conditionally register/hide skills from the per-session listing — if one exists, evaluate whether claude-tweaks' skill count/structure would benefit from using it.\n2. If no such mechanism exists, determine whether the more direct lever — reducing description size/count (#2799's scope) and consolidating near-duplicate or rarely-triggered skills — is the actual available answer, and state that explicitly rather than pursuing an unavailable \"gate\" mechanism.\n\n## Acceptance Criteria\n\n- A concrete answer is recorded to \"does Claude Code expose any plugin-level skill-listing gate today\" — not assumed either way.\n- If no such mechanism exists, this record's outcome explicitly redirects to #2799's already-shaped scope (description trimming) rather than treating the gate idea as still open, so the investigation lands somewhere actionable instead of dead-ending.\n- If a mechanism does exist, a follow-up evaluation of whether claude-tweaks' current skill set would benefit is at least scoped (even if not fully executed in this same record).\n\n## Release Note\n\nNo user-visible change: evaluated whether the plugin can gate which skills load per project.\n\n## Technical Approach\n\nResearch Claude Code's actual documented plugin/skill-loading behavior first — whether any conditional-registration or lazy-listing mechanism is exposed to plugins today. This determines which of the two Deliverable branches applies; the record intentionally doesn't presuppose which.\n\n### Key Files\n\n- None specific to claude-tweaks' own codebase — this is primarily a platform-capability investigation; any resulting action likely lands in #2799's scope (skill description trimming) rather than new code here\n\n## Gotchas\n\n- Don't build a custom skill-gating mechanism inside claude-tweaks itself as a workaround if the platform doesn't expose one — that would be reimplementing harness-level behavior at the plugin layer, a much larger and riskier undertaking than this capture's one-line scope suggests, and almost certainly not what was intended.\n- This record's most likely real outcome is \"the answer is #2799\" — don't treat that as a non-finding; explicitly stating that redirect is itself the useful conclusion.\n\n## Original request\n\nEvaluate a jev-skill-suggestion-style skill-loading gate\n\nContext: Claude Code lists every installed skill every session, capped at 1% of context; jev-skill-suggestion gates that behind a fast classifier instead.\n\nScope: Whether claude-tweaks' own skills could be gated similarly to save context.\n",
-        "createdAt": "2026-09-29T01:24:04Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2802,
-        "state": "OPEN",
-        "title": "Evaluate a jev-skill-suggestion-style skill-loading gate",
-        "updatedAt": "2026-10-01T16:11:36Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "## Current State\n\n`_shared/pr-early-run-lifecycle.md` documents that `build/worktree-setup.md` Step 1.6 (\"Remote-only stale branch check\") exists specifically so a same-name branch left on `origin` by a prior, unrelated run is caught and stopped for a decision *before* `EnterWorktree` creates the new worktree and before Step 2's push can be rejected non-fast-forward. On run `2026-09-30T102540-record-2625` (#2625, dispatch group, worktree branch `worktree-dispatch-next`), the first (`build,test`) call's own `decisions.md` entry records that Step 2's push nonetheless failed non-fast-forward twice, against a genuinely unrelated stale branch left by a different old run (commit `c19a97b7a`, re #2266, ~61 commits behind current main) — exactly the shape Step 1.6 is supposed to close. The run proceeded local-only with `prExempt: true` stamped in `run-state.json` rather than stopping for the documented decision, and the second call had to resolve it manually (rename + push to a disambiguated branch name).\n\n## Deliverables\n\nInvestigate why Step 1.6's remote-only stale-branch check did not fire (or fired but did not stop the run) for this collision — confirm whether it ran at all, and if it did, why its outcome didn't prevent the subsequent non-fast-forward push. Fix the gap so a genuinely unrelated same-name remote branch is caught before worktree creation, consistent with the documented contract, rather than surfacing only as a failed push two steps later.\n\n## Acceptance Criteria\n\n1. A reproduction (or an audit of Step 1.6's actual invocation site) identifies why the check did not stop this run.\n2. Step 1.6 (or its invocation) is fixed so an unrelated same-name remote branch is caught pre-emptively for a `pr-first` dispatch-orchestrated worktree run, not just handled reactively after a failed push.\n3. No regression to the legitimate resume case (a same-name branch that IS this run's own prior attempt) — Step 1.6 must still distinguish \"mine\" from \"someone else's stale leftover.\"\n\n## Release Note\n\nInternal maintenance — no user-visible change.\n\n## Suggested resolution\n\nStart by reading `build/worktree-setup.md` Step 1.6 and confirming it was actually invoked in this run's first call (check for a `decisions.md` line at that step) — the observed evidence stops at \"push failed twice,\" short of enough context to state a root cause with confidence.\n\nOrigin: reflect full mode from #2625's wrap-up. Defer-reason: tangential.\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-09-30T10:58:05Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          }
-        ],
-        "number": 2844,
-        "state": "OPEN",
-        "title": "PR-early lifecycle's Step 1.6 remote-only stale-branch check didn't prevent a same-name push collision on worktree-dispatch-next",
-        "updatedAt": "2026-10-01T16:18:34Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
     ]
   ],
   "excluded": [
@@ -1352,13 +1086,5 @@
       ]
     }
   ],
-  "bundles": [
-    {
-      "records": [
-        2746,
-        2802,
-        2844
-      ]
-    }
-  ]
+  "bundles": []
 }
