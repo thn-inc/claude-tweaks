@@ -53,6 +53,21 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.136.0](https://github.com/thn-inc/claude-tweaks/compare/v6.135.0...v6.136.0) (2026-10-04)
+
+
+### Features
+
+* Upstream defect report — `verify.js --changed-files`… ([#2744](https://github.com/thn-inc/claude-tweaks/issues/2744)) ([0153343](https://github.com/thn-inc/claude-tweaks/commit/015334398bb16cd4ab629d2047f51b4c41ad1ace)), closes [#2779](https://github.com/thn-inc/claude-tweaks/issues/2779)
+
+
+### Bug Fixes
+
+* Document the multi-spec rule for the PR verdict… ([#2860](https://github.com/thn-inc/claude-tweaks/issues/2860)) ([f8179fa](https://github.com/thn-inc/claude-tweaks/commit/f8179fa13a3cd2dc89dce9445b70b515f1c96bfc))
+* Dream scan stages transcript command text without path… ([#2968](https://github.com/thn-inc/claude-tweaks/issues/2968)) ([0c9205f](https://github.com/thn-inc/claude-tweaks/commit/0c9205fce20a23641131475014a6511b6b9d5b48))
+* flow-preflight misclassifies a claim-log-only… ([#2861](https://github.com/thn-inc/claude-tweaks/issues/2861)) ([a5f50c1](https://github.com/thn-inc/claude-tweaks/commit/a5f50c117d304a370fefd5d7af38b798f9f07de2))
+* Upstream defect report — `hooks.js teardown-run --merged`… ([#2747](https://github.com/thn-inc/claude-tweaks/issues/2747)) ([cc3426a](https://github.com/thn-inc/claude-tweaks/commit/cc3426a571ff8392e851a59aa0218b1fd8aa3a7b))
+
 ## [6.135.0](https://github.com/thn-inc/claude-tweaks/compare/v6.134.1...v6.135.0) (2026-10-04)
 
 
