@@ -89,7 +89,7 @@ test('shaping-mode.md territory line carries the parent-guard removal carve-out'
   // line (part of Actions Performed) landed in shaping-mode-stamping.md, then
   // #2841 split Actions Performed onward into shaping-mode-readback.md.
   const src = readFlat('plugin/skills/specify/shaping-mode-readback.md');
-  assert.ok(src.includes('as the one removal carve-out'), 'territory-line carve-out clause missing from shaping-mode-stamping.md');
+  assert.ok(src.includes('as the one removal carve-out'), 'territory-line carve-out clause missing from shaping-mode-readback.md');
   assert.ok(src.includes('record bearing the parent marker'), 'parent-marker scoping missing from shaping-mode.md carve-out');
 });
 
