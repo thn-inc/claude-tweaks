@@ -53,6 +53,20 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.135.0](https://github.com/thn-inc/claude-tweaks/compare/v6.134.1...v6.135.0) (2026-10-04)
+
+
+### Features
+
+* Add a cross-session self-healing pass (a /dream-style… ([#2691](https://github.com/thn-inc/claude-tweaks/issues/2691)) ([1b7acee](https://github.com/thn-inc/claude-tweaks/commit/1b7acee21e962296b5d273f7d0a2ee895dcca22a))
+
+
+### Bug Fixes
+
+* acceptance-gap backstop counts NOT_PLANNED and DUPLICATE… ([#2854](https://github.com/thn-inc/claude-tweaks/issues/2854)) ([abf42ed](https://github.com/thn-inc/claude-tweaks/commit/abf42edeac667ab1d626978591c89313cda5163b))
+* console/resolve.js SECTION_MAP: the curation engine's own… ([#2773](https://github.com/thn-inc/claude-tweaks/issues/2773)) ([0b31553](https://github.com/thn-inc/claude-tweaks/commit/0b315536e562f9b872e3c2c1d21c46fbd2e4c10f))
+* github-pr-scan item 10's bulk PR fetch exceeds GitHub's… ([#2853](https://github.com/thn-inc/claude-tweaks/issues/2853)) ([1ae6e63](https://github.com/thn-inc/claude-tweaks/commit/1ae6e631c6d4ed09114ddfee3d7b35af510018f6))
+
 ## [6.134.1](https://github.com/thn-inc/claude-tweaks/compare/v6.134.0...v6.134.1) (2026-10-03)
 
 
