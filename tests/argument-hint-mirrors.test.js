@@ -131,6 +131,15 @@ const EXTRACTORS = {
     const prefix = `usage: /claude-tweaks:${skill} `;
     return content.split('\n').filter((l) => l.startsWith(prefix)).map((l) => l.slice(prefix.length).trimEnd());
   },
+  'syntax-block'(content, skill) {
+    const start = content.match(/^## Syntax$/m);
+    if (!start) return [];
+    const rest = content.slice(start.index + start[0].length);
+    const end = rest.search(/^#{2,6} /m);
+    const prefix = `/claude-tweaks:${skill} `;
+    return (end === -1 ? rest : rest.slice(0, end))
+      .split('\n').filter((l) => l.startsWith(prefix)).map((l) => l.slice(prefix.length).trimEnd());
+  },
   'reference-card-takes'(content, skill) {
     const found = [];
     for (const { command, takes } of parseTakesRows(content)) {
@@ -203,9 +212,16 @@ const readWith = (mutations) => (p) => {
   return mutated;
 };
 
-// The skill the discrimination probes mutate: it carries every enumerated
-// surface, and its hint has no `|`, so the card cell holds it unescaped.
+// The skill the discrimination probes mutate: its hint has no `|`, so the
+// card cell holds it unescaped. No one skill carries every when-present
+// surface, so a surface PROBE lacks names its own probe skill here.
 const PROBE = 'release';
+const PROBE_FOR = { 'syntax-block': 'flow' };
+const probeFor = (id) => PROBE_FOR[id] || PROBE;
+const carries = (id, skill) => {
+  const row = ROWS.find((r) => r.id === id);
+  return EXTRACTORS[id](readRepoFile(row.file.replace('{skill}', skill)), skill).length > 0;
+};
 const PROBE_SKILL_MD = `plugin/skills/${PROBE}/SKILL.md`;
 const PROBE_HINT = extractArgumentHint(readRepoFile(PROBE_SKILL_MD));
 const CARD = 'plugin/skills/help/reference-card.md';
@@ -222,8 +238,13 @@ test('the enumeration table and the extractor registry name the same surfaces', 
   assert.strictEqual(new Set(ROWS.map((r) => r.id)).size, ROWS.length, 'a surface id is enumerated twice');
   for (const row of ROWS) {
     assert.ok(PRESENCE.includes(row.presence), `${row.id}: Presence must be one of ${PRESENCE.join(' / ')}, got "${row.presence}"`);
-    const found = EXTRACTORS[row.id](readRepoFile(row.file.replace('{skill}', PROBE)), PROBE);
-    assert.ok(found.length > 0, `${row.id}: the probe skill (${PROBE}) must carry every surface, or the probes below prove nothing for it`);
+    assert.ok(carries(row.id, probeFor(row.id)), `${row.id}: its probe skill (${probeFor(row.id)}) must carry the surface, or the probes below prove nothing for it`);
+    if (row.id !== CANONICAL) {
+      assert.ok(
+        ONE_SURFACE_DRIFTS.some(([surface, , , , skill = PROBE]) => surface === row.id && skill === probeFor(row.id)),
+        `${row.id}: no one-surface drift probe mutates it -- add a case to ONE_SURFACE_DRIFTS`,
+      );
+    }
   }
   assert.strictEqual(ROWS.find((r) => r.id === CANONICAL).presence, 'required', 'the canonical surface must be required');
 });
@@ -240,8 +261,8 @@ test('a flag added to argument-hint alone is reported on every other surface', (
   });
   assert.deepStrictEqual(
     keysOf(problems),
-    ROWS.filter((r) => r.id !== CANONICAL).map((r) => `${PROBE}:${r.id}`).sort(),
-    `expected one stale mirror per non-canonical surface of ${PROBE}, got:\n${problems.join('\n')}`,
+    ROWS.filter((r) => r.id !== CANONICAL && carries(r.id, PROBE)).map((r) => `${PROBE}:${r.id}`).sort(),
+    `expected one stale mirror per non-canonical surface ${PROBE} carries, got:\n${problems.join('\n')}`,
   );
 });
 
@@ -260,12 +281,13 @@ const ONE_SURFACE_DRIFTS = [
   ['input-parse-line', 'a stale restatement line written with "="', PROBE_SKILL_MD, (md) => md.replace(RESTATED, '`$ARGUMENTS` = `[--dry-run]`')],
   ['input-parse-line', 'a stale restatement line written with "is"', PROBE_SKILL_MD, (md) => md.replace(RESTATED, '`$ARGUMENTS` is `[--dry-run]`')],
   ['usage-line', 'a stale usage line', PROBE_SKILL_MD, (md) => md.replace(`usage: /claude-tweaks:${PROBE} ${PROBE_HINT}`, `usage: /claude-tweaks:${PROBE} [--dry-run]`)],
+  ['syntax-block', 'a stale Syntax-block line', 'plugin/skills/flow/SKILL.md', (md) => md.replace(/^\/claude-tweaks:flow .*$/m, '/claude-tweaks:flow #N [worktree]'), 'flow'],
 ];
 
-for (const [surface, label, file, mutate] of ONE_SURFACE_DRIFTS) {
+for (const [surface, label, file, mutate, skill = PROBE] of ONE_SURFACE_DRIFTS) {
   test(`${label} is reported on ${surface} alone`, () => {
     const problems = introduced({ read: readWith({ [file]: mutate }) });
-    assert.deepStrictEqual(keysOf(problems), [`${PROBE}:${surface}`], problems.join('\n'));
+    assert.deepStrictEqual(keysOf(problems), [`${skill}:${surface}`], problems.join('\n'));
   });
 }
 
