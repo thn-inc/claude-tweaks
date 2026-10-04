@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-04T12:04:16.940Z",
+  "computedAt": "2026-10-04T12:27:34.089Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -95,7 +95,7 @@
       },
       {
         "number": 2779,
-        "updatedAt": "2026-10-01T16:12:07Z",
+        "updatedAt": "2026-10-04T12:06:22Z",
         "state": "OPEN"
       },
       {
@@ -120,7 +120,7 @@
       },
       {
         "number": 2744,
-        "updatedAt": "2026-10-01T16:13:31Z",
+        "updatedAt": "2026-10-04T12:14:52Z",
         "state": "OPEN"
       },
       {
@@ -750,190 +750,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n**Related:** #2806 (untangle verify/args.js parseArgs — both records edit `plugin/bin/lib/verify/args.js`; build order matters, coordinate before dispatching both)\n\n## Current State\n\n`verify.js --cmd <name>=<command>` spawns each check's command via a child shell with no way to set an environment variable for just that one check's process, portably across platforms.\n\nA caller of `verify.js` needs to set an environment variable for one named check's spawned process only (e.g. to gate an optional/expensive code path off for that check). On Windows the runner spawns via `cmd.exe`, so a POSIX-style `VAR=val command` prefix inside the `--cmd` value fails outright (`'VAR' is not recognized as an internal or external command`). The only workaround found was writing a throwaway wrapper script (a `.bat` file on Windows: `set VAR=val` then the real command) instead of passing the env var inline to `--cmd`.\n\n## Deliverables\n\nA repeatable `--cmd-env <check-name>=<KEY=VALUE>` flag that sets environment variables for that named check's spawned process via the child_process `env` option (not shell syntax) — works identically across `cmd.exe` and POSIX shells, with no wrapper script needed.\n\n## Acceptance Criteria\n\n- `verify.js --cmd foo=\"node check.js\" --cmd-env foo=MY_VAR=1` spawns `foo`'s process with `MY_VAR=1` set in its environment, verified cross-platform (or, if only one platform is available to test on, verified via the child_process `env` option's documented behavior rather than shell-syntax parsing).\n- A `--cmd-env` naming a check not declared via `--cmd` produces the same class of clear error `verify.js` already gives for other `--cmd`-name mismatches (per the existing `--cmd-name-vs-declaration` check noted in `bin/verify.js`).\n- Omitting `--cmd-env` entirely leaves existing `--cmd`-only invocations unaffected (backward compatible, no behavior change for callers not using the new flag).\n- `npm test` passes in full after the change.\n\n## Release Note\n\nAdded a way to pass environment variables to verification checks that works the same on Windows and POSIX shells.\n\n## Technical Approach\n\nAdd `--cmd-env` parsing to `plugin/bin/lib/verify/args.js` alongside the existing `--cmd` parsing, validating the `<check-name>=<KEY=VALUE>` shape and cross-checking the named check exists among declared `--cmd` names (mirroring the existing name-vs-declaration validation noted at `bin/verify.js`'s AC5/L13 comment). Thread the resolved per-check env map through to wherever the spawn actually happens (likely `plugin/bin/lib/verify/run.js`), merging it into the child_process `env` option for that check's spawn call only — not via shell-syntax prefixing, which is what breaks under `cmd.exe`.\n\n### Key Files\n\n- `plugin/bin/lib/verify/args.js` — add `--cmd-env` flag parsing and validation\n- `plugin/bin/lib/verify/run.js` — thread the per-check env map into the spawn call's `env` option\n- `plugin/bin/verify.js` — the CLI entrypoint documenting available flags\n\n## Gotchas\n\n- Must use child_process's `env` option, not a shell-syntax `VAR=val` prefix — that's precisely the cross-platform failure this record exists to fix, so reintroducing shell-syntax passthrough anywhere in the implementation would not actually solve the problem.\n- The per-check env map should merge with (not replace) the spawned process's inherited environment, unless there's an existing `verify.js` convention for env isolation that says otherwise — check current spawn behavior before assuming.\n\n## Original request\n\n**Summary:** `verify.js --cmd <name>=<command>` spawns each check's command via a child shell with no way to set an environment variable for just that one check's process, portably across platforms.\n\n**Kind:** Gap\n\n**Affected component:** bin/verify.js\n\n**Use case:** A caller of `verify.js` needs to set an environment variable for one named check's spawned process only (e.g. to gate an optional/expensive code path off for that check). On Windows the runner spawns via `cmd.exe`, so a POSIX-style `VAR=val command` prefix inside the `--cmd` value fails outright (`'VAR' is not recognized as an internal or external command`). The only workaround found was writing a throwaway wrapper script (a `.bat` file on Windows: `set VAR=val` then the real command) instead of passing the env var inline to `--cmd`.\n\n**Definition:** Clear — a `--cmd-env <check-name>=<KEY=VALUE>` flag (repeatable) that sets environment variables for that named check's spawned process via the child_process `env` option (not shell syntax) would work identically across `cmd.exe` and POSIX shells, with no wrapper script needed.\n\n**Plugin version:** 6.129.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-48f21dbb -->\n",
-        "createdAt": "2026-09-23T13:13:34Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2779,
-        "state": "OPEN",
-        "title": "bin/verify.js: --cmd has no cross-platform env-var passthrough for the spawned check process",
-        "updatedAt": "2026-10-01T16:12:07Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n**Related:** #2746, #2748 (same shape — pure verification-and-close findings, already-resolved by the time of shaping)\n\n## Current State\n\n**Both bundled defects in this report are already fixed — verified against the current codebase during shaping, not just claimed.**\n\n**Defect (2), the `impeccable-cli` pin:** the report claims the pin is `3.6.0` versus an installed `4.1.0`. Read `plugin/skills/design-wrapper/impeccable-cli.md`'s actual header: `<!-- upstream-pin: impeccable-cli@4.1.0 -->` — the pin is already `4.1.0`, matching the filer's own installed version. Whatever prompted this filing, the pin has since been bumped (the file's own prose even documents a prior stale-pin incident, `[IL-89]`, and treats pin currency carefully) — nothing to fix here anymore.\n\n**Defect (1), `verify.js --changed-files` returning an empty set:** read `plugin/bin/lib/verify/changed-files.js`'s `resolveBase` function directly. It already implements exactly the fix this report asks for, tracked as `#2486`: \"a stamp anchor identical to HEAD answers 'nothing since the last full verify'... but a caller that explicitly named `--integration-branch` is asking a different question... When the anchor is this degenerate and an integration branch was given, skip it and fall through to the integration-branch resolution below.\" `bin/verify.js`'s `changedFilesMode` (the actual `--changed-files` call site) already passes `requireNonDegenerate: true`, triggering this fallback. It even goes further than the report's own ask: if the resolved base *still* equals HEAD after the fallback (a genuinely merged branch, or no `--integration-branch` given), it emits an explicit `result.warning = 'resolved base equals HEAD — diff will be empty'` in the JSON output — turning the silent-empty-set trap the filer hit into a clearly signaled condition rather than a fix that could itself regress silently.\n\nThe filer's plugin version (6.126.0) predates the currently-installed 6.129.0 — both fixes evidently shipped in that gap. This record, as originally filed, has no remaining buildable work.\n\n## Deliverables\n\n- Confirm both fixes are present and correct on the branch/version the build actually runs against (re-read `impeccable-cli.md`'s pin and `changed-files.js`'s `resolveBase`/`changedFilesMode` fresh — don't just trust this shaping pass's snapshot, since more time may have passed).\n- Close this record with a comment citing the confirming evidence (the pin's current value, `#2486`'s `requireNonDegenerate` mechanism and the `result.warning` field) — no code change.\n- If re-verification finds either fix is NOT actually present on the branch this builds against (a genuine surprise, contradicting this shaping pass's findings), stop and report that discrepancy explicitly rather than assuming this record's premise-correction was wrong — that would itself be worth investigating.\n\n## Acceptance Criteria\n\n- A fresh read of `impeccable-cli.md`'s pin comment and `changed-files.js`'s `resolveBase`/`changedFilesMode` confirms both fixes are present (or the build reports a genuine contradiction, if found).\n- The record is closed with a comment stating why, not left open or silently abandoned.\n- No production code changes are expected; `npm test` passes regardless (no test-affecting change).\n\n## Release Note\n\nFixed changed-file detection returning nothing when the verification stamp is at the latest commit.\n\n## Technical Approach\n\nThis is a verify-and-close record, not a code-change record — the \"build\" here is re-confirming what this shaping pass already found and then closing the issue with that evidence cited, per this codebase's own `Close (GitHub)` convention (comment first, always — never a silent close).\n\n### Key Files\n\n- `plugin/skills/design-wrapper/impeccable-cli.md` — the pin comment to re-confirm (`4.1.0`)\n- `plugin/bin/lib/verify/changed-files.js` — `resolveBase`'s `#2486` degenerate-anchor fallback to re-confirm\n- `plugin/bin/verify.js` — `changedFilesMode`'s `requireNonDegenerate: true` call and its `result.warning` field to re-confirm\n\n## Gotchas\n\n- Don't assume this record is simply wrong to have been filed — it was accurate for the filer's plugin version (6.126.0) at the time; the fixes evidently shipped afterward. This is a normal case of feedback lagging the fix, not a bad report.\n- If closing this record, the closing comment should name the specific commit/version where each fix landed if that's discoverable (e.g. via `git log` on the two files), giving the filer's project a concrete upgrade target — worth a quick check at build time, not required if not cheaply discoverable.\n\n## Original request\n\nUpstream defect report — `verify.js --changed-files` returns an empty set when the runner stamp sits at HEAD; `impeccable-cli` pin 3.6.0 vs installed 4.1.0\n\nComponent: `bin/verify.js` (`--changed-files`), `skills/test/SKILL.md` pipeline story selection, `skills/design-wrapper/impeccable-cli.md` (pin)\nKind: defect (two related)\nVersion: claude-tweaks 6.126.0\n\n## Symptom\n\n(1) After Common Step 5 stamped verification at HEAD, `/test`'s pipeline story selection calls `verify.js --changed-files --integration-branch develop`; the runner uses the stamp's own sha as the base, so the changed set is `[]` and the selection rule reads \"zero matches → web surface → run the full story set\" — the opposite of what the diff warrants. The record's own range (plan commit..HEAD) intersected `source_files` for 4 of 15 stories; the controller had to compute that by hand.\n(2) `impeccable-cli.md` pins the CLI at 3.6.0 and states an off-pin CLI fails the contract test, while `npx impeccable --version` resolves 4.1.0 on this machine; `detect --json` still returned the documented array shape, so the gate ran, but a stale pin turns every run into a documented contract breach.\n\n## Expected\n\n(1) `--changed-files` should fall back to the record's materialized range (or `merge-base(integration-branch)..HEAD`) whenever the stamp sha equals HEAD, instead of returning an empty set; the story-selection rule should treat an empty set from that cause as \"unknown\", not \"none\". (2) Bump or widen the `impeccable-cli` pin (4.1.x parses identically for `detect --json`).\n\n## Evidence\n\nRun 2026-09-20T195550-spec-497-498-499, spec #499: `spec-499/decisions.md` `/test` \"Pipeline QA selection + Design CLI gate\" entry; `staged/reflect-3.md` in spec-499.\n\nFiled from djoef/recommender-system run 2026-09-20T195550-spec-497-498-499 (claude-tweaks 6.126.0, unattended).\n<!-- fingerprint: feedback-99b201b9 -->\n\n",
-        "createdAt": "2026-09-21T10:20:24Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 2744,
-        "state": "OPEN",
-        "title": "Upstream defect report — `verify.js --changed-files` returns an empty set when the runner stamp sits at HEAD; `impeccable-cli` pin 3.6.0 vs installed 4.1.0",
-        "updatedAt": "2026-10-01T16:13:31Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
