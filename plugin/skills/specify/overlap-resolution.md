@@ -3,8 +3,8 @@
 Loaded from `decomposition-mode.md`'s Step 1 Overlap Analysis (this skill's directory; #2841's
 split). Read it only when that analysis classified at least one design-doc section as **Already
 exists** or **Partial overlap** — a run whose every section is a **Gap** never loads it. "Above"
-in this file means `decomposition-mode.md`'s Overlap Analysis coverage table and the open records
-its Step 1 found.
+in this file means this file's own earlier text (its Auto mode section, its batch table); the
+coverage classifications it resolves come from `decomposition-mode.md`'s Overlap Analysis table.
 
 ---
 

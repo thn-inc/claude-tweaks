@@ -5,9 +5,10 @@ compose-then-write-once there, read-back verification and Actions Performed here
 Read it once a record's write call in that file's Compose-then-write-once section has run —
 landed, been refused by the pre-write shape check, or failed — on every entry path that file
 names. Section names are unchanged across the split, so a cross-reference naming a section here
-still resolves regardless of which file it lands in; "above" in this file means
-`shaping-mode-stamping.md`'s sections (and, before them, `shaping-mode.md`'s), which precede this
-file in reading order.
+still resolves regardless of which file it lands in; "above" in this file means this file's own
+earlier text where the thing named lives here (Read-back verification, the Actions Performed
+row), and otherwise `shaping-mode-stamping.md`'s sections (and, before them, `shaping-mode.md`'s),
+which precede this file in reading order.
 
 ---
 

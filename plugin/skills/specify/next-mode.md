@@ -282,7 +282,7 @@ successful claim in `## Claim` below) reaches `--budget <n>`, the drain loop end
 `next-mode-closeout.md` in this skill's directory then, and follow it: the two zero-eligible cases,
 budget exhaustion, the `{shaped: N, routed: M, failed: K}` close-out render, and the
 `--source sweep` reporting rule all live there (#2841's split). Never read it on an iteration that
-picked a record.
+goes on to claim a record.
 
 ## Claim
 

@@ -179,7 +179,7 @@ Never write a bare "zero matches anywhere" AC alongside a tombstone requirement 
 
 ## Empirical Premise-Check Deliverables
 
-When a spec's technical approach rests on an assumption about how an external system, harness, or tool actually behaves — an undocumented payload shape, an unconfirmed API contract, an assumed invocation path, or a third-party CLI/API's behavior — read `empirical-premise-check-deliverables.md` in this skill's directory and write the blocking "Task 0" deliverable it describes before any other deliverable's fixtures are written.
+When a spec's technical approach rests on an assumption about how an external system, harness, or tool actually behaves — an undocumented payload shape, an unconfirmed API contract, an assumed invocation path, or a third-party CLI/API's behavior — read `empirical-premise-check-deliverables.md` in this skill's directory and write the blocking "Task 0" deliverable it describes before any other deliverable's fixtures are written. Read it too whenever the spec carries any flagged-but-unvalidated assumption (a `## Gotchas` assumption, an inline ambiguity marker, an `## Open Questions` row) — its Risk-Marker Verification paragraph says how review re-checks those — or a deliverable adds new *binding* skill prose to a review/build gate, which its Plan-authoring corollary requires pinning with a conformance-test deliverable.
 
 ## Gate-Authoring Deliverables
 

@@ -3,7 +3,7 @@
 Loaded from `next-mode.md`'s `## Zero eligible or budget exhausted (loop termination + close-out)`
 stub (this skill's directory; #2841's split). Read it when that file's Selection fence yields a
 `null` `$PICK`, or when this firing's attempt counter reaches `--budget <n>` — never on an
-iteration that picked a record. "This fence", "above", and "below" in this file refer to
+iteration that goes on to claim a record. "This fence", "above", and "below" in this file refer to
 `next-mode.md`'s reading order at that stub: its Selection section sits above, its `## Claim`
 section below.
 

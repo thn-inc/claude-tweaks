@@ -2,7 +2,9 @@
 
 Referenced from `spec-template.md`'s Empirical Premise-Check Deliverables pointer, in this skill's
 directory (#2841's split). Read it when a record's technical approach rests on an assumption about
-how an external system, harness, tool, or third-party CLI/API actually behaves. "This section"
+how an external system, harness, tool, or third-party CLI/API actually behaves, when the spec
+carries any flagged-but-unvalidated assumption, or when a deliverable adds new binding skill prose
+to a review/build gate. "This section"
 below means that `spec-template.md` section, which this file carries in full.
 
 When a spec's technical approach rests on an assumption about how an external system, harness, or tool actually behaves — an undocumented payload shape, an unconfirmed API contract, an assumed invocation path — write a blocking first deliverable ("Task 0") that captures the real behavior before any other deliverable's fixtures are written. Word its scope as an enumeration, not a single check, and cover every path that reaches the feature, not just every shape the resulting payload can take:

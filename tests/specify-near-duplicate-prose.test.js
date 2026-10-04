@@ -46,7 +46,7 @@ test('shaping-mode.md routes a ready+in-flight candidate to needs:decision with 
   assert.match(SHAPING_MODE, /Absorb into #\{candidate\}/);
 });
 
-test('shaping-mode-stamping.md\'s Actions Performed outcome vocabulary includes the refusal', () => {
+test('shaping-mode-readback.md\'s Actions Performed outcome vocabulary includes the refusal', () => {
   assert.match(SHAPING_STAMPING, /refused — proposed Absorb into #\{candidate\}/);
 });
 
