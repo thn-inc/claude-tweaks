@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-04T14:50:37.171Z",
+  "computedAt": "2026-10-04T15:51:28.860Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -35,7 +35,7 @@
       },
       {
         "number": 2841,
-        "updatedAt": "2026-10-01T16:18:30Z",
+        "updatedAt": "2026-10-04T14:52:17Z",
         "state": "OPEN"
       },
       {
@@ -575,84 +575,6 @@
           "origin": null,
           "risk": "low",
           "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: ledger resolve gate (#2827/#2828 run, ledger item 3)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\nThree /specify sub-files sit within a few hundred bytes of the 28,672-byte per-sub-file ceiling that `tests/bin-lib/skill-audit/context-cost.test.js` pins (`SPECIFY_SUBFILE_CEILING_BYTES = 28 * 1024`): `spec-template.md` 28,666 B, `shaping-mode-stamping.md` 28,523 B, `next-mode.md` 28,454 B (measured at b3c936252).\n\nTwo gaps from #2827 need room in `shaping-mode-stamping.md` that it no longer has: shaping mode's born-ready \"already shaped, no-op\" classification (`shaping-mode.md`, and the stamping file's Actions Performed rows) is judged by eye rather than by `compose-record.js --check` exiting 0; and the local-files driver's pre-write `--check` exists only in prose, with no conformance test (the github-issues fence has one in `tests/specify-shaping-template-required-sections.test.js`).\n\n## Deliverables\n\n1. Split the three near-ceiling /specify sub-files along their existing section boundaries into lazy-loaded siblings, each well under the ceiling, and repoint every citation (SKILL.md routing, `docs/plugin-structure.md`'s per-skill sub-file table, tests that read them by path).\n\n2. Make shaping mode's \"already shaped, no-op\" classification the result of `compose-record.js --check` exiting 0 on the live body, not a by-eye judgment.\n\n3. Add a conformance test pinning the local-files driver's pre-write `--check` line, matching the github-issues fence's existing test.\n\n## Acceptance Criteria\n\n- [ ] Every `plugin/skills/specify/*.md` sub-file is at least 2,048 B under `SPECIFY_SUBFILE_CEILING_BYTES`, and `npm test` passes.\n- [ ] A body that `compose-record.js --check` accepts is reported \"already shaped, no-op\" and a body it rejects never is — asserted by a test.\n- [ ] A test fails when the local-files `--check` line is removed from the shaping stamping procedure.\n\n## Release Note\n\nNo user-visible change: reorganized the /specify skill files so shaping-mode checks have room to grow.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
-        "createdAt": "2026-09-30T06:15:42Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2841,
-        "state": "OPEN",
-        "title": "Split the near-ceiling /specify sub-files; judge shaping no-ops by --check; test the local-files --check",
-        "updatedAt": "2026-10-01T16:18:30Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
           "ceremony": null,
           "solutionUnjustified": false,
           "breaking": false,
