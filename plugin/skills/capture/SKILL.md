@@ -21,7 +21,7 @@ Lifecycle: `/claude-tweaks:init` → **`/claude-tweaks:capture`** → `/superpow
 
 ## Input
 
-`$ARGUMENTS` is parsed as `<idea text> [--route=<value>] [--title="..."] [--type=<value>] [--needs-definition|--no-needs-definition] [--batch <path>]`:
+`$ARGUMENTS` is parsed as `<idea text> [--route=brainstorm|keep|absorb:N] [--title="..."] [--type=bug|feature|task] [--needs-definition|--no-needs-definition] [--batch <path>]`:
 
 | Argument | Behavior |
 |----------|----------|

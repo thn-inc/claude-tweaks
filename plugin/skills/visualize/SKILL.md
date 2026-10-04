@@ -23,7 +23,7 @@ Generates a self-contained HTML+SVG diagram, themed from the project's own desig
 
 ## Input
 
-`$ARGUMENTS` is parsed as `<type> <topic>`:
+`$ARGUMENTS` is parsed as `<architecture|flowchart|sequence|state|er|timeline|swimlane|quadrant|nested|tree|org-chart|layers|venn|pyramid|record-graph> [topic] [--source <caller>] [--ephemeral]`:
 
 | Type | Diagram |
 |------|---------|

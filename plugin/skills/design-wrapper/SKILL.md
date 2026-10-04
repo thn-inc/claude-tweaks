@@ -40,7 +40,7 @@ Full per-mode behavior and argument shape: see the Input table below.
 
 ## Input
 
-`$ARGUMENTS` is parsed as `<mode> <target> [flags]`:
+`$ARGUMENTS` is parsed as `<shape|pre-build|test|review|polish|survey|doctor|reset-recommendations|live|explore> [target] [<surface-topic>] [--screenshots <paths>] [--source <parent-skill>] [--description <text>] [--dry-run] [--limit <n>] [--scope <identity|layout>]`:
 
 | Mode | Target | Behavior |
 |------|--------|----------|

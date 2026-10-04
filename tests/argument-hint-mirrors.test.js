@@ -131,16 +131,10 @@ const EXTRACTORS = {
 };
 
 // `{skill}:{surface}` -> reason, for a surface that legitimately diverges
-// from its skill's argument-hint. Holds the five restatement lines that
-// were stale when this suite landed, until the next commit fixes them.
+// from its skill's argument-hint. Empty by design: every divergence found
+// when this suite landed was staleness or an abbreviation, and was fixed.
 // An entry whose surface passes is itself reported, so the list cannot rot.
-const EXCEPTIONS = {
-  'capture:input-parse-line': 'abbreviates the --route/--type values as <value>',
-  'design-wrapper:input-parse-line': 'abbreviates the whole grammar as <mode> <target> [flags]',
-  'feedback:input-parse-line': 'abbreviates the --kind values as <value>',
-  'tidy:input-parse-line': 'stale: missing --approve and --source',
-  'visualize:input-parse-line': 'abbreviates the whole grammar as <type> <topic>',
-};
+const EXCEPTIONS = {};
 
 // Walk every enumerated surface for every skill. `read` is injectable so the
 // discrimination tests below can hand the walker a mutated copy of one file.
