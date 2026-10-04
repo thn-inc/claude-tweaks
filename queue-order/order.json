@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-04T16:28:24.911Z",
+  "computedAt": "2026-10-04T16:39:33.712Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -20,7 +20,7 @@
       },
       {
         "number": 2860,
-        "updatedAt": "2026-10-01T16:19:00Z",
+        "updatedAt": "2026-10-04T16:38:28Z",
         "state": "OPEN"
       },
       {
@@ -434,78 +434,6 @@
           "grants": {
             "build": true,
             "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: reflect full (multi-spec batch) from #2633/#2664\n\nDefer-reason: tangential\n\n## Current State\n\n`_shared/pr-run-comments.md` finds and updates each run-comment kind by a first-line marker (`<!-- run-comment: verdict -->`), one comment per kind per PR. A `/flow` multi-spec run shares one PR across N specs, and each spec's `/review` Step 7 posts a verdict. The documented find-and-update would make spec N's verdict silently overwrite specs 1..N-1's, and the file has no multi-spec rule.\n\nRun 2026-09-30T190052-spec-2633-2664 ruled ad hoc: it kept one cumulative comment with a per-spec section that each spec's review updates in place (`decisions.md`, spec-2633 Step 7).\n\n## Deliverables\n\n1. `_shared/pr-run-comments.md` states the multi-spec rule: one cumulative `verdict` comment per shared PR, with one `### #{n}` section per spec, and each spec's review replacing only its own section.\n2. `review/code-mode-steps.md` Step 7 cites it.\n3. Add a conformance test pinning the rule's presence.\n\n## Acceptance Criteria\n\n- `pr-run-comments.md` names the multi-spec cumulative-section rule, and Step 7 cites it.\n- A conformance test fails when the rule text is removed.\n\n## Release Note\n\nMulti-spec pipeline runs keep every spec's review verdict on the shared PR instead of the last one overwriting the rest.\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-09-30T20:34:11Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2860,
-        "state": "OPEN",
-        "title": "Document the multi-spec rule for the PR verdict run-comment — one shared marker per PR",
-        "updatedAt": "2026-10-01T16:19:00Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
           },
           "bot": {
             "inProgress": false,
