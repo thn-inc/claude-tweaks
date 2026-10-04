@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-04T16:39:33.712Z",
+  "computedAt": "2026-10-04T17:31:56.910Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -15,7 +15,7 @@
       },
       {
         "number": 2861,
-        "updatedAt": "2026-10-01T16:19:04Z",
+        "updatedAt": "2026-10-04T16:42:01Z",
         "state": "OPEN"
       },
       {
@@ -345,84 +345,6 @@
         "updatedAt": "2026-10-01T16:19:08Z",
         "facets": {
           "origin": "docs-health",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: reflect full (multi-spec batch) from #2633/#2664\n\nDefer-reason: tangential\n\n## Current State\n\nAt the start of run 2026-09-30T190052-spec-2633-2664, `flow-preflight` classified the freshly minted run dir as adoption **case 3** (an adopted, already-running run), not case 2 (a fresh mint).\n\nThe cause was the issue-claim step, which had already appended its claim-log lines to `decisions.md`. The preflight treated a non-empty `decisions.md` as evidence of a prior run. The executor ruled case 2 by hand and logged the ruling.\n\nA case-3 misclassification would have triggered the case-3 adoption-recovery backfill (`flow/steps-and-gates.md`) on a run that had nothing to recover.\n\n## Deliverables\n\n1. The preflight's case classification ignores `decisions.md` entries written by the claim step, recognized by their claim-log section or line shape, when deciding fresh vs adopted.\n2. Add a regression test with a run dir whose `decisions.md` holds only claim-log lines.\n\n## Acceptance Criteria\n\n- A run dir with only claim-log lines in `decisions.md` classifies as case 2.\n- A run dir with any non-claim decision entry still classifies as it does today.\n\n## Release Note\n\nFreshly started /flow runs are no longer mistaken for resumed ones after claiming their records.\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-09-30T20:34:14Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2861,
-        "state": "OPEN",
-        "title": "flow-preflight misclassifies a claim-log-only decisions.md as an adopted run (case 3)",
-        "updatedAt": "2026-10-01T16:19:04Z",
-        "facets": {
-          "origin": null,
           "risk": "low",
           "size": "low",
           "ceremony": null,
