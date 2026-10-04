@@ -21,7 +21,7 @@ Lifecycle: `/claude-tweaks:init` → **`/claude-tweaks:capture`** → `/superpow
 
 ## Input
 
-`$ARGUMENTS` is parsed as `<idea text> [--route=<value>] [--title="..."] [--type=<value>] [--needs-definition|--no-needs-definition] [--batch <path>]`:
+`$ARGUMENTS` is parsed as `<idea text> [--route=brainstorm|keep|absorb:N] [--title="..."] [--type=bug|feature|task] [--needs-definition|--no-needs-definition] [--batch <path>]`:
 
 | Argument | Behavior |
 |----------|----------|
@@ -189,17 +189,45 @@ toward the grant.
    node "${CLAUDE_PLUGIN_ROOT}/bin/compose-record.js" "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-payload.json" --out "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md"
    ```
 
-   **Type expression branch.** Read the project's `work-types` config key once before filing and branch — never re-probe mid-flow (`_shared/work-record.md`'s config-key table; the key is written by `/init`). `work-types: native` applies `$TYPE` via GitHub's native Issue Type; `work-types: labels` adds the matching `type:$TYPE` label instead (the pairs live in `record.js`'s `TYPE_LABELS`):
+   **Type expression branch.** Read the project's `work-types` config key once before filing and branch — never re-probe mid-flow (`_shared/work-record.md`'s config-key table; the key is written by `/init`). `work-types: native` applies `$TYPE` via GitHub's native Issue Type; `work-types: labels` adds the matching `type:$TYPE` label instead (the pairs live in `record.js`'s `TYPE_LABELS`).
+
+   **`work-types: native`** — detect-then-fallback, never version-sniff `gh --version` (gh added `issue create --type` between 2.92.0 and 2.96.0; a fleet runs a mix of both, so presence of the flag is what matters, not the version string). Run each command below as its **own plain Bash call** and branch on what it returns: an `if VAR=$(gh …)` wrapper and an inline GraphQL mutation declaring two `$var`s inside a nested `input:{…}` are both refused by the worktree-session guard (`_shared/scratch-worktree.md`), and shell variables do not survive between calls — carry each returned value (issue number, node id, type id) forward as a literal.
+
+   a. File with the native type, stderr kept for the branch decision:
+
+      ```bash
+      gh issue create --title "$TITLE" --body-file "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md" --type "$TYPE" --label by:capture 2>"/tmp/capture-${CLAUDE_CODE_SESSION_ID}-create-err.txt"
+      ```
+
+      Exit `0` → the printed URL is the record; this branch is done. Non-zero → read `/tmp/capture-${CLAUDE_CODE_SESSION_ID}-create-err.txt`: when it names `unknown flag: --type`, this gh build predates the flag — go to (b). Any other failure (auth, network, validation) → **stop** and surface that stderr verbatim; it is never absorbed into the fallback, and nothing was filed.
+
+   b. File without the type:
+
+      ```bash
+      gh issue create --title "$TITLE" --body-file "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md" --label by:capture
+      ```
+
+      Non-zero → **stop** and surface gh's stderr; nothing was filed. Exit `0` → the record exists; take its number `N` from the printed URL, then set its type in (c).
+
+   c. Set the native type on `N`. Resolve the slug first (`gh api graphql`'s `-f`/`-F` never expands `{owner}/{repo}` — `.claude/skills/gh-api-module-pattern`'s own guidance), then the issue's node id, then the type's id — three plain calls:
+
+      ```bash
+      gh repo view --json owner,name -q '.owner.login + " " + .name'
+      gh issue view N --json id -q .id
+      gh api graphql -f query='query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){issueTypes(first:50){nodes{id name}}}}' -f owner=OWNER -f repo=REPO -q ".data.repository.issueTypes.nodes[] | select(.name | ascii_downcase == \"$TYPE\") | .id"
+      ```
+
+      An empty type id means the repo has no native type named `$TYPE` — skip the mutation and report `#N filed but untyped: no native issue type "$TYPE" in this repo`. Otherwise write the mutation to `/tmp/capture-${CLAUDE_CODE_SESSION_ID}-type-mutation.graphql` with the `Write` tool (the session id resolved to its literal value) — `mutation($id:ID!,$typeId:ID!){updateIssue(input:{id:$id,issueTypeId:$typeId}){issue{id}}}` — and pass it by file:
+
+      ```bash
+      gh api graphql -F query=@"/tmp/capture-${CLAUDE_CODE_SESSION_ID}-type-mutation.graphql" -f id=NODE_ID -f typeId=TYPE_ID -q .data.updateIssue.issue.id
+      ```
+
+      Non-zero or empty output → report `#N filed but untyped: {gh's stderr}` — the record stands, its type does not, and the report says so rather than passing as typed. Remove the `-create-err.txt` and `-type-mutation.graphql` temp files once the branch finishes.
+
+   **`work-types: labels`:**
 
    ```bash
-   # work-types: native
-   gh issue create \
-     --title "$TITLE" \
-     --body-file "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md" \
-     --type "$TYPE" \
-     --label by:capture
-
-   # work-types: labels
    gh issue create \
      --title "$TITLE" \
      --body-file "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md" \
@@ -266,6 +294,23 @@ On match, skip Entry Format's stub assembly and its character-budget cap, and ru
 1. **Judging Definition first — and it wins.** `needs:definition` (judged, or `--needs-definition`, or an `## Open Question` section present) → compose via `specShapedBody` with `openQuestion`, `releaseNote: 'No user-visible change yet — pending definition.'` (#2660 — required on every `specShapedBody` call, `openQuestion` included; a genuinely undecided record has nothing more specific to say yet), `filedBy: 'capture'`, footer `_Filed by \`capture\` via specShapedBody._`, and file with `needs:definition`, no `ready`, no scoring (an undecided record is never born-ready). `--defer-reason=` is **not** required here — a needs-you record is not a deferral; when supplied it is still rendered via `provenance.deferReason`.
 2. **The deferral check.** The filing is a deferral when the body carries an `Origin:` line, `--origin=` was supplied (both content signals — either way the composed body carries provenance), **or** any `--source` value other than `intake` was given — the rule keys on "any `--source`", not named producers. A deferral with no `--defer-reason=` and no `Defer-reason:` line in the text → **stop and report the missing reason; file nothing** (the same hard gate `wrap-up/refused-proposals.md` enforces at the console). This check is evaluated before branch selection — a supplied `--defer-reason=` is never silently dropped on the stub path (a stub deferral's validated value is passed to `recordPayload({deferReason})`, which inserts the body line). This is the one deliberate content-keyed exception where invoker identity enters (`--source` as the headless-caller equivalent of the `Origin:` content signal), named as such.
 3. **Score and file born-ready.** Judge `risk`/`size` per `_shared/work-record.md`'s Scoring axis (or take `--risk=`/`--size=` overrides), compose via `specShapedBody({ header, currentState, deliverables, acceptanceCriteria, releaseNote: <a plain-language, verb-first sentence describing what becomes true for a user once this record is built, or 'No user-visible change.' for a purely internal one — #2660, required>, filedBy: 'capture', provenance: { origin: <the lifted line's value (the text after `Origin: `), else the `--origin=` text, else omitted>, deferReason }, footer: '_Filed by `capture` via specShapedBody._' })`, and file via Backend Selection's existing filing step with `recordPayload({ …, origin: 'capture', risk, size, ready: true, deferReason })` — `ready` regardless of the autonomy ceiling.
+
+   This branch's full `recordPayload` call, spelled out (`record.js`'s accepted keys are wider —
+   `ceremony`, `solutionUnjustified`, `parked`, `priority`, `fingerprint` — this branch never
+   passes those):
+
+   ```json
+   {
+     "title": "<the record title>",
+     "body": "<specShapedBody's composed text, from this step>",
+     "type": "<bug|feature|task>",
+     "origin": "capture",
+     "risk": "<low|medium|high>",
+     "size": "<low|medium|high>",
+     "ready": true,
+     "deferReason": "<one of DEFER_REASONS, present only when the deferral check above applies>"
+   }
+   ```
 
 **Decision (recorded, not an omission):** `ready` on this branch follows from the born-ready rule's own reasoning — a `specShapedBody`-composed, scored body is structurally what health skills file, and they are `ready` by construction — not from a trust verdict; the human gate stays the grant at `refine`, and the trust ledger's `producer:capture` class grades outcomes post-hoc. Self-judged scoring is likewise deliberately unconditional (the same judgment `/specify` shaping mode makes).
 

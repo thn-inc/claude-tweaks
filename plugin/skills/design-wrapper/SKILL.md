@@ -40,7 +40,7 @@ Full per-mode behavior and argument shape: see the Input table below.
 
 ## Input
 
-`$ARGUMENTS` is parsed as `<mode> <target> [flags]`:
+`$ARGUMENTS` is parsed as `<shape|pre-build|test|review|polish|survey|doctor|reset-recommendations|live|explore> [target] [<surface-topic>] [--screenshots <paths>] [--source <parent-skill>] [--description <text>] [--dry-run] [--limit <n>] [--scope <identity|layout>]`:
 
 | Mode | Target | Behavior |
 |------|--------|----------|
@@ -65,7 +65,7 @@ Full per-mode behavior and argument shape: see the Input table below.
 | `--dry-run` | `polish` | Compute the dispatch list without invoking any Impeccable command or modifying files |
 | `--limit <n>` | `survey` | Override the default 5-recommendation cap (see `modes/survey.md` Step 5) |
 
-When `<target>` is omitted for `test` mode, the wrapper resolves changed files via `git diff --name-only`. When omitted for `review` mode or `polish` mode, the wrapper falls back to the same git-diff resolution. `survey` defaults to the same git-diff resolution when called without files. If that `git diff --name-only` resolution itself fails (non-git directory, git error, corrupted index, mid-rebase state), the wrapper treats it the same as any other unresolvable-target case: return `{skipped: "unable to resolve target files (git diff failed)"}` immediately, without attempting detection or dispatch. `<spec>` is required (not resolvable via git diff) for `reset-recommendations` — when omitted, return `{skipped: "reset-recommendations requires <spec> — no default target resolution"}` rather than guessing a most-recently-modified cache across all specs.
+When `[target]` is omitted for `test` mode, the wrapper resolves changed files via `git diff --name-only`. When omitted for `review` mode or `polish` mode, the wrapper falls back to the same git-diff resolution. `survey` defaults to the same git-diff resolution when called without files. If that `git diff --name-only` resolution itself fails (non-git directory, git error, corrupted index, mid-rebase state), the wrapper treats it the same as any other unresolvable-target case: return `{skipped: "unable to resolve target files (git diff failed)"}` immediately, without attempting detection or dispatch. `<spec>` is required (not resolvable via git diff) for `reset-recommendations` — when omitted, return `{skipped: "reset-recommendations requires <spec> — no default target resolution"}` rather than guessing a most-recently-modified cache across all specs.
 
 **Layer 0 substitution in the fallback path.** When Layer 0 resolved and Layer 3 has ruled the change frontend, use its `scan.targets` in place of the raw `git diff --name-only` output as the source of candidate paths. One rule for every mode with a fallback path (`test`, `review`, `polish`, `survey`) — no per-mode variant. Its three load-bearing constraints — fallback only (never overriding an explicit caller-supplied `<target>` list), after Layer 3 and with the per-file trigger-extension/path filter still applied to the substituted list, and empty-`scan.targets`-takes-the-git-diff-fallback — are stated canonically in `impeccable-plugin.md`'s per-signal trust rules (`scan.targets` row); read that row before implementing this substitution.
 
@@ -210,6 +210,8 @@ Lazy-load these only when needed for the active mode:
 - `critics.md` — track-keyed roster of project-local craft critics; read only by `review` mode Step 3.8.
 - `impeccable-cli.md` — Exact CLI invocation, JSON output schema, parsing rules. Pins the **CLI**.
 - `impeccable-plugin.md` — the shared `resolveImpeccablePlugin` plugin-cache resolver (one resolver for every consumer in its script-path table), plus Layer 0 itself: the flagless `context-signals.mjs` invocation contract, `gatherSignals()`'s output shape, degradation conditions, and the per-signal trust rules. Pins the **plugin** — a separate artifact on a separate version line from the CLI.
+- `claude-design-skill-comparison.md` — Decision record (#2690): why `design-wrapper` stays Impeccable-only relative to Anthropic's native `/design` skill, and the condition for revisiting it. Not loaded by any mode's dispatch logic — reference only.
+- `third-party-design-skill-comparisons.md` — Comparison notes for third-party design skills evaluated against Impeccable, one section per skill (first: Hallmark, #2695 — its `study` reference-matching is complementary, not redundant, and not adopted). Not loaded by any mode's dispatch logic — reference only.
 
 ## Next Actions
 

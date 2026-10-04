@@ -56,6 +56,10 @@ jobs:
           # {previous-tag}..{new-tag}`, and pushes the follow-up CHANGELOG
           # commit straight back onto the default branch.
           fetch-depth: 0
+          # A release event sets github.ref to the tag, so a bare checkout is
+          # detached and the follow-up git push has no branch to push; check
+          # out the default branch instead.
+          ref: ${{ github.event.repository.default_branch }}
       - uses: actions/setup-node@v4
         with:
           node-version: 20

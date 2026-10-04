@@ -10,11 +10,11 @@
 // trailing status line (`_shared/subagent-output-contract.md`'s Implementer Status Protocol).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 
+const { readText } = require('./helpers/read-skill');
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const DISPATCH = read('plugin', 'skills', 'build', 'dispatch.md');
 

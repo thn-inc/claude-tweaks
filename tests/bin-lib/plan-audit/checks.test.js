@@ -40,12 +40,29 @@ test('checkA passes for Create when the parent directory exists, even though the
   }
 });
 
-test('checkA fails for Create when even the parent directory is missing', () => {
+// #2745: a lone Create/Test bullet whose parent directory is missing by
+// exactly one level (the repo-root-relative directory itself doesn't exist,
+// but its own parent — here, the repo root — does) passes on its own: the
+// same task creates the new directory as a side effect of writing the file,
+// so nothing else in the plan needs to pre-create or reference it. This
+// closes the standing "mkdir the new module dir before auditing" workaround.
+test('checkA passes a lone Create bullet creating exactly one new directory level (#2745)', () => {
   const repo = makeTmpRepo();
   try {
     const result = checkA([{ type: 'Create', path: 'nowhere/new.js' }], repo);
+    assert.strictEqual(result.ok, true);
+    assert.deepStrictEqual(result.missing, []);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('checkA fails for Create when TWO directory levels are missing and nothing else covers it', () => {
+  const repo = makeTmpRepo();
+  try {
+    const result = checkA([{ type: 'Create', path: 'nowhere/deeper/new.js' }], repo);
     assert.strictEqual(result.ok, false);
-    assert.deepStrictEqual(result.missing, ['nowhere/new.js']);
+    assert.deepStrictEqual(result.missing, ['nowhere/deeper/new.js']);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
@@ -74,11 +91,13 @@ test('checkA treats Test like Create — parent dir suffices for a brand-new tes
 });
 
 // #1999: Check A gains plan-awareness — a Create:/Test: bullet's missing
-// parent is satisfied by ANOTHER entry in the same plan (never by itself
-// alone — see this plan's own Deviation note on AC1's "first creation"
-// parenthetical, which would otherwise make every lone Create trivially
-// pass and contradict the pinned "even the parent directory is missing"
-// case above).
+// parent, when more than one directory level is missing, is satisfied by
+// ANOTHER entry in the same plan (never by itself alone — see this plan's
+// own Deviation note on AC1's "first creation" parenthetical). #2745 later
+// narrowed this to multi-level gaps specifically: a single missing directory
+// level passes on its own (the pinned tests above), since creating the file
+// creates that one directory as a side effect; a deeper gap still needs
+// cross-reference coverage, preserved by the tests below.
 test('checkA passes a Create bullet whose missing parent is created by ANOTHER Create bullet in the same plan (#1999)', () => {
   const repo = makeTmpRepo();
   try {
@@ -93,12 +112,12 @@ test('checkA passes a Create bullet whose missing parent is created by ANOTHER C
   }
 });
 
-test('checkA still fails a lone, unsupported Create bullet with a missing parent (#1999)', () => {
+test('checkA still fails a lone, unsupported Create bullet with a multi-level missing parent (#1999)', () => {
   const repo = makeTmpRepo();
   try {
-    const result = checkA([{ type: 'Create', path: 'nowhere/new.js' }], repo);
+    const result = checkA([{ type: 'Create', path: 'nowhere/nested/new.js' }], repo);
     assert.strictEqual(result.ok, false);
-    assert.deepStrictEqual(result.missing, ['nowhere/new.js']);
+    assert.deepStrictEqual(result.missing, ['nowhere/nested/new.js']);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
@@ -135,9 +154,9 @@ test('checkA: a Modify under a plan-created directory still fails — Modify nee
 test('checkA missingDetail names the nearest existing ancestor for a still-missing parent (#1999)', () => {
   const repo = makeTmpRepo();
   try {
-    const result = checkA([{ type: 'Create', path: 'nowhere/new.js' }], repo);
+    const result = checkA([{ type: 'Create', path: 'nowhere/nested/new.js' }], repo);
     assert.strictEqual(result.missingDetail.length, 1);
-    assert.strictEqual(result.missingDetail[0].path, 'nowhere/new.js');
+    assert.strictEqual(result.missingDetail[0].path, 'nowhere/nested/new.js');
     assert.strictEqual(result.missingDetail[0].nearestExistingAncestor, '.');
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });

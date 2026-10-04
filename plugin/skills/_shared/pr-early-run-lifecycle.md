@@ -288,6 +288,29 @@ marks the PR ready after gates pass.
 run was invoked with (`#{n}` or the bundle's comma-joined list). `{next-step}` is the step this
 run is *about* to execute — `build` at run start, since this procedure runs before any phase.
 
+**Deferred-closure decisions (#2686).** A spec can finish every other phase yet still carry a
+deliberate decision to withhold its own closing keyword — e.g. a decision already logged to leave
+the underlying issue open until a later manual step completes. Composing this block only once, at
+run start, can never see such a decision (nothing has run yet); the check instead lives at the
+point this block is actually corrected against real outcomes — `_shared/pr-checklist-refresh.md`'s
+"Rewrite the `Fixes` block from `manifest.yml` outcomes" step, which must treat a deferred-closure
+spec the same way it already treats a `not-run`/`failed` one: a `Refs` line, never `Fixes`, even
+when that spec's manifest status reads `complete`. The entry shape that step's
+`readDeferredClosures` (`bin/lib/flow/manifest.js`) recognizes — the one shape, written through
+`bin/log-decision.js` like every other decision in this file, to that spec's own
+`spec-{id}/decisions.md` (`flow/multispec-run-dir-layout.md`'s per-spec subdirectory):
+
+`deferred-closure: spec #{n} closing keyword withheld ({reason})`
+
+passed as `--text` to `log-decision.js` with `--status AUTO`, producing a line such as
+`AUTO {time} — spec #{n}: deferred-closure: spec #{n} closing keyword withheld ({reason}).
+Reversibility: high (a later commit or PR edit can still add Fixes #{n}).` `{reason}` is a short
+free-text phrase (e.g. `AC not fully met, pending manual step`). This is the one entry shape the
+rewrite step's reader recognizes — do not invent a differently-worded line for the same decision.
+A single-record run never writes or checks this line: there is no bundle `manifest.yml` for a
+single-record run to rewrite against, so the one `Fixes #{n}` line it composes here at Step 3 stays
+unconditional, exactly as before.
+
 Write the body to `/tmp/pr-early-body-{run-id}-{n}.md` — scoped by this run's own `{run-id}`
 (the run-dir basename), not just the issue number, so a retried run's fresh write can never
 land on a stale file a prior attempt left at a fixed `{n}`-only path (worse on Windows, where

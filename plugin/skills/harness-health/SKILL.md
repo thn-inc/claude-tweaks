@@ -93,6 +93,14 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/context-cost-report.js" --plugin-root "${CLAUDE_
 
 Include the per-step `bytes.max` values (one line per `step`, sorted descending) in Step 8's SUMMARIZE report — this is the standing answer to "how many bytes does each pipeline step load" that a session or a maintainer can otherwise only get by running the CLI by hand. An `error` row (an unparsed compose call, a missing/unreadable source) is reported the same way, naming the file:line rather than a byte count.
 
+**Harness cost-efficiency check (#2741, reporting only — same shape as the Composed-bytes-per-step check above, no issue filed, runs every firing).** A HarnessTax-style study found harness/tool-roster choice alone can move inference cost up to 5x with no comparable success-rate change; `context-cost.js`'s check above already measures a skill's prose payload, but says nothing about its declared *tool* roster or how deep it reaches into `_shared/*.md`. Call:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/harness-cost-report.js" --plugin-root "${CLAUDE_PLUGIN_ROOT}"
+```
+
+This reports every shipped skill's `allowed-tools:` declaration against a fixed four-tool baseline (Read/Write/Edit/Bash, the cited study's own Pareto-frontier reference point) — `toolCount: null` means the skill declares no `allowed-tools:` line at all and implicitly gets the full default roster, which `unscopedCount` tallies corpus-wide rather than flagging each one individually (the corpus norm, not the exception, so a per-skill flag there would be noise). `flagged` lists only skills with a *declared* tool count over 2x the baseline — never an unscoped skill, since there's nothing to ratio. Include in Step 8's SUMMARIZE report: the `unscopedCount`/`totalSkills` line, and any `flagged` entries by name and tool count. This is reporting only, the same posture as the composed-bytes check above — it never files an issue; a human or `/review` decides whether a specific flagged skill's roster is deliberate or worth narrowing.
+
 Read the `why` field on whichever target(s) came back:
 - If both `target`/`targets` are empty and `gapScanDue` is `false`: nothing is due this firing. Report this to the user and stop.
 - `why: "stale"` — this target has not been audited in over 90 days regardless of domain churn.
@@ -182,7 +190,7 @@ Read `filing.md` in this skill's directory and apply it. It owns the whole filin
 
 **Step 8 — SUMMARIZE.**
 
-Report: which target(s) were audited (or that only the gap scan ran), how many findings were emitted, how many filed vs skipped by dedup. List any new issue URLs. Always include the throttle line per `_shared/health-filing-digest.md`'s SUMMARIZE step: `filed: N, digested: M, cap: {CAP}, materiality: K` — report it even when `M` and `K` are both `0`, so the throttle is visible rather than inferred. Always include the composed-bytes-per-step line from the check above: `bytes/step (max): {step}={bytes} B, ...` sorted descending by bytes.
+Report: which target(s) were audited (or that only the gap scan ran), how many findings were emitted, how many filed vs skipped by dedup. List any new issue URLs. Always include the throttle line per `_shared/health-filing-digest.md`'s SUMMARIZE step: `filed: N, digested: M, cap: {CAP}, materiality: K` — report it even when `M` and `K` are both `0`, so the throttle is visible rather than inferred. Always include the composed-bytes-per-step line from the check above: `bytes/step (max): {step}={bytes} B, ...` sorted descending by bytes. Always include the harness cost-efficiency line from that check above: `tool scope: {unscopedCount}/{totalSkills} skills unscoped, flagged: {name}={toolCount} tools, ...` (omit the `flagged:` clause entirely when empty).
 
 ## Routine Configuration
 
@@ -199,6 +207,16 @@ Report-only, matching `/code-health` — every finding files as a `by:harness-he
 **Confidence floor on headless firings.** This skill's own `validate-findings --min-confidence <low|med|high>` now mirrors `/code-health`'s `--min-risk` flag — a finding below the floor is held in the durable `remembered` cache instead of filed. `docs-health` closed the same gap the same way in the same pass; `journey-health` also closed it, but with a different mechanism (drops a below-floor finding for that run rather than holding it durably — see `_shared/health-routine-notes.md`). The routine template's default prompt omits `--min-confidence`, so a scheduled firing still files every surviving finding regardless of confidence by default, matching this skill's pre-existing behavior — pass `--min-confidence med` (or `low`) in a customized Routine prompt to intentionally quiet a noisy headless firing down to `/code-health`'s own default posture.
 
 > **Billing note:** Routines run inside the subscription; verify automation-credit specifics against the live account. (Canonical text in `_shared/health-routine-notes.md` — shared with `/code-health`, `/docs-health`, and `/journey-health`.)
+
+## Dream Pass (cross-session failure mining)
+
+A separate, standalone-only pass (#2691): mines this account's own session transcripts for
+tool-call failures repeating across two or more DISTINCT sessions — the two-session evidence
+bar, enforced in code (`bin/lib/dream/scan.js`'s `filterByEvidenceBar`), not just prose — and
+stages propose-only writeups with quoted evidence under a `*-dream-standalone*` run directory.
+Read-only/propose-only: it never edits CLAUDE.md or a skill file, and nothing it stages is
+auto-applied. Full CLI invocation, scope, and review flow: `dream-pass.md` in this skill's
+directory.
 
 ## Next Actions
 

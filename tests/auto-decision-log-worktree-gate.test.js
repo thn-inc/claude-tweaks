@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #596: skills/_shared/auto-decision-log.md falsely claimed a skill already
 // running inside a /flow-/build-created worktree "is unaffected ... the
 // worktree already satisfies the gate" for decisions.md appends. It does
@@ -19,7 +20,7 @@ const path = require('path');
 // regression anywhere in the tree, not just these two known files.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const AUTO_DECISION_LOG = read('plugin', 'skills', '_shared', 'auto-decision-log.md');
 const PIPELINE_RUN_DIR = read('plugin', 'skills', '_shared', 'pipeline-run-dir.md');

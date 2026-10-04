@@ -4,10 +4,10 @@
 // since the lens's rows are manual-inspection prompts, not mechanical rules.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
-const LENS = fs.readFileSync(path.join(__dirname, '../plugin/skills/visual-review/ux-heuristics-lens.md'), 'utf8');
+const LENS = readText(path.join(__dirname, '../plugin/skills/visual-review/ux-heuristics-lens.md'));
 
 function checklistRows() {
   const start = LENS.indexOf('## The checklist');

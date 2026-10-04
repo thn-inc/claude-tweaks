@@ -232,6 +232,53 @@ test('a fixture whose expect.stream is neither stdout nor stderr produces a vali
   assert.ok(errors.some((e) => e.includes('fixtures[0]') && e.includes('stream')));
 });
 
+// ─── 9b. text-mode (expect.textMatch, #2573) assertion-mode validation ──
+
+test('a fixture using expect.textMatch instead of expect.keys is valid — text-mode does not require keys', () => {
+  const dep = validDependency();
+  delete dep.fixtures[0].expect.keys;
+  dep.fixtures[0].expect.textMatch = 'engine binary not found';
+
+  assert.deepStrictEqual(validateManifest({ dependencies: [dep] }), []);
+});
+
+test('a fixture specifying both expect.keys and expect.textMatch is an ambiguous-mode validation error', () => {
+  const dep = validDependency();
+  dep.fixtures[0].expect.textMatch = 'engine binary not found';
+
+  const errors = validateManifest({ dependencies: [dep] });
+  assert.ok(errors.some((e) => e.includes('fixtures[0]') && e.includes('keys') && e.includes('textMatch')));
+});
+
+test('a fixture specifying neither expect.keys nor expect.textMatch is a missing-assertion-mode validation error', () => {
+  const dep = validDependency();
+  delete dep.fixtures[0].expect.keys;
+
+  const errors = validateManifest({ dependencies: [dep] });
+  assert.ok(errors.some((e) => e.includes('fixtures[0]') && e.includes('keys') && e.includes('textMatch')));
+});
+
+test('a fixture whose expect.textMatch is an empty string is a validation error', () => {
+  const dep = validDependency();
+  delete dep.fixtures[0].expect.keys;
+  dep.fixtures[0].expect.textMatch = '';
+
+  const errors = validateManifest({ dependencies: [dep] });
+  assert.ok(errors.some((e) => e.includes('fixtures[0]') && e.includes('textMatch')));
+});
+
+test('exit and stream are still validated when a fixture uses text-mode', () => {
+  const dep = validDependency();
+  delete dep.fixtures[0].expect.keys;
+  dep.fixtures[0].expect.textMatch = 'engine binary not found';
+  dep.fixtures[0].expect.stream = 'both';
+  delete dep.fixtures[0].expect.exit;
+
+  const errors = validateManifest({ dependencies: [dep] });
+  assert.ok(errors.some((e) => e.includes('fixtures[0]') && e.includes('stream')));
+  assert.ok(errors.some((e) => e.includes('fixtures[0]') && e.includes('exit')));
+});
+
 // ─── 10. fixtures: [] and contract-paths: [] are valid ─────────────────
 
 test('an empty list is valid for contract-paths, assertions, fixtures, and expect.keys — distinct from missing', () => {

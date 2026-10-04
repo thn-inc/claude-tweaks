@@ -6,6 +6,7 @@ const path = require('path');
 const os = require('os');
 const { execFileSync } = require('child_process');
 
+const { readText } = require('./helpers/read-skill');
 // #203: /help Stage 4.7's acceptance-queue scope gets a local-files twin.
 // Prose-as-implementation (Stage 4.7 is a markdown-inlined `node -e` script,
 // same convention as Stage 1's Conflict detection sub-section and
@@ -15,7 +16,7 @@ const { execFileSync } = require('child_process');
 // embedded scripts.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 const STATUS_SCAN = read('plugin', 'skills', 'help', 'status-scan.md');
 const DEMO_SKILL = read('plugin', 'skills', 'demo', 'SKILL.md');
 

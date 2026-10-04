@@ -81,3 +81,51 @@ test('quantize: a large, high-color-count frame (mimicking a real screenshot) co
   assert.equal(idx.length, w * h);
   assert.ok(elapsedMs < 5000, `expected quantize+index on a ${w}x${h} frame to complete in under 5s, took ${elapsedMs}ms`);
 });
+
+// #2769: the fixture above (400x300, 65,536 distinct colours) sits entirely in the fast band —
+// it can never exercise the slow-band pathology, since medianCut's cost scales with DISTINCT
+// colour count, not pixel count. This fixture produces a high-entropy, high-distinct-colour-count
+// 8-frame 1280x720 walkthrough (gradient + bounded per-pixel noise on two channels) — the same
+// shape of adversarial input (photo/map/video-heavy content) #2769 reports (deterministic across
+// runs: ~982,011 distinct colours, well above PRE_BUCKET_THRESHOLD). Proven red against the
+// pre-fix quantizer (~6.2s / ~278MB RSS, over this test's budget) before the colour-count-bounded
+// path (`preBucketColors`, palette.js) landed.
+function gradientNoiseFrame(w, h, seed, noiseAmp) {
+  const rgba = new Uint8Array(w * h * 4);
+  let s = seed;
+  function rnd(n) { s = (s * 1103515245 + 12345) & 0x7fffffff; return s % n; }
+  function withNoise(base) { return Math.min(255, Math.max(0, base + rnd(noiseAmp) - (noiseAmp >> 1))); }
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4;
+    rgba[i] = withNoise(Math.floor((x / w) * 255));
+    rgba[i + 1] = withNoise(Math.floor((y / h) * 255));
+    rgba[i + 2] = (x * 7 + y * 13) % 256;
+    rgba[i + 3] = 255;
+  }
+  return rgba;
+}
+
+test('quantize: an adversarial high-distinct-colour-count 8-frame 1280x720 walkthrough stays bounded (#2769)', () => {
+  const w = 1280, h = 720, frameCount = 8, noiseAmp = 4;
+  const rgbaFrames = [];
+  for (let f = 0; f < frameCount; f++) rgbaFrames.push(gradientNoiseFrame(w, h, f * 999331 + 1, noiseAmp));
+
+  // Sanity-check the fixture itself actually lands in the slow band this test targets, so a
+  // future change to the fixture's own generator can't silently stop exercising it.
+  const seen = new Set();
+  for (const frame of rgbaFrames) {
+    for (let p = 0; p < frame.length; p += 4) seen.add((frame[p] << 16) | (frame[p + 1] << 8) | frame[p + 2]);
+  }
+  assert.ok(seen.size > 150000, `expected fixture to exceed the pre-bucket threshold, got ${seen.size} distinct colours`);
+
+  const start = Date.now();
+  const { palette, index } = quantize(rgbaFrames, 256);
+  const elapsedMs = Date.now() - start;
+  assert.ok(palette.length / 3 <= 256);
+  const idx = index(rgbaFrames[0]);
+  assert.equal(idx.length, w * h);
+  assert.ok(
+    elapsedMs < 3000,
+    `expected quantize on an adversarial ${w}x${h}x${frameCount}-frame walkthrough (${seen.size} distinct colours) to complete in under 3s (bounded, regardless of distinct-colour count), took ${elapsedMs}ms`
+  );
+});

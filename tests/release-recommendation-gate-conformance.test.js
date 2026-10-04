@@ -11,11 +11,11 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const GATE = read('plugin', 'skills', '_shared', 'release-recommendation-gate.md');
 const FLOW_SUMMARY = read('plugin', 'skills', 'flow', 'summary-template.md');

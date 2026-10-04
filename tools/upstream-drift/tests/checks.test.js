@@ -288,6 +288,86 @@ test('replayFixtures: ok and empty results for fixtures: []', () => {
   assert.deepStrictEqual(result.results, []);
 });
 
+// ─── text-mode assertion (expect.textMatch, #2573) ────────────────────────
+
+test('replayFixtures: text-mode ok when the named stream contains the expected substring', () => {
+  const entry = {
+    name: 'impeccable-cli',
+    fixtures: [
+      { run: 'node -e "process.stderr.write(\'engine binary not found\');process.exit(127)"', expect: { exit: 127, stream: 'stderr', textMatch: 'engine binary not found' } },
+    ],
+  };
+  const result = replayFixtures(entry);
+  assert.strictEqual(result.status, 'ok');
+  assert.strictEqual(result.results[0].status, 'ok');
+});
+
+test('replayFixtures: text-mode mismatch names the expected substring and the checked stream', () => {
+  const entry = {
+    name: 'impeccable-cli',
+    fixtures: [
+      { run: 'node -e "process.stderr.write(\'something else entirely\');process.exit(127)"', expect: { exit: 127, stream: 'stderr', textMatch: 'engine binary not found' } },
+    ],
+  };
+  const result = replayFixtures(entry);
+  assert.strictEqual(result.status, 'mismatch');
+  assert.strictEqual(result.results[0].status, 'mismatch');
+  assert.ok(result.results[0].detail.includes('engine binary not found'), `detail must name the expected substring, got: ${result.results[0].detail}`);
+  assert.ok(result.results[0].detail.includes('stderr'), `detail must name the checked stream, got: ${result.results[0].detail}`);
+});
+
+test('replayFixtures: text-mode never attempts a JSON parse — a non-JSON stream still passes on a substring match', () => {
+  const entry = {
+    name: 'impeccable-cli',
+    fixtures: [
+      { run: 'node -e "process.stdout.write(\'plain text, not json\')"', expect: { exit: 0, stream: 'stdout', textMatch: 'not json' } },
+    ],
+  };
+  const result = replayFixtures(entry);
+  assert.strictEqual(result.status, 'ok');
+});
+
+test('replayFixtures: text-mode still enforces the exit-code check before the substring check', () => {
+  const entry = {
+    name: 'impeccable-cli',
+    fixtures: [
+      { run: 'node -e "process.stderr.write(\'engine binary not found\');process.exit(1)"', expect: { exit: 127, stream: 'stderr', textMatch: 'engine binary not found' } },
+    ],
+  };
+  const result = replayFixtures(entry);
+  assert.strictEqual(result.status, 'mismatch');
+  assert.ok(result.results[0].detail.includes('exit'), `detail must name the exit mismatch, got: ${result.results[0].detail}`);
+});
+
+test('#2573 AC5: a plain-text-stderr/exit-127 fixture (the #2480 engine-download-failure shape) round-trips — passes when behavior matches, fails with an informative detail on regression', () => {
+  // "An equivalent" per #2573's Deliverable 3 — a synthetic command standing
+  // in for Impeccable's engine-locate/download shim, which (per #2480) fails
+  // by writing a plain-text message to stderr and exiting 127. This proves
+  // the new text-mode assertion round-trips a real plain-text failure
+  // without needing a live, network-dependent engine-download to reproduce.
+  const engineDownloadFailureCmd = 'node -e "process.stderr.write(\'impeccable: engine binary not found and could not be downloaded\\n\');process.exit(127)"';
+  const entry = {
+    name: 'impeccable-cli',
+    fixtures: [
+      { run: engineDownloadFailureCmd, expect: { exit: 127, stream: 'stderr', textMatch: 'engine binary not found' } },
+    ],
+  };
+
+  const passing = replayFixtures(entry);
+  assert.strictEqual(passing.status, 'ok', `expected the real plain-text failure to pass, got: ${JSON.stringify(passing.results[0])}`);
+
+  // Simulate a regression: the engine shim's message wording changes.
+  const regressed = {
+    name: 'impeccable-cli',
+    fixtures: [
+      { run: 'node -e "process.stderr.write(\'impeccable: engine unavailable\\n\');process.exit(127)"', expect: { exit: 127, stream: 'stderr', textMatch: 'engine binary not found' } },
+    ],
+  };
+  const failing = replayFixtures(regressed);
+  assert.strictEqual(failing.status, 'mismatch');
+  assert.ok(failing.results[0].detail.includes('engine binary not found'), `regression detail must name the expected substring, got: ${failing.results[0].detail}`);
+});
+
 // ─── never-prints guard ──────────────────────────────────────────────────
 
 test('checks.js never calls console.* — rendering belongs to a later module', () => {

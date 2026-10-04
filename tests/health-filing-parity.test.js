@@ -17,18 +17,18 @@
 // siblings, found and fixed alongside this test — see #240).
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 
 const SOURCES = {
-  'code-health': fs.readFileSync(path.join(ROOT, 'plugin/skills/code-health/SKILL.md'), 'utf8')
-    + fs.readFileSync(path.join(ROOT, 'plugin/skills/code-health/filing.md'), 'utf8'),
-  'harness-health': fs.readFileSync(path.join(ROOT, 'plugin/skills/harness-health/SKILL.md'), 'utf8')
-    + fs.readFileSync(path.join(ROOT, 'plugin/skills/harness-health/filing.md'), 'utf8'),
-  'docs-health': fs.readFileSync(path.join(ROOT, 'plugin/skills/docs-health/SKILL.md'), 'utf8'),
-  'journey-health': fs.readFileSync(path.join(ROOT, 'plugin/skills/journey-health/SKILL.md'), 'utf8'),
+  'code-health': readText(path.join(ROOT, 'plugin/skills/code-health/SKILL.md'))
+    + readText(path.join(ROOT, 'plugin/skills/code-health/filing.md')),
+  'harness-health': readText(path.join(ROOT, 'plugin/skills/harness-health/SKILL.md'))
+    + readText(path.join(ROOT, 'plugin/skills/harness-health/filing.md')),
+  'docs-health': readText(path.join(ROOT, 'plugin/skills/docs-health/SKILL.md')),
+  'journey-health': readText(path.join(ROOT, 'plugin/skills/journey-health/SKILL.md')),
 };
 
 // Extracts a paragraph starting at `startMarker` up to (not including) the

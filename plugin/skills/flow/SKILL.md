@@ -34,7 +34,7 @@ Run multiple lifecycle steps in sequence without stopping between them. Each ste
 ## Syntax
 
 ```
-/claude-tweaks:flow #N[,#M...] [worktree | current-branch] [no-stories] [no-polish] [no-deepen] [no-creative] [auto | interactive | hybrid | confirm] [keep-going] [cleanup-only] [step1,step2,step3]
+/claude-tweaks:flow #N[,#M...] [worktree|current-branch] [no-stories] [no-polish] [no-deepen] [no-creative] [auto|interactive|hybrid|confirm] [keep-going] [cleanup-only] [step1,step2,step3]
 ```
 
 All bracketed tokens are optional and order-independent. `worktree` is the default git strategy when neither `worktree` nor `current-branch` is set. `keep-going` applies to multi-record runs only. Design doc paths are rejected at Step 2.7 — run `/claude-tweaks:specify` first.

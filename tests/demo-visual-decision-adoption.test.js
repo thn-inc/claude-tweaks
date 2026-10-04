@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const DEMO_SKILL_PATH = 'plugin/skills/demo/SKILL.md';
@@ -16,12 +16,12 @@ const CONTRACT_PATH = 'plugin/skills/_shared/visual-decision.md';
 const PLUGIN_STRUCTURE_PATH = 'docs/plugin-structure.md';
 const SKILL_GRAPH_PATH = 'docs/skill-graph.md';
 
-const demoSkill = fs.readFileSync(path.join(ROOT, DEMO_SKILL_PATH), 'utf8');
-const browserVerdict = fs.readFileSync(path.join(ROOT, BROWSER_VERDICT_PATH), 'utf8');
-const browserReview = fs.readFileSync(path.join(ROOT, BROWSER_REVIEW_PATH), 'utf8');
-const contract = fs.readFileSync(path.join(ROOT, CONTRACT_PATH), 'utf8');
-const pluginStructure = fs.readFileSync(path.join(ROOT, PLUGIN_STRUCTURE_PATH), 'utf8');
-const skillGraph = fs.readFileSync(path.join(ROOT, SKILL_GRAPH_PATH), 'utf8');
+const demoSkill = readText(path.join(ROOT, DEMO_SKILL_PATH));
+const browserVerdict = readText(path.join(ROOT, BROWSER_VERDICT_PATH));
+const browserReview = readText(path.join(ROOT, BROWSER_REVIEW_PATH));
+const contract = readText(path.join(ROOT, CONTRACT_PATH));
+const pluginStructure = readText(path.join(ROOT, PLUGIN_STRUCTURE_PATH));
+const skillGraph = readText(path.join(ROOT, SKILL_GRAPH_PATH));
 
 // The commit this branch was built on top of (worktree branch point off origin/main) —
 // already part of main's own history, so it stays reachable after this branch merges.

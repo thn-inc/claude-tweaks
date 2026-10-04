@@ -1,8 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 // #679: session-evaluation watermark — pins the prose/doc deliverables that
 // ship no runtime code of their own (plugin/bin/lib/transcript-judge/
@@ -24,7 +24,7 @@ const path = require('path');
 // none of this is a table mirroring a code structure.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const SESSION_EVAL = read('plugin', 'skills', 'feedback', 'session-evaluation.md');
 const SKILL = read('plugin', 'skills', 'feedback', 'SKILL.md');
@@ -139,7 +139,7 @@ test('SKILL.md frontmatter argument-hint includes --full', () => {
 test('SKILL.md "$ARGUMENTS is parsed as" intro line includes --full', () => {
   assert.match(
     SKILL,
-    /`\$ARGUMENTS` is parsed as `\[<learning text>\] \[--kind=<value>\] \[--upstream <owner\/name>\] \[--dry-run\] \[--queue\] \[--full\] \[--pre-confirmed\]`:/,
+    /`\$ARGUMENTS` is parsed as `\[<learning text>\] \[--kind=defect\|gap\] \[--upstream <owner\/name>\] \[--dry-run\] \[--queue\] \[--full\] \[--pre-confirmed\]`:/,
   );
 });
 

@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #1957: build-time guard warning before a build reuses another record's
 // cherry-picked branch that already backs an open PR (closes #1821's
 // incident class). The detection logic itself has unit coverage in
@@ -27,7 +27,7 @@ const path = require('path');
 // Dependency freshness check extraction).
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const WORKTREE_SETUP = read('plugin', 'skills', 'build', 'worktree-setup.md');
 const CHERRY_PICK_CHECK = read('plugin', 'skills', 'build', 'cherry-pick-provenance-check.md');
