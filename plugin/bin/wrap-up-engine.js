@@ -46,7 +46,7 @@ const { runVerify, renderVerifyTable, resolveArchivedRunDir } = require('./lib/w
 const { resolveLedgerPath, flipLedgerRow, TERMINAL_STATUSES } = require('./lib/wrap-up/ledger-write');
 const { appendEntry, formatEntry } = require('./lib/log-decision/append');
 const { writeFileAtomic } = require('./lib/atomic-write');
-const { writeExpectations } = require('./lib/verify-expectations/write');
+const { validateFields, writeExpectations } = require('./lib/verify-expectations/write');
 
 const USAGE = [
   'usage: wrap-up-engine.js plan --run-dir <dir> --base <sha> [--ceremony <profile>] [--skill-budget n] [--doc-budget n] [--signals <json>] [--dry-run]',
@@ -513,17 +513,11 @@ function validateFinishConsolePayload(payload) {
   const memory = payload.memory ?? [];
   const upstream = payload.upstream ?? [];
   const ledger = payload.ledger ?? [];
-  if (!Array.isArray(memory)) return '"memory" must be an array';
-  if (!Array.isArray(upstream)) return '"upstream" must be an array';
+  // memory/upstream shape is the writer library's own check — one rule for
+  // both writers of verify-expectations.json (#2764).
+  const fieldsError = validateFields({ memory, upstream });
+  if (fieldsError) return fieldsError;
   if (!Array.isArray(ledger)) return '"ledger" must be an array';
-  for (const [i, m] of memory.entries()) {
-    if (!m || typeof m.file !== 'string' || !m.file || typeof m.indexFile !== 'string' || !m.indexFile) {
-      return `memory[${i}] must be {file, indexFile} (both non-empty strings)`;
-    }
-  }
-  for (const [i, u] of upstream.entries()) {
-    if (!u || typeof u.url !== 'string' || !u.url) return `upstream[${i}] must be {url} (a non-empty string)`;
-  }
   for (const [i, l] of ledger.entries()) {
     if (!l || !Number.isInteger(l.item) || l.item <= 0) return `ledger[${i}].item must be a positive integer`;
     if (!TERMINAL_STATUSES.includes(l.status)) return `ledger[${i}].status must be one of ${TERMINAL_STATUSES.join(', ')}`;
