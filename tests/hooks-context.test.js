@@ -560,8 +560,8 @@ test('readRunStateWithParent: a usable per-spec value wins over the parent (prec
   assert.deepStrictEqual(r.filled, []);
 });
 
-test('readRunStateWithParent: a present-but-unusable per-spec value (pr null, pr {}, worktree "") is filled from the parent', () => {
-  for (const own of [{ pr: null, worktree: '' }, { pr: {}, worktree: '' }]) {
+test('readRunStateWithParent: a present-but-unusable per-spec value (pr null, pr {}, a string pr.number, worktree "", a non-string worktree) is filled from the parent', () => {
+  for (const own of [{ pr: null, worktree: '' }, { pr: {}, worktree: '' }, { pr: { number: '12' }, worktree: 5 }]) {
     const { child } = mkSpecChild({ worktree: '/w/tree', pr: { number: 12 } }, own);
     const r = ctx.readRunStateWithParent(child);
     assert.strictEqual(r.state.worktree, '/w/tree');
