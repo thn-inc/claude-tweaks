@@ -12,7 +12,7 @@ const path = require('path');
 const STAGE1 = ['types', 'lint'];
 
 function runOne({
-  name, command, logDir, spawnImpl, now, cwd,
+  name, command, logDir, spawnImpl, now, cwd, env: checkEnv = null,
 }) {
   const logPath = path.join(logDir, `${name}.log`);
   const stream = fs.createWriteStream(logPath);
@@ -43,7 +43,10 @@ function runOne({
     // text when told to; the extractor's own stripAnsi stays authoritative
     // for runners that ignore both. Caller-set values win (a project that
     // deliberately forces colour on keeps it).
-    const env = { NO_COLOR: '1', FORCE_COLOR: '0', ...process.env };
+    // #2779: a check's own --cmd-env variables merge last, over the inherited
+    // environment, and reach the child through spawn's `env` option — never
+    // as a `VAR=val` prefix on the command string, which cmd.exe rejects.
+    const env = { NO_COLOR: '1', FORCE_COLOR: '0', ...process.env, ...checkEnv };
     try {
       child = spawnImpl(command, cwd ? { shell: true, cwd, env } : { shell: true, env });
     } catch (err) {

@@ -1422,3 +1422,84 @@ test('#1928 fix round 1: a fail-fast-skipped check is excluded from the verify e
   assert.ok(!ev.suitesRun.includes('tests'), `suitesRun should not include the fail-fast-skipped 'tests' check: ${JSON.stringify(ev.suitesRun)}`);
   assert.deepStrictEqual(ev.suitesRun, ['lint']);
 });
+
+// #2779: the variable name is unique to this file so an inherited value in
+// the test runner's own environment can never make these pass by accident.
+// The child reads it from its real process environment; the command strings
+// carry no shell-syntax assignment, so the same invocation holds under
+// cmd.exe and POSIX shells alike.
+const ENV_VAR = 'VERIFY_CLI_TEST_2779';
+
+test('#2779: --cmd-env sets the variable in the named check process only, and report.json records no env', async () => {
+  assert.strictEqual(process.env[ENV_VAR], undefined, 'precondition: the variable is not inherited');
+  const dir = tmpDir();
+  fs.writeFileSync(path.join(dir, 'print-env.js'), `console.log('seen=' + String(process.env.${ENV_VAR}));\n`);
+  const logDir = tmpDir();
+  const { code, stderr } = await runCli([
+    '--log-dir', logDir,
+    '--cmd', 'foo=node print-env.js',
+    '--cmd', 'bar=node print-env.js',
+    '--cmd-env', `foo=${ENV_VAR}=1`,
+  ], { cwd: dir });
+  assert.strictEqual(code, 0, stderr);
+  assert.strictEqual(fs.readFileSync(path.join(logDir, 'foo.log'), 'utf8').trim(), 'seen=1');
+  assert.strictEqual(fs.readFileSync(path.join(logDir, 'bar.log'), 'utf8').trim(), 'seen=undefined');
+  const report = JSON.parse(fs.readFileSync(path.join(logDir, 'report.json'), 'utf8'));
+  assert.strictEqual(report.checks.foo.command, 'node print-env.js');
+  assert.ok(!('env' in report.checks.foo));
+});
+
+test('#2779: a --cmd-env naming an undeclared check exits 2 naming it, with usage, and spawns nothing', async () => {
+  const dir = tmpDir();
+  fs.writeFileSync(path.join(dir, 'mark.js'), "require('fs').writeFileSync('ran.marker', 'ran');\n");
+  const { code, stderr } = await runCli([
+    '--cmd', 'foo=node mark.js', '--cmd-env', `baz=${ENV_VAR}=1`,
+  ], { cwd: dir });
+  assert.strictEqual(code, 2);
+  assert.ok(stderr.includes('--cmd-env "baz" names no declared --cmd (declared: foo)'), stderr);
+  assert.ok(stderr.includes('usage:'));
+  assert.ok(!fs.existsSync(path.join(dir, 'ran.marker')), 'no check may spawn on a usage error');
+});
+
+test('#2779: omitting --cmd-env leaves a --cmd-only run with the inherited environment and nothing else', async () => {
+  const dir = tmpDir();
+  fs.writeFileSync(path.join(dir, 'print-env.js'), `console.log('seen=' + String(process.env.${ENV_VAR}));\n`);
+  const logDir = tmpDir();
+  const { code, stderr } = await runCli(['--log-dir', logDir, '--cmd', 'foo=node print-env.js'], { cwd: dir });
+  assert.strictEqual(code, 0, stderr);
+  assert.strictEqual(fs.readFileSync(path.join(logDir, 'foo.log'), 'utf8').trim(), 'seen=undefined');
+});
+
+test('#2779: a flaky retry of a check runs with that check\'s --cmd-env', async () => {
+  const r = flakyRepo();
+  fs.writeFileSync(path.join(r.repo, 'retry.js'), `require('fs').writeFileSync('retry.marker', String(process.env.${ENV_VAR}));\n`);
+  const { code, stderr } = await runCli([...r.args, '--cmd-env', `tests=${ENV_VAR}=on`], { cwd: r.repo });
+  assert.strictEqual(code, 0, stderr);
+  assert.strictEqual(fs.readFileSync(r.marker, 'utf8'), 'on');
+});
+
+test('#2779: tool-scoped mode\'s synthesized tests command runs with the tests check\'s --cmd-env', async () => {
+  const r = tmpGitRepo();
+  const out = path.join(r.repo, 'env-seen.txt');
+  // The {base} placeholder is what makes a string-form tests check
+  // tool-scoped; it rides in a JS comment since this test reads the env.
+  const decl = {
+    checks: { tests: `node -e 'require("fs").writeFileSync(${JSON.stringify(out)}, String(process.env.${ENV_VAR})) /* {base} */'` },
+    rules: [{ match: 'src/**', suites: [], static: true }, { match: 'docs/**', suites: [], static: false }],
+  };
+  fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
+  r.git('add', '.claude-tweaks/verify-scope.json');
+  r.git('commit', '-q', '-m', 'declare');
+  const args = [
+    '--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.git('symbolic-ref', '--short', 'HEAD').trim(),
+    '--cmd', 'tests=node -e 0', '--cmd-env', `tests=${ENV_VAR}=on`,
+  ];
+  const run1 = await runCli(args, { cwd: r.repo });
+  assert.strictEqual(run1.code, 0, run1.stderr);
+  commitFile(r, 'src/a.js', '1');
+  const run2 = await runCli(args, { cwd: r.repo });
+  assert.strictEqual(run2.code, 0, run2.stderr);
+  assert.match(run2.stdout, /^Scope: tool-scoped/m);
+  assert.strictEqual(fs.readFileSync(out, 'utf8'), 'on');
+});
