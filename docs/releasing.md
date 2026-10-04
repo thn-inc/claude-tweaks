@@ -25,5 +25,6 @@ Two PATs, both required — their failure modes differ. Without `RELEASE_PLEASE_
 Unchanged — `_shared/pr-first-merge-post-merge.md` Step 4.1 answers this from tag ancestry alone:
 
 ```
+git fetch origin <integration-branch>
 git describe --tags --contains --first-parent --match 'v*' <merge-sha>
 ```
