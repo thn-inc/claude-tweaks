@@ -550,8 +550,21 @@ function validateManifest(obj) {
         if (f.expect.stream !== 'stdout' && f.expect.stream !== 'stderr') {
           errors.push(`Dependency ${label}: 'fixtures[${i}].expect.stream' must be exactly 'stdout' or 'stderr'`);
         }
-        if (!hasKey(f.expect, 'keys')) {
-          errors.push(`Dependency ${label}: 'fixtures[${i}].expect.keys' is required`);
+        // Exactly one assertion mode per fixture: JSON-mode (`expect.keys`)
+        // or text-mode (`expect.textMatch`, #2573) — never both, never
+        // neither. checks.js's checkOneFixture branches on `textMatch`'s
+        // presence the same way, so this is the single place that enforces
+        // the two modes stay mutually exclusive.
+        const hasKeys = hasKey(f.expect, 'keys');
+        const hasTextMatch = hasKey(f.expect, 'textMatch');
+        if (hasKeys && hasTextMatch) {
+          errors.push(`Dependency ${label}: 'fixtures[${i}].expect' must use exactly one assertion mode — both 'keys' (JSON-mode) and 'textMatch' (text-mode) are present`);
+        } else if (hasTextMatch) {
+          if (typeof f.expect.textMatch !== 'string' || f.expect.textMatch.length === 0) {
+            errors.push(`Dependency ${label}: 'fixtures[${i}].expect.textMatch' must be a non-empty string`);
+          }
+        } else if (!hasKeys) {
+          errors.push(`Dependency ${label}: 'fixtures[${i}].expect' must specify either 'keys' (JSON-mode) or 'textMatch' (text-mode)`);
         } else if (!Array.isArray(f.expect.keys)) {
           errors.push(`Dependency ${label}: 'fixtures[${i}].expect.keys' must be a list`);
         } else {
