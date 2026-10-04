@@ -68,9 +68,15 @@ function redactSecrets(s) {
 // The one redaction every transcript-derived field goes through before it
 // can reach a staged proposal, report.md, or decisions.md. Secrets first, so
 // a slash-bearing secret value is replaced whole rather than half-eaten by
-// the path pattern.
+// the path pattern. Input is capped first: SECRET_NAME's unbounded runs
+// backtrack quadratically on a long keyword-bearing run (a multi-megabyte
+// tool output), and every caller truncates to at most MAX_ERROR_CHARS after
+// redacting, so text past the cap can never reach an output anyway.
+const PRE_REDACT_CHARS = 2048;
+
 function redact(s) {
-  return redactPaths(redactSecrets(s));
+  const capped = s.length > PRE_REDACT_CHARS ? s.slice(0, PRE_REDACT_CHARS) : s;
+  return redactPaths(redactSecrets(capped));
 }
 
 // List every `{configDir}/projects/*/*.jsonl` file whose mtime falls within

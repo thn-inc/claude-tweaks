@@ -274,3 +274,12 @@ test('composeProposalMarkdown: a proposal built from real findings quotes no raw
   assert.ok(!md.includes('abcDEF1234567890xyz'), md);
   assert.ok(md.includes('Bearer <secret>'), md);
 });
+
+test('redact: a huge keyword-bearing tool output stays fast (input is capped before the secret regexes run)', () => {
+  // Uncapped, SECRET_NAME's unbounded runs backtrack quadratically here (~2 s at 120k chars).
+  const huge = 'TOKEN'.repeat(24000);
+  const started = Date.now();
+  const out = redact(huge);
+  assert.ok(Date.now() - started < 500, `redact took ${Date.now() - started} ms`);
+  assert.ok(out.startsWith('TOKEN'), out.slice(0, 20));
+});
