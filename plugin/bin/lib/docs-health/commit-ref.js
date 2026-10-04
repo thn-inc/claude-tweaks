@@ -70,8 +70,8 @@ function isShallow(git, root) {
   throw new Error(`unexpected is-shallow-repository output: ${out}`);
 }
 
-// F1 (#2866 review): git rev-parse --disambiguate truncates an over-length
-// prefix to the repository's own hash length, so it cannot by itself tell an
+// git rev-parse --disambiguate truncates an over-length prefix to the
+// repository's own hash length (#2866), so it cannot by itself tell an
 // over-long (and therefore malformed) hash from a real one. Read the object
 // format once, up front, so callers can classify any input longer than it
 // as invalid rather than letting a truncated match read as reachable.
@@ -110,7 +110,7 @@ function resolveIntegrationRef(git, root, remote, branch) {
 function commitCandidates(git, root, prefix) {
   const out = git(['-C', root, 'rev-parse', `--disambiguate=${prefix}`]);
   const shas = out.split('\n').map((l) => l.trim()).filter(Boolean);
-  // Belt-and-braces against --disambiguate's own prefix truncation (I1):
+  // Belt-and-braces against --disambiguate's own prefix truncation (#2866):
   // keep only candidates that actually start with the (lowercased) prefix.
   return shas
     .filter((sha) => sha.startsWith(prefix) && git(['-C', root, 'cat-file', '-t', sha]).trim() === 'commit')
@@ -168,10 +168,10 @@ function verifyCommits({
     return allUnverifiable(`not a git repository, or git unavailable: ${errorText(err)}`);
   }
 
-  // F5 (#2866 review M2): resolve the branch NAME before paying for the
-  // deepen fetch, so a run that cannot reach a verdict never pays for the
-  // network side effect. resolveIntegrationRef stays after the deepen below
-  // — the fetch can create the ref it needs.
+  // Resolve the branch NAME before paying for the deepen fetch (#2866), so a
+  // run that cannot reach a verdict never pays for the network side effect.
+  // resolveIntegrationRef stays after the deepen below — the fetch can
+  // create the ref it needs.
   const branch = resolveIntegrationBranch(git, root, remote, integrationBranch);
   if (!branch || !NAME_RE.test(branch)) {
     return allUnverifiable(`integration branch unresolved: pass --integration-branch or set ${remote}/HEAD`);
@@ -202,10 +202,9 @@ function verifyCommits({
   if (!ref) return allUnverifiable(`integration ref not found for branch ${branch}`);
   result.integrationRef = ref;
 
-  // F1 (#2866 review I1): --disambiguate truncates an over-length prefix to
-  // the repository's own hash length, so an input longer than that length
-  // can never be a real hash — classify it invalid before it ever reaches
-  // git, rather than letting it match a truncated candidate as reachable.
+  // Over-length inputs must be classified invalid before classifyOne ever
+  // sees them — see objectHashLength's own comment above (#2866): a
+  // truncated --disambiguate match would otherwise read as reachable.
   let hashLength;
   try {
     hashLength = objectHashLength(git, root);

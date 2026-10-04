@@ -347,7 +347,7 @@ function cmdVerifyCommit(args) {
   }
   // Canonical resolution (_shared/integration-branch.md): an explicit flag
   // wins; absent that, the integration-branch policy key; only when neither
-  // resolves does verifyCommits fall back to <remote>/HEAD itself (#2866 I2).
+  // resolves does verifyCommits fall back to <remote>/HEAD itself (#2866).
   const root = args.root || process.cwd();
   const integrationBranch = args.integrationBranch || readIntegrationBranch(root) || null;
   const result = verifyCommits({
