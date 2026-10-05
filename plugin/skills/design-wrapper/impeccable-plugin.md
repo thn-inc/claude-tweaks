@@ -1,13 +1,13 @@
 # Impeccable Plugin — Context Signals (Layer 0)
 
 <!-- upstream-pin: impeccable-plugin@4.0.2 -->
-*Contract pinned to the Impeccable **plugin** 4.0.2 and proven by `tests/impeccable-plugin-contract.test.js`, which resolves the installed plugin from the cache and executes `gatherSignals()` against it. A prose re-verification pass is not a substitute for running that test — see the same rationale in `impeccable-cli.md`'s pin statement (`[IL-89]`).*
+*Last verified against the Impeccable **plugin** 4.0.2, with the Layer 3 non-equivalence assertion below still pinned and proven by `tests/impeccable-plugin-contract.test.js`. Resolution and execution are owned by `plugin/bin/lib/impeccable-engine/index.js` (record #2979) and covered by `tests/bin-lib/impeccable-engine/*.test.js` — this file documents the CLI contract that wraps it, not a parallel implementation. A prose re-verification pass is not a substitute for running those tests — see the same rationale in `impeccable-cli.md`'s pin statement (`[IL-89]`).*
 
 The **plugin** and the **CLI** are two independent artifacts on two independent version lines. `impeccable-cli.md` pins `impeccable-cli`; this file pins `impeccable-plugin`. Conflating them is the documented root cause of the drift `tools/upstream-drift/manifest.yml` exists to catch, and that manifest carries the two as separate entries for exactly this reason.
 
-Reference for **Layer 0**, the wrapper's enrichment layer. Layer 0 executes Impeccable's own `context-signals.mjs` and folds its output into the wrapper's decisions. It is cheap (no LLM call, no detector run, no file writes) and entirely optional.
+Reference for **Layer 0**, the wrapper's enrichment layer. Layer 0 runs `plugin/bin/impeccable-engine.js run signals` and folds the returned JSON envelope into the wrapper's decisions. It is cheap (no LLM call, no detector run, no file writes) and entirely optional.
 
-This file also hosts the **shared plugin-root resolver** (`## Resolution` below). Layer 0 is its first consumer but no longer its only one: the other consumers in the table below run different scripts out of the same plugin root. The resolver is named and specified once here precisely so every additional consumer imports it rather than re-deriving it (`[IL-32]`). Everything outside `## Resolution` — the output shape, the trust rules, the Layer 0 framing — remains Layer-0-specific.
+Resolving and invoking the installed plugin is **the engine module's job**, not this file's. `plugin/bin/lib/impeccable-engine/index.js`'s `resolve()`/`run()` are the one implementation every consumer calls — Layer 0 here, `doctor` (`modes/doctor.md`), and `explore`'s sibling sub-issue. The CLI's `resolve` subcommand is documented once, in `## Resolution` below, precisely so no consumer re-derives it (`[IL-32]`). Everything outside `## Resolution` — the output shape, the trust rules, the Layer 0 framing — remains Layer-0-specific.
 
 ## Layer 0 — what it can and cannot decide
 
@@ -43,111 +43,76 @@ Nothing upstream computes a frontend predicate, so deleting or weakening Layer 3
 
 ## Resolution
 
-The wrapper resolves the pinned plugin from the Claude Code plugin cache. Every step reads the artifact itself.
+The engine module resolves the active install itself — read `installed_plugins.json`, select the best project-or-user-scope entry for the calling session's working directory, confirm the 4.2.2+ launcher exists, then probe the cached design-engine binary. Every consumer calls the same two functions (`resolve()`/`run()`, `plugin/bin/lib/impeccable-engine/index.js`) via the CLI wrapper — nothing here re-derives that procedure.
 
-### `resolveImpeccablePlugin({searchRoot}) -> {root, version} | null`
+### `node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" resolve`
 
-**One resolver, every consumer.** Every consumer needs the same answer — "where is the pinned Impeccable plugin?" — so the procedure below is specified once, under this name, and each consumer derives its own script path from the returned `root`. A second copy of these four steps is the duplication `[IL-32]` names; do not add one.
+**One resolver, every consumer.** Every consumer needs the same answer — "is there a usable Impeccable install, and where is its plugin root?" — so this is the one call every consumer makes (Layer 0 here, `doctor` via `run doctor`, `explore`'s sibling sub-issue via `run concept-seed`). A second resolver beside it would be the duplication `[IL-32]` names; do not add one.
 
-`searchRoot` defaults to `~/.claude/plugins/cache` (see "Injectable search root" below). The return is `{root, version}` on a hit and `null` on a miss, with the miss distinguished per the degradation table below — a bare `null` collapses "absent" into "off-pin" and reports a fixable install problem as an unfixable absence.
+Prints one JSON envelope to stdout:
 
-#### Procedure
+- **`{ok: true, pluginRoot, launcher, pluginVersion, engineVersion, scope}`** — `pluginRoot` is the plugin's install directory (the value `native-routing.md`'s dispatch rule reads); `launcher` is the resolved `impeccable`/`impeccable.cmd` script path; `pluginVersion`/`engineVersion` are the installed plugin's and cached engine's own version strings — informational, not a gate; `scope` is `"project"` or `"user"` (a project-scope entry wins over the user-scope install when both exist for this working directory).
+- **`{ok: false, reason, fix?, detail?}`** — one of the six reasons in `## Degradation` below.
 
-1. **Glob** `<search-root>/*/impeccable/*/.claude-plugin/plugin.json`, where `<search-root>` defaults to `~/.claude/plugins/cache`. The first `*` is the marketplace directory; the second is the version directory.
-2. **Read each candidate's own `version` field.** Never infer the version from the directory name — a stale or mislabeled cache directory is precisely the drift this pin exists to catch, not to reproduce.
-3. **Select the candidate whose `version` equals the pin** in this file's `<!-- upstream-pin: impeccable-plugin@X.Y.Z -->` comment. Several versions coexist in the cache routinely (4.0.2 and 3.0.6 both sit there on the machine this contract was recorded against), so this is a select-from-many, not a read-the-one.
-4. **The plugin root** is two segments up from the matched `plugin.json` — the directory containing `.claude-plugin/`. That directory is the returned `root`; the matched `version` is the returned `version`.
-
-#### Script paths per consumer
-
-Derived from the returned `root`. The resolver itself resolves no script — it answers only "which plugin root is at the pin," and each consumer appends its own path:
-
-| Consumer | Script |
-|---|---|
-| Layer 0 (all modes) | `<root>/skills/impeccable/scripts/context-signals.mjs` |
-| `doctor` mode (`modes/doctor.md`) | `<root>/skills/impeccable/scripts/doctor.mjs` |
-| `explore` mode (`modes/explore.md`) | `<root>/skills/impeccable/scripts/concept-seed.mjs` |
-
-Every consumer's script ships inside the same plugin at the same pin, so one successful resolve serves them all — a `doctor` or `explore` invocation never re-globs the cache when Layer 0 already resolved in the same wrapper call.
+A `run <verb>` call (`## Invocation`) resolves internally first and returns the identical `{ok: false, ...}` shape on a resolution failure — a consumer never needs to call `resolve` before `run` just to check.
 
 ### Never resolve via `${CLAUDE_PLUGIN_ROOT}`
 
-`${CLAUDE_PLUGIN_ROOT}` is **claude-tweaks' own** plugin root. Reading a version from it reports *this* plugin's version under Impeccable's name — a wrong-artifact answer that looks entirely healthy. `[IL-89]` names the rule ("resolve the running build from the artifact, never from install metadata"); this is its wrong-artifact form.
+`${CLAUDE_PLUGIN_ROOT}` is **claude-tweaks' own** plugin root — it is where `impeccable-engine.js` itself lives, not where Impeccable is installed. Reading a version from it reports *this* plugin's version under Impeccable's name — a wrong-artifact answer that looks entirely healthy. `[IL-89]` names the rule ("resolve the running build from the artifact, never from install metadata"); this is its wrong-artifact form. The engine module's own `resolve()` return is the only source for Impeccable's `pluginRoot`/`pluginVersion`.
 
-### Injectable search root
+### Last verified version, not an exact pin
 
-The search root is a parameter with a default, not a constant. Without one, the only way to test the version-mismatch branch is to mutate or hide the developer's real `~/.claude/plugins/cache` — which `tests/impeccable-plugin-contract.test.js` must never do. It points the search root at a committed fixture cache tree instead.
-
-### The pin is not pedantry
-
-`context-signals.mjs` **does not exist** at 3.0.6, the other version cached on the recording machine. Nor do `doctor.mjs` or `concept-seed.mjs` — verified against the same cache, so the pin is load-bearing for *every* consumer of this resolver, not just Layer 0. A resolver that took "some Impeccable plugin is installed" for an answer would resolve a path that isn't there. Version-mismatch is a real, load-bearing distinction, not a strictness preference.
+Earlier versions of this file pinned Layer 0's resolution to one exact plugin version, selected by globbing the plugin cache. The engine module drops that constraint deliberately: `resolve()` accepts any install carrying the 4.2.2+ launcher and a cached engine binary, regardless of exact version, because the launcher's own `engine-probe`/verb dispatch is the real compatibility boundary now. The `<!-- upstream-pin: impeccable-plugin@4.0.2 -->` comment above records the version this file's prose was **last verified against**, not a version this resolver enforces — `tools/upstream-drift/manifest.yml` is where an exact-version contract (`tests/impeccable-plugin-contract.test.js`'s Layer 3 assertion) still lives.
 
 ## Degradation
 
-Three conditions all degrade to a skip. The skip reason must distinguish them — collapsing them reports a fixable install problem as an unfixable absence.
+Six conditions, all returned as `{ok: false, reason, fix?, detail?}` by `plugin/bin/lib/impeccable-engine/index.js` (`FAILURE_REASONS` — treat this list as authoritative; a module change to it is the one thing that could make this table stale). Three carry a canned `fix` string from the module itself; the other three carry only a `detail` naming what went wrong, because there is no single fix to print.
 
-The first two rows are **resolver-level**: they are the two ways `resolveImpeccablePlugin` returns `null`, and they read identically for every consumer. The third is **per-consumer** — each consumer runs a different script, so each detects and words its own execution failure. `doctor` mode's wording is in `modes/doctor.md`.
-
-| Condition | Level | Detected by | Skip reason |
+| `reason` | Meaning | User-facing skip wording | Fix |
 |---|---|---|---|
-| **Absent** | Resolver | The glob matched no candidate directory at all | `Impeccable plugin not installed` |
-| **Version mismatch** | Resolver | Candidates found, none at the pin | `Impeccable plugin {found} does not match the pinned {pinned}` — `{found}` names **every** version found, as a list |
-| **Execution failure** | Per-consumer | The pinned script resolves but exits non-zero, writes to stderr, or emits stdout that does not parse as JSON | `Impeccable context signals unavailable (execution failed)` (Layer 0's wording) |
+| `not-installed` | No `impeccable@impeccable` entry in `installed_plugins.json` at all | `Impeccable plugin not installed` | `/plugin install impeccable@impeccable (Impeccable 4.2.2 or later)` (the module's own `fix` string) |
+| `upgrade-required` | An install exists, but its launcher script (`skills/impeccable/scripts/impeccable[.cmd]`) is missing — an install older than 4.2.2 | `Impeccable plugin is older than 4.2.2 (no engine launcher)` | `/plugin update impeccable@impeccable to 4.2.2 or later` (the module's `fix` string also names the missing launcher path) |
+| `engine-not-installed` | The launcher exists but `engine-probe` failed — the design-engine binary isn't cached yet | `Impeccable design engine not cached` | Run the launcher's own `engine-probe` subcommand (the module's `fix` string is the exact command for this machine) |
+| `shape-mismatch` | The verb ran and returned JSON, but it didn't match the expected `signals`/`doctor`/… shape | `Impeccable {verb} output did not match the expected shape` | `detail` names the first field that failed validation — usually an engine/plugin version skew; re-run `engine-probe` or update the plugin |
+| `exec-failed` | The launcher exited non-zero, or crashed before producing output | `Impeccable {verb} unavailable (execution failed)` | `detail` carries the last lines of stderr — report it; usually a transient environment issue, not an install problem |
+| `timeout` | The run exceeded the engine module's 60-second timeout | `Impeccable {verb} timed out` | Retry; a persistent timeout points at something hanging inside the launcher, not this wrapper |
 
-Naming every version found is the point, and the plural is load-bearing: two cached copies on one machine is an ordinary observed state, so "what was found" is a list, not a value. A reason naming one of two installed versions sends the user chasing the wrong one.
+**Execution failure is a skip, never an exception.** A single observed run — exit 0, clean JSON — is an observation from one run of one install, not a guarantee. `run()` wraps every spawn in a `try`/`catch` and every `reason` above is a returned value, never a thrown error reaching the caller — the same "neither function throws" contract the module's own header comment states.
 
-**Execution failure is a skip, never an exception.** Exit 0 / empty stderr / JSON on stdout is an *observation* from one run of one version, not a guarantee. `context-signals.mjs` promises internally that "every probe is best-effort and never throws" — but that promise covers the probes, not the module load, not the imports it resolves at load time, and not the process. A version-matched script that fails must not propagate an exception into every `/tidy` and `/flow` run.
-
-In all three cases Layers 1-3 run unchanged and every mode completes normally — **for Layer 0**. That immunity is Layer 0's property, not the table's: Layer 0 is enrichment, so losing it changes no outcome. A consumer for which the plugin *is* the work degrades differently — `doctor` mode returns a skip object of its own, because a `doctor` run with no `doctor.mjs` has no result to report. Read a row here for how to *detect and word* a condition, not for what it costs the caller.
+In every case Layers 1-3 run unchanged and every mode completes normally — **for Layer 0**. That immunity is Layer 0's property, not the table's: Layer 0 is enrichment, so losing it changes no outcome. A consumer for which the plugin *is* the work degrades differently — `doctor` mode returns a skip object of its own (`modes/doctor.md`), because a `doctor` run with no engine has no result to report. Read a row here for how to *detect and word* a condition, not for what it costs the caller.
 
 ## Invocation
 
-Two entry points, both at the resolved script path.
-
-**As a module** (preferred — returns the object directly, no parse step):
-
-```js
-import { gatherSignals } from '<plugin-root>/skills/impeccable/scripts/context-signals.mjs';
-const signals = await gatherSignals(cwd);   // cwd defaults to process.cwd()
-```
-
-**As a CLI:**
+One entry point — the CLI, which never throws and always prints exactly one JSON line:
 
 ```bash
-node <plugin-root>/skills/impeccable/scripts/context-signals.mjs
+node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" run signals
 ```
 
-Writes `JSON.stringify(signals, null, 2)` plus a trailing newline to stdout.
+Branch on the envelope: `{ok: true, value: {setup, critique, git, devServer, scan}}` — the Output shape below — or `{ok: false, reason, fix?, detail?}` per `## Degradation` above. `signals` ignores `--help` and executes unconditionally — never document or invoke it with `--help`.
 
-### Arguments resolution
+### Arguments
 
-**The CLI entrypoint accepts no flags.** Its `cli()` calls `gatherSignals(process.cwd())` and never reads `process.argv` — there is no `--json` (JSON is the only output), no target argument, and no cwd override. The exported `gatherSignals(cwd = process.cwd())` takes a working directory and nothing else.
-
-This is not a gap to work around. It is the fact that makes `scan.targets` a *fallback* substitute only, never an override of a caller-supplied file list (see the trust table): there is no argument that would scope it.
+**`run signals` accepts no arguments.** `validateVerbArgs('signals', args)` requires `args.length === 0`; any argument makes the CLI exit 2 with a usage error before it ever resolves or spawns anything. This is not a gap to work around. It is the fact that makes `scan.targets` a *fallback* substitute only, never an override of a caller-supplied file list (see the trust table): there is no argument that would scope it.
 
 ### Working directory
 
-Run from the project root. Every signal is computed relative to `cwd` — `PRODUCT.md`/`DESIGN.md` discovery, the `.impeccable/critique/` lookup, the git shell-outs, and `scan.targets`' path existence checks. `productPath`, `designPath`, `critique.latest.file`, and `scan.targets` are all returned **relative to `cwd`**, unlike the Impeccable CLI's absolute finding paths.
+Run from the project root. Every signal is computed relative to the engine's working directory — `PRODUCT.md`/`DESIGN.md` discovery, the `.impeccable/critique/` lookup, the git shell-outs, and `scan.targets`' path existence checks. `productPath`, `designPath`, `critique.latest.file`, and `scan.targets` are all returned **relative to that directory**, unlike the Impeccable CLI's absolute finding paths.
 
 ### `git.changedFiles` is read live, with no injection point
 
-`gitSignals()` shells out via `execFileSync` on every call:
-
-- `git diff --name-only <base>...HEAD` when a local `main` or `master` exists **and** differs from the current branch;
-- otherwise `git status --porcelain` against the working tree.
-
-There is no parameter, environment variable, or flag that supplies a synthetic changed-file list. Two consequences, both load-bearing:
+The `signals` verb shells out to git on every call — `git diff --name-only <base>...HEAD` when a local `main` or `master` exists **and** differs from the current branch, otherwise `git status --porcelain` against the working tree. There is no parameter, environment variable, or flag that supplies a synthetic changed-file list. Two consequences, both load-bearing:
 
 1. `scan.targets` cannot be scoped by a caller, so it may only replace the wrapper's own unscoped fallback — never an explicit target list.
 2. `tests/impeccable-plugin-contract.test.js` replays a **frozen fixture** for anything asserting over `scan.targets`, because a live run asserts over whatever happens to be uncommitted at that moment.
 
 ### Timeout
 
-Use the Bash tool's default timeout. The dominant cost is the dev-server probe — seven TCP connects issued in parallel with a 250 ms timeout each — so a call completes in well under a second. Treat a timeout as an **execution failure** per the degradation table.
+The engine module enforces its own 60-second timeout (`DEFAULT_TIMEOUT_MS`) and returns `{ok: false, reason: 'timeout'}` rather than hanging the caller. The dominant real-world cost is the dev-server probe inside `signals` — seven TCP connects issued in parallel with a 250 ms timeout each — so a successful call completes in well under a second; a `timeout` result means the launcher itself is stuck, not that the probe is merely slow.
 
 ## Output shape
 
-`gatherSignals()` returns exactly these five keys. This file is the **single source of truth** for the shape; `SKILL.md` and the mode files reference it and must not restate it. Three copies of the CLI contract is what let Phase 1's bug survive two verification passes.
+The `signals` verb returns exactly these five keys in its `value` field. This file is the **single source of truth** for the shape — the engine module's `validateSignals()` encodes the same fields; `SKILL.md` and the mode files reference this file and must not restate it. Three copies of the CLI contract is what let Phase 1's bug survive two verification passes.
 
 ```json
 {
@@ -219,4 +184,4 @@ First branch that yields anything wins:
 
 - ~~**Native routing**~~ — **closed.** `setup.platform` now drives track resolution in `SKILL.md`, with the `Surface:` fallback's precedence stated there and each of its four rows walked through in `native-routing.md`. `test` and `live` skip explicitly on the native track rather than returning a pass the web-only detector could not have failed.
 - ~~**`doctor` integration**~~ — **closed.** `doctor` mode landed and consumes `setup.hasProduct` / `setup.hasDesign` as its project-context precondition (see the trust table above and `modes/doctor.md`). They remain deliberately unsurfaced in the wrapper return: the consumer reads them internally, so surfacing them would add a field with no reader.
-- **Cache lifetime** — the wrapper re-executes `gatherSignals()` per invocation. The call is sub-second, so there is no caching today; if a pipeline run ever calls several modes in sequence, a per-run memo keyed on `cwd` is the obvious next step.
+- **Cache lifetime** — the wrapper re-invokes `run signals` per invocation. The call is sub-second, so there is no caching today; if a pipeline run ever calls several modes in sequence, a per-run memo keyed on `cwd` is the obvious next step.

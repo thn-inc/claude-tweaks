@@ -6,7 +6,7 @@ Read this when `SKILL.md`'s track resolution returns `ios`, `android`, or `adapt
 
 ## Native dispatch
 
-Before planning, a mode dispatching on the native track reads the named platform's own upstream reference, under the plugin root `impeccable-plugin.md`'s `resolveImpeccablePlugin` returns:
+Before planning, a mode dispatching on the native track reads the named platform's own upstream reference, under the Impeccable plugin root `impeccable-plugin.md`'s resolve call returns (`node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" resolve`'s `pluginRoot` field — never claude-tweaks' own `${CLAUDE_PLUGIN_ROOT}`, which locates that CLI itself):
 
 | Track platform | Read before planning |
 |---|---|
