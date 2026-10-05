@@ -42,7 +42,11 @@ const VERBS = Object.freeze(['signals', 'doctor', 'concept-seed', 'surface-brief
 
 const NOT_INSTALLED_FIX = '/plugin install impeccable@impeccable (Impeccable 4.2.2 or later)';
 
-const CONCEPT_SEED_ALLOWED_FLAGS = Object.freeze(['--scope', '--mode', '--from', '--candidate-count']);
+// --reroll and --chosen (#2982 — explore mode's Reroll/Lock-in steps re-run this
+// verb with one of these appended to a prior deal's --scope/--mode/--from) were
+// verified against the real launcher alongside the original four, both alone
+// and combined with every other flag here.
+const CONCEPT_SEED_ALLOWED_FLAGS = Object.freeze(['--scope', '--mode', '--from', '--candidate-count', '--reroll', '--chosen']);
 
 const DEFAULT_TIMEOUT_MS = 60000;
 
