@@ -39,6 +39,37 @@ whose diff is the five files under `git.changedFiles` above, add a
 section (so `platform` stays `null`), then run the pinned
 `gatherSignals(<repo>)` and replace this file with its output verbatim.
 
+## `doctor.json` — frozen `impeccable-engine.js run doctor` output (record #2981)
+
+A **real, executed** `{findings, ...}` payload (the `run doctor` envelope's
+`value` field), captured on the authoring machine by copying this repo's own
+`PRODUCT.md`/`DESIGN.md` into a scratch directory outside the repo (so
+`resolve()` falls back to the cached user-scope 4.4.0 install rather than this
+repo's own project-scope pin, which has no cached engine binary here) and
+running `node plugin/bin/impeccable-engine.js run doctor` from inside it.
+Every field is verbatim from that run except `projectRoot`/`repoRoot`, which
+were the scratch directory's own throwaway absolute path — normalized here to
+`/tmp/impeccable-doctor-capture` for readability. No test asserts on those two
+fields.
+
+Compared field-by-field against what `modes/doctor.md:142` documents and
+`skills/tidy/scan-procedures.md` reads: `findings[].id`, `.severity`,
+`.summary`, and `.fix` all match (`/tidy`'s `[doctor] {id} ({severity}) —
+{summary} — {fix}` row), and `productPath`/`designPath`/`platform` match the
+top-level keys `modes/doctor.md:71-83` documents. No shape difference found —
+`tests/bin-lib/impeccable-engine/run.test.js`'s extended `validateDoctor`
+tests pin exactly this shape, and `skills/tidy/scan-procedures.md` /
+`step-6-auto.md` needed no restructuring, only their stray `doctor.mjs`
+wording updated.
+
+### Re-recording it
+
+Only if the engine's `doctor` output shape changes. Copy a `PRODUCT.md`/
+`DESIGN.md` pair into a scratch directory outside this repo (so `resolve()`
+uses a cached install), run `node plugin/bin/impeccable-engine.js run doctor`
+from inside it, and replace this file's `value` field with the fresh output —
+normalizing `projectRoot`/`repoRoot` the same way.
+
 ## `cache/` — a fake plugin cache tree
 
 Two candidates at deliberately **non-pinned** versions, laid out exactly like a
