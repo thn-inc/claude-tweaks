@@ -250,5 +250,9 @@
   "plugin/bin/lib/closing-tally": {
     "lastSweptMs": 1791083334579,
     "lastHash": "8e0d875fb043c0654dc5e3c9fcbeaf860df55ece"
+  },
+  "plugin/bin/lib/dream": {
+    "lastSweptMs": 1791170975167,
+    "lastHash": "77d03e59e14ce008f23ebec3dc8c025da964723b"
   }
 }
