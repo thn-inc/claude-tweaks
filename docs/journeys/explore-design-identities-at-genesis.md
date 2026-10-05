@@ -3,6 +3,8 @@ files:
   - plugin/skills/design-wrapper/modes/explore.md
   - plugin/skills/design-wrapper/SKILL.md
   - plugin/skills/design-wrapper/impeccable-plugin.md
+  - plugin/skills/design-wrapper/availability.md
+  - plugin/bin/lib/impeccable-engine/index.js
   - plugin/skills/design-wrapper/compare-shell/template.html
   - plugin/skills/design-wrapper/compare-shell/seed-compare.mjs
   - plugin/skills/_shared/visual-decision.md
@@ -22,11 +24,11 @@ files:
 - **Action:** Run at genesis (no `DESIGN.md`, or an empty stub). Scope auto-resolves to `identity` via Layer 0's `hasDesign` signal.
 - **Should feel:** Guarded but frictionless — the mode checks the kill-switch, the pinned plugin, and the track before any dealing happens; a native-surface project or a locked identity gets a clean one-line skip, never a broken tournament.
 - **Should understand:** If `DESIGN.md` already declares a real identity (palette + typography direction), the mode refuses to re-deal — identity replacement routes through upstream new-work explicitly. Missing `PRODUCT.md` gets exactly one offer to run `/impeccable:impeccable init` first.
-- **Red flags:** The mode running from a pipeline (`auto` / `$PIPELINE_RUN_DIR`) context — it is interactive-only; the wrapper globbing the plugin cache directly instead of `resolveImpeccablePlugin`.
+- **Red flags:** The mode running from a pipeline (`auto` / `$PIPELINE_RUN_DIR`) context — it is interactive-only; the wrapper globbing the plugin cache directly instead of resolving through the `impeccable-engine` module.
 
 ### 2. Deal and compare — browser
 - **URL:** The ephemeral server URL the mode prints (serving `docs/plans/YYYY-MM-DD-{feature}-explore/index.html`)
-- **Action:** Upstream's `concept-seed.mjs` deals; the mode derives and weighs per upstream's instruction block, then builds one shared HTML scaffold and one CSS skin per *presented* direction (assigned + surviving challengers — never the full candidate list). Cycle skins with arrow keys; the "1 / N — {direction}" indicator names each world.
+- **Action:** Upstream's `concept-seed` engine verb deals (`impeccable-engine.js run concept-seed`, contacting Impeccable's catalog service); the mode derives and weighs per upstream's instruction block, then builds one shared HTML scaffold and one CSS skin per *presented* direction (assigned + surviving challengers — never the full candidate list). Cycle skins with arrow keys; the "1 / N — {direction}" indicator names each world.
 - **Should feel:** A real comparison of identities, not layouts — the markup never changes between slots, only the skin stylesheet swaps, so what differs is exactly the visual world.
 - **Should understand:** Scaffold copy is partly invented placeholder content (the offer text says so); a builder that couldn't express its direction as a pure restyle appears as a degraded slot — visible, named, not pickable. The focus view also carries the shared shell's hue / spacing / radius tweak levers — the same panel the layout scope uses, since one `seed-compare.mjs` template serves both scopes. In this scope they are especially not a way to adjust the dealt world: they preview the shell's own panel only, never the skin under judgment, and a nudge records a `tweak` event that is never a verdict.
 - **Red flags:** A skin that restructures markup; external fonts/CDN assets in the switcher; all candidates rendered instead of the presented set; a tweak lever appearing to restyle the dealt world's own skin, or a tweak event resolving the round.

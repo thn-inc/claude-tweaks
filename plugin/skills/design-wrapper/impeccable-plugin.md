@@ -66,9 +66,8 @@ Derived from the returned `root`. The resolver itself resolves no script — it 
 |---|---|
 | Layer 0 (all modes) | `<root>/skills/impeccable/scripts/context-signals.mjs` |
 | `doctor` mode (`modes/doctor.md`) | `<root>/skills/impeccable/scripts/doctor.mjs` |
-| `explore` mode (`modes/explore.md`) | `<root>/skills/impeccable/scripts/concept-seed.mjs` |
 
-Every consumer's script ships inside the same plugin at the same pin, so one successful resolve serves them all — a `doctor` or `explore` invocation never re-globs the cache when Layer 0 already resolved in the same wrapper call.
+Every consumer's script ships inside the same plugin at the same pin, so one successful resolve serves them all — a `doctor` invocation never re-globs the cache when Layer 0 already resolved in the same wrapper call. `explore` mode (`modes/explore.md`) no longer resolves through this procedure — it resolves through the `impeccable-engine` module instead (#2979, #2982), which finds the active install directly rather than globbing this resolver's plugin cache.
 
 ### Never resolve via `${CLAUDE_PLUGIN_ROOT}`
 
@@ -80,7 +79,7 @@ The search root is a parameter with a default, not a constant. Without one, the 
 
 ### The pin is not pedantry
 
-`context-signals.mjs` **does not exist** at 3.0.6, the other version cached on the recording machine. Nor do `doctor.mjs` or `concept-seed.mjs` — verified against the same cache, so the pin is load-bearing for *every* consumer of this resolver, not just Layer 0. A resolver that took "some Impeccable plugin is installed" for an answer would resolve a path that isn't there. Version-mismatch is a real, load-bearing distinction, not a strictness preference.
+`context-signals.mjs` **does not exist** at 3.0.6, the other version cached on the recording machine. Nor does `doctor.mjs` — verified against the same cache, so the pin is load-bearing for *every* consumer of this resolver, not just Layer 0. A resolver that took "some Impeccable plugin is installed" for an answer would resolve a path that isn't there. Version-mismatch is a real, load-bearing distinction, not a strictness preference.
 
 ## Degradation
 
