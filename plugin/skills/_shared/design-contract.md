@@ -63,9 +63,15 @@ Five labels, each a bare name immediately followed by `:` —
 THESIS:   OWN-WORLD:   STORY:   FIRST VIEWPORT:   FORM:
 ```
 
+**Scope first: the `## Direction contract` section only**, not the whole brief — a surface brief
+may carry other `##` sections after it (upstream's briefs are not single-purpose files). Take the
+text from that heading to the start of the next `##`-level heading, or to the end of the brief
+when none follows; label-matching below (and "the end of the brief" in the next paragraph) means
+the end of *this* slice, never the file.
+
 Match case-insensitively, allowing any run of whitespace inside `FIRST VIEWPORT`. A block's body
-runs from its own label to the start of the next label found, or to the end of the brief text for
-the last one. Order is not required: use the labels' actual positions, sorted, rather than
+runs from its own label to the start of the next label found, or to the end of the section's text
+for the last one. Order is not required: use the labels' actual positions, sorted, rather than
 assuming upstream's ordering — presence is structural, ordering is not.
 
 **All five must be present.** Four is malformed, not partial — see Step 4.
