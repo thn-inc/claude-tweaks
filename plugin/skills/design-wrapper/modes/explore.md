@@ -214,7 +214,7 @@ node "<root>/skills/impeccable/scripts/concept-seed.mjs" --scope surface --mode 
 `<key>` is the committed direction's seed key. It is **not recorded in `DESIGN.md`** — upstream's `document --seed` does not write it there. Its only durable homes, in resolution order:
 
 1. the caller's record `Design-seed:` body-metadata line — this repo's established carrier, written by this wrapper's own `review` mode per `skills/_shared/design-contract.md`;
-2. absent that, the direction contract's `FORM` block inside a built artifact's opening comment, parsed per `skills/_shared/design-contract.md`'s procedure over the candidate list the caller already resolved — this mode never discovers candidate files on its own.
+2. absent that, the direction contract's `FORM` block, read via `skills/_shared/design-contract.md`'s procedure over the candidate list the caller already resolved — this mode never discovers candidate files on its own.
 
 Zero candidates, no seed label found, or multiple candidates whose keys disagree → **deal without `--from`**, and say so in the offer text presented before dealing: challengers are dealt without the committed direction's seed. Degraded, never fatal.
 
