@@ -239,6 +239,24 @@ function validateSignals(text) {
   return { ok: true, value: obj };
 }
 
+// Fields /tidy's Step 4.9 scan (skills/tidy/scan-procedures.md) and
+// design-wrapper's modes/doctor.md both depend on, per record #2981's Task 0
+// comparison against a real captured run (tests/fixtures/impeccable-plugin/
+// doctor.json): findings[].id/.severity/.summary/.fix feed /tidy's
+// `[doctor] {id} ({severity}) — {summary} — {fix}` row; `.artifact` and
+// `.path` are always present per modes/doctor.md's Finding schema table
+// (`.path` nullable). `counts` is NOT validated here — it is computed by the
+// wrapper mode from `findings`, never read off the engine's own output.
+// Same checks-array shape as validateSignals' per-field loop above.
+const FINDING_FIELD_CHECKS = [
+  ['id', (v) => typeof v === 'string' && v !== ''],
+  ['artifact', (v) => typeof v === 'string' && v !== ''],
+  ['path', (v) => v === null || typeof v === 'string'],
+  ['severity', (v) => typeof v === 'string'],
+  ['summary', (v) => typeof v === 'string'],
+  ['fix', (v) => typeof v === 'string'],
+];
+
 function validateDoctor(text) {
   let obj;
   try {
@@ -251,8 +269,11 @@ function validateDoctor(text) {
   }
   for (let i = 0; i < obj.findings.length; i++) {
     const finding = obj.findings[i];
-    if (!finding || typeof finding !== 'object' || typeof finding.severity !== 'string') {
-      return { ok: false, field: `findings[${i}].severity` };
+    if (!finding || typeof finding !== 'object') {
+      return { ok: false, field: `findings[${i}]` };
+    }
+    for (const [field, ok] of FINDING_FIELD_CHECKS) {
+      if (!ok(finding[field])) return { ok: false, field: `findings[${i}].${field}` };
     }
   }
   return { ok: true, value: obj };

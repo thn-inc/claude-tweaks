@@ -2,7 +2,7 @@
 
 Invoked via `/claude-tweaks:design-wrapper doctor`. Returns `{mode, result: "advisory", findings, ...}` or `{mode, skipped, ...}` to caller.
 
-A **thin delegation**. `doctor.mjs` is Impeccable's own staleness pass over Impeccable's own project artifacts — `PRODUCT.md`, `DESIGN.md` and its sidecar, `.impeccable/config.json`, surface briefs, the design hook. This mode runs it, normalizes nothing away, and hands the findings to the caller. It reimplements none of `doctor`'s checks and restates none of its rules: doing so is precisely the drift this wrapper exists to prevent.
+A **thin delegation**. Impeccable's own `doctor` verb is its own staleness pass over its own project artifacts — `PRODUCT.md`, `DESIGN.md` and its sidecar, `.impeccable/config.json`, surface briefs, the design hook. This mode runs it (via `impeccable-engine.js run doctor`), normalizes nothing away, and hands the findings to the caller. It reimplements none of `doctor`'s checks and restates none of its rules: doing so is precisely the drift this wrapper exists to prevent.
 
 ## When this runs
 
@@ -12,9 +12,9 @@ Called by `/claude-tweaks:tidy` as one scan step (Step 4.9). Takes **no target**
 
 ## Never `--fix`
 
-**This mode invokes `doctor.mjs --json` and never `doctor.mjs --fix`.**
+**This mode invokes the engine's `doctor` verb (`--json` only, built into `impeccable-engine.js run doctor` — the module hardcodes the argv, so there is nothing to pass) and never `--fix`.**
 
-The reason, so a later reader does not add `--fix` as an obvious convenience: `--fix` writes to `PRODUCT.md` on disk, and editing a user's project files on a third party's judgment is exactly the file-modifying decision `_shared/auto-mode-card.md` reserves for an explicit human approval. `auto`-severity findings are surfaced as staged proposals carrying their own `fix` text — the user runs `--fix` themselves if they want it.
+The reason, so a later reader does not add `--fix` as an obvious convenience: `--fix` writes to `PRODUCT.md` on disk, and editing a user's project files on a third party's judgment is exactly the file-modifying decision `_shared/auto-mode-card.md` reserves for an explicit human approval. `auto`-severity findings are surfaced as staged proposals carrying their own `fix` text — the user runs `--fix` themselves if they want it. The engine module enforces this at the layer below this mode too: `doctor --fix` is rejected outright by the CLI's own usage gate (exit 2) before it ever spawns the launcher — see `plugin/bin/impeccable-engine.js`'s header comment.
 
 This holds even though upstream calls `auto` migrations "the ones with no judgment in them." Whether *Impeccable* needs judgment to apply a migration and whether *this wrapper* may apply it unattended are different questions, and only the second one is ours.
 
@@ -29,42 +29,45 @@ Layer 1 still applies in full: a project that set `design-integration: disabled`
 
 ### Skip conditions
 
-Four, beyond the Layer 1 kill-switch above. Layer 1 is universal to every mode; these four are `doctor`'s own.
+Seven, beyond the Layer 1 kill-switch above. Layer 1 is universal to every mode; these seven are `doctor`'s own.
 
 | # | Condition | Detected by | `skipped` reason |
 |---|---|---|---|
-| 1 | Plugin **absent** | `resolveImpeccablePlugin` returned `null`, glob matched nothing | `Impeccable plugin not installed` |
-| 2 | Plugin **off-pin** | `resolveImpeccablePlugin` returned `null`, candidates found but none at the pin | `Impeccable plugin {found} does not match the pinned {pinned}` — `{found}` names **every** version found, as a list |
-| 3 | **No project context** | Layer 0's `setup.hasProduct` and `setup.hasDesign` are both false | `no Impeccable project context (no PRODUCT.md or DESIGN.md)` |
-| 4 | **Execution failure** | `doctor.mjs` exited non-zero, or its stdout did not parse as JSON | `Impeccable doctor unavailable (execution failed)` |
+| 1 | `not-installed` | `impeccable-engine.js run doctor` returned `{ok: false, reason: 'not-installed'}` | `Impeccable plugin not installed` |
+| 2 | `upgrade-required` | `{ok: false, reason: 'upgrade-required'}` | `Impeccable plugin is older than 4.2.2 (no engine launcher)` |
+| 3 | `engine-not-installed` | `{ok: false, reason: 'engine-not-installed'}` | `Impeccable design engine not cached` |
+| 4 | **No project context** | Layer 0's `setup.hasProduct` and `setup.hasDesign` are both false | `no Impeccable project context (no PRODUCT.md or DESIGN.md)` |
+| 5 | `shape-mismatch` | `{ok: false, reason: 'shape-mismatch'}` | `Impeccable doctor output did not match the expected shape` |
+| 6 | `exec-failed` | `{ok: false, reason: 'exec-failed'}` | `Impeccable doctor unavailable (execution failed)` |
+| 7 | `timeout` | `{ok: false, reason: 'timeout'}` | `Impeccable doctor timed out` |
 
-Rows 1 and 2 are the resolver's own two outcomes — see `../impeccable-plugin.md`'s degradation table, which is where those reasons are worded. Do not re-derive them here.
+Rows 1, 2, 3, 5, 6, and 7 are the engine module's own six failure reasons — see `../impeccable-plugin.md`'s Degradation table, which is where those reasons and their fixes are worded in full. Do not re-derive them here; surface the `fix` field when the engine returned one.
 
-**Row 4 is the one an implementer will skip.** A single observed run — exit 0, empty stderr, clean JSON — is an observation, not a guarantee. `doctor.mjs` writes to stderr and exits 1 on any thrown error, and it loads a large dependency graph (`context.mjs`, the staleness modules, the detector rule registry) before it produces anything. An uncaught exception here would break **every `/tidy` run on every project**, which is a far worse failure than losing one scan step. Catch it, skip, and let `/tidy` continue.
+**Row 6 (`exec-failed`) is the one an implementer will skip.** A single observed run — exit 0, clean JSON — is an observation, not a guarantee. The underlying launcher can still exit non-zero or crash before producing output, and `run()` wraps every spawn in a `try`/`catch` so this is always a returned value, never a thrown exception reaching the caller. An uncaught exception here would break **every `/tidy` run on every project**, which is a far worse failure than losing one scan step. Catch it, skip, and let `/tidy` continue.
 
-Row 3 uses Layer 0's signals because Layer 0 has already run in the same wrapper invocation, so the check is free and happens *before* spawning a second process. When Layer 0 itself degraded on execution failure while the plugin still resolved at the pin, that signal is unavailable — in that case skip the precondition, run `doctor.mjs`, and apply row 3 post-hoc if its `productPath` and `designPath` both come back `null`.
+Row 4 uses Layer 0's signals because Layer 0 has already run in the same wrapper invocation, so the check is free and happens *before* spawning a second process. When Layer 0 itself degraded on execution failure while the plugin still resolved, that signal is unavailable — in that case skip the precondition, run `doctor`, and apply row 4 post-hoc if its `productPath` and `designPath` both come back `null`.
 
 ## Procedure
 
 ### Step 1: Run preconditions
 
-Layer 1, then the four skip conditions in order. On any skip, return the skip object — `/tidy` degrades silently (it does not render an "unavailable" row).
+Layer 1, then the seven skip conditions in order. On any skip, return the skip object — `/tidy` degrades silently (it does not render an "unavailable" row).
 
-### Step 2: Resolve the script
+### Step 2: Resolve and run
 
-Call `resolveImpeccablePlugin({searchRoot})` per `../impeccable-plugin.md`. The script is `<root>/skills/impeccable/scripts/doctor.mjs`, per that file's per-consumer script-path table. When Layer 0 already resolved in this invocation, reuse its `root` — do not re-glob the cache.
+Call `node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" run doctor` per `../impeccable-plugin.md`'s Resolution and Invocation sections. The CLI resolves the install internally — there is no separate resolve step and no script path for this mode to compute; the module's own `run()` already reuses one resolve per process the same way Layer 0's `signals` call does.
 
 ### Step 3: Execute
 
 ```bash
-node "<root>/skills/impeccable/scripts/doctor.mjs" --json
+node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" run doctor
 ```
 
-Run from the **project root**; every path in the output is resolved relative to it.
+Run from the **project root**; every path in the output is resolved relative to it. Branch on the envelope: `{ok: true, value}` is the Step 4 shape below; `{ok: false, reason, fix?, detail?}` maps to skip conditions 1-3 and 5-7 above.
 
-**Pass `--json` and nothing else.** `doctor.mjs` parses its non-flag arguments in strict mode, so an unrecognized argument makes it exit 1 with a usage error — turning a supported invocation into skip condition 4 for no reason. In particular do not pass `--target`: monorepo workspace findings already arrive in the ordinary `findings` array without it.
+**The module hardcodes `['doctor', '--json']`** (`buildArgs('doctor', args)`, `plugin/bin/lib/impeccable-engine/index.js`) and `validateVerbArgs` requires zero arguments from the caller — there is no flag to pass or get wrong. In particular, `--target` is not and has never been forwarded: monorepo workspace findings already arrive in the ordinary `findings` array without it.
 
-Use the Bash tool's default timeout. `doctor` is heavier than Layer 0's `context-signals.mjs` — it shells out to git, walks workspace candidates, and loads the detector rule registry — but still completes in seconds. Treat a timeout as skip condition 4.
+The engine module enforces its own 60-second timeout and returns `{ok: false, reason: 'timeout'}` rather than hanging — `doctor` is heavier than Layer 0's `signals` (it shells out to git, walks workspace candidates, and loads the detector rule registry) but still completes in seconds under normal conditions. Treat a `timeout` result as skip condition 7.
 
 ### Step 4: Parse and normalize
 
@@ -74,13 +77,13 @@ Parse stdout as JSON. It carries these top-level keys:
 |---|---|
 | `projectRoot`, `repoRoot` | Absolute paths |
 | `isMonorepo` | boolean |
-| `productPath`, `designPath` | Relative to `projectRoot`; `null` when absent — the post-hoc form of skip condition 3 |
+| `productPath`, `designPath` | Relative to `projectRoot`; `null` when absent — the post-hoc form of skip condition 4 |
 | `platform` | `web` \| `ios` \| `android` \| `adaptive` \| `null`; `null` is the expected common case |
 | `ruleRegistryAvailable` | boolean — see below |
 | `findings` | The array this mode exists to return |
 | `workspaces` | Per-workspace summary rows. Not findings — real workspace problems already appear in `findings`. Ignore. |
 
-`ruleRegistryAvailable: false` is a **degraded success, not a failure**: the run completed, but the bundled detector could not be resolved, so ignored rule ids went unvalidated and `detector-ignore-rules-unknown` could not fire. Do not treat it as skip condition 4, and do not surface it as a finding — carry it on the return so a caller can note the run was partial.
+`ruleRegistryAvailable: false` is a **degraded success, not a failure**: the run completed, but the bundled detector could not be resolved, so ignored rule ids went unvalidated and `detector-ignore-rules-unknown` could not fire. Do not treat it as skip condition 6, and do not surface it as a finding — carry it on the return so a caller can note the run was partial.
 
 Normalization is **one step, done once, here**: pass each finding's six fields through unchanged. There is nothing else to do to them. `/tidy` maps them onto its own table columns for display; that mapping is `/tidy`'s and lives in `skills/tidy/scan-procedures.md`.
 
@@ -139,6 +142,6 @@ Upstream's display order is `route`, `mention`, `auto`. That is a reading order 
 
 `result` is always `"advisory"` on a successful run, including when `findings` is empty — a clean project is a real, reportable result, not a skip. Per `_shared/design-wrapper-handling.md`, `advisory` means "the mode ran and produced output; surface the findings," and it never fails a caller's gate.
 
-`counts` is a convenience tally by severity; `findings` remains the authority. `platform` is the wrapper's standard top-level Layer 0 field (see `../SKILL.md`'s Output contract), not something `doctor` computes — `doctor.mjs` reports its own `platform` too, and the two agree because both read the same `PRODUCT.md`.
+`counts` is a convenience tally by severity; `findings` remains the authority. `platform` is the wrapper's standard top-level Layer 0 field (see `../SKILL.md`'s Output contract), not something this mode computes — the engine's `doctor` verb reports its own `platform` too, and the two agree because both read the same `PRODUCT.md`.
 
 **This mode modifies no file, in any project, under any condition.** It is read-only with respect to both source code and Impeccable's own artifacts.

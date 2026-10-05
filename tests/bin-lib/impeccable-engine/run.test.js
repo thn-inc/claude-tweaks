@@ -61,8 +61,19 @@ test('AC6: a valid signals output returns {ok:true, value} with the parsed objec
   assert.deepStrictEqual(out.value, parsed);
 });
 
+const VALID_FINDING = {
+  id: 'product-schema-legacy',
+  artifact: 'PRODUCT.md',
+  path: 'PRODUCT.md',
+  severity: 'route',
+  summary: 'PRODUCT.md predates the current schema.',
+  fix: 'Offer `init`.',
+};
+
 test('doctor validator: findings array with a non-string severity is shape-mismatch', () => {
-  const deps = fakeDeps({ spawn: () => JSON.stringify({ findings: [{ severity: 1 }] }) });
+  const deps = fakeDeps({
+    spawn: () => JSON.stringify({ findings: [{ ...VALID_FINDING, severity: 1 }] }),
+  });
   const out = run('doctor', [], {}, deps);
   assert.strictEqual(out.ok, false);
   assert.strictEqual(out.reason, 'shape-mismatch');
@@ -70,9 +81,49 @@ test('doctor validator: findings array with a non-string severity is shape-misma
 });
 
 test('doctor validator: a valid findings array passes', () => {
-  const deps = fakeDeps({ spawn: () => JSON.stringify({ findings: [{ severity: 'p1' }] }) });
+  const deps = fakeDeps({ spawn: () => JSON.stringify({ findings: [VALID_FINDING] }) });
   const out = run('doctor', [], {}, deps);
   assert.strictEqual(out.ok, true);
+});
+
+test('doctor validator: a finding with a nullable path is valid', () => {
+  const deps = fakeDeps({
+    spawn: () => JSON.stringify({ findings: [{ ...VALID_FINDING, path: null }] }),
+  });
+  const out = run('doctor', [], {}, deps);
+  assert.strictEqual(out.ok, true);
+});
+
+test('doctor validator: a finding missing .id is shape-mismatch (record #2981 Task 0)', () => {
+  const finding = { ...VALID_FINDING };
+  delete finding.id;
+  const deps = fakeDeps({ spawn: () => JSON.stringify({ findings: [finding] }) });
+  const out = run('doctor', [], {}, deps);
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'shape-mismatch');
+  assert.strictEqual(out.detail, 'findings[0].id');
+});
+
+test('doctor validator: a finding missing .fix is shape-mismatch (record #2981 Task 0)', () => {
+  const finding = { ...VALID_FINDING };
+  delete finding.fix;
+  const deps = fakeDeps({ spawn: () => JSON.stringify({ findings: [finding] }) });
+  const out = run('doctor', [], {}, deps);
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'shape-mismatch');
+  assert.strictEqual(out.detail, 'findings[0].fix');
+});
+
+test('doctor validator: the committed real-run fixture passes unmodified (record #2981 Task 0)', () => {
+  const fixture = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'fixtures', 'impeccable-plugin', 'doctor.json'),
+    'utf8'
+  );
+  const parsed = JSON.parse(fixture);
+  const deps = fakeDeps({ spawn: () => fixture });
+  const out = run('doctor', [], {}, deps);
+  assert.strictEqual(out.ok, true);
+  assert.deepStrictEqual(out.value, parsed);
 });
 
 test('concept-seed validator: a header with a leading scope word is accepted (unanchored regex)', () => {
