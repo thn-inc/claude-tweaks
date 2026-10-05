@@ -59,6 +59,16 @@ prose and pins it: `assert.deepEqual(rows.map(r => r.releaseType), RELEASE_STACK
 r.releaseType))`, then each row's markers in turn — a dropped, reordered, or edited prose row
 fails loudly instead of silently drifting from the code it once matched.
 
+**Prose-to-code instance (#2980/#2981):** `plugin/skills/design-wrapper/impeccable-plugin.md`'s
+`## Degradation` table (one row per `plugin/bin/lib/impeccable-engine/index.js`'s `FAILURE_REASONS`)
+must name every reason the module can return, each with a fix or a stated reason there isn't one.
+`tests/impeccable-engine-skip-reasons.test.js` pins it three ways: `FAILURE_REASONS` itself is
+asserted against a frozen sorted array (so a rename or addition is caught at the source), the
+Degradation section is parsed and checked for a backtick-quoted mention of every reason, and each
+reason's own table row is checked for a non-empty Fix cell matching the right vocabulary (`module`
+for a canned `fix` string, `detail` for the two reasons that carry only `detail`) — a reason added,
+renamed, or moved to the other fix-shape bucket fails loudly instead of leaving the doc stale.
+
 **Candidate instance (a live, currently-unpinned gap this check surfaces today):**
 `plugin/bin/lib/compose-subject.js:69`'s `TYPE_PRECEDENCE = ['feature', 'bug', 'task']` is a
 *third* copy of the same closed vocabulary `TYPES`/`TYPE_PREFIX` above already key off — used to
