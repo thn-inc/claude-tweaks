@@ -97,6 +97,18 @@ test('concept-seed args are filtered to the allowed flag set before reaching the
   assert.deepStrictEqual(seenArgs, ['concept-seed', '--scope', 'surface']);
 });
 
+test('concept-seed validator: a --chosen/--from lock-in response passes the same header check as a deal', () => {
+  const deps = fakeDeps({ spawn: () => 'CONCEPT SEED (key: abc123)\nlocked.\n' });
+  const out = run('concept-seed', ['--chosen', 'direction-1', '--from', 'abc123'], {}, deps);
+  assert.strictEqual(out.ok, true);
+});
+
+test('concept-seed validator: a --reroll/--from response passes the same header check as a deal', () => {
+  const deps = fakeDeps({ spawn: () => 'CONCEPT SEED (key: def456)\nre-dealt.\n' });
+  const out = run('concept-seed', ['--reroll', '1', '--from', 'abc123'], {}, deps);
+  assert.strictEqual(out.ok, true);
+});
+
 test('surface-brief: text is returned verbatim', () => {
   const deps = fakeDeps({ spawn: () => 'raw brief text\n' });
   const out = run('surface-brief', ['target.md'], {}, deps);
