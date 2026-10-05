@@ -243,6 +243,16 @@ function validateSignals(text) {
 // `.path` are always present per modes/doctor.md's Finding schema table
 // (`.path` nullable). `counts` is NOT validated here — it is computed by the
 // wrapper mode from `findings`, never read off the engine's own output.
+// Same checks-array shape as validateSignals' per-field loop above.
+const FINDING_FIELD_CHECKS = [
+  ['id', (v) => typeof v === 'string' && v !== ''],
+  ['artifact', (v) => typeof v === 'string' && v !== ''],
+  ['path', (v) => v === null || typeof v === 'string'],
+  ['severity', (v) => typeof v === 'string'],
+  ['summary', (v) => typeof v === 'string'],
+  ['fix', (v) => typeof v === 'string'],
+];
+
 function validateDoctor(text) {
   let obj;
   try {
@@ -258,23 +268,8 @@ function validateDoctor(text) {
     if (!finding || typeof finding !== 'object') {
       return { ok: false, field: `findings[${i}]` };
     }
-    if (typeof finding.id !== 'string' || finding.id === '') {
-      return { ok: false, field: `findings[${i}].id` };
-    }
-    if (typeof finding.artifact !== 'string' || finding.artifact === '') {
-      return { ok: false, field: `findings[${i}].artifact` };
-    }
-    if (finding.path !== null && typeof finding.path !== 'string') {
-      return { ok: false, field: `findings[${i}].path` };
-    }
-    if (typeof finding.severity !== 'string') {
-      return { ok: false, field: `findings[${i}].severity` };
-    }
-    if (typeof finding.summary !== 'string') {
-      return { ok: false, field: `findings[${i}].summary` };
-    }
-    if (typeof finding.fix !== 'string') {
-      return { ok: false, field: `findings[${i}].fix` };
+    for (const [field, ok] of FINDING_FIELD_CHECKS) {
+      if (!ok(finding[field])) return { ok: false, field: `findings[${i}].${field}` };
     }
   }
   return { ok: true, value: obj };
