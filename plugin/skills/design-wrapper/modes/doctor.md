@@ -51,7 +51,7 @@ Row 4 uses Layer 0's signals because Layer 0 has already run in the same wrapper
 
 ### Step 1: Run preconditions
 
-Layer 1, then the four skip conditions in order. On any skip, return the skip object — `/tidy` degrades silently (it does not render an "unavailable" row).
+Layer 1, then the seven skip conditions in order. On any skip, return the skip object — `/tidy` degrades silently (it does not render an "unavailable" row).
 
 ### Step 2: Resolve and run
 
@@ -77,13 +77,13 @@ Parse stdout as JSON. It carries these top-level keys:
 |---|---|
 | `projectRoot`, `repoRoot` | Absolute paths |
 | `isMonorepo` | boolean |
-| `productPath`, `designPath` | Relative to `projectRoot`; `null` when absent — the post-hoc form of skip condition 3 |
+| `productPath`, `designPath` | Relative to `projectRoot`; `null` when absent — the post-hoc form of skip condition 4 |
 | `platform` | `web` \| `ios` \| `android` \| `adaptive` \| `null`; `null` is the expected common case |
 | `ruleRegistryAvailable` | boolean — see below |
 | `findings` | The array this mode exists to return |
 | `workspaces` | Per-workspace summary rows. Not findings — real workspace problems already appear in `findings`. Ignore. |
 
-`ruleRegistryAvailable: false` is a **degraded success, not a failure**: the run completed, but the bundled detector could not be resolved, so ignored rule ids went unvalidated and `detector-ignore-rules-unknown` could not fire. Do not treat it as skip condition 4, and do not surface it as a finding — carry it on the return so a caller can note the run was partial.
+`ruleRegistryAvailable: false` is a **degraded success, not a failure**: the run completed, but the bundled detector could not be resolved, so ignored rule ids went unvalidated and `detector-ignore-rules-unknown` could not fire. Do not treat it as skip condition 6, and do not surface it as a finding — carry it on the return so a caller can note the run was partial.
 
 Normalization is **one step, done once, here**: pass each finding's six fields through unchanged. There is nothing else to do to them. `/tidy` maps them onto its own table columns for display; that mapping is `/tidy`'s and lives in `skills/tidy/scan-procedures.md`.
 
