@@ -44,9 +44,7 @@ Impeccable's own `surface-brief write <primary-target> ...` step names when it r
 contract (`reference/new-work.md` §5). `projectPath` doubles as both which Impeccable install
 `resolve()` selects and the spawn's working directory (the surface brief lives at
 `.impeccable/surfaces/<target>.md` relative to it) — pass the repo root, never a bare relative
-path. Stop at the first candidate whose read surfaces a `## Direction contract` heading (Step 2)
-— the direct replacement for the old "first comment block that carries the five labels" rule, now
-applied across engine calls instead of across comment blocks in one file.
+path. Stop at the first candidate whose read surfaces a `## Direction contract` heading (Step 2).
 
 **Two ways a candidate yields nothing, both treated alike:**
 
@@ -56,9 +54,6 @@ applied across engine calls instead of across comment blocks in one file.
   a brief exists but was never used to record a contract.
 
 Either way, move to the next candidate. **No candidate yields anything** → "No contract" (Step 4).
-
-This retires the old bounded-prefix, comment-syntax scan entirely — a brief's full text comes back
-in one call; there is no byte limit to apply and no comment syntax to recognize.
 
 ## Step 2: Recognize the blocks
 

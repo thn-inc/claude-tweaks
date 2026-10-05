@@ -53,9 +53,8 @@ The one point where a built artifact and its work record are both in hand — Im
 contract (and its seed key, the only thing making a non-deterministic build reproducible) is read
 from the relevant surface brief here and recorded onto the record as `Design-seed:`. Read
 `review-seed-capture.md` in this directory and follow it in full: the locate-and-parse procedure
-over Step 2's resolved file list,
-the three outcomes (No contract / Malformed / Contract found), the record-resolution and
-`Design-seed:` write rules, and the never-gate posture. Step 3.7's gate reads this step's parse
+over Step 2's resolved file list, the three outcomes (No contract / Malformed / Contract found), the
+record-resolution and `Design-seed:` write rules, and the never-gate posture. Step 3.7's gate reads this step's parse
 outcome — **Contract found** is the only outcome that reaches it.
 
 ### Step 3.7: Dispatch upstream's finishing review (only when a contract was found)
@@ -125,9 +124,7 @@ gap:**
   `.impeccable/build/spec.json`, and the diff directories `.impeccable/review/diff/hero/` and
   `.impeccable/review/diff/final/`.
 
-`DESIGN.md`'s path is **not** part of upstream's Input Contract and is dropped from the packet —
-it was sent by the pre-4.2.2 caller this step replaces, but upstream's own Input Contract names
-only `PRODUCT.md`.
+Do **not** send `DESIGN.md`'s path — upstream's Input Contract names only `PRODUCT.md`.
 
 Working-directory discipline applies as to any dispatch: the agent runs `Read`/`Bash`/`Glob`/`Grep`, so
 substitute the **resolved absolute** repository path into the prompt before dispatching, never an
@@ -140,13 +137,13 @@ carries what that line would have routed. None of these may be reported as a cle
 |---|---|---|
 | **Unavailable** | `resolve()` returned `ok: false`, or no agent file | Skip; `SCANNED` log; omit `finish_review` from the return |
 | **Failed** | The dispatch errored, or the agent returned nothing (an empty reply) | `finish_review: {ran: true, parsed: false, reason}`; no findings; `SCANNED` log |
-| **Unparseable** | The first non-empty line is not `disposition: {ship\|fix\|rebuild\|recapture}` (an unknown disposition word, or no disposition line at all); a `disposition: fix`/`rebuild`/`ship` reply missing any of the five named sections (`persistence`, `fidelity`, `ceiling`, `material_fixes`, `keep`); a `disposition: recapture` reply missing the `recapture` section; or `disposition: fix` with an empty `material_fixes` list | Reported as "finish review unparseable," never as a clean pass — same handling as Failed. Do **not** mine prose for something finding-shaped |
+| **Unparseable** | The first non-empty line is not `disposition: {ship\|fix\|rebuild\|recapture}` (an unknown disposition word, or no disposition line at all); a `disposition: fix`/`rebuild`/`ship` reply missing any of the five named sections (`persistence`, `fidelity`, `ceiling`, `material_fixes`, `keep`); a `disposition: recapture` reply missing the `recapture` section; or `disposition: fix`/`rebuild` with an empty `material_fixes` list | Reported as "finish review unparseable," never as a clean pass — same handling as Failed. Do **not** mine prose for something finding-shaped |
 | **Parsed** | The disposition line parses to one of the four words and its required section(s) are all present | Adapt per Step 4 |
 
 A parsed `disposition: ship` reply (`material_fixes` empty by construction — `ship` only derives
 when the matrix holds no contradicted or missing row) is a real, clean result and is reported as
 one — that is the only case that may say the render met its contract. An empty `material_fixes`
-under any *other* disposition word is the Unparseable case above, never a clean pass. Absence of
+under `fix` or `rebuild` is the Unparseable case above, never a clean pass. Absence of
 output is not absence of findings, and the distinction lives in `parsed`, never in the finding
 count.
 
@@ -349,14 +346,13 @@ mapping never re-derives a second verdict from the sections underneath it:
 | `fix` | One finding per `material_fixes` line, **in the order given** | `contract` | `warning` |
 | `rebuild` | One finding carrying the **first** `material_fixes` line; the rest are moot — upstream's rebuild directive tells the builder to stop ordering repairs | `contract` | `error` |
 | `recapture` | One finding naming the missing or invalid captures from the `recapture` section | `contract` | `warning` |
-| *(unparseable)* | Reported as "finish review unparseable," **never** a clean pass — see the outcomes table above for the exact unparseable conditions (unknown disposition word, a missing required section, an empty reply, `fix` with an empty `material_fixes`) | — | — |
+| *(unparseable)* | Reported as "finish review unparseable," **never** a clean pass — conditions in Step 3.7's outcomes table | — | — |
 
 Three rules on this mapping:
 
-- **`severity` is assigned, not parsed.** Upstream emits no severity scale. `warning`/`error` here are
-  this wrapper's own choice — `fix` and `recapture` map to medium (`warning`), `rebuild` to high
-  (`error`) — chosen so the enum `/review` already maps (`info` → low, `warning` → medium, `error` →
-  high) keeps working. Do not manufacture a gradient from a fix's rank within `fix`: `material_fixes`
+- **`severity` is assigned, not parsed.** Upstream emits no severity scale. The table's `warning`/`error`
+  values are this wrapper's own, chosen so the enum `/review` already maps (`info` → low, `warning` →
+  medium, `error` → high) keeps working. Do not manufacture a gradient from a fix's rank within `fix`: `material_fixes`
   is ordered most material first, and that ordering is preserved as **array order** in `findings`,
   which is the whole of what upstream promised.
 - **`suggestion` is `null`.** The field exists to name an Impeccable command for `polish` mode to

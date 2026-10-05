@@ -53,7 +53,7 @@ function normalizeFinishReview(replyText) {
 
   if (disposition === 'recapture') {
     const sections = splitSections(rest, ['recapture']);
-    if (!('recapture' in sections) || sections.recapture === '') {
+    if (!sections.recapture) {
       return { unparseable: true, reason: 'missing or empty recapture section' };
     }
     return {
@@ -70,9 +70,11 @@ function normalizeFinishReview(replyText) {
   if (disposition === 'ship') return { disposition, findings: [] };
 
   const fixes = sections.material_fixes.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (fixes.length === 0) {
+    return { unparseable: true, reason: `${disposition} with empty material_fixes` };
+  }
 
   if (disposition === 'fix') {
-    if (fixes.length === 0) return { unparseable: true, reason: 'fix with empty material_fixes' };
     return {
       disposition,
       findings: fixes.map((message) => ({ severity: 'warning', category: 'contract', message })),
@@ -80,7 +82,6 @@ function normalizeFinishReview(replyText) {
   }
 
   // rebuild
-  if (fixes.length === 0) return { unparseable: true, reason: 'rebuild with empty material_fixes' };
   return {
     disposition,
     findings: [{ severity: 'error', category: 'contract', message: fixes[0] }],
