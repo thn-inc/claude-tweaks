@@ -19,22 +19,18 @@ function tmp(prefix) {
 function fakeDeps({ installPath = '/fake/user/install', spawn } = {}) {
   const entries = [{ scope: 'user', installPath, version: '4.4.0' }];
   const data = JSON.stringify({ version: 2, plugins: { 'impeccable@impeccable': entries } });
-  let callCount = 0;
-  const wrappedSpawn = (cmd, args, options) => {
-    callCount += 1;
-    // The first call is always resolve()'s own engine-probe.
-    if (args[0] === 'engine-probe') return 'impeccable-engine 0.1.11\n';
-    return spawn(cmd, args, options);
-  };
-  const deps = {
+  return {
     readFile: () => data,
     exists: () => true,
     realpath: (p) => p,
     homedir: () => '/fake-home',
     cwd: () => '/fake-project',
-    spawn: wrappedSpawn,
+    spawn: (cmd, args, options) => {
+      // The first call is always resolve()'s own engine-probe.
+      if (args[0] === 'engine-probe') return 'impeccable-engine 0.1.11\n';
+      return spawn(cmd, args, options);
+    },
   };
-  return { deps, callCount: () => callCount };
 }
 
 test('AC6: signals output missing setup.platform -> shape-mismatch naming setup.platform', () => {
@@ -44,7 +40,7 @@ test('AC6: signals output missing setup.platform -> shape-mismatch naming setup.
     git: { isRepo: false },
     devServer: { running: false, ports: [] },
   });
-  const { deps } = fakeDeps({ spawn: () => body });
+  const deps = fakeDeps({ spawn: () => body });
   const out = run('signals', [], {}, deps);
   assert.strictEqual(out.ok, false);
   assert.strictEqual(out.reason, 'shape-mismatch');
@@ -59,14 +55,14 @@ test('AC6: a valid signals output returns {ok:true, value} with the parsed objec
     devServer: { running: false, ports: [] },
     scan: { targets: ['.'], via: 'root' },
   };
-  const { deps } = fakeDeps({ spawn: () => JSON.stringify(parsed) });
+  const deps = fakeDeps({ spawn: () => JSON.stringify(parsed) });
   const out = run('signals', [], {}, deps);
   assert.strictEqual(out.ok, true);
   assert.deepStrictEqual(out.value, parsed);
 });
 
 test('doctor validator: findings array with a non-string severity is shape-mismatch', () => {
-  const { deps } = fakeDeps({ spawn: () => JSON.stringify({ findings: [{ severity: 1 }] }) });
+  const deps = fakeDeps({ spawn: () => JSON.stringify({ findings: [{ severity: 1 }] }) });
   const out = run('doctor', [], {}, deps);
   assert.strictEqual(out.ok, false);
   assert.strictEqual(out.reason, 'shape-mismatch');
@@ -74,19 +70,19 @@ test('doctor validator: findings array with a non-string severity is shape-misma
 });
 
 test('doctor validator: a valid findings array passes', () => {
-  const { deps } = fakeDeps({ spawn: () => JSON.stringify({ findings: [{ severity: 'p1' }] }) });
+  const deps = fakeDeps({ spawn: () => JSON.stringify({ findings: [{ severity: 'p1' }] }) });
   const out = run('doctor', [], {}, deps);
   assert.strictEqual(out.ok, true);
 });
 
 test('concept-seed validator: a header with a leading scope word is accepted (unanchored regex)', () => {
-  const { deps } = fakeDeps({ spawn: () => 'SURFACE CONCEPT SEED (key: abc123)\nmore text\n' });
+  const deps = fakeDeps({ spawn: () => 'SURFACE CONCEPT SEED (key: abc123)\nmore text\n' });
   const out = run('concept-seed', ['--scope', 'surface'], {}, deps);
   assert.strictEqual(out.ok, true);
 });
 
 test('concept-seed validator: no matching header is shape-mismatch', () => {
-  const { deps } = fakeDeps({ spawn: () => 'not a concept seed header\n' });
+  const deps = fakeDeps({ spawn: () => 'not a concept seed header\n' });
   const out = run('concept-seed', [], {}, deps);
   assert.strictEqual(out.ok, false);
   assert.strictEqual(out.reason, 'shape-mismatch');
@@ -94,7 +90,7 @@ test('concept-seed validator: no matching header is shape-mismatch', () => {
 
 test('concept-seed args are filtered to the allowed flag set before reaching the launcher', () => {
   let seenArgs = null;
-  const { deps } = fakeDeps({
+  const deps = fakeDeps({
     spawn: (_cmd, args) => { seenArgs = args; return 'CONCEPT SEED (key: x)\n'; },
   });
   run('concept-seed', ['--scope', 'surface', '--evil', 'x'], {}, deps);
@@ -102,14 +98,14 @@ test('concept-seed args are filtered to the allowed flag set before reaching the
 });
 
 test('surface-brief: text is returned verbatim', () => {
-  const { deps } = fakeDeps({ spawn: () => 'raw brief text\n' });
+  const deps = fakeDeps({ spawn: () => 'raw brief text\n' });
   const out = run('surface-brief', ['target.md'], {}, deps);
   assert.strictEqual(out.ok, true);
   assert.strictEqual(out.value, 'raw brief text\n');
 });
 
 test('exec-failed: a non-timeout, non-127 spawn failure reports exit code plus trailing stderr', () => {
-  const { deps } = fakeDeps({
+  const deps = fakeDeps({
     spawn: () => {
       const err = new Error('boom');
       err.status = 1;
@@ -141,7 +137,7 @@ test('a resolve() failure short-circuits run() and is passed through unchanged',
 
 test('AC8: every spawn run() makes for the verb call also carries IMPECCABLE_LAUNCHER_PROBE=1', () => {
   let capturedEnv = null;
-  const { deps } = fakeDeps({
+  const deps = fakeDeps({
     spawn: (_cmd, _args, options) => { capturedEnv = options.env; return '{"findings":[]}'; },
   });
   run('doctor', [], {}, deps);

@@ -15,7 +15,12 @@ const engine = require('./lib/impeccable-engine');
 const USAGE = 'usage: impeccable-engine.js resolve\n'
   + '       impeccable-engine.js run <signals|doctor|concept-seed|surface-brief> [args...]\n';
 
-const realDeps = { resolve: engine.resolve, run: engine.run, stdout: (s) => process.stdout.write(s), stderr: (s) => process.stderr.write(s) };
+const realDeps = {
+  resolve: engine.resolve,
+  run: engine.run,
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
+};
 
 // argv -> exit code. All I/O through deps so tests never touch a real engine.
 function run(argv, deps = realDeps) {
@@ -28,7 +33,7 @@ function run(argv, deps = realDeps) {
   if (sub === 'run') {
     const verb = argv[1];
     const args = argv.slice(2);
-    if (!engine.VERBS.includes(verb)) { deps.stderr(USAGE); return 2; }
+    // validateVerbArgs rejects an unknown verb as well as a bad argument shape.
     if (!engine.validateVerbArgs(verb, args).ok) { deps.stderr(USAGE); return 2; }
     deps.stdout(JSON.stringify(deps.run(verb, args, {})) + '\n');
     return 0;

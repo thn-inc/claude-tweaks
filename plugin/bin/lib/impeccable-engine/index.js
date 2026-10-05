@@ -44,6 +44,8 @@ const NOT_INSTALLED_FIX = '/plugin install impeccable@impeccable (Impeccable 4.2
 
 const CONCEPT_SEED_ALLOWED_FLAGS = Object.freeze(['--scope', '--mode', '--from', '--candidate-count']);
 
+const DEFAULT_TIMEOUT_MS = 60000;
+
 function defaultDeps() {
   const fs = require('fs');
   const os = require('os');
@@ -110,6 +112,17 @@ function launcherPath(installPath) {
   return path.join(installPath, 'skills', 'impeccable', 'scripts', name);
 }
 
+// Shared by every launcher call — the probe and each verb all carry
+// IMPECCABLE_LAUNCHER_PROBE=1.
+function spawnOptions(cwd, opts) {
+  return {
+    cwd,
+    env: Object.assign({}, process.env, { IMPECCABLE_LAUNCHER_PROBE: '1' }),
+    encoding: 'utf8',
+    timeout: opts.timeoutMs || DEFAULT_TIMEOUT_MS,
+  };
+}
+
 // opts: { projectPath, timeoutMs }. deps: { readFile, exists, realpath,
 // homedir, cwd, spawn }.
 function resolve(opts = {}, deps = defaultDeps()) {
@@ -131,15 +144,9 @@ function resolve(opts = {}, deps = defaultDeps()) {
       fix: `/plugin update impeccable@impeccable to 4.2.2 or later (missing ${launcher})`,
     };
   }
-  const timeoutMs = opts.timeoutMs || 60000;
   let stdout;
   try {
-    stdout = deps.spawn(launcher, ['engine-probe'], {
-      cwd: projectPath,
-      env: Object.assign({}, process.env, { IMPECCABLE_LAUNCHER_PROBE: '1' }),
-      encoding: 'utf8',
-      timeout: timeoutMs,
-    });
+    stdout = deps.spawn(launcher, ['engine-probe'], spawnOptions(projectPath, opts));
   } catch (err) {
     return {
       ok: false,
@@ -168,10 +175,9 @@ function buildArgs(verb, args) {
   if (verb === 'signals') return ['signals'];
   if (verb === 'surface-brief') return ['surface-brief', 'read', ...args];
   if (verb === 'concept-seed') {
-    const allowed = new Set(CONCEPT_SEED_ALLOWED_FLAGS);
     const out = ['concept-seed'];
     for (let i = 0; i < args.length; i++) {
-      if (allowed.has(args[i])) {
+      if (CONCEPT_SEED_ALLOWED_FLAGS.includes(args[i])) {
         out.push(args[i]);
         if (i + 1 < args.length) out.push(args[++i]);
       }
@@ -181,18 +187,17 @@ function buildArgs(verb, args) {
   return [verb, ...args];
 }
 
-// verb argument shape, shared by the module's own defensive filtering
-// (buildArgs above) and the CLI's usage-error gate (bin/impeccable-engine.js)
-// — one source of truth for "what does this verb accept" rather than two.
+// Each verb's accepted argument shape — the CLI's usage-error gate
+// (bin/impeccable-engine.js). Returns {ok:false} for an unknown verb too.
+// Shares CONCEPT_SEED_ALLOWED_FLAGS with buildArgs' defensive filtering.
 function validateVerbArgs(verb, args) {
   if (verb === 'signals' || verb === 'doctor') {
     return { ok: args.length === 0 };
   }
   if (verb === 'concept-seed') {
     if (args.length % 2 !== 0) return { ok: false };
-    const allowed = new Set(CONCEPT_SEED_ALLOWED_FLAGS);
     for (let i = 0; i < args.length; i += 2) {
-      if (!allowed.has(args[i])) return { ok: false };
+      if (!CONCEPT_SEED_ALLOWED_FLAGS.includes(args[i])) return { ok: false };
     }
     return { ok: true };
   }
@@ -278,16 +283,10 @@ function run(verb, args = [], opts = {}, deps = defaultDeps()) {
   }
   const resolved = resolve(opts, deps);
   if (!resolved.ok) return resolved;
-  const timeoutMs = opts.timeoutMs || 60000;
-  const launcherArgs = buildArgs(verb, args);
+  const cwd = opts.projectRoot || opts.projectPath || deps.cwd();
   let stdout;
   try {
-    stdout = deps.spawn(resolved.launcher, launcherArgs, {
-      cwd: opts.projectRoot || opts.projectPath || deps.cwd(),
-      env: Object.assign({}, process.env, { IMPECCABLE_LAUNCHER_PROBE: '1' }),
-      encoding: 'utf8',
-      timeout: timeoutMs,
-    });
+    stdout = deps.spawn(resolved.launcher, buildArgs(verb, args), spawnOptions(cwd, opts));
   } catch (err) {
     if (err && (err.killed || err.signal === 'SIGTERM' || err.code === 'ETIMEDOUT')) {
       return { ok: false, reason: 'timeout' };
