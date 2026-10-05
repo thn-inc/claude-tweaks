@@ -1,6 +1,6 @@
 {
-  "projectRoot": "/tmp/impeccable-doctor-capture",
-  "repoRoot": "/tmp/impeccable-doctor-capture",
+  "projectRoot": "/path/to/project",
+  "repoRoot": "/path/to/project",
   "isMonorepo": false,
   "productPath": "PRODUCT.md",
   "designPath": "DESIGN.md",

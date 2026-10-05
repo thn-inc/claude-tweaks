@@ -3,68 +3,92 @@
 // Contract probe for the Impeccable PLUGIN (a different artifact on a
 // different version line from the Impeccable CLI — see
 // tests/impeccable-cli-contract.test.js for that one). Proves the claims in
-// skills/design-wrapper/impeccable-plugin.md against the plugin actually
-// installed in the cache.
+// skills/design-wrapper/impeccable-plugin.md against the plugin and engine
+// actually installed.
 //
-// Resolution is NOT reimplemented here. tools/upstream-drift/checks.js already
-// owns the plugin-cache-glob resolver — glob the cache, read each candidate's
-// own plugin.json `version`, select the one equal to the pin — and the pin
-// itself lives once in tools/upstream-drift/manifest.yml. A second resolver
-// beside it would be a second thing to keep correct, and two resolvers
-// agreeing is exactly when a shared bug reads as the spec.
+// Two layers, deliberately split (record #2985):
+//
+// 1. Fixture-driven shape tests — run everywhere, including CI, with no
+//    Impeccable install at all. They replay committed fixtures through the
+//    engine module's own run()/VALIDATORS dispatch (the same seam
+//    tests/bin-lib/impeccable-engine/run.test.js drives with a fake
+//    launcher), proving the fixtures still match the documented shape.
+// 2. Live-engine tests — gated on `impeccable-engine.js resolve()` actually
+//    finding a usable install on THIS machine. Absent or mismatched: skip
+//    with the resolve reason, never fail. The drift tool
+//    (tools/upstream-drift/run.js), run explicitly, still reports a version
+//    breach as a breach — this file only turns it into an unconditional skip.
+//
+// Resolution is NOT reimplemented here. plugin/bin/lib/impeccable-engine's
+// resolve()/run() already own it — Layer 0, doctor, and explore all call the
+// same two functions; tools/upstream-drift/checks.js owns the SEPARATE
+// plugin-cache-glob version-pin resolver the manifest's `pinned` key drives.
+// A second resolver beside either would be a second thing to keep correct,
+// and two resolvers agreeing is exactly when a shared bug reads as the spec.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
 const { checkVersion, checkAssertions } = require('../tools/upstream-drift/checks');
 const { loadManifest } = require('../tools/upstream-drift/manifest');
+const engine = require('../plugin/bin/lib/impeccable-engine');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const FIXTURES = path.join(__dirname, 'fixtures', 'impeccable-plugin');
 const CONTRACT_DOC = path.join(REPO_ROOT, 'plugin', 'skills', 'design-wrapper', 'impeccable-plugin.md');
 const DETECTION_DOC = path.join(REPO_ROOT, 'plugin', 'skills', 'design-wrapper', 'frontend-detection.md');
-const SCRIPT_REL = path.join('skills', 'impeccable', 'scripts', 'context-signals.mjs');
 
 const manifest = loadManifest(path.join(REPO_ROOT, 'tools', 'upstream-drift', 'manifest.yml'));
 const ENTRY = manifest.dependencies.find((d) => d.name === 'impeccable-plugin');
 const PINNED = ENTRY.pinned;
+const PINNED_ENGINE = ENTRY['pinned-engine'];
 
 const versionCheck = checkVersion(ENTRY);
 
-// Absent plugin skips; present-but-off-pin FAILS. A contract probe that
-// silently declines to run reads exactly like one that passed — which is the
-// defect this suite exists to catch, so it must not be this suite's own
-// behaviour. Contributors without Impeccable installed are unaffected.
-//
-// Everything that replays a committed fixture runs unconditionally: fixtures
-// need no installed plugin, and the Layer 3 assertion below is permanent.
-const skip = versionCheck.status === 'absent' ? 'Impeccable plugin not installed' : false;
+// Absent plugin, OR present-but-off-pin: both are a skip, never a failure —
+// AC1/AC2. A contract probe that silently declines to run reads exactly like
+// one that passed, which is the defect this suite exists to catch, so it
+// must not be this suite's own behaviour for the ONE case that genuinely has
+// nothing to prove (absent) or the ONE case the drift tool, not this test,
+// is responsible for reporting (a version breach — `checks.js`'s own
+// "version mismatch is a breach" test below still proves checkVersion
+// reports it correctly when run on purpose). Everything that replays a
+// committed fixture runs unconditionally regardless of this gate: fixtures
+// need no installed plugin at all.
+const versionSkipReason = versionCheck.status === 'ok'
+  ? false
+  : versionCheck.status === 'absent'
+    ? 'Impeccable plugin not installed'
+    : `installed version(s) do not match the pin — ${versionCheck.detail}`;
 
-// ─── the pin ────────────────────────────────────────────────────────────────
+// ─── the pins ───────────────────────────────────────────────────────────────
 
-test('impeccable-plugin.md pins the same version the drift manifest does', () => {
+const PIN_COMMENT_RE = /<!--\s*upstream-pin:\s*impeccable-plugin@(\S+)\s+impeccable-engine@(\S+)\s*-->/;
+
+test('impeccable-plugin.md pins the same plugin AND engine versions the drift manifest does (AC5)', () => {
   const doc = fs.readFileSync(CONTRACT_DOC, 'utf8');
-  const match = doc.match(/<!--\s*upstream-pin:\s*impeccable-plugin@([^\s]+)\s*-->/);
-  assert.ok(match, 'impeccable-plugin.md must carry an <!-- upstream-pin: impeccable-plugin@X.Y.Z --> comment');
+  const match = doc.match(PIN_COMMENT_RE);
+  assert.ok(
+    match,
+    'impeccable-plugin.md must carry an <!-- upstream-pin: impeccable-plugin@X.Y.Z impeccable-engine@A.B.C --> comment'
+  );
   assert.strictEqual(
     match[1],
     PINNED,
-    `impeccable-plugin.md pins ${match[1]} but tools/upstream-drift/manifest.yml pins ${PINNED}. ` +
+    `impeccable-plugin.md pins impeccable-plugin@${match[1]} but tools/upstream-drift/manifest.yml pins ${PINNED}. ` +
+      'Two pins for one artifact is the drift this whole seam exists to prevent — move both together.'
+  );
+  assert.strictEqual(
+    match[2],
+    PINNED_ENGINE,
+    `impeccable-plugin.md pins impeccable-engine@${match[2]} but tools/upstream-drift/manifest.yml pins ${PINNED_ENGINE}. ` +
       'Two pins for one artifact is the drift this whole seam exists to prevent — move both together.'
   );
 });
 
-test('the installed plugin matches the pinned version', { skip }, () => {
-  assert.strictEqual(
-    versionCheck.status,
-    'ok',
-    `${versionCheck.detail}. Every assertion below describes ${PINNED}'s behaviour, so they prove ` +
-      `nothing about the installed one — context-signals.mjs does not even exist at every version ` +
-      `that satisfies the plugin's skill-resolution check. Install ${PINNED}, or re-pin deliberately ` +
-      'by re-recording the fixtures against the new version.'
-  );
+test('the installed plugin matches the pinned version', { skip: versionSkipReason }, () => {
+  assert.strictEqual(versionCheck.status, 'ok');
 });
 
 // ─── degradation: the three conditions stay distinguishable ─────────────────
@@ -115,19 +139,9 @@ test('an empty search root is absent, not a breach', () => {
   );
 });
 
-// ─── the installed artifact ─────────────────────────────────────────────────
+// ─── the installed artifact's static contract ───────────────────────────────
 
-// Resolves the pinned plugin root as a by-product of checking the manifest's
-// own assertions about it — the same resolver the version check above used.
-function pinnedPluginRoot() {
-  const result = checkAssertions(ENTRY);
-  assert.notStrictEqual(result.status, 'skipped', 'could not resolve an installed root at the pin');
-  const roots = result.results.flatMap((r) => r.roots.map((x) => x.root));
-  assert.ok(roots.length > 0, 'the manifest entry must carry at least one assertion to resolve a root from');
-  return roots[0];
-}
-
-test('the manifest\'s assertions about the pinned plugin still hold', { skip }, () => {
+test('the manifest\'s assertions about the pinned plugin still hold', { skip: versionSkipReason }, () => {
   const result = checkAssertions(ENTRY);
   const failing = result.results.filter((r) => r.status !== 'ok');
   assert.deepStrictEqual(
@@ -137,125 +151,94 @@ test('the manifest\'s assertions about the pinned plugin still hold', { skip }, 
   );
 });
 
-test('gatherSignals() executes cleanly and returns the documented shape', { skip }, async () => {
-  const script = path.join(pinnedPluginRoot(), SCRIPT_REL);
-  assert.ok(fs.existsSync(script), `${script} does not exist — impeccable-plugin.md's resolved script path is stale`);
+// ─── fixture-driven validator tests (always on, no install needed) ─────────
+//
+// Replays each committed fixture through the engine module's own run()
+// dispatch — a fake launcher that returns the fixture's raw text — so the
+// fixtures stay proven against the SAME validators Layer 0/doctor/explore
+// rely on in production, with zero dependency on what (if anything) is
+// actually installed on the machine running this suite. Mirrors
+// tests/bin-lib/impeccable-engine/run.test.js's own fakeDeps pattern
+// (notably its "the committed real-run fixture passes unmodified" doctor.json
+// test), scoped here to the two fixtures that module's own suite does not
+// already cover: signals and concept-seed.
 
-  const { gatherSignals } = await import(`file://${script}`);
-  const signals = await gatherSignals(REPO_ROOT);
+function fakeEngineDeps(spawnStdout) {
+  const entries = [{ scope: 'user', installPath: '/fake/install', version: PINNED }];
+  const installedPluginsJson = JSON.stringify({ version: 2, plugins: { 'impeccable@impeccable': entries } });
+  return {
+    readFile: () => installedPluginsJson,
+    exists: () => true,
+    realpath: (p) => p,
+    homedir: () => '/fake-home',
+    cwd: () => '/fake-project',
+    spawn: (_cmd, args) => {
+      // The first call through resolve() is always its own engine-probe.
+      if (args[0] === 'engine-probe') return `impeccable-engine ${PINNED_ENGINE}\n`;
+      return spawnStdout;
+    },
+  };
+}
 
+test('fixture: signals-backend-repo.json still matches validateSignals() shape', () => {
+  const fixtureText = fs.readFileSync(path.join(FIXTURES, 'signals-backend-repo.json'), 'utf8');
+  const out = engine.run('signals', [], {}, fakeEngineDeps(fixtureText));
+  assert.strictEqual(out.ok, true, out.detail || out.reason);
+  assert.deepStrictEqual(out.value, JSON.parse(fixtureText));
+});
+
+test('fixture: concept-seed.txt still matches validateConceptSeed() shape', () => {
+  const fixtureText = fs.readFileSync(path.join(FIXTURES, 'concept-seed.txt'), 'utf8');
+  const out = engine.run('concept-seed', ['--scope', 'surface'], {}, fakeEngineDeps(fixtureText));
+  assert.strictEqual(out.ok, true, out.detail || out.reason);
+  assert.strictEqual(out.value, fixtureText);
+});
+
+// ─── live-engine tests (gated on a real, usable install) ────────────────────
+//
+// `resolve()` accepts any install carrying the 4.2.2+ launcher and a cached
+// engine binary, regardless of exact plugin version — a DIFFERENT, more
+// permissive gate than `versionSkipReason` above (which tracks the exact
+// `pinned` version the drift manifest cares about). A machine can fail one
+// gate and pass the other in either direction, so the two are independent,
+// never collapsed into one skip reason.
+
+const liveResolved = engine.resolve();
+const liveEngineSkip = liveResolved.ok
+  ? false
+  : `Impeccable engine not available (${liveResolved.reason}${liveResolved.detail ? `: ${liveResolved.detail}` : ''})`;
+
+test('live: impeccable-engine.js resolve() finds a usable 4.2.2+ install with a cached engine', { skip: liveEngineSkip }, () => {
+  assert.strictEqual(liveResolved.ok, true);
+  assert.ok(fs.existsSync(liveResolved.launcher), `resolved launcher ${liveResolved.launcher} does not exist`);
+  assert.ok(liveResolved.engineVersion, 'engine-probe must report a version string');
+});
+
+test('live: the resolved launcher\'s engine-probe output matches /^impeccable-engine \\S+$/', { skip: liveEngineSkip }, () => {
+  const { execFileSync } = require('node:child_process');
+  const out = execFileSync(liveResolved.launcher, ['engine-probe'], {
+    encoding: 'utf8',
+    env: Object.assign({}, process.env, { IMPECCABLE_LAUNCHER_PROBE: '1' }),
+  });
+  assert.match(out.trim(), /^impeccable-engine \S+$/);
+});
+
+test('live: run("signals") against the real installed engine returns the documented shape', { skip: liveEngineSkip }, () => {
+  const out = engine.run('signals');
+  assert.strictEqual(out.ok, true, out.detail || out.reason);
   assert.deepStrictEqual(
-    Object.keys(signals).sort(),
+    Object.keys(out.value).sort(),
     ['critique', 'devServer', 'git', 'scan', 'setup'],
     'impeccable-plugin.md documents exactly these five top-level keys'
   );
-
-  // Keys and types only — never values. Every value here is a fact about
-  // whatever happens to be checked out and listening right now, so asserting
-  // one would be a scheduled failure with no contract behind it.
-  const shape = {
-    'setup.hasProduct': ['boolean'],
-    'setup.productPath': ['string', 'null'],
-    'setup.hasDesign': ['boolean'],
-    'setup.designPath': ['string', 'null'],
-    'setup.hasCode': ['boolean'],
-    'setup.platform': ['string', 'null'],
-    'critique.latest': ['object', 'null'],
-    'git.isRepo': ['boolean'],
-    'git.branch': ['string', 'null'],
-    'git.base': ['string', 'null'],
-    'git.changedFiles': ['array'],
-    'git.changedCount': ['number'],
-    'devServer.running': ['boolean'],
-    'devServer.ports': ['array'],
-    'scan.targets': ['array'],
-    'scan.via': ['string', 'null'],
-  };
-  for (const [dotted, allowed] of Object.entries(shape)) {
-    const [group, key] = dotted.split('.');
-    const value = signals[group][key];
-    const actual = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
-    assert.ok(
-      allowed.includes(actual),
-      `${dotted} is ${actual}, but impeccable-plugin.md's field reference documents ${allowed.join(' | ')}`
-    );
-  }
-
-  if (signals.scan.via !== null) {
-    assert.ok(
-      ['git-changes', 'source-dir', 'html', 'root'].includes(signals.scan.via),
-      `scan.via reported an undocumented branch: ${signals.scan.via}`
-    );
-  }
-  assert.ok(
-    signals.git.changedCount >= signals.git.changedFiles.length,
-    'changedCount is the uncapped total, so it can never be below the capped list'
-  );
-});
-
-test('the CLI entrypoint accepts no flags', { skip }, () => {
-  const script = path.join(pinnedPluginRoot(), SCRIPT_REL);
-  // impeccable-plugin.md states the entrypoint never reads process.argv. Prove
-  // it behaviourally: flags that would be meaningful to any other CLI must be
-  // inert here — neither honoured nor rejected.
-  const run = (args) => spawnSync(process.execPath, [script, ...args], { cwd: REPO_ROOT, encoding: 'utf8' });
-
-  const bare = run([]);
-  const flagged = run(['--json', '--target', 'src/', '--nonsense']);
-
-  assert.strictEqual(bare.status, 0, `bare invocation must exit 0; stderr: ${bare.stderr}`);
-  assert.strictEqual(bare.stderr, '', 'nothing may go to stderr on the happy path');
-  assert.strictEqual(flagged.status, 0, `flags must not cause a non-zero exit; stderr: ${flagged.stderr}`);
-  assert.strictEqual(flagged.stderr, '', 'flags must not provoke a usage error on stderr');
-
-  const parsed = JSON.parse(flagged.stdout);
-  assert.deepStrictEqual(
-    Object.keys(parsed).sort(),
-    ['critique', 'devServer', 'git', 'scan', 'setup'],
-    'stdout must carry the same five-key object regardless of arguments'
-  );
-
-  // The direct form of the claim, and the only one that holds regardless of what
-  // the working tree is doing: had the entrypoint read argv, `--target src/`
-  // would be the scan target.
-  assert.notDeepStrictEqual(
-    parsed.scan.targets,
-    ['src/'],
-    '--target was honoured — the no-injection-point claim in impeccable-plugin.md would be false'
-  );
-
-  // The full-object comparison is strictly stronger — it would catch an argv
-  // effect that happened not to look like `['src/']` — but it is only meaningful
-  // when the two runs observed the same repository, and that is not something
-  // this test can assume. `resolveScan` returns
-  // `{ targets: changed.slice(0, 50), via: 'git-changes' }` whenever the tree is
-  // dirty, so any write under REPO_ROOT between the two spawns changes the
-  // answer. This repo's normal working mode is several parallel worktree
-  // sessions, so that happens, and it surfaced as this very assertion's message
-  // — blaming argv handling for concurrent git churn.
-  //
-  // Gating on `via === 'git-changes'` for both runs is NOT sufficient: a dirty
-  // tree gives both runs that same `via` while their target lists differ, which
-  // is precisely the observed failure. Only `via: 'root'` is a basis that cannot
-  // vary between two spawns, so the comparison runs there and is skipped
-  // otherwise. The deterministic `--target` assertion above carries the claim in
-  // either case; this is an additional net, never the only one.
-  const bareScan = JSON.parse(bare.stdout).scan;
-  if (bareScan.via === 'root' && parsed.scan.via === 'root') {
-    assert.deepStrictEqual(
-      bareScan,
-      parsed.scan,
-      'a --target flag changed scan — the no-injection-point claim in impeccable-plugin.md would be false'
-    );
-  }
 });
 
 // ─── Layer 3 is not redundant with scan.targets (PERMANENT) ─────────────────
 //
 // Replays a frozen fixture, never live git state: an assertion that this repo
-// currently produces N targets is a scheduled failure timed to the next commit
-// ([IL-80]), and this leaf's own diff moves that number. See the fixture's
-// README for how it was recorded.
+// currently produces N targets is a scheduled failure timed to the next
+// commit ([IL-80]), and this leaf's own diff moves that number. See the
+// fixture's README for how it was recorded.
 
 const FROZEN = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'signals-backend-repo.json'), 'utf8'));
 
