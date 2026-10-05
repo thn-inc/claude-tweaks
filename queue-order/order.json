@@ -1,21 +1,21 @@
 {
-  "computedAt": "2026-10-04T18:02:59.537Z",
+  "computedAt": "2026-10-05T03:27:19.331Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
       {
+        "number": 2979,
+        "updatedAt": "2026-10-05T02:38:22Z",
+        "state": "OPEN"
+      },
+      {
         "number": 2866,
-        "updatedAt": "2026-10-01T16:19:12Z",
+        "updatedAt": "2026-10-04T18:18:35Z",
         "state": "OPEN"
       },
       {
         "number": 2844,
         "updatedAt": "2026-10-04T12:41:24Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2840,
-        "updatedAt": "2026-10-04T14:48:13Z",
         "state": "OPEN"
       },
       {
@@ -140,7 +140,7 @@
       },
       {
         "number": 1350,
-        "updatedAt": "2026-10-01T16:10:32Z",
+        "updatedAt": "2026-10-05T02:30:29Z",
         "state": "OPEN"
       }
     ]
@@ -148,8 +148,8 @@
   "groups": [
     [
       {
-        "body": "Origin: reflect light from #2785\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:docs-health` filed #2785 proposing specific replacement text for a dangling\ncommit-hash citation (\"squashed into `15553cf`\", \"`41dc8424f` is not a resolvable object in\nthis repository\"). #2785's own build phase, running a full (unshallowed) history fetch, found\nboth claims in the *proposed replacement* itself were wrong: `41dc8424f` is a real commit\n(just unreachable from `main`), and `15553cf` never touches the files in question — the\nactual landing commit is `cdb32b046`. The record had to be fixed against its own proposed fix\ntext, not just its originally-flagged problem.\n\n## Deliverables\n\n`docs-health`'s staleness-finding procedure for a dangling-commit-hash finding should run (or\ninstruct the filing pass to run) a full/unshallowed `git log`/`git branch -r --contains` check\nagainst the proposed replacement commit hash(es) before filing — the same check #2785's build\nphase had to redo independently — so a filed record's \"Proposed\" text is not itself stale on\narrival.\n\n## Acceptance Criteria\n\nA dangling-commit-hash staleness finding `docs-health` files includes a replacement citation\nthat has already been verified reachable (or explicitly marked unresolvable) against full\nrepo history, not just the shallow-clone view available at filing time.\n\n---\n_Filed by `reflect` (light mode, Fresh-start lens) during #2785's wrap-up. Staged detail:\n`staged/reflect-2.md` in run `2026-10-01T081654-record-2785` (gitignored, not in this issue)._",
-        "createdAt": "2026-10-01T09:01:08Z",
+        "body": "Surface: infra\n\n## Overview\n\nAdd one module that every `design-wrapper` consumer uses to find and run Impeccable's engine, replacing the per-mode `.mjs` script resolution that broke when Impeccable 4.2.2 retired those scripts. From 4.2.2 onward `skills/impeccable/scripts/` ships a POSIX launcher, `scripts/impeccable` (plus `impeccable.cmd`), for a self-contained engine binary with its own version line (plugin 4.2.2 → engine 0.1.3, 4.3.1 → 0.1.5, 4.4.0 → 0.1.6, 4.5.0 → 0.1.11, read from each install's `VERSION` file).\n\nThe module gates on output shape, not on a pinned version: it runs whatever engine the active install provides, validates each verb's output against its documented shape, and reports a named failure on a mismatch. It never downloads anything. This is the first unit of the migration in the parent record; units for Layer 0, `doctor`, `explore` and the direction contract all call this CLI.\n\n**Complexity:** Medium\n**Estimated tasks:** 6\n\n## Non-Goals\n\n- Changing any skill prose — the consumer rewrites are separate sub-issues of the same parent.\n- The `live-*`, `detect`, `comp-spec`, `context` and other engine verbs. `live` mode needs only skill resolution; `test` mode keeps its separate `impeccable-cli` contract.\n- Re-pinning the manifest, re-recording fixtures or rewriting `tests/impeccable-plugin-contract.test.js` (the closing sub-issue owns those).\n- Supporting Impeccable installs older than 4.2.2 — they resolve to `upgrade-required`.\n\n## Prerequisites\n\nNone.\n\n## Current State\n\n- Resolution today is prose only: `plugin/skills/design-wrapper/impeccable-plugin.md:48` documents `resolveImpeccablePlugin({searchRoot}) -> {root, version} | null`, an exact-pin glob over the plugin cache, and its script-path table (`impeccable-plugin.md:67-69`) points at `context-signals.mjs`, `doctor.mjs` and `concept-seed.mjs`, none of which exist at 4.2.2+.\n- Seam pattern to follow: `plugin/bin/link-records.js` (`// argv -> exit code. All I/O through deps so tests never touch gh or git.`, line 57) over `plugin/bin/lib/issues/link.js`.\n- Install metadata: `~/.claude/plugins/installed_plugins.json` carries one `impeccable@impeccable` entry per scope; on the maintainer machine (2026-10-04) user scope is 4.4.0 and this repo's project scope is 4.5.0. Engines are cached under `~/.impeccable/bin/<VERSION>/impeccable`; that cache holds 0.1.0, 0.1.3, 0.1.5 and 0.1.6, not 0.1.11.\n- Launcher resolution order (read from the 4.4.0 launcher text): `$IMPECCABLE_BIN`, sibling `bin/<os>-<arch>/impeccable`, `~/.impeccable/bin/impeccable` (probe-validated), `~/.impeccable/bin/<VERSION>/impeccable`, `impeccable` on PATH (probe-validated), then a network download from `github.com/pbakaus/impeccable/releases` verified by a `.sha256` sidecar. `IMPECCABLE_LAUNCHER_PROBE=1` disables the download and exits 127 when nothing is found. `engine-probe` prints `impeccable-engine <version>`.\n- Tests: `tests/bin-lib/` holds one directory per module (for example `tests/bin-lib/docs-health/`), using `node --test` with temp directories.\n\n## Deliverables\n\n- [ ] `plugin/bin/lib/impeccable-engine/index.js` exporting `resolve(opts, deps)` and `run(verb, args, opts, deps)`, both never throwing — every failure is a returned value.\n- [ ] `resolve`: (1) read `installed_plugins.json` and select the `impeccable@impeccable` entry by scope precedence. A project-scope entry matches when `path.relative(realpath(projectPath), realpath(mainCheckoutRoot))` is empty or does not start with `..` and is not absolute; among several matching project-scope entries the longest `projectPath` wins; with no matching project-scope entry, the user-scope entry is used; with neither, `{ok: false, reason: \"not-installed\", fix: \"/plugin install impeccable@impeccable (Impeccable 4.2.2 or later)\"}`. An unreadable or malformed `installed_plugins.json` also returns `not-installed`, with `detail` naming the parse error; (2) missing `<installPath>/skills/impeccable/scripts/impeccable` → `{ok: false, reason: \"upgrade-required\", fix}`; (3) run `IMPECCABLE_LAUNCHER_PROBE=1 <launcher> engine-probe`, parse `impeccable-engine <version>`; exit 127 → `{ok: false, reason: \"engine-not-installed\", fix}` where `fix` is the literal command `<launcher> engine-probe` to run once with network access; (4) success → `{ok: true, pluginRoot, launcher, pluginVersion, engineVersion, scope}`, where `pluginRoot` is the entry's `installPath` — `native-routing.md` and `review` mode derive upstream file paths (`reference/ios.md`, `agents/impeccable-finish-reviewer.md`) from it.\n- [ ] `run` for exactly four verbs, always with `IMPECCABLE_LAUNCHER_PROBE=1`, the project root as cwd, and a timeout of 60 000 ms (overridable through `opts.timeoutMs`; the process is killed when it expires): `signals` (JSON; validated against the Layer 0 field table in `impeccable-plugin.md` — top-level `setup`, `critique`, `git`, `devServer`, and `setup.{hasProduct, productPath, hasDesign, designPath, hasCode, platform}` with their documented types); `doctor` (`doctor --json` only — `--fix` is rejected by the module itself; validated as JSON with a `findings` array whose every item is an object with a string `severity` — deliberately shallower than `signals`, because the field-by-field shape `/tidy` depends on is established by the `doctor` sub-issue's real capture, which extends this validator); `concept-seed` (passes through only `--scope`, `--mode`, `--from`, `--candidate-count`; validated as text whose first non-empty line matches the unanchored `/CONCEPT SEED \\(key: [^)]+\\)/`, so a leading scope word such as `SURFACE` is allowed); `surface-brief` (`surface-brief read <target>` only; validated as text, returned verbatim).\n- [ ] Failure values from `run`: `shape-mismatch` (names the first failing field in the Layer 0 field table's declaration order, or the failing line), `exec-failed` (exit code plus the last 20 lines of stderr), `timeout`, or a `resolve` failure passed through unchanged.\n- [ ] `plugin/bin/impeccable-engine.js` CLI: `resolve` and `run <verb> [args...]`, printing one JSON envelope to stdout. Exit 0 for every resolved outcome, `ok: false` included (failures are data the caller branches on); exit 2 only for a usage error (unknown verb, `--fix`, an argument outside a verb's allowlist, or any argument after `resolve`).\n- [ ] Unit tests under `tests/bin-lib/impeccable-engine/` covering every `resolve` outcome and every `run` failure value with fake launchers (small shell scripts) in `fs.mkdtempSync` directories and a fake `installed_plugins.json` — never a real binary, never the real plugin cache.\n- [ ] `docs/plugin-structure.md` registers the module and the CLI.\n\n## Acceptance Criteria\n\n1. With a fake install whose launcher is absent, `node plugin/bin/impeccable-engine.js resolve` prints `{\"ok\":false,\"reason\":\"upgrade-required\",…}` and exits 0 — asserted in a committed test.\n2. With a fake launcher that exits 127 under `IMPECCABLE_LAUNCHER_PROBE=1`, `resolve` returns `engine-not-installed` with a `fix` naming that launcher's `engine-probe` command — asserted in a committed test.\n3. Scope precedence is asserted in committed tests for: a matching project-scope entry plus a user-scope entry (project wins); only a user-scope entry (user); a non-matching project-scope entry plus a user-scope entry (user — `/repo-other` must not match `/repo`); two matching project-scope entries (the longer `projectPath` wins).\n4. With no `impeccable@impeccable` entry, and separately with a malformed `installed_plugins.json`, `resolve` returns `not-installed` with the `/plugin install` fix — asserted.\n5. A fake launcher that sleeps past a 200 ms `timeoutMs` returns `{ok:false, reason:\"timeout\"}` — asserted.\n6. A fake `signals` output missing `setup.platform` returns `{ok:false, reason:\"shape-mismatch\"}` naming `setup.platform`; a valid one returns `{ok:true, value}` with the parsed object — asserted.\n7. `run doctor --fix` exits 2 with a usage error and never spawns the launcher — asserted with a fake launcher that records invocations.\n8. A test asserts every spawn the module makes carries `IMPECCABLE_LAUNCHER_PROBE=1` in its environment.\n9. `npm test` passes.\n\n## Release Note\n\nAdded an internal helper that finds and runs the Impeccable design engine without ever downloading it, as the base for restoring design checks on Impeccable 4.2.2 and later.\n\n## Technical Approach\n\nPure logic over injected `deps` (`readFile`, `exists`, `spawn`, `homedir`, `mainCheckoutRoot`), following `plugin/bin/link-records.js`'s `run(argv, deps)` seam so tests never touch the real filesystem layout or a real engine. Validators are plain functions in the same module, one per verb, each returning `{ok}` or `{ok:false, field}`.\n\n### Data / API Surface\n\n- `resolve() -> {ok:true, pluginRoot, launcher, pluginVersion, engineVersion, scope:\"project\"|\"user\"} | {ok:false, reason:\"not-installed\"|\"upgrade-required\"|\"engine-not-installed\", fix}`\n- `run(verb, args) -> {ok:true, value} | {ok:false, reason:\"shape-mismatch\"|\"exec-failed\"|\"timeout\"|<resolve reason>, detail, fix?}` — `value` is the parsed JSON for `signals`/`doctor`, the raw text for `concept-seed`/`surface-brief`.\n- CLI: `impeccable-engine.js resolve`, `impeccable-engine.js run <signals|doctor|concept-seed|surface-brief> [args]`.\n\n### Key Files\n\n- `plugin/bin/lib/impeccable-engine/index.js` — new module: resolve, run, validators\n- `plugin/bin/impeccable-engine.js` — new CLI wrapper\n- `tests/bin-lib/impeccable-engine/resolve.test.js` — new resolve-outcome tests with fake installs\n- `tests/bin-lib/impeccable-engine/run.test.js` — new run/validator tests with fake launchers\n- `docs/plugin-structure.md` — register the module and CLI\n- `plugin/skills/design-wrapper/impeccable-plugin.md` — read only: the Layer 0 field table the `signals` validator encodes\n\n## Gotchas\n\n- `signals`, `context` and `concept-seed` ignore `--help` and execute; `concept-seed` contacts Impeccable's catalog service. Never call them with `--help` expecting usage text, in code or in tests.\n- `IMPECCABLE_LAUNCHER_PROBE` is internal to Impeccable's launcher. The closing sub-issue adds a manifest assertion on the launcher text so an upstream change becomes visible. If upstream removes it, the fallback is to probe the cached binary paths directly (`IMPECCABLE_BIN`, the sibling binary, `~/.impeccable/bin/<VERSION>/impeccable`).\n- ASSUMPTION — verify at build: Claude Code selects a project-scope plugin install over the user-scope one for sessions inside that project, and records `projectPath` as the main checkout (not a `.claude/worktrees/*` path) — via Claude Code's plugin documentation or a `/plugin` listing from the main checkout and from a worktree; record the evidence in the module's header comment. If either is false, implement the observed rule instead, record it the same way, and update this record's AC3 cases to match.\n- \"Never download\" covers the engine binary only. Network calls the engine makes itself while running a verb (`concept-seed` contacting Impeccable's catalog service) are upstream behaviour, documented by the consumers, not blocked here.\n- The failure-reason values (`not-installed`, `upgrade-required`, `engine-not-installed`, `shape-mismatch`, `exec-failed`, `timeout`) are a contract: sibling sub-issues document and test against them, so export them as a frozen list and treat any rename or addition as a breaking change for those consumers.\n- ASSUMPTION — verify at build: `concept-seed --scope direction` prints a header matching `/CONCEPT SEED \\(key: /` like the observed `SURFACE CONCEPT SEED (key: …)` for `--scope surface` — via one real run on an install whose engine is cached (4.4.0 at user scope today). If it does not, widen the validator to the observed header and record the literal output in the module's header comment.\n- The engine is cached per engine version: in this repo (project scope 4.5.0, engine 0.1.11 not cached) `resolve` returns `engine-not-installed` until 4.5.0's launcher has run once with network access. That is a correct result, not a bug.\n- Use `node --test 'tests/bin-lib/impeccable-engine/*.test.js'` (glob form); a bare directory argument fails on node 22.\n\n## Decision Rationale\n\n- **Engine only.** The `.mjs` path served exactly one version (4.0.2); keeping it would mean two code paths for one legacy pin. Installs without the launcher get a clean `upgrade-required` skip.\n- **Gate on output shape, not version.** The engine version moves faster than the plugin (four engine versions across four plugin releases), so a version pin would break on every release; shape validation fails only when the contract actually changes.\n- **Never download.** A design-review helper fetching binaries from the network as a side effect is unacceptable in cloud sandboxes and Routines; an absent engine degrades with a paste-ready fix instead.\n- **One module plus CLI.** Rejected: prose-only binding (shape checks no test can run, resolution restated in three modes) and per-mode helpers (three copies of the resolver).\n\n\n<!-- work-fingerprint: impeccable-engine-migration:add-the-impeccable-engine-module-and-cli-resolve-run-output -->\nwork-fingerprint: impeccable-engine-migration:add-the-impeccable-engine-module-and-cli-resolve-run-output",
+        "createdAt": "2026-10-04T18:42:47Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -158,22 +158,16 @@
             "color": "0e8a16"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Size: medium effort",
+            "color": "fbca04"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACrzEqFA",
@@ -182,103 +176,37 @@
             "color": "F9D0C4"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACxTu0eA",
-            "name": "by:reflect",
-            "description": "Origin: filed via /reflect (wrap-up Phase 1)",
-            "color": "ededed"
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Risk: medium blast radius",
+            "color": "fbca04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: standard review",
+            "color": "c5def5"
           }
         ],
-        "number": 2866,
+        "number": 2979,
         "state": "OPEN",
-        "title": "docs-health: verify proposed replacement text against unshallowed history before filing",
-        "updatedAt": "2026-10-01T16:19:12Z",
+        "title": "Add the impeccable-engine module and CLI: resolve, run, output-shape validators",
+        "updatedAt": "2026-10-05T02:38:22Z",
         "facets": {
           "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": "standard",
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: ledger resolve gate (#2827/#2828 run, ledger item 1)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n`tools/upstream-drift/manifest.yml` pins `impeccable-plugin` at 4.0.2, and `plugin/skills/design-wrapper/impeccable-plugin.md` carries the matching `<!-- upstream-pin: impeccable-plugin@4.0.2 -->`. The maintainer machine's plugin cache holds 3.0.6, 4.2.2, 4.3.1 and 4.4.0 (enabled at user scope: 4.4.0) and no 4.0.2, so `checkVersion` reports `breach` and three tests in `tests/impeccable-plugin-contract.test.js` fail on every local `npm test`: \"the installed plugin matches the pinned version\", \"gatherSignals() executes cleanly and returns the documented shape\" and \"the CLI entrypoint accepts no flags\". CI has no Impeccable install, so the same tests skip there as `absent`.\n\nEvery local run since the pin fell behind reports these 3 failures, which each pipeline run has to re-diagnose as environmental (the #2827/#2828 run logged them as its ledger item 1). Related: #2531 provisions sandbox plugin caches at whatever the pin is; this record moves the pin itself forward to the version maintainers run, so the two are complementary.\n\n## Deliverables\n\n1. Re-pin `impeccable-plugin` to the version installed at user scope (4.4.0 at filing time — re-check with `claude plugin list`) in `tools/upstream-drift/manifest.yml` and `impeccable-plugin.md`'s pin comment together.\n\n2. Re-verify every `assertions` entry for `impeccable-plugin` in the manifest against that version's `skills/impeccable/scripts/context-signals.mjs`, and update `impeccable-plugin.md`'s claims where upstream changed.\n\n3. Re-record `tests/fixtures/impeccable-plugin/` against the new version, per its README.\n\n## Acceptance Criteria\n\n- [ ] `node --test tests/impeccable-plugin-contract.test.js` passes with no failures on a machine whose enabled Impeccable is the new pin.\n- [ ] `node tools/upstream-drift/run.js` reports `ok` for `impeccable-plugin`.\n- [ ] The manifest pin and `impeccable-plugin.md`'s pin comment name the same version (the existing pin-parity test passes).\n\n## Release Note\n\nNo user-visible change: updated the pinned Impeccable plugin version the design-wrapper contract tests check against.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
-        "createdAt": "2026-09-30T06:15:39Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 2840,
-        "state": "OPEN",
-        "title": "Re-pin impeccable-plugin to the installed 4.4.0 and re-record its contract fixtures",
-        "updatedAt": "2026-10-04T14:48:13Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
+          "priority": "medium",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -437,7 +365,7 @@
         "number": 1350,
         "state": "OPEN",
         "title": "Verify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)",
-        "updatedAt": "2026-10-01T16:10:32Z",
+        "updatedAt": "2026-10-05T02:30:29Z",
         "facets": {
           "origin": null,
           "risk": "low",
