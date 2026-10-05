@@ -172,7 +172,7 @@ overlap: companion
 design-intent: none
 leftover-default: defer
 auto-fix-threshold: lint+type
-review-auto-apply-ceiling: low   # ceiling-conditional — medium when the run's resolved autonomy ceiling is unattended (Recommendation defaults)
+review-auto-apply-ceiling: low   # NOT an unconditional default -- medium when the resolved autonomy ceiling is unattended (Recommendation defaults)
 tidy-aggressiveness: moderate
 ceremony-profile: fast-lane
 model-stance: default
