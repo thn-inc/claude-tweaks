@@ -1,33 +1,8 @@
 {
-  "computedAt": "2026-10-05T04:56:17.049Z",
+  "computedAt": "2026-10-05T15:42:50.594Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
-      {
-        "number": 2984,
-        "updatedAt": "2026-10-05T04:55:36Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2983,
-        "updatedAt": "2026-10-05T04:55:32Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2982,
-        "updatedAt": "2026-10-05T04:55:27Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2981,
-        "updatedAt": "2026-10-05T04:55:23Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 2980,
-        "updatedAt": "2026-10-05T04:55:18Z",
-        "state": "OPEN"
-      },
       {
         "number": 2844,
         "updatedAt": "2026-10-04T12:41:24Z",
@@ -163,396 +138,6 @@
   "groups": [
     [
       {
-        "body": "Surface: infra\n\n## Overview\n\nBring `design-wrapper` `review` mode's Step 3.7 dispatch of `impeccable-finish-reviewer` in line with the agent's 4.2.2+ contract. Since Impeccable 4.2.2 the agent expects a much larger input packet and returns a `disposition:` first line plus exactly five sections. Step 3.7 still passes the old inputs and normalizes the old return, and it checks agent availability with the retired `resolveImpeccablePlugin`.\n\nThe agent stays exempt from this repo's subagent output contract — its definition ships outside `plugin/agents/` — so all adaptation happens at the caller's boundary: build the packet, check availability at the agent level, normalize the return, and never report an unavailable, failed, empty or unparseable run as a clean result.\n\nThe parent design also planned to adapt an `impeccable-asset-producer` caller. That half is dropped: on main nothing in the wrapper dispatches `impeccable-asset-producer` (its only mention is the comparison note `third-party-design-skill-comparisons.md:86`), so there is no caller to change.\n\n**Complexity:** Medium\n**Estimated tasks:** 4\n\n## Non-Goals\n\n- Where the direction contract text comes from (the direction-contract sub-issue).\n- Adding an `impeccable-asset-producer` dispatch.\n- Re-prompting the agent for format, inlining Template A, or asking it for a status line — the third-party exemption forbids all three.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| engine-module sub-issue (linked as blocker) | Add the impeccable-engine module and CLI (provides `resolve`'s `pluginRoot`) | not started |\n\n## Current State\n\n- `plugin/skills/design-wrapper/modes/review.md` Step 3.7 (from `:61`): gated on Step 3.6's \"Contract found\"; availability at `:73-76` resolves the plugin with `resolveImpeccablePlugin({searchRoot})` and checks `{root}/agents/impeccable-finish-reviewer.md` exists; dispatches one `Task()` with `subagent_type: impeccable-finish-reviewer`, no worktree isolation, no model override; `:100` hands it the five contract blocks.\n- `plugin/skills/_shared/subagent-output-contract.md` — \"Exemption: third-party agents\" section names this dispatch.\n- Upstream 4.4.0 `agents/impeccable-finish-reviewer.md`, Input Contract: the original request; confirmed user answers; artifact path(s); screenshots in `.impeccable/review/` (web `desktop.png`, `mobile.png`); the direction contract (THESIS, OWN-WORLD, STORY, FIRST VIEWPORT, FORM); the PRODUCT.md path; existing hook or detector findings; the chosen world's QUALITY BAR card paths; on a comp-led build the approved comp path, `.impeccable/build/state.json`, `.impeccable/build/spec.json` and `.impeccable/review/diff/{hero,final}/`; and `reference/craft-floor.md`'s path. Output Contract: first line `disposition: recapture|rebuild|fix|ship`, then exactly five sections `persistence`, `fidelity`, `ceiling`, `material_fixes` (at most eight, ordered), `keep`; a `recapture` return replaces the five sections with one `recapture` section; missing inputs are named in one line above the sections.\n\n## Deliverables\n\n- [ ] Availability: take the plugin root from `impeccable-engine.js resolve`'s `pluginRoot` and keep the agent-file existence check (`{pluginRoot}/agents/impeccable-finish-reviewer.md`); an `ok: false` resolve or a missing agent file keeps today's skip-and-log behaviour.\n- [ ] Packet: build the 4.2.2+ input packet from what `review` mode has in hand. Always-required inputs: artifact paths (the changed-UI-file list Step 3's critique and audit already ran over), the five contract blocks verbatim, the PRODUCT.md path, the findings Step 3's `/impeccable:impeccable audit` returned, and `{pluginRoot}/skills/impeccable/reference/craft-floor.md`. Conditional inputs, passed only when present on disk: the screenshots in `.impeccable/review/`, the quality-bar card paths, and — on a comp-led build only — the approved comp, `.impeccable/build/state.json`, `.impeccable/build/spec.json` and `.impeccable/review/diff/{hero,final}/`. Name every always-required input the packet could not supply in the prompt. A missing conditional input is normal and is not named as a gap.\n- [ ] Normalization: parse the first non-empty line as `disposition: <word>` against the four-word vocabulary. Skip the optional one-line missing-inputs note upstream places above the sections, then split the five named sections (or the single `recapture` section). Mappings:\n  - `ship` → no finding.\n  - `fix` → one medium-severity finding per `material_fixes` line.\n  - `rebuild` → one high-severity finding carrying the first material fix. The rest are moot, because upstream's rebuild directive tells the builder to stop ordering repairs.\n  - `recapture` → one medium-severity finding naming the missing or invalid captures.\n\n  Each of these is reported as \"finish review unparseable\", never as a clean pass: an unknown disposition word, a missing section, an empty reply, and `fix` with an empty `material_fixes`.\n- [ ] Update the comparison note `third-party-design-skill-comparisons.md`'s present-tense description of how the wrapper uses the two agents, only where it now misstates the return shape.\n\n## Acceptance Criteria\n\n1. `git grep -n \"resolveImpeccablePlugin\" -- plugin/skills/design-wrapper/modes/review.md` returns no matches.\n2. `review.md` Step 3.7 names the four disposition words and the five section names exactly as upstream spells them, and states the unparseable-reply outcome.\n3. A committed test feeds the normalization rule six captured-shape replies and asserts the outcomes:\n   - `ship` gives zero findings.\n   - `fix` with three material fixes and a missing-inputs line gives three medium findings.\n   - `rebuild` gives one high finding.\n   - `recapture` gives one medium finding.\n   - `fix` with an empty `material_fixes` gives one unparseable finding.\n   - A reply missing the `keep` section gives one unparseable finding.\n\n   The rule may be prose plus a small helper. If it is prose only, the test asserts that `review.md` Step 3.7 contains each of the literal strings `disposition:`, `ship`, `fix`, `rebuild`, `recapture`, `persistence`, `fidelity`, `ceiling`, `material_fixes`, `keep` and `finish review unparseable`.\n4. `npm test` passes.\n\n## Release Note\n\nUpdated design review to send Impeccable's finishing reviewer the inputs it now expects and to read its new verdict format, instead of misreading it.\n\n## Technical Approach\n\nAll adaptation sits in Step 3.7, at the caller boundary, per the exemption section in `_shared/subagent-output-contract.md`. Field names come from 4.4.0's `agents/impeccable-finish-reviewer.md`, quoted in Current State. That text is authoritative for this build unless the 4.5.0 diff in Gotchas shows a difference. The closing sub-issue in this decomposition (the re-pin and retirement-sweep record) pins the `disposition:` line and the five section names in `tools/upstream-drift/manifest.yml`, which is the durable record that the contract still holds on later upgrades.\n\n### Key Files\n\n- `plugin/skills/design-wrapper/modes/review.md` — Step 3.7 availability, packet, normalization\n- `plugin/skills/_shared/subagent-output-contract.md` — exemption section, only if its description of this dispatch's return shape is now wrong\n- `plugin/skills/design-wrapper/third-party-design-skill-comparisons.md` — correct the present-tense description where it misstates the return shape\n- `tests/design-wrapper-finish-reviewer-normalize.test.js` — new normalization test\n\n## Gotchas\n\n- `modes/review.md` is also edited by the direction-contract sub-issue (line 7's phrase and Step 3.6's opening paragraph only); keep this sub-issue to Step 3.7. Whichever of the two lands second rebases on the other, and confirms in its PR that the other's text survived.\n- The `resolve` envelope shape (`ok`, `pluginRoot`) comes from the engine-module blocker. Use the merged module's actual field names if they differ.\n- The agent has a hard turn ceiling and \"returns nothing\" when it runs out before writing its sections — an empty reply is the unparseable case, not a pass.\n- Do not pass `isolation: \"worktree\"` and do not override the model; both are unchanged from today.\n- ASSUMPTION — verify at build: 4.5.0's `agents/impeccable-finish-reviewer.md` Output Contract matches 4.4.0's (same four disposition words and five section names) — via a diff of the two cached agent files, with the result quoted in the PR description. If they diverge, stop and re-scope with the human, rather than silently picking one version's wording.\n\n\n<!-- work-fingerprint: impeccable-engine-migration:adapt-the-finish-reviewer-dispatch-to-impeccable-4-2-2-s-inp -->\nwork-fingerprint: impeccable-engine-migration:adapt-the-finish-reviewer-dispatch-to-impeccable-4-2-2-s-inp",
-        "createdAt": "2026-10-04T18:44:49Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          }
-        ],
-        "number": 2984,
-        "state": "OPEN",
-        "title": "Adapt the finish-reviewer dispatch to Impeccable 4.2.2+'s input packet and return shape",
-        "updatedAt": "2026-10-05T04:55:36Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Overview\n\nRead Impeccable's direction contract from where 4.2.2+ writes it — under a `## Direction contract` heading in the surface brief, read through the engine's `surface-brief read <target>` verb — instead of from the opening comment of the built artifact. Impeccable 4.4.0's `reference/new-work.md` now forbids the old location outright: \"Never copy the direction contract into implementation source or any browser-delivered artifact. This includes HTML or framework comments … Reviewers and documenters receive the contract from the surface brief.\" So on current Impeccable, `review` mode's seed capture, its finish-reviewer gate and `/demo`'s contract section all find \"no contract\" every time.\n\nThe structural rules stay the same: this repo still never defines, validates or paraphrases the contract; it finds it, splits it on the five block labels (THESIS, OWN-WORLD, STORY, FIRST VIEWPORT, FORM), copies the seed key out of `FORM` as an opaque token, and hands both to a human. Only the location and the read mechanism change.\n\n**Complexity:** Low\n**Estimated tasks:** 4\n\n## Non-Goals\n\n- What the finish-reviewer is given or returns (the finish-reviewer sub-issue); this sub-issue only changes where the contract text comes from.\n- Judging or validating the contract's content.\n- Keeping the artifact-opening-comment location as a fallback: it served only installs before 4.2.2, which this migration no longer supports.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| engine-module sub-issue (linked as blocker) | Add the impeccable-engine module and CLI (provides `run surface-brief`) | not started |\n\n## Current State\n\n- `plugin/skills/_shared/design-contract.md:3` — \"Impeccable writes a **direction contract** into the opening comment of the artifact it builds\"; its Step 1 reads the first 4 KB of each candidate file and recognizes three comment syntaxes, citing `SCANNABLE_EXT` in `scripts/context-signals.mjs` (`:45`), a file 4.2.2+ no longer ships.\n- `plugin/skills/demo/design-contract-section.md:10` and `plugin/skills/design-wrapper/modes/review-seed-capture.md:6` restate the opening-comment location.\n- `plugin/skills/design-wrapper/modes/review.md:7` (\"when the built artifact carries …\"), `:50` (Step 3.6), `:100` (the five blocks handed to the finish-reviewer); `plugin/skills/review/code-mode-steps.md:303` and `plugin/skills/specify/spec-template.md:11` and `:19` describe the contract as living in the built artifact.\n- Upstream 4.4.0 `reference/new-work.md` §5: the contract is six short blocks recorded \"under `## Direction contract` in the relevant surface brief\" — THESIS, OWN-WORLD, STORY, FIRST VIEWPORT, FORM (carrying the seed key), closed by a FINISH line — read with `\"<skill-base-dir>/scripts/impeccable\" surface-brief read <primary-target>`.\n- `tools/upstream-drift/manifest.yml` pins the block labels (the closing sub-issue moves that assertion to the new heading).\n\n## Deliverables\n\n- [ ] Task 0 (blocking; starts once the engine-module sub-issue has merged): in a session where `impeccable-engine.js resolve` returns `ok: true`, use a scratch project and capture: what `surface-brief read <target>` accepts as `<target>` (a route, a source file, an artifact path); whether one brief covers several targets; and the literal output and exit code both when a brief exists and when none does. Create the scratch brief through upstream's own `surface-brief write <target> <body-file>` verb, with a body file carrying a `## Direction contract` section (the five labels plus a seed key in `FORM`), so its on-disk location and format are upstream's. Then decide and record, for each caller (`review` mode with its changed-UI-file list; `/demo` with its changed-path list), which `<target>` value(s) it passes and whether it calls once or once per candidate. Record all of this literally in the PR description.\n- [ ] `_shared/design-contract.md` Step 1: replace the bounded-prefix comment scan with a shell call to `node \"${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js\" run surface-brief read <target>` for the target(s) Task 0 decided, parsing the CLI's printed JSON envelope (`{ok, value}` or `{ok: false, reason}`) and taking the text under `## Direction contract` from `value`; remove the comment-syntax table and the `SCANNABLE_EXT` citation. Steps 2-4 (split on the five labels, copy the seed key, hand to a human; the found / no-contract / malformed outcomes) stay.\n- [ ] Two \"no contract\" paths, never a malformed one: an envelope with `ok: false` (reason logged), and an `ok: true` brief with no `## Direction contract` heading. If Task 0 shows that \"no brief exists\" surfaces in some third way, map it to \"no contract\" too and record the mapping.\n- [ ] Reword the location in `demo/design-contract-section.md`, `modes/review-seed-capture.md`, `modes/review.md`, `review/code-mode-steps.md:303` and `specify/spec-template.md:11,19` to \"the surface brief's `## Direction contract` section\"; these files cite `_shared/design-contract.md` for the procedure and do not restate it. In `modes/review.md`, edit only two content anchors: line 7's \"when the built artifact carries a direction contract\" phrase and the opening paragraph of `### Step 3.6: Read the direction contract and record its seed key`.\n\n## Acceptance Criteria\n\n1. `git grep -n -i -E \"opening comment|built artifact\" -- plugin/skills/_shared/design-contract.md plugin/skills/demo/design-contract-section.md plugin/skills/design-wrapper/modes/review-seed-capture.md plugin/skills/design-wrapper/modes/review.md plugin/skills/review/code-mode-steps.md plugin/skills/specify/spec-template.md` returns no line that places the direction contract in the artifact.\n2. `_shared/design-contract.md` no longer names `context-signals.mjs` or `SCANNABLE_EXT`.\n3. On a scratch project whose surface brief carries a `## Direction contract` section with all five labels and a seed key, `review` mode's Step 3.6 reports Contract found and records the seed key verbatim — recorded as a captured run in the PR description.\n4. On a project with no surface brief, and on one whose brief has no `## Direction contract` heading, Step 3.6 reports no contract and the finish-reviewer gate skips silently, as today. The finish-reviewer sub-issue changes only Step 3.7's availability, packet and normalization; it leaves this gate alone.\n5. `npm test` passes.\n\n## Release Note\n\nRestored design review's reading of Impeccable's direction contract for Impeccable 4.2.2 and later, which records it in the surface brief instead of the built page.\n\n## Technical Approach\n\nThe shared procedure becomes a caller of the engine CLI's `surface-brief read` verb; the parse (five labels, seed key from `FORM`) is unchanged. Every other file keeps citing `_shared/design-contract.md` rather than restating it.\n\n### Key Files\n\n- `plugin/skills/_shared/design-contract.md` — Step 1 locate procedure\n- `plugin/skills/demo/design-contract-section.md` — location wording\n- `plugin/skills/design-wrapper/modes/review-seed-capture.md` — location wording\n- `plugin/skills/design-wrapper/modes/review.md` — location wording, lines 7 and 50 only\n- `plugin/skills/review/code-mode-steps.md` — location wording, line 303\n- `plugin/skills/specify/spec-template.md` — `Design-seed:` source wording, lines 11 and 19\n\n## Gotchas\n\n- `modes/review.md` is also edited by the finish-reviewer sub-issue (Step 3.7). Keep this sub-issue to the two content anchors named in the Deliverables. Whichever of the two lands second rebases on the other, and confirms in its PR that the other's text survived.\n- ASSUMPTION — verify at build: `surface-brief read` exits 0 and prints the brief text (including the `## Direction contract` heading) when a brief exists, and something distinguishable when none exists — via Task 0.\n- The FINISH line is not one of the five blocks; the parse must not treat it as a sixth label or as part of `FORM`.\n\n\n<!-- work-fingerprint: impeccable-engine-migration:read-the-direction-contract-from-impeccable-s-surface-brief -->\nwork-fingerprint: impeccable-engine-migration:read-the-direction-contract-from-impeccable-s-surface-brief",
-        "createdAt": "2026-10-04T18:44:23Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          }
-        ],
-        "number": 2983,
-        "state": "OPEN",
-        "title": "Read the direction contract from Impeccable's surface brief",
-        "updatedAt": "2026-10-05T04:55:32Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      },
-      {
-        "body": "Surface: backend\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule\nsentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`,\n18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its\npersonas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent`\ntool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a\nstatic `node --test` assertion; it can only be confirmed by observing an actual future `/specify`\ndecomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that\npersona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s\nfan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the\nobservation (transcript excerpt or note) against this item, or file a defect against\n`red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use\ncalls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of\nsub-issues) assistant messages.\n\n## Release Note\n\nNo user-visible change: verified that spec red-team reviews batch correctly across several sub-issues.\n\n## Technical Approach\n\nWait for (or trigger) a `/claude-tweaks:specify` decomposition-mode run that produces 2 or more\n`ceremony:standard` sub-issue records — `ceremony-check` (`assess-agent-autonomy/ceremony-check.md`)\nresolves the tier per sub-issue during that run's own Step 3, so the tier isn't knowable until the\nrun happens. Once such a run occurs, inspect that session's stored transcript for the Step 5\nred-team dispatch (`specify/red-team.md`'s Parallel dispatch section): locate the `Agent` tool_use\nblocks for each dispatched persona and group them by the assistant message id each block belongs\nto. Confirm the number of distinct assistant message ids covering all persona dispatches for a\ngiven sub-issue is ≤ the number of sub-issues in that batch. Use the same read-only transcript\ninspection method `transcript-payload-verification` documents for reading this session's own\nlocally-stored transcript, rather than instrumenting or modifying `red-team.md` itself.\n\nIf the count exceeds the bound, file a defect issue against `red-team.md`'s dispatch prose\n(quoting the transcript grouping that violates the rule) instead of editing the file directly from\nthis record — this record's own deliverable is the observation, not the fix.\n\n### Key Files\n\n- `plugin/skills/specify/red-team.md` — the per-sub-issue persona dispatch procedure being observed\n- `plugin/skills/_shared/subagent-output-contract.md` — the fan-out single-assistant-message rule this observation verifies compliance with\n- `tests/subagent-contract-clauses.test.js` — AC1's existing static test coverage (unaffected by this record)\n\n## Gotchas\n\n- This record's acceptance criterion depends on an external event (a live `/specify` decomposition\n  run over 2+ `ceremony:standard` sub-issues happening) that this record cannot itself trigger on a\n  fixed schedule — it may sit open for some time until a qualifying run occurs naturally, or until\n  someone deliberately runs one to close it out.\n- A qualifying run must be observed via its own transcript at the time it happens; this record\n  cannot be resolved from historical data if no already-completed run's transcript is still\n  available.\n\n## Original request\n\nVerify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)\n\nOrigin: ledger resolve gate\n\nDefer-reason: needs-human-decision\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule sentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`, 18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its personas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent` tool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a static `node --test` assertion; it can only be confirmed by observing an actual future `/specify` decomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that persona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s fan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the observation (transcript excerpt or note) against this item, or file a defect against `red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use calls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of sub-issues) assistant messages.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
-        "createdAt": "2026-08-24T03:21:25Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAAC0IWj4w",
-            "name": "fix-on-worktree-worktree-dispatch-record-1350",
-            "description": "Fixed on worktree-worktree-dispatch-record-1350, not yet on the default branch",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 1350,
-        "state": "OPEN",
-        "title": "Verify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)",
-        "updatedAt": "2026-10-05T02:30:29Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Overview\n\nRun `design-wrapper`'s `doctor` mode through the engine's `doctor --json` verb, via `impeccable-engine.js run doctor`, instead of the retired `doctor.mjs`. Today `doctor` skips as unavailable for every user on Impeccable 4.2.2 or later, because its exact-pin resolver finds no `doctor.mjs`; `/tidy` Step 4.9's design-record scan, which calls `doctor`, therefore surfaces nothing on those installs.\n\nThe read-only guarantee is unchanged and now enforced in code: the engine module rejects `--fix`, so the mode can never edit `PRODUCT.md`. Before changing either consumer, this sub-issue captures one real `doctor --json` output and compares it field by field with what `doctor.md` and `/tidy` read today, because that comparison has not been made.\n\n**Complexity:** Low\n**Estimated tasks:** 4\n\n## Non-Goals\n\n- Layer 0, `explore`, the direction contract and the finish-reviewer dispatch (sibling sub-issues).\n- Ever passing `--fix`, or applying `auto` findings — they stay staged proposals carrying their own fix text.\n- Recording the shared contract fixtures under `tests/fixtures/impeccable-plugin/` (the closing sub-issue); this sub-issue keeps its one capture as evidence in the PR description and, if a test needs it, as a module-local fixture.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| engine-module sub-issue (linked as blocker) | Add the impeccable-engine module and CLI | not started |\n\n## Current State\n\n- `plugin/skills/design-wrapper/modes/doctor.md:15` — \"This mode invokes `doctor.mjs --json` and never `doctor.mjs --fix`\"; `:30-41` is the four-row skip table (rows 1-2 are `resolveImpeccablePlugin`'s absent/off-pin outcomes, row 3 is no project context via Layer 0's `setup.hasProduct`/`setup.hasDesign`, row 4 is execution failure); `:55-67` resolves the plugin and runs `node \"<root>/skills/impeccable/scripts/doctor.mjs\" --json`; `:142` describes the returned `counts`/`findings`/`platform` shape.\n- `plugin/skills/design-wrapper/SKILL.md:53` (the `doctor` mode row: \"Runs the pinned plugin's `doctor.mjs --json`\"), `:163` (read-only paragraph), `:234` (Next Actions row for `route` findings), `:267-268` (anti-patterns \"Passing `--fix` to `doctor.mjs`\" and \"Passing any flag but `--json` to `doctor.mjs`\" — the second exists because `doctor.mjs`'s argument parser was strict).\n- `plugin/skills/tidy/scan-procedures.md:309` and `plugin/skills/tidy/step-6-auto.md:56` — Step 4.9 consumes `doctor`'s `[doctor]` findings as surface-or-suppress rows; no project file is edited.\n- Upstream 4.4.0 runs `\"<skill-base-dir>/scripts/impeccable\" doctor --json` (its `SKILL.md` line 16) and `doctor --fix` to apply `auto` findings (line 29).\n\n## Deliverables\n\n- [ ] Task 0 (blocking): capture one real `impeccable doctor --json` output via `node plugin/bin/impeccable-engine.js run doctor`, run from a project that has Impeccable artifacts (this repo's `PRODUCT.md` produced two findings under `doctor.mjs`), in a session where `resolve` returns `ok: true`. Commit the capture as `tests/fixtures/impeccable-plugin/doctor.json` (the closing sub-issue re-records it later). Compare it field by field with the shape `modes/doctor.md:142` documents and `/tidy` Step 4.9 reads (`findings[].severity` route/mention/auto, `fix`, `counts`). Any severity value the capture does not exercise is checked against upstream `skills/impeccable/SKILL.md`'s doctor section instead, and the PR says which. Record the literal output excerpt and the comparison in the PR description.\n- [ ] Extend the engine module's `doctor` validator to the fields Task 0 shows `/tidy` depends on, with a unit test over the committed fixture.\n- [ ] `modes/doctor.md`: run `node \"${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js\" run doctor` and branch on the envelope; replace skip rows 1, 2 and 4 with one row per engine-module failure value (`not-installed`, `upgrade-required`, `engine-not-installed`, `shape-mismatch`, `exec-failed`, `timeout` — the merged module's exported list is authoritative if it differs), citing `impeccable-plugin.md`'s skip table for the wording rather than restating it; keep row 3 (no project context) unchanged, giving seven rows in total.\n- [ ] If Task 0 shows a field difference, adapt `doctor.md`'s documented return shape and `/tidy` Step 4.9 (`scan-procedures.md`, `step-6-auto.md`) to the engine's shape in this same sub-issue; if it shows none, leave `/tidy` untouched and say so in the PR.\n- [ ] `SKILL.md`: the `doctor` mode row and read-only paragraph name the engine verb; replace the anti-pattern \"Passing any flag but `--json` to `doctor.mjs`\" with \"Passing any flag but `--json` to the engine's `doctor` verb\" (the module rejects other flags with exit 2) and reword \"Passing `--fix` to `doctor.mjs`\" to the engine verb, keeping both rows (renamed, not removed).\n- [ ] `docs/skill-graph.md:203`: the `/tidy` → `doctor` edge names the engine verb instead of `doctor.mjs`.\n\n## Acceptance Criteria\n\n1. `git grep -n \"doctor\\.mjs\" -- plugin/skills/design-wrapper/modes/doctor.md plugin/skills/design-wrapper/SKILL.md plugin/skills/tidy/ docs/skill-graph.md` returns no matches.\n2. `modes/doctor.md` contains no invocation that passes `--fix` — asserted by a committed test that greps the file for `--fix` outside its \"never\" sentence.\n3. The PR description quotes the Task 0 capture and states, field by field, whether `findings[].severity`, `findings[].fix` and `counts` match what `/tidy` Step 4.9 reads.\n4. In the same kind of session as Task 0 (`resolve` returns `ok: true`), `/claude-tweaks:design-wrapper doctor` returns the wrapper's standard `{mode: \"doctor\", result, findings, counts, platform}` shape documented at `modes/doctor.md:142`, instead of `skipped` — recorded as a captured run in the PR description.\n5. `tests/fixtures/impeccable-plugin/doctor.json` is committed and the extended validator's unit test passes over it.\n6. `npm test` passes.\n\n## Release Note\n\nRestored design-wrapper's doctor check, and the design-record findings it feeds into tidy, for Impeccable 4.2.2 and later.\n\n## Technical Approach\n\nThe mode becomes a caller of `impeccable-engine.js run doctor`; the engine module owns resolution, the `--json`-only invocation and shape validation. The mode keeps its own row 3 (project-context gate from Layer 0) because that check is free once Layer 0 has run.\n\n### Key Files\n\n- `plugin/skills/design-wrapper/modes/doctor.md` — engine invocation and skip rows\n- `plugin/skills/design-wrapper/SKILL.md` — mode row, read-only paragraph, Next Actions row, two anti-pattern rows\n- `plugin/skills/tidy/scan-procedures.md` — Step 4.9, only if Task 0 shows a shape difference\n- `plugin/skills/tidy/step-6-auto.md` — Design record drift row, only if Task 0 shows a shape difference\n- `tests/bin-lib/skill-audit/anti-patterns.test.js` — read only: its history comment (lines 248-252) quotes the two renamed rows; row counts are unchanged by a rename\n- `tests/fixtures/impeccable-plugin/doctor.json` — new committed Task 0 capture\n- `plugin/bin/lib/impeccable-engine/index.js` — extend the `doctor` validator (and the exit-code handling, only if Task 0 requires it)\n- `docs/skill-graph.md` — line 203's `/tidy` edge names \"the pinned plugin's `doctor.mjs --json`\"; it becomes the engine verb\n- `tests/design-wrapper-doctor-no-fix.test.js` — new test: no `--fix` invocation in `modes/doctor.md`\n\n## Gotchas\n\n- `SKILL.md` is also edited by the Layer 0 sub-issue (sub-file index line 212 only); keep this sub-issue's edits to the rows listed above.\n- `anti-patterns.test.js` pins the anti-pattern table's row count; renaming the two rows keeps the count, removing one would break the pin.\n- ASSUMPTION — verify at build: the engine's `doctor --json` exits 0 with JSON on stdout when it has findings, as `doctor.mjs` did — via the Task 0 capture. If it exits non-zero with valid findings JSON, extend the engine module's `doctor` run to accept that exit code (with a unit test) in this sub-issue, rather than letting every run with findings read as `exec-failed`.\n- If no session available to the build resolves an engine, stop and ask the human to run `node plugin/bin/impeccable-engine.js run doctor` in a terminal where `resolve` returns `ok: true`, and to paste the output; do not invent a fixture.\n- Parity across Impeccable 4.2.2–4.4.0 is assumed, not verified: Task 0 captures one version, and the PR names it.\n\n\n<!-- work-fingerprint: impeccable-engine-migration:run-design-wrapper-doctor-mode-and-tidy-step-4-9-through-the -->\nwork-fingerprint: impeccable-engine-migration:run-design-wrapper-doctor-mode-and-tidy-step-4-9-through-the",
-        "createdAt": "2026-10-04T18:43:35Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          }
-        ],
-        "number": 2981,
-        "state": "OPEN",
-        "title": "Run design-wrapper doctor mode and /tidy Step 4.9 through the Impeccable engine",
-        "updatedAt": "2026-10-05T04:55:23Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      },
-      {
-        "body": "Surface: infra\n\n## Overview\n\nMove `design-wrapper`'s Layer 0 enrichment, its availability table and its native-track platform lookup off the retired `context-signals.mjs` / `resolveImpeccablePlugin` binding and onto the `impeccable-engine.js` CLI from the engine-module sub-issue. Today, for every user on Impeccable 4.2.2 or later, Layer 0 silently degrades to no signals because `context-signals.mjs` no longer exists; after this change Layer 0 runs `impeccable-engine.js run signals` and gets the same `setup`/`critique`/`git`/`devServer` shape from the engine.\n\nBehaviour on failure stays exactly what Layer 0 promises today: any `ok: false` means no signals, and every mode completes normally. What changes is that the skip now carries a named reason with a fix, instead of a silent miss. The reasons are the six the engine module exports: `not-installed` (no Impeccable install entry at all), `upgrade-required` (an install older than 4.2.2, with no launcher), `engine-not-installed` (launcher present, engine binary not cached), `shape-mismatch`, `exec-failed` and `timeout`. If the merged engine module's exported list differs, it is authoritative over this list.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- `doctor` mode, `explore` mode, the direction-contract readers and the finish-reviewer dispatch — each is its own sibling sub-issue.\n- Any change to what Layer 0 decides: it stays enrichment only, with no skip edge (`frontend-detection.md:125`).\n- Manifest assertions, fixtures and the contract test (the closing sub-issue).\n- Changing `live` mode's behaviour — only its one stale sentence about `live.mjs` is corrected.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| engine-module sub-issue (linked as blocker) | Add the impeccable-engine module and CLI | not started |\n\n## Current State\n\n- `plugin/skills/design-wrapper/impeccable-plugin.md:8` — \"Layer 0 executes Impeccable's own `context-signals.mjs`\"; `:48` documents `resolveImpeccablePlugin`; `:67-69` is the script-path table; `:83` notes the scripts are absent at 3.0.6; `:110` and `:117` show the `import { gatherSignals }` / `node …/context-signals.mjs` invocations; `:210` begins the Layer 0 field table (`setup.hasProduct` / `setup.hasDesign` …), which stays as the documentation the engine module's `signals` validator encodes.\n- `plugin/skills/design-wrapper/availability.md:17-18` — the `doctor` and `explore` rows require \"Impeccable plugin **at the pinned version**\" and the bundled `doctor.mjs` / `concept-seed.mjs`; `:26` is the \"Bundled scripts, at an exact pin\" paragraph in the three-artifact-kinds section.\n- `plugin/skills/design-wrapper/frontend-detection.md:3` and `:81` call Layer 0 \"the context-signals enrichment layer\".\n- `plugin/skills/design-wrapper/native-routing.md:9` — reads the platform reference under the plugin root \"`impeccable-plugin.md`'s `resolveImpeccablePlugin` returns\".\n- `plugin/skills/design-wrapper/modes/live.md:35` — says live mode depends on scripts under `.claude/skills/impeccable/scripts/` including `live.mjs`, which 4.2.2+ no longer ships.\n- `plugin/skills/design-wrapper/SKILL.md:212` — the sub-file index line describing `impeccable-plugin.md` as \"the shared `resolveImpeccablePlugin` plugin-cache resolver\".\n\n## Deliverables\n\n- [ ] Rewrite `impeccable-plugin.md` around the engine: Layer 0 runs `node \"${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js\" run signals` and branches on the JSON envelope; remove `resolveImpeccablePlugin`, the script-path table and both `.mjs` invocation snippets; keep the Layer 0 field table, retitled as the shape the engine module validates; replace the version-pin language with \"last verified version\". The pin comment itself stays exactly `<!-- upstream-pin: impeccable-plugin@4.0.2 -->` in this sub-issue; the closing sub-issue changes its value.\n- [ ] Rewrite `impeccable-plugin.md`'s skip table: one row per engine-module failure value (`not-installed`, `upgrade-required`, `engine-not-installed`, `shape-mismatch`, `exec-failed`, `timeout`), each with its user-facing reason and paste-ready fix (for `engine-not-installed`, the `fix` string the module returns).\n- [ ] `availability.md`: the `doctor`, `explore` and Layer 0 rows become \"engine available per `impeccable-engine.js resolve`\"; rewrite the three-artifact-kinds section so the third kind is the engine, not \"bundled scripts, at an exact pin\".\n- [ ] `frontend-detection.md` and `SKILL.md:212`: reword the Layer 0 description to the engine's `signals` verb; no logic change.\n- [ ] `native-routing.md:9`: take the **Impeccable** plugin root from `impeccable-engine.js resolve`'s `pluginRoot`. Name it \"the Impeccable plugin root\" in the prose so it is never confused with claude-tweaks' own `${CLAUDE_PLUGIN_ROOT}`, which locates the CLI itself.\n- [ ] `modes/live.md:35`: correct the `live.mjs` sentence to what 4.2.2+ ships, naming the `live-*` verbs listed in upstream 4.4.0's `skills/impeccable/reference/live.md` and stating they are still reached through the `/impeccable:impeccable*` skill check; no behaviour change.\n\n## Acceptance Criteria\n\n1. `git grep -n -E \"context-signals\\.mjs|resolveImpeccablePlugin|gatherSignals|live\\.mjs\" -- plugin/skills/design-wrapper/impeccable-plugin.md plugin/skills/design-wrapper/availability.md plugin/skills/design-wrapper/frontend-detection.md plugin/skills/design-wrapper/native-routing.md plugin/skills/design-wrapper/modes/live.md` returns no matches, and `SKILL.md`'s sub-file index entry for `impeccable-plugin.md` no longer names `resolveImpeccablePlugin`.\n2. `impeccable-plugin.md` names every failure value `plugin/bin/lib/impeccable-engine/index.js` can return, each with a fix — checked by a committed test that reads the module's exported reason list and asserts each value appears in `impeccable-plugin.md`.\n3. In a session where `node plugin/bin/impeccable-engine.js resolve` returns `ok: true` (on the maintainer machine: any directory outside this repo, where user-scope 4.4.0 with cached engine 0.1.6 is active), the wrapper's Layer 0 step reports resolved signals (`setup.platform` present) — recorded in the PR description with the `resolve` output quoted.\n4. In a session where `resolve` returns `ok: false` (on the maintainer machine: this repo, whose project-scope 4.5.0 engine 0.1.11 is not cached, so it returns `engine-not-installed`), every `design-wrapper` mode still completes and the run log names the reason and the fix — recorded in the PR description with the `resolve` output quoted. If the build session can reproduce neither state, stop and ask the human to run the two checks.\n5. `npm test` passes.\n\n## Release Note\n\nRestored design-wrapper's project-context signals for Impeccable 4.2.2 and later, and made a missing or outdated Impeccable engine report why and how to fix it instead of failing silently.\n\n## Technical Approach\n\nSkill prose calls the CLI and branches on its JSON envelope; no prose restates resolution or validation logic (the engine module owns both). The Layer 0 field table remains the single human-readable statement of the `signals` shape, and the module's validator encodes the same fields.\n\n### Key Files\n\n- `plugin/skills/design-wrapper/impeccable-plugin.md` — rewrite around the engine CLI; skip table per failure value\n- `plugin/skills/design-wrapper/availability.md` — `doctor`/`explore`/Layer 0 rows and the artifact-kinds section\n- `plugin/skills/design-wrapper/frontend-detection.md` — Layer 0 wording\n- `plugin/skills/design-wrapper/native-routing.md` — plugin root from `resolve`'s `pluginRoot`\n- `plugin/skills/design-wrapper/modes/live.md` — correct the stale `live.mjs` sentence\n- `plugin/skills/design-wrapper/SKILL.md` — sub-file index line 212 only\n- `tests/impeccable-engine-skip-reasons.test.js` — new test: every module failure value is documented in `impeccable-plugin.md`\n\n## Gotchas\n\n- `SKILL.md` is also edited by the `doctor`-mode sub-issue (mode row, anti-pattern rows); this sub-issue touches only the sub-file index line, so keep the edit to that line to avoid a merge conflict.\n- `plugin/skills/**/*.md` files carry a size ceiling (`CEILING_BYTES`, 45 KB, `plugin/bin/lib/skill-audit/context-cost.js`, advisory since #1990); record `impeccable-plugin.md`'s byte count before and after the rewrite in the PR description — the rewrite is expected to shrink it, since resolution moves into code.\n- AC1 is scoped to this sub-issue's files on purpose; the repo-wide guard against the retired names is the closing sub-issue's retirement-sweep test. Still run `git grep -n -E \"context-signals\\.mjs|resolveImpeccablePlugin|gatherSignals\"` repo-wide before finishing and list any remaining hit together with the sibling sub-issue that owns it.\n- AC2's test binds to the engine module's exported reason list: a reason added or renamed there must update `impeccable-plugin.md`'s skip table in the same change.\n- Layer 0 must keep \"no signals\" as a normal outcome: do not let an `ok: false` envelope turn into a mode failure anywhere, including `live`'s dev-server veto (`modes/live.md:37-50`, which already skips when Layer 0 did not resolve).\n- `signals` ignores `--help` and executes; never document it with `--help`.\n\n\n<!-- work-fingerprint: impeccable-engine-migration:move-design-wrapper-layer-0-and-availability-onto-the-impecc -->\nwork-fingerprint: impeccable-engine-migration:move-design-wrapper-layer-0-and-availability-onto-the-impecc",
-        "createdAt": "2026-10-04T18:43:08Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Size: medium effort",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Risk: medium blast radius",
-            "color": "fbca04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
-          }
-        ],
-        "number": 2980,
-        "state": "OPEN",
-        "title": "Move design-wrapper Layer 0 and availability onto the Impeccable engine",
-        "updatedAt": "2026-10-05T04:55:18Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: infra\n\n## Current State\n\n`design-wrapper` currently routes design-quality work to Impeccable only. A described set of five Claude Code design plugins includes a Taste skill (anti-slop styling, 76k GitHub stars) and a Web Design Guidelines skill (audits against Vercel's rules including accessibility).\n\n## Deliverables\n\n- Trial the Taste and Web Design Guidelines skills against a sample build alongside Impeccable's own passes.\n- Decide whether either complements or duplicates Impeccable's finish-reviewer/asset-producer roles.\n\n## Acceptance Criteria\n\n- A short comparison note on overlap/gaps versus Impeccable, checked into `design-wrapper`'s docs.\n\n## Release Note\n\nNo user-visible change: evaluated the Taste and Web Design Guidelines skills for design reviews.\n\n## Technical Approach\n\nRun Taste and Web Design Guidelines against the same sample build `design-wrapper`'s Impeccable passes (`impeccable-finish-reviewer`, `impeccable-asset-producer`) already cover, and compare findings directly: does either surface issues Impeccable misses (e.g. Web Design Guidelines' accessibility rules against Vercel's own bar), or does either largely duplicate Impeccable's existing critique? Write the comparison as a short note, landing in `design-wrapper`'s docs alongside its existing mode documentation.\n\n### Key Files\n\n- `plugin/skills/design-wrapper/modes/` — the existing Impeccable-routed passes to compare against\n- `plugin/skills/design-wrapper/` docs — where the comparison note lands\n\n## Gotchas\n\n- Both third-party skills are external plugins this repo doesn't own — availability/version drift should be noted in the comparison if either isn't stably installable.\n- This is a comparison-and-decide record — a \"duplicates Impeccable, no action\" outcome is a valid, complete result, not a failure to find value.\n\n## Original request\n\nEvaluate Taste/Web-Design-Guidelines skills for design-wrapper\n\nCurrent State:\n- design-wrapper currently routes design-quality work to Impeccable only.\n- A reel names five Claude Code design plugins: a Taste skill (anti-slop styling, 76k GitHub stars), a Web Design Guidelines skill (audits against Vercel's rules incl. accessibility), a full design-system skill, 21st Dev MCP (10k+ UI components), and Playwright CLI for self-screenshot review.\n\nDeliverables:\n- Trial the Taste and Web Design Guidelines skills against a sample build alongside Impeccable's own passes.\n- Decide whether either complements or duplicates Impeccable's finish-reviewer/asset-producer roles.\n\nAcceptance Criteria:\n- A short comparison note on overlap/gaps versus Impeccable, checked into design-wrapper's docs.\n\nSource: https://www.instagram.com/reel/DcEFABnvBuH/\n",
         "createdAt": "2026-09-20T19:00:56Z",
         "labels": [
@@ -637,8 +222,8 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Overview\n\nRun `design-wrapper`'s `explore` mode's deal step through the engine's `concept-seed` verb, via `impeccable-engine.js run concept-seed`, instead of the retired `concept-seed.mjs`. Today `explore` skips as unavailable for every user on Impeccable 4.2.2 or later, because its exact-pin resolver finds no `concept-seed.mjs`.\n\nThe mode's division of labour is unchanged: upstream deals, this mode derives and renders. What is new is a documented network side effect — the engine's `concept-seed` contacts Impeccable's catalog service (observed reporting `source: api`) — and three run-time skip reasons: `exec-failed` (for example offline), `timeout` and `shape-mismatch`, alongside the engine module's resolve reasons. The merged engine module's exported reason list is authoritative if it differs from these names.\n\n**Complexity:** Low\n**Estimated tasks:** 3\n\n## Non-Goals\n\n- Layer 0, `doctor`, the direction contract and the finish-reviewer dispatch (sibling sub-issues).\n- Blocking or proxying the catalog-service call; it is upstream behaviour and is documented, not prevented.\n- Changing how the mode derives worlds or renders the comparison shell.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| engine-module sub-issue (linked as blocker) | Add the impeccable-engine module and CLI | not started |\n\n## Current State\n\n- `plugin/skills/design-wrapper/modes/explore.md:21` — \"`concept-seed.mjs` assigns and deals\"; `:38` — availability is \"exact-pin `resolveImpeccablePlugin`, `doctor`-class\"; `:44` — calls `resolveImpeccablePlugin({searchRoot})` and returns on `null`; `:82-85` — runs `node \"<root>/skills/impeccable/scripts/concept-seed.mjs\" --scope direction --mode <mode>`; `:94` — the output is one shared instruction block; `:204-207` — the surface scope runs `concept-seed.mjs --scope surface --mode <mode> --from <key> --candidate-count 6`.\n- Upstream 4.4.0 runs `\"<skill-base-dir>/scripts/impeccable\" concept-seed --scope direction --mode <mode>` and `concept-seed --scope surface --mode <mode>` (its `reference/` files).\n- `docs/journeys/explore-design-identities-at-genesis.md:29` — journey step \"Upstream's `concept-seed.mjs` deals\".\n\n## Deliverables\n\n- [ ] `modes/explore.md` availability: replace the exact-pin `resolveImpeccablePlugin` check with `impeccable-engine.js resolve`; on `ok: false`, skip with the module's reason and fix, before any other work — the same early return `explore.md:44` makes today on a `null` resolve.\n- [ ] Both deal steps run `node \"${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js\" run concept-seed --scope <direction|surface> --mode <mode>`; the surface scope also passes `--from <key> --candidate-count 6` only if the Gotchas verification below confirms the engine accepts them (otherwise use the flags the verification observed); `exec-failed`, `timeout` or `shape-mismatch` is a mode skip naming the reason.\n- [ ] Document in `explore.md`, beside the invocation, that the verb may contact Impeccable's catalog service, so an offline or sandboxed run (cloud sessions, Routines) skips with `exec-failed`.\n- [ ] Update the journey step in `docs/journeys/explore-design-identities-at-genesis.md:29` to name the engine verb.\n\n## Acceptance Criteria\n\n1. `git grep -n -E \"concept-seed\\.mjs|resolveImpeccablePlugin\" -- plugin/skills/design-wrapper/modes/explore.md docs/journeys/explore-design-identities-at-genesis.md` returns no matches.\n2. `explore.md` states the catalog-service network call and the offline skip outcome in the section that runs the verb.\n3. Manual run, by the builder if its session has network access and `resolve` returns `ok: true`, otherwise by the human: `/claude-tweaks:design-wrapper explore` reaches its deal step and receives a seed block whose first line matches `/CONCEPT SEED \\(key: /` — recorded as a captured run in the PR description. In a sandbox without network access, the PR instead records the `exec-failed` skip the mode produces there, and names who ran the networked check.\n4. `npm test` passes.\n\n## Release Note\n\nRestored design-wrapper's explore mode for Impeccable 4.2.2 and later, and documented that dealing design directions contacts Impeccable's catalog service.\n\n## Technical Approach\n\n`explore` becomes a caller of `impeccable-engine.js`; the module owns resolution, the argument allowlist (`--scope`, `--mode`, `--from`, `--candidate-count`) and the header-line validation.\n\n### Key Files\n\n- `plugin/skills/design-wrapper/modes/explore.md` — availability check and both deal invocations\n- `docs/journeys/explore-design-identities-at-genesis.md` — journey step wording\n\n## Gotchas\n\n- `concept-seed` ignores `--help` and executes, contacting the catalog service; never call it with `--help` while testing.\n- ASSUMPTION — verify at build: the engine's `concept-seed` accepts `--from <key>` and `--candidate-count <n>` for the surface scope, as `concept-seed.mjs` did — via one real run; if it does not, drop them and record the observed flags in the PR description and in `explore.md`.\n- `explore` is interactive-only (it must not run from a pipeline context); the engine change does not alter that.\n\n\n<!-- work-fingerprint: impeccable-engine-migration:run-design-wrapper-explore-mode-s-concept-seed-through-the-i -->\nwork-fingerprint: impeccable-engine-migration:run-design-wrapper-explore-mode-s-concept-seed-through-the-i",
-        "createdAt": "2026-10-04T18:44:01Z",
+        "body": "Surface: backend\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule\nsentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`,\n18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its\npersonas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent`\ntool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a\nstatic `node --test` assertion; it can only be confirmed by observing an actual future `/specify`\ndecomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that\npersona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s\nfan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the\nobservation (transcript excerpt or note) against this item, or file a defect against\n`red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use\ncalls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of\nsub-issues) assistant messages.\n\n## Release Note\n\nNo user-visible change: verified that spec red-team reviews batch correctly across several sub-issues.\n\n## Technical Approach\n\nWait for (or trigger) a `/claude-tweaks:specify` decomposition-mode run that produces 2 or more\n`ceremony:standard` sub-issue records — `ceremony-check` (`assess-agent-autonomy/ceremony-check.md`)\nresolves the tier per sub-issue during that run's own Step 3, so the tier isn't knowable until the\nrun happens. Once such a run occurs, inspect that session's stored transcript for the Step 5\nred-team dispatch (`specify/red-team.md`'s Parallel dispatch section): locate the `Agent` tool_use\nblocks for each dispatched persona and group them by the assistant message id each block belongs\nto. Confirm the number of distinct assistant message ids covering all persona dispatches for a\ngiven sub-issue is ≤ the number of sub-issues in that batch. Use the same read-only transcript\ninspection method `transcript-payload-verification` documents for reading this session's own\nlocally-stored transcript, rather than instrumenting or modifying `red-team.md` itself.\n\nIf the count exceeds the bound, file a defect issue against `red-team.md`'s dispatch prose\n(quoting the transcript grouping that violates the rule) instead of editing the file directly from\nthis record — this record's own deliverable is the observation, not the fix.\n\n### Key Files\n\n- `plugin/skills/specify/red-team.md` — the per-sub-issue persona dispatch procedure being observed\n- `plugin/skills/_shared/subagent-output-contract.md` — the fan-out single-assistant-message rule this observation verifies compliance with\n- `tests/subagent-contract-clauses.test.js` — AC1's existing static test coverage (unaffected by this record)\n\n## Gotchas\n\n- This record's acceptance criterion depends on an external event (a live `/specify` decomposition\n  run over 2+ `ceremony:standard` sub-issues happening) that this record cannot itself trigger on a\n  fixed schedule — it may sit open for some time until a qualifying run occurs naturally, or until\n  someone deliberately runs one to close it out.\n- A qualifying run must be observed via its own transcript at the time it happens; this record\n  cannot be resolved from historical data if no already-completed run's transcript is still\n  available.\n\n## Original request\n\nVerify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)\n\nOrigin: ledger resolve gate\n\nDefer-reason: needs-human-decision\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule sentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`, 18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its personas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent` tool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a static `node --test` assertion; it can only be confirmed by observing an actual future `/specify` decomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that persona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s fan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the observation (transcript excerpt or note) against this item, or file a defect against `red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use calls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of sub-issues) assistant messages.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
+        "createdAt": "2026-08-24T03:21:25Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -659,10 +244,10 @@
             "color": "E99695"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACrzEqFA",
@@ -671,22 +256,28 @@
             "color": "F9D0C4"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACszED4w",
             "name": "ceremony:fast-lane",
             "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
             "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAAC0IWj4w",
+            "name": "fix-on-worktree-worktree-dispatch-record-1350",
+            "description": "Fixed on worktree-worktree-dispatch-record-1350, not yet on the default branch",
+            "color": "FBCA04"
           }
         ],
-        "number": 2982,
+        "number": 1350,
         "state": "OPEN",
-        "title": "Run design-wrapper explore mode's concept-seed through the Impeccable engine",
-        "updatedAt": "2026-10-05T04:55:27Z",
+        "title": "Verify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)",
+        "updatedAt": "2026-10-05T02:30:29Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -695,7 +286,7 @@
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
-          "priority": "medium",
+          "priority": "low",
           "stage": "ready",
           "grants": {
             "build": true,
