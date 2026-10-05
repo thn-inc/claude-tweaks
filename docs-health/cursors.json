@@ -187,5 +187,8 @@
   },
   "doc:plans/2026-09-30-flow-spec-2704-2709-ledger": {
     "lastAuditedMs": 1791008381371
+  },
+  "doc:decisions/0021-visual-plan-stays-opt-in-via-visualize": {
+    "lastAuditedMs": 1791181177458
   }
 }
