@@ -165,7 +165,7 @@ Why an exemption rather than a conformance shim: this contract buys **dispatch c
 
 Re-prompting on format (below) does not apply to an exempt agent: it is not violating a format it was never given.
 
-**Current exempt dispatch:** `impeccable-finish-reviewer`, shipped by the Impeccable plugin and dispatched by `/claude-tweaks:design-wrapper`'s `review` mode (`modes/review.md` Step 3.7). Its four-section output contract (`persistence` / `ceiling` / `material_fixes` / `keep`) is upstream's; that mode's Step 4 maps it into this repo's normalized finding shape.
+**Current exempt dispatch:** `impeccable-finish-reviewer`, shipped by the Impeccable plugin and dispatched by `/claude-tweaks:design-wrapper`'s `review` mode (`modes/review.md` Step 3.7). Its output contract (a first-line `disposition: recapture|rebuild|fix|ship`, then exactly five sections — `persistence` / `fidelity` / `ceiling` / `material_fixes` / `keep` — or, on `recapture`, a single `recapture` section replacing all five) is upstream's; that mode's Step 4 maps it into this repo's normalized finding shape.
 
 ## Re-prompt on violation
 

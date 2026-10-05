@@ -1,10 +1,10 @@
 # Impeccable's Direction Contract — locating and reading it
 
-Impeccable writes a **direction contract** into the opening comment of the artifact it builds,
-before the code. This file is the single procedure for finding that comment and reading it back.
-It is cited by `/claude-tweaks:design-wrapper`'s `review` mode (which extracts the seed key and
-records it) and by `/claude-tweaks:demo` (which renders the blocks to a human). Both cite it;
-neither restates it.
+Impeccable records a **direction contract** under a `## Direction contract` heading in the
+relevant **surface brief**, before the code — never in the artifact it builds. This file is the
+single procedure for finding that section and reading it back. It is cited by
+`/claude-tweaks:design-wrapper`'s `review` mode (which extracts the seed key and records it) and
+by `/claude-tweaks:demo` (which renders the blocks to a human). Both cite it; neither restates it.
 
 ## What this repo does and does not own
 
@@ -21,7 +21,7 @@ is that agent's, never this procedure's.
 
 What this repo does is narrower and purely structural:
 
-1. find the comment,
+1. find the surface brief's `## Direction contract` section,
 2. recognize the five block labels well enough to split the text into blocks,
 3. copy the seed key out of the `FORM` block as an opaque token,
 4. hand both to a human at the acceptance gate.
@@ -30,35 +30,35 @@ The block labels are the only piece of upstream's contract this repo hard-codes,
 pinned by an assertion in `tools/upstream-drift/manifest.yml` so a rename upstream surfaces as
 drift rather than as a silently empty brief.
 
-## Step 1: Locate the comment
+## Step 1: Read the surface brief
 
 **Candidate files.** Whatever file list the calling skill already has — `review` mode's resolved
 changed-UI-file list, `/demo`'s changed-path list from the closing commit or session recall. This
 procedure never discovers files on its own.
 
-**Bounded prefix.** Read at most the **first 4 KB** of each candidate. The contract is an *opening*
-comment; a match past that boundary is some other comment and is not this. The bound also keeps a
-large built artifact from being read whole just to check.
+**One engine call per candidate, first hit wins.** For each candidate, in order, run
+`node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" run surface-brief <candidate-path>` —
+`bin/lib/impeccable-engine`'s `run('surface-brief', [candidatePath], {projectPath: <repo root>})`
+when called from JS. The candidate's own path (or route) is the `<target>` — the same value
+Impeccable's own `surface-brief write <primary-target> ...` step names when it records the
+contract (`reference/new-work.md` §5). `projectPath` doubles as both which Impeccable install
+`resolve()` selects and the spawn's working directory (the surface brief lives at
+`.impeccable/surfaces/<target>.md` relative to it) — pass the repo root, never a bare relative
+path. Stop at the first candidate whose read surfaces a `## Direction contract` heading (Step 2)
+— the direct replacement for the old "first comment block that carries the five labels" rule, now
+applied across engine calls instead of across comment blocks in one file.
 
-**Comment syntaxes.** Three are recognized, which is what Impeccable's own scannable extension set
-(`.html .htm .css .scss .jsx .tsx .js .ts .vue .svelte .astro` — `SCANNABLE_EXT` in its
-`scripts/context-signals.mjs`) can produce:
+**Two ways a candidate yields nothing, both treated alike:**
 
-| Syntax | Opens / closes | Artifact families |
-|---|---|---|
-| `<!-- … -->` | HTML comment | `.html`, `.htm`, and the template half of `.vue` / `.svelte` / `.astro` |
-| `/* … */` | block comment | `.css`, `.scss`, and the script half of every JS/TS family file |
-| `//` | a run of consecutive line comments, treated as one block | `.js`, `.ts`, `.jsx`, `.tsx`, and script blocks |
+- `{ok: false, ...}` — no brief exists for that target, or the call failed outright. The engine
+  reports no dedicated "not found" reason; every `ok: false` means "nothing to read here."
+- `{ok: true, value: <brief text>}` with no `## Direction contract` heading anywhere in `value` —
+  a brief exists but was never used to record a contract.
 
-**Anything else skips cleanly** — a `#`-commented file, a syntax not in this table, an unterminated
-comment. Skipping is a defined outcome (Step 4, "no contract"), never a parse attempt on a syntax
-this table does not name. Guessing at an unlisted syntax is how a half-read contract gets rendered,
-and a half-rendered contract is worse than none because it looks complete.
+Either way, move to the next candidate. **No candidate yields anything** → "No contract" (Step 4).
 
-**Which block.** Scan every comment block within the prefix, in order, and take the **first one that
-carries the five labels** (Step 2). It is deliberately not "the first comment block" — a license
-header, a generated-file banner, or a `<!doctype html>` preamble routinely sits ahead of it, and
-requiring literal position would miss the contract in exactly the artifacts most likely to have one.
+This retires the old bounded-prefix, comment-syntax scan entirely — a brief's full text comes back
+in one call; there is no byte limit to apply and no comment syntax to recognize.
 
 ## Step 2: Recognize the blocks
 
@@ -69,9 +69,9 @@ THESIS:   OWN-WORLD:   STORY:   FIRST VIEWPORT:   FORM:
 ```
 
 Match case-insensitively, allowing any run of whitespace inside `FIRST VIEWPORT`. A block's body
-runs from its own label to the start of the next label found, or to the end of the comment for the
-last one. Order is not required: use the labels' actual positions, sorted, rather than assuming
-upstream's ordering — presence is structural, ordering is not.
+runs from its own label to the start of the next label found, or to the end of the brief text for
+the last one. Order is not required: use the labels' actual positions, sorted, rather than
+assuming upstream's ordering — presence is structural, ordering is not.
 
 **All five must be present.** Four is malformed, not partial — see Step 4.
 
@@ -104,8 +104,8 @@ Every call to this procedure ends in exactly one of these. There is no fourth.
 
 | Outcome | Condition | What the caller does |
 |---|---|---|
-| **No contract** | No candidate file has a qualifying comment in its prefix, or every candidate's syntax is unrecognized | Nothing. Render exactly as if this procedure did not exist — no empty section, no "not found" placeholder, no `Design-seed:` line. Most records will never have a contract, so this is the ordinary case and must be silent. |
-| **Malformed** | A comment carries some but not all five labels, or a label with no body | Treat as **No contract** for every rendering and recording purpose, **and log it** (below). Never render the blocks that did parse. |
+| **No contract** | No candidate's surface brief read returns a `## Direction contract` heading (Step 1's two no-hit shapes) | Nothing. Render exactly as if this procedure did not exist — no empty section, no "not found" placeholder, no `Design-seed:` line. Most records will never have a contract, so this is the ordinary case and must be silent. |
+| **Malformed** | A found `## Direction contract` section carries some but not all five labels, or a label with no body | Treat as **No contract** for every rendering and recording purpose, **and log it** (below). Never render the blocks that did parse. |
 | **Contract, no seed** | Five labels present, `FORM` carries no seed label | Render the blocks. **Omit** the seed entirely — omit the `Design-seed:` line rather than writing it empty. This is normal, not drift: upstream's own wording carries the seed key *"when the seed dealt stagings,"* so a contract without one is a legal contract. |
 
 **Logging the malformed case.** Inside a pipeline (`$PIPELINE_RUN_DIR` resolved), write one
@@ -139,6 +139,7 @@ so "the contract did not carry one" and "we wrote an empty one" can never be con
 | `/claude-tweaks:design-wrapper` `review` mode | Step 3.6 — runs this on the changed UI files it already resolved, then writes `seed` onto the work record as its `Design-seed:` body-metadata line |
 | `/claude-tweaks:demo` | Step 2 — runs this on the changed-path list Step 1 already produced, and renders `blocks` under `### The design contract this was built against` (rendering rules in `demo/design-contract-section.md`, read only when a contract resolves or parses malformed) |
 
-`/demo` re-parses the shipped artifact rather than reading a copy captured at build time. That is
-deliberate: the acceptance gate should show the contract that is actually in the file the human is
-being asked to sign off on, and a cached copy could differ from it by the time anyone looks.
+`/demo` re-reads the live surface brief rather than a copy captured at build time. That is
+deliberate: the acceptance gate should show the contract that is actually in the brief as it
+stands when the human is asked to sign off, and a cached copy could differ from it by the time
+anyone looks.

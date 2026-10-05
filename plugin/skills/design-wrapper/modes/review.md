@@ -1,10 +1,10 @@
 # Design Mode — review
 
-Invoked via `/claude-tweaks:design-wrapper review <spec>`. Returns `{mode, result: "advisory", files_scanned, findings, score_trend}` or `{mode, skipped, ...}` to caller. Also writes an audit cache that `polish` mode consumes, appends to a persistent design-score history log, and — when the built artifact carries one — records the Impeccable direction contract's seed key onto the work record (Step 3.6) and dispatches upstream's own finishing-review agent against that contract (Step 3.7).
+Invoked via `/claude-tweaks:design-wrapper review <spec>`. Returns `{mode, result: "advisory", files_scanned, findings, score_trend}` or `{mode, skipped, ...}` to caller. Also writes an audit cache that `polish` mode consumes, appends to a persistent design-score history log, and — when the relevant surface brief carries one — records the Impeccable direction contract's seed key onto the work record (Step 3.6) and dispatches upstream's own finishing-review agent against that contract (Step 3.7).
 
 ## When this runs
 
-Called by `/claude-tweaks:review` during code review. Runs `/impeccable:impeccable critique` + `/impeccable:impeccable audit` on changed UI files, and — when the built artifact carries a direction contract — additionally dispatches Impeccable's own `impeccable-finish-reviewer` agent (Step 3.7). Findings appear in the review summary as advisory (never auto-applied).
+Called by `/claude-tweaks:review` during code review. Runs `/impeccable:impeccable critique` + `/impeccable:impeccable audit` on changed UI files, and — when the relevant surface brief carries a direction contract — additionally dispatches Impeccable's own `impeccable-finish-reviewer` agent (Step 3.7). Findings appear in the review summary as advisory (never auto-applied).
 
 ## Preconditions
 
@@ -51,8 +51,9 @@ When Layer 0 did not resolve, or resolved with `critique.latest: null`, omit `pr
 
 The one point where a built artifact and its work record are both in hand — Impeccable's direction
 contract (and its seed key, the only thing making a non-deterministic build reproducible) is read
-here and recorded onto the record as `Design-seed:`. Read `review-seed-capture.md` in this
-directory and follow it in full: the locate-and-parse procedure over Step 2's resolved file list,
+from the relevant surface brief here and recorded onto the record as `Design-seed:`. Read
+`review-seed-capture.md` in this directory and follow it in full: the locate-and-parse procedure
+over Step 2's resolved file list,
 the three outcomes (No contract / Malformed / Contract found), the record-resolution and
 `Design-seed:` write rules, and the never-gate posture. Step 3.7's gate reads this step's parse
 outcome — **Contract found** is the only outcome that reaches it.
@@ -71,16 +72,18 @@ its `SCANNED` entry in Step 3.6). That parse is the detection signal; this step 
 and never applies a looser test of its own.
 
 **Availability, at the agent level.** The Preconditions check resolves *skill* commands and does not
-answer this. Resolve the plugin with `resolveImpeccablePlugin({searchRoot})`
-(`../impeccable-plugin.md`), then check that `{root}/agents/impeccable-finish-reviewer.md` exists —
-the same derive-your-own-path-from-`root` pattern `doctor` mode uses for its script. Agents are added
-and removed between versions of one plugin (`impeccable-documenter` exists at 4.0.4 and not at the
-pinned 4.0.2), so plugin presence proves nothing about this agent.
+answer this. Take the plugin root from `node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" resolve`'s
+`pluginRoot` (`bin/lib/impeccable-engine`'s `resolve()`, #2979), then check that
+`{pluginRoot}/agents/impeccable-finish-reviewer.md` exists — the same derive-your-own-path-from-`root`
+pattern `doctor` mode uses for its script. Agents are added and removed between versions of one plugin
+(`impeccable-documenter` exists at 4.0.4 and not at the pinned 4.0.2), so plugin presence proves
+nothing about this agent.
 
-If the resolver returns `null` or the agent file is absent, **skip and continue**: the critique + audit
-path from Step 3 stands on its own and the review proceeds normally. This is never a hard failure. Log
-one `SCANNED` entry naming the missing agent — "a contract existed and nothing could review the render
-against it" is a different state from "no contract," and only the log tells them apart.
+If `resolve()` returns `ok: false` or the agent file is absent, **skip and continue**: the critique +
+audit path from Step 3 stands on its own and the review proceeds normally. This is never a hard
+failure. Log one `SCANNED` entry naming the missing agent — "a contract existed and nothing could
+review the render against it" is a different state from "no contract," and only the log tells them
+apart.
 
 **Dispatch.** One `Task()` call, `subagent_type: impeccable-finish-reviewer`. Do **not** pass
 `isolation: "worktree"` — this mode routinely runs inside a worktree already set up for the task, and a
@@ -93,17 +96,38 @@ outside this plugin's `agents/` directory, which is the whole of the condition
 `DONE` status line, do not inline Template A, and do not re-prompt it for format. It has its own output
 contract; this step adapts to that contract instead of overwriting it.
 
-The dispatcher's side still binds. Send only:
+The dispatcher's side still binds. Build the 4.2.2+ input packet from what this mode has in hand —
+upstream's Input Contract (`agents/impeccable-finish-reviewer.md`) names every field below by name
+and cannot re-derive one this packet omits.
+
+**Always required — name any of these the packet cannot supply, in one line above the rest of the
+prompt:**
 
 1. **The artifact path(s)** — Step 2's resolved file list, absolute, with the file Step 3.6 found the
    contract in named first. Never the conversation, never this mode's own findings so far.
-2. **The direction contract** — the five blocks from Step 3.6's parse, verbatim. Its input contract
-   asks for them by name and it cannot re-derive them.
-3. **The detector findings already in hand** — Step 3's `audit` output. Upstream tells this agent not
+2. **The direction contract** — the five blocks from Step 3.6's parse, verbatim.
+3. **`PRODUCT.md`'s path**, when Layer 0 resolved it (`setup.hasProduct` / `setup.productPath`).
+   Named as a missing always-required input (not silently omitted) when Layer 0 did not resolve.
+4. **The detector findings already in hand** — Step 3's `audit` output. Upstream tells this agent not
    to run a second detector pass, so withholding what we already ran is what makes it run one.
-4. **`PRODUCT.md` / `DESIGN.md` paths**, when Layer 0 resolved them (`setup.hasProduct` /
-   `setup.hasDesign`), since its first check is persistence. Omit the line when Layer 0 did not
-   resolve — omitting is honest; guessing a path is not.
+5. **The craft-floor reference path** — `{pluginRoot}/skills/impeccable/reference/craft-floor.md`
+   (`pluginRoot` from the Availability resolve above).
+
+**Conditional — send only when present on disk; a missing one is normal and is never named as a
+gap:**
+
+- **Screenshots** already captured under `.impeccable/review/` (web: `desktop.png` / `mobile.png`;
+  native: one per device class), when that directory exists.
+- **The chosen world's QUALITY BAR card path**, when this project's own design state names one
+  findable on disk (e.g. alongside a decision comp under `.impeccable/mocks/decision/`) — this
+  repo has no dedicated resolver for it yet, so omit the line rather than guess a path.
+- **On a comp-led build only**: the approved comp path, `.impeccable/build/state.json`,
+  `.impeccable/build/spec.json`, and the diff directories `.impeccable/review/diff/hero/` and
+  `.impeccable/review/diff/final/`.
+
+`DESIGN.md`'s path is **not** part of upstream's Input Contract and is dropped from the packet —
+it was sent by the pre-4.2.2 caller this step replaces, but upstream's own Input Contract names
+only `PRODUCT.md`.
 
 Working-directory discipline applies as to any dispatch: the agent runs `Read`/`Bash`/`Glob`/`Grep`, so
 substitute the **resolved absolute** repository path into the prompt before dispatching, never an
@@ -114,14 +138,17 @@ carries what that line would have routed. None of these may be reported as a cle
 
 | Outcome | How it looks | What this step does |
 |---|---|---|
-| **Unavailable** | Resolver returned `null`, or no agent file | Skip; `SCANNED` log; omit `finish_review` from the return |
-| **Failed** | The dispatch errored, or the agent returned nothing | `finish_review: {ran: true, parsed: false, reason}`; no findings; `SCANNED` log |
-| **Unparseable** | A reply yielding none of the four sections | Same as Failed. Do **not** mine prose for something finding-shaped |
-| **Parsed** | The four sections are present | Adapt per Step 4 |
+| **Unavailable** | `resolve()` returned `ok: false`, or no agent file | Skip; `SCANNED` log; omit `finish_review` from the return |
+| **Failed** | The dispatch errored, or the agent returned nothing (an empty reply) | `finish_review: {ran: true, parsed: false, reason}`; no findings; `SCANNED` log |
+| **Unparseable** | The first non-empty line is not `disposition: {ship\|fix\|rebuild\|recapture}` (an unknown disposition word, or no disposition line at all); a `disposition: fix`/`rebuild`/`ship` reply missing any of the five named sections (`persistence`, `fidelity`, `ceiling`, `material_fixes`, `keep`); a `disposition: recapture` reply missing the `recapture` section; or `disposition: fix` with an empty `material_fixes` list | Reported as "finish review unparseable," never as a clean pass — same handling as Failed. Do **not** mine prose for something finding-shaped |
+| **Parsed** | The disposition line parses to one of the four words and its required section(s) are all present | Adapt per Step 4 |
 
-A parsed reply with an empty `material_fixes` list is a real, clean result and is reported as one —
-that is the only case that may say the render met its contract. Absence of output is not absence of
-findings, and the distinction lives in `parsed`, never in the finding count.
+A parsed `disposition: ship` reply (`material_fixes` empty by construction — `ship` only derives
+when the matrix holds no contradicted or missing row) is a real, clean result and is reported as
+one — that is the only case that may say the render met its contract. An empty `material_fixes`
+under any *other* disposition word is the Unparseable case above, never a clean pass. Absence of
+output is not absence of findings, and the distinction lives in `parsed`, never in the finding
+count.
 
 ### Step 3.8: Dispatch project-local craft critics
 
@@ -311,24 +338,27 @@ Parse each output into a normalized findings list:
 }
 ```
 
-**Adapting the finishing review (Step 3.7).** Its output contract is four named sections rather than a
-findings table — `persistence`, `ceiling`, `material_fixes`, `keep` — so the mapping is stated here
-rather than left to be inferred:
+**Adapting the finishing review (Step 3.7).** Normalize by **disposition word**, not by section —
+the disposition is upstream's own verdict over the five sections (a `fix`/`rebuild` already reflects
+whatever `persistence`/`fidelity`/`ceiling` found, surfaced through `material_fixes`), so this
+mapping never re-derives a second verdict from the sections underneath it:
 
-| Section | Becomes | `category` | `severity` |
+| `disposition` | Becomes | `category` | `severity` |
 |---|---|---|---|
-| `persistence`, when it fails | One finding per missing or mismatched file | `persistence` | `error` |
-| `ceiling`, when it is not `"reached"` | One finding naming the unused native devices | `ceiling` | `info` |
-| `material_fixes` | One finding each, **in the order given** | `contract` | `warning` |
-| `keep` | Not a finding — see below | — | — |
+| `ship` | No finding | — | — |
+| `fix` | One finding per `material_fixes` line, **in the order given** | `contract` | `warning` |
+| `rebuild` | One finding carrying the **first** `material_fixes` line; the rest are moot — upstream's rebuild directive tells the builder to stop ordering repairs | `contract` | `error` |
+| `recapture` | One finding naming the missing or invalid captures from the `recapture` section | `contract` | `warning` |
+| *(unparseable)* | Reported as "finish review unparseable," **never** a clean pass — see the outcomes table above for the exact unparseable conditions (unknown disposition word, a missing required section, an empty reply, `fix` with an empty `material_fixes`) | — | — |
 
 Three rules on this mapping:
 
-- **`severity` is assigned, not parsed.** Upstream emits no severity scale. These three values are this
-  wrapper's, chosen so the enum `/review` already maps (`info` → low, `warning` → medium, `error` →
-  high) keeps working. Do not manufacture a gradient from a fix's rank: `material_fixes` is ordered
-  most material first, and that ordering is preserved as **array order** in `findings`, which is the
-  whole of what upstream promised.
+- **`severity` is assigned, not parsed.** Upstream emits no severity scale. `warning`/`error` here are
+  this wrapper's own choice — `fix` and `recapture` map to medium (`warning`), `rebuild` to high
+  (`error`) — chosen so the enum `/review` already maps (`info` → low, `warning` → medium, `error` →
+  high) keeps working. Do not manufacture a gradient from a fix's rank within `fix`: `material_fixes`
+  is ordered most material first, and that ordering is preserved as **array order** in `findings`,
+  which is the whole of what upstream promised.
 - **`suggestion` is `null`.** The field exists to name an Impeccable command for `polish` mode to
   dispatch, and the finishing review names none. `null` rather than omitted, for the reason Step 5
   gives.
@@ -341,7 +371,7 @@ finding would invite someone to "resolve" it; discarding it strips the fixes of 
 them from flattening the design. It travels in the return as `finish_review.keep`, and the Design
 Quality section renders it above the findings it qualifies.
 
-`result` stays `advisory` whatever comes back. An `error`-severity persistence finding is advisory like
+`result` stays `advisory` whatever comes back. An `error`-severity `rebuild` finding is advisory like
 every other design finding — this mode gates nothing, exactly as Step 3.6 does not.
 
 **Adapting the craft critics (Step 3.8).** Each surviving table row from a parsed critic becomes one
