@@ -107,13 +107,18 @@ function resolveIntegrationRef(git, root, remote, branch) {
 
 // rev-parse --verify cannot tell an unknown prefix from an ambiguous one
 // (both exit 1); --disambiguate lists every object carrying the prefix.
+// An annotated tag object is kept alongside commits (not filtered out) —
+// classifyOne below peels it to the commit it points at before the ancestry
+// check, so a citation of a tag object's own hash is classified rather than
+// misreported as not-found (#2866 whole-branch review M4).
 function commitCandidates(git, root, prefix) {
   const out = git(['-C', root, 'rev-parse', `--disambiguate=${prefix}`]);
   const shas = out.split('\n').map((l) => l.trim()).filter(Boolean);
   // Belt-and-braces against --disambiguate's own prefix truncation (#2866):
   // keep only candidates that actually start with the (lowercased) prefix.
   return shas
-    .filter((sha) => sha.startsWith(prefix) && git(['-C', root, 'cat-file', '-t', sha]).trim() === 'commit')
+    .filter((sha) => sha.startsWith(prefix)
+      && ['commit', 'tag'].includes(git(['-C', root, 'cat-file', '-t', sha]).trim()))
     .sort();
 }
 
@@ -127,18 +132,33 @@ function classifyOne(git, root, input, integrationRef) {
   if (candidates.length === 0) return { input, outcome: 'not-found' };
   if (candidates.length > 1) return { input, outcome: 'ambiguous', candidates };
   const sha = candidates[0];
+  let commitSha = sha;
   try {
-    git(['-C', root, 'merge-base', '--is-ancestor', sha, integrationRef]);
-    return { input, outcome: 'reachable', sha };
+    if (git(['-C', root, 'cat-file', '-t', sha]).trim() === 'tag') {
+      commitSha = git(['-C', root, 'rev-parse', '--verify', '--end-of-options', `${sha}^{commit}`]).trim();
+    }
   } catch (err) {
-    if (err && err.status === 1) return { input, outcome: 'exists-unreachable', sha };
-    return { input, outcome: 'unverifiable', sha, reason: `ancestry check failed: ${errorText(err)}` };
+    return { input, outcome: 'unverifiable', sha, reason: `could not peel tag to commit: ${errorText(err)}` };
+  }
+  try {
+    git(['-C', root, 'merge-base', '--is-ancestor', commitSha, integrationRef]);
+    return { input, outcome: 'reachable', sha: commitSha };
+  } catch (err) {
+    if (err && err.status === 1) return { input, outcome: 'exists-unreachable', sha: commitSha };
+    return { input, outcome: 'unverifiable', sha: commitSha, reason: `ancestry check failed: ${errorText(err)}` };
   }
 }
 
 function verifyCommits({
   root, hashes, integrationBranch = null, remote = 'origin', deepen = true, git = defaultGit,
 } = {}) {
+  // A non-array hashes value (programmatic misuse — the CLI always passes an
+  // array) used to throw the cryptic "hashes.map is not a function" from the
+  // line below; fail with a clear, named error instead (#2866 whole-branch
+  // review M11).
+  if (hashes != null && !Array.isArray(hashes)) {
+    throw new TypeError(`verifyCommits: hashes must be an array, got ${typeof hashes}`);
+  }
   const inputs = (hashes || []).map(String);
   const result = {
     root,

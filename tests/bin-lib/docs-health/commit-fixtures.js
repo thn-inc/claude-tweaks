@@ -37,7 +37,10 @@ function makeOriginRepo() {
   const sideOnly = commit('c.txt', 'side only');
   git(dir, ['checkout', '-q', 'main']);
   const third = commit('d.txt', 'third');
-  return { dir, root, second, sideOnly, third };
+  git(dir, ['-c', 'user.email=t@example.com', '-c', 'user.name=T',
+    'tag', '-a', 'annotated', '-m', 'annotated tag', second]);
+  const annotatedTag = git(dir, ['rev-parse', 'annotated']).trim();
+  return { dir, root, second, sideOnly, third, annotatedTag };
 }
 
 // A file:// URL, not a bare path: a local-path clone ignores --depth.

@@ -107,6 +107,7 @@ test('judge-procedure.md point 6 runs verify-commit on every cited commit hash b
   assert.match(point6, /before emitting/i, 'point 6 must run the check before the finding is emitted');
   assert.match(point6, /`unverifiable`[^.]*never[^.]*`not-found`/, 'point 6 must forbid reading unverifiable as not-found');
   assert.match(point6, /already cites/i, 'point 6 must cover a commit hash the doc already cites, not only newString\'s new ones');
+  assert.match(point6, /\bdescription\b[^.]*\breason\b/, 'point 6 must cover commit hashes cited in description/reason, not only newString/oldString');
 });
 
 // This is the invariant the whole extraction rests on: the body is inlined

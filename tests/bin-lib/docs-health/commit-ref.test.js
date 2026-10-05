@@ -121,3 +121,21 @@ test('an input one character longer than a full sha1 hash classifies invalid, no
   const r = verifyCommits({ root: origin.dir, hashes: [over], integrationBranch: 'main' });
   assert.strictEqual(outcomeOf(r, over), 'invalid');
 });
+
+test('an annotated tag object hash is peeled to its commit and classified, not not-found', () => {
+  const origin = makeOriginRepo();
+  const r = verifyCommits({
+    root: origin.dir, hashes: [origin.annotatedTag.slice(0, 10)], integrationBranch: 'main',
+  });
+  assert.deepStrictEqual(r.commits, [
+    { input: origin.annotatedTag.slice(0, 10), outcome: 'reachable', sha: origin.second },
+  ]);
+});
+
+test('verifyCommits throws a clear TypeError on a non-array hashes value', () => {
+  const origin = makeOriginRepo();
+  assert.throws(
+    () => verifyCommits({ root: origin.dir, hashes: 'abcd', integrationBranch: 'main' }),
+    /verifyCommits: hashes must be an array, got string/,
+  );
+});

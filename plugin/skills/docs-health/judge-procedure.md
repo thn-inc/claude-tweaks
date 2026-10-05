@@ -51,7 +51,7 @@ Throughout, the bar for flagging anything is "would this actually mislead a read
 
    For each path in the result's `missing` array, that's a broken dependency — a staleness finding on its own. For each entry in `stale`, judge whether the tracked file's change is substantive enough to actually invalidate what the doc claims (a trivial reformat doesn't; a rewritten function signature does). A mismatch (stated fact, broken dependency, substantive tracked-file drift, or a failing/contradicting executed command) is a `category: "staleness"` finding.
 
-   Before emitting any finding whose `newString` cites a commit hash — including the replacement for a commit-hash citation that no longer resolves — verify every commit hash in that `newString` against complete repository history:
+   Before emitting any finding whose `newString`, `description`, or `reason` cites a commit hash — including the replacement for a commit-hash citation that no longer resolves — verify every commit hash in those fields against complete repository history:
 
    ```bash
    node "{plugin-root}/bin/docs-health.js" verify-commit <hash> [<hash> ...] --root "{root}"
@@ -60,6 +60,8 @@ Throughout, the bar for flagging anything is "would this actually mislead a read
    Each entry in the result's `commits` array carries an `outcome`: `reachable` (on the integration branch — safe to cite), `exists-unreachable` (a real commit that is not on the integration branch), `not-found`, `ambiguous` (an abbreviated hash matching several commits — re-run with the full hash; the result's `candidates` array lists the full hashes), `invalid`, or `unverifiable` (history could not be completed, such as a shallow clone that could not be deepened — no verdict, and never read it as `not-found`). Cite a hash as fact only when its outcome is `reachable`; for any other outcome, either drop the hash from `newString` or state explicitly in `newString` that the commit does not exist in the repository's history, is unreachable from the integration branch, or could not be verified, and name the outcome in `reason`.
 
    The same check applies to a commit hash the doc already cites, in `oldString`: before treating it as unresolvable or unreachable, run `verify-commit` on it too. Only `not-found` supports a "does not exist" claim, and only `exists-unreachable` supports an "unreachable" claim; `unverifiable` supports neither — drop that finding, or file it with `confidence: "low"` and say why in `reason`.
+
+   `description` and `reason` carry commit-hash citations too — e.g. a `reason` explaining why a hash is being replaced, or a `description` quoting the hash directly — and both reach the filed issue exactly as `newString`/`oldString` do; the same verify-then-cite rule applies to every hash in either field, not only the ones inside the literal replacement strings.
 
 7. For every finding, judge `misleads`: `"human"` (a skim-and-notice-caveat reader partially self-corrects), `"agent"` (retrieval-style consumption — a chunked search hit, not a full read-through — has no such safety net; weight this higher), or `"both"`.
 8. Judge `classification`: `"additive"` (a one-line fact correction, an added disclaimer) or `"restructural"` (reorganizing a doc that mixes genres, splitting a doc, moving a file).
