@@ -22,7 +22,7 @@ files:
 ### 1. Invoke the mode — terminal
 - **URL:** `/claude-tweaks:design-wrapper explore`
 - **Action:** Run at genesis (no `DESIGN.md`, or an empty stub). Scope auto-resolves to `identity` via Layer 0's `hasDesign` signal.
-- **Should feel:** Guarded but frictionless — the mode checks the kill-switch, the pinned plugin, and the track before any dealing happens; a native-surface project or a locked identity gets a clean one-line skip, never a broken tournament.
+- **Should feel:** Guarded but frictionless — the mode checks the kill-switch, a compatible (4.2.2+) Impeccable engine install, and the track before any dealing happens; a native-surface project or a locked identity gets a clean one-line skip, never a broken tournament.
 - **Should understand:** If `DESIGN.md` already declares a real identity (palette + typography direction), the mode refuses to re-deal — identity replacement routes through upstream new-work explicitly. Missing `PRODUCT.md` gets exactly one offer to run `/impeccable:impeccable init` first.
 - **Red flags:** The mode running from a pipeline (`auto` / `$PIPELINE_RUN_DIR`) context — it is interactive-only; the wrapper globbing the plugin cache directly instead of resolving through the `impeccable-engine` module.
 
