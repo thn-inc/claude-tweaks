@@ -14,16 +14,16 @@ For the dispatched mode, verify the dependency is available:
 | `pre-build` | Impeccable plugin (reference files) | Same as `review`. The reference files ship with the plugin; if the plugin resolves, the references are available. |
 | `polish` | Impeccable plugin (LLM commands) | Same as `review` — the refinement set and every suggestion-driven command all live in the plugin. |
 | `live` | Impeccable plugin (LLM commands + bundled live-mode scripts) | Same as `review` — checks for `/impeccable:impeccable*` skill resolution. The live-mode scripts ship with the plugin itself, so no separate check is needed. |
-| `doctor` | Impeccable plugin **at the pinned version** (bundled `doctor.mjs`) | Same resolution as Layer 0 below — `resolveImpeccablePlugin` per `impeccable-plugin.md`. **Unlike Layer 0, an unavailable result here *is* a mode-level skip**: `doctor` has no result to report without the script. Absent and off-pin are two distinct skip reasons; see `modes/doctor.md`'s skip table. |
-| `explore` | Impeccable plugin **at the pinned version** (bundled `concept-seed.mjs`) | Same resolution as Layer 0 / `doctor` — `resolveImpeccablePlugin` per `impeccable-plugin.md`. An unavailable result **is** a mode-level skip — the mode has nothing to deal without the script. |
-| **Layer 0** (all modes) | Impeccable plugin **at the pinned version**, resolved from the plugin cache | Follow `impeccable-plugin.md`'s resolution procedure: glob the cache, read each candidate's own `version`, select the one equal to the pin in its `<!-- upstream-pin: impeccable-plugin@X.Y.Z -->` comment. **Unlike every row above, an unavailable result here is not a mode-level skip** — see the note below the skip shapes. |
+| `doctor` | Impeccable engine available (`impeccable-engine.js resolve`) | Same resolution as Layer 0 below — `node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" resolve` per `impeccable-plugin.md`. **Unlike Layer 0, an unavailable result here *is* a mode-level skip**: `doctor` has no result to report without the engine. Each of the six failure reasons is its own skip reason; see `modes/doctor.md`'s skip table. |
+| `explore` | Impeccable engine available (`impeccable-engine.js resolve`) | Same resolution as Layer 0 / `doctor` — `node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" resolve` per `impeccable-plugin.md`. An unavailable result **is** a mode-level skip — the mode has nothing to deal without the engine. |
+| **Layer 0** (all modes) | Impeccable engine available (`impeccable-engine.js resolve`) | Follow `impeccable-plugin.md`'s resolution procedure: `node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" resolve` and branch on its `ok` field. **Unlike every row above, an unavailable result here is not a mode-level skip** — see the note below the skip shapes. |
 
 ## The three artifact kinds
 
 Impeccable's artifacts are checked independently and must not be conflated. The rows above fall into three kinds:
 
-- **LLM commands, by skill resolution, unpinned** (`review`, `shape`, `pre-build`, `polish`, `live`) — an off-pin plugin still answers `/impeccable:impeccable critique`.
-- **Bundled scripts, at an exact pin** (`doctor`, `explore`, and Layer 0) — `resolveImpeccablePlugin` per `impeccable-plugin.md`, because neither `context-signals.mjs` nor `doctor.mjs` nor `concept-seed.mjs` exists at every version that satisfies the skill-resolution check. These differ only in consequence: Layer 0 degrades to no-signals, `doctor` and `explore` skip the mode.
+- **LLM commands, by skill resolution, unpinned** (`review`, `shape`, `pre-build`, `polish`, `live`) — a differently-versioned plugin still answers `/impeccable:impeccable critique`.
+- **The engine** (`doctor`, `explore`, and Layer 0) — `impeccable-engine.js resolve`/`run` per `impeccable-plugin.md`, because none of the `signals`, `doctor`, or `concept-seed` verbs are reachable without a 4.2.2+ launcher and a cached engine binary. These differ only in consequence: Layer 0 degrades to no-signals, `doctor` and `explore` skip the mode.
 - **The CLI** (`test`) — a third artifact entirely, on its own version line.
 
 ## Skip shapes

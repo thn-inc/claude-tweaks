@@ -32,7 +32,7 @@ Upstream states the constraint: *"`live` and the bundled `detect.mjs` are web-on
 
 ### Step 2: Availability check (live-specific)
 
-In addition to the standard `/impeccable:impeccable*` skill-resolution check, live mode depends on scripts under `.claude/skills/impeccable/scripts/` (`live.mjs` et al.) shipping with the installed Impeccable plugin version. If `/impeccable:impeccable*` resolves at all, treat these scripts as present — they ship together as one plugin release; there is no separate installation step to check.
+In addition to the standard `/impeccable:impeccable*` skill-resolution check, live mode depends on the `live-*` verbs (`live-poll`, `live-accept`, `live-status`, `live-resume`, `live-complete`, `live-insert`, `live-wrap`, `live-server`, `live-inject`, and others — upstream's `skills/impeccable/reference/live.md` is authoritative) on the installed Impeccable plugin's own launcher script. These are reached through the same `/impeccable:impeccable*` skill check, not a separate script — if `/impeccable:impeccable*` resolves at all, treat the verbs as present; they ship together as one plugin release, with no separate installation step to check.
 
 ### Step 2.5: Dev-server veto (Layer 0, when signals resolved)
 
