@@ -1,16 +1,16 @@
 {
-  "computedAt": "2026-10-05T15:44:02.941Z",
+  "computedAt": "2026-10-06T03:17:29.998Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
       {
-        "number": 2985,
-        "updatedAt": "2026-10-05T15:41:50Z",
+        "number": 2997,
+        "updatedAt": "2026-10-06T03:15:49Z",
         "state": "OPEN"
       },
       {
         "number": 2844,
-        "updatedAt": "2026-10-04T12:41:24Z",
+        "updatedAt": "2026-10-05T22:38:35Z",
         "state": "OPEN"
       },
       {
@@ -135,7 +135,7 @@
       },
       {
         "number": 1350,
-        "updatedAt": "2026-10-05T02:30:29Z",
+        "updatedAt": "2026-10-06T03:16:32Z",
         "state": "OPEN"
       }
     ]
@@ -143,8 +143,8 @@
   "groups": [
     [
       {
-        "body": "Surface: infra\n\n## Overview\n\nClose the Impeccable engine migration: point the upstream pin, the drift manifest, the recorded fixtures and the contract test at the engine, and add a conformance test that fails if anything reintroduces the retired scripts. This is also the sub-issue that stops `npm test` from depending on which old Impeccable versions happen to sit in a machine's plugin cache. Today the three `tests/impeccable-plugin-contract.test.js` failures that #2840, #2867, #2880 and #2531 each re-diagnosed pass only because an orphaned 4.0.2 cache directory survives on the maintainer machine.\n\nThe pin's meaning changes: `impeccable-plugin@…` becomes \"last verified version\", read only by the drift tooling and the tests, never by runtime gating (runtime gates on output shape, per the engine module). A second pin, `impeccable-engine@…`, records the engine `VERSION` of that same install.\n\n**Complexity:** Medium\n**Estimated tasks:** 7\n\n## Non-Goals\n\n- Any skill-prose consumer change — sibling sub-issues own those, and this one is blocked by all of them.\n- Provisioning sandbox plugin caches (#2531's original ask); after this sub-issue, a mismatched cache skips the live-engine tests with a reason instead of failing them, so #2531 is re-checked against that outcome rather than built as filed.\n- The visual-decide stale-PID failure that #2880 also tracks.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| Layer 0 sub-issue (linked as blocker) | Move design-wrapper Layer 0 and availability onto the Impeccable engine | not started |\n| doctor sub-issue (linked as blocker) | Run design-wrapper doctor mode and /tidy Step 4.9 through the Impeccable engine | not started |\n| explore sub-issue (linked as blocker) | Run design-wrapper explore mode's concept-seed through the Impeccable engine | not started |\n| direction-contract sub-issue (linked as blocker) | Read the direction contract from Impeccable's surface brief | not started |\n| finish-reviewer sub-issue (linked as blocker) | Adapt the finish-reviewer dispatch to Impeccable 4.2.2+'s input packet and return shape | not started |\n\n## Current State\n\n- `tools/upstream-drift/manifest.yml:76-148` — the `impeccable-plugin` entry: `plugin-cache-glob` version source, `pinned: \"4.0.2\"`, `contract-paths` including `scripts/context-signals.mjs` and `scripts/concept-seed.mjs`, and 15 assertions, six of which target removed scripts (`live.mjs` once, `context-signals.mjs` three times, `concept-seed.mjs` twice) and one of which (`must-match: \"as a contract in the artifact's opening comment\"`) pins the contract location 4.2.2+ abandoned.\n- `plugin/skills/design-wrapper/impeccable-plugin.md` carries `<!-- upstream-pin: impeccable-plugin@4.0.2 -->`; `tests/impeccable-plugin-contract.test.js:47` asserts it equals the manifest pin.\n- `tests/impeccable-plugin-contract.test.js` — `:59` \"the installed plugin matches the pinned version\" (fails on a present-but-different cache), `:130` manifest assertions hold, `:140` \"gatherSignals() executes cleanly …\", `:196` \"the CLI entrypoint accepts no flags\" (both import `context-signals.mjs`, `:28`), and `:276-317` the `scan.targets` / Layer 3 tests over `tests/fixtures/impeccable-plugin/signals-backend-repo.json`.\n- `tests/fixtures/impeccable-plugin/` — `README.md` (recording procedure), `signals-backend-repo.json`, and a fake plugin cache with 3.0.6 and 4.0.4 manifests.\n- `tools/upstream-drift/tests/run.test.js:210` and `tests/bin-lib/skill-audit/anti-patterns.test.js:250-251` reference `live.mjs` / `doctor.mjs`.\n- `plugin/skills/design-wrapper/claude-design-skill-comparison.md` (`:51`, `:73`, `:83`, `:99`) describes the wrapper using `concept-seed.mjs` and `doctor.mjs` in the present tense.\n- Install landscape on the maintainer machine (2026-10-04): user scope 4.4.0 (engine 0.1.6, cached); this repo's project scope 4.5.0 (engine 0.1.11, not cached).\n\n## Deliverables\n\n- [ ] Pins: record fixtures from whichever install `node plugin/bin/impeccable-engine.js resolve` selects in the recording session; it must return `ok: true` there. Set `impeccable-plugin@…` (manifest `pinned:` and the `impeccable-plugin.md` comment, together) to that `resolve` output's `pluginVersion`. Add an `impeccable-engine@…` pin (manifest and comment) set to its `engineVersion`, which is read from the `engine-probe` handshake. Reword the pin comment's surrounding text to \"last verified version\". Name the install, scope and the `resolve` output in the PR description.\n- [ ] Manifest: drop the six assertions on removed scripts and the two removed `contract-paths`; repoint the contract-location assertion to `## Direction contract` in `reference/new-work.md`; add assertions, on upstream's own files:\n  - the launcher path, `skills/impeccable/scripts/impeccable`;\n  - the launcher text containing `engine-probe`, with the live-engine block below separately asserting that the probe output matches `/^impeccable-engine \\S+$/`;\n  - the launcher's `IMPECCABLE_LAUNCHER_PROBE` no-download branch, asserted on the launcher's own text;\n  - `doctor --json` in `skills/impeccable/SKILL.md`;\n  - both `concept-seed --scope` invocations in `reference/`;\n  - the finish-reviewer's `disposition:` first line and five section names in `agents/impeccable-finish-reviewer.md`.\n\n  Every literal is re-read from the recording install's files at build time, and from the sibling sub-issues' merged text where they quote it, never copied from this record.\n- [ ] Fixtures: re-record `signals`, `doctor --json` (replacing the doctor sub-issue's committed capture) and `concept-seed` outputs from a real engine through `impeccable-engine.js run`, in a session with network access. If the catalog service is unreachable, stop and ask the human to record `concept-seed`; never hand-write that fixture; update `README.md`'s recording procedure to the engine and note that recording `concept-seed` contacts Impeccable's catalog service.\n- [ ] Contract test: delete the `gatherSignals()` and CLI-entrypoint tests; run fixture-driven validator tests (the engine module's validators over the recorded fixtures) everywhere including CI; wrap every live-engine check in a block that runs only when `impeccable-engine.js resolve` returns `ok: true` and otherwise skips with the resolve reason in the skip message; turn \"the installed plugin matches the pinned version\" into a skip-with-reason when the active install differs from the pin (the drift tool, run explicitly, still reports the breach).\n- [ ] `tools/upstream-drift/tests/run.test.js` and `tests/bin-lib/skill-audit/anti-patterns.test.js`: replace the retired-script references.\n- [ ] Reword present-tense claims about the scripts in `claude-design-skill-comparison.md` (and `third-party-design-skill-comparisons.md` if any remain after the finish-reviewer sub-issue); historical statements may stay in the past tense.\n- [ ] New `tests/impeccable-retired-scripts-sweep.test.js`: fails if `context-signals.mjs`, `doctor.mjs`, `concept-seed.mjs`, `live.mjs` or `resolveImpeccablePlugin` appears in any tracked file under `plugin/`, `.claude/skills/`, `docs/`, `tests/` or `tools/`, matching on each file's whole text with every whitespace run (newlines included) collapsed to one space, so a name wrapped across a markdown line break is still caught. Exempt by exact path, unconditionally (whatever text remains in them): the two comparison notes, `docs/incident-log.md`, `docs/superpowers/plans/`, `tests/bin-lib/issues/fixtures/record-146-body.md`, `tests/bin-lib/issues/fixtures/record-150-body.md`, `.claude/skills/upstream-drift/judge-procedure.md` (a historical worked example), and the sweep test itself.\n\n- [ ] Follow-up on #2531, at wrap-up: comment on #2531 with the observed contract-test outcome on a machine whose cache holds a non-pinned version (skip with reason, no failure), and recommend closing it as resolved by this sub-issue.\n- [ ] Keep `tests/impeccable-plugin-contract.test.js:89` (\"version mismatch is a breach…\"), so `checkVersion` still reports a breach when the drift tool runs on purpose.\n\n## Acceptance Criteria\n\n1. On a machine with no Impeccable install, `node --test tests/impeccable-plugin-contract.test.js` passes with the live-engine tests reported as skipped.\n2. On a machine whose active install differs from the pin, or whose engine is not cached, the same command passes, with each skip message naming the resolve reason or the version difference — no test fails because of cache contents.\n3. On the machine and install the fixtures were recorded from, the same command passes with the live-engine tests executed, not skipped.\n4. `node tools/upstream-drift/run.js` reports `ok` for `impeccable-plugin` on that same install.\n5. The pin-parity test passes for both `impeccable-plugin@` and `impeccable-engine@`.\n6. Reintroducing the string `context-signals.mjs` into any non-exempt file under `plugin/` makes `tests/impeccable-retired-scripts-sweep.test.js` fail — verified by a temporary edit before merge and recorded in the PR description.\n7. `npm test` passes.\n\n## Release Note\n\nUpdated the design-wrapper's Impeccable contract checks to the engine-based Impeccable 4.2.2+, so tests no longer fail depending on which old Impeccable versions are cached on a machine.\n\n## Technical Approach\n\nThe contract test splits into two layers: fixture-driven shape tests that need no install and run everywhere, and live-engine tests gated on `impeccable-engine.js resolve`. Version drift becomes a drift-tool report, not a test failure. The sweep test is a plain `git ls-files` plus whitespace-collapsed substring scan with an exact-path exemption list.\n\n### Key Files\n\n- `tools/upstream-drift/manifest.yml` — pin, contract-paths, assertions\n- `plugin/skills/design-wrapper/impeccable-plugin.md` — the two pin comments\n- `tests/impeccable-plugin-contract.test.js` — two-layer rewrite\n- `tests/fixtures/impeccable-plugin/README.md` — engine recording procedure\n- `tests/fixtures/impeccable-plugin/signals-backend-repo.json` — re-recorded from the engine\n- `tests/fixtures/impeccable-plugin/doctor.json` — re-recorded `doctor --json` output (first committed by the doctor sub-issue)\n- `tests/fixtures/impeccable-plugin/concept-seed.txt` — new recorded `concept-seed` output\n- `tools/upstream-drift/tests/run.test.js` — replace the `live.mjs` reference\n- `tests/bin-lib/skill-audit/anti-patterns.test.js` — replace the `doctor.mjs` history references\n- `plugin/skills/design-wrapper/claude-design-skill-comparison.md` — present-tense rewording\n- `plugin/skills/design-wrapper/third-party-design-skill-comparisons.md` — present-tense rewording, if any remains\n- `tests/impeccable-retired-scripts-sweep.test.js` — new retirement-sweep conformance test\n- `tools/upstream-drift/checks.js` — read only: `checkVersion`'s present-but-different → breach behaviour the test now turns into a skip\n\n## Gotchas\n\n- Record fixtures from an install whose engine is actually present. In this repo, the project-scope 4.5.0 install resolves `engine-not-installed` (engine 0.1.11 not cached) until its launcher runs once with network access, so a recording session inside this repo needs that one deliberate run first. Outside this repo, user-scope 4.4.0 (engine 0.1.6, cached) resolves directly. The pin follows whichever install `resolve` selected; see the Pins deliverable.\n- ASSUMPTION — verify at build: the engine's `signals` still carries `scan.targets` with the same scannable-extension behaviour the Layer 3 tests (`:276-317`) replay — via the re-recorded fixture; if it does not, the Layer 3 retention claim in `impeccable-plugin.md` needs revisiting in this sub-issue.\n- Byte-pinned conformance tests make two independently green branches merge red; this sub-issue lands last, so run the full `npm test` after merging `origin/main` into the branch, not just the contract test.\n- `grep -c` counts lines, not occurrences; the sweep test must count matches, and must collapse whitespace so a name wrapped across a markdown line break is still caught.\n\n\n<!-- work-fingerprint: impeccable-engine-migration:re-pin-impeccable-to-the-engine-re-record-fixtures-rewrite-c -->\nwork-fingerprint: impeccable-engine-migration:re-pin-impeccable-to-the-engine-re-record-fixtures-rewrite-c",
-        "createdAt": "2026-10-04T18:45:12Z",
+        "body": "Origin: dispatch of #2980-#2984 (session 6ccd43b3), group 3 PR #2996\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n`_shared/pr-early-run-lifecycle.md` defines the run PR's body template: a `<!-- claude-tweaks-run: {run-id} -->` marker on the first line, a `phases-start`/`phases-end` checklist, and a `fixes-start`/`fixes-end` block carrying one `Fixes #{n}` per record. Nothing composes that template mechanically: the agent running `/flow`'s PR-early step writes the body by hand and passes it to `gh pr create`.\n\nObserved on PR #2996 (record #2982, run `2026-10-05T071404-record-2982`, a dispatched `build,test` call): the PR was created at 2026-10-05T07:31:37Z with a freeform `## Summary` body carrying none of the three markers. GitHub's `userContentEdits` for the PR shows exactly two versions — the creation body and a later manual restore — so it was opened without the template, not overwritten afterwards.\n\nNothing downstream repairs it. `_shared/pr-checklist-refresh.md`'s phase-checklist update treats a missing delimiter pair as a best-effort skip (the run logged `SKIP ... body carries no phases-start/phases-end delimiter pair` twice), and its pre-merge Fixes-block rewrite replaces the fixes span only when one exists. The file calls a stale title, checklist or Fixes block \"cosmetic, never a merge blocker\". The run reached `pending-review` with `closingIssuesReferences` empty; the dispatching session noticed only because it happened to read that field, and restored the template by hand.\n\nA missing block is not cosmetic, on three counts:\n- `partitionByOpenLinkedPR` (`bin/lib/issues/record.js`) keys dispatch's open-linked-PR exclusion (#1224) on `closedByPullRequestsReferences` alone, so a record whose PR has no closing reference stays dispatch-eligible while that PR is open (only the claim stands in the way, until it is released).\n- `_shared/github-pr-scan.md`'s unarmed-PR and stale-pending scans recognize plugin PRs only by the `RUN_MARKER` regex, so such a PR drops out of `/help` and `/tidy`.\n- A merge through GitHub's UI (rather than `pr-first-merge.md`'s `compose-subject.js` path, whose commit message carries its own `Fixes` lines) does not close the record.\n\n## Deliverables\n\n1. A tested `plugin/bin/` CLI (or an extension of an existing one) that composes the PR-early body from the run directory — run id, phases, resume line, and one `Fixes #{n}` per target — so `_shared/pr-early-run-lifecycle.md`'s `gh pr create` step passes its output via `--body-file` instead of a hand-written body. The template's literal text moves into that module, and the prose cites it instead of restating it.\n\n2. A repair path for a body missing the markers: when `_shared/pr-checklist-refresh.md`'s phase-checklist update or pre-merge refresh finds no run marker, no phases pair, or no fixes pair, it re-inserts the missing pieces (keeping any freeform content the body already has) instead of skipping, and logs one `AUTO` line naming what was restored.\n\n3. Correct `pr-checklist-refresh.md`'s \"a stale ... `Fixes` block is cosmetic, never a merge blocker\" sentence: a missing Fixes block must be restored before the merge sequence runs (still never a new stop — restoration is mechanical).\n\n4. A test covering a PR body with all three marker pairs absent: the repair step restores all three and preserves the freeform text.\n\n## Acceptance Criteria\n\n- [ ] A `/flow` run's PR-early `gh pr create` passes a body produced by the new composer, and the composed body passes `RUN_MARKER` and contains both delimiter pairs and one `Fixes #{n}` per target.\n\n- [ ] Given a run PR whose body has no markers (the #2996 shape), the next phase-checklist update or the pre-merge refresh restores the run marker, phases block and fixes block, keeps the existing freeform text, and logs one `AUTO` line; `gh pr view --json closingIssuesReferences` then lists the run's records.\n\n- [ ] `pr-checklist-refresh.md` no longer describes a missing `Fixes` block as cosmetic.\n\n- [ ] `npm test` passes, including the new tests.\n\n## Release Note\n\nPipeline PRs now always carry the run marker, phase checklist and `Fixes` lines, and a PR opened without them is repaired before merge, so merging it closes its records.\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-10-05T15:33:18Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -153,22 +153,22 @@
             "color": "0e8a16"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
             "id": "LA_kwDORUwzVM8AAAACruzLxQ",
             "name": "size:medium",
             "description": "Size: medium effort",
             "color": "fbca04"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACrzEqFA",
@@ -183,21 +183,21 @@
             "color": "0052CC"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: standard review",
-            "color": "c5def5"
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Risk: medium blast radius",
+            "color": "fbca04"
           }
         ],
-        "number": 2985,
+        "number": 2997,
         "state": "OPEN",
-        "title": "Re-pin Impeccable to the engine, re-record fixtures, rewrite contract tests, add a retirement sweep",
-        "updatedAt": "2026-10-05T15:41:50Z",
+        "title": "PR-early lifecycle can open a run's PR without its template, and nothing restores it before merge",
+        "updatedAt": "2026-10-06T03:15:49Z",
         "facets": {
-          "origin": null,
-          "risk": "low",
+          "origin": "capture",
+          "risk": "medium",
           "size": "medium",
-          "ceremony": "standard",
+          "ceremony": null,
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
@@ -300,90 +300,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule\nsentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`,\n18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its\npersonas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent`\ntool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a\nstatic `node --test` assertion; it can only be confirmed by observing an actual future `/specify`\ndecomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that\npersona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s\nfan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the\nobservation (transcript excerpt or note) against this item, or file a defect against\n`red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use\ncalls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of\nsub-issues) assistant messages.\n\n## Release Note\n\nNo user-visible change: verified that spec red-team reviews batch correctly across several sub-issues.\n\n## Technical Approach\n\nWait for (or trigger) a `/claude-tweaks:specify` decomposition-mode run that produces 2 or more\n`ceremony:standard` sub-issue records — `ceremony-check` (`assess-agent-autonomy/ceremony-check.md`)\nresolves the tier per sub-issue during that run's own Step 3, so the tier isn't knowable until the\nrun happens. Once such a run occurs, inspect that session's stored transcript for the Step 5\nred-team dispatch (`specify/red-team.md`'s Parallel dispatch section): locate the `Agent` tool_use\nblocks for each dispatched persona and group them by the assistant message id each block belongs\nto. Confirm the number of distinct assistant message ids covering all persona dispatches for a\ngiven sub-issue is ≤ the number of sub-issues in that batch. Use the same read-only transcript\ninspection method `transcript-payload-verification` documents for reading this session's own\nlocally-stored transcript, rather than instrumenting or modifying `red-team.md` itself.\n\nIf the count exceeds the bound, file a defect issue against `red-team.md`'s dispatch prose\n(quoting the transcript grouping that violates the rule) instead of editing the file directly from\nthis record — this record's own deliverable is the observation, not the fix.\n\n### Key Files\n\n- `plugin/skills/specify/red-team.md` — the per-sub-issue persona dispatch procedure being observed\n- `plugin/skills/_shared/subagent-output-contract.md` — the fan-out single-assistant-message rule this observation verifies compliance with\n- `tests/subagent-contract-clauses.test.js` — AC1's existing static test coverage (unaffected by this record)\n\n## Gotchas\n\n- This record's acceptance criterion depends on an external event (a live `/specify` decomposition\n  run over 2+ `ceremony:standard` sub-issues happening) that this record cannot itself trigger on a\n  fixed schedule — it may sit open for some time until a qualifying run occurs naturally, or until\n  someone deliberately runs one to close it out.\n- A qualifying run must be observed via its own transcript at the time it happens; this record\n  cannot be resolved from historical data if no already-completed run's transcript is still\n  available.\n\n## Original request\n\nVerify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)\n\nOrigin: ledger resolve gate\n\nDefer-reason: needs-human-decision\n\n## Current State\n\nRecord #649 added `_shared/subagent-output-contract.md`'s fan-out single-assistant-message-rule sentence and per-site citations (AC1, fully test-pinned in `tests/subagent-contract-clauses.test.js`, 18/18 passing). AC2 — \"A `/specify` red-team over 2+ `ceremony:standard` sub-issues launches its personas in ≤ (number of sub-issues) assistant messages, verified in the transcript by `Agent` tool_use blocks sharing a message id\" — is a live-behavior criterion that cannot be verified by a static `node --test` assertion; it can only be confirmed by observing an actual future `/specify` decomposition run's transcript.\n\n## Deliverables\n\nConfirm, at the next `/specify` decomposition run over 2+ `ceremony:standard` sub-issues, that persona dispatch actually batches into ≤N assistant messages per `_shared/subagent-output-contract.md`'s fan-out single-assistant-message rule and `red-team.md`'s per-sub-issue batching unit. Record the observation (transcript excerpt or note) against this item, or file a defect against `red-team.md`'s dispatch prose if it does not.\n\n## Acceptance Criteria\n\nA `/specify` run over 2+ `ceremony:standard` sub-issues is observed; its persona `Agent` tool_use calls are confirmed (via transcript `tool_use` block message-id grouping) to arrive in ≤ (number of sub-issues) assistant messages.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
-        "createdAt": "2026-08-24T03:21:25Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: ready for dispatch",
-            "color": "0e8a16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "E99695"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAAC0IWj4w",
-            "name": "fix-on-worktree-worktree-dispatch-record-1350",
-            "description": "Fixed on worktree-worktree-dispatch-record-1350, not yet on the default branch",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 1350,
-        "state": "OPEN",
-        "title": "Verify /specify red-team fan-out batching at next live multi-sub-issue run (#649 AC2)",
-        "updatedAt": "2026-10-05T02:30:29Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
         }
       }
     ]
