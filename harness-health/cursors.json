@@ -162,5 +162,9 @@
   "skill:upstream-repin": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1791264624337
+  },
+  "skill:design-wrapper": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1791273628362
   }
 }
