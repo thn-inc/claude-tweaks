@@ -24,10 +24,8 @@
     "changedCount": 5
   },
   "devServer": {
-    "running": true,
-    "ports": [
-      8080
-    ]
+    "running": false,
+    "ports": []
   },
   "scan": {
     "targets": [

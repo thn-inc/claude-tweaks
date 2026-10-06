@@ -1,7 +1,7 @@
 # Impeccable Plugin — Context Signals (Layer 0)
 
-<!-- upstream-pin: impeccable-plugin@4.0.2 -->
-*Last verified against the Impeccable **plugin** 4.0.2, with the Layer 3 non-equivalence assertion below still pinned and proven by `tests/impeccable-plugin-contract.test.js`. Resolution and execution are owned by `plugin/bin/lib/impeccable-engine/index.js` (record #2979) and covered by `tests/bin-lib/impeccable-engine/*.test.js` — this file documents the CLI contract that wraps it, not a parallel implementation. A prose re-verification pass is not a substitute for running those tests — see the same rationale in `impeccable-cli.md`'s pin statement (`[IL-89]`).*
+<!-- upstream-pin: impeccable-plugin@4.5.0 impeccable-engine@0.1.11 -->
+*Last verified against the Impeccable **plugin** 4.5.0 (project scope) and its cached **engine** 0.1.11, with the Layer 3 non-equivalence assertion below still pinned and proven by `tests/impeccable-plugin-contract.test.js`. Both numbers are last-verified-against markers, not exact pins this file's resolution enforces — see "Last verified version, not an exact pin" below. Resolution and execution are owned by `plugin/bin/lib/impeccable-engine/index.js` (record #2979) and covered by `tests/bin-lib/impeccable-engine/*.test.js` — this file documents the CLI contract that wraps it, not a parallel implementation. A prose re-verification pass is not a substitute for running those tests — see the same rationale in `impeccable-cli.md`'s pin statement (`[IL-89]`).*
 
 The **plugin** and the **CLI** are two independent artifacts on two independent version lines. `impeccable-cli.md` pins `impeccable-cli`; this file pins `impeccable-plugin`. Conflating them is the documented root cause of the drift `tools/upstream-drift/manifest.yml` exists to catch, and that manifest carries the two as separate entries for exactly this reason.
 
@@ -62,7 +62,7 @@ A `run <verb>` call (`## Invocation`) resolves internally first and returns the 
 
 ### Last verified version, not an exact pin
 
-Earlier versions of this file pinned Layer 0's resolution to one exact plugin version, selected by globbing the plugin cache. The engine module drops that constraint deliberately: `resolve()` accepts any install carrying the 4.2.2+ launcher and a cached engine binary, regardless of exact version, because the launcher's own `engine-probe`/verb dispatch is the real compatibility boundary now. The `<!-- upstream-pin: impeccable-plugin@4.0.2 -->` comment above records the version this file's prose was **last verified against**, not a version this resolver enforces — `tools/upstream-drift/manifest.yml` is where an exact-version contract (`tests/impeccable-plugin-contract.test.js`'s Layer 3 assertion) still lives.
+Earlier versions of this file pinned Layer 0's resolution to one exact plugin version, selected by globbing the plugin cache. The engine module drops that constraint deliberately: `resolve()` accepts any install carrying the 4.2.2+ launcher and a cached engine binary, regardless of exact version, because the launcher's own `engine-probe`/verb dispatch is the real compatibility boundary now. The `<!-- upstream-pin: impeccable-plugin@4.5.0 impeccable-engine@0.1.11 -->` comment above records the plugin and engine versions this file's prose was **last verified against**, not versions this resolver enforces — `tools/upstream-drift/manifest.yml` is where an exact-version contract (`tests/impeccable-plugin-contract.test.js`'s Layer 3 assertion) still lives.
 
 ## Degradation
 
