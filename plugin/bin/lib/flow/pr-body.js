@@ -95,6 +95,36 @@ function hasFixesPair(body) {
   return html || plain;
 }
 
+// Strips an orphaned single-sided delimiter line — a start marker present
+// with no matching end, or an end present with no matching start, in either
+// marker form — before a repair decides whether to append a fresh pair.
+// Without this, a body already carrying one half of a pair (a prior partial
+// write, a manual edit, or any other source of a malformed span) would fail
+// the presence check below, trigger a fresh pair append, and end up with
+// the orphan plus the new pair both present: two starts and one end (or the
+// mirror), an unclosed span a downstream "find the span between markers"
+// read could misparse — swallowing everything between the orphan and the
+// new, unrelated close marker, including real freeform content between
+// them. Removes only the marker line itself, never surrounding content.
+// "Both present" (a real pair, or already two full pairs) and "both absent"
+// are left untouched — there is nothing orphaned in either case.
+function stripOrphanedHalf(body, startTokens, endTokens) {
+  const hasStart = startTokens.some((t) => body.includes(t));
+  const hasEnd = endTokens.some((t) => body.includes(t));
+  if (hasStart === hasEnd) return body;
+  const orphanTokens = hasStart ? startTokens : endTokens;
+  let result = body;
+  for (const token of orphanTokens) {
+    result = result.split('\n').filter((line) => line.trim() !== token).join('\n');
+  }
+  return result;
+}
+
+const PHASES_START_TOKENS = ['<!-- phases-start -->', '[claude-tweaks-phases-start]'];
+const PHASES_END_TOKENS = ['<!-- phases-end -->', '[claude-tweaks-phases-end]'];
+const FIXES_START_TOKENS = ['<!-- fixes-start -->', '[claude-tweaks-fixes-start]'];
+const FIXES_END_TOKENS = ['<!-- fixes-end -->', '[claude-tweaks-fixes-end]'];
+
 // { body, runId, fixesLines, phases? } -> { body, restored }
 // Restores whichever of the run marker / phases pair / fixes pair are
 // missing from `body`, keeping every byte of its existing content
@@ -112,11 +142,13 @@ function repairPrBody({ body, runId, fixesLines, phases }) {
     result = `${runMarkerHtml(runId)}\n${runMarkerPlain(runId)}\n\n${result}`;
     restored.push('run marker');
   }
+  result = stripOrphanedHalf(result, PHASES_START_TOKENS, PHASES_END_TOKENS);
   if (!hasPhasesPair(result)) {
     const sep = result.endsWith('\n') ? '\n' : '\n\n';
     result = `${result}${sep}### Phases\n\n${composePhasesBlock(phases)}\n`;
     restored.push('phases block');
   }
+  result = stripOrphanedHalf(result, FIXES_START_TOKENS, FIXES_END_TOKENS);
   if (!hasFixesPair(result)) {
     const sep = result.endsWith('\n') ? '\n' : '\n\n';
     result = `${result}${sep}${composeFixesSpan(fixesLines)}\n`;

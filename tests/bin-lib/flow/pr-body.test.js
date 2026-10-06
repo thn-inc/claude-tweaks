@@ -100,6 +100,58 @@ test('repairPrBody restores only the pieces actually missing', () => {
   assert.ok(body.includes('some freeform notes'));
 });
 
+test('repairPrBody strips an orphaned half-marker instead of appending a duplicate unclosed span (wrap-up #2997 follow-up)', () => {
+  // A phases-start with no matching phases-end — e.g. a body truncated mid-write.
+  // Human content sits between the orphan and the real fixes block.
+  const malformed = [
+    '<!-- phases-start -->',
+    'some human notes between the orphan and the fixes block',
+    '<!-- fixes-start -->',
+    '[claude-tweaks-fixes-start]',
+    'Fixes #42',
+    '[claude-tweaks-fixes-end]',
+    '<!-- fixes-end -->',
+  ].join('\n');
+  const { body, restored } = repairPrBody({ body: malformed, runId: 'r1', fixesLines: ['Fixes #42'] });
+
+  assert.deepEqual(restored, ['run marker', 'phases block']);
+  // The orphaned start is gone, not left dangling alongside a freshly appended pair.
+  const phasesStartCount = (body.match(/<!-- phases-start -->/g) || []).length;
+  const phasesEndCount = (body.match(/<!-- phases-end -->/g) || []).length;
+  assert.equal(phasesStartCount, 1, 'exactly one phases-start — the orphan must not survive alongside the new pair');
+  assert.equal(phasesEndCount, 1);
+  // The freeform content between the orphan and the real fixes block must survive.
+  assert.ok(body.includes('some human notes between the orphan and the fixes block'));
+  // The original fixes block (never touched — it was already a real pair) must survive untouched.
+  assert.match(body, /Fixes #42/);
+  assert.equal(hasPhasesPair(body), true);
+  assert.equal(hasFixesPair(body), true);
+});
+
+test('repairPrBody strips an orphaned fixes-end with no matching fixes-start', () => {
+  const malformed = [
+    '<!-- claude-tweaks-run: r1 -->',
+    'claude-tweaks-run: r1',
+    '',
+    '<!-- phases-start -->',
+    '[claude-tweaks-phases-start]',
+    '- [ ] build',
+    '[claude-tweaks-phases-end]',
+    '<!-- phases-end -->',
+    '',
+    'stray trailing content',
+    '[claude-tweaks-fixes-end]',
+  ].join('\n');
+  const { body, restored } = repairPrBody({ body: malformed, runId: 'r1', fixesLines: ['Fixes #7'] });
+
+  assert.deepEqual(restored, ['fixes block']);
+  const fixesEndCount = (body.match(/\[claude-tweaks-fixes-end\]/g) || []).length;
+  assert.equal(fixesEndCount, 1, 'the orphaned end must not survive alongside the new pair\'s own end');
+  assert.ok(body.includes('stray trailing content'));
+  assert.match(body, /Fixes #7/);
+  assert.equal(hasFixesPair(body), true);
+});
+
 test('hasRunMarker/hasPhasesPair/hasFixesPair recognize either the HTML-comment or the plain-text form alone (#929 MCP-read case)', () => {
   assert.equal(hasRunMarker('claude-tweaks-run: r1\n'), true);
   assert.equal(hasRunMarker('no marker here'), false);
