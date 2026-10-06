@@ -254,5 +254,9 @@
   "plugin/bin/lib/dream": {
     "lastSweptMs": 1791170975167,
     "lastHash": "77d03e59e14ce008f23ebec3dc8c025da964723b"
+  },
+  "plugin/bin/lib/impeccable-engine": {
+    "lastSweptMs": 1791256072626,
+    "lastHash": "f59043971c98868a77e32843fa741c4db2fca75f"
   }
 }
