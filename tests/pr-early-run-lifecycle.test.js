@@ -275,3 +275,31 @@ test('#2997: pr-checklist-refresh.md\'s Phase-checklist update repairs a body ca
   assert.match(CHECKLIST_REFRESH, /Repair before locating anything \(#2997\)/);
   assert.match(CHECKLIST_REFRESH, /This replaces the former best-effort skip on a\s*\n\s*missing delimiter pair/);
 });
+
+// #2997 follow-up (found during /claude-tweaks:wrap-up's Skills curation row): Step 3's
+// "Composed shape" fence is a prose/code twin of composePrEarlyBody's actual output — a
+// fenced template, not a table, which is exactly the shape prose-code-twin-pin's own
+// Anti-Patterns table now names. The tests above only assert each side's own literals
+// separately (markers present, module cited); neither pins the fence against the real
+// composer output, so a sixth phase row or a renamed delimiter on either side would leave
+// both green. Extract the fence by structure and assert byte equality (modulo the
+// composer's own trailing newline, which the fence — embedded inside the prose — doesn't
+// carry) against calling the composer with the fence's own placeholder text.
+test('#2997 follow-up: Step 3\'s "Composed shape" fence is byte-identical to composePrEarlyBody\'s real output', () => {
+  const stepIdx = LIFECYCLE.indexOf('### Step 3: Compose the body');
+  assert.ok(stepIdx !== -1, 'Step 3 heading not found');
+  const fenceMatch = LIFECYCLE.slice(stepIdx).match(/```markdown\n([\s\S]*?)\n```/);
+  assert.ok(fenceMatch, 'no ```markdown fence found under Step 3');
+  const fence = fenceMatch[1];
+
+  const composed = composePrEarlyBody({
+    runId: '{run-id}',
+    specSummary: '{one-paragraph summary}',
+    target: '{target}',
+    nextStep: '{next-step}',
+    fixesLines: ['Fixes #{n}'],
+    runDir: '{run-dir}',
+  });
+
+  assert.strictEqual(fence, composed.replace(/\n$/, ''), 'the prose fence and the composer\'s real output have drifted apart');
+});
