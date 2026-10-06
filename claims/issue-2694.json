@@ -1,6 +1,7 @@
 {
-  "released": true,
-  "runId": "2026-10-03T223242-record-2694",
-  "reason": "failed: review-spec-compliance",
-  "releasedAt": "2026-10-04T11:41:03.281Z"
+  "runId": "2026-10-06T063143-record-2694",
+  "sessionId": "fe81ffe8-3b72-5552-9e56-5feca0602afb",
+  "claimedAt": "2026-10-06T06:51:04.492Z",
+  "ttlHours": 72,
+  "host": "vm"
 }
