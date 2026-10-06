@@ -222,3 +222,56 @@ test('bin/hooks.js record-pr verb writes run-state.json.pr through writeRunState
   assert.match(HOOKS_JS, /ctxLib\.writeRunState\(runDir, \{ pr: /);
   assert.match(HOOKS_JS, /\{ number, url: urlArg \}/);
 });
+
+// #2997: nothing composed the PR-early body mechanically — the agent running
+// /flow's PR-early step wrote it by hand, so a run could open a PR missing
+// the run marker / phase checklist / Fixes block (observed on PR #2996).
+// bin/lib/flow/pr-body.js now owns that template's literal text, and these
+// tests pin the cite-instead-of-restate change plus the module's own output.
+const { composePrEarlyBody, repairPrBody } = require('../plugin/bin/lib/flow/pr-body');
+
+test('#2997: Step 3 composes the body via composePrEarlyBody (bin/lib/flow/pr-body.js) instead of hand-composing it', () => {
+  assert.match(LIFECYCLE, /composePrEarlyBody/);
+  assert.match(LIFECYCLE, /bin\/lib\/flow\/pr-body\.js/);
+});
+
+test('#2997 AC1: a run PR body produced by composePrEarlyBody passes RUN_MARKER, both delimiter pairs, and one Fixes line per target', () => {
+  const body = composePrEarlyBody({
+    runId: '2026-10-06T031832-record-2997',
+    specSummary: 'One paragraph.',
+    target: '#2997',
+    nextStep: 'build',
+    fixesLines: ['Fixes #2997'],
+  });
+  // RUN_MARKER is the HTML-comment-form regex _shared/github-pr-scan.md keys on.
+  const RUN_MARKER = /<!-- claude-tweaks-run: ([^ ]+) -->/;
+  assert.match(body, RUN_MARKER);
+  assert.match(body, /<!-- phases-start -->[\s\S]*<!-- phases-end -->/);
+  assert.match(body, /<!-- fixes-start -->[\s\S]*<!-- fixes-end -->/);
+  assert.match(body, /Fixes #2997/);
+});
+
+test('#2997 AC2/AC4: repairPrBody restores a #2996-shaped body (no markers at all) and preserves its freeform text', () => {
+  const freeform = '## Summary\n\nOpened without the template.\n';
+  const { body, restored } = repairPrBody({ body: freeform, runId: 'r1', fixesLines: ['Fixes #42'] });
+  assert.deepEqual(restored, ['run marker', 'phases block', 'fixes block']);
+  assert.ok(body.includes('Opened without the template.'));
+  assert.match(body, /<!-- claude-tweaks-run: r1 -->/);
+  assert.match(body, /<!-- phases-start -->/);
+  assert.match(body, /<!-- fixes-start -->/);
+});
+
+test('#2997 AC3: a missing Fixes/phases/run-marker block is no longer described as cosmetic', () => {
+  assert.doesNotMatch(
+    CHECKLIST_REFRESH,
+    /stale title\/checklist\/`Fixes` block is cosmetic/,
+    'the old sentence lumped a missing Fixes block in with a merely-stale title/checklist — #2997 corrects that',
+  );
+  assert.match(CHECKLIST_REFRESH, /missing.{0,40}run marker, phases pair, or `Fixes` block is not\s*\ncosmetic/);
+  assert.match(CHECKLIST_REFRESH, /repairPrBody/);
+});
+
+test('#2997: pr-checklist-refresh.md\'s Phase-checklist update repairs a body carrying no markers instead of skipping', () => {
+  assert.match(CHECKLIST_REFRESH, /Repair before locating anything \(#2997\)/);
+  assert.match(CHECKLIST_REFRESH, /This replaces the former best-effort skip on a\s*\n\s*missing delimiter pair/);
+});
