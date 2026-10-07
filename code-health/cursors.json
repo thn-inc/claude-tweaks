@@ -258,5 +258,9 @@
   "plugin/bin/lib/impeccable-engine": {
     "lastSweptMs": 1791256072626,
     "lastHash": "f59043971c98868a77e32843fa741c4db2fca75f"
+  },
+  "plugin/bin/lib/set-config": {
+    "lastSweptMs": 1791342503818,
+    "lastHash": "d27229fee87a018b8d38cec82af6005ba099bbc2"
   }
 }
