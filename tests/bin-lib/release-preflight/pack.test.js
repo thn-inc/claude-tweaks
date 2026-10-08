@@ -239,6 +239,16 @@ test('hook (pr-first): CRLF workflows are scanned like LF ones — a Windows che
   assert.strictEqual(await hookOf({ 'publish.yml': 'on:\r\n  release:\r\n    types: [created]\r\njobs: {}\r\n' }), false);
 });
 
+test('hook (pr-first): an inline comment directly on `on:` or `release:` does not hide the block below it (#3040)', async () => {
+  // ON_LINE_RE's `[ \t]*` eats the gap before `#`, so the captured value is `# trigger` —
+  // stripComment must strip a comment that starts the value, not only one after whitespace.
+  const commentedOn = 'on:  # trigger\n  release:\n    types: [published]\n';
+  assert.strictEqual(await hookOf({ 'publish.yml': commentedOn }), true);
+  assert.strictEqual(await hookOf({ 'publish.yml': commentedOn.replace(/\n/g, '\r\n') }), true);
+  assert.strictEqual(await hookOf({ 'publish.yml': 'on:\n  release:  # note\n    types: [published]\n' }), true);
+  assert.strictEqual(await hookOf({ 'ci.yml': 'on: [push]  # ci only\n' }), false);
+});
+
 test("engine honours the run's pinned config.yml over policy.yml (ruling 13)", async () => {
   const runDir = path.join(ROOT, '.claude-tweaks/pipelines/2026-09-12T000000-release');
   const { deps } = fakeDeps({ files: { [path.join(runDir, 'config.yml')]: 'integration-model: local-merge\n' } });
