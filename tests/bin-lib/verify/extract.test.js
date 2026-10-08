@@ -470,10 +470,10 @@ test('failingTestsByFile: an entry whose name line does not parse is null, never
   assert.deepStrictEqual(failingTestsByFile(log, 'spec').get('tests/a.test.js'), [null]);
 });
 
-test('failingTestsByFile: TAP names come from every `not ok` block at any indentation, directive stripped (#3043)', () => {
+test('failingTestsByFile: TAP names come from every `not ok` block at any indentation; a SKIP/TODO block names nothing (#3043)', () => {
   assert.deepStrictEqual([...failingTestsByFile(NESTED_TAP, 'tap', { cwd: '/repo' })], [['tests/nested.test.js', ['inner', 'grp']]]);
-  const todo = 'not ok 1 - known # TODO fix later\n  at tests/a.test.js:2:1\n# fail 0';
-  assert.deepStrictEqual(failingTestsByFile(todo, 'tap').get('tests/a.test.js'), ['known']);
+  const todo = 'not ok 1 - known # TODO fix later\n  at tests/a.test.js:2:1\nnot ok 2 - real\n  at tests/a.test.js:5:1\n# fail 1';
+  assert.deepStrictEqual(failingTestsByFile(todo, 'tap').get('tests/a.test.js'), ['real']);
   assert.deepStrictEqual([...failingTestsByFile(TAP_FILE_LEVEL, 'tap', { cwd: 'C:\\repo' })], [['tests/broken.test.js', ['tests/broken.test.js']]]);
 });
 

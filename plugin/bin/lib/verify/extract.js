@@ -228,14 +228,17 @@ function specEntries(lines) {
 // file that fails to load takes, as opposed to a failing test inside it.
 const SPEC_FAIL_NAME_RE = /^✖ (.+) \(\d[\d.]*ms\)\s*$/;
 
-// A TAP name carries an optional `# SKIP` / `# TODO` directive after it.
-const TAP_NAME_RE = /^\s*not ok\b(?:\s+\d+)?(?:\s+-)?\s*(.*?)(?:\s+#\s*(?:SKIP|TODO)\b.*)?\s*$/i;
+// A TAP name carries an optional `# SKIP` / `# TODO` directive after it. A
+// block with a directive is not a failure (TAP's `# fail` excludes it), so it
+// contributes no name — a todo name at base must never cover a real failure
+// at HEAD.
+const TAP_NAME_RE = /^\s*not ok\b(?:\s+\d+)?(?:\s+-)?\s*(.*?)(\s+#\s*(?:SKIP|TODO)\b.*)?\s*$/i;
 
 // The failing test names per relativized test file, in log order, as a
 // multiset (a name may repeat): Map<file, (string|null)[]>. spec: the
 // `✖ <name> (…)` line after each `test at` entry, minus its duration (null
 // when that line does not parse). tap: each `not ok N - <name>` block's name,
-// directive stripped, under every test file its frames name. A file-level
+// under every test file its frames name — a `# SKIP`/`# TODO` block is skipped. A file-level
 // entry's name is the path itself, so it is normalized the same way the file
 // is. Entries naming no test file are skipped (countUnmatchedFailures counts
 // them); every other family returns an empty Map.
@@ -257,7 +260,8 @@ function failingTestsByFile(text, family, { cwd = process.cwd() } = {}) {
   }
   if (family === 'tap') {
     for (const block of tapBlocks(lines)) {
-      const name = block.line.replace(/\r$/, '').match(TAP_NAME_RE)[1];
+      const [, name, directive] = block.line.replace(/\r$/, '').match(TAP_NAME_RE);
+      if (directive) continue;
       tapBlockFiles(block, cwd).forEach((rel) => add(rel, name));
     }
   }
