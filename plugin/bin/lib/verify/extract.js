@@ -249,9 +249,10 @@ const TAP_NAME_RE = /^\s*not ok\b(?:\s+\d+)?(?:\s+-)?\s*(.*?)(\s+#\s*(?:SKIP|TOD
 // skipped. A file-level entry's name is the path itself, so it is normalized
 // the same way the file is. Entries naming no test file are skipped
 // (countUnmatchedFailures counts them); every other family returns an empty
-// Map. `located`: each per-test name becomes `<name>@<line>:<col>` (the test's
-// definition site; null when the entry carries none), so two tests sharing a
-// leaf name in one file stay distinct. `conclusiveOnly`: an entry whose
+// Map. `located`: each name — file-level ones included — becomes
+// `<name>@<line>:<col>` (the failing site; null when the entry carries none),
+// so a load failure (`1:1`) and a file-scoped hook failure stay distinct.
+// `conclusiveOnly`: an entry whose
 // diagnostics say it timed out or was cancelled is dropped — it did not
 // finish, which proves nothing about whether it fails.
 const INCONCLUSIVE_RE = /test timed out after|testTimeoutFailure|cancelledBy|was cancelled|did not finish before/i;
@@ -261,7 +262,7 @@ function failingTestsByFile(text, family, { cwd = process.cwd(), located = false
   const add = (rel, name, loc, body) => {
     if (conclusiveOnly && body.some((l) => INCONCLUSIVE_RE.test(l))) return;
     let named = name !== null && relativize(name, cwd) === rel ? rel : name;
-    if (located && named !== null && named !== rel) named = loc ? `${named}@${loc}` : null;
+    if (located && named !== null) named = loc ? `${named}@${loc}` : null;
     if (!byFile.has(rel)) byFile.set(rel, []);
     byFile.get(rel).push(named);
   };
@@ -297,34 +298,43 @@ function cancelledCount(text, family) {
 // Every test point a single-file log reports. `all`/`passed` count leaf names
 // (pass, fail or skip — suites included / only the ones that ran and passed,
 // no SKIP/TODO directive), `paths` counts suite paths; `failed` lists each
-// failing point by its suite path
-// (`outer > inner > name`, a multiset in log order — suites and parent tests
+// failing point by its suite path (a JSON array of names, so no name can
+// fake a nesting boundary; a multiset in log order — suites and parent tests
 // included), so two tests sharing a leaf name in different suites stay
 // distinct. spec reads the tree above `✖ failing tests:` (that section
 // repeats failures), nesting from `▶ name` openers and their same-indent
 // closers; tap reads every `ok`/`not ok` line at any indentation, nesting
-// from `# Subtest: name` lines. Other families: empty.
-const SPEC_TREE_RE = /^(\s*)([✔✖﹣])\s+(.+) \(\d[\d.]*ms\)(\s+#\s*(?:SKIP|TODO)\b.*)?\s*$/;
-const SPEC_OPEN_RE = /^(\s*)▶ (.+?)\s*$/;
-const TAP_POINT_RE = /^(\s*)(not ok|ok)\b(?:\s+\d+)?(?:\s+-)?\s*(.*?)(\s+#\s*(?:SKIP|TODO)\b.*)?\s*$/i;
-const TAP_OPEN_RE = /^(\s*)# Subtest: (.+?)\s*$/;
+// from `# Subtest: name` lines. Names are read byte-for-byte on both sides,
+// never trimmed. `wellFormed` is false when the nesting does not close
+// cleanly — a point at a suite's indent that is not its closer, a point
+// shallower than an open suite, or a suite still open at the end (a name
+// containing a newline prints across lines) — and such a tree is no
+// evidence of anything. Other families: empty and well-formed.
+const SPEC_TREE_RE = /^( *)([✔✖﹣]) (.+) \(\d[\d.]*ms\)( # (?:SKIP|TODO)\b.*)?$/;
+const SPEC_OPEN_RE = /^( *)▶ (.*)$/;
+const TAP_POINT_RE = /^( *)(not ok|ok)(?= |$)(?: \d+)?(?: - )?(.*?)( # (?:SKIP|TODO)\b.*)?$/i;
+const TAP_OPEN_RE = /^( *)# Subtest: (.*)$/;
 function testTree(text, family) {
   const all = new Map();
   const passed = new Map();
   const paths = new Map();
   const failed = [];
+  let wellFormed = true;
   const bump = (map, name) => map.set(name, (map.get(name) || 0) + 1);
   const open = [];
   const point = (indent, name, ok, fail) => {
     const top = open[open.length - 1];
-    if (top && top.indent === indent && top.name === name) open.pop();
-    const qualified = [...open.map((o) => o.name), name].join(' > ');
+    if (top && indent < top.indent) wellFormed = false;
+    if (top && indent === top.indent) {
+      if (top.name === name) open.pop(); else wellFormed = false;
+    }
+    const qualified = JSON.stringify([...open.map((o) => o.name), name]);
     bump(all, name);
     bump(paths, qualified);
     if (ok) bump(passed, name);
     if (fail) failed.push(qualified);
   };
-  if (family !== 'spec' && family !== 'tap') return { all, passed, paths, failed };
+  if (family !== 'spec' && family !== 'tap') return { all, passed, paths, failed, wellFormed };
   for (const raw of stripAnsi(text).split('\n')) {
     const line = raw.replace(/\r$/, '');
     if (family === 'spec') {
@@ -340,7 +350,8 @@ function testTree(text, family) {
       if (m) point(m[1].length, m[3], m[2].toLowerCase() === 'ok' && !m[4], m[2].toLowerCase() === 'not ok' && !m[4]);
     }
   }
-  return { all, passed, paths, failed };
+  if (open.length > 0) wellFormed = false;
+  return { all, passed, paths, failed, wellFormed };
 }
 
 // Relativized forward-slash test paths whose failing entries are ALL

@@ -489,9 +489,9 @@ const LOCATED_SPEC = ['ℹ tests 4', 'ℹ pass 0', 'ℹ fail 4', 'ℹ cancelled 
   'test at tests/a.test.js:12:1', '✖ slow (100ms)', "  'test timed out after 100ms'", '',
   'test at tests/b.test.js:1:1', '✖ tests/b.test.js (5ms)', "  'test failed'", ''].join('\n');
 
-test('failingTestsByFile: located keys carry the definition site; file-level names stay the path (#3043)', () => {
+test('failingTestsByFile: located keys carry the failing site — file-level ones too, so a load failure and a hook failure differ (#3043)', () => {
   assert.deepStrictEqual(failingTestsByFile(LOCATED_SPEC, 'spec', { cwd: '/r', located: true }).get('tests/a.test.js'), ['works@3:3', 'works@9:3', 'slow@12:1']);
-  assert.deepStrictEqual(failingTestsByFile(LOCATED_SPEC, 'spec', { cwd: '/r', located: true }).get('tests/b.test.js'), ['tests/b.test.js']);
+  assert.deepStrictEqual(failingTestsByFile(LOCATED_SPEC, 'spec', { cwd: '/r', located: true }).get('tests/b.test.js'), ['tests/b.test.js@1:1']);
   const tap = "not ok 1 - works\n  ---\n  location: '/r/tests/a.test.js:9:3'\n  ...\nnot ok 2 - bare\n  at tests/a.test.js:4:1\n# fail 2";
   assert.deepStrictEqual(failingTestsByFile(tap, 'tap', { cwd: '/r', located: true }).get('tests/a.test.js'), ['works@9:3', null]);
 });
@@ -528,12 +528,30 @@ test('testTree counts every test point by name and the ones that passed — skip
 
 test('testTree qualifies failing points by suite path — spec `▶` nesting and tap `# Subtest:` nesting (#3043)', () => {
   const spec = testTree(['▶ X', '  ✖ works (1ms)', '✖ X (2ms)', '▶ Y', '  ✔ works (1ms)', '✔ Y (2ms)', 'ℹ tests 2'].join('\n'), 'spec');
-  assert.deepStrictEqual(spec.failed, ['X > works', 'X']);
-  assert.strictEqual(spec.paths.get('Y > works'), 1);
+  assert.deepStrictEqual(spec.failed, ['["X","works"]', '["X"]']);
+  assert.strictEqual(spec.paths.get('["Y","works"]'), 1);
   assert.strictEqual(spec.all.get('works'), 2);
+  assert.strictEqual(spec.wellFormed, true);
   const tap = testTree(['# Subtest: X', '    # Subtest: works', '    not ok 1 - works', '    1..1', 'not ok 1 - X', '# Subtest: Y', 'ok 2 - Y'].join('\n'), 'tap');
-  assert.deepStrictEqual(tap.failed, ['X > works', 'X']);
+  assert.deepStrictEqual(tap.failed, ['["X","works"]', '["X"]']);
   assert.deepStrictEqual([...tap.passed], [['Y', 1]]);
+  assert.strictEqual(tap.wellFormed, true);
+  // A name containing the old ` > ` separator cannot fake a nesting level.
+  assert.notStrictEqual(testTree('▶ a > b\n  ✖ c (1ms)\n✖ a > b (1ms)', 'spec').failed[0], testTree('▶ a\n  ▶ b\n    ✖ c (1ms)\n  ✖ b (1ms)\n✖ a (1ms)', 'spec').failed[0]);
+});
+
+test('testTree reads suite names byte-for-byte and marks unclosed or mismatched nesting malformed (#3043)', () => {
+  // ` setup` (leading space) opens and closes under the same name — later siblings are top-level again.
+  const spaced = testTree(['▶  setup', '  ✖ a (1ms)', '✖  setup (2ms)', '✖ works (1ms)'].join('\n'), 'spec');
+  assert.strictEqual(spaced.wellFormed, true);
+  assert.deepStrictEqual(spaced.failed, ['[" setup","a"]', '[" setup"]', '["works"]']);
+  // A suite name with a newline prints across lines: its closer never parses, so the tree is no evidence.
+  assert.strictEqual(testTree(['▶ multi', 'line', '  ✖ a (1ms)', '✖ multi', 'line (2ms)', '✖ works (1ms)'].join('\n'), 'spec').wellFormed, false);
+  // A point at the open suite's indent that is not its closer.
+  assert.strictEqual(testTree(['▶ X', '✖ works (1ms)'].join('\n'), 'spec').wellFormed, false);
+  const tapSpaced = testTree(['# Subtest:  setup', '    # Subtest: a', '    not ok 1 - a', 'not ok 1 -  setup', 'not ok 2 - works'].join('\n'), 'tap');
+  assert.strictEqual(tapSpaced.wellFormed, true);
+  assert.deepStrictEqual(tapSpaced.failed, ['[" setup","a"]', '[" setup"]', '["works"]']);
 });
 
 test('testTree reads a name that itself contains ` (Nms)` whole, never its prefix (#3043)', () => {

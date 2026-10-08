@@ -225,12 +225,10 @@ async function adjudicate({
     // the base run's own log must name this very file as failing, under the
     // same accounting guards as HEAD's, with nothing cancelled and no failure
     // that timed out or was cancelled (it did not finish — no evidence; the
-    // whole base log is then unproven). `located` keys a test by its
-    // definition site (`name@line:col`), kept only when its leaf name is
-    // unique in the base file's tree — one call site in a loop yields several
-    // tests at one site. `qualified` is the tree's failing points by suite
-    // path (`X > works`), kept only when that path is unique in the tree, for
-    // comparing against another single-file log.
+    // whole base log is then unproven). `located` keys each failure by its
+    // failing site (`name@line:col`, file-level ones included). `qualified`
+    // is the base tree's failing points by suite path, kept only when that
+    // path is unique in the tree — and none at all from a malformed tree.
     const baseEv = baseRuns.map((r, k) => {
       if (r === null || typeof r.exitCode !== 'number' || r.exitCode === 0) return null;
       const text = readLog(r.logPath);
@@ -238,31 +236,24 @@ async function adjudicate({
       const family = accountedFamily(text, baseDir);
       if (family === null) return null;
       const file = work[k].file;
-      const keys = failingTestsByFile(text, family, { cwd: baseDir, located: true }).get(file);
+      const located = failingTestsByFile(text, family, { cwd: baseDir, located: true }).get(file);
       const conclusive = failingTestsByFile(text, family, { cwd: baseDir, conclusiveOnly: true }).get(file);
-      if (!keys || !conclusive || conclusive.length !== keys.length) return null;
+      if (!located || !conclusive || conclusive.length !== located.length) return null;
       const tree = testTree(text, family);
-      const names = failingTestsByFile(text, family, { cwd: baseDir }).get(file);
-      const located = keys.filter((key, i) => names[i] === file || (names[i] !== null && tree.all.get(names[i]) === 1));
-      const qualified = tree.failed.filter((p) => tree.paths.get(p) === 1);
+      const qualified = tree.wellFormed ? tree.failed.filter((p) => tree.paths.get(p) === 1) : [];
       return { located, qualified, fileLevel: fileLevelFailures(text, family, { cwd: baseDir }).has(file) };
     });
-    // Covered at base without a HEAD re-run: only an unchanged test file,
-    // compared test-by-test at the definition site, so an old environment
-    // failure cannot cover a new failing test in the same file. A changed
-    // file always falls through to the isolated HEAD run.
-    const failsAtBase = baseEv.map((ev, k) => {
-      if (!ev || !unchanged[k] || !coveredBy(work[k].headLocated, ev.located)) return false;
-      if (!ev.fileLevel) return true;
-      // A file-level base failure is a test file that did not load. A scratch
-      // worktree carries no untracked dependencies, so that is not
-      // distinguishable from a missing install: it proves "fails at base" only
-      // when HEAD's own failure was file-level too and HEAD resolves no
-      // dependencies either — Node's own resolution: no node_modules at the
-      // HEAD directory or any ancestor, and no NODE_PATH (inherited or the
-      // check's own --cmd-env).
-      return work[k].headFileLevel && !headResolvesDeps && !(envOf(work[k].check) || {}).NODE_PATH;
-    });
+    // No HEAD re-run only for a test file that does not load at all: wholly
+    // file-level at base and in the full run, unchanged, failing at the same
+    // sites (a load failure at 1:1 never covers a file-scoped hook failure).
+    // A scratch worktree carries no untracked dependencies, so a load failure
+    // there is not distinguishable from a missing install: it proves "fails
+    // at base" only when HEAD resolves no dependencies either — Node's own
+    // resolution: no node_modules at the HEAD directory or any ancestor, and
+    // no NODE_PATH (inherited or the check's own --cmd-env). Every other file
+    // present at base takes the isolated HEAD run.
+    const failsAtBase = baseEv.map((ev, k) => Boolean(ev) && ev.fileLevel && work[k].headFileLevel && unchanged[k]
+      && coveredBy(work[k].headLocated, ev.located) && !headResolvesDeps && !(envOf(work[k].check) || {}).NODE_PATH);
     // A file absent at base is new on this branch: attributable outright —
     // an isolated pass must never let a flaky verdict cover a new file.
     const headRuns = await pool(work, concurrency, (w, k) => (failsAtBase[k] || !atBase[k] ? null : run(w, 'isolated', cwd)));
@@ -283,7 +274,8 @@ async function adjudicate({
       if (family === null) return false;
       const counts = parseCounts(text, family);
       if (!(counts.tests > 0 && counts.pass > 0 && counts.fail === 0)) return false;
-      return work[k].headTests.length > 0 && work[k].headTests.every(passedIn(testTree(text, family)));
+      const tree = testTree(text, family);
+      return tree.wellFormed && work[k].headTests.length > 0 && work[k].headTests.every(passedIn(tree));
     };
     // Baseline after an isolated HEAD run: the isolated log (same accounting
     // guards, nothing cancelled, naming only this file, never a file-level
@@ -302,6 +294,7 @@ async function adjudicate({
       if (files.length !== 1 || files[0] !== file) return null;
       if (fileLevelFailures(text, family, { cwd: headDir }).has(file)) return null;
       const tree = testTree(text, family);
+      if (!tree.wellFormed) return null;
       const isoNames = failingTestsByFile(text, family, { cwd: headDir }).get(file);
       if (!isoNames || !isoNames.every((n) => n !== null && tree.all.get(n) === 1)) return null;
       if (!tree.failed.every((p) => tree.paths.get(p) === 1) || !coveredBy(tree.failed, baseEv[k].qualified)) return null;

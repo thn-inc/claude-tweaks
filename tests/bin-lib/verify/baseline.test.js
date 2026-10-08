@@ -54,7 +54,7 @@ function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, t
 
 const tmpl = new Map([['tests', 'node --test {file}']]);
 
-test('every failing file also fails at base → verdict pass, nothing re-run at HEAD (#3043 AC1)', async () => {
+test('every failing file fails the same tests at base and in isolation at HEAD → verdict pass (#3043 AC1)', async () => {
   const { p, dir } = logFile(SPEC(['tests/a.test.js', 'tests/b.test.js']));
   const { git, runOne, calls } = fakes({ outcomes: { 'baseline:tests/a.test.js': 1, 'baseline:tests/b.test.js': 1 } });
   const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'origin/main', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
@@ -62,8 +62,9 @@ test('every failing file also fails at base → verdict pass, nothing re-run at 
   assert.strictEqual(r.verdict, 'pass');
   assert.deepStrictEqual(r.baselineFailing, ['tests/a.test.js', 'tests/b.test.js']);
   assert.deepStrictEqual(r.attributable, []);
-  assert.deepStrictEqual(calls.runs.filter((c) => c.kind === 'isolated'), []);
-  assert.deepStrictEqual(calls.runs.map((c) => c.cwd), ['/scratch', '/scratch']);
+  assert.deepStrictEqual(r.baselineIsolated['tests/a.test.js'].waived, []);
+  // Per-test failures are never covered by the base run alone — each file also runs once in isolation at HEAD.
+  assert.deepStrictEqual(calls.runs.map((c) => `${c.kind}@${c.cwd}`), ['baseline@/scratch', 'baseline@/scratch', 'isolated@/repo', 'isolated@/repo']);
   assert.deepStrictEqual(calls.removed, ['/scratch']);
 });
 
@@ -217,8 +218,11 @@ test('C2: the comparison is a multiset — a name failing twice at HEAD needs tw
 test('C2: every HEAD failing test also failing at base (a superset at base is fine) is baseline (#3043)', async () => {
   const { p, dir } = logFile(SPEC_NAMED([['tests/a.test.js', 'env one']]));
   const { git, runOne } = fakes({
-    outcomes: { 'baseline:tests/a.test.js': 1 },
-    logs: { 'baseline:tests/a.test.js': SPEC_NAMED([['tests/a.test.js', 'env two'], ['tests/a.test.js', 'env one']]) },
+    outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 },
+    logs: {
+      'baseline:tests/a.test.js': SPEC_NAMED([['tests/a.test.js', 'env two'], ['tests/a.test.js', 'env one']]),
+      'isolated:tests/a.test.js': SPEC_NAMED([['tests/a.test.js', 'env one']]),
+    },
   });
   const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
   assert.deepStrictEqual(r.baselineFailing, ['tests/a.test.js']);
@@ -231,7 +235,10 @@ test('C2: TAP names compare the same way — a new failing test beside an old on
   const { p, dir } = logFile(tap(['old env failure', 'new regression # TODO not really']));
   const { git, runOne } = fakes({
     outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 },
-    logs: { 'baseline:tests/a.test.js': tap(['old env failure', 'new regression']).replace(/\/repo\//g, '/scratch/') },
+    logs: {
+      'baseline:tests/a.test.js': tap(['old env failure', 'new regression']).replace(/\/repo\//g, '/scratch/'),
+      'isolated:tests/a.test.js': tap(['old env failure']),
+    },
   });
   const covered = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
   assert.deepStrictEqual(covered.baselineFailing, ['tests/a.test.js'], 'directive stripped, base paths relativized against the scratch tree');
@@ -486,6 +493,38 @@ test('flaky needs evidence too: an isolated exit 0 where the full-run failure ne
     assert.deepStrictEqual(r.flakyPassed, []);
     assert.deepStrictEqual(r.attributable, [R]);
   }
+});
+
+test('a suite name with a leading space nests exactly — moving a failing test into ` setup` is attributable (#3043)', async () => {
+  // Base: describe(' setup', () => it('a')); it('works') — both fail. HEAD: works moved inside ` setup`, failing for a new reason.
+  const base = TREE(['▶  setup', '  ✖ a (1ms)', '✖  setup (2ms)', '✖ works (1ms)'], [['a', '2:3'], ['works', '4:1']]);
+  const iso = TREE(['▶  setup', '  ✖ a (1ms)', '  ✖ works (1ms)', '✖  setup (2ms)'], [['a', '2:3'], ['works', '3:3']]);
+  const r = await isolationCase(iso, { head: iso, baseLog: base, sameAtBase: () => false });
+  assert.deepStrictEqual(r.attributable, [R]);
+});
+
+test('a malformed isolated tree (a suite name spanning lines) is no evidence (#3043)', async () => {
+  const tree = ['▶ multi', 'line', '  ✖ a (1ms)', '✖ multi', 'line (2ms)'];
+  const r = await isolationCase(TREE(tree, [['a', '2:3']]), { head: TREE(tree, [['a', '2:3']]), baseLog: TREE(tree, [['a', '2:3']]) });
+  assert.deepStrictEqual(r.attributable, [R]);
+});
+
+test('a file-scoped hook failure at base never covers a test file that fails to load at HEAD (#3043)', async () => {
+  // Base: an `after` hook throws (reported as the file, at 7:1) beside an ordinary failing test. HEAD: the file does not load (1:1).
+  const base = TREE([`✖ ${R} (3ms)`, '✖ crlf (1ms)'], [[R, '7:1'], ['crlf', '3:1']]);
+  const head = FILE_LEVEL(R);
+  const r = await isolationCase(FILE_LEVEL(R), { head, baseLog: base });
+  assert.deepStrictEqual(r.baselineFailing, []);
+  assert.deepStrictEqual(r.attributable, [R]);
+});
+
+test('data-driven tests at one call site: base fails alpha > works, HEAD fails beta > works — attributable via the isolated run (#3043)', async () => {
+  const base = TREE(['▶ alpha', '  ✖ works (1ms)', '✖ alpha (2ms)'], [['works', '8:5']]);
+  const iso = TREE(['▶ alpha', '  ✔ works (1ms)', '✔ alpha (2ms)', '▶ beta', '  ✖ works (1ms)', '✖ beta (2ms)'], [['works', '8:5']]);
+  const r = await isolationCase(iso, { head: TREE(['✖ works (1ms)'], [['works', '8:5']]), baseLog: base });
+  assert.deepStrictEqual(r.baselineFailing, []);
+  assert.deepStrictEqual(r.attributable, [R]);
+  assert.strictEqual(r.calls.runs.filter((c) => c.kind === 'isolated').length, 1, 'an unchanged file with per-test failures still takes the isolated run');
 });
 
 test('a changed test file always takes the isolated run, comparing names unique in both trees (#3043)', async () => {
