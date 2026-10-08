@@ -170,7 +170,7 @@ Under a scoped run (the table above), render the runner's `Scope:` line — and 
 | Tests | {pass/fail} | {Xs} | {passed}/{total}, {failed count} failures |
 ```
 
-Source the table from report.json: Status from each check's exitCode (or skipped), Duration from durationMs, Details from summary/counts. Capture VERIFICATION_SHA from report.json's sha — with the dirty caveat: dirty: true means "verified this tree, which is not exactly commit sha". When the runner printed any `CAVEAT:` line (`testCountRegression`, `flaky-retried`, `flaky-allowlist`), render each (see "Suite-count regression caveat" above) as its own paragraph directly under the table — never folded into the Tests row, since it is not a pass/fail signal.
+Source the table from report.json: Status from each check's exitCode (or skipped) — except after a baseline-adjudicated pass, where it is the runner's own `pass (baseline-adjudicated vs …)` Status, Duration from durationMs, Details from summary/counts. Capture VERIFICATION_SHA from report.json's sha — with the dirty caveat: dirty: true means "verified this tree, which is not exactly commit sha". When the runner printed any `CAVEAT:` line (`testCountRegression`, `flaky-retried`, `flaky-allowlist`, `baseline-flaky`), render each (see "Suite-count regression caveat" above) as its own paragraph directly under the table — never folded into the Tests row, since it is not a pass/fail signal.
 
 ### On failure
 
