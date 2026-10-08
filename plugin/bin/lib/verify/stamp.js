@@ -31,9 +31,9 @@ const SHA_RE = /^[0-9a-f]{40}$/;
 // the caller-supplied fields so a caller can never override them (the same
 // rule appendEvent states in bin/lib/hooks/context.js).
 function composeStamp({
-  report, scope, fullSha, base, changedFiles, suitesRun, flakyRetried, reportPath, at,
+  report, scope, fullSha, base, changedFiles, suitesRun, flakyRetried, reportPath, at, baseline = null,
 }) {
-  return {
+  const stamp = {
     sha: report.sha,
     dirty: report.dirty,
     scope,
@@ -45,6 +45,11 @@ function composeStamp({
     reportPath,
     at,
   };
+  // #3043: present only on a baseline-adjudicated pass ({ base, baseSha,
+  // baselineFailing, flakyPassed }) — its presence is what --stamp-status keys
+  // `baselineAdjudicated` and the strict `match: false` on.
+  if (baseline !== null) stamp.baseline = baseline;
+  return stamp;
 }
 
 function writeStamp(gitDir, stamp, deps = {}) {

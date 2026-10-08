@@ -193,3 +193,14 @@ test('readStamp returns the JSON stamp as-is when sha is valid and fullSha is ab
   });
   assert.deepStrictEqual(readStamp('/g', fsImpl), { sha: VALID, scope: 'full' });
 });
+
+test('composeStamp omits baseline when none is passed and carries it verbatim when given (#3043)', () => {
+  const args = {
+    report: REPORT, scope: 'full', fullSha: 'abc123', base: null, changedFiles: [],
+    suitesRun: ['tests'], flakyRetried: [], reportPath: '/r.json', at: 't',
+  };
+  assert.strictEqual('baseline' in composeStamp(args), false);
+  assert.strictEqual('baseline' in composeStamp({ ...args, baseline: null }), false);
+  const baseline = { base: 'main', baseSha: 'f'.repeat(40), baselineFailing: ['tests/a.test.js'], flakyPassed: [] };
+  assert.deepStrictEqual(composeStamp({ ...args, baseline }).baseline, baseline);
+});

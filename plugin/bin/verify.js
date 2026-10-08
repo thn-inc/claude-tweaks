@@ -11,9 +11,11 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawn } = require('child_process');
 
 const { parseArgs, UsageError, USAGE } = require('./lib/verify/args');
 const { runChecks, runOne } = require('./lib/verify/run');
+const { adjudicate, realGit } = require('./lib/verify/baseline');
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine, extractFailingFiles, stripAnsi,
 } = require('./lib/verify/extract');
@@ -121,7 +123,12 @@ function stampStatus(parsed) {
   // it was recorded either (review finding, refs #1921).
   const storedClean = present && stamp.dirty === false;
   const stampCoversCleanHead = !foreignGitDir && storedClean && git.sha !== null && stamp.sha === git.sha && git.dirty === false;
-  const match = stampCoversCleanHead && scope === 'full';
+  // A baseline-adjudicated pass (#3043) carries a `baseline` marker: HEAD was
+  // accepted with environment-baseline failures still red, so it is verified
+  // (verifiedHead) but never a clean full pass — `match` keeps its strict
+  // meaning, and the marker is surfaced as `baselineAdjudicated`.
+  const baselineAdjudicated = present && stamp.baseline !== null && typeof stamp.baseline === 'object';
+  const match = stampCoversCleanHead && scope === 'full' && !baselineAdjudicated;
   // verifiedHead (#1923): "HEAD is verified" for the re-verify sites — a
   // clean HEAD covered either by a full pass (match) or by a passing
   // scoped/none/static-only/tool-scoped run whose fullSha anchor is still an
@@ -141,6 +148,7 @@ function stampStatus(parsed) {
     fullSha: present ? anchorOf(stamp) : null,
     match,
     verifiedHead,
+    baselineAdjudicated,
     reportPath: present && typeof stamp.reportPath === 'string' ? stamp.reportPath : null,
     legacy: present ? stamp.legacy === true : false,
   };
@@ -212,6 +220,18 @@ async function main() {
   const logDir = parsed.logDir
     || (gitDir ? path.join(gitDir, 'claude-tweaks-verify') : fs.mkdtempSync(path.join(os.tmpdir(), 'claude-tweaks-verify-')));
   fs.mkdirSync(logDir, { recursive: true });
+  // #3043: an unresolvable --baseline is a usage error before any check runs.
+  let bgit = null;
+  let baseSha = null;
+  if (parsed.baseline) {
+    bgit = realGit(parsed.cwd || process.cwd());
+    baseSha = bgit.resolveCommit(parsed.baseline);
+    if (baseSha === null) {
+      process.stderr.write(`--baseline: ${parsed.baseline} does not resolve to a commit\n${USAGE}\n`);
+      process.exitCode = 2;
+      return;
+    }
+  }
   const jsonPath = parsed.json || path.join(logDir, 'report.json');
   const countStampPath = parsed.countStamp || (gitDir ? path.join(gitDir, 'claude-tweaks-test-count.json') : null);
 
@@ -384,6 +404,36 @@ async function main() {
   const retriedFiles = [...new Set(results.flatMap((c) => c.flakyRetried || []))];
   const git = gitInfo();
 
+  // Baseline adjudication (#3043): only a run with a raw failure and a
+  // caller-supplied --baseline re-runs the failing files (at base in a scratch
+  // worktree, in isolation at HEAD). report.pass stays raw; the verdict is
+  // report.baselineAdjudicated and, on a pass, the stamp's baseline marker.
+  const rawPass = results.filter((c) => !c.skipped).every((c) => c.exitCode === 0);
+  let baselineAdjudicated = null;
+  if (parsed.baseline && !rawPass) {
+    try {
+      baselineAdjudicated = await adjudicate({
+        checks: results,
+        baselineCmds: new Map(parsed.baselineCmds.map((b) => [b.name, b.template])),
+        base: parsed.baseline,
+        baseSha,
+        cwd: parsed.cwd,
+        logDir,
+        runOne,
+        spawnImpl: spawn,
+        envOf,
+        git: bgit,
+      });
+    } catch (err) {
+      // Fail closed: an adjudicator crash (e.g. the scratch worktree could not
+      // be created) is "not adjudicated", never a pass and never a lost report.
+      baselineAdjudicated = {
+        base: parsed.baseline, baseSha, eligible: false, reason: `adjudication error: ${String((err && err.message) || err)}`,
+      };
+    }
+  }
+  const adjudicatedPass = Boolean(baselineAdjudicated && baselineAdjudicated.verdict === 'pass');
+
   // Suite-count regression stamp (#881, IL-84): the "tests" check's own
   // parsed count is compared against the previous run's persisted count.
   // --count-stamp is caller-resolved (verification.md Step 2) or defaults
@@ -449,9 +499,12 @@ async function main() {
   const report = composeReport({
     checks: results, startedAt, durationMs: Date.now() - startMs, git, testCountRegression,
     scope: sel ? { mode: sel.mode, suites: scopeSuites, static: sel.static, base: resolvedBase, unmatched: sel.unmatched, changedFiles: files, matched: sel.matched } : null,
-    flakyEscalation,
+    flakyEscalation, baselineAdjudicated,
   });
   writeReportAtomic(report, jsonPath);
+  // The exit code and the pass stamp follow the adjudicated verdict; the
+  // report's own `pass` stays the raw "every check exited 0".
+  const effectivePass = report.pass || adjudicatedPass;
 
   // Verify event (#1928): the runner is the mechanical source for the
   // tasks→test phase boundary (bin/lib/timing/derive.js). Written only when
@@ -470,6 +523,7 @@ async function main() {
         suitesRun: results.filter((c) => !c.skipped).map((c) => c.name),
         durationMs: report.durationMs,
         pass: report.pass,
+        baselineAdjudicated: baselineAdjudicated ? baselineAdjudicated.verdict || 'ineligible' : null,
         sha: git.sha,
         flakyRetried: retriedFiles,
         reportPath: jsonPath,
@@ -503,7 +557,7 @@ async function main() {
   // An explicit --git-dir redirects logs and the count stamp only; the pass
   // stamp keys on the invoking cwd's HEAD, which may not be that repo's.
   if (
-    report.pass && fullSet && !parsed.noStamp && gitDir && git.sha && !parsed.gitDir
+    effectivePass && fullSet && !parsed.noStamp && gitDir && git.sha && !parsed.gitDir
     && !unchangedHeadNoop && !emptyNonNoneRun
   ) {
     const suitesRun = results.filter((c) => c.name !== 'types' && c.name !== 'lint').map((c) => c.name);
@@ -513,11 +567,20 @@ async function main() {
       base: mode === 'full' ? null : resolvedBase,
       changedFiles: mode === 'full' ? [] : files,
       suitesRun, flakyRetried: retriedFiles, reportPath: path.resolve(jsonPath), at: new Date().toISOString(),
+      baseline: adjudicatedPass
+        ? {
+          base: baselineAdjudicated.base, baseSha: baselineAdjudicated.baseSha,
+          baselineFailing: baselineAdjudicated.baselineFailing, flakyPassed: baselineAdjudicated.flakyPassed,
+        }
+        : null,
     });
     // H1 (review): the legacy bare-SHA twin only ever names a real FULL
     // pass — a narrowed run leaves it untouched rather than repointing it
-    // at a sha that a scoped/tool-scoped/none run never fully verified.
-    try { writeStamp(gitDir, stamp, { legacy: mode === 'full' }); } catch { /* best-effort; next --stamp-status simply reads absent */ }
+    // at a sha that a scoped/tool-scoped/none run never fully verified. A
+    // baseline-adjudicated pass is not a clean full pass either (#3043), so
+    // it never repoints the twin: an older reader of the bare file must not
+    // read it as one.
+    try { writeStamp(gitDir, stamp, { legacy: mode === 'full' && !adjudicatedPass }); } catch { /* best-effort; next --stamp-status simply reads absent */ }
   }
 
   const lines = [];
@@ -570,9 +633,18 @@ async function main() {
   }
   for (const line of flakyCaveatLines(results)) lines.push('', line);
   for (const e of flakyEscalation) lines.push('', escalationCaveatLine(e));
+  if (baselineAdjudicated) {
+    if (baselineAdjudicated.eligible) {
+      const b = baselineAdjudicated;
+      lines.push('', `Baseline: adjudicated against ${b.base} (${String(b.baseSha).slice(0, 9)}) — ${b.failingFiles.length} failing file(s): ${b.baselineFailing.length} also fail at base, ${b.flakyPassed.length} flaky (passed in isolation), ${b.attributable.length} attributable`);
+      for (const file of b.attributable) lines.push(`ATTRIBUTABLE: ${file}`);
+    } else {
+      lines.push('', `Baseline: not adjudicated — ${baselineAdjudicated.reason}`);
+    }
+  }
   lines.push('', `report: ${jsonPath}`);
   process.stdout.write(`${lines.join('\n')}\n`);
-  process.exitCode = report.pass ? 0 : 1;
+  process.exitCode = effectivePass ? 0 : 1;
 }
 
 main().catch((err) => {
