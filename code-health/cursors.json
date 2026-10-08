@@ -262,5 +262,9 @@
   "plugin/bin/lib/set-config": {
     "lastSweptMs": 1791342503818,
     "lastHash": "d27229fee87a018b8d38cec82af6005ba099bbc2"
+  },
+  "plugin/bin/lib/skill-audit": {
+    "lastSweptMs": 1791429066696,
+    "lastHash": "a79edc005b84338f8b07a2df8785071a8524eed3"
   }
 }
