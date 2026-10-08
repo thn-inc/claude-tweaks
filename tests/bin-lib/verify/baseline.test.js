@@ -306,9 +306,38 @@ test('file-level base failure + file-level HEAD failure + no node_modules: a gen
     logs: { 'baseline:tests/a.test.js': FILE_LEVEL('tests/a.test.js') },
     repoRoot: path.join(os.tmpdir(), 'baseline-no-such-repo-root'),
   });
-  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: path.join(os.tmpdir(), 'baseline-no-such-repo-root'), logDir: dir, runOne, git });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: path.join(os.tmpdir(), 'baseline-no-such-repo-root'), logDir: dir, runOne, git, env: {} });
   assert.deepStrictEqual(r.baselineFailing, ['tests/a.test.js']);
   assert.strictEqual(r.verdict, 'pass');
+});
+
+// I2: HEAD resolves dependencies the way Node does — walking up parent
+// directories, and through NODE_PATH.
+const fileLevelBoth = (cwd, repoRoot) => fakes({
+  outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 },
+  logs: { 'baseline:tests/a.test.js': FILE_LEVEL('tests/a.test.js'), 'isolated:tests/a.test.js': FILE_LEVEL('tests/a.test.js') },
+  repoRoot: repoRoot || cwd,
+});
+
+test('I2: a worktree nested in a checkout whose node_modules sits at an ancestor resolves deps — not baseline (#3043)', async () => {
+  const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-outer-'));
+  fs.mkdirSync(path.join(outer, 'node_modules'));
+  const wt = path.join(outer, '.claude', 'worktrees', 'rec');
+  fs.mkdirSync(wt, { recursive: true });
+  const { p, dir } = logFile(FILE_LEVEL('tests/a.test.js'));
+  const { git, runOne } = fileLevelBoth(wt);
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: wt, logDir: dir, runOne, git, env: {} });
+  assert.deepStrictEqual(r.baselineFailing, []);
+  assert.deepStrictEqual(r.attributable, ['tests/a.test.js']);
+});
+
+test('I2: a set NODE_PATH resolves deps — a file-level failure on both sides is not baseline (#3043)', async () => {
+  const root = path.join(os.tmpdir(), 'baseline-no-such-repo-root');
+  const { p, dir } = logFile(FILE_LEVEL('tests/a.test.js'));
+  const { git, runOne } = fileLevelBoth(root);
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: root, logDir: dir, runOne, git, env: { NODE_PATH: path.join(os.tmpdir(), 'deps') } });
+  assert.deepStrictEqual(r.baselineFailing, []);
+  assert.deepStrictEqual(r.attributable, ['tests/a.test.js']);
 });
 
 test('file-level base failure + file-level HEAD failure but the checkout has node_modules: the scratch tree just lacks them, not baseline (#3043)', async () => {

@@ -90,13 +90,22 @@ function coveredBy(headNames, baseNames) {
   });
 }
 
+// Whether Node's module resolution from `dir` would find a node_modules
+// directory: at `dir` itself or any ancestor up to the filesystem root.
+function hasNodeModulesUpward(dir) {
+  for (let d = path.resolve(dir); ; d = path.dirname(d)) {
+    try { if (fs.statSync(path.join(d, 'node_modules')).isDirectory()) return true; } catch { /* absent */ }
+    if (path.dirname(d) === d) return false;
+  }
+}
+
 function readLog(logPath) {
   try { return stripAnsi(fs.readFileSync(logPath, 'utf8')); } catch { return null; }
 }
 
 async function adjudicate({
   checks, baselineCmds, base, baseSha, cwd = null, logDir, runOne, spawnImpl, now = Date.now,
-  envOf = () => null, git, concurrency = 4,
+  envOf = () => null, git, concurrency = 4, env = process.env,
 }) {
   const header = { base, baseSha };
   const work = [];
@@ -160,6 +169,7 @@ async function adjudicate({
   const run = (w, kind, dir) => runOne({
     name: `${w.check}-${kind}-${slug(w.file)}`, command: w.command, logDir, spawnImpl, now, cwd: dir, env: envOf(w.check),
   });
+  const headResolvesDeps = Boolean(env.NODE_PATH) || hasNodeModulesUpward(headDir);
   try {
     if (atBase.some(Boolean)) scratch = git.addWorktree(baseSha);
     const baseDir = scratch && (sub ? path.join(scratch, ...sub.split('/')) : scratch);
@@ -182,9 +192,11 @@ async function adjudicate({
       // A file-level base failure is a test file that did not load. A scratch
       // worktree carries no untracked dependencies, so that is not
       // distinguishable from a missing install: it proves "fails at base" only
-      // when HEAD's own failure was file-level too and the main checkout has
-      // no node_modules either.
-      return work[k].headFileLevel && !fs.existsSync(path.join(git.repoRoot(), 'node_modules'));
+      // when HEAD's own failure was file-level too and HEAD resolves no
+      // dependencies either — Node's own resolution: no node_modules at the
+      // HEAD directory or any ancestor, and no NODE_PATH (inherited or the
+      // check's own --cmd-env).
+      return work[k].headFileLevel && !headResolvesDeps && !(envOf(work[k].check) || {}).NODE_PATH;
     });
     const headRuns = await pool(work, concurrency, (w, k) => (failsAtBase[k] ? null : run(w, 'isolated', cwd)));
     // Flaky is symmetric evidence: the isolated run exited 0 AND its log shows
