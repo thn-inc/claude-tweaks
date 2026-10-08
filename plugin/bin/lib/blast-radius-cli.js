@@ -22,7 +22,7 @@ class BlastRadiusError extends Error {
 }
 
 function defaultGit(args) {
-  return execFileSync('git', args, { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
+  return execFileSync('git', args, { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', windowsHide: true });
 }
 
 function defaultReadFile(filePath) {

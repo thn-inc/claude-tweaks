@@ -62,7 +62,7 @@ function defaultDeps() {
     cwd: () => process.cwd(),
     // spawn(cmd, args, options) -> stdout string; throws on non-zero exit,
     // timeout (err.killed/err.signal), or launch failure (err.code).
-    spawn: (cmd, args, options) => execFileSync(cmd, args, options),
+    spawn: (cmd, args, options) => execFileSync(cmd, args, { ...options, windowsHide: true }),
   };
 }
 

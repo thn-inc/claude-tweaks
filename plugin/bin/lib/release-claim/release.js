@@ -19,7 +19,7 @@ const GRANT_LABELS = ['auto:build', 'auto:merge-pending', 'auto:merge'];
 const IN_PROGRESS_LABEL = 'bot:in-progress';
 
 function defaultRunner(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 }
 
 function errorText(err) {

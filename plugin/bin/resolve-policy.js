@@ -46,6 +46,7 @@ function gitRoot(args) {
   return execFileSync('git', args, {
     stdio: ['ignore', 'pipe', 'ignore'],
     encoding: 'utf8',
+    windowsHide: true,
   });
 }
 

@@ -149,7 +149,7 @@ function hasPullRequestCi(repoRoot, { readWorkflows = readWorkflowFiles } = {}) 
 // therefore make the two disagree online vs. offline — the mismatch fails
 // toward `off`, never toward the stricter `merge-when-green`.
 function readDefaultBranch(repoRoot) {
-  const opts = { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, encoding: 'utf8' };
+  const opts = { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, encoding: 'utf8', windowsHide: true };
   try {
     const name = execFileSync('gh', ['repo', 'view', '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name'], opts).trim();
     if (name) return name;

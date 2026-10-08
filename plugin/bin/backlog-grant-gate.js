@@ -66,7 +66,7 @@ function parseArgs(argv) {
 
 function repoRoot() {
   try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' }).trim();
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8', windowsHide: true }).trim();
   } catch {
     return process.cwd();
   }
@@ -98,10 +98,10 @@ const realDeps = {
   // `unattended` ceiling this runs with no human to retry, so a spurious
   // timeout-kill is worse than the slow-but-eventually-successful unbounded
   // call it would replace.
-  runner: (args) => execFileSync('gh', args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES }),
+  runner: (args) => execFileSync('gh', args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true }),
   // maxBuffer widened for the same reason: fetchGitLog dumps every commit
   // message on the integration branch in one call.
-  gitRunner: (args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES }),
+  gitRunner: (args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true }),
   readPolicyRaw: () => readFileSafe(path.join(repoRoot(), '.claude-tweaks', 'policy.yml')),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
