@@ -3,6 +3,8 @@
 // Family is sniffed from output CONTENT, never from the check's name. Counts
 // fail toward absence: anything ambiguous returns null — a wrong count would
 // poison #881's future drop-detection.
+// Families: tap, summary (jest/pytest/vitest), spec (node --test's default
+// reporter, #3043), generic.
 // `extractFailingFiles` (#1925) names the failing TEST files the same way,
 // ANSI-stripped, for the runner's flaky retry; `[]` when nothing parses.
 'use strict';
@@ -21,10 +23,18 @@ const SUMMARY_MARKERS = [
   /^\s*Test Files\s+\d+ (?:passed|failed)/m,
 ];
 const KNOWN_SUMMARY_CATEGORIES = ['failed', 'passed', 'skipped', 'pending', 'todo'];
+// node --test's `spec` reporter — the default since Node 20 (#3043). Its
+// summary is `ℹ tests N` / `ℹ pass N` / `ℹ fail N`, and every failure is
+// listed after `✖ failing tests:` as `test at <path>:<line>:<col>` followed by
+// the failing test's name and diagnostics. Without this family the runner
+// sniffed this repo's own `npm test` output as `generic` and named no file.
+const SPEC_MARKERS = [/^ℹ tests \d+/m, /^✖ failing tests:/m];
+const SPEC_TEST_AT_RE = /^test at (.+):\d+:\d+\s*$/;
 
 function sniffFamily(text) {
   if (TAP_MARKERS.some((re) => re.test(text))) return 'tap';
   if (SUMMARY_MARKERS.some((re) => re.test(text))) return 'summary';
+  if (SPEC_MARKERS.some((re) => re.test(text))) return 'spec';
   return 'generic';
 }
 
@@ -69,6 +79,10 @@ function extractFailingRegion(text, family) {
     });
     return cap([...keep].sort((a, b) => a - b).map((i) => lines[i]));
   }
+  if (family === 'spec') {
+    const start = lines.findIndex((line) => /^✖ failing tests:/.test(line));
+    if (start !== -1) return cap(lines.slice(start).map((line) => line.replace(/\r$/, '')));
+  }
   return cap(lines.slice(-GENERIC_TAIL_LINES));
 }
 
@@ -107,6 +121,13 @@ function parseCounts(text, family) {
     }
     if (failed === null || passed === null) return null;
     return { tests: total === null ? passed + failed : total, pass: passed, fail: failed };
+  }
+  if (family === 'spec') {
+    const tests = num(text.match(/^ℹ tests (\d+)/m));
+    const pass = num(text.match(/^ℹ pass (\d+)/m));
+    const fail = num(text.match(/^ℹ fail (\d+)/m));
+    if (tests === null || pass === null || fail === null) return null;
+    return { tests, pass, fail };
   }
   return null;
 }
@@ -201,6 +222,17 @@ function extractFailingFiles(text, family, { cwd = process.cwd() } = {}) {
   if (family === 'summary') {
     for (const line of lines) {
       const m = line.match(SUMMARY_FAIL_RE);
+      if (m) push(m[1]);
+    }
+    return found;
+  }
+  if (family === 'spec') {
+    let inSection = false;
+    for (const raw of lines) {
+      const line = raw.replace(/\r$/, '');
+      if (/^✖ failing tests:/.test(line)) { inSection = true; continue; }
+      if (!inSection) continue;
+      const m = line.match(SPEC_TEST_AT_RE);
       if (m) push(m[1]);
     }
     return found;

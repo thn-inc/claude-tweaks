@@ -290,3 +290,64 @@ test('extractFailingFiles: generic family and a log with nothing parseable yield
 test('stripAnsi removes ESC-anchored colour sequences and nothing else', () => {
   assert.strictEqual(stripAnsi('\x1b[31mred\x1b[0m [1m not a code'), 'red [1m not a code');
 });
+
+const SPEC_LOG = [
+  '✔ passes (1.2ms)',
+  '✖ breaks (3.0ms)',
+  'ℹ tests 4',
+  'ℹ suites 0',
+  'ℹ pass 2',
+  'ℹ fail 2',
+  'ℹ cancelled 0',
+  '',
+  '✖ failing tests:',
+  '',
+  'test at tests\\a.test.js:229:1',
+  '✖ breaks (3.0ms)',
+  '  AssertionError [ERR_ASSERTION]: nope',
+  '      at TestContext.<anonymous> (C:\\repo\\plugin\\lib\\x.js:12:3)',
+  '',
+  'test at tests/sub/b.test.js:5:1',
+  '✖ also breaks (1.0ms)',
+  '',
+  'test at tests\\a.test.js:300:1',
+  '✖ second failure in a (1.0ms)',
+].join('\n');
+
+test('spec reporter: sniffed as its own family (#3043)', () => {
+  assert.strictEqual(sniffFamily(SPEC_LOG), 'spec');
+});
+
+test('spec reporter: failing files come from the failing-tests section, forward-slash, deduped, log order — never a stack-frame source file (#3043)', () => {
+  assert.deepStrictEqual(extractFailingFiles(SPEC_LOG, 'spec', { cwd: 'C:\\repo' }), ['tests/a.test.js', 'tests/sub/b.test.js']);
+});
+
+test('spec reporter: CRLF-terminated lines still extract (#3043)', () => {
+  const crlf = SPEC_LOG.replace(/\n/g, '\r\n');
+  assert.deepStrictEqual(extractFailingFiles(crlf, 'spec', { cwd: 'C:\\repo' }), ['tests/a.test.js', 'tests/sub/b.test.js']);
+});
+
+test('spec reporter: an absolute test-at path under cwd is relativized (#3043)', () => {
+  const abs = SPEC_LOG.replace('test at tests\\a.test.js:229:1', 'test at C:\\repo\\tests\\c.test.js:1:1');
+  assert.deepStrictEqual(extractFailingFiles(abs, 'spec', { cwd: 'C:\\repo' })[0], 'tests/c.test.js');
+});
+
+test('spec reporter: counts parse from the ℹ summary lines (#3043)', () => {
+  assert.deepStrictEqual(parseCounts(SPEC_LOG, 'spec'), { tests: 4, pass: 2, fail: 2 });
+});
+
+test('spec reporter: missing ℹ fail line means counts null, never a guess (#3043)', () => {
+  assert.strictEqual(parseCounts(SPEC_LOG.replace('ℹ fail 2\n', ''), 'spec'), null);
+});
+
+test('spec reporter: failing region starts at the failing-tests section (#3043)', () => {
+  const region = extractFailingRegion(SPEC_LOG, 'spec');
+  assert.ok(region.startsWith('✖ failing tests:'));
+  assert.ok(region.includes('test at tests/sub/b.test.js:5:1'));
+});
+
+test('spec reporter: a passing spec log (no failing section) extracts no files (#3043)', () => {
+  const passing = ['✔ ok (1ms)', 'ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0'].join('\n');
+  assert.strictEqual(sniffFamily(passing), 'spec');
+  assert.deepStrictEqual(extractFailingFiles(passing, 'spec'), []);
+});
