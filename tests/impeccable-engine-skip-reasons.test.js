@@ -19,8 +19,9 @@ const DOC = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'im
 
 // Reasons the engine module documents with a canned `fix` string returned at
 // runtime (resolve()/run() in index.js) vs. the two that carry `detail`
-// instead, and `timeout`, which carries neither (index.js returns a bare
-// `{ok: false, reason: 'timeout'}`) — the doc must still say what to do.
+// instead, and `timeout`, which never carries a `fix` (run() returns a bare
+// `{ok: false, reason: 'timeout'}`; resolve()'s engine-probe timeout adds a
+// `detail`) — the doc must still say what to do.
 const REASONS_WITH_CANNED_FIX = new Set(['not-installed', 'upgrade-required', 'engine-not-installed']);
 const REASONS_WITH_DETAIL = new Set(['shape-mismatch', 'exec-failed']);
 
@@ -79,7 +80,7 @@ test('every engine failure reason has a fix or a named reason there is none', ()
         `\`${reason}\` carries a \`detail\` field but no canned \`fix\` — the doc's Fix cell should point to \`detail\``
       );
     }
-    // `timeout` carries neither `fix` nor `detail` (index.js returns a bare
-    // {ok: false, reason: 'timeout'}) — only the non-empty-cell check above applies.
+    // `timeout` never carries a `fix` (and a `detail` only from resolve()'s
+    // engine-probe) — only the non-empty-cell check above applies.
   }
 });

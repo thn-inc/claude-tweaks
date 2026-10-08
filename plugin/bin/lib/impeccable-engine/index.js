@@ -87,7 +87,8 @@ function escapeBatchArg(arg) {
 // launcher + args -> {file, args, options} for execFileSync. On win32 the
 // launcher is `impeccable.cmd`, and Node refuses to execFile a .cmd/.bat
 // without a shell (CVE-2024-27980 hardening — spawnSync throws EINVAL), which
-// made resolve() report `engine-not-installed` on every Windows install. So a
+// made resolve() report `engine-not-installed` on every Windows install (it now
+// reports such a launch failure as `exec-failed`). So a
 // batch launcher runs as `cmd.exe /d /s /c "<escaped line>"` with verbatim
 // arguments; anything else passes through untouched. `platform`/`env` are
 // parameters so the translation is testable on any OS.
@@ -164,6 +165,35 @@ function spawnOptions(cwd, opts) {
   };
 }
 
+// execFileSync's timeout kill — shared by resolve()'s probe and run()'s verb,
+// so both classify a stuck launcher as `timeout` the same way.
+function isSpawnTimeout(err) {
+  return Boolean(err && (err.killed || err.signal === 'SIGTERM' || err.code === 'ETIMEDOUT'));
+}
+
+// engine-probe failure -> resolver reason. Only the launcher's own "no engine"
+// answer (exit 127 — every not-cached path in the launcher ends there) means
+// the engine isn't installed. A probe that timed out or never launched at all
+// (spawn EINVAL/ENOENT — #3039's Windows bug read as `engine-not-installed`)
+// gets the same `timeout`/`exec-failed` reasons run() uses for a verb.
+function probeFailure(err, launcher) {
+  const e = err || {};
+  if (isSpawnTimeout(e)) {
+    return { ok: false, reason: 'timeout', detail: `engine-probe timed out (${e.code || e.signal || 'killed'})` };
+  }
+  if (e.status === 127) {
+    return { ok: false, reason: 'engine-not-installed', fix: `${launcher} engine-probe`, detail: e.message };
+  }
+  if (typeof e.status === 'number') {
+    const lastLines = String(e.stderr || e.message || '').split('\n').slice(-20).join('\n');
+    return { ok: false, reason: 'exec-failed', detail: `engine-probe exit ${e.status}: ${lastLines}` };
+  }
+  if (e.signal) {
+    return { ok: false, reason: 'exec-failed', detail: `engine-probe killed by ${e.signal}` };
+  }
+  return { ok: false, reason: 'exec-failed', detail: `engine-probe could not launch (${e.code || 'unknown'}): ${e.message || ''}` };
+}
+
 // opts: { projectPath, timeoutMs }. deps: { readFile, exists, realpath,
 // homedir, cwd, spawn }.
 function resolve(opts = {}, deps = defaultDeps()) {
@@ -189,12 +219,7 @@ function resolve(opts = {}, deps = defaultDeps()) {
   try {
     stdout = deps.spawn(launcher, ['engine-probe'], spawnOptions(projectPath, opts));
   } catch (err) {
-    return {
-      ok: false,
-      reason: 'engine-not-installed',
-      fix: `${launcher} engine-probe`,
-      detail: err && err.message,
-    };
+    return probeFailure(err, launcher);
   }
   const match = /impeccable-engine\s+(\S+)/.exec(String(stdout));
   return {
@@ -350,7 +375,7 @@ function run(verb, args = [], opts = {}, deps = defaultDeps()) {
   try {
     stdout = deps.spawn(resolved.launcher, buildArgs(verb, args), spawnOptions(cwd, opts));
   } catch (err) {
-    if (err && (err.killed || err.signal === 'SIGTERM' || err.code === 'ETIMEDOUT')) {
+    if (isSpawnTimeout(err)) {
       return { ok: false, reason: 'timeout' };
     }
     const stderrText = String((err && err.stderr) || (err && err.message) || '');

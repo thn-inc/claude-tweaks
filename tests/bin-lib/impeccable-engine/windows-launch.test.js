@@ -61,7 +61,7 @@ test('a .cmd launcher run through defaultDeps().spawn receives every argument in
       '',
     ].join('\r\n'));
     const args = [
-      'concept-seed', '--scope', 'a b', '--from', 'say "hi"', '--mode', 'x&y|z<w>v',
+      'concept-seed', '--scope', 'a b', '--from', 'say "hi"', 'a"&echo pwned&"', '--mode', 'x&y|z<w>v',
       '--chosen', '100%', '--reroll', '%PATH%', 'bang!', 'caret^', '(paren)', 'trail\\', 'semi;comma,', '',
     ];
     const out = defaultDeps().spawn(launcher, args, { encoding: 'utf8', timeout: 30000 });
@@ -69,4 +69,18 @@ test('a .cmd launcher run through defaultDeps().spawn receives every argument in
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// The exact `/c` payload, pinned on every platform (#3040): the win32
+// real-process test above is skipped on Linux CI, so without this pin dropping
+// either caret pass or the trailing-backslash doubling left every CI test green.
+// The second caret pass is what stops `a"&echo pwned&"` from closing the quote
+// during the launcher's own `"%run%" %*` re-parse and running `echo pwned`.
+test('launchSpec pins the exact escaped /c payload for metacharacter, quote, trailing-backslash and injection args', () => {
+  const payload = (arg) => launchSpec('C:\\x\\impeccable.cmd', [arg], 'win32', { ComSpec: 'cmd.exe' }).args[3];
+  assert.strictEqual(payload('a b'), String.raw`"C:\x\impeccable.cmd ^^^"a^^^ b^^^""`);
+  assert.strictEqual(payload('x&y|z<w>v'), String.raw`"C:\x\impeccable.cmd ^^^"x^^^&y^^^|z^^^<w^^^>v^^^""`);
+  assert.strictEqual(payload('say "hi"'), String.raw`"C:\x\impeccable.cmd ^^^"say^^^ \^^^"hi\^^^"^^^""`);
+  assert.strictEqual(payload('trail\\'), String.raw`"C:\x\impeccable.cmd ^^^"trail\\^^^""`);
+  assert.strictEqual(payload('a"&echo pwned&"'), String.raw`"C:\x\impeccable.cmd ^^^"a\^^^"^^^&echo^^^ pwned^^^&\^^^"^^^""`);
 });

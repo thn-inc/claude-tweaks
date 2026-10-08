@@ -42,7 +42,7 @@ const PUBLISHED_RE = /\bpublished\b/;
 // YAML parser: one `on:` block, its three spellings.
 function indentOf(line) { return /^[ \t]*/.exec(line)[0].length; }
 
-function stripComment(value) { return value.replace(/\s+#.*$/, '').trim(); }
+function stripComment(value) { return value.replace(/(^|\s+)#.*$/, '').trim(); } // `(^|\s+)`: the key regexes' `[ \t]*` already ate the gap, so a comment can start the value
 
 // The value side of a `release` key in flow form. Empty (a key with no value,
 // or the next entry starting) means every activity type; otherwise `published`
@@ -94,7 +94,7 @@ function blockTriggersRelease(lines, start, onIndent) {
 }
 
 function workflowPublishesRelease(text) {
-  const lines = String(text).split('\n');
+  const lines = String(text).split(/\r?\n/); // CRLF checkouts: `on:\r` never matches ON_LINE_RE's `(.*)$`
   const i = lines.findIndex((l) => ON_LINE_RE.test(l));
   if (i === -1) return false;
   const inline = stripComment(ON_LINE_RE.exec(lines[i])[1]);

@@ -24,7 +24,7 @@ const DOC = path.join(
 );
 
 function fencedCodeBlocks(doc) {
-  return [...doc.matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map((m) => m[1]);
+  return [...doc.matchAll(/```[a-z]*\r?\n([\s\S]*?)```/g)].map((m) => m[1]);
 }
 
 test('modes/doctor.md has at least one fenced invocation block (sanity check)', () => {
@@ -58,4 +58,11 @@ test('the only prose mentions of --fix are the "Never --fix" discussion and the 
       `a line outside a fenced block looks like a direct --fix invocation: ${line}`
     );
   }
+});
+
+test('fencedCodeBlocks finds blocks in CRLF text, so the --fix guard is not vacuous on a Windows checkout (#3040)', () => {
+  const crlf = 'intro\r\n\r\n```bash\r\nnode impeccable-engine.js run doctor --fix\r\n```\r\n\r\n```\r\nplain\r\n```\r\n';
+  const blocks = fencedCodeBlocks(crlf);
+  assert.strictEqual(blocks.length, 2, 'both CRLF fenced blocks must be found');
+  assert.ok(blocks[0].includes('--fix'), 'the guard must see the --fix invocation inside a CRLF block');
 });
