@@ -16,17 +16,21 @@ function logFile(text) {
 const SPEC = (files) => ['ℹ tests 9', 'ℹ pass 1', `ℹ fail ${files.length}`, '', '✖ failing tests:', '',
   ...files.flatMap((f) => [`test at ${f}:1:1`, '✖ x (1ms)', ''])].join('\n');
 
+// A test file that fails to load: node lists the FILE as the failing test.
+const FILE_LEVEL = (f) => ['ℹ tests 1', 'ℹ pass 0', 'ℹ fail 1', '', '✖ failing tests:', '',
+  `test at ${f}:1:1`, `✖ ${f} (12ms)`, "  'test failed'", ''].join('\n');
+
 // outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/b.test.js': 0, ... } — exit code per (kind, file)
 // Each fake run writes a real log reflecting its outcome (a failing run names the
 // file in a spec-format log, a passing run reports one passing test); `logs`
 // overrides the text per `${kind}:${file}`.
 const PASS_LOG = ['ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0'].join('\n');
 
-function fakes({ outcomes, existsAtBase = () => true, throwOn = null, logs = {} }) {
+function fakes({ outcomes, existsAtBase = () => true, throwOn = null, logs = {}, repoRoot = '/repo' }) {
   const calls = { runs: [], added: [], removed: [] };
   const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-fake-runs-'));
   const git = {
-    repoRoot: () => '/repo',
+    repoRoot: () => repoRoot,
     fileExistsAt: (sha, f) => existsAtBase(f),
     addWorktree: (sha) => { calls.added.push(sha); return '/scratch'; },
     removeWorktree: (dir) => { calls.removed.push(dir); },
@@ -166,12 +170,72 @@ test('fail-open guard: an isolated run exiting 0 with an empty log is attributab
   assert.strictEqual(r.verdict, 'fail');
 });
 
-test('pool abort: after one run rejects no further item starts, and the scratch worktree is still removed (#3043)', async () => {
+test('pool abort: a rejection starts no further item and the worktree is removed only after the in-flight sibling settles (#3043)', async () => {
   const { p, dir } = logFile(SPEC(['tests/a.test.js', 'tests/b.test.js', 'tests/c.test.js']));
-  const { git, runOne, calls } = fakes({ outcomes: {}, throwOn: 'baseline:tests/a.test.js' });
-  await assert.rejects(adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git, concurrency: 1 }), /boom/);
-  assert.strictEqual(calls.runs.length, 1);
-  assert.deepStrictEqual(calls.removed, ['/scratch']);
+  const { git } = fakes({ outcomes: {} });
+  const order = [];
+  git.removeWorktree = () => { order.push('removed'); };
+  const started = [];
+  const runOne = async ({ name, command }) => {
+    const file = command.replace('node --test ', '');
+    started.push(file);
+    if (file === 'tests/a.test.js') { await new Promise((r) => setTimeout(r, 5)); throw new Error('boom'); }
+    await new Promise((r) => setTimeout(r, 60)); // b is still in flight when a rejects
+    order.push(`settled:${file}`);
+    return { name, command, exitCode: 1, durationMs: 1, logPath: 'x' };
+  };
+  await assert.rejects(adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git, concurrency: 2 }), /boom/);
+  assert.deepStrictEqual(started, ['tests/a.test.js', 'tests/b.test.js'], 'c never starts');
+  assert.deepStrictEqual(order, ['settled:tests/b.test.js', 'removed']);
+});
+
+test('file-level base failure + per-test HEAD failure: the file may have loaded at base, so it is not baseline (#3043)', async () => {
+  const { p, dir } = logFile(SPEC(['tests/a.test.js']));
+  const { git, runOne } = fakes({
+    outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 },
+    logs: { 'baseline:tests/a.test.js': FILE_LEVEL('tests/a.test.js') },
+  });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.deepStrictEqual(r.baselineFailing, []);
+  assert.deepStrictEqual(r.attributable, ['tests/a.test.js']);
+});
+
+test('file-level base failure + file-level HEAD failure + no node_modules: a genuine load failure, baseline (#3043)', async () => {
+  const { p, dir } = logFile(FILE_LEVEL('tests/a.test.js'));
+  const { git, runOne } = fakes({
+    outcomes: { 'baseline:tests/a.test.js': 1 },
+    logs: { 'baseline:tests/a.test.js': FILE_LEVEL('tests/a.test.js') },
+    repoRoot: path.join(os.tmpdir(), 'baseline-no-such-repo-root'),
+  });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: path.join(os.tmpdir(), 'baseline-no-such-repo-root'), logDir: dir, runOne, git });
+  assert.deepStrictEqual(r.baselineFailing, ['tests/a.test.js']);
+  assert.strictEqual(r.verdict, 'pass');
+});
+
+test('file-level base failure + file-level HEAD failure but the checkout has node_modules: the scratch tree just lacks them, not baseline (#3043)', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-repo-'));
+  fs.mkdirSync(path.join(root, 'node_modules'));
+  const { p, dir } = logFile(FILE_LEVEL('tests/a.test.js'));
+  const { git, runOne } = fakes({
+    outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 },
+    logs: { 'baseline:tests/a.test.js': FILE_LEVEL('tests/a.test.js'), 'isolated:tests/a.test.js': FILE_LEVEL('tests/a.test.js') },
+    repoRoot: root,
+  });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: root, logDir: dir, runOne, git });
+  assert.deepStrictEqual(r.baselineFailing, []);
+  assert.deepStrictEqual(r.attributable, ['tests/a.test.js']);
+  assert.strictEqual(r.verdict, 'fail');
+});
+
+test('an isolated run exiting 0 with every test skipped (pass 0) is attributable, never flaky (#3043)', async () => {
+  const { p, dir } = logFile(SPEC(['tests/b.test.js']));
+  const { git, runOne } = fakes({
+    outcomes: { 'baseline:tests/b.test.js': 0, 'isolated:tests/b.test.js': 0 },
+    logs: { 'isolated:tests/b.test.js': ['ℹ tests 1', 'ℹ pass 0', 'ℹ fail 0'].join('\n') },
+  });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.deepStrictEqual(r.flakyPassed, []);
+  assert.deepStrictEqual(r.attributable, ['tests/b.test.js']);
 });
 
 test('passing checks are ignored — only failed ones are adjudicated (#3043)', async () => {

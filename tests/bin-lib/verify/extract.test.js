@@ -5,7 +5,7 @@ const path = require('path');
 
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
-  MAX_REGION_LINES, GENERIC_TAIL_LINES, stripAnsi, extractFailingFiles, countUnmatchedFailures,
+  MAX_REGION_LINES, GENERIC_TAIL_LINES, stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'extract.js'));
 
 const TAP_FIXTURE = [
@@ -362,4 +362,26 @@ test('countUnmatchedFailures: a spec test-at entry that names no test file is co
 test('countUnmatchedFailures: 0 when every spec entry is a test file, and 0 for every other family (#3043)', () => {
   assert.strictEqual(countUnmatchedFailures(SPEC_LOG, 'spec', { cwd: 'C:\\repo' }), 0);
   assert.strictEqual(countUnmatchedFailures('not ok 1 - x\n  at tests/helper.js:2:1', 'tap'), 0);
+});
+
+const FILE_LEVEL_LOG = ['ℹ tests 3', 'ℹ pass 0', 'ℹ fail 3', '', '✖ failing tests:', '',
+  'test at tests\\a.test.js:1:1', '✖ tests\\a.test.js (1231.6738ms)', "  'test failed'", '',
+  'test at tests/b.test.js:1:1', '✖ tests/b.test.js (3ms)', "  'test failed'", '',
+  'test at tests/b.test.js:9:1', '✖ a real failing test (1ms)', '',
+  'test at C:\\repo\\tests\\c.test.js:1:1', '✖ C:\\repo\\tests\\c.test.js (2ms)'].join('\n');
+
+test('fileLevelFailures: a file whose only entry is the file itself is file-level; one that also has a per-test entry is not (#3043)', () => {
+  const set = fileLevelFailures(FILE_LEVEL_LOG, 'spec', { cwd: 'C:\\repo' });
+  assert.deepStrictEqual([...set].sort(), ['tests/a.test.js', 'tests/c.test.js']);
+});
+
+test('fileLevelFailures: CRLF logs behave the same; a per-test entry is never file-level (#3043)', () => {
+  const crlf = FILE_LEVEL_LOG.replace(/\n/g, '\r\n');
+  assert.deepStrictEqual([...fileLevelFailures(crlf, 'spec', { cwd: 'C:\\repo' })].sort(), ['tests/a.test.js', 'tests/c.test.js']);
+  assert.strictEqual(fileLevelFailures(SPEC_LOG, 'spec', { cwd: 'C:\\repo' }).size, 0);
+});
+
+test('fileLevelFailures: every other family returns an empty set (#3043)', () => {
+  assert.strictEqual(fileLevelFailures('not ok 1 - x\n  at tests/a.test.js:2:1', 'tap').size, 0);
+  assert.strictEqual(fileLevelFailures(FILE_LEVEL_LOG, 'generic').size, 0);
 });

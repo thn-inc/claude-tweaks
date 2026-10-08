@@ -201,19 +201,43 @@ function relativize(file, cwd) {
 // A path extractFailingFiles would keep: a test file, never a node: internal.
 function isRetryableFile(rel) { return TEST_FILE_RE.test(rel) && !rel.startsWith('node:'); }
 
-// Every `test at <path>:L:C` path (raw, in log order) inside the spec
-// reporter's `✖ failing tests:` section.
-function specTestAtPaths(lines) {
-  const paths = [];
+// Every `test at <path>:L:C` entry ({file: raw path, next: the line right
+// after it}, in log order) inside the spec reporter's `✖ failing tests:` section.
+function specEntries(lines) {
+  const entries = [];
   let inSection = false;
+  let prev = null;
   for (const raw of lines) {
     const line = raw.replace(/\r$/, '');
+    if (prev) { prev.next = line; prev = null; }
     if (/^✖ failing tests:/.test(line)) { inSection = true; continue; }
     if (!inSection) continue;
     const m = line.match(SPEC_TEST_AT_RE);
-    if (m) paths.push(m[1]);
+    if (m) { prev = { file: m[1], next: '' }; entries.push(prev); }
   }
-  return paths;
+  return entries;
+}
+
+// A spec entry is file-level when node reports the FILE itself as the failing
+// test (`✖ <path> (Nms)` right under `test at <path>:1:1`) — the shape a test
+// file that fails to load takes, as opposed to a failing test inside it.
+const SPEC_FAIL_NAME_RE = /^✖ (.+) \(\d[\d.]*ms\)\s*$/;
+
+// Relativized forward-slash test paths whose failing-section entries are ALL
+// file-level. A file with any per-test entry is absent. Non-spec families
+// return an empty Set.
+function fileLevelFailures(text, family, { cwd = process.cwd() } = {}) {
+  const fileLevel = new Set();
+  if (family !== 'spec') return fileLevel;
+  const perTest = new Set();
+  for (const { file, next } of specEntries(stripAnsi(text).split('\n'))) {
+    const rel = relativize(file, cwd);
+    const m = next.match(SPEC_FAIL_NAME_RE);
+    if (m && relativize(m[1], cwd) === rel) fileLevel.add(rel);
+    else perTest.add(rel);
+  }
+  perTest.forEach((rel) => fileLevel.delete(rel));
+  return fileLevel;
 }
 
 // How many spec-family failing entries extractFailingFiles silently drops
@@ -222,8 +246,8 @@ function specTestAtPaths(lines) {
 // never read as a clean pass. Every other family returns 0.
 function countUnmatchedFailures(text, family, { cwd = process.cwd() } = {}) {
   if (family !== 'spec') return 0;
-  return specTestAtPaths(stripAnsi(text).split('\n'))
-    .filter((file) => !isRetryableFile(relativize(file, cwd))).length;
+  return specEntries(stripAnsi(text).split('\n'))
+    .filter(({ file }) => !isRetryableFile(relativize(file, cwd))).length;
 }
 
 // Deduped, log-order, repo-relative test files named by the failing part of
@@ -255,7 +279,7 @@ function extractFailingFiles(text, family, { cwd = process.cwd() } = {}) {
     return found;
   }
   if (family === 'spec') {
-    specTestAtPaths(lines).forEach(push);
+    specEntries(lines).forEach(({ file }) => push(file));
     return found;
   }
   return found;
@@ -263,6 +287,6 @@ function extractFailingFiles(text, family, { cwd = process.cwd() } = {}) {
 
 module.exports = {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
-  stripAnsi, extractFailingFiles, countUnmatchedFailures, TEST_FILE_RE,
+  stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, TEST_FILE_RE,
   MAX_REGION_LINES, GENERIC_TAIL_LINES, MAX_LINE_CHARS,
 };

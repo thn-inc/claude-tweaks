@@ -18,7 +18,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const {
-  sniffFamily, extractFailingFiles, countUnmatchedFailures, parseCounts, stripAnsi,
+  sniffFamily, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, parseCounts, stripAnsi,
 } = require('./extract');
 
 function realGit(cwd) {
@@ -108,7 +108,10 @@ async function adjudicate({
         reason: `unclassified failure(s): ${unmatched} failing ${unmatched === 1 ? 'entry names' : 'entries name'} no test file in ${c.name}`,
       };
     }
-    for (const file of files) work.push({ check: c.name, file, command: template.replace(/\{file\}/g, file) });
+    const headFileLevel = fileLevelFailures(text, family, { cwd: headDir });
+    for (const file of files) {
+      work.push({ check: c.name, file, command: template.replace(/\{file\}/g, file), headFileLevel: headFileLevel.has(file) });
+    }
   }
 
   // A --cwd subdir: failing files are relative to it, so the base-side path
@@ -132,17 +135,27 @@ async function adjudicate({
       if (r === null || typeof r.exitCode !== 'number' || r.exitCode === 0) return false;
       const text = readLog(r.logPath);
       if (text === null) return false;
-      return extractFailingFiles(text, sniffFamily(text), { cwd: baseDir }).includes(work[k].file);
+      const family = sniffFamily(text);
+      const file = work[k].file;
+      if (!extractFailingFiles(text, family, { cwd: baseDir }).includes(file)) return false;
+      if (!fileLevelFailures(text, family, { cwd: baseDir }).has(file)) return true;
+      // A file-level base failure is a test file that did not load. A scratch
+      // worktree carries no untracked dependencies, so that is not
+      // distinguishable from a missing install: it proves "fails at base" only
+      // when HEAD's own failure was file-level too and the main checkout has
+      // no node_modules either.
+      return work[k].headFileLevel && !fs.existsSync(path.join(git.repoRoot(), 'node_modules'));
     });
     const headRuns = await pool(work, concurrency, (w, k) => (failsAtBase[k] ? null : run(w, 'isolated', cwd)));
     // Flaky is symmetric evidence: the isolated run exited 0 AND its log shows
-    // tests actually ran and none failed — `echo {file}` proves nothing.
+    // tests actually ran and passed (an all-skipped run is not clean) —
+    // `echo {file}` proves nothing.
     const ranCleanly = (r) => {
       if (!r || r.exitCode !== 0) return false;
       const text = readLog(r.logPath);
       if (text === null) return false;
       const counts = parseCounts(text, sniffFamily(text));
-      return counts !== null && counts.tests > 0 && counts.fail === 0;
+      return counts !== null && counts.tests > 0 && counts.pass > 0 && counts.fail === 0;
     };
     const baselineFailing = [];
     const flakyPassed = [];
