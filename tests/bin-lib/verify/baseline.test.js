@@ -373,6 +373,49 @@ test('an isolated run exiting 0 with every test skipped (pass 0) is attributable
   assert.deepStrictEqual(r.attributable, ['tests/b.test.js']);
 });
 
+// A spec log naming (file, test name) pairs; `fail` defaults to the entry count.
+const NAMED = (pairs, fail = pairs.length) => ['ℹ tests 20', 'ℹ pass 1', `ℹ fail ${fail}`, '', '✖ failing tests:', '',
+  ...pairs.flatMap(([f, n]) => [`test at ${f}:1:1`, `✖ ${n} (1ms)`, ''])].join('\n');
+
+// The full run fails tests/r.test.js on base's `x` plus a load-induced `slow`.
+const isolationCase = (isolatedLog, isolatedCode = 1, baseLog = NAMED([['tests/r.test.js', 'x']])) => {
+  const { p, dir } = logFile(NAMED([['tests/r.test.js', 'x'], ['tests/r.test.js', 'slow']]));
+  const { git, runOne } = fakes({
+    outcomes: { 'baseline:tests/r.test.js': 1, 'isolated:tests/r.test.js': isolatedCode },
+    logs: { 'baseline:tests/r.test.js': baseLog, 'isolated:tests/r.test.js': isolatedLog },
+  });
+  return adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+};
+
+test('a file failing beyond its base tests in the full run, but only base tests in isolation, is baseline with its isolated log (#3043)', async () => {
+  const r = await isolationCase(NAMED([['tests/r.test.js', 'x']]));
+  assert.strictEqual(r.verdict, 'pass');
+  assert.deepStrictEqual(r.baselineFailing, ['tests/r.test.js']);
+  assert.deepStrictEqual(r.attributable, []);
+  assert.match(r.baselineIsolatedLogs['tests/r.test.js'], /tests-isolated-tests\+r\.test\.js\.log$/);
+});
+
+test('an isolated run failing a test base does not fail stays attributable (#3043)', async () => {
+  const r = await isolationCase(NAMED([['tests/r.test.js', 'x'], ['tests/r.test.js', 'slow']]));
+  assert.deepStrictEqual(r.attributable, ['tests/r.test.js']);
+  assert.deepStrictEqual(r.baselineIsolatedLogs, {});
+});
+
+test('an isolated run whose failing entries do not account for ℹ fail stays attributable (#3043)', async () => {
+  const r = await isolationCase(NAMED([['tests/r.test.js', 'x']], 2));
+  assert.deepStrictEqual(r.attributable, ['tests/r.test.js']);
+});
+
+test('an isolated run with no numeric exit, or a base that names no failing test, stays attributable (#3043)', async () => {
+  assert.deepStrictEqual((await isolationCase(NAMED([['tests/r.test.js', 'x']]), null)).attributable, ['tests/r.test.js']);
+  assert.deepStrictEqual((await isolationCase(NAMED([['tests/r.test.js', 'x']]), 1, PASS_LOG)).attributable, ['tests/r.test.js']);
+});
+
+test('a file-level isolated failure never qualifies as baseline-in-isolation (#3043)', async () => {
+  const r = await isolationCase(FILE_LEVEL('tests/r.test.js'), 1, FILE_LEVEL('tests/r.test.js'));
+  assert.deepStrictEqual(r.attributable, ['tests/r.test.js']);
+});
+
 test('passing checks are ignored — only failed ones are adjudicated (#3043)', async () => {
   const { p, dir } = logFile(SPEC(['tests/a.test.js']));
   const { git, runOne } = fakes({ outcomes: { 'baseline:tests/a.test.js': 1 } });

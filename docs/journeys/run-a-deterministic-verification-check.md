@@ -103,6 +103,7 @@ files:
 - **Should understand:** Adjudication runs only when a check fails.
   - **The comparison.** Each failing test file runs once at the base commit, in a scratch detached worktree that is removed afterwards. Every file that base does not prove failing re-runs once in isolation at HEAD.
   - **baseline:** the base run's own log names the file as failing, with every one of its HEAD failing tests (a multiset of test names). A new failing test beside an old environment failure is therefore not covered.
+  - **baseline, after isolation:** a file whose full run also failed extra tests under load still counts as baseline when its isolated HEAD run fails only base's tests. Each such file prints a `baseline-in-isolation` CAVEAT.
   - **flaky:** the isolated run exited 0 and actually ran tests. Each flaky file prints a CAVEAT.
   - **attributable:** everything else, including any file absent at base.
   - **Exit code and table.** The exit code is the gate. An adjudicated pass exits 0 and shows `pass (baseline-adjudicated vs origin/main: {b} baseline, {f} flaky)` in the table. Meanwhile `report.json`'s `pass` and each check's `exitCode` stay raw.

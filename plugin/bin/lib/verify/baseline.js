@@ -191,6 +191,7 @@ async function adjudicate({
     // every test that fails in it at HEAD, so an old environment failure
     // cannot cover a new failing test in the same file. Anything else is
     // unproven and falls through to the isolated HEAD run.
+    const baseNames = work.map(() => null);
     const failsAtBase = baseRuns.map((r, k) => {
       if (r === null || typeof r.exitCode !== 'number' || r.exitCode === 0) return false;
       const text = readLog(r.logPath);
@@ -198,6 +199,7 @@ async function adjudicate({
       const family = sniffFamily(text);
       const file = work[k].file;
       const baseTests = failingTestsByFile(text, family, { cwd: baseDir }).get(file);
+      if (baseTests) baseNames[k] = baseTests;
       if (!baseTests || !coveredBy(work[k].headTests, baseTests)) return false;
       if (!fileLevelFailures(text, family, { cwd: baseDir }).has(file)) return true;
       // A file-level base failure is a test file that did not load. A scratch
@@ -222,15 +224,38 @@ async function adjudicate({
       const counts = parseCounts(text, sniffFamily(text));
       return counts !== null && counts.tests > 0 && counts.pass > 0 && counts.fail === 0;
     };
+    // A file whose full-run failures go beyond base's (extra tests failing
+    // under the full suite's load) is still baseline when, in isolation at
+    // HEAD, it fails only tests that also fail at base — the isolated log held
+    // to the same accounting guards as the full run's, naming only this file,
+    // and never on a file-level failure.
+    const baselineInIsolation = (r, k) => {
+      if (!r || typeof r.exitCode !== 'number' || r.exitCode === 0 || !baseNames[k]) return false;
+      const text = readLog(r.logPath);
+      if (text === null) return false;
+      const family = sniffFamily(text);
+      if (family !== 'spec' && family !== 'tap') return false;
+      const counts = parseCounts(text, family);
+      if (counts === null || countUnmatchedFailures(text, family, { cwd: headDir }) > 0) return false;
+      if (family === 'spec' && specEntryCount(text) !== counts.fail) return false;
+      const file = work[k].file;
+      const files = extractFailingFiles(text, family, { cwd: headDir });
+      if (files.length !== 1 || files[0] !== file) return false;
+      if (fileLevelFailures(text, family, { cwd: headDir }).has(file)) return false;
+      const names = failingTestsByFile(text, family, { cwd: headDir }).get(file);
+      return Boolean(names) && coveredBy(names, baseNames[k]);
+    };
     const baselineFailing = [];
     const flakyPassed = [];
     const flakyLogs = {};
+    const baselineIsolatedLogs = {};
     const attributable = [];
     const failingByCheck = {};
     work.forEach((w, k) => {
       (failingByCheck[w.check] = failingByCheck[w.check] || []).push(w.file);
       if (failsAtBase[k]) baselineFailing.push(w.file);
       else if (ranCleanly(headRuns[k])) { flakyPassed.push(w.file); flakyLogs[w.file] = headRuns[k].logPath; }
+      else if (baselineInIsolation(headRuns[k], k)) { baselineFailing.push(w.file); baselineIsolatedLogs[w.file] = headRuns[k].logPath; }
       else attributable.push(w.file);
     });
     return {
@@ -242,6 +267,7 @@ async function adjudicate({
       baselineFailing,
       flakyPassed,
       flakyLogs,
+      baselineIsolatedLogs,
       attributable,
     };
   } finally {

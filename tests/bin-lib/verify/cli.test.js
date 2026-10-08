@@ -1615,6 +1615,22 @@ test('--baseline: a file failing only in the full run is flaky — exit 0 with a
   assert.match(stdout, /^CAVEAT: baseline-flaky: tests\/flaky\.test\.js — failed in the full run, passed in isolation at HEAD; see .*tests-isolated-tests\+flaky\.test\.js\.log$/m);
 });
 
+test('--baseline: a file failing beyond its base tests only in the full run is baseline — exit 0 with a baseline-in-isolation CAVEAT (#3043)', async () => {
+  const r = baselineRepo();
+  // `old` fails everywhere; `once` fails only in the full run (it consumes the marker).
+  const marker = path.join(tmpDir(), 'fail-once');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'mixed.test.js'), `const fs = require('fs');\nconst test = require('node:test');\ntest('old', () => { throw new Error('env'); });\ntest('once', () => { if (fs.existsSync(${JSON.stringify(marker)})) { fs.unlinkSync(${JSON.stringify(marker)}); throw new Error('load'); } });\n`);
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'add mixed');
+  const baseSha = r.git('rev-parse', 'HEAD').trim();
+  headCommit(r);
+  fs.writeFileSync(marker, '');
+  const { code, stdout } = await runCli(['--cmd', 'tests=node --test --test-reporter=tap tests/mixed.test.js', '--baseline', baseSha, '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 0, stdout);
+  assert.ok(stdout.includes(`| tests | pass (baseline-adjudicated vs ${baseSha}: 1 baseline, 0 flaky) |`), stdout);
+  assert.match(stdout, /^CAVEAT: baseline-in-isolation: tests\/mixed\.test\.js — failed beyond its base failures in the full run; in isolation at HEAD it failed only tests that also fail at base; see .*tests-isolated-tests\+mixed\.test\.js\.log$/m);
+});
+
 test('--baseline: the scratch worktree is gone after the run (#3043)', async () => {
   const r = baselineRepo();
   headCommit(r);
