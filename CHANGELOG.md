@@ -70,6 +70,14 @@ Three conventions follow from how this repo works, and all are visible below:
 * Hide the console window on every plugin/bin spawn ([#3038](https://github.com/thn-inc/claude-tweaks/issues/3038)) ([bb0789a](https://github.com/thn-inc/claude-tweaks/commit/bb0789acb243eae261e687ee87429fe480424913))
 * Run the Impeccable launcher through cmd.exe on Windows ([#3039](https://github.com/thn-inc/claude-tweaks/issues/3039)) ([23d7611](https://github.com/thn-inc/claude-tweaks/commit/23d7611de073a19b34190c934e9b5111a5cf6311))
 
+### Highlights
+* Updated the design-wrapper's Impeccable contract checks to the engine-based Impeccable 4.2.2+, so tests no longer fail depending on which old Impeccable versions are cached on a machine.
+* Restored design-wrapper's explore mode for Impeccable 4.2.2 and later, and documented that dealing design directions contacts Impeccable's catalog service.
+* Restored design review's reading of Impeccable's direction contract for Impeccable 4.2.2 and later, which records it in the surface brief instead of the built page.
+* Restored design-wrapper's project-context signals for Impeccable 4.2.2 and later, and made a missing or outdated Impeccable engine report why and how to fix it instead of failing silently.
+* Documentation health checks no longer propose a replacement commit citation without first
+* Added an internal helper that finds and runs the Impeccable design engine without ever downloading it, as the base for restoring design checks on Impeccable 4.2.2 and later.
+
 ## [6.136.0](https://github.com/thn-inc/claude-tweaks/compare/v6.135.0...v6.136.0) (2026-10-04)
 
 
