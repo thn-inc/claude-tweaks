@@ -124,46 +124,41 @@ async function adjudicate({
   envOf = () => null, git, concurrency = 4, env = process.env,
 }) {
   const header = { base, baseSha };
+  const ineligible = (reason) => ({ ...header, eligible: false, reason });
   const work = [];
   const headDir = cwd || process.cwd();
   for (const c of checks.filter((x) => x.skipped || x.exitCode !== 0)) {
-    if (c.skipped) return { ...header, eligible: false, reason: `${c.name} skipped (${c.skipped})` };
-    if (c.spawnError !== undefined) return { ...header, eligible: false, reason: `${c.name} could not spawn` };
-    if (typeof c.exitCode !== 'number') return { ...header, eligible: false, reason: `${c.name} exited without a numeric code` };
+    if (c.skipped) return ineligible(`${c.name} skipped (${c.skipped})`);
+    if (c.spawnError !== undefined) return ineligible(`${c.name} could not spawn`);
+    if (typeof c.exitCode !== 'number') return ineligible(`${c.name} exited without a numeric code`);
     const template = baselineCmds.get(c.name);
-    if (!template) return { ...header, eligible: false, reason: `no --baseline-cmd for failing check ${c.name}` };
-    let text;
-    try { text = stripAnsi(fs.readFileSync(c.logPath, 'utf8')); } catch {
-      return { ...header, eligible: false, reason: `${c.name} log unreadable` };
-    }
+    if (!template) return ineligible(`no --baseline-cmd for failing check ${c.name}`);
+    const text = readLog(c.logPath);
+    if (text === null) return ineligible(`${c.name} log unreadable`);
     const family = sniffFamily(text);
     const files = extractFailingFiles(text, family, { cwd: headDir });
-    if (files.length === 0) return { ...header, eligible: false, reason: `no-parse: no failing test file extractable from ${c.name}` };
+    if (files.length === 0) return ineligible(`no-parse: no failing test file extractable from ${c.name}`);
     // The failing-file list must account for the whole failure. Only spec
     // and tap have a guard that proves it; their summary counts must parse
     // (a truncated log has none).
     if (family !== 'spec' && family !== 'tap') {
-      return { ...header, eligible: false, reason: `${c.name} output family ${family} has no failure-accounting guard` };
+      return ineligible(`${c.name} output family ${family} has no failure-accounting guard`);
     }
     const counts = parseCounts(text, family);
     if (counts === null) {
-      return { ...header, eligible: false, reason: `${c.name} summary counts unparsed (family ${family}) — log truncated or unrecognized` };
+      return ineligible(`${c.name} summary counts unparsed (family ${family}) — log truncated or unrecognized`);
     }
     // A failing entry extractFailingFiles dropped means `files` is an
     // undercount — classifying the rest could return `pass` over a failure
     // nothing adjudicated.
     const unmatched = countUnmatchedFailures(text, family, { cwd: headDir });
     if (unmatched > 0) {
-      return {
-        ...header,
-        eligible: false,
-        reason: `unclassified failure(s): ${unmatched} failing ${unmatched === 1 ? 'entry names' : 'entries name'} no test file in ${c.name}`,
-      };
+      return ineligible(`unclassified failure(s): ${unmatched} failing ${unmatched === 1 ? 'entry names' : 'entries name'} no test file in ${c.name}`);
     }
     if (family === 'spec') {
       const entries = specEntryCount(text);
       if (entries !== counts.fail) {
-        return { ...header, eligible: false, reason: `${c.name} failing entries (${entries}) do not account for ℹ fail ${counts.fail}` };
+        return ineligible(`${c.name} failing entries (${entries}) do not account for ℹ fail ${counts.fail}`);
       }
     }
     const headFileLevel = fileLevelFailures(text, family, { cwd: headDir });

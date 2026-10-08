@@ -238,10 +238,11 @@ const TAP_NAME_RE = /^\s*not ok\b(?:\s+\d+)?(?:\s+-)?\s*(.*?)(\s+#\s*(?:SKIP|TOD
 // multiset (a name may repeat): Map<file, (string|null)[]>. spec: the
 // `✖ <name> (…)` line after each `test at` entry, minus its duration (null
 // when that line does not parse). tap: each `not ok N - <name>` block's name,
-// under every test file its frames name — a `# SKIP`/`# TODO` block is skipped. A file-level
-// entry's name is the path itself, so it is normalized the same way the file
-// is. Entries naming no test file are skipped (countUnmatchedFailures counts
-// them); every other family returns an empty Map.
+// under every test file its frames name — a `# SKIP`/`# TODO` block is
+// skipped. A file-level entry's name is the path itself, so it is normalized
+// the same way the file is. Entries naming no test file are skipped
+// (countUnmatchedFailures counts them); every other family returns an empty
+// Map.
 function failingTestsByFile(text, family, { cwd = process.cwd() } = {}) {
   const byFile = new Map();
   const add = (rel, name) => {
@@ -344,10 +345,7 @@ function extractFailingFiles(text, family, { cwd = process.cwd() } = {}) {
     }
     return found;
   }
-  if (family === 'spec') {
-    specEntries(lines).forEach(({ file }) => push(file));
-    return found;
-  }
+  if (family === 'spec') specEntries(lines).forEach(({ file }) => push(file));
   return found;
 }
 
