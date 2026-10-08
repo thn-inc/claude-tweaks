@@ -1,8 +1,10 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { resolve } = require('../../../plugin/bin/lib/impeccable-engine');
+const { resolve, run, defaultDeps } = require('../../../plugin/bin/lib/impeccable-engine');
 
 // A minimal fake deps object. `entries` is the array that would normally sit
 // at installed_plugins.json's plugins["impeccable@impeccable"] — the JSON
@@ -128,4 +130,91 @@ test('every spawn resolve() makes carries IMPECCABLE_LAUNCHER_PROBE=1 in its env
   });
   resolve({}, deps);
   assert.strictEqual(capturedEnv.IMPECCABLE_LAUNCHER_PROBE, '1');
+});
+
+const USER_ENTRY = [{ scope: 'user', installPath: '/fake/user/install', version: '4.4.0' }];
+const probeThrows = (props) => fakeDeps({
+  entries: USER_ENTRY,
+  spawn: () => { throw Object.assign(new Error(props.message || 'probe failed'), props); },
+});
+
+test('#3040: a probe killed by the timeout -> timeout (not engine-not-installed), detail names engine-probe and the code', () => {
+  const out = resolve({}, probeThrows({ code: 'ETIMEDOUT', signal: 'SIGTERM', killed: true, status: null }));
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'timeout');
+  assert.match(out.detail, /^engine-probe timed out/);
+  assert.match(out.detail, /ETIMEDOUT/);
+  assert.strictEqual(out.fix, undefined, 'a timeout has no canned fix');
+});
+
+test('#3040: a probe that cannot launch (EINVAL, the #3039 Windows bug) -> exec-failed carrying err.code', () => {
+  const out = resolve({}, probeThrows({ code: 'EINVAL', message: 'spawnSync impeccable.cmd EINVAL' }));
+  assert.strictEqual(out.reason, 'exec-failed');
+  assert.match(out.detail, /^engine-probe could not launch \(EINVAL\)/);
+  assert.strictEqual(out.fix, undefined);
+});
+
+test('#3040: a probe whose launcher is missing at spawn time (ENOENT) -> exec-failed carrying err.code', () => {
+  const out = resolve({}, probeThrows({ code: 'ENOENT', message: 'spawnSync /x ENOENT' }));
+  assert.strictEqual(out.reason, 'exec-failed');
+  assert.match(out.detail, /\(ENOENT\)/);
+});
+
+test('#3040: a probe that exits non-zero other than 127 -> exec-failed with the exit code and stderr tail', () => {
+  const out = resolve({}, probeThrows({ status: 1, stderr: 'line a\nline b\n' }));
+  assert.strictEqual(out.reason, 'exec-failed');
+  assert.match(out.detail, /^engine-probe exit 1: /);
+  assert.match(out.detail, /line b/);
+});
+
+test('#3040: a bare error (no code, no status) still yields a non-empty exec-failed detail', () => {
+  const out = resolve({}, probeThrows({ message: 'mystery' }));
+  assert.strictEqual(out.reason, 'exec-failed');
+  assert.match(out.detail, /^engine-probe could not launch \(unknown\): mystery/);
+});
+
+test('#3040: run() passes a probe timeout through unchanged rather than relabelling it', () => {
+  const out = run('signals', [], {}, probeThrows({ code: 'ETIMEDOUT', signal: 'SIGTERM', killed: true, status: null }));
+  assert.strictEqual(out.reason, 'timeout');
+  assert.match(out.detail, /^engine-probe timed out/);
+});
+
+test('#3040: a real launcher that hangs on engine-probe -> resolve() returns timeout (real process)', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'impeccable-probe-home-'));
+  const install = fs.mkdtempSync(path.join(os.tmpdir(), 'impeccable-probe-install-'));
+  try {
+    const scriptsDir = path.join(install, 'skills', 'impeccable', 'scripts');
+    fs.mkdirSync(scriptsDir, { recursive: true });
+    const isWin = process.platform === 'win32';
+    const launcher = path.join(scriptsDir, isWin ? 'impeccable.cmd' : 'impeccable');
+    const engine = path.join(scriptsDir, 'hang.js');
+    fs.writeFileSync(engine, 'setTimeout(() => {}, 3000);\n');
+    fs.writeFileSync(launcher, isWin
+      ? ['@echo off', `"${process.execPath}" "${engine}" %*`, 'exit /b %errorlevel%', ''].join('\r\n')
+      : ['#!/bin/sh', 'sleep 3', ''].join('\n'));
+    if (!isWin) fs.chmodSync(launcher, 0o755); // root-safe — exec-bit setup for a fake launcher script, not a permission-denial simulation
+    const pluginsDir = path.join(home, '.claude', 'plugins');
+    fs.mkdirSync(pluginsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginsDir, 'installed_plugins.json'),
+      JSON.stringify({ version: 2, plugins: { 'impeccable@impeccable': [{ scope: 'user', installPath: install, version: '4.4.0' }] } })
+    );
+    const deps = {
+      readFile: (p) => fs.readFileSync(p, 'utf8'),
+      exists: (p) => fs.existsSync(p),
+      realpath: (p) => fs.realpathSync(p),
+      homedir: () => home,
+      // Not `install`/`home`: on win32 the timed-out probe's engine child
+      // outlives the killed cmd.exe and would hold its cwd, so the cleanup
+      // below would fail with EPERM.
+      cwd: () => os.tmpdir(),
+      spawn: defaultDeps().spawn,
+    };
+    const out = resolve({ timeoutMs: isWin ? 1500 : 300 }, deps);
+    assert.strictEqual(out.ok, false);
+    assert.strictEqual(out.reason, 'timeout');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(install, { recursive: true, force: true });
+  }
 });
