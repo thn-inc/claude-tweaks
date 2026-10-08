@@ -1,7 +1,7 @@
 {
+  "released": true,
   "runId": "2026-10-08T101832-record-3040",
-  "sessionId": "c28c97eb-2c5e-42ce-9833-8f56a5bf7ced",
-  "claimedAt": "2026-10-08T10:20:06.465Z",
-  "ttlHours": 72,
-  "host": "Djoef-PC-WE8Swd"
+  "reason": "pr-opened: spec 3040",
+  "releasedAt": "2026-10-08T14:44:13.755Z",
+  "link": "https://github.com/thn-inc/claude-tweaks/pull/3041"
 }
