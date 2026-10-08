@@ -29,7 +29,9 @@ const FENCE_ANCHOR =
   /```bash\n(eval "\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/session-tmp-resolve\.js" ST_BACKLOG_OVERVIEW_UNSYNCED=backlog-overview-unsynced\.json ST_BACKLOG_OVERVIEW_UNSYNCED_DATED=backlog-overview-unsynced-dated\.json[\s\S]*?)\n```/m;
 
 function extractFoldInSnippet() {
-  const doc = fs.readFileSync(DOC, 'utf8');
+  // LF-normalized: a core.autocrlf checkout reads fences as ```bash\r\n, and the \r
+  // would also ride into the snippet bash executes.
+  const doc = fs.readFileSync(DOC, 'utf8').replace(/\r\n/g, '\n');
   const match = FENCE_ANCHOR.exec(doc);
   assert.ok(match, 'extraction pattern is out of sync with overview-mode.md — update this test');
   return match[1];
