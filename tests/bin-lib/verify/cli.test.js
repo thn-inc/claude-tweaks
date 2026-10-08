@@ -1534,8 +1534,10 @@ test('--baseline: failures that also fail at base exit 0, stamp a baseline pass,
   const { code, stdout } = await runCli(['--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', PER_FILE], r.opts);
   assert.strictEqual(code, 0, stdout);
   assert.match(stdout, /Baseline: adjudicated against .* 1 also fail at base, 0 flaky \(passed in isolation\), 0 attributable/);
+  assert.ok(stdout.includes(`| tests | pass (baseline-adjudicated vs ${r.baseSha}: 1 baseline, 0 flaky) |`), stdout);
   const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
   assert.strictEqual(report.pass, false);
+  assert.strictEqual(report.checks.tests.exitCode, 1, 'report.json keeps the raw exit code');
   assert.strictEqual(report.baselineAdjudicated.verdict, 'pass');
   assert.deepStrictEqual(report.baselineAdjudicated.attributable, []);
   const status = JSON.parse((await runCli(['--stamp-status'], r.opts)).stdout);
@@ -1579,6 +1581,21 @@ test('--baseline: a failing check with no extractable file is not adjudicated an
   const { code, stdout } = await runCli(['--cmd', 'tests=node -e "process.exit(3)"', '--baseline', r.baseSha, '--baseline-cmd', PER_FILE], r.opts);
   assert.strictEqual(code, 1);
   assert.match(stdout, /Baseline: not adjudicated — no-parse/);
+});
+
+test('--baseline: a file failing only in the full run is flaky — exit 0 with a CAVEAT line naming its isolated log (#3043 I3)', async () => {
+  const r = baselineRepo();
+  // Fails once (the full run consumes the marker), then passes at base and in isolation.
+  const marker = path.join(tmpDir(), 'flake-once');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'flaky.test.js'), `const fs = require('fs');\nrequire('node:test')('flaky', () => { if (fs.existsSync(${JSON.stringify(marker)})) { fs.unlinkSync(${JSON.stringify(marker)}); throw new Error('flake'); } });\n`);
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'add flaky');
+  const baseSha = r.git('rev-parse', 'HEAD').trim();
+  fs.writeFileSync(marker, '');
+  const { code, stdout } = await runCli(['--cmd', 'tests=node --test --test-reporter=tap tests/env.test.js tests/flaky.test.js', '--baseline', baseSha, '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 0, stdout);
+  assert.ok(stdout.includes(`| tests | pass (baseline-adjudicated vs ${baseSha}: 1 baseline, 1 flaky) |`), stdout);
+  assert.match(stdout, /^CAVEAT: baseline-flaky: tests\/flaky\.test\.js — failed in the full run, passed in isolation at HEAD; see .*tests-isolated-tests\+flaky\.test\.js\.log$/m);
 });
 
 test('--baseline: the scratch worktree is gone after the run (#3043)', async () => {

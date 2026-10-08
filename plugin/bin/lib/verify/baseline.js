@@ -2,16 +2,16 @@
 // check fails on a checkout with a known environment-specific failure baseline
 // (a Windows dev checkout's separator/CRLF failures), this re-runs only the
 // failing test files: at the base commit in a scratch detached worktree, and
-// — for files passing at base or absent there — once more in isolation at
-// HEAD. A file failing at base is baseline; one passing in isolation at HEAD
-// is flaky; the rest are attributable. Fails closed: anything not classified
-// with evidence (no extractable file, a failing entry naming no test file, a
-// fail-fast skip, a spawn error, a base run with no numeric exit) is never
-// "fails at base" — a base run counts only when its own log names the file as
-// failing with every test that fails in it at HEAD, and a file is flaky only
-// when its isolated log shows tests ran and
-// passed. git and runOne are injected so the tests never touch a
-// real repo; realGit is the CLI's seam.
+// — for files existing at base but not proven failing there — once more in
+// isolation at HEAD. A file failing at base is baseline; one passing in
+// isolation at HEAD is flaky; the rest, including every file absent at base,
+// are attributable. Fails closed: anything not classified with evidence (no
+// extractable file, a failing entry naming no test file, a fail-fast skip, a
+// spawn error, a base run with no numeric exit) is never "fails at base" — a
+// base run counts only when its own log names the file as failing with every
+// test that fails in it at HEAD, and a file is flaky only when its isolated
+// log shows tests ran and passed. git and runOne are injected so the tests
+// never touch a real repo; realGit is the CLI's seam.
 'use strict';
 
 const fs = require('fs');
@@ -198,7 +198,9 @@ async function adjudicate({
       // check's own --cmd-env).
       return work[k].headFileLevel && !headResolvesDeps && !(envOf(work[k].check) || {}).NODE_PATH;
     });
-    const headRuns = await pool(work, concurrency, (w, k) => (failsAtBase[k] ? null : run(w, 'isolated', cwd)));
+    // A file absent at base is new on this branch: attributable outright —
+    // an isolated pass must never let a flaky verdict cover a new file.
+    const headRuns = await pool(work, concurrency, (w, k) => (failsAtBase[k] || !atBase[k] ? null : run(w, 'isolated', cwd)));
     // Flaky is symmetric evidence: the isolated run exited 0 AND its log shows
     // tests actually ran and passed (an all-skipped run is not clean) —
     // `echo {file}` proves nothing.
@@ -211,10 +213,13 @@ async function adjudicate({
     };
     const baselineFailing = [];
     const flakyPassed = [];
+    const flakyLogs = {};
     const attributable = [];
+    const failingByCheck = {};
     work.forEach((w, k) => {
+      (failingByCheck[w.check] = failingByCheck[w.check] || []).push(w.file);
       if (failsAtBase[k]) baselineFailing.push(w.file);
-      else if (ranCleanly(headRuns[k])) flakyPassed.push(w.file);
+      else if (ranCleanly(headRuns[k])) { flakyPassed.push(w.file); flakyLogs[w.file] = headRuns[k].logPath; }
       else attributable.push(w.file);
     });
     return {
@@ -222,8 +227,10 @@ async function adjudicate({
       eligible: true,
       verdict: attributable.length === 0 ? 'pass' : 'fail',
       failingFiles: work.map((w) => w.file),
+      failingByCheck,
       baselineFailing,
       flakyPassed,
+      flakyLogs,
       attributable,
     };
   } finally {

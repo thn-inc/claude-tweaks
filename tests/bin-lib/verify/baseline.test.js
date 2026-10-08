@@ -79,13 +79,19 @@ test('a file passing at base and passing in isolation at HEAD is flaky, not attr
   const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
   assert.strictEqual(r.verdict, 'pass');
   assert.deepStrictEqual(r.flakyPassed, ['tests/b.test.js']);
+  assert.match(r.flakyLogs['tests/b.test.js'], /tests-isolated-tests\+b\.test\.js\.log$/, 'the isolated log a CAVEAT line points at');
+  assert.deepStrictEqual(r.failingByCheck, { tests: ['tests/b.test.js'] });
 });
 
-test('a failing file absent at base skips the base run and is attributable unless it passes in isolation (#3043)', async () => {
+test('I3: a failing file absent at base is attributable outright — no base run, no isolated run, never flaky (#3043)', async () => {
   const { p, dir } = logFile(SPEC(['tests/new.test.js']));
-  const { git, runOne, calls } = fakes({ outcomes: { 'isolated:tests/new.test.js': 1 }, existsAtBase: () => false });
+  // Even an isolated run that would pass cannot cover a file new on this branch.
+  const { git, runOne, calls } = fakes({ outcomes: { 'isolated:tests/new.test.js': 0 }, existsAtBase: () => false });
   const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
   assert.deepStrictEqual(r.attributable, ['tests/new.test.js']);
+  assert.deepStrictEqual(r.flakyPassed, []);
+  assert.strictEqual(r.verdict, 'fail');
+  assert.deepStrictEqual(calls.runs, [], 'nothing is re-run for a file new on this branch');
   assert.deepStrictEqual(calls.added, [], 'no scratch worktree when no failing file exists at base');
 });
 

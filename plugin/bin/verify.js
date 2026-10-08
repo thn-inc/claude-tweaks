@@ -615,7 +615,14 @@ async function main() {
       const clause = '(retry: no-parse — whole-suite re-run applies)';
       summary = check.summary ? `${summary} ${clause}` : clause;
     }
-    lines.push(`| ${check.name} | ${statusOf(check)} | ${duration} | ${summary} |`);
+    // An adjudicated pass (#3043) renders its failing checks as passes here —
+    // the exit code is 0 — while report.json keeps each raw exitCode.
+    const adjudicatedFiles = adjudicatedPass && baselineAdjudicated.failingByCheck[check.name];
+    const among = (list) => adjudicatedFiles.filter((f) => list.includes(f)).length;
+    const status = adjudicatedFiles
+      ? `pass (baseline-adjudicated vs ${baselineAdjudicated.base}: ${among(baselineAdjudicated.baselineFailing)} baseline, ${among(baselineAdjudicated.flakyPassed)} flaky)`
+      : statusOf(check);
+    lines.push(`| ${check.name} | ${status} | ${duration} | ${summary} |`);
   }
   for (const check of results) {
     if (!check.skipped && check.exitCode !== 0 && check.failingRegion) {
@@ -638,6 +645,9 @@ async function main() {
       const b = baselineAdjudicated;
       lines.push('', `Baseline: adjudicated against ${b.base} (${String(b.baseSha).slice(0, 9)}) — ${b.failingFiles.length} failing file(s): ${b.baselineFailing.length} also fail at base, ${b.flakyPassed.length} flaky (passed in isolation), ${b.attributable.length} attributable`);
       for (const file of b.attributable) lines.push(`ATTRIBUTABLE: ${file}`);
+      for (const file of b.flakyPassed) {
+        lines.push('', `CAVEAT: baseline-flaky: ${file} — failed in the full run, passed in isolation at HEAD; see ${b.flakyLogs[file]}`);
+      }
     } else {
       lines.push('', `Baseline: not adjudicated — ${baselineAdjudicated.reason}`);
     }
