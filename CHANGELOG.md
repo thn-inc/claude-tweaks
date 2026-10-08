@@ -53,6 +53,23 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.137.0](https://github.com/thn-inc/claude-tweaks/compare/v6.136.0...v6.137.0) (2026-10-08)
+
+
+### Features
+
+* Add the impeccable-engine module and CLI: resolve, run… ([#2979](https://github.com/thn-inc/claude-tweaks/issues/2979)) ([fecef3f](https://github.com/thn-inc/claude-tweaks/commit/fecef3f1a0ebbfe5360e2c96012ff9aa40c66b6c))
+* Move design-wrapper Layer 0 and availability onto the… ([#2980](https://github.com/thn-inc/claude-tweaks/issues/2980)) ([be0fe58](https://github.com/thn-inc/claude-tweaks/commit/be0fe58f949de84f752e9bc1d6d86d45f807a614)), closes [#2981](https://github.com/thn-inc/claude-tweaks/issues/2981)
+* Re-pin Impeccable to the engine, re-record fixtures… ([#2985](https://github.com/thn-inc/claude-tweaks/issues/2985)) ([7ba57cd](https://github.com/thn-inc/claude-tweaks/commit/7ba57cda86aa932e7ba84cbed1e586b65b59ff9c))
+* Read the direction contract from Impeccable's surface… ([#2983](https://github.com/thn-inc/claude-tweaks/issues/2983)) ([57efb9e](https://github.com/thn-inc/claude-tweaks/commit/57efb9e3d215d396d1a7f199bdb33fd4c8385c5e)), closes [#2984](https://github.com/thn-inc/claude-tweaks/issues/2984)
+* Run design-wrapper explore mode's concept-seed through… ([#2982](https://github.com/thn-inc/claude-tweaks/issues/2982)) ([0e1842f](https://github.com/thn-inc/claude-tweaks/commit/0e1842f1b352d145019d681843a98067d4dc5f0b))
+
+
+### Bug Fixes
+
+* Hide the console window on every plugin/bin spawn ([#3038](https://github.com/thn-inc/claude-tweaks/issues/3038)) ([bb0789a](https://github.com/thn-inc/claude-tweaks/commit/bb0789acb243eae261e687ee87429fe480424913))
+* Run the Impeccable launcher through cmd.exe on Windows ([#3039](https://github.com/thn-inc/claude-tweaks/issues/3039)) ([23d7611](https://github.com/thn-inc/claude-tweaks/commit/23d7611de073a19b34190c934e9b5111a5cf6311))
+
 ## [6.136.0](https://github.com/thn-inc/claude-tweaks/compare/v6.135.0...v6.136.0) (2026-10-04)
 
 
