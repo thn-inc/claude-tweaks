@@ -182,7 +182,10 @@ function probeFailure(err, launcher) {
     const lastLines = String(e.stderr || e.message || '').split('\n').slice(-20).join('\n');
     return { ok: false, reason: 'exec-failed', detail: `engine-probe exit ${e.status}: ${lastLines}` };
   }
-  return { ok: false, reason: 'exec-failed', detail: `engine-probe could not launch (${e.code || e.signal || 'unknown'}): ${e.message || ''}` };
+  if (e.signal) {
+    return { ok: false, reason: 'exec-failed', detail: `engine-probe killed by ${e.signal}` };
+  }
+  return { ok: false, reason: 'exec-failed', detail: `engine-probe could not launch (${e.code || 'unknown'}): ${e.message || ''}` };
 }
 
 // opts: { projectPath, timeoutMs }. deps: { readFile, exists, realpath,

@@ -218,3 +218,9 @@ test('#3040: a real launcher that hangs on engine-probe -> resolve() returns tim
     fs.rmSync(install, { recursive: true, force: true });
   }
 });
+
+test('#3040: a probe killed by a non-SIGTERM signal -> exec-failed naming the signal, not "could not launch"', () => {
+  const out = resolve({}, probeThrows({ signal: 'SIGSEGV', status: null }));
+  assert.strictEqual(out.reason, 'exec-failed');
+  assert.strictEqual(out.detail, 'engine-probe killed by SIGSEGV');
+});
