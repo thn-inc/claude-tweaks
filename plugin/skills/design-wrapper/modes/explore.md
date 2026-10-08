@@ -41,13 +41,13 @@ The genesis worlds tournament renders CSS skins over an HTML scaffold in a brows
 
 Run this immediately after Preconditions, before Scope resolution's `PRODUCT.md` offer below — never after, and never deferred to Deal and derive's own resolve call. A caller (`specify/design-pre-steps.md` Step 2.5b-ii) may already have run this same check on its own side before ever offering the tournament; when it has, this mode still re-confirms rather than trusting an unvalidated caller claim, but the two checks read the identical fact and cannot disagree.
 
-Run `node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" resolve`. On `ok: false`, return immediately — before the `PRODUCT.md` check, before any `AskUserQuestion` call — naming the module's own `reason` and `fix` verbatim:
+Run `node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" resolve`. On `ok: false`, return immediately — before the `PRODUCT.md` check, before any `AskUserQuestion` call — naming the module's own `reason` verbatim, plus whichever of `fix`/`detail` it returned:
 
 ```json
 { "mode": "explore", "skipped": "<reason>", "fix": "<fix>" }
 ```
 
-`reason` is one of the module's resolver-level failure reasons (`not-installed`, `upgrade-required`, `engine-not-installed`) — the module's exported `FAILURE_REASONS` list is authoritative if it differs from these names. On a hit (`ok: true`), nothing needs to be carried forward: Deal and derive (both scopes) calls `impeccable-engine.js run concept-seed` directly, and the module's own `run()` re-resolves internally rather than requiring a caller-held root.
+`reason` is one of the module's resolver-level failure reasons: `not-installed`, `upgrade-required`, or `engine-not-installed` (each carrying `fix`, rendered as above), or `timeout`/`exec-failed` when the `engine-probe` handshake itself timed out or could not run (each carrying `detail` instead — render `{ "mode": "explore", "skipped": "<reason>", "detail": "<detail>" }`). The module's exported `FAILURE_REASONS` list is authoritative if it differs from these names. On a hit (`ok: true`), nothing needs to be carried forward: Deal and derive (both scopes) calls `impeccable-engine.js run concept-seed` directly, and the module's own `run()` re-resolves internally rather than requiring a caller-held root.
 
 This reorders what was previously an implicit resolve buried inside Deal and derive, reached only after Scope resolution and the `PRODUCT.md` offer had already run — so an unavailable engine used to surface only after the user had already answered two upstream questions. Resolving it here means an unavailable engine is known before Scope resolution's own `PRODUCT.md` offer ever renders.
 
@@ -91,7 +91,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" run concept-seed --scope d
 { "mode": "explore", "skipped": "<reason>", "detail": "<detail>" }
 ```
 
-`run()` re-resolves internally on every call, so a plugin lost between the `## Availability` check and this call (uninstalled or downgraded mid-session, including after a reroll minutes later) surfaces here too — but as a `fix`-bearing Availability-stage reason (`not-installed`/`upgrade-required`/`engine-not-installed`), not a `detail`-bearing run-time one. Check which field the `ok: false` envelope actually carries and render the matching shape — the `## Availability` section's `{ "skipped": "<reason>", "fix": "<fix>" }` for a `fix`-bearing miss, the shape above for a `detail`-bearing one — never force a `fix`-bearing reason into the `detail` slot.
+`run()` re-resolves internally on every call, so a plugin lost between the `## Availability` check and this call (uninstalled or downgraded mid-session, including after a reroll minutes later) surfaces here too — as one of `resolve()`'s own reasons: `fix`-bearing (`not-installed`/`upgrade-required`/`engine-not-installed`), or, when the `engine-probe` handshake itself timed out or failed to run, a `detail`-bearing `timeout`/`exec-failed` with the same shape as a run-time miss. Check which field the `ok: false` envelope actually carries and render the matching shape — the `## Availability` section's `{ "skipped": "<reason>", "fix": "<fix>" }` for a `fix`-bearing miss, the shape above for a `detail`-bearing one — never force a `fix`-bearing reason into the `detail` slot.
 
 `<mode>` is a real, optional parameter of the verb — one of `persuade`, `operate`, `read`, `experience`. Map the primary surface's job: **persuade** for marketing/conversion surfaces, **operate** for tools/dashboards, **read** for content/reading surfaces, **experience** for immersive ones. When the job is unclear, **omit `--mode` entirely** — staging then rolls from the full approved pool rather than this mode guessing. Leave `--candidate-count` at the verb's own default; sizing the deal is upstream's call, not this mode's. **This is the identity scope's own policy** — the layout scope makes a different, deliberate choice for its own deal; see "Dealing" below, which does not change this sentence's meaning here.
 
@@ -302,7 +302,7 @@ A layout `ok` exists only on a pick, so `visual_reference` always carries the wi
 - `{ "mode": "explore", "skipped": "native surface — explore is web-only", "surface_track": "<ios|android|adaptive>" }`
 - `{ "mode": "explore", "skipped": "no PRODUCT.md — run /impeccable:impeccable init first" }`
 - `{ "mode": "explore", "skipped": "<not-installed|upgrade-required|engine-not-installed>", "fix": "<fix>" }` — the `## Availability` section's engine-resolve miss.
-- `{ "mode": "explore", "skipped": "<exec-failed|timeout|shape-mismatch>", "detail": "<detail>" }` — a `concept-seed` run-time miss (Deal and derive / Dealing / Lock-in), including the offline/sandboxed case where the catalog-service call itself cannot complete.
+- `{ "mode": "explore", "skipped": "<exec-failed|timeout|shape-mismatch>", "detail": "<detail>" }` — a `concept-seed` run-time miss (Deal and derive / Dealing / Lock-in), including the offline/sandboxed case where the catalog-service call itself cannot complete; also the `## Availability` section's `engine-probe` timeout or launch failure (`timeout`/`exec-failed` only).
 - Plus the standard availability/kill-switch skips defined in `../SKILL.md` (`design integration disabled`, etc.) — this mode does not redefine those, it dispatches into them exactly as every other mode does.
 
 Both shapes carry the wrapper's standard top-level `platform` and `surface_track` fields — see `../SKILL.md`'s Output contract. This mode adds no field beyond what's shown above.

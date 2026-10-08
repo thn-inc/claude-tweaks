@@ -41,7 +41,7 @@ Seven, beyond the Layer 1 kill-switch above. Layer 1 is universal to every mode;
 | 6 | `exec-failed` | `{ok: false, reason: 'exec-failed'}` | `Impeccable doctor unavailable (execution failed)` |
 | 7 | `timeout` | `{ok: false, reason: 'timeout'}` | `Impeccable doctor timed out` |
 
-Rows 1, 2, 3, 5, 6, and 7 are the engine module's own six failure reasons — see `../impeccable-plugin.md`'s Degradation table, which is where those reasons and their fixes are worded in full. Do not re-derive them here; surface the `fix` field when the engine returned one.
+Rows 1, 2, 3, 5, 6, and 7 are the engine module's own six failure reasons — see `../impeccable-plugin.md`'s Degradation table, which is where those reasons and their fixes are worded in full. Do not re-derive them here; surface the `fix` field when the engine returned one. Rows 6 and 7 can also come from `run doctor`'s internal resolve, when the `engine-probe` handshake timed out, could not launch, or exited non-zero other than 127 — neither row means the engine is missing; only row 3 does.
 
 **Row 6 (`exec-failed`) is the one an implementer will skip.** A single observed run — exit 0, clean JSON — is an observation, not a guarantee. The underlying launcher can still exit non-zero or crash before producing output, and `run()` wraps every spawn in a `try`/`catch` so this is always a returned value, never a thrown exception reaching the caller. An uncaught exception here would break **every `/tidy` run on every project**, which is a far worse failure than losing one scan step. Catch it, skip, and let `/tidy` continue.
 
