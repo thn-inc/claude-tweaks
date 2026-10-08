@@ -165,6 +165,12 @@ function spawnOptions(cwd, opts) {
   };
 }
 
+// execFileSync's timeout kill — shared by resolve()'s probe and run()'s verb,
+// so both classify a stuck launcher as `timeout` the same way.
+function isSpawnTimeout(err) {
+  return Boolean(err && (err.killed || err.signal === 'SIGTERM' || err.code === 'ETIMEDOUT'));
+}
+
 // engine-probe failure -> resolver reason. Only the launcher's own "no engine"
 // answer (exit 127 — every not-cached path in the launcher ends there) means
 // the engine isn't installed. A probe that timed out or never launched at all
@@ -172,7 +178,7 @@ function spawnOptions(cwd, opts) {
 // gets the same `timeout`/`exec-failed` reasons run() uses for a verb.
 function probeFailure(err, launcher) {
   const e = err || {};
-  if (e.killed || e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT') {
+  if (isSpawnTimeout(e)) {
     return { ok: false, reason: 'timeout', detail: `engine-probe timed out (${e.code || e.signal || 'killed'})` };
   }
   if (e.status === 127) {
@@ -369,7 +375,7 @@ function run(verb, args = [], opts = {}, deps = defaultDeps()) {
   try {
     stdout = deps.spawn(resolved.launcher, buildArgs(verb, args), spawnOptions(cwd, opts));
   } catch (err) {
-    if (err && (err.killed || err.signal === 'SIGTERM' || err.code === 'ETIMEDOUT')) {
+    if (isSpawnTimeout(err)) {
       return { ok: false, reason: 'timeout' };
     }
     const stderrText = String((err && err.stderr) || (err && err.message) || '');
