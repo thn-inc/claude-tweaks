@@ -97,7 +97,7 @@ const IS_DIRTY_TIMEOUT_MS = 10000;
 // confirm" contract `defaultIsDirty` already documented before this split.
 function readPorcelainStatus(worktreePath) {
   try {
-    const out = execFileSync('git', ['-C', worktreePath, 'status', '--porcelain'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: IS_DIRTY_TIMEOUT_MS });
+    const out = execFileSync('git', ['-C', worktreePath, 'status', '--porcelain'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: IS_DIRTY_TIMEOUT_MS, windowsHide: true });
     const lines = out.split('\n');
     if (lines[lines.length - 1] === '') lines.pop(); // trailing newline's empty tail entry (and the empty-output case)
     return lines;

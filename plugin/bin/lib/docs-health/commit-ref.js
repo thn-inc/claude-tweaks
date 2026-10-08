@@ -55,6 +55,7 @@ function defaultGit(args, opts = {}) {
     stdio: ['ignore', 'pipe', 'pipe'],
     ...(opts.timeout ? { timeout: opts.timeout } : {}),
     ...(opts.env ? { env: opts.env } : {}),
+    windowsHide: true,
   });
 }
 

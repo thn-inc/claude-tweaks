@@ -35,7 +35,7 @@ function gitLastChangedMap(root, relPaths) {
     const out = execFileSync(
       'git',
       ['-C', root, 'log', '--format=%x00%ct', '--name-only', '--', ...relPaths],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30000 },
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30000, windowsHide: true },
     );
     let currentTimestampMs = null;
     for (const line of out.split('\n')) {

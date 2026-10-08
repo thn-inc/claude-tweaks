@@ -113,6 +113,7 @@ function resolveRepoRoot(cwd) {
   try {
     const commonDir = execFileSync('git', ['rev-parse', '--git-common-dir'], {
       cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
     }).trim();
     if (!commonDir) return cwd;
     const abs = path.isAbsolute(commonDir) ? commonDir : path.resolve(cwd, commonDir);
