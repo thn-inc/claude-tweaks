@@ -18,7 +18,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const {
-  sniffFamily, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, parseCounts, stripAnsi,
+  sniffFamily, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, parseCounts, stripAnsi, specEntryCount,
 } = require('./extract');
 
 function realGit(cwd) {
@@ -88,6 +88,7 @@ async function adjudicate({
   for (const c of checks.filter((x) => x.skipped || x.exitCode !== 0)) {
     if (c.skipped) return { ...header, eligible: false, reason: `${c.name} skipped (${c.skipped})` };
     if (c.spawnError !== undefined) return { ...header, eligible: false, reason: `${c.name} could not spawn` };
+    if (typeof c.exitCode !== 'number') return { ...header, eligible: false, reason: `${c.name} exited without a numeric code` };
     const template = baselineCmds.get(c.name);
     if (!template) return { ...header, eligible: false, reason: `no --baseline-cmd for failing check ${c.name}` };
     let text;
@@ -97,6 +98,16 @@ async function adjudicate({
     const family = sniffFamily(text);
     const files = extractFailingFiles(text, family, { cwd: headDir });
     if (files.length === 0) return { ...header, eligible: false, reason: `no-parse: no failing test file extractable from ${c.name}` };
+    // The failing-file list must account for the whole failure. Only spec
+    // and tap have a guard that proves it; their summary counts must parse
+    // (a truncated log has none).
+    if (family !== 'spec' && family !== 'tap') {
+      return { ...header, eligible: false, reason: `${c.name} output family ${family} has no failure-accounting guard` };
+    }
+    const counts = parseCounts(text, family);
+    if (counts === null) {
+      return { ...header, eligible: false, reason: `${c.name} summary counts unparsed (family ${family}) — log truncated or unrecognized` };
+    }
     // A failing entry extractFailingFiles dropped means `files` is an
     // undercount — classifying the rest could return `pass` over a failure
     // nothing adjudicated.
@@ -107,6 +118,12 @@ async function adjudicate({
         eligible: false,
         reason: `unclassified failure(s): ${unmatched} failing ${unmatched === 1 ? 'entry names' : 'entries name'} no test file in ${c.name}`,
       };
+    }
+    if (family === 'spec') {
+      const entries = specEntryCount(text);
+      if (entries !== counts.fail) {
+        return { ...header, eligible: false, reason: `${c.name} failing entries (${entries}) do not account for ℹ fail ${counts.fail}` };
+      }
     }
     const headFileLevel = fileLevelFailures(text, family, { cwd: headDir });
     for (const file of files) {

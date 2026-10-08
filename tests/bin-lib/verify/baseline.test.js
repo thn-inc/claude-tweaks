@@ -133,6 +133,52 @@ test('ineligible: a failing entry that names no test file is unclassified, never
   assert.deepStrictEqual(calls.runs, [], 'nothing is re-run once the log is known to be undercounted');
 });
 
+// C1: the failing-file list must account for the whole failure. Each case
+// below would otherwise adjudicate `pass` — its base run names the file.
+const adjudicateOne = async (headLog, checkOverrides = {}) => {
+  const { p, dir } = logFile(headLog);
+  const { git, runOne, calls } = fakes({ outcomes: { 'baseline:tests/a.test.js': 1, 'baseline:tests/test_a.py': 1 } });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p, ...checkOverrides }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  return { r, calls };
+};
+
+test('C1: a signal-killed HEAD check (exitCode null) is not adjudicated (#3043)', async () => {
+  const { r, calls } = await adjudicateOne(SPEC(['tests/a.test.js']), { exitCode: null });
+  assert.strictEqual(r.eligible, false);
+  assert.strictEqual(r.reason, 'tests exited without a numeric code');
+  assert.deepStrictEqual(calls.runs, []);
+});
+
+test('C1: a summary-family log (pytest ERROR lines are invisible to it) has no failure-accounting guard (#3043)', async () => {
+  const pytest = ['FAILED tests/test_a.py::test_x - AssertionError', 'ERROR tests/test_b.py::test_y - fixture missing',
+    '=========== 1 failed, 1 error, 3 passed in 0.21s ==========='].join('\n');
+  const { r } = await adjudicateOne(pytest);
+  assert.strictEqual(r.eligible, false);
+  assert.strictEqual(r.reason, 'tests output family summary has no failure-accounting guard');
+});
+
+test('C1: a truncated TAP log (no `# fail N` summary) is not adjudicated (#3043)', async () => {
+  const truncated = ['TAP version 13', 'not ok 1 - env', '  ---', "  location: '/repo/tests/a.test.js:1:1'", '  ...'].join('\n');
+  const { r } = await adjudicateOne(truncated);
+  assert.strictEqual(r.eligible, false);
+  assert.strictEqual(r.reason, 'tests summary counts unparsed (family tap) — log truncated or unrecognized');
+});
+
+test('C1: a spec log whose failing entries fall short of `ℹ fail N` is not adjudicated (#3043)', async () => {
+  const short = SPEC(['tests/a.test.js']).replace('ℹ fail 1', 'ℹ fail 3');
+  const { r } = await adjudicateOne(short);
+  assert.strictEqual(r.eligible, false);
+  assert.strictEqual(r.reason, 'tests failing entries (1) do not account for ℹ fail 3');
+});
+
+test('C1: a TAP `not ok` block whose frames name no test file is an unclassified failure (#3043)', async () => {
+  const tap = ['not ok 1 - env', "  location: '/repo/tests/a.test.js:1:1'", 'not ok 2 - crashed', "  error: 'worker died'",
+    '# tests 2', '# pass 0', '# fail 2'].join('\n');
+  const { r } = await adjudicateOne(tap);
+  assert.strictEqual(r.eligible, false);
+  assert.match(r.reason, /^unclassified failure\(s\): 1 failing entry names no test file in tests$/);
+});
+
 test('fail-open guard: a base run exiting 1 whose log names a different file, or none, is not baseline — it falls to the isolated HEAD run (#3043)', async () => {
   const { p, dir } = logFile(SPEC(['tests/a.test.js', 'tests/b.test.js']));
   const { git, runOne, calls } = fakes({

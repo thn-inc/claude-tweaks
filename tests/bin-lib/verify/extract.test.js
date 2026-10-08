@@ -5,7 +5,7 @@ const path = require('path');
 
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
-  MAX_REGION_LINES, GENERIC_TAIL_LINES, stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures,
+  MAX_REGION_LINES, GENERIC_TAIL_LINES, stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, specEntryCount,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'extract.js'));
 
 const TAP_FIXTURE = [
@@ -379,9 +379,46 @@ test('countUnmatchedFailures: a spec test-at entry that names no test file is co
   assert.deepStrictEqual(extractFailingFiles(log, 'spec'), ['tests/a.test.js']);
 });
 
-test('countUnmatchedFailures: 0 when every spec entry is a test file, and 0 for every other family (#3043)', () => {
+test('countUnmatchedFailures: 0 when every spec entry is a test file, and 0 for the summary and generic families (#3043)', () => {
   assert.strictEqual(countUnmatchedFailures(SPEC_LOG, 'spec', { cwd: 'C:\\repo' }), 0);
-  assert.strictEqual(countUnmatchedFailures('not ok 1 - x\n  at tests/helper.js:2:1', 'tap'), 0);
+  assert.strictEqual(countUnmatchedFailures(PYTEST_FIXTURE, 'summary'), 0);
+  assert.strictEqual(countUnmatchedFailures(GENERIC_FIXTURE, 'generic'), 0);
+});
+
+// node --test's real TAP shape (Node 20 and 24 alike): a failing subtest is an
+// indented `not ok` block, and its suite's own `not ok` follows at column 0.
+const NESTED_TAP = [
+  '# Subtest: grp',
+  '    # Subtest: inner',
+  '    not ok 1 - inner',
+  '      ---',
+  "      location: '/repo/tests/nested.test.js:2:25'",
+  '      stack: |-',
+  '        TestContext.<anonymous> (/repo/tests/nested.test.js:2:51)',
+  '      ...',
+  '    # Subtest: fine',
+  '    ok 2 - fine',
+  '    1..2',
+  'not ok 1 - grp',
+  '  ---',
+  "  type: 'suite'",
+  "  location: '/repo/tests/nested.test.js:2:1'",
+  '  ...',
+  '# tests 2', '# pass 1', '# fail 1',
+].join('\n');
+
+test('countUnmatchedFailures: a TAP `not ok` block, at any indentation, whose frames name no test file is counted (#3043)', () => {
+  assert.strictEqual(countUnmatchedFailures('not ok 1 - x\n  at tests/helper.js:2:1', 'tap'), 1);
+  assert.strictEqual(countUnmatchedFailures(NESTED_TAP, 'tap', { cwd: '/repo' }), 0);
+  const frameless = NESTED_TAP.replace("      location: '/repo/tests/nested.test.js:2:25'\n", '')
+    .replace('        TestContext.<anonymous> (/repo/tests/nested.test.js:2:51)\n', '');
+  assert.strictEqual(countUnmatchedFailures(frameless, 'tap', { cwd: '/repo' }), 1, 'the indented block is unaccounted for even though its suite names the file');
+  assert.deepStrictEqual(extractFailingFiles(NESTED_TAP, 'tap', { cwd: '/repo' }), ['tests/nested.test.js']);
+});
+
+test('specEntryCount: every failing-section entry, a test file or not (#3043)', () => {
+  assert.strictEqual(specEntryCount(SPEC_LOG), 3);
+  assert.strictEqual(specEntryCount(['ℹ fail 2', '✖ failing tests:', 'test at tests/helper.js:2:1', '✖ y (1ms)'].join('\n')), 1);
 });
 
 const FILE_LEVEL_LOG = ['ℹ tests 3', 'ℹ pass 0', 'ℹ fail 3', '', '✖ failing tests:', '',

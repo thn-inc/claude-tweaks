@@ -245,13 +245,46 @@ function fileLevelFailures(text, family, { cwd = process.cwd() } = {}) {
   return fileLevel;
 }
 
-// How many spec-family failing entries extractFailingFiles silently drops
-// (a path that is no test file, or a node: internal). The baseline adjudicator
-// refuses to classify when this is non-zero — an undercounted file list must
-// never read as a clean pass. Every other family returns 0.
+// Every `test at` entry in a spec log's failing section, matched or not — the
+// adjudicator's check that the list accounts for `ℹ fail N`.
+function specEntryCount(text) { return specEntries(stripAnsi(text).split('\n')).length; }
+
+// Every TAP `not ok` block, at any indentation (a failing subtest nests under
+// its suite), in log order: {line: the `not ok` line, body: the lines after
+// it up to the next test point or `# ` line at any indentation}.
+function tapBlocks(lines) {
+  const blocks = [];
+  let current = null;
+  for (const line of lines) {
+    if (/^\s*not ok\b/.test(line)) { current = { line, body: [] }; blocks.push(current); continue; }
+    if (/^\s*(ok \d|# )/.test(line)) { current = null; continue; }
+    if (current) current.body.push(line);
+  }
+  return blocks;
+}
+
+// The relativized test files one TAP block's frames name, deduped.
+function tapBlockFiles(block, cwd) {
+  const files = [];
+  for (const line of block.body) {
+    for (const m of line.matchAll(TAP_FRAME_RE)) {
+      const rel = relativize(m[1], cwd);
+      if (isRetryableFile(rel) && !files.includes(rel)) files.push(rel);
+    }
+  }
+  return files;
+}
+
+// How many failing entries extractFailingFiles silently drops: a spec entry
+// whose path is no test file (or a node: internal), or a TAP `not ok` block
+// whose frames name no test file. The baseline adjudicator refuses to
+// classify when this is non-zero — an undercounted file list must never read
+// as a clean pass. Every other family returns 0.
 function countUnmatchedFailures(text, family, { cwd = process.cwd() } = {}) {
+  const lines = stripAnsi(text).split('\n');
+  if (family === 'tap') return tapBlocks(lines).filter((b) => tapBlockFiles(b, cwd).length === 0).length;
   if (family !== 'spec') return 0;
-  return specEntries(stripAnsi(text).split('\n'))
+  return specEntries(lines)
     .filter(({ file }) => !isRetryableFile(relativize(file, cwd))).length;
 }
 
@@ -267,13 +300,7 @@ function extractFailingFiles(text, family, { cwd = process.cwd() } = {}) {
     if (isRetryableFile(rel) && !found.includes(rel)) found.push(rel);
   };
   if (family === 'tap') {
-    let inFailure = false;
-    for (const line of lines) {
-      if (/^not ok\b/.test(line)) { inFailure = true; continue; }
-      if (/^(ok \d|# )/.test(line)) { inFailure = false; continue; }
-      if (!inFailure) continue;
-      for (const m of line.matchAll(TAP_FRAME_RE)) push(m[1]);
-    }
+    tapBlocks(lines).forEach((b) => tapBlockFiles(b, cwd).forEach(push));
     return found;
   }
   if (family === 'summary') {
@@ -292,6 +319,6 @@ function extractFailingFiles(text, family, { cwd = process.cwd() } = {}) {
 
 module.exports = {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
-  stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, TEST_FILE_RE,
+  stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, specEntryCount, TEST_FILE_RE,
   MAX_REGION_LINES, GENERIC_TAIL_LINES, MAX_LINE_CHARS,
 };
