@@ -412,7 +412,13 @@ async function main() {
   let baselineAdjudicated = null;
   if (parsed.baseline && !rawPass) {
     try {
-      baselineAdjudicated = await adjudicate({
+      // A base that equals or contains HEAD (`--baseline HEAD`, the branch's
+      // own pushed remote, a post-merge integration branch) fails exactly
+      // where HEAD fails — comparing against it would pass everything.
+      baselineAdjudicated = bgit.isAncestor('HEAD', baseSha) ? {
+        base: parsed.baseline, baseSha, eligible: false,
+        reason: `base ${parsed.baseline} (${baseSha.slice(0, 9)}) already contains HEAD — nothing to compare against`,
+      } : await adjudicate({
         checks: results,
         baselineCmds: new Map(parsed.baselineCmds.map((b) => [b.name, b.template])),
         base: parsed.baseline,

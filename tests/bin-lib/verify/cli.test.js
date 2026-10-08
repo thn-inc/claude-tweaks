@@ -1576,8 +1576,24 @@ test('--baseline: a passing run never adjudicates and stamps exactly as before (
   assert.strictEqual(status.baselineAdjudicated, false);
 });
 
+// A commit on top of the base, so HEAD is not contained in it (I1).
+function headCommit(r) {
+  fs.writeFileSync(path.join(r.repo, 'README.md'), 'change\n');
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'head');
+}
+
+test('--baseline: a base that already contains HEAD is not adjudicated and exits 1 (#3043 I1)', async () => {
+  const r = baselineRepo();
+  const { code, stdout } = await runCli(['--cmd', SUITE, '--baseline', 'HEAD', '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 1, stdout);
+  assert.ok(stdout.includes(`Baseline: not adjudicated — base HEAD (${r.baseSha.slice(0, 9)}) already contains HEAD — nothing to compare against`), stdout);
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')), 'no stamp');
+});
+
 test('--baseline: a failing check with no extractable file is not adjudicated and exits 1 (#3043)', async () => {
   const r = baselineRepo();
+  headCommit(r);
   const { code, stdout } = await runCli(['--cmd', 'tests=node -e "process.exit(3)"', '--baseline', r.baseSha, '--baseline-cmd', PER_FILE], r.opts);
   assert.strictEqual(code, 1);
   assert.match(stdout, /Baseline: not adjudicated — no-parse/);
@@ -1591,6 +1607,7 @@ test('--baseline: a file failing only in the full run is flaky — exit 0 with a
   r.git('add', '.');
   r.git('commit', '-q', '-m', 'add flaky');
   const baseSha = r.git('rev-parse', 'HEAD').trim();
+  headCommit(r);
   fs.writeFileSync(marker, '');
   const { code, stdout } = await runCli(['--cmd', 'tests=node --test --test-reporter=tap tests/env.test.js tests/flaky.test.js', '--baseline', baseSha, '--baseline-cmd', PER_FILE], r.opts);
   assert.strictEqual(code, 0, stdout);
@@ -1600,7 +1617,9 @@ test('--baseline: a file failing only in the full run is flaky — exit 0 with a
 
 test('--baseline: the scratch worktree is gone after the run (#3043)', async () => {
   const r = baselineRepo();
-  await runCli(['--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', PER_FILE], r.opts);
+  headCommit(r);
+  const { stdout } = await runCli(['--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', PER_FILE], r.opts);
+  assert.match(stdout, /Baseline: adjudicated against/, 'a scratch worktree was actually created');
   const list = r.git('worktree', 'list', '--porcelain');
   assert.strictEqual((list.match(/^worktree /gm) || []).length, 1, list);
 });

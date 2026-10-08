@@ -4,7 +4,8 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { adjudicate } = require('../../../plugin/bin/lib/verify/baseline');
+const { execFileSync } = require('child_process');
+const { adjudicate, realGit } = require('../../../plugin/bin/lib/verify/baseline');
 
 function logFile(text) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-test-'));
@@ -377,4 +378,18 @@ test('passing checks are ignored — only failed ones are adjudicated (#3043)', 
   const { git, runOne } = fakes({ outcomes: { 'baseline:tests/a.test.js': 1 } });
   const r = await adjudicate({ checks: [{ name: 'lint', exitCode: 0, logPath: 'unused' }, { name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
   assert.strictEqual(r.verdict, 'pass');
+});
+
+test('M1: a scratch worktree that survives cleanup is named on stderr with the manual removal command (#3043)', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-'));
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  const scratch = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')), 'wt');
+  fs.mkdirSync(scratch);
+  const warned = [];
+  // `git worktree remove` refuses a non-worktree and the rm is a no-op, so the directory survives.
+  realGit(repo, { warn: (line) => warned.push(line), rmSync: () => {} }).removeWorktree(scratch);
+  assert.deepStrictEqual(warned, [`verify.js: could not remove the baseline scratch worktree ${scratch} — remove it manually: git worktree remove --force ${scratch}\n`]);
+  const quiet = [];
+  realGit(repo, { warn: (line) => quiet.push(line) }).removeWorktree(scratch);
+  assert.deepStrictEqual(quiet, [], 'a removal that succeeds says nothing');
 });

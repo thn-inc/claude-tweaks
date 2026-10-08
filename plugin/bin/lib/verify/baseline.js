@@ -23,7 +23,8 @@ const {
   specEntryCount,
 } = require('./extract');
 
-function realGit(cwd) {
+// `warn` and `rmSync` are injectable so a test can force a failed cleanup.
+function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs.rmSync } = {}) {
   const git = (args) => String(execFileSync('git', args, {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
   })).trim();
@@ -31,6 +32,15 @@ function realGit(cwd) {
     repoRoot: () => git(['rev-parse', '--show-toplevel']),
     resolveCommit: (ref) => {
       try { return git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]) || null; } catch { return null; }
+    },
+    // `git merge-base --is-ancestor`: exit 0 → true, exit 1 → false; any
+    // other failure throws (the caller's adjudication-error path), never a
+    // guessed answer.
+    isAncestor: (a, b) => {
+      try { git(['merge-base', '--is-ancestor', a, b]); return true; } catch (err) {
+        if (err && err.status === 1) return false;
+        throw err;
+      }
     },
     fileExistsAt: (sha, file) => {
       try { git(['cat-file', '-e', `${sha}:${file}`]); return true; } catch { return false; }
@@ -41,10 +51,16 @@ function realGit(cwd) {
       git(['worktree', 'add', '--detach', dir, sha]);
       return dir;
     },
+    // Never silent: a scratch that survives every attempt is named on stderr
+    // with the manual cleanup command. No startup sweep — it could delete a
+    // sibling session's live scratch.
     removeWorktree: (dir) => {
       try { git(['worktree', 'remove', '--force', dir]); } catch { /* best effort — rm below */ }
-      try { fs.rmSync(path.dirname(dir), { recursive: true, force: true }); } catch { /* best effort */ }
+      try { rmSync(path.dirname(dir), { recursive: true, force: true }); } catch { /* best effort */ }
       try { git(['worktree', 'prune']); } catch { /* best effort */ }
+      if (fs.existsSync(dir)) {
+        warn(`verify.js: could not remove the baseline scratch worktree ${dir} — remove it manually: git worktree remove --force ${dir}\n`);
+      }
     },
   };
 }
