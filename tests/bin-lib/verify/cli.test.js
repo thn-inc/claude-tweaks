@@ -1628,7 +1628,7 @@ test('--baseline: a file failing beyond its base tests only in the full run is b
   const { code, stdout } = await runCli(['--cmd', 'tests=node --test --test-reporter=tap tests/mixed.test.js', '--baseline', baseSha, '--baseline-cmd', PER_FILE], r.opts);
   assert.strictEqual(code, 0, stdout);
   assert.ok(stdout.includes(`| tests | pass (baseline-adjudicated vs ${baseSha}: 1 baseline, 0 flaky) |`), stdout);
-  assert.match(stdout, /^CAVEAT: baseline-in-isolation: tests\/mixed\.test\.js — failed beyond its base failures in the full run; in isolation at HEAD it failed only tests that also fail at base; see .*tests-isolated-tests\+mixed\.test\.js\.log$/m);
+  assert.match(stdout, /^CAVEAT: baseline-in-isolation: tests\/mixed\.test\.js — in isolation at HEAD it failed only tests that also fail at base; passed there, waived from the full run: once; see .*tests-isolated-tests\+mixed\.test\.js\.log$/m);
 });
 
 test('--baseline: the scratch worktree is gone after the run (#3043)', async () => {

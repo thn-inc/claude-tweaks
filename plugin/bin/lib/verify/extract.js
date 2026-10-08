@@ -29,7 +29,7 @@ const KNOWN_SUMMARY_CATEGORIES = ['failed', 'passed', 'skipped', 'pending', 'tod
 // the failing test's name and diagnostics. Without this family the runner
 // sniffed this repo's own `npm test` output as `generic` and named no file.
 const SPEC_MARKERS = [/^ℹ tests \d+/m, /^✖ failing tests:/m];
-const SPEC_TEST_AT_RE = /^test at (.+):\d+:\d+\s*$/;
+const SPEC_TEST_AT_RE = /^test at (.+):(\d+:\d+)\s*$/;
 
 // Spec first: its markers are unambiguous, while a stray `not ok` line a test
 // printed to stdout would otherwise sniff a spec log as tap.
@@ -206,19 +206,26 @@ function relativize(file, cwd) {
 // A path extractFailingFiles would keep: a test file, never a node: internal.
 function isRetryableFile(rel) { return TEST_FILE_RE.test(rel) && !rel.startsWith('node:'); }
 
-// Every `test at <path>:L:C` entry ({file: raw path, next: the line right
-// after it}, in log order) inside the spec reporter's `✖ failing tests:` section.
+// Every `test at <path>:L:C` entry ({file: raw path, loc: 'L:C', next: the
+// line right after it, body: the diagnostic lines after that}, in log order)
+// inside the spec reporter's `✖ failing tests:` section.
 function specEntries(lines) {
   const entries = [];
   let inSection = false;
-  let prev = null;
+  let current = null;
+  let wantNext = false;
   for (const raw of lines) {
     const line = raw.replace(/\r$/, '');
-    if (prev) { prev.next = line; prev = null; }
+    const m = inSection ? line.match(SPEC_TEST_AT_RE) : null;
+    if (wantNext) {
+      current.next = line;
+      wantNext = false;
+      if (!m) continue;
+    }
     if (/^✖ failing tests:/.test(line)) { inSection = true; continue; }
     if (!inSection) continue;
-    const m = line.match(SPEC_TEST_AT_RE);
-    if (m) { prev = { file: m[1], next: '' }; entries.push(prev); }
+    if (m) { current = { file: m[1], loc: m[2], next: '', body: [] }; entries.push(current); wantNext = true; continue; }
+    if (current) current.body.push(line);
   }
   return entries;
 }
@@ -242,31 +249,78 @@ const TAP_NAME_RE = /^\s*not ok\b(?:\s+\d+)?(?:\s+-)?\s*(.*?)(\s+#\s*(?:SKIP|TOD
 // skipped. A file-level entry's name is the path itself, so it is normalized
 // the same way the file is. Entries naming no test file are skipped
 // (countUnmatchedFailures counts them); every other family returns an empty
-// Map.
-function failingTestsByFile(text, family, { cwd = process.cwd() } = {}) {
+// Map. `located`: each per-test name becomes `<name>@<line>:<col>` (the test's
+// definition site; null when the entry carries none), so two tests sharing a
+// leaf name in one file stay distinct. `conclusiveOnly`: an entry whose
+// diagnostics say it timed out or was cancelled is dropped — it did not
+// finish, which proves nothing about whether it fails.
+const INCONCLUSIVE_RE = /test timed out after|testTimeoutFailure|cancelledBy|was cancelled|did not finish before/i;
+const TAP_LOCATION_RE = /location:\s*'.*:(\d+:\d+)'/;
+function failingTestsByFile(text, family, { cwd = process.cwd(), located = false, conclusiveOnly = false } = {}) {
   const byFile = new Map();
-  const add = (rel, name) => {
-    const named = name !== null && relativize(name, cwd) === rel ? rel : name;
+  const add = (rel, name, loc, body) => {
+    if (conclusiveOnly && body.some((l) => INCONCLUSIVE_RE.test(l))) return;
+    let named = name !== null && relativize(name, cwd) === rel ? rel : name;
+    if (located && named !== null && named !== rel) named = loc ? `${named}@${loc}` : null;
     if (!byFile.has(rel)) byFile.set(rel, []);
     byFile.get(rel).push(named);
   };
   const lines = stripAnsi(text).split('\n');
   if (family === 'spec') {
-    for (const { file, next } of specEntries(lines)) {
+    for (const { file, loc, next, body } of specEntries(lines)) {
       const rel = relativize(file, cwd);
       if (!isRetryableFile(rel)) continue;
       const m = next.match(SPEC_FAIL_NAME_RE);
-      add(rel, m ? m[1] : null);
+      add(rel, m ? m[1] : null, loc, body);
     }
   }
   if (family === 'tap') {
     for (const block of tapBlocks(lines)) {
       const [, name, directive] = block.line.replace(/\r$/, '').match(TAP_NAME_RE);
       if (directive) continue;
-      tapBlockFiles(block, cwd).forEach((rel) => add(rel, name));
+      const locLine = block.body.map((l) => l.match(TAP_LOCATION_RE)).find(Boolean);
+      tapBlockFiles(block, cwd).forEach((rel) => add(rel, name, locLine ? locLine[1] : null, block.body));
     }
   }
   return byFile;
+}
+
+// The `ℹ cancelled N` (spec) / `# cancelled N` (tap) count, or null when the
+// log carries none — a cancelled test did not finish, so a log with any is no
+// evidence of what fails.
+function cancelledCount(text, family) {
+  const re = { spec: /^ℹ cancelled (\d+)/m, tap: /^# cancelled (\d+)/m }[family];
+  const m = re && stripAnsi(text).match(re);
+  return m ? Number(m[1]) : null;
+}
+
+// Every test point a single-file log reports, by name: `all` counts each
+// name's occurrences (pass, fail or skip — suites included), `passed` only
+// the ones that ran and passed (no SKIP/TODO directive). spec reads the tree
+// above `✖ failing tests:` (that section repeats failures); tap reads every
+// `ok`/`not ok` line at any indentation. Other families: empty maps.
+const SPEC_TREE_RE = /^\s*([✔✖﹣])\s+(.+?) \(\d[\d.]*ms\)(.*)$/;
+const TAP_POINT_RE = /^\s*(not ok|ok)\b(?:\s+\d+)?(?:\s+-)?\s*(.*?)(\s+#\s*(?:SKIP|TODO)\b.*)?\s*$/i;
+function testTree(text, family) {
+  const all = new Map();
+  const passed = new Map();
+  const bump = (map, name) => map.set(name, (map.get(name) || 0) + 1);
+  for (const raw of stripAnsi(text).split('\n')) {
+    const line = raw.replace(/\r$/, '');
+    if (family === 'spec') {
+      if (/^✖ failing tests:/.test(line)) break;
+      const m = line.match(SPEC_TREE_RE);
+      if (!m) continue;
+      bump(all, m[2]);
+      if (m[1] === '✔' && !/#\s*(?:SKIP|TODO)\b/i.test(m[3])) bump(passed, m[2]);
+    } else if (family === 'tap') {
+      const m = line.match(TAP_POINT_RE);
+      if (!m) continue;
+      bump(all, m[2]);
+      if (m[1].toLowerCase() === 'ok' && !m[3]) bump(passed, m[2]);
+    }
+  }
+  return { all, passed };
 }
 
 // Relativized forward-slash test paths whose failing entries are ALL
@@ -351,6 +405,7 @@ function extractFailingFiles(text, family, { cwd = process.cwd() } = {}) {
 
 module.exports = {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
-  stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, failingTestsByFile, specEntryCount, TEST_FILE_RE,
+  stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, failingTestsByFile, specEntryCount,
+  cancelledCount, testTree, TEST_FILE_RE,
   MAX_REGION_LINES, GENERIC_TAIL_LINES, MAX_LINE_CHARS,
 };

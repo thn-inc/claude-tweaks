@@ -6,7 +6,7 @@ const path = require('path');
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
   MAX_REGION_LINES, GENERIC_TAIL_LINES, stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, specEntryCount,
-  failingTestsByFile,
+  failingTestsByFile, cancelledCount, testTree,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'extract.js'));
 
 const TAP_FIXTURE = [
@@ -480,4 +480,48 @@ test('failingTestsByFile: TAP names come from every `not ok` block at any indent
 test('failingTestsByFile: summary and generic families return an empty Map (#3043)', () => {
   assert.strictEqual(failingTestsByFile(PYTEST_FIXTURE, 'summary').size, 0);
   assert.strictEqual(failingTestsByFile(GENERIC_FIXTURE, 'generic').size, 0);
+});
+
+// Two tests sharing the leaf name `works` (different describes), one timed out, one file-level.
+const LOCATED_SPEC = ['ℹ tests 4', 'ℹ pass 0', 'ℹ fail 4', 'ℹ cancelled 0', '', '✖ failing tests:', '',
+  'test at tests/a.test.js:3:3', '✖ works (1ms)', '  AssertionError', '',
+  'test at tests/a.test.js:9:3', '✖ works (1ms)', '  AssertionError', '',
+  'test at tests/a.test.js:12:1', '✖ slow (100ms)', "  'test timed out after 100ms'", '',
+  'test at tests/b.test.js:1:1', '✖ tests/b.test.js (5ms)', "  'test failed'", ''].join('\n');
+
+test('failingTestsByFile: located keys carry the definition site; file-level names stay the path (#3043)', () => {
+  assert.deepStrictEqual(failingTestsByFile(LOCATED_SPEC, 'spec', { cwd: '/r', located: true }).get('tests/a.test.js'), ['works@3:3', 'works@9:3', 'slow@12:1']);
+  assert.deepStrictEqual(failingTestsByFile(LOCATED_SPEC, 'spec', { cwd: '/r', located: true }).get('tests/b.test.js'), ['tests/b.test.js']);
+  const tap = "not ok 1 - works\n  ---\n  location: '/r/tests/a.test.js:9:3'\n  ...\nnot ok 2 - bare\n  at tests/a.test.js:4:1\n# fail 2";
+  assert.deepStrictEqual(failingTestsByFile(tap, 'tap', { cwd: '/r', located: true }).get('tests/a.test.js'), ['works@9:3', null]);
+});
+
+test('failingTestsByFile: conclusiveOnly drops entries that timed out or were cancelled (#3043)', () => {
+  assert.deepStrictEqual(failingTestsByFile(LOCATED_SPEC, 'spec', { cwd: '/r', conclusiveOnly: true }).get('tests/a.test.js'), ['works', 'works']);
+  const tap = "not ok 1 - slow\n  ---\n  failureType: 'testTimeoutFailure'\n  at tests/a.test.js:4:1\n  ...\nnot ok 2 - real\n  at tests/a.test.js:5:1\n# fail 2";
+  assert.deepStrictEqual(failingTestsByFile(tap, 'tap', { conclusiveOnly: true }).get('tests/a.test.js'), ['real']);
+});
+
+test('specEntryCount still counts back-to-back test at lines (#3043)', () => {
+  assert.strictEqual(specEntryCount(['✖ failing tests:', 'test at tests/a.test.js:1:1', 'test at tests/b.test.js:2:1', '✖ x (1ms)'].join('\n')), 2);
+});
+
+test('cancelledCount reads ℹ cancelled / # cancelled, null when absent (#3043)', () => {
+  assert.strictEqual(cancelledCount(LOCATED_SPEC, 'spec'), 0);
+  assert.strictEqual(cancelledCount('ℹ tests 2\nℹ cancelled 1', 'spec'), 1);
+  assert.strictEqual(cancelledCount('# tests 2\n# cancelled 3', 'tap'), 3);
+  assert.strictEqual(cancelledCount('ℹ tests 2', 'spec'), null);
+});
+
+test('testTree counts every test point by name and the ones that passed — skips and the failing section excluded (#3043)', () => {
+  const spec = ['▶ grp', '  ✔ works (1ms)', '  ✖ works (2ms)', '▶ grp', '✔ quick (1ms)', '﹣ later (0.1ms) # SKIP', 'ℹ tests 4', '✖ failing tests:', 'test at tests/a.test.js:3:3', '✖ works (2ms)'].join('\n');
+  const t = testTree(spec, 'spec');
+  assert.strictEqual(t.all.get('works'), 2);
+  assert.strictEqual(t.passed.get('works'), 1);
+  assert.strictEqual(t.passed.get('quick'), 1);
+  assert.strictEqual(t.all.get('later'), 1);
+  assert.strictEqual(t.passed.get('later'), undefined);
+  const tap = testTree('ok 1 - a\nnot ok 2 - b\n    ok 1 - c # SKIP\nok 3 - d # TODO', 'tap');
+  assert.deepStrictEqual([...tap.passed], [['a', 1]]);
+  assert.strictEqual(tap.all.get('c'), 1);
 });

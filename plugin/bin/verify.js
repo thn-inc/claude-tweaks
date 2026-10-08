@@ -658,8 +658,9 @@ async function main() {
       for (const file of b.flakyPassed) {
         lines.push('', `CAVEAT: baseline-flaky: ${file} — failed in the full run, passed in isolation at HEAD; see ${b.flakyLogs[file]}`);
       }
-      for (const [file, log] of Object.entries(b.baselineIsolatedLogs || {})) {
-        lines.push('', `CAVEAT: baseline-in-isolation: ${file} — failed beyond its base failures in the full run; in isolation at HEAD it failed only tests that also fail at base; see ${log}`);
+      for (const [file, { log, waived }] of Object.entries(b.baselineIsolated || {})) {
+        const extra = waived.length ? `; passed there, waived from the full run: ${waived.join(', ')}` : '';
+        lines.push('', `CAVEAT: baseline-in-isolation: ${file} — in isolation at HEAD it failed only tests that also fail at base${extra}; see ${log}`);
       }
     } else {
       lines.push('', `Baseline: not adjudicated — ${baselineAdjudicated.reason}`);

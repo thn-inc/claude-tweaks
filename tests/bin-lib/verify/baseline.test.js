@@ -14,11 +14,11 @@ function logFile(text) {
   return { dir, p };
 }
 
-const SPEC = (files) => ['ℹ tests 9', 'ℹ pass 1', `ℹ fail ${files.length}`, '', '✖ failing tests:', '',
+const SPEC = (files) => ['ℹ tests 9', 'ℹ pass 1', `ℹ fail ${files.length}`, 'ℹ cancelled 0', '', '✖ failing tests:', '',
   ...files.flatMap((f) => [`test at ${f}:1:1`, '✖ x (1ms)', ''])].join('\n');
 
 // A test file that fails to load: node lists the FILE as the failing test.
-const FILE_LEVEL = (f) => ['ℹ tests 1', 'ℹ pass 0', 'ℹ fail 1', '', '✖ failing tests:', '',
+const FILE_LEVEL = (f) => ['ℹ tests 1', 'ℹ pass 0', 'ℹ fail 1', 'ℹ cancelled 0', '', '✖ failing tests:', '',
   `test at ${f}:1:1`, `✖ ${f} (12ms)`, "  'test failed'", ''].join('\n');
 
 // outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/b.test.js': 0, ... } — exit code per (kind, file)
@@ -27,12 +27,13 @@ const FILE_LEVEL = (f) => ['ℹ tests 1', 'ℹ pass 0', 'ℹ fail 1', '', '✖ f
 // overrides the text per `${kind}:${file}`.
 const PASS_LOG = ['ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0'].join('\n');
 
-function fakes({ outcomes, existsAtBase = () => true, throwOn = null, logs = {}, repoRoot = '/repo' }) {
+function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, throwOn = null, logs = {}, repoRoot = '/repo' }) {
   const calls = { runs: [], added: [], removed: [] };
   const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-fake-runs-'));
   const git = {
     repoRoot: () => repoRoot,
     fileExistsAt: (sha, f) => existsAtBase(f),
+    sameAtBase: (sha, f) => sameAtBase(f),
     addWorktree: (sha) => { calls.added.push(sha); return '/scratch'; },
     removeWorktree: (dir) => { calls.removed.push(dir); },
   };
@@ -187,7 +188,7 @@ test('C1: a TAP `not ok` block whose frames name no test file is an unclassified
 });
 
 // C2: failing (file, test-name) pairs, not just files.
-const SPEC_NAMED = (pairs) => ['ℹ tests 9', 'ℹ pass 1', `ℹ fail ${pairs.length}`, '', '✖ failing tests:', '',
+const SPEC_NAMED = (pairs) => ['ℹ tests 9', 'ℹ pass 1', `ℹ fail ${pairs.length}`, 'ℹ cancelled 0', '', '✖ failing tests:', '',
   ...pairs.flatMap(([f, name]) => [`test at ${f}:1:1`, `✖ ${name} (1ms)`, ''])].join('\n');
 
 test('C2: an old environment failure at base does not cover a new failing test in the same file (#3043)', async () => {
@@ -226,7 +227,7 @@ test('C2: every HEAD failing test also failing at base (a superset at base is fi
 
 test('C2: TAP names compare the same way — a new failing test beside an old one is unproven (#3043)', async () => {
   const tap = (names) => [...names.flatMap((n, i) => [`not ok ${i + 1} - ${n}`, "  location: '/repo/tests/a.test.js:1:1'"]),
-    `# tests ${names.length}`, '# pass 0', `# fail ${names.length}`].join('\n');
+    `# tests ${names.length}`, '# pass 0', `# fail ${names.length}`, '# cancelled 0'].join('\n');
   const { p, dir } = logFile(tap(['old env failure', 'new regression # TODO not really']));
   const { git, runOne } = fakes({
     outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 },
@@ -373,47 +374,93 @@ test('an isolated run exiting 0 with every test skipped (pass 0) is attributable
   assert.deepStrictEqual(r.attributable, ['tests/b.test.js']);
 });
 
-// A spec log naming (file, test name) pairs; `fail` defaults to the entry count.
-const NAMED = (pairs, fail = pairs.length) => ['ℹ tests 20', 'ℹ pass 1', `ℹ fail ${fail}`, '', '✖ failing tests:', '',
-  ...pairs.flatMap(([f, n]) => [`test at ${f}:1:1`, `✖ ${n} (1ms)`, ''])].join('\n');
+// A single-file spec log of tests/r.test.js, the way node prints it: the tree
+// (`✔`/`✖`/`﹣` per test) above the failing section. `fails` are [name, loc,
+// diagnostics?] — loc defaults to 1:1; `passes`/`skips` are names.
+const R = 'tests/r.test.js';
+const NAMED = ({ fails = [], passes = [], skips = [], fail = fails.length, cancelled = 0 } = {}) => [
+  ...passes.map((n) => `✔ ${n} (1ms)`), ...fails.map(([n]) => `✖ ${n} (1ms)`), ...skips.map((n) => `﹣ ${n} (0.1ms) # SKIP`),
+  `ℹ tests ${passes.length + fails.length + skips.length}`, `ℹ pass ${passes.length}`, `ℹ fail ${fail}`, `ℹ cancelled ${cancelled}`, '',
+  '✖ failing tests:', '',
+  ...fails.flatMap(([n, loc = '1:1', diag = '  AssertionError']) => [`test at ${R}:${loc}`, `✖ ${n} (1ms)`, diag, '']),
+].join('\n');
 
 // The full run fails tests/r.test.js on base's `x` plus a load-induced `slow`.
-const isolationCase = (isolatedLog, isolatedCode = 1, baseLog = NAMED([['tests/r.test.js', 'x']])) => {
-  const { p, dir } = logFile(NAMED([['tests/r.test.js', 'x'], ['tests/r.test.js', 'slow']]));
-  const { git, runOne } = fakes({
-    outcomes: { 'baseline:tests/r.test.js': 1, 'isolated:tests/r.test.js': isolatedCode },
-    logs: { 'baseline:tests/r.test.js': baseLog, 'isolated:tests/r.test.js': isolatedLog },
+const isolationCase = (isolatedLog, { isolatedCode = 1, baseLog = NAMED({ fails: [['x']], passes: ['slow'] }), head = NAMED({ fails: [['x'], ['slow']] }), sameAtBase } = {}) => {
+  const { p, dir } = logFile(head);
+  const { git, runOne, calls } = fakes({
+    outcomes: { [`baseline:${R}`]: 1, [`isolated:${R}`]: isolatedCode },
+    logs: { [`baseline:${R}`]: baseLog, [`isolated:${R}`]: isolatedLog },
+    sameAtBase,
   });
-  return adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  return adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git })
+    .then((r) => ({ ...r, calls }));
 };
 
-test('a file failing beyond its base tests in the full run, but only base tests in isolation, is baseline with its isolated log (#3043)', async () => {
-  const r = await isolationCase(NAMED([['tests/r.test.js', 'x']]));
+test('a file failing beyond its base tests in the full run, but only base tests in isolation (the rest passing there), is baseline (#3043)', async () => {
+  const r = await isolationCase(NAMED({ fails: [['x']], passes: ['slow'] }));
   assert.strictEqual(r.verdict, 'pass');
-  assert.deepStrictEqual(r.baselineFailing, ['tests/r.test.js']);
+  assert.deepStrictEqual(r.baselineFailing, [R]);
   assert.deepStrictEqual(r.attributable, []);
-  assert.match(r.baselineIsolatedLogs['tests/r.test.js'], /tests-isolated-tests\+r\.test\.js\.log$/);
+  assert.deepStrictEqual(r.baselineIsolated[R].waived, ['slow']);
+  assert.match(r.baselineIsolated[R].log, /tests-isolated-tests\+r\.test\.js\.log$/);
 });
 
 test('an isolated run failing a test base does not fail stays attributable (#3043)', async () => {
-  const r = await isolationCase(NAMED([['tests/r.test.js', 'x'], ['tests/r.test.js', 'slow']]));
-  assert.deepStrictEqual(r.attributable, ['tests/r.test.js']);
-  assert.deepStrictEqual(r.baselineIsolatedLogs, {});
+  const r = await isolationCase(NAMED({ fails: [['x'], ['slow']] }));
+  assert.deepStrictEqual(r.attributable, [R]);
+  assert.deepStrictEqual(r.baselineIsolated, {});
 });
 
-test('an isolated run whose failing entries do not account for ℹ fail stays attributable (#3043)', async () => {
-  const r = await isolationCase(NAMED([['tests/r.test.js', 'x']], 2));
-  assert.deepStrictEqual(r.attributable, ['tests/r.test.js']);
+test('absence is not a pass: an isolated run cut short (the extra test never ran) or skipping it stays attributable (#3043)', async () => {
+  // A child killed mid-file after `x` failed: `slow` never appears.
+  assert.deepStrictEqual((await isolationCase(NAMED({ fails: [['x']], passes: ['first'] }))).attributable, [R]);
+  assert.deepStrictEqual((await isolationCase(NAMED({ fails: [['x']], skips: ['slow'] }))).attributable, [R]);
+});
+
+test('an isolated run that does not account for its failure, or reports a cancelled test, stays attributable (#3043)', async () => {
+  assert.deepStrictEqual((await isolationCase(NAMED({ fails: [['x']], passes: ['slow'], fail: 2 }))).attributable, [R]);
+  assert.deepStrictEqual((await isolationCase(NAMED({ fails: [['x']], passes: ['slow'], cancelled: 1 }))).attributable, [R]);
 });
 
 test('an isolated run with no numeric exit, or a base that names no failing test, stays attributable (#3043)', async () => {
-  assert.deepStrictEqual((await isolationCase(NAMED([['tests/r.test.js', 'x']]), null)).attributable, ['tests/r.test.js']);
-  assert.deepStrictEqual((await isolationCase(NAMED([['tests/r.test.js', 'x']]), 1, PASS_LOG)).attributable, ['tests/r.test.js']);
+  const iso = NAMED({ fails: [['x']], passes: ['slow'] });
+  assert.deepStrictEqual((await isolationCase(iso, { isolatedCode: null })).attributable, [R]);
+  assert.deepStrictEqual((await isolationCase(iso, { baseLog: PASS_LOG })).attributable, [R]);
 });
 
 test('a file-level isolated failure never qualifies as baseline-in-isolation (#3043)', async () => {
-  const r = await isolationCase(FILE_LEVEL('tests/r.test.js'), 1, FILE_LEVEL('tests/r.test.js'));
-  assert.deepStrictEqual(r.attributable, ['tests/r.test.js']);
+  const r = await isolationCase(FILE_LEVEL(R), { baseLog: FILE_LEVEL(R) });
+  assert.deepStrictEqual(r.attributable, [R]);
+});
+
+test('a base run with a cancelled test, or whose failure timed out, is no evidence — even when HEAD fails the same names (#3043)', async () => {
+  const head = NAMED({ fails: [['x']] });
+  const cancelledBase = NAMED({ fails: [['x']], cancelled: 1 });
+  const r1 = await isolationCase(NAMED({ fails: [['x']] }), { head, baseLog: cancelledBase });
+  assert.deepStrictEqual(r1.attributable, [R]);
+  const timedOutBase = NAMED({ fails: [['x', '1:1', "  'test timed out after 100ms'"]] });
+  const r2 = await isolationCase(NAMED({ fails: [['x']] }), { head, baseLog: timedOutBase });
+  assert.deepStrictEqual(r2.attributable, [R]);
+});
+
+test('an unchanged file compares tests by definition site — a same-named test elsewhere in the file is not covered (#3043)', async () => {
+  // Base fails `works` at 3:3 (describe A); HEAD fails `works` at 9:3 (describe B).
+  const head = NAMED({ fails: [['works', '9:3']], passes: ['works'] });
+  const r = await isolationCase(NAMED({ fails: [['works', '9:3']], passes: ['works'] }), { head, baseLog: NAMED({ fails: [['works', '3:3']], passes: ['works'] }) });
+  assert.deepStrictEqual(r.baselineFailing, []);
+  assert.deepStrictEqual(r.attributable, [R]);
+});
+
+test('a changed test file always takes the isolated run, comparing names unique in both trees (#3043)', async () => {
+  const head = NAMED({ fails: [['x']] });
+  const ok = await isolationCase(NAMED({ fails: [['x', '7:1']], passes: ['y'] }), { head, baseLog: NAMED({ fails: [['x']] }), sameAtBase: () => false });
+  assert.deepStrictEqual(ok.baselineFailing, [R]);
+  assert.deepStrictEqual(ok.baselineIsolated[R].waived, []);
+  assert.strictEqual(ok.calls.runs.filter((c) => c.kind === 'isolated').length, 1, 'no definition-site shortcut for a changed file');
+  // `works` appears twice in the base tree — ambiguous, never evidence.
+  const dup = await isolationCase(NAMED({ fails: [['works']] }), { head: NAMED({ fails: [['works']] }), baseLog: NAMED({ fails: [['works']], passes: ['works'] }), sameAtBase: () => false });
+  assert.deepStrictEqual(dup.attributable, [R]);
 });
 
 test('passing checks are ignored — only failed ones are adjudicated (#3043)', async () => {
@@ -435,4 +482,20 @@ test('M1: a scratch worktree that survives cleanup is named on stderr with the m
   const quiet = [];
   realGit(repo, { warn: (line) => quiet.push(line) }).removeWorktree(scratch);
   assert.deepStrictEqual(quiet, [], 'a removal that succeeds says nothing');
+});
+
+test('realGit.sameAtBase: true for a working-tree file whose blob matches the commit, false once edited or absent (#3043)', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-'));
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  git('init', '-q');
+  fs.mkdirSync(path.join(repo, 'tests'));
+  fs.writeFileSync(path.join(repo, 'tests', 'a.test.js'), 'one\n');
+  git('add', '.');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'base');
+  const sha = git('rev-parse', 'HEAD');
+  const rg = realGit(path.join(repo, 'tests'));
+  assert.strictEqual(rg.sameAtBase(sha, 'tests/a.test.js'), true, 'repo-root-relative path, from a subdirectory cwd');
+  fs.writeFileSync(path.join(repo, 'tests', 'a.test.js'), 'two\n');
+  assert.strictEqual(rg.sameAtBase(sha, 'tests/a.test.js'), false);
+  assert.strictEqual(rg.sameAtBase(sha, 'tests/missing.test.js'), false);
 });
