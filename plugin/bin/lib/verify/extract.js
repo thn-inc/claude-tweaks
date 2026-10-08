@@ -198,6 +198,34 @@ function relativize(file, cwd) {
   return normalizedFile.startsWith(prefix) ? normalizedFile.slice(prefix.length) : normalizedFile;
 }
 
+// A path extractFailingFiles would keep: a test file, never a node: internal.
+function isRetryableFile(rel) { return TEST_FILE_RE.test(rel) && !rel.startsWith('node:'); }
+
+// Every `test at <path>:L:C` path (raw, in log order) inside the spec
+// reporter's `✖ failing tests:` section.
+function specTestAtPaths(lines) {
+  const paths = [];
+  let inSection = false;
+  for (const raw of lines) {
+    const line = raw.replace(/\r$/, '');
+    if (/^✖ failing tests:/.test(line)) { inSection = true; continue; }
+    if (!inSection) continue;
+    const m = line.match(SPEC_TEST_AT_RE);
+    if (m) paths.push(m[1]);
+  }
+  return paths;
+}
+
+// How many spec-family failing entries extractFailingFiles silently drops
+// (a path that is no test file, or a node: internal). The baseline adjudicator
+// refuses to classify when this is non-zero — an undercounted file list must
+// never read as a clean pass. Every other family returns 0.
+function countUnmatchedFailures(text, family, { cwd = process.cwd() } = {}) {
+  if (family !== 'spec') return 0;
+  return specTestAtPaths(stripAnsi(text).split('\n'))
+    .filter((file) => !isRetryableFile(relativize(file, cwd))).length;
+}
+
 // Deduped, log-order, repo-relative test files named by the failing part of
 // the log. `[]` whenever nothing parses — no parse ⇒ no retry (the caller
 // never guesses). TAP: frames inside `not ok` blocks only, so a passing
@@ -207,7 +235,7 @@ function extractFailingFiles(text, family, { cwd = process.cwd() } = {}) {
   const found = [];
   const push = (file) => {
     const rel = relativize(file, cwd);
-    if (TEST_FILE_RE.test(rel) && !rel.startsWith('node:') && !found.includes(rel)) found.push(rel);
+    if (isRetryableFile(rel) && !found.includes(rel)) found.push(rel);
   };
   if (family === 'tap') {
     let inFailure = false;
@@ -227,14 +255,7 @@ function extractFailingFiles(text, family, { cwd = process.cwd() } = {}) {
     return found;
   }
   if (family === 'spec') {
-    let inSection = false;
-    for (const raw of lines) {
-      const line = raw.replace(/\r$/, '');
-      if (/^✖ failing tests:/.test(line)) { inSection = true; continue; }
-      if (!inSection) continue;
-      const m = line.match(SPEC_TEST_AT_RE);
-      if (m) push(m[1]);
-    }
+    specTestAtPaths(lines).forEach(push);
     return found;
   }
   return found;
@@ -242,6 +263,6 @@ function extractFailingFiles(text, family, { cwd = process.cwd() } = {}) {
 
 module.exports = {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
-  stripAnsi, extractFailingFiles, TEST_FILE_RE,
+  stripAnsi, extractFailingFiles, countUnmatchedFailures, TEST_FILE_RE,
   MAX_REGION_LINES, GENERIC_TAIL_LINES, MAX_LINE_CHARS,
 };

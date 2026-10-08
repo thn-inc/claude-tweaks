@@ -5,7 +5,7 @@ const path = require('path');
 
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
-  MAX_REGION_LINES, GENERIC_TAIL_LINES, stripAnsi, extractFailingFiles,
+  MAX_REGION_LINES, GENERIC_TAIL_LINES, stripAnsi, extractFailingFiles, countUnmatchedFailures,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'extract.js'));
 
 const TAP_FIXTURE = [
@@ -350,4 +350,16 @@ test('spec reporter: a passing spec log (no failing section) extracts no files (
   const passing = ['✔ ok (1ms)', 'ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0'].join('\n');
   assert.strictEqual(sniffFamily(passing), 'spec');
   assert.deepStrictEqual(extractFailingFiles(passing, 'spec'), []);
+});
+
+test('countUnmatchedFailures: a spec test-at entry that names no test file is counted, never silently dropped (#3043)', () => {
+  const log = ['ℹ tests 3', 'ℹ pass 1', 'ℹ fail 2', '', '✖ failing tests:', '',
+    'test at tests/a.test.js:1:1', '✖ x (1ms)', '', 'test at tests/helper.js:2:1', '✖ y (1ms)'].join('\n');
+  assert.strictEqual(countUnmatchedFailures(log, 'spec'), 1);
+  assert.deepStrictEqual(extractFailingFiles(log, 'spec'), ['tests/a.test.js']);
+});
+
+test('countUnmatchedFailures: 0 when every spec entry is a test file, and 0 for every other family (#3043)', () => {
+  assert.strictEqual(countUnmatchedFailures(SPEC_LOG, 'spec', { cwd: 'C:\\repo' }), 0);
+  assert.strictEqual(countUnmatchedFailures('not ok 1 - x\n  at tests/helper.js:2:1', 'tap'), 0);
 });
