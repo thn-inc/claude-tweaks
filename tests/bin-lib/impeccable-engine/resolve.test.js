@@ -22,7 +22,8 @@ function fakeDeps({ entries = [], exists = () => true, spawn, readFile, realpath
   };
 }
 
-const launcherFor = (installPath) => path.join(installPath, 'skills', 'impeccable', 'scripts', 'impeccable');
+const launcherFor = (installPath) =>
+  path.join(installPath, 'skills', 'impeccable', 'scripts', process.platform === 'win32' ? 'impeccable.cmd' : 'impeccable');
 
 test('AC1: fake install whose launcher is absent -> upgrade-required', () => {
   const entries = [{ scope: 'user', installPath: '/fake/user/install', version: '4.4.0' }];

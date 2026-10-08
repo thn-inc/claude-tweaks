@@ -4,8 +4,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
-const { run } = require('../../../plugin/bin/lib/impeccable-engine');
+const { run, defaultDeps } = require('../../../plugin/bin/lib/impeccable-engine');
 const cli = require('../../../plugin/bin/impeccable-engine.js');
 
 function tmp(prefix) {
@@ -207,13 +206,32 @@ test('AC8: every spawn run() makes for the verb call also carries IMPECCABLE_LAU
   assert.strictEqual(capturedEnv.IMPECCABLE_LAUNCHER_PROBE, '1');
 });
 
-test('AC5: a fake launcher that sleeps past a 200ms timeoutMs returns {ok:false, reason:"timeout"} (real process, real timeout)', () => {
+test('AC5: a fake launcher that sleeps past timeoutMs returns {ok:false, reason:"timeout"} (real process, real timeout)', () => {
   const home = tmp('impeccable-engine-home-');
   const install = tmp('impeccable-engine-install-');
   const scriptsDir = path.join(install, 'skills', 'impeccable', 'scripts');
   fs.mkdirSync(scriptsDir, { recursive: true });
-  const launcher = path.join(scriptsDir, 'impeccable');
-  fs.writeFileSync(launcher, [
+  // The module looks for impeccable.cmd on win32 and runs it through cmd.exe
+  // (launchSpec), so the fake launcher is a batch file there and a sh script
+  // elsewhere — same behavior: answer the probe, sleep on any verb. The batch
+  // file mirrors the real one's shape: it only forwards `%*` to an engine
+  // (here a node script), never reads `%1` itself.
+  const isWin = process.platform === 'win32';
+  const launcher = path.join(scriptsDir, isWin ? 'impeccable.cmd' : 'impeccable');
+  const engine = path.join(scriptsDir, 'fake-engine.js');
+  if (isWin) {
+    fs.writeFileSync(engine, [
+      "if (process.argv[2] === 'engine-probe') { console.log('impeccable-engine 0.1.0'); process.exit(0); }",
+      "setTimeout(() => console.log('should never be seen'), 5000);",
+      '',
+    ].join('\n'));
+  }
+  fs.writeFileSync(launcher, isWin ? [
+    '@echo off',
+    `"${process.execPath}" "${engine}" %*`,
+    'exit /b %errorlevel%',
+    '',
+  ].join('\r\n') : [
     '#!/bin/sh',
     'if [ "$1" = "engine-probe" ]; then',
     '  echo "impeccable-engine 0.1.0"',
@@ -223,7 +241,7 @@ test('AC5: a fake launcher that sleeps past a 200ms timeoutMs returns {ok:false,
     'echo "should never be seen"',
     '',
   ].join('\n'));
-  fs.chmodSync(launcher, 0o755); // root-safe — exec-bit setup for a fake launcher script, not a permission-denial simulation
+  if (!isWin) fs.chmodSync(launcher, 0o755); // root-safe — exec-bit setup for a fake launcher script, not a permission-denial simulation
   const pluginsDir = path.join(home, '.claude', 'plugins');
   fs.mkdirSync(pluginsDir, { recursive: true });
   fs.writeFileSync(
@@ -236,9 +254,11 @@ test('AC5: a fake launcher that sleeps past a 200ms timeoutMs returns {ok:false,
     realpath: (p) => fs.realpathSync(p),
     homedir: () => home,
     cwd: () => install,
-    spawn: (cmd, args, options) => execFileSync(cmd, args, options),
+    spawn: defaultDeps().spawn,
   };
-  const out = run('signals', [], { timeoutMs: 200 }, deps);
+  // cmd.exe startup alone can exceed 200ms, and the budget also covers
+  // resolve()'s engine-probe — give the probe room on Windows.
+  const out = run('signals', [], { timeoutMs: isWin ? 2000 : 200 }, deps);
   assert.strictEqual(out.ok, false);
   assert.strictEqual(out.reason, 'timeout');
 });

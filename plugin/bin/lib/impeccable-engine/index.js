@@ -62,7 +62,44 @@ function defaultDeps() {
     cwd: () => process.cwd(),
     // spawn(cmd, args, options) -> stdout string; throws on non-zero exit,
     // timeout (err.killed/err.signal), or launch failure (err.code).
-    spawn: (cmd, args, options) => execFileSync(cmd, args, { ...options, windowsHide: true }),
+    spawn: (cmd, args, options) => {
+      const spec = launchSpec(cmd, args, process.platform, process.env);
+      return execFileSync(spec.file, spec.args, { ...options, ...spec.options, windowsHide: true });
+    },
+  };
+}
+
+// cmd.exe metacharacters, caret-escaped so cmd never treats them (or a quote)
+// as syntax. Same rule set as cross-spawn's lib/util/escape.js.
+const CMD_META = /([()\][%!^"`<>&|;, *?])/g;
+
+// One argument as the target program's CRT will parse it (backslash/quote
+// rules), then caret-escaped twice: once for the `cmd /c` line, once more for
+// the batch file's own re-parse of `%*` (the launcher runs `"%run%" %*`).
+function escapeBatchArg(arg) {
+  let s = String(arg)
+    .replace(/(\\*)"/g, '$1$1\\"')
+    .replace(/(\\*)$/, '$1$1');
+  s = `"${s}"`;
+  return s.replace(CMD_META, '^$1').replace(CMD_META, '^$1');
+}
+
+// launcher + args -> {file, args, options} for execFileSync. On win32 the
+// launcher is `impeccable.cmd`, and Node refuses to execFile a .cmd/.bat
+// without a shell (CVE-2024-27980 hardening — spawnSync throws EINVAL), which
+// made resolve() report `engine-not-installed` on every Windows install. So a
+// batch launcher runs as `cmd.exe /d /s /c "<escaped line>"` with verbatim
+// arguments; anything else passes through untouched. `platform`/`env` are
+// parameters so the translation is testable on any OS.
+function launchSpec(launcher, args, platform, env = {}) {
+  if (platform !== 'win32' || !/\.(cmd|bat)$/i.test(launcher)) {
+    return { file: launcher, args, options: {} };
+  }
+  const line = [launcher.replace(CMD_META, '^$1'), ...args.map(escapeBatchArg)].join(' ');
+  return {
+    file: env.ComSpec || 'cmd.exe',
+    args: ['/d', '/s', '/c', `"${line}"`],
+    options: { windowsVerbatimArguments: true },
   };
 }
 
@@ -332,4 +369,5 @@ module.exports = {
   VERBS,
   validateVerbArgs,
   defaultDeps,
+  launchSpec,
 };
