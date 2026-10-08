@@ -17,8 +17,14 @@ const SPEC = (files) => ['ℹ tests 9', 'ℹ pass 1', `ℹ fail ${files.length}`
   ...files.flatMap((f) => [`test at ${f}:1:1`, '✖ x (1ms)', ''])].join('\n');
 
 // outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/b.test.js': 0, ... } — exit code per (kind, file)
-function fakes({ outcomes, existsAtBase = () => true, throwOn = null }) {
+// Each fake run writes a real log reflecting its outcome (a failing run names the
+// file in a spec-format log, a passing run reports one passing test); `logs`
+// overrides the text per `${kind}:${file}`.
+const PASS_LOG = ['ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0'].join('\n');
+
+function fakes({ outcomes, existsAtBase = () => true, throwOn = null, logs = {} }) {
   const calls = { runs: [], added: [], removed: [] };
+  const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-fake-runs-'));
   const git = {
     repoRoot: () => '/repo',
     fileExistsAt: (sha, f) => existsAtBase(f),
@@ -30,8 +36,12 @@ function fakes({ outcomes, existsAtBase = () => true, throwOn = null }) {
     const file = command.replace('node --test ', '');
     calls.runs.push({ kind, file, cwd });
     if (throwOn && throwOn === `${kind}:${file}`) throw new Error('boom');
-    const code = outcomes[`${kind}:${file}`];
-    return { name, command, exitCode: code === undefined ? 1 : code, durationMs: 1, logPath: 'x' };
+    const key = `${kind}:${file}`;
+    const code = outcomes[key];
+    const text = key in logs ? logs[key] : (code === 0 ? PASS_LOG : SPEC([file]));
+    const logPath = path.join(logRoot, `${name}.log`);
+    fs.writeFileSync(logPath, text);
+    return { name, command, exitCode: code === undefined ? 1 : code, durationMs: 1, logPath };
   };
   return { git, runOne, calls };
 }
@@ -117,6 +127,51 @@ test('ineligible: a failing entry that names no test file is unclassified, never
   assert.strictEqual(r.eligible, false);
   assert.match(r.reason, /unclassified failure/);
   assert.deepStrictEqual(calls.runs, [], 'nothing is re-run once the log is known to be undercounted');
+});
+
+test('fail-open guard: a base run exiting 1 whose log names a different file, or none, is not baseline — it falls to the isolated HEAD run (#3043)', async () => {
+  const { p, dir } = logFile(SPEC(['tests/a.test.js', 'tests/b.test.js']));
+  const { git, runOne, calls } = fakes({
+    outcomes: { 'baseline:tests/a.test.js': 1, 'baseline:tests/b.test.js': 1, 'isolated:tests/a.test.js': 1, 'isolated:tests/b.test.js': 1 },
+    logs: { 'baseline:tests/a.test.js': SPEC(['tests/other.test.js']), 'baseline:tests/b.test.js': 'sh: nod: command not found\n' },
+  });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.deepStrictEqual(r.baselineFailing, []);
+  assert.deepStrictEqual(r.attributable, ['tests/a.test.js', 'tests/b.test.js']);
+  assert.strictEqual(r.verdict, 'fail');
+  assert.strictEqual(calls.runs.filter((c) => c.kind === 'isolated').length, 2);
+});
+
+test('fail-open guard: an unreadable base log is unproven, not baseline (#3043)', async () => {
+  const { p, dir } = logFile(SPEC(['tests/a.test.js']));
+  const { git, runOne: inner } = fakes({ outcomes: { 'isolated:tests/a.test.js': 1 } });
+  const runOne = async (o) => {
+    const r = await inner(o);
+    return o.name.includes('-baseline-') ? { ...r, logPath: path.join(dir, 'does-not-exist.log') } : r;
+  };
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.deepStrictEqual(r.baselineFailing, []);
+  assert.deepStrictEqual(r.attributable, ['tests/a.test.js']);
+});
+
+test('fail-open guard: an isolated run exiting 0 with an empty log is attributable, never flaky (#3043)', async () => {
+  const { p, dir } = logFile(SPEC(['tests/b.test.js']));
+  const { git, runOne } = fakes({
+    outcomes: { 'baseline:tests/b.test.js': 0, 'isolated:tests/b.test.js': 0 },
+    logs: { 'isolated:tests/b.test.js': '' },
+  });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.deepStrictEqual(r.flakyPassed, []);
+  assert.deepStrictEqual(r.attributable, ['tests/b.test.js']);
+  assert.strictEqual(r.verdict, 'fail');
+});
+
+test('pool abort: after one run rejects no further item starts, and the scratch worktree is still removed (#3043)', async () => {
+  const { p, dir } = logFile(SPEC(['tests/a.test.js', 'tests/b.test.js', 'tests/c.test.js']));
+  const { git, runOne, calls } = fakes({ outcomes: {}, throwOn: 'baseline:tests/a.test.js' });
+  await assert.rejects(adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git, concurrency: 1 }), /boom/);
+  assert.strictEqual(calls.runs.length, 1);
+  assert.deepStrictEqual(calls.removed, ['/scratch']);
 });
 
 test('passing checks are ignored — only failed ones are adjudicated (#3043)', async () => {

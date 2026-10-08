@@ -7,7 +7,9 @@
 // is flaky; the rest are attributable. Fails closed: anything not classified
 // with evidence (no extractable file, a failing entry naming no test file, a
 // fail-fast skip, a spawn error, a base run with no numeric exit) is never
-// "fails at base". git and runOne are injected so the tests never touch a
+// "fails at base" — a base run counts only when its own log names the file as
+// failing, and a file is flaky only when its isolated log shows tests ran and
+// passed. git and runOne are injected so the tests never touch a
 // real repo; realGit is the CLI's seam.
 'use strict';
 
@@ -15,7 +17,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { sniffFamily, extractFailingFiles, countUnmatchedFailures, stripAnsi } = require('./extract');
+const {
+  sniffFamily, extractFailingFiles, countUnmatchedFailures, parseCounts, stripAnsi,
+} = require('./extract');
 
 function realGit(cwd) {
   const git = (args) => String(execFileSync('git', args, {
@@ -47,17 +51,31 @@ function realGit(cwd) {
 // files never share a log path.
 function slug(file) { return file.replace(/[\\/]/g, '+'); }
 
+// After any rejection no worker takes a further item, and the first error is
+// thrown only once every in-flight item has settled — so the caller's `finally`
+// (scratch-worktree removal) never races a sibling still spawning into it.
 async function pool(items, limit, fn) {
   const out = new Array(items.length);
   let next = 0;
+  let failed = false;
+  let firstError;
   const worker = async () => {
-    while (next < items.length) {
+    while (!failed && next < items.length) {
       const k = next++;
-      out[k] = await fn(items[k], k);
+      try {
+        out[k] = await fn(items[k], k);
+      } catch (err) {
+        if (!failed) { failed = true; firstError = err; }
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  if (failed) throw firstError;
   return out;
+}
+
+function readLog(logPath) {
+  try { return stripAnsi(fs.readFileSync(logPath, 'utf8')); } catch { return null; }
 }
 
 async function adjudicate({
@@ -106,15 +124,32 @@ async function adjudicate({
     if (atBase.some(Boolean)) scratch = git.addWorktree(baseSha);
     const baseDir = scratch && (sub ? path.join(scratch, ...sub.split('/')) : scratch);
     const baseRuns = await pool(work, concurrency, (w, k) => (atBase[k] ? run(w, 'baseline', baseDir) : null));
-    // Only a numeric non-zero exit is evidence of failing at base (Review Focus 3).
-    const failsAtBase = baseRuns.map((r) => r !== null && typeof r.exitCode === 'number' && r.exitCode !== 0);
+    // A numeric non-zero exit alone proves nothing (a typo'd template, a scratch
+    // tree with no node_modules and a shell syntax error all exit non-zero):
+    // the base run's own log must name this very file as failing. Anything
+    // else is unproven and falls through to the isolated HEAD run.
+    const failsAtBase = baseRuns.map((r, k) => {
+      if (r === null || typeof r.exitCode !== 'number' || r.exitCode === 0) return false;
+      const text = readLog(r.logPath);
+      if (text === null) return false;
+      return extractFailingFiles(text, sniffFamily(text), { cwd: baseDir }).includes(work[k].file);
+    });
     const headRuns = await pool(work, concurrency, (w, k) => (failsAtBase[k] ? null : run(w, 'isolated', cwd)));
+    // Flaky is symmetric evidence: the isolated run exited 0 AND its log shows
+    // tests actually ran and none failed — `echo {file}` proves nothing.
+    const ranCleanly = (r) => {
+      if (!r || r.exitCode !== 0) return false;
+      const text = readLog(r.logPath);
+      if (text === null) return false;
+      const counts = parseCounts(text, sniffFamily(text));
+      return counts !== null && counts.tests > 0 && counts.fail === 0;
+    };
     const baselineFailing = [];
     const flakyPassed = [];
     const attributable = [];
     work.forEach((w, k) => {
       if (failsAtBase[k]) baselineFailing.push(w.file);
-      else if (headRuns[k] && headRuns[k].exitCode === 0) flakyPassed.push(w.file);
+      else if (ranCleanly(headRuns[k])) flakyPassed.push(w.file);
       else attributable.push(w.file);
     });
     return {
