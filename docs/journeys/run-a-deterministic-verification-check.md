@@ -12,6 +12,7 @@ files:
   - plugin/bin/lib/verify/changed-files.js
   - plugin/bin/lib/verify/flaky.js
   - plugin/bin/lib/verify/scope.js
+  - plugin/bin/lib/verify/baseline.js
   - plugin/skills/test/verification.md
   - plugin/skills/test/SKILL.md
 ---
@@ -71,7 +72,7 @@ files:
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --cmd tests="npm test"` followed by `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status`
 - **Action:** Run the full resolved check set to a passing result inside a git checkout, then read `{git-dir}/claude-tweaks-verify-pass.json` and separately run `--stamp-status`.
 - **Should feel:** The pass stamp is the runner's own artifact, not something a skill or agent hand-writes — `verification.md`'s Step 2.5 states this is the only writer (#1921, closing #1784's agent-written-stamp gap).
-- **Should understand:** A passing run of every supplied `--cmd` check (none fail-fast skipped) writes `{sha, dirty, scope: "full", fullSha, base: null, changedFiles: [], suitesRun, flakyRetried: [], reportPath, at}` to `{git-dir}/claude-tweaks-verify-pass.json`, keyed on the invoking cwd's own `git rev-parse HEAD` — never on `--git-dir` when one is supplied (see Red flags). `--stamp-status [--git-dir <dir>]` reads that artifact back and recomputes `dirty`/`head` fresh from the live tree rather than echoing the stored stamp, printing `{present, sha, head, dirty, scope, fullSha, match, verifiedHead, reportPath, legacy}` and always exiting 0 — status is data, never a failure, including when no stamp exists at all. A targeted run (`--no-stamp`, or a `--cmd` set that isn't the full resolved suite) must never leave a stale-but-plausible `scope: "full"` stamp behind for a later `--stamp-status` to misread as a clean full pass. `verifiedHead` (#1923) is the field the re-verify gates read — `true` for a clean HEAD covered by a full pass or by a passing scoped run whose `fullSha` is still an ancestor of HEAD — while `match` keeps its strict full-pass meaning.
+- **Should understand:** A passing run of every supplied `--cmd` check (none fail-fast skipped) writes `{sha, dirty, scope: "full", fullSha, base: null, changedFiles: [], suitesRun, flakyRetried: [], reportPath, at}` to `{git-dir}/claude-tweaks-verify-pass.json`, keyed on the invoking cwd's own `git rev-parse HEAD` — never on `--git-dir` when one is supplied (see Red flags). `--stamp-status [--git-dir <dir>]` reads that artifact back and recomputes `dirty`/`head` fresh from the live tree rather than echoing the stored stamp, printing `{present, sha, head, dirty, scope, fullSha, match, verifiedHead, baselineAdjudicated, reportPath, legacy}` and always exiting 0 — status is data, never a failure, including when no stamp exists at all. A targeted run (`--no-stamp`, or a `--cmd` set that isn't the full resolved suite) must never leave a stale-but-plausible `scope: "full"` stamp behind for a later `--stamp-status` to misread as a clean full pass. `verifiedHead` (#1923) is the field the re-verify gates read — `true` for a clean HEAD covered by a full pass or by a passing scoped run whose `fullSha` is still an ancestor of HEAD — while `match` keeps its strict full-pass meaning.
 - **Red flags:** A stamp written under a repo other than the one whose HEAD it claims — `--git-dir` on a run redirects `--log-dir`/`--count-stamp` paths only; it never writes the pass stamp, precisely because `gitInfo()` reads HEAD/dirty from the invoking cwd, not from `--git-dir`. `--stamp-status` reporting `match: true` against a dirty tree, or against a stamp whose `scope` isn't `full`.
 
 ### 8. Declare a scope, then watch three consecutive runs shrink to what changed
@@ -95,6 +96,35 @@ files:
 - **Should understand:** A retry fires only under `--scope`, only for a `tests`-family check (never `types`/`lint`), and only when **every** failing test file the log names (ANSI stripped; paths as the suite prints them) is matched by `flaky.files` and the suite has a `retry` template — entries are repo-relative paths or `**`/`*` globs (the same forms `rules[].match` accepts), matched against the path exactly as the suite prints it. Any unmatched file, an unparseable log, a missing template, `maxRetries: 0`, or an unreadable log is an ordinary failure whose `retryDecision.reason` says which. Two of those reasons route the agent differently afterwards (`verification.md`'s "Flake handling"): an `unlisted: […]` reason selects named-file isolation, while a `no-parse` reason — no failing file could be named at all — selects the whole-suite re-run fallback, and the runner appends `(retry: no-parse — whole-suite re-run applies)` to that check's stdout summary cell so the choice is visible without opening `report.json`. Files retry serially in log order, each up to `maxRetries` (ceiling 2), stopping at a file's first pass; the first file to exhaust its attempts fails the run (`retryFailed`) and the rest are not attempted. Each attempt is its own `{suite}-retry-{file-slug}-{i}.log`. A retried pass stamps exactly like a clean pass (the retried suite re-ran to green, so the full set passed), and a suite retried to a pass never fail-fast-skips the suites behind it. `summary`/`counts` still describe the original failing run — the row's status and the caveat are the disambiguation. The count stamp keeps `flakyHits` per retried file, pruned to the allowlist only when a declaration was read (a run without one carries the map forward), so the counter survives ordinary full runs.
 - **Red flags:** A retry on a run without `--scope`; a retry when any failing file is unlisted; a `types`/`lint` failure retried; more than `maxRetries` attempts for one file; a `retryFailed` run that still stamped; a `flakyHits` map emptied by a no-declaration run; the escalation caveat absent while `flakyHits` reads 5 or more for an allowlisted file; an agent editing `flaky.files` itself instead of staging a `flaky-allowlist` proposal; a failing check whose `retryDecision.reason` is `no-parse` printing a bare summary cell with no `(retry: no-parse — whole-suite re-run applies)` clause, leaving the isolation path invisible on stdout.
 
+### 11. Verify a checkout with a known failure baseline against the integration branch
+- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --run "$PIPELINE_RUN_DIR" --cmd tests="npm test" --cmd-env tests=CT_HOOKS_GIT_TIMEOUT_MS=60000 --baseline origin/main --baseline-cmd tests="node --test {file}"` on a Windows dev checkout of this repo, whose suite fails about 350 tests in about 106 files identically at `origin/main`. Run it once as-is, then once after committing a test that fails in a file that passes at base. Then follow each run with `--stamp-status`.
+- **Action:** Read the `Baseline:` line, the table's Status cell, any `ATTRIBUTABLE:` / `CAVEAT: baseline-flaky:` lines, `report.json`'s `baselineAdjudicated`, the process exit code, and `--stamp-status`'s `verifiedHead`/`baselineAdjudicated`.
+- **Should feel:** The runner, not the agent, does the by-file comparison against base that used to be hand-run. A branch that adds no failure gets a verified stamp, so `/claude-tweaks:test` and `/claude-tweaks:review` Step 1.5 stop re-running a ~16-minute suite that can never exit 0 here. A branch that does add a failure is named, with no reading of the log required.
+- **Should understand:** Adjudication runs only when a check fails.
+  - **The comparison.** Each failing test file runs once at the base commit, in a scratch detached worktree that is removed afterwards. Every file that base does not prove failing re-runs once in isolation at HEAD.
+  - **baseline:** the base run's own log names the file as failing, with every one of its HEAD failing tests (a multiset of test names). A new failing test beside an old environment failure is therefore not covered.
+  - **flaky:** the isolated run exited 0 and actually ran tests. Each flaky file prints a CAVEAT.
+  - **attributable:** everything else, including any file absent at base.
+  - **Exit code and table.** The exit code is the gate. An adjudicated pass exits 0 and shows `pass (baseline-adjudicated vs origin/main: {b} baseline, {f} flaky)` in the table. Meanwhile `report.json`'s `pass` and each check's `exitCode` stay raw.
+  - **Stamp.** The stamp gains a `baseline` key (no legacy bare-SHA twin), and `--stamp-status` reads `match: false`, `verifiedHead: true`, `baselineAdjudicated: true`. The stamp means "this branch added no failure", not "the suite is green"; hosted CI stays authoritative.
+  - **When it refuses.** Anything it cannot classify with evidence prints `Baseline: not adjudicated — {reason}` and exits 1. That covers:
+    - a fail-fast skip
+    - a spawn error
+    - a missing `--baseline-cmd`
+    - a log with no extractable file, or one outside the spec/TAP families
+    - unparsed counts, or spec entries that do not add up to `ℹ fail`
+    - a TAP block naming no file
+    - a base that already contains HEAD
+  - An unresolvable ref exits 2 before anything runs.
+- **Red flags:**
+  - An exit 0 while any `ATTRIBUTABLE:` line printed.
+  - A pass over a failure in a file that does not exist at base.
+  - A pass when `--baseline` names HEAD itself.
+  - A file covered as "baseline" when HEAD fails a test in it that base does not.
+  - A flaky verdict with no CAVEAT line.
+  - A scratch worktree left behind with no stderr line naming it and the `git worktree remove --force` command.
+  - `report.json`'s `pass` rewritten to `true`.
+
 ## Origin
 - Created during build of #892 (deterministic verification runner + `verification.md` migration) — replaces the retired prose-orchestrated `LOG=`/`tail`/`grep` capture discipline `verification.md` Step 2 used to document directly.
 - Step 6 added after #881 shipped (suite-count regression stamp) — the journey previously only forward-referenced it as "a future consumer of `report.json`'s `counts` field."
@@ -104,4 +134,5 @@ files:
 - Step 10 added after #1925 shipped (runner-owned flaky retry allowlist: `flaky.js`, `extractFailingFiles`, the `run.js` retry hook, `flakyHits` in the count stamp with its five-hit escalation; `verification.md`'s "Flake handling" replaced the agent-side adjudication) — a flake in an allowlisted file no longer costs the agent an isolated rerun plus a second full suite.
 - Step 10 restated after #2026/#2029 shipped (`flaky.files` accepts globs, not only exact paths; a `no-parse` `retryDecision` now marks its stdout row and routes to `verification.md`'s whole-suite re-run instead of the named-file isolation path).
 - Step 6 extended after #1837 shipped (vitest's `Tests` summary line recognized by `extract.js`; ANSI stripped from an in-memory copy before every parser, with `NO_COLOR`/`FORCE_COLOR` set on the spawned check's own environment; a `tests` check whose counts still don't parse now surfaces its own `countsUnparsed`/`CAVEAT: tests counts unparsed …` trace instead of silently skipping the count-stamp comparison) — previously the count-stamp caveat was only demonstrated for a strict count drop, never for a parse failure.
+- Step 11 added, and Step 7's envelope gained `baselineAdjudicated`, after #3043 shipped (`--baseline`/`--baseline-cmd`, `baseline.js`, the `spec` output family in `extract.js`) — a dev checkout with a known non-zero baseline can now produce a verified stamp instead of an unresolvable re-trigger loop.
 - Related specs: #891 (parent — deterministic verification runner family), #881 (suite-count regression detection), #882 (flake adjudication — landed as a standalone `node --test` isolated re-run recipe in `verification.md`'s own "Flake adjudication" section; does not consume `verify.js`'s per-check log files)
