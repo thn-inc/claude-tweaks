@@ -94,7 +94,7 @@ function blockTriggersRelease(lines, start, onIndent) {
 }
 
 function workflowPublishesRelease(text) {
-  const lines = String(text).split('\n');
+  const lines = String(text).split(/\r?\n/); // CRLF checkouts: `on:\r` never matches ON_LINE_RE's `(.*)$`
   const i = lines.findIndex((l) => ON_LINE_RE.test(l));
   if (i === -1) return false;
   const inline = stripComment(ON_LINE_RE.exec(lines[i])[1]);
