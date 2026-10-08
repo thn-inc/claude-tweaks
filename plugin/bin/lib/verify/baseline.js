@@ -135,17 +135,39 @@ function multisetMinus(a, b) {
   });
 }
 
+// Node's own runner-level error diagnostics — an uncaught error from async
+// work that outlived its test, and the like. Node reports them as a separate
+// file-level failure only when no test in the file failed, so beside any
+// failing test they are visible here and nowhere else.
+const RUNNER_ERROR_RE = /^(?:ℹ|#) Error: |generated asynchronous activity after the test ended/m;
+
 // The family of a single-file log that accounts for its whole failure — spec
-// or tap, counts parsed, nothing cancelled, every failing entry naming a test
-// file, and (spec) entries adding up to `ℹ fail` — else null.
+// or tap, counts parsed, nothing cancelled, no runner-level error diagnostic,
+// every failing entry naming a test file, and (spec) entries adding up to
+// `ℹ fail` — else null.
 function accountedFamily(text, cwd) {
   const family = sniffFamily(text);
   if (family !== 'spec' && family !== 'tap') return null;
+  if (RUNNER_ERROR_RE.test(text)) return null;
   const counts = parseCounts(text, family);
   if (counts === null || cancelledCount(text, family) !== 0) return null;
   if (countUnmatchedFailures(text, family, { cwd }) > 0) return null;
   if (family === 'spec' && specEntryCount(text) !== counts.fail) return null;
   return family;
+}
+
+// A single-file log with every run-specific detail removed: the checkout
+// root (each spelling — forward slashes, backslashes, YAML-doubled
+// backslashes) and every duration. Two runs of the same file that fail the
+// same way produce the same text.
+function normalizeLog(text, roots) {
+  let out = text.replace(/\r$/gm, '');
+  for (const root of roots) {
+    const fwd = root.replace(/\\/g, '/').replace(/\/+$/, '');
+    const back = fwd.replace(/\//g, '\\');
+    for (const spelling of [back.replace(/\\/g, '\\\\'), back, fwd]) out = out.split(spelling).join('<ROOT>');
+  }
+  return out.replace(/\(\d[\d.]*ms\)/g, '(ms)').replace(/^ℹ duration_ms .*$/gm, '').replace(/duration_ms: .*$/gm, '');
 }
 
 function readLog(logPath) {
@@ -241,22 +263,32 @@ async function adjudicate({
       if (!located || !conclusive || conclusive.length !== located.length) return null;
       const tree = testTree(text, family);
       const qualified = tree.wellFormed ? tree.failed.filter((p) => tree.paths.get(p) === 1) : [];
-      return { located, qualified, fileLevel: fileLevelFailures(text, family, { cwd: baseDir }).has(file) };
+      return { text, located, qualified, fileLevel: fileLevelFailures(text, family, { cwd: baseDir }).has(file) };
     });
-    // No HEAD re-run only for a test file that does not load at all: wholly
-    // file-level at base and in the full run, unchanged, failing at the same
-    // sites (a load failure at 1:1 never covers a file-scoped hook failure).
-    // A scratch worktree carries no untracked dependencies, so a load failure
-    // there is not distinguishable from a missing install: it proves "fails
-    // at base" only when HEAD resolves no dependencies either — Node's own
+    // Every file present at base takes one isolated HEAD run. A file absent
+    // at base is new on this branch: attributable outright — an isolated pass
+    // must never let a flaky verdict cover a new file.
+    const headRuns = await pool(work, concurrency, (w, k) => (atBase[k] ? run(w, 'isolated', cwd) : null));
+    // A test file that does not load at all has no tests to compare, so it is
+    // baseline only when it is wholly file-level at base and in the full run,
+    // unchanged, failing at the same sites (a load failure at 1:1 never covers
+    // a file-scoped hook failure), and its isolated HEAD log is the base log
+    // once roots and durations are removed — the same error, not merely the
+    // same site. A scratch worktree carries no untracked dependencies, so a
+    // load failure there is not distinguishable from a missing install: it
+    // counts only when HEAD resolves no dependencies either — Node's own
     // resolution: no node_modules at the HEAD directory or any ancestor, and
-    // no NODE_PATH (inherited or the check's own --cmd-env). Every other file
-    // present at base takes the isolated HEAD run.
-    const failsAtBase = baseEv.map((ev, k) => Boolean(ev) && ev.fileLevel && work[k].headFileLevel && unchanged[k]
-      && coveredBy(work[k].headLocated, ev.located) && !headResolvesDeps && !(envOf(work[k].check) || {}).NODE_PATH);
-    // A file absent at base is new on this branch: attributable outright —
-    // an isolated pass must never let a flaky verdict cover a new file.
-    const headRuns = await pool(work, concurrency, (w, k) => (failsAtBase[k] || !atBase[k] ? null : run(w, 'isolated', cwd)));
+    // no NODE_PATH (inherited or the check's own --cmd-env).
+    const headRoot = git.repoRoot();
+    const failsToLoadAtBase = (k) => {
+      const ev = baseEv[k];
+      const r = headRuns[k];
+      if (!ev || !ev.fileLevel || !work[k].headFileLevel || !unchanged[k] || !coveredBy(work[k].headLocated, ev.located)) return false;
+      if (headResolvesDeps || (envOf(work[k].check) || {}).NODE_PATH) return false;
+      if (!r || typeof r.exitCode !== 'number' || r.exitCode === 0) return false;
+      const text = readLog(r.logPath);
+      return text !== null && normalizeLog(text, [headRoot]) === normalizeLog(ev.text, [scratch]);
+    };
     // A full-run failing test passed in the isolated log only when its leaf
     // name occurs there exactly once and that once is a pass. Absence is no
     // evidence: a test that never ran (killed mid-file, skipped, filtered out)
@@ -310,7 +342,7 @@ async function adjudicate({
     const failingByCheck = {};
     work.forEach((w, k) => {
       (failingByCheck[w.check] = failingByCheck[w.check] || []).push(w.file);
-      if (failsAtBase[k]) baselineFailing.push(w.file);
+      if (failsToLoadAtBase(k)) baselineFailing.push(w.file);
       else if (ranCleanly(headRuns[k], k)) { flakyPassed.push(w.file); flakyLogs[w.file] = headRuns[k].logPath; }
       else {
         const iso = baselineInIsolation(headRuns[k], k);

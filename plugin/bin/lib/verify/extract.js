@@ -309,41 +309,61 @@ function cancelledCount(text, family) {
 // cleanly — a point at a suite's indent that is not its closer, a point
 // shallower than an open suite, or a suite still open at the end (a name
 // containing a newline prints across lines) — and such a tree is no
-// evidence of anything. Other families: empty and well-formed.
-const SPEC_TREE_RE = /^( *)([✔✖﹣]) (.+) \(\d[\d.]*ms\)( # (?:SKIP|TODO)\b.*)?$/;
+// evidence of anything. A parent (a suite, or a test with subtests) appears in
+// `failed` only when it failed in its own right — spec: it has its own
+// `✖ failing tests:` entry (a hook failure); tap: its block's failureType is
+// not 'subtestsFailed' — never for a failure it only inherits from a child,
+// which the child's own entry already carries. Any ` # …` suffix (SKIP, TODO,
+// a `t.skip('reason')` message) marks a point that neither passed nor
+// failed. Other families: empty and well-formed.
+const SPEC_TREE_RE = /^( *)([✔✖﹣]) (.+) \(\d[\d.]*ms\)( # .*)?$/;
 const SPEC_OPEN_RE = /^( *)▶ (.*)$/;
 const TAP_POINT_RE = /^( *)(not ok|ok)(?= |$)(?: \d+)?(?: - )?(.*?)( # (?:SKIP|TODO)\b.*)?$/i;
 const TAP_OPEN_RE = /^( *)# Subtest: (.*)$/;
+const TAP_INHERITED_RE = /^\s*failureType:\s*'subtestsFailed'/;
 function testTree(text, family) {
   const all = new Map();
   const passed = new Map();
   const paths = new Map();
-  const failed = [];
+  const failures = [];
   let wellFormed = true;
   const bump = (map, name) => map.set(name, (map.get(name) || 0) + 1);
   const open = [];
+  let lastFailure = null;
   const point = (indent, name, ok, fail) => {
     const top = open[open.length - 1];
+    let parent = false;
     if (top && indent < top.indent) wellFormed = false;
     if (top && indent === top.indent) {
-      if (top.name === name) open.pop(); else wellFormed = false;
+      if (top.name === name) { open.pop(); parent = top.hasChildren; } else wellFormed = false;
     }
+    if (open.length) open[open.length - 1].hasChildren = true;
     const qualified = JSON.stringify([...open.map((o) => o.name), name]);
     bump(all, name);
     bump(paths, qualified);
     if (ok) bump(passed, name);
-    if (fail) failed.push(qualified);
+    lastFailure = fail ? { qualified, name, parent, inherited: false } : null;
+    if (fail) failures.push(lastFailure);
   };
-  if (family !== 'spec' && family !== 'tap') return { all, passed, paths, failed, wellFormed };
+  if (family !== 'spec' && family !== 'tap') return { all, passed, paths, failed: [], wellFormed };
+  const listed = new Map();
+  let inFailingSection = false;
+  let afterTestAt = false;
   for (const raw of stripAnsi(text).split('\n')) {
     const line = raw.replace(/\r$/, '');
     if (family === 'spec') {
-      if (/^✖ failing tests:/.test(line)) break;
+      if (inFailingSection) {
+        if (afterTestAt) { const n = line.match(SPEC_FAIL_NAME_RE); if (n) bump(listed, n[1]); }
+        afterTestAt = SPEC_TEST_AT_RE.test(line);
+        continue;
+      }
+      if (/^✖ failing tests:/.test(line)) { inFailingSection = true; continue; }
       const o = line.match(SPEC_OPEN_RE);
       if (o) { open.push({ indent: o[1].length, name: o[2] }); continue; }
       const m = line.match(SPEC_TREE_RE);
       if (m) point(m[1].length, m[3], m[2] === '✔' && !m[4], m[2] === '✖' && !m[4]);
     } else {
+      if (lastFailure && TAP_INHERITED_RE.test(line)) { lastFailure.inherited = true; continue; }
       const o = line.match(TAP_OPEN_RE);
       if (o) { open.push({ indent: o[1].length, name: o[2] }); continue; }
       const m = line.match(TAP_POINT_RE);
@@ -351,6 +371,15 @@ function testTree(text, family) {
     }
   }
   if (open.length > 0) wellFormed = false;
+  if (family === 'spec') {
+    // A spec parent failed in its own right only when the failing section
+    // lists it; each listing vouches for one parent.
+    for (const f of failures) {
+      if (!f.parent) continue;
+      if (listed.get(f.name)) listed.set(f.name, listed.get(f.name) - 1); else f.inherited = true;
+    }
+  }
+  const failed = failures.filter((f) => !f.inherited).map((f) => f.qualified);
   return { all, passed, paths, failed, wellFormed };
 }
 

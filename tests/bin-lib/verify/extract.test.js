@@ -528,7 +528,7 @@ test('testTree counts every test point by name and the ones that passed — skip
 
 test('testTree qualifies failing points by suite path — spec `▶` nesting and tap `# Subtest:` nesting (#3043)', () => {
   const spec = testTree(['▶ X', '  ✖ works (1ms)', '✖ X (2ms)', '▶ Y', '  ✔ works (1ms)', '✔ Y (2ms)', 'ℹ tests 2'].join('\n'), 'spec');
-  assert.deepStrictEqual(spec.failed, ['["X","works"]', '["X"]']);
+  assert.deepStrictEqual(spec.failed, ['["X","works"]'], 'X only inherits its child failure — it has no failing-section entry of its own');
   assert.strictEqual(spec.paths.get('["Y","works"]'), 1);
   assert.strictEqual(spec.all.get('works'), 2);
   assert.strictEqual(spec.wellFormed, true);
@@ -544,7 +544,7 @@ test('testTree reads suite names byte-for-byte and marks unclosed or mismatched 
   // ` setup` (leading space) opens and closes under the same name — later siblings are top-level again.
   const spaced = testTree(['▶  setup', '  ✖ a (1ms)', '✖  setup (2ms)', '✖ works (1ms)'].join('\n'), 'spec');
   assert.strictEqual(spaced.wellFormed, true);
-  assert.deepStrictEqual(spaced.failed, ['[" setup","a"]', '[" setup"]', '["works"]']);
+  assert.deepStrictEqual(spaced.failed, ['[" setup","a"]', '["works"]']);
   // A suite name with a newline prints across lines: its closer never parses, so the tree is no evidence.
   assert.strictEqual(testTree(['▶ multi', 'line', '  ✖ a (1ms)', '✖ multi', 'line (2ms)', '✖ works (1ms)'].join('\n'), 'spec').wellFormed, false);
   // A point at the open suite's indent that is not its closer.
@@ -558,4 +558,21 @@ test('testTree reads a name that itself contains ` (Nms)` whole, never its prefi
   const t = testTree('✔ foo (1ms) bar (0.34ms)', 'spec');
   assert.strictEqual(t.passed.get('foo (1ms) bar'), 1);
   assert.strictEqual(t.passed.get('foo'), undefined);
+});
+
+test('testTree keeps a parent only when it failed in its own right — spec listing, tap failureType (#3043)', () => {
+  // spec: P is listed in the failing section (its own error); S only inherits from its child.
+  const spec = testTree(['▶ P', '  ✖ child (1ms)', '✖ P (2ms)', '▶ S', '  ✖ inner (1ms)', '✖ S (2ms)', 'ℹ tests 3', '', '✖ failing tests:', '',
+    'test at tests/a.test.js:5:3', '✖ child (1ms)', '', 'test at tests/a.test.js:4:1', '✖ P (2ms)', '', 'test at tests/a.test.js:9:3', '✖ inner (1ms)'].join('\n'), 'spec');
+  assert.deepStrictEqual(spec.failed, ['["P","child"]', '["P"]', '["S","inner"]']);
+  // tap: P's block says subtestsFailed (inherited); S's says hookFailed (its own).
+  const tap = testTree(['# Subtest: P', '    # Subtest: child', '    not ok 1 - child', '    1..1', 'not ok 1 - P', '  ---', "  failureType: 'subtestsFailed'", '  ...',
+    '# Subtest: S', '    # Subtest: inner', '    ok 1 - inner', '    1..1', 'not ok 2 - S', '  ---', "  failureType: 'hookFailed'", '  ...'].join('\n'), 'tap');
+  assert.deepStrictEqual(tap.failed, ['["P","child"]', '["S"]']);
+});
+
+test('testTree treats any ` # …` suffix as neither passed nor failed — t.skip(reason) included (#3043)', () => {
+  const t = testTree(['﹣ works (0.1ms) # windows only', '✔ works (1ms)'].join('\n'), 'spec');
+  assert.strictEqual(t.all.get('works'), 2, 'the skipped twin still counts, so the name is not unique');
+  assert.strictEqual(t.passed.get('works'), 1);
 });

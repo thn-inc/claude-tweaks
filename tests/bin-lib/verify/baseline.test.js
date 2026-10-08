@@ -316,14 +316,23 @@ test('file-level base failure + per-test HEAD failure: the file may have loaded 
 
 test('file-level base failure + file-level HEAD failure + no node_modules: a genuine load failure, baseline (#3043)', async () => {
   const { p, dir } = logFile(FILE_LEVEL('tests/a.test.js'));
-  const { git, runOne } = fakes({
-    outcomes: { 'baseline:tests/a.test.js': 1 },
-    logs: { 'baseline:tests/a.test.js': FILE_LEVEL('tests/a.test.js') },
-    repoRoot: path.join(os.tmpdir(), 'baseline-no-such-repo-root'),
-  });
-  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: path.join(os.tmpdir(), 'baseline-no-such-repo-root'), logDir: dir, runOne, git, env: {} });
-  assert.deepStrictEqual(r.baselineFailing, ['tests/a.test.js']);
-  assert.strictEqual(r.verdict, 'pass');
+  const root = path.join(os.tmpdir(), 'baseline-no-such-repo-root');
+  // The same load error at base (under /scratch) and in isolation at HEAD (under the repo root).
+  const loadLog = (r, msg) => [`${r}${path.sep}lib.js:3`, `Error: ${msg}`, `    at Object.<anonymous> (${r}${path.sep}lib.js:3:7)`, FILE_LEVEL('tests/a.test.js').replace('(12ms)', `(${msg.length}ms)`)].join('\n');
+  const run = async (headMsg) => {
+    const { git, runOne } = fakes({
+      outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 },
+      logs: { 'baseline:tests/a.test.js': loadLog('/scratch', 'windows-only path issue'), 'isolated:tests/a.test.js': loadLog(root, headMsg) },
+      repoRoot: root,
+    });
+    return adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: root, logDir: dir, runOne, git, env: {} });
+  };
+  const same = await run('windows-only path issue');
+  assert.deepStrictEqual(same.baselineFailing, ['tests/a.test.js']);
+  assert.strictEqual(same.verdict, 'pass');
+  // Same site (1:1), different error — a new load failure, never covered.
+  const different = await run('undefinedThing is not defined');
+  assert.deepStrictEqual(different.attributable, ['tests/a.test.js']);
 });
 
 // I2: HEAD resolves dependencies the way Node does — walking up parent
@@ -507,6 +516,24 @@ test('a malformed isolated tree (a suite name spanning lines) is no evidence (#3
   const tree = ['▶ multi', 'line', '  ✖ a (1ms)', '✖ multi', 'line (2ms)'];
   const r = await isolationCase(TREE(tree, [['a', '2:3']]), { head: TREE(tree, [['a', '2:3']]), baseLog: TREE(tree, [['a', '2:3']]) });
   assert.deepStrictEqual(r.attributable, [R]);
+});
+
+test('a runner-level error diagnostic in the isolated log (async work outliving its test) is no evidence, even beside a base failure (#3043)', async () => {
+  const tree = ['✖ base-fail (1ms)', '✔ late (1ms)'];
+  const iso = TREE(tree, [['base-fail', '3:1']]).replace('ℹ tests', 'ℹ Error: Test "late" at tests\\r.test.js:5:3 generated asynchronous activity after the test ended.\nℹ tests');
+  const r = await isolationCase(iso, { head: TREE(tree, [['base-fail', '3:1']]), baseLog: TREE(tree, [['base-fail', '3:1']]) });
+  assert.deepStrictEqual(r.attributable, [R]);
+});
+
+test('a base parent that only inherited its child failure never covers the parent failing in its own right at HEAD (#3043)', async () => {
+  // Base: P fails only because `child` fails (P unlisted). HEAD: P also throws its own error (listed).
+  const base = TREE(['▶ P', '  ✖ child (1ms)', '✖ P (2ms)'], [['child', '5:3']]);
+  const iso = TREE(['▶ P', '  ✖ child (1ms)', '✖ P (2ms)'], [['child', '5:3'], ['P', '4:1']]);
+  const r = await isolationCase(iso, { head: iso, baseLog: base });
+  assert.deepStrictEqual(r.attributable, [R]);
+  // The same inheritance on both sides is baseline.
+  const same = await isolationCase(base, { head: base, baseLog: base });
+  assert.deepStrictEqual(same.baselineFailing, [R]);
 });
 
 test('a file-scoped hook failure at base never covers a test file that fails to load at HEAD (#3043)', async () => {
