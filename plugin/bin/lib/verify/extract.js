@@ -228,20 +228,50 @@ function specEntries(lines) {
 // file that fails to load takes, as opposed to a failing test inside it.
 const SPEC_FAIL_NAME_RE = /^✖ (.+) \(\d[\d.]*ms\)\s*$/;
 
-// Relativized forward-slash test paths whose failing-section entries are ALL
-// file-level. A file with any per-test entry is absent. Non-spec families
-// return an empty Set.
+// A TAP name carries an optional `# SKIP` / `# TODO` directive after it.
+const TAP_NAME_RE = /^\s*not ok\b(?:\s+\d+)?(?:\s+-)?\s*(.*?)(?:\s+#\s*(?:SKIP|TODO)\b.*)?\s*$/i;
+
+// The failing test names per relativized test file, in log order, as a
+// multiset (a name may repeat): Map<file, (string|null)[]>. spec: the
+// `✖ <name> (…)` line after each `test at` entry, minus its duration (null
+// when that line does not parse). tap: each `not ok N - <name>` block's name,
+// directive stripped, under every test file its frames name. A file-level
+// entry's name is the path itself, so it is normalized the same way the file
+// is. Entries naming no test file are skipped (countUnmatchedFailures counts
+// them); every other family returns an empty Map.
+function failingTestsByFile(text, family, { cwd = process.cwd() } = {}) {
+  const byFile = new Map();
+  const add = (rel, name) => {
+    const named = name !== null && relativize(name, cwd) === rel ? rel : name;
+    if (!byFile.has(rel)) byFile.set(rel, []);
+    byFile.get(rel).push(named);
+  };
+  const lines = stripAnsi(text).split('\n');
+  if (family === 'spec') {
+    for (const { file, next } of specEntries(lines)) {
+      const rel = relativize(file, cwd);
+      if (!isRetryableFile(rel)) continue;
+      const m = next.match(SPEC_FAIL_NAME_RE);
+      add(rel, m ? m[1] : null);
+    }
+  }
+  if (family === 'tap') {
+    for (const block of tapBlocks(lines)) {
+      const name = block.line.replace(/\r$/, '').match(TAP_NAME_RE)[1];
+      tapBlockFiles(block, cwd).forEach((rel) => add(rel, name));
+    }
+  }
+  return byFile;
+}
+
+// Relativized forward-slash test paths whose failing entries are ALL
+// file-level (the name is the path itself). A file with any per-test entry
+// is absent. Families other than spec and tap return an empty Set.
 function fileLevelFailures(text, family, { cwd = process.cwd() } = {}) {
   const fileLevel = new Set();
-  if (family !== 'spec') return fileLevel;
-  const perTest = new Set();
-  for (const { file, next } of specEntries(stripAnsi(text).split('\n'))) {
-    const rel = relativize(file, cwd);
-    const m = next.match(SPEC_FAIL_NAME_RE);
-    if (m && relativize(m[1], cwd) === rel) fileLevel.add(rel);
-    else perTest.add(rel);
-  }
-  perTest.forEach((rel) => fileLevel.delete(rel));
+  failingTestsByFile(text, family, { cwd }).forEach((names, rel) => {
+    if (names.every((n) => n === rel)) fileLevel.add(rel);
+  });
   return fileLevel;
 }
 
@@ -319,6 +349,6 @@ function extractFailingFiles(text, family, { cwd = process.cwd() } = {}) {
 
 module.exports = {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
-  stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, specEntryCount, TEST_FILE_RE,
+  stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, failingTestsByFile, specEntryCount, TEST_FILE_RE,
   MAX_REGION_LINES, GENERIC_TAIL_LINES, MAX_LINE_CHARS,
 };

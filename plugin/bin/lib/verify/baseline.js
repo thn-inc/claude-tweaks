@@ -8,7 +8,8 @@
 // with evidence (no extractable file, a failing entry naming no test file, a
 // fail-fast skip, a spawn error, a base run with no numeric exit) is never
 // "fails at base" — a base run counts only when its own log names the file as
-// failing, and a file is flaky only when its isolated log shows tests ran and
+// failing with every test that fails in it at HEAD, and a file is flaky only
+// when its isolated log shows tests ran and
 // passed. git and runOne are injected so the tests never touch a
 // real repo; realGit is the CLI's seam.
 'use strict';
@@ -18,7 +19,8 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const {
-  sniffFamily, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, parseCounts, stripAnsi, specEntryCount,
+  sniffFamily, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, failingTestsByFile, parseCounts, stripAnsi,
+  specEntryCount,
 } = require('./extract');
 
 function realGit(cwd) {
@@ -74,6 +76,20 @@ async function pool(items, limit, fn) {
   return out;
 }
 
+// Multiset containment: every HEAD failing test name (repeats counted) is
+// among the base's for the same file. An unparsed (null) or empty HEAD list
+// is never covered.
+function coveredBy(headNames, baseNames) {
+  if (headNames.length === 0) return false;
+  const left = new Map();
+  baseNames.forEach((n) => left.set(n, (left.get(n) || 0) + 1));
+  return headNames.every((n) => {
+    if (n === null || !left.get(n)) return false;
+    left.set(n, left.get(n) - 1);
+    return true;
+  });
+}
+
 function readLog(logPath) {
   try { return stripAnsi(fs.readFileSync(logPath, 'utf8')); } catch { return null; }
 }
@@ -126,8 +142,12 @@ async function adjudicate({
       }
     }
     const headFileLevel = fileLevelFailures(text, family, { cwd: headDir });
+    const headTests = failingTestsByFile(text, family, { cwd: headDir });
     for (const file of files) {
-      work.push({ check: c.name, file, command: template.replace(/\{file\}/g, file), headFileLevel: headFileLevel.has(file) });
+      work.push({
+        check: c.name, file, command: template.replace(/\{file\}/g, file),
+        headFileLevel: headFileLevel.has(file), headTests: headTests.get(file) || [],
+      });
     }
   }
 
@@ -146,15 +166,18 @@ async function adjudicate({
     const baseRuns = await pool(work, concurrency, (w, k) => (atBase[k] ? run(w, 'baseline', baseDir) : null));
     // A numeric non-zero exit alone proves nothing (a typo'd template, a scratch
     // tree with no node_modules and a shell syntax error all exit non-zero):
-    // the base run's own log must name this very file as failing. Anything
-    // else is unproven and falls through to the isolated HEAD run.
+    // the base run's own log must name this very file as failing — and with
+    // every test that fails in it at HEAD, so an old environment failure
+    // cannot cover a new failing test in the same file. Anything else is
+    // unproven and falls through to the isolated HEAD run.
     const failsAtBase = baseRuns.map((r, k) => {
       if (r === null || typeof r.exitCode !== 'number' || r.exitCode === 0) return false;
       const text = readLog(r.logPath);
       if (text === null) return false;
       const family = sniffFamily(text);
       const file = work[k].file;
-      if (!extractFailingFiles(text, family, { cwd: baseDir }).includes(file)) return false;
+      const baseTests = failingTestsByFile(text, family, { cwd: baseDir }).get(file);
+      if (!baseTests || !coveredBy(work[k].headTests, baseTests)) return false;
       if (!fileLevelFailures(text, family, { cwd: baseDir }).has(file)) return true;
       // A file-level base failure is a test file that did not load. A scratch
       // worktree carries no untracked dependencies, so that is not

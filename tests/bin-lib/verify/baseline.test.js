@@ -179,6 +179,59 @@ test('C1: a TAP `not ok` block whose frames name no test file is an unclassified
   assert.match(r.reason, /^unclassified failure\(s\): 1 failing entry names no test file in tests$/);
 });
 
+// C2: failing (file, test-name) pairs, not just files.
+const SPEC_NAMED = (pairs) => ['ℹ tests 9', 'ℹ pass 1', `ℹ fail ${pairs.length}`, '', '✖ failing tests:', '',
+  ...pairs.flatMap(([f, name]) => [`test at ${f}:1:1`, `✖ ${name} (1ms)`, ''])].join('\n');
+
+test('C2: an old environment failure at base does not cover a new failing test in the same file (#3043)', async () => {
+  const { p, dir } = logFile(SPEC_NAMED([['tests/a.test.js', 'old env failure'], ['tests/a.test.js', 'new regression']]));
+  const { git, runOne, calls } = fakes({
+    outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 },
+    logs: { 'baseline:tests/a.test.js': SPEC_NAMED([['tests/a.test.js', 'old env failure']]) },
+  });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.deepStrictEqual(r.baselineFailing, []);
+  assert.deepStrictEqual(r.attributable, ['tests/a.test.js']);
+  assert.strictEqual(r.verdict, 'fail');
+  assert.strictEqual(calls.runs.filter((c) => c.kind === 'isolated').length, 1, 'the unproven file falls through to the isolated run');
+});
+
+test('C2: the comparison is a multiset — a name failing twice at HEAD needs two base failures (#3043)', async () => {
+  const { p, dir } = logFile(SPEC_NAMED([['tests/a.test.js', 'dup'], ['tests/a.test.js', 'dup']]));
+  const { git, runOne } = fakes({
+    outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 },
+    logs: { 'baseline:tests/a.test.js': SPEC_NAMED([['tests/a.test.js', 'dup']]) },
+  });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.deepStrictEqual(r.attributable, ['tests/a.test.js']);
+});
+
+test('C2: every HEAD failing test also failing at base (a superset at base is fine) is baseline (#3043)', async () => {
+  const { p, dir } = logFile(SPEC_NAMED([['tests/a.test.js', 'env one']]));
+  const { git, runOne } = fakes({
+    outcomes: { 'baseline:tests/a.test.js': 1 },
+    logs: { 'baseline:tests/a.test.js': SPEC_NAMED([['tests/a.test.js', 'env two'], ['tests/a.test.js', 'env one']]) },
+  });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.deepStrictEqual(r.baselineFailing, ['tests/a.test.js']);
+  assert.strictEqual(r.verdict, 'pass');
+});
+
+test('C2: TAP names compare the same way — a new failing test beside an old one is unproven (#3043)', async () => {
+  const tap = (names) => [...names.flatMap((n, i) => [`not ok ${i + 1} - ${n}`, "  location: '/repo/tests/a.test.js:1:1'"]),
+    `# tests ${names.length}`, '# pass 0', `# fail ${names.length}`].join('\n');
+  const { p, dir } = logFile(tap(['old env failure', 'new regression # TODO not really']));
+  const { git, runOne } = fakes({
+    outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 },
+    logs: { 'baseline:tests/a.test.js': tap(['old env failure', 'new regression']).replace(/\/repo\//g, '/scratch/') },
+  });
+  const covered = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.deepStrictEqual(covered.baselineFailing, ['tests/a.test.js'], 'directive stripped, base paths relativized against the scratch tree');
+  const { p: p2 } = logFile(tap(['old env failure', 'brand new']));
+  const uncovered = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p2 }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.deepStrictEqual(uncovered.attributable, ['tests/a.test.js']);
+});
+
 test('fail-open guard: a base run exiting 1 whose log names a different file, or none, is not baseline — it falls to the isolated HEAD run (#3043)', async () => {
   const { p, dir } = logFile(SPEC(['tests/a.test.js', 'tests/b.test.js']));
   const { git, runOne, calls } = fakes({

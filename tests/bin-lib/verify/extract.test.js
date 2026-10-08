@@ -6,6 +6,7 @@ const path = require('path');
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
   MAX_REGION_LINES, GENERIC_TAIL_LINES, stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, specEntryCount,
+  failingTestsByFile,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'extract.js'));
 
 const TAP_FIXTURE = [
@@ -438,7 +439,45 @@ test('fileLevelFailures: CRLF logs behave the same; a per-test entry is never fi
   assert.strictEqual(fileLevelFailures(SPEC_LOG, 'spec', { cwd: 'C:\\repo' }).size, 0);
 });
 
-test('fileLevelFailures: every other family returns an empty set (#3043)', () => {
+test('fileLevelFailures: a per-test TAP failure is not file-level, and the summary/generic families return an empty set (#3043)', () => {
   assert.strictEqual(fileLevelFailures('not ok 1 - x\n  at tests/a.test.js:2:1', 'tap').size, 0);
   assert.strictEqual(fileLevelFailures(FILE_LEVEL_LOG, 'generic').size, 0);
+  assert.strictEqual(fileLevelFailures(PYTEST_FIXTURE, 'summary').size, 0);
+});
+
+// The real node --test TAP shape of a test file that fails to load: the
+// block's name is the path, YAML-escaped (`\\` per separator) on Windows.
+const TAP_FILE_LEVEL = ['not ok 1 - tests\\\\broken.test.js', '  ---',
+  "  location: 'C:\\\\repo\\\\tests\\\\broken.test.js:1:1'", "  error: 'test failed'", '  ...',
+  '# tests 1', '# pass 0', '# fail 1'].join('\n');
+
+test('fileLevelFailures: a TAP block named by its own file is file-level (#3043)', () => {
+  assert.deepStrictEqual([...fileLevelFailures(TAP_FILE_LEVEL, 'tap', { cwd: 'C:\\repo' })], ['tests/broken.test.js']);
+});
+
+test('failingTestsByFile: spec names per file as a multiset, duration stripped, file-level names normalized to the path (#3043)', () => {
+  const got = failingTestsByFile(FILE_LEVEL_LOG, 'spec', { cwd: 'C:\\repo' });
+  assert.deepStrictEqual([...got], [
+    ['tests/a.test.js', ['tests/a.test.js']],
+    ['tests/b.test.js', ['tests/b.test.js', 'a real failing test']],
+    ['tests/c.test.js', ['tests/c.test.js']],
+  ]);
+  assert.deepStrictEqual(failingTestsByFile(SPEC_LOG, 'spec', { cwd: 'C:\\repo' }).get('tests/a.test.js'), ['breaks', 'second failure in a']);
+});
+
+test('failingTestsByFile: an entry whose name line does not parse is null, never a guessed name (#3043)', () => {
+  const log = ['ℹ fail 1', '✖ failing tests:', 'test at tests/a.test.js:1:1', 'garbled'].join('\n');
+  assert.deepStrictEqual(failingTestsByFile(log, 'spec').get('tests/a.test.js'), [null]);
+});
+
+test('failingTestsByFile: TAP names come from every `not ok` block at any indentation, directive stripped (#3043)', () => {
+  assert.deepStrictEqual([...failingTestsByFile(NESTED_TAP, 'tap', { cwd: '/repo' })], [['tests/nested.test.js', ['inner', 'grp']]]);
+  const todo = 'not ok 1 - known # TODO fix later\n  at tests/a.test.js:2:1\n# fail 0';
+  assert.deepStrictEqual(failingTestsByFile(todo, 'tap').get('tests/a.test.js'), ['known']);
+  assert.deepStrictEqual([...failingTestsByFile(TAP_FILE_LEVEL, 'tap', { cwd: 'C:\\repo' })], [['tests/broken.test.js', ['tests/broken.test.js']]]);
+});
+
+test('failingTestsByFile: summary and generic families return an empty Map (#3043)', () => {
+  assert.strictEqual(failingTestsByFile(PYTEST_FIXTURE, 'summary').size, 0);
+  assert.strictEqual(failingTestsByFile(GENERIC_FIXTURE, 'generic').size, 0);
 });
