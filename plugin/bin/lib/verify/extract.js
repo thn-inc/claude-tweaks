@@ -192,9 +192,12 @@ const TAP_FRAME_RE = new RegExp(`(?:\\(|\\s|')(${WIN_PATH}):\\d+:\\d+\\)?`, 'g')
 // (`FAIL path`), pytest (`FAILED path::name`).
 const SUMMARY_FAIL_RE = new RegExp(`^\\s*(?:FAIL|❯|FAILED)\\s+(${PATH})(?=\\s|::|$)`);
 
+// A run of backslashes is ONE separator: node's TAP `location: '...'` line is
+// YAML-quoted, so on Windows it carries `\\` per separator — read as two, the
+// path never matched the cwd prefix and the same file listed twice.
 function relativize(file, cwd) {
-  const normalizedFile = file.replace(/\\/g, '/');
-  const prefix = `${cwd.replace(/\\/g, '/').replace(/\/+$/, '')}/`;
+  const normalizedFile = file.replace(/\\+/g, '/');
+  const prefix = `${cwd.replace(/\\+/g, '/').replace(/\/+$/, '')}/`;
   return normalizedFile.startsWith(prefix) ? normalizedFile.slice(prefix.length) : normalizedFile;
 }
 

@@ -282,6 +282,22 @@ test('extractFailingFiles: a Windows-native node --test frame (drive letter + ba
   assert.deepStrictEqual(extractFailingFiles(text, 'tap', { cwd: 'C:\\repo' }), ['tests/a.test.js']);
 });
 
+// #3043: the same failing file also appears in the TAP `location: '...'` line,
+// YAML-quoted with a doubled backslash per separator — it must fold into the
+// stack frame's entry, not list the file a second time as `C://repo//...`.
+test('extractFailingFiles: a YAML-quoted Windows TAP location line (doubled backslashes) dedupes with the stack frame (#3043)', () => {
+  const text = [
+    'not ok 1 - a fails',
+    '  ---',
+    "  location: 'C:\\\\repo\\\\tests\\\\a.test.js:1:21'",
+    '  stack: |-',
+    '    TestContext.<anonymous> (C:\\repo\\tests\\a.test.js:12:5)',
+    '  ...',
+    '# tests 1', '# pass 0', '# fail 1',
+  ].join('\n');
+  assert.deepStrictEqual(extractFailingFiles(text, 'tap', { cwd: 'C:\\repo' }), ['tests/a.test.js']);
+});
+
 test('extractFailingFiles: generic family and a log with nothing parseable yield [] — no parse, no retry (AC1)', () => {
   assert.deepStrictEqual(extractFailingFiles(GENERIC_FIXTURE, 'generic'), []);
   assert.deepStrictEqual(extractFailingFiles('not ok 1 - fails with no frame\n# fail 1', 'tap'), []);
