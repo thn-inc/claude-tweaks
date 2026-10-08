@@ -104,7 +104,8 @@ files:
   - **The comparison.** Each failing test file runs once at the base commit, in a scratch detached worktree that is removed afterwards. Every file that base does not prove failing re-runs once in isolation at HEAD.
   - **baseline:** the base run's own log names the file as failing, with every one of its HEAD failing tests (a multiset of test names). A new failing test beside an old environment failure is therefore not covered.
   - **baseline, after isolation:** a file whose full run also failed extra tests under load still counts as baseline when its isolated HEAD run fails only base's tests and shows a `✔` pass for every extra one. A test that never ran proves nothing. Each such file prints a `baseline-in-isolation` CAVEAT naming the waived tests.
-  - **How tests are matched:** an unchanged test file compares tests by definition site (`name@line:col`). A changed one always takes the isolated run and compares names that appear once. Base failures that timed out or were cancelled never count.
+  - **How tests are matched:** an unchanged test file compares tests by definition site (`name@line:col`), and only where the leaf name is unique. Otherwise the isolated run compares suite paths (`X > works`) that occur once in each tree. A base log with a timed-out or cancelled test is no evidence.
+  - **flaky** needs the same positive evidence: every full-run failure must show its own pass in the isolated run.
   - **flaky:** the isolated run exited 0 and actually ran tests. Each flaky file prints a CAVEAT.
   - **attributable:** everything else, including any file absent at base.
   - **Exit code and table.** The exit code is the gate. An adjudicated pass exits 0 and shows `pass (baseline-adjudicated vs origin/main: {b} baseline, {f} flaky)` in the table. Meanwhile `report.json`'s `pass` and each check's `exitCode` stay raw.

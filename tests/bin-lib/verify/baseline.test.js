@@ -14,7 +14,7 @@ function logFile(text) {
   return { dir, p };
 }
 
-const SPEC = (files) => ['ℹ tests 9', 'ℹ pass 1', `ℹ fail ${files.length}`, 'ℹ cancelled 0', '', '✖ failing tests:', '',
+const SPEC = (files) => [...files.map(() => '✖ x (1ms)'), 'ℹ tests 9', 'ℹ pass 1', `ℹ fail ${files.length}`, 'ℹ cancelled 0', '', '✖ failing tests:', '',
   ...files.flatMap((f) => [`test at ${f}:1:1`, '✖ x (1ms)', ''])].join('\n');
 
 // A test file that fails to load: node lists the FILE as the failing test.
@@ -25,7 +25,7 @@ const FILE_LEVEL = (f) => ['ℹ tests 1', 'ℹ pass 0', 'ℹ fail 1', 'ℹ cance
 // Each fake run writes a real log reflecting its outcome (a failing run names the
 // file in a spec-format log, a passing run reports one passing test); `logs`
 // overrides the text per `${kind}:${file}`.
-const PASS_LOG = ['ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0'].join('\n');
+const PASS_LOG = ['✔ x (1ms)', 'ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0', 'ℹ cancelled 0'].join('\n');
 
 function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, throwOn = null, logs = {}, repoRoot = '/repo' }) {
   const calls = { runs: [], added: [], removed: [] };
@@ -188,7 +188,7 @@ test('C1: a TAP `not ok` block whose frames name no test file is an unclassified
 });
 
 // C2: failing (file, test-name) pairs, not just files.
-const SPEC_NAMED = (pairs) => ['ℹ tests 9', 'ℹ pass 1', `ℹ fail ${pairs.length}`, 'ℹ cancelled 0', '', '✖ failing tests:', '',
+const SPEC_NAMED = (pairs) => [...pairs.map(([, name]) => `✖ ${name} (1ms)`), 'ℹ tests 9', 'ℹ pass 1', `ℹ fail ${pairs.length}`, 'ℹ cancelled 0', '', '✖ failing tests:', '',
   ...pairs.flatMap(([f, name]) => [`test at ${f}:1:1`, `✖ ${name} (1ms)`, ''])].join('\n');
 
 test('C2: an old environment failure at base does not cover a new failing test in the same file (#3043)', async () => {
@@ -450,6 +450,42 @@ test('an unchanged file compares tests by definition site — a same-named test 
   const r = await isolationCase(NAMED({ fails: [['works', '9:3']], passes: ['works'] }), { head, baseLog: NAMED({ fails: [['works', '3:3']], passes: ['works'] }) });
   assert.deepStrictEqual(r.baselineFailing, []);
   assert.deepStrictEqual(r.attributable, [R]);
+});
+
+// A single-file spec log of tests/r.test.js with an explicit tree (suites as
+// `▶ name` … same-indent closer) and failing-section entries [name, loc].
+const TREE = (tree, entries) => [...tree, `ℹ tests ${tree.filter((l) => /[✔✖﹣] /.test(l)).length}`, 'ℹ pass 1', `ℹ fail ${entries.length}`, 'ℹ cancelled 0', '',
+  '✖ failing tests:', '', ...entries.flatMap(([n, loc]) => [`test at ${R}:${loc}`, `✖ ${n} (1ms)`, '  AssertionError', ''])].join('\n');
+
+test('one call site in a loop: an unchanged file whose base and HEAD fail `works` at the same site in different suites is attributable (#3043)', async () => {
+  // for (impl of ['A','B']) describe(impl, () => it('works')) — A fails at base, B fails at HEAD.
+  const suites = (failing) => ['A', 'B'].flatMap((s) => [`▶ ${s}`, `  ${s === failing ? '✖' : '✔'} works (1ms)`, `${s === failing ? '✖' : '✔'} ${s} (2ms)`]);
+  const r = await isolationCase(TREE(suites('B'), [['works', '6:5']]), {
+    head: TREE(suites('B'), [['works', '6:5']]),
+    baseLog: TREE(suites('A'), [['works', '6:5']]),
+  });
+  assert.deepStrictEqual(r.baselineFailing, []);
+  assert.deepStrictEqual(r.attributable, [R]);
+});
+
+test('a changed file whose failing test moved suites (X > works at base, Y > works at HEAD) is attributable (#3043)', async () => {
+  const one = (s) => [`▶ ${s}`, '  ✖ works (1ms)', `✖ ${s} (2ms)`];
+  const r = await isolationCase(TREE(one('Y'), [['works', '9:3']]), {
+    head: TREE(one('Y'), [['works', '9:3']]), baseLog: TREE(one('X'), [['works', '3:3']]), sameAtBase: () => false,
+  });
+  assert.deepStrictEqual(r.attributable, [R]);
+});
+
+test('flaky needs evidence too: an isolated exit 0 where the full-run failure never ran, or a cancelled test, is attributable (#3043)', async () => {
+  const { p, dir } = logFile(SPEC([R]));
+  const notRun = ['✔ other (1ms)', 'ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0', 'ℹ cancelled 0'].join('\n');
+  const cancelled = ['✔ x (1ms)', 'ℹ tests 2', 'ℹ pass 1', 'ℹ fail 0', 'ℹ cancelled 1'].join('\n');
+  for (const iso of [notRun, cancelled]) {
+    const { git, runOne } = fakes({ outcomes: { [`baseline:${R}`]: 0, [`isolated:${R}`]: 0 }, logs: { [`isolated:${R}`]: iso } });
+    const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+    assert.deepStrictEqual(r.flakyPassed, []);
+    assert.deepStrictEqual(r.attributable, [R]);
+  }
 });
 
 test('a changed test file always takes the isolated run, comparing names unique in both trees (#3043)', async () => {

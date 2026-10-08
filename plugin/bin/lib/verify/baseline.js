@@ -223,11 +223,14 @@ async function adjudicate({
     // A numeric non-zero exit alone proves nothing (a typo'd template, a scratch
     // tree with no node_modules and a shell syntax error all exit non-zero):
     // the base run's own log must name this very file as failing, under the
-    // same accounting guards as HEAD's, with nothing cancelled, and counting
-    // only failures that finished (a timeout or cancellation proves nothing).
-    // `located` keys a test by its definition site, comparable only when the
-    // test file is byte-identical at base; `names` are leaf names, kept only
-    // when unique in the base file's own tree.
+    // same accounting guards as HEAD's, with nothing cancelled and no failure
+    // that timed out or was cancelled (it did not finish — no evidence; the
+    // whole base log is then unproven). `located` keys a test by its
+    // definition site (`name@line:col`), kept only when its leaf name is
+    // unique in the base file's tree — one call site in a loop yields several
+    // tests at one site. `qualified` is the tree's failing points by suite
+    // path (`X > works`), kept only when that path is unique in the tree, for
+    // comparing against another single-file log.
     const baseEv = baseRuns.map((r, k) => {
       if (r === null || typeof r.exitCode !== 'number' || r.exitCode === 0) return null;
       const text = readLog(r.logPath);
@@ -235,18 +238,19 @@ async function adjudicate({
       const family = accountedFamily(text, baseDir);
       if (family === null) return null;
       const file = work[k].file;
-      const located = failingTestsByFile(text, family, { cwd: baseDir, located: true, conclusiveOnly: true }).get(file);
-      if (!located) return null;
-      const tree = testTree(text, family).all;
-      const names = failingTestsByFile(text, family, { cwd: baseDir, conclusiveOnly: true }).get(file)
-        .filter((n) => n === file || tree.get(n) === 1);
-      return { located, names, fileLevel: fileLevelFailures(text, family, { cwd: baseDir }).has(file) };
+      const keys = failingTestsByFile(text, family, { cwd: baseDir, located: true }).get(file);
+      const conclusive = failingTestsByFile(text, family, { cwd: baseDir, conclusiveOnly: true }).get(file);
+      if (!keys || !conclusive || conclusive.length !== keys.length) return null;
+      const tree = testTree(text, family);
+      const names = failingTestsByFile(text, family, { cwd: baseDir }).get(file);
+      const located = keys.filter((key, i) => names[i] === file || (names[i] !== null && tree.all.get(names[i]) === 1));
+      const qualified = tree.failed.filter((p) => tree.paths.get(p) === 1);
+      return { located, qualified, fileLevel: fileLevelFailures(text, family, { cwd: baseDir }).has(file) };
     });
     // Covered at base without a HEAD re-run: only an unchanged test file,
     // compared test-by-test at the definition site, so an old environment
-    // failure cannot cover a new failing test in the same file — not even
-    // one sharing its leaf name. A changed file always falls through to the
-    // isolated HEAD run.
+    // failure cannot cover a new failing test in the same file. A changed
+    // file always falls through to the isolated HEAD run.
     const failsAtBase = baseEv.map((ev, k) => {
       if (!ev || !unchanged[k] || !coveredBy(work[k].headLocated, ev.located)) return false;
       if (!ev.fileLevel) return true;
@@ -262,23 +266,31 @@ async function adjudicate({
     // A file absent at base is new on this branch: attributable outright —
     // an isolated pass must never let a flaky verdict cover a new file.
     const headRuns = await pool(work, concurrency, (w, k) => (failsAtBase[k] || !atBase[k] ? null : run(w, 'isolated', cwd)));
-    // Flaky is symmetric evidence: the isolated run exited 0 AND its log shows
-    // tests actually ran and passed (an all-skipped run is not clean) —
-    // `echo {file}` proves nothing.
-    const ranCleanly = (r) => {
+    // A full-run failing test passed in the isolated log only when its leaf
+    // name occurs there exactly once and that once is a pass. Absence is no
+    // evidence: a test that never ran (killed mid-file, skipped, filtered out)
+    // proves nothing.
+    const passedIn = (tree) => (n) => n !== null && tree.all.get(n) === 1 && tree.passed.get(n) === 1;
+    // Flaky is symmetric evidence: the isolated run exited 0, its log accounts
+    // for itself (nothing cancelled), tests actually ran and passed (an
+    // all-skipped run is not clean — `echo {file}` proves nothing), and every
+    // test that failed in the full run shows its own pass there.
+    const ranCleanly = (r, k) => {
       if (!r || r.exitCode !== 0) return false;
       const text = readLog(r.logPath);
       if (text === null) return false;
-      const counts = parseCounts(text, sniffFamily(text));
-      return counts !== null && counts.tests > 0 && counts.pass > 0 && counts.fail === 0;
+      const family = accountedFamily(text, headDir);
+      if (family === null) return false;
+      const counts = parseCounts(text, family);
+      if (!(counts.tests > 0 && counts.pass > 0 && counts.fail === 0)) return false;
+      return work[k].headTests.length > 0 && work[k].headTests.every(passedIn(testTree(text, family)));
     };
     // Baseline after an isolated HEAD run: the isolated log (same accounting
     // guards, nothing cancelled, naming only this file, never a file-level
-    // failure) fails only tests that also fail at base — by definition site
-    // for an unchanged file, else by leaf names unique in both trees — and
-    // every full-run failure it did not reproduce shows a pass there. Absence
-    // is no evidence: a test that never ran (killed mid-file, skipped) proves
-    // nothing. Returns {log, waived} or null.
+    // failure) fails only tests that also fail at base — compared by suite
+    // path (`X > works`) between the two single-file trees, its failing leaf
+    // names each unique — and every full-run failure it did not reproduce
+    // shows its own pass there. Returns {log, waived} or null.
     const baselineInIsolation = (r, k) => {
       if (!r || typeof r.exitCode !== 'number' || r.exitCode === 0 || !baseEv[k]) return null;
       const text = readLog(r.logPath);
@@ -290,15 +302,11 @@ async function adjudicate({
       if (files.length !== 1 || files[0] !== file) return null;
       if (fileLevelFailures(text, family, { cwd: headDir }).has(file)) return null;
       const tree = testTree(text, family);
-      const unique = (n) => n !== null && tree.all.get(n) === 1;
       const isoNames = failingTestsByFile(text, family, { cwd: headDir }).get(file);
-      if (!isoNames) return null;
-      const covered = unchanged[k]
-        ? coveredBy(failingTestsByFile(text, family, { cwd: headDir, located: true }).get(file), baseEv[k].located)
-        : isoNames.every(unique) && coveredBy(isoNames, baseEv[k].names);
-      if (!covered) return null;
+      if (!isoNames || !isoNames.every((n) => n !== null && tree.all.get(n) === 1)) return null;
+      if (!tree.failed.every((p) => tree.paths.get(p) === 1) || !coveredBy(tree.failed, baseEv[k].qualified)) return null;
       const waived = multisetMinus(work[k].headTests, isoNames);
-      if (!waived.every((n) => unique(n) && tree.passed.get(n) === 1)) return null;
+      if (!waived.every(passedIn(tree))) return null;
       return { log: r.logPath, waived };
     };
     const baselineFailing = [];
@@ -310,7 +318,7 @@ async function adjudicate({
     work.forEach((w, k) => {
       (failingByCheck[w.check] = failingByCheck[w.check] || []).push(w.file);
       if (failsAtBase[k]) baselineFailing.push(w.file);
-      else if (ranCleanly(headRuns[k])) { flakyPassed.push(w.file); flakyLogs[w.file] = headRuns[k].logPath; }
+      else if (ranCleanly(headRuns[k], k)) { flakyPassed.push(w.file); flakyLogs[w.file] = headRuns[k].logPath; }
       else {
         const iso = baselineInIsolation(headRuns[k], k);
         if (iso) { baselineFailing.push(w.file); baselineIsolated[w.file] = iso; } else attributable.push(w.file);

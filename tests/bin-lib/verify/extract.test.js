@@ -525,3 +525,19 @@ test('testTree counts every test point by name and the ones that passed — skip
   assert.deepStrictEqual([...tap.passed], [['a', 1]]);
   assert.strictEqual(tap.all.get('c'), 1);
 });
+
+test('testTree qualifies failing points by suite path — spec `▶` nesting and tap `# Subtest:` nesting (#3043)', () => {
+  const spec = testTree(['▶ X', '  ✖ works (1ms)', '✖ X (2ms)', '▶ Y', '  ✔ works (1ms)', '✔ Y (2ms)', 'ℹ tests 2'].join('\n'), 'spec');
+  assert.deepStrictEqual(spec.failed, ['X > works', 'X']);
+  assert.strictEqual(spec.paths.get('Y > works'), 1);
+  assert.strictEqual(spec.all.get('works'), 2);
+  const tap = testTree(['# Subtest: X', '    # Subtest: works', '    not ok 1 - works', '    1..1', 'not ok 1 - X', '# Subtest: Y', 'ok 2 - Y'].join('\n'), 'tap');
+  assert.deepStrictEqual(tap.failed, ['X > works', 'X']);
+  assert.deepStrictEqual([...tap.passed], [['Y', 1]]);
+});
+
+test('testTree reads a name that itself contains ` (Nms)` whole, never its prefix (#3043)', () => {
+  const t = testTree('✔ foo (1ms) bar (0.34ms)', 'spec');
+  assert.strictEqual(t.passed.get('foo (1ms) bar'), 1);
+  assert.strictEqual(t.passed.get('foo'), undefined);
+});

@@ -294,33 +294,53 @@ function cancelledCount(text, family) {
   return m ? Number(m[1]) : null;
 }
 
-// Every test point a single-file log reports, by name: `all` counts each
-// name's occurrences (pass, fail or skip — suites included), `passed` only
-// the ones that ran and passed (no SKIP/TODO directive). spec reads the tree
-// above `✖ failing tests:` (that section repeats failures); tap reads every
-// `ok`/`not ok` line at any indentation. Other families: empty maps.
-const SPEC_TREE_RE = /^\s*([✔✖﹣])\s+(.+?) \(\d[\d.]*ms\)(.*)$/;
-const TAP_POINT_RE = /^\s*(not ok|ok)\b(?:\s+\d+)?(?:\s+-)?\s*(.*?)(\s+#\s*(?:SKIP|TODO)\b.*)?\s*$/i;
+// Every test point a single-file log reports. `all`/`passed` count leaf names
+// (pass, fail or skip — suites included / only the ones that ran and passed,
+// no SKIP/TODO directive), `paths` counts suite paths; `failed` lists each
+// failing point by its suite path
+// (`outer > inner > name`, a multiset in log order — suites and parent tests
+// included), so two tests sharing a leaf name in different suites stay
+// distinct. spec reads the tree above `✖ failing tests:` (that section
+// repeats failures), nesting from `▶ name` openers and their same-indent
+// closers; tap reads every `ok`/`not ok` line at any indentation, nesting
+// from `# Subtest: name` lines. Other families: empty.
+const SPEC_TREE_RE = /^(\s*)([✔✖﹣])\s+(.+) \(\d[\d.]*ms\)(\s+#\s*(?:SKIP|TODO)\b.*)?\s*$/;
+const SPEC_OPEN_RE = /^(\s*)▶ (.+?)\s*$/;
+const TAP_POINT_RE = /^(\s*)(not ok|ok)\b(?:\s+\d+)?(?:\s+-)?\s*(.*?)(\s+#\s*(?:SKIP|TODO)\b.*)?\s*$/i;
+const TAP_OPEN_RE = /^(\s*)# Subtest: (.+?)\s*$/;
 function testTree(text, family) {
   const all = new Map();
   const passed = new Map();
+  const paths = new Map();
+  const failed = [];
   const bump = (map, name) => map.set(name, (map.get(name) || 0) + 1);
+  const open = [];
+  const point = (indent, name, ok, fail) => {
+    const top = open[open.length - 1];
+    if (top && top.indent === indent && top.name === name) open.pop();
+    const qualified = [...open.map((o) => o.name), name].join(' > ');
+    bump(all, name);
+    bump(paths, qualified);
+    if (ok) bump(passed, name);
+    if (fail) failed.push(qualified);
+  };
+  if (family !== 'spec' && family !== 'tap') return { all, passed, paths, failed };
   for (const raw of stripAnsi(text).split('\n')) {
     const line = raw.replace(/\r$/, '');
     if (family === 'spec') {
       if (/^✖ failing tests:/.test(line)) break;
+      const o = line.match(SPEC_OPEN_RE);
+      if (o) { open.push({ indent: o[1].length, name: o[2] }); continue; }
       const m = line.match(SPEC_TREE_RE);
-      if (!m) continue;
-      bump(all, m[2]);
-      if (m[1] === '✔' && !/#\s*(?:SKIP|TODO)\b/i.test(m[3])) bump(passed, m[2]);
-    } else if (family === 'tap') {
+      if (m) point(m[1].length, m[3], m[2] === '✔' && !m[4], m[2] === '✖' && !m[4]);
+    } else {
+      const o = line.match(TAP_OPEN_RE);
+      if (o) { open.push({ indent: o[1].length, name: o[2] }); continue; }
       const m = line.match(TAP_POINT_RE);
-      if (!m) continue;
-      bump(all, m[2]);
-      if (m[1].toLowerCase() === 'ok' && !m[3]) bump(passed, m[2]);
+      if (m) point(m[1].length, m[3], m[2].toLowerCase() === 'ok' && !m[4], m[2].toLowerCase() === 'not ok' && !m[4]);
     }
   }
-  return { all, passed };
+  return { all, passed, paths, failed };
 }
 
 // Relativized forward-slash test paths whose failing entries are ALL
