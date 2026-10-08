@@ -31,10 +31,12 @@ const KNOWN_SUMMARY_CATEGORIES = ['failed', 'passed', 'skipped', 'pending', 'tod
 const SPEC_MARKERS = [/^ℹ tests \d+/m, /^✖ failing tests:/m];
 const SPEC_TEST_AT_RE = /^test at (.+):\d+:\d+\s*$/;
 
+// Spec first: its markers are unambiguous, while a stray `not ok` line a test
+// printed to stdout would otherwise sniff a spec log as tap.
 function sniffFamily(text) {
+  if (SPEC_MARKERS.some((re) => re.test(text))) return 'spec';
   if (TAP_MARKERS.some((re) => re.test(text))) return 'tap';
   if (SUMMARY_MARKERS.some((re) => re.test(text))) return 'summary';
-  if (SPEC_MARKERS.some((re) => re.test(text))) return 'spec';
   return 'generic';
 }
 

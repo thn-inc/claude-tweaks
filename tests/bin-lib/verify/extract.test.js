@@ -334,6 +334,10 @@ test('spec reporter: sniffed as its own family (#3043)', () => {
   assert.strictEqual(sniffFamily(SPEC_LOG), 'spec');
 });
 
+test('spec reporter: a stray `not ok` line a test printed to stdout still sniffs spec, not tap (#3043)', () => {
+  assert.strictEqual(sniffFamily(`not ok 1 - printed by a test\n${SPEC_LOG}`), 'spec');
+});
+
 test('spec reporter: failing files come from the failing-tests section, forward-slash, deduped, log order — never a stack-frame source file (#3043)', () => {
   assert.deepStrictEqual(extractFailingFiles(SPEC_LOG, 'spec', { cwd: 'C:\\repo' }), ['tests/a.test.js', 'tests/sub/b.test.js']);
 });
