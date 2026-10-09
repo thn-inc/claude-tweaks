@@ -367,6 +367,14 @@ test('spec reporter: failing region starts at the failing-tests section (#3043)'
   assert.ok(region.includes('test at tests/sub/b.test.js:5:1'));
 });
 
+test('spec reporter: with no failing-tests section the region falls through to the generic tail (#3043)', () => {
+  const lines = Array.from({ length: GENERIC_TAIL_LINES + 5 }, (_, i) => `line ${i}`).concat(['ℹ tests 1', 'ℹ fail 1']);
+  const region = extractFailingRegion(lines.join('\n'), 'spec');
+  assert.strictEqual(region.split('\n').length, GENERIC_TAIL_LINES);
+  assert.ok(region.endsWith('ℹ fail 1'));
+  assert.ok(!region.includes('line 0'));
+});
+
 test('spec reporter: a passing spec log (no failing section) extracts no files (#3043)', () => {
   const passing = ['✔ ok (1ms)', 'ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0'].join('\n');
   assert.strictEqual(sniffFamily(passing), 'spec');

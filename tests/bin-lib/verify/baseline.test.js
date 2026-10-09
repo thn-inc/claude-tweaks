@@ -314,7 +314,18 @@ test('file-level base failure + per-test HEAD failure: the file may have loaded 
   assert.deepStrictEqual(r.attributable, ['tests/a.test.js']);
 });
 
-test('file-level base failure + file-level HEAD failure + no node_modules: a genuine load failure, baseline (#3043)', async () => {
+// Node resolves dependencies up the whole ancestor chain, so a `node_modules`
+// above the OS tmpdir (e.g. in the home directory) is a real dependency
+// source for the fixture root below — the positive path cannot hold there.
+function nodeModulesAbove(dir) {
+  for (let d = path.resolve(dir); ; d = path.dirname(d)) {
+    if (fs.existsSync(path.join(d, 'node_modules'))) return true;
+    if (path.dirname(d) === d) return false;
+  }
+}
+
+test('file-level base failure + file-level HEAD failure + no node_modules: a genuine load failure, baseline (#3043)', async (t) => {
+  if (nodeModulesAbove(os.tmpdir())) return t.skip('a node_modules above the OS tmpdir makes the fixture root resolve dependencies');
   const { p, dir } = logFile(FILE_LEVEL('tests/a.test.js'));
   const root = path.join(os.tmpdir(), 'baseline-no-such-repo-root');
   // The same load error at base (under /scratch) and in isolation at HEAD (under the repo root).

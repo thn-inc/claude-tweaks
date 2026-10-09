@@ -282,7 +282,13 @@ test('duplicate --baseline-cmd name is a usage error (#3043)', () => {
   assert.throws(() => parseArgs(['--cmd', 'tests=npm test', '--baseline', 'x', '--baseline-cmd', 'tests=a {file}', '--baseline-cmd', 'tests=b {file}']), /duplicate --baseline-cmd name: tests/);
 });
 
-test('--baseline is rejected with --stamp-status and --changed-files (#3043)', () => {
-  assert.throws(() => parseArgs(['--stamp-status', '--baseline', 'x']), /--baseline/);
-  assert.throws(() => parseArgs(['--changed-files', '--baseline', 'x']), /--baseline/);
+test('--baseline and --baseline-cmd are rejected with --stamp-status and --changed-files, by the mode-conflict message (#3043)', () => {
+  const conflict = /apply to a check run — not to --stamp-status or --changed-files/;
+  assert.throws(() => parseArgs(['--stamp-status', '--baseline', 'x']), conflict);
+  assert.throws(() => parseArgs(['--changed-files', '--baseline', 'x']), conflict);
+  assert.throws(() => parseArgs(['--stamp-status', '--baseline-cmd', 'tests=node --test {file}']), conflict);
+});
+
+test('USAGE names --baseline and --baseline-cmd (#3043)', () => {
+  for (const flag of ['--baseline', '--baseline-cmd']) assert.ok(USAGE.includes(flag), flag);
 });

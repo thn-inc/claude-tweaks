@@ -577,12 +577,15 @@ async function main() {
       base: mode === 'full' ? null : resolvedBase,
       changedFiles: mode === 'full' ? [] : files,
       suitesRun, flakyRetried: retriedFiles, reportPath: path.resolve(jsonPath), at: new Date().toISOString(),
+      // A narrowed run anchored on a baseline-adjudicated full pass inherits
+      // that pass's marker: its fullSha still names a commit verified with
+      // environment-baseline failures red, and the stamp must keep saying so.
       baseline: adjudicatedPass
         ? {
           base: baselineAdjudicated.base, baseSha: baselineAdjudicated.baseSha,
           baselineFailing: baselineAdjudicated.baselineFailing, flakyPassed: baselineAdjudicated.flakyPassed,
         }
-        : null,
+        : (mode !== 'full' && priorStamp && priorStamp.baseline && priorStamp.fullSha === sel.base ? priorStamp.baseline : null),
     });
     // H1 (review): the legacy bare-SHA twin only ever names a real FULL
     // pass — a narrowed run leaves it untouched rather than repointing it

@@ -196,7 +196,10 @@ const SUMMARY_FAIL_RE = new RegExp(`^\\s*(?:FAIL|❯|FAILED)\\s+(${PATH})(?=\\s|
 
 // A run of backslashes is ONE separator: node's TAP `location: '...'` line is
 // YAML-quoted, so on Windows it carries `\\` per separator — read as two, the
-// path never matched the cwd prefix and the same file listed twice.
+// path never matched the cwd prefix and the same file listed twice. The fold
+// also turns a UNC path outside cwd (`\\srv\share\x.test.js`) into
+// `/srv/share/x.test.js` — never under cwd, so it never matches a file at
+// base and fails closed (attributable).
 function relativize(file, cwd) {
   const normalizedFile = file.replace(/\\+/g, '/');
   const prefix = `${cwd.replace(/\\+/g, '/').replace(/\/+$/, '')}/`;

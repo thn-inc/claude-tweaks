@@ -28,6 +28,10 @@ function assertPinned(pattern, message) {
   assert.doesNotMatch(PRE_1923_STEP_1_5_FLOW_BRANCH, pattern, `${message} (must NOT match the pre-#1923 match-only control — proves the pattern can go red)`);
 }
 
+test("Step 1.5's /flow pipeline branch prints the full --stamp-status envelope, baselineAdjudicated included (#3043)", () => {
+  assertPinned(/\{present, sha, head, dirty, scope, fullSha, match, verifiedHead, baselineAdjudicated, reportPath, legacy\}/, 'the envelope names baselineAdjudicated');
+});
+
 test("Step 1.5's /flow pipeline branch gates the proceed decision on verifiedHead: true, not bare match", () => {
   assertPinned(/verifiedHead: true[\s\S]{0,260}proceed to Step 2/, 'verifiedHead: true routes to proceed');
 });

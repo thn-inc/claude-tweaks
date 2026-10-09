@@ -552,6 +552,30 @@ function commitFile(r, rel, content) {
   r.git('commit', '-q', '-m', `add ${rel}`);
 }
 
+test('--scope: a none run anchored on a baseline-adjudicated full stamp carries its baseline marker forward (#3043)', async () => {
+  const r = scopedRepo([
+    { match: 'src/**', suites: ['unit'], static: true },
+    { match: 'docs/**', suites: [], static: false },
+  ]);
+  const head = r.git('rev-parse', 'HEAD').trim();
+  const marker = { base: 'origin/main', baseSha: 'b'.repeat(40), baselineFailing: ['tests/env.test.js'], flakyPassed: [] };
+  fs.writeFileSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json'), JSON.stringify({
+    sha: head, dirty: false, scope: 'full', fullSha: head, base: null, changedFiles: [], suitesRun: ['unit', 'other'],
+    flakyRetried: [], reportPath: path.join(r.gitDir, 'report.json'), at: new Date().toISOString(), baseline: marker,
+  }));
+  commitFile(r, 'docs/a.md', 'docs');
+  const run = await runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.match(run.stdout, /^Scope: none/m);
+  const s = stampOf(r.gitDir);
+  assert.strictEqual(s.scope, 'none');
+  assert.strictEqual(s.fullSha, head);
+  assert.deepStrictEqual(s.baseline, marker);
+  const status = JSON.parse((await runCli(['--stamp-status'], { cwd: r.repo })).stdout);
+  assert.strictEqual(status.baselineAdjudicated, true);
+  assert.strictEqual(status.verifiedHead, true);
+});
+
 test('--scope: full → none → scoped across three commits, anchored to the first full pass (#1922 AC4)', async () => {
   const r = scopedRepo([
     { match: 'src/**', suites: ['unit'], static: true },
@@ -1629,6 +1653,34 @@ test('--baseline: a file failing beyond its base tests only in the full run is b
   assert.strictEqual(code, 0, stdout);
   assert.ok(stdout.includes(`| tests | pass (baseline-adjudicated vs ${baseSha}: 1 baseline, 0 flaky) |`), stdout);
   assert.match(stdout, /^CAVEAT: baseline-in-isolation: tests\/mixed\.test\.js — in isolation at HEAD it failed only tests that also fail at base; passed there, waived from the full run: once; see .*tests-isolated-tests\+mixed\.test\.js\.log$/m);
+});
+
+test('--baseline: the verify event carries the adjudication verdict (#3043)', async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  const runDir = anchoredRunDir(r.repo);
+  const { code, stdout } = await runCli(['--run', runDir, '--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 0, stdout);
+  const ev = JSON.parse(fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').pop());
+  assert.strictEqual(ev.baselineAdjudicated, 'pass');
+  assert.strictEqual(ev.pass, false, 'the event, like report.json, keeps the raw pass');
+});
+
+test('--baseline: an adjudicator that throws (the scratch worktree cannot be created) is "adjudication error", exits 1, writes the report (#3043)', async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  // A plain file where git keeps its worktree registry: `git worktree add` fails.
+  fs.writeFileSync(path.join(r.gitDir, 'worktrees'), 'not a directory\n');
+  const runDir = anchoredRunDir(r.repo);
+  const { code, stdout } = await runCli(['--run', runDir, '--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 1, stdout);
+  assert.match(stdout, /^Baseline: not adjudicated — adjudication error: /m);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.baselineAdjudicated.eligible, false);
+  assert.match(report.baselineAdjudicated.reason, /^adjudication error: /);
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')), 'no stamp');
+  const ev = JSON.parse(fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').pop());
+  assert.strictEqual(ev.baselineAdjudicated, 'ineligible');
 });
 
 test('--baseline: the scratch worktree is gone after the run (#3043)', async () => {
