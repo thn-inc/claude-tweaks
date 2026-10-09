@@ -166,5 +166,9 @@
   "skill:design-wrapper": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1791273628362
+  },
+  "skill:node-test-output-evidence": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1791523040816
   }
 }
