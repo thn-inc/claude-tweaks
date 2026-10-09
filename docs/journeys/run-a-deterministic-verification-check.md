@@ -118,7 +118,7 @@ files:
     - a spawn error
     - a missing `--baseline-cmd`
     - a log with no extractable file, or one outside the spec/TAP families
-    - unparsed counts, or spec entries that do not add up to `ℹ fail`
+    - unparsed counts, or spec entries that do not add up to `ℹ fail` plus `ℹ cancelled` (a cancelled test is listed but not counted as failed)
     - a TAP block naming no file
     - a base that already contains HEAD
     - a check with no numeric exit (signal-killed)
