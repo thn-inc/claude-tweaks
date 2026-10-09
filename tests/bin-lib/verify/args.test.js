@@ -33,6 +33,8 @@ test('parses repeatable --cmd plus --json, --log-dir, and --count-stamp', () => 
     changedFiles: false,
     run: null,
     cwd: null,
+    baseline: null,
+    baselineCmds: [],
   });
 });
 
@@ -248,4 +250,45 @@ test('#2779: without --cmd-env no check carries an env key (unchanged parse shap
 
 test('#2779: USAGE names --cmd-env', () => {
   assert.ok(USAGE.includes('--cmd-env <name>=<KEY=VALUE>'));
+});
+
+test('--baseline with --baseline-cmd parses (#3043)', () => {
+  const got = parseArgs(['--cmd', 'tests=npm test', '--baseline', 'origin/main', '--baseline-cmd', 'tests=node --test {file}']);
+  assert.strictEqual(got.baseline, 'origin/main');
+  assert.deepStrictEqual(got.baselineCmds, [{ name: 'tests', template: 'node --test {file}' }]);
+});
+
+test('an empty --baseline (an unset shell variable) is a usage error, never a silent no-adjudication (#3043)', () => {
+  assert.throws(() => parseArgs(['--cmd', 'tests=npm test', '--baseline', '', '--baseline-cmd', 'tests=node --test {file}']), /--baseline needs a ref, got an empty value/);
+});
+
+test('--baseline without --baseline-cmd is a usage error (#3043)', () => {
+  assert.throws(() => parseArgs(['--cmd', 'tests=npm test', '--baseline', 'origin/main']), /--baseline requires at least one --baseline-cmd/);
+});
+
+test('--baseline-cmd without --baseline is a usage error (#3043)', () => {
+  assert.throws(() => parseArgs(['--cmd', 'tests=npm test', '--baseline-cmd', 'tests=node --test {file}']), /--baseline-cmd requires --baseline/);
+});
+
+test('--baseline-cmd naming no --cmd is a usage error (#3043)', () => {
+  assert.throws(() => parseArgs(['--cmd', 'tests=npm test', '--baseline', 'x', '--baseline-cmd', 'web=node --test {file}']), /--baseline-cmd "web" names no declared --cmd/);
+});
+
+test('--baseline-cmd template without {file} is a usage error (#3043)', () => {
+  assert.throws(() => parseArgs(['--cmd', 'tests=npm test', '--baseline', 'x', '--baseline-cmd', 'tests=npm test']), /must contain \{file\}/);
+});
+
+test('duplicate --baseline-cmd name is a usage error (#3043)', () => {
+  assert.throws(() => parseArgs(['--cmd', 'tests=npm test', '--baseline', 'x', '--baseline-cmd', 'tests=a {file}', '--baseline-cmd', 'tests=b {file}']), /duplicate --baseline-cmd name: tests/);
+});
+
+test('--baseline and --baseline-cmd are rejected with --stamp-status and --changed-files, by the mode-conflict message (#3043)', () => {
+  const conflict = /apply to a check run — not to --stamp-status or --changed-files/;
+  assert.throws(() => parseArgs(['--stamp-status', '--baseline', 'x']), conflict);
+  assert.throws(() => parseArgs(['--changed-files', '--baseline', 'x']), conflict);
+  assert.throws(() => parseArgs(['--stamp-status', '--baseline-cmd', 'tests=node --test {file}']), conflict);
+});
+
+test('USAGE names --baseline and --baseline-cmd (#3043)', () => {
+  for (const flag of ['--baseline', '--baseline-cmd']) assert.ok(USAGE.includes(flag), flag);
 });

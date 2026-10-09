@@ -80,6 +80,7 @@ Node refuses to `execFileSync` a `.cmd`/`.bat` without a shell (CVE-2024-27980 h
 
 - A platform branch with no Linux-runnable pin is untested as far as the merge gate is concerned. Add the pin in the same change as the branch.
 - A Windows `npm test` run already fails files that pass on CI. Compare failing-file sets against that baseline rather than reading every red file as new. When you fix a CRLF failure, grep `tests/` for the same regex shape (for example `` ```bash\n ``) and fix or record the other instances.
+- In a pipeline run, `plugin/bin/verify.js --baseline origin/main --baseline-cmd tests="node --test {file}"` makes that comparison mechanically (#3043). It re-runs each failing file at the base commit and in isolation at HEAD, and exits 0 only when no file is attributable to the branch. The exact invocation is in `plugin/skills/test/verification.md`'s Baseline adjudication. A test that is flaky on Windows can still come back `ATTRIBUTABLE`, because one passing base run proves nothing: `tests/bin-lib/declined-learning/store-concurrency.test.js` failed about 6 runs in 10 at base with an `EPERM` rename race, yet its single base run passed. Re-run such a file at the base several times before treating it as the branch's failure.
 - A win32 real-process test that times out kills `cmd.exe`, but the child it launched can outlive it and hold its cwd. Spawn with `cwd: os.tmpdir()`, not the temp dir the `finally` block removes, or `rmSync` fails with `EPERM` (the hang test in `tests/bin-lib/impeccable-engine/resolve.test.js`).
 
 ## Common Operations
@@ -98,6 +99,7 @@ node --test tests/bin-lib/impeccable-engine/windows-launch.test.js     # pins ru
 | `split('\n')` followed by a `$`-anchored line regex | On a CRLF checkout each line keeps its `\r`, `(.*)$` fails, and the probe answers "absent" (`pack.js`'s hook probe before #3040) |
 | Mapping every spawn throw to a "not installed" or "not found" verdict | A win32-only `EINVAL` then reads as a real answer with a plausible fix, so nobody looks further (`resolve()` before #3040, #3039) |
 | Updating an exact-string pin to match new output without running the win32 round-trip | The pin then records the regression instead of catching it |
+| Comparing a working-tree file's raw bytes with its committed blob to decide "unchanged" | On a CRLF checkout every LF-committed file reads as changed. Hash it with `git hash-object --path=<file>` so the clean filters apply, and compare that with `git rev-parse <sha>:<file>` (`plugin/bin/lib/verify/baseline.js`'s `sameAtBase`, #3043) |
 
 ## Reference
 
