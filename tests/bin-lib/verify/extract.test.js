@@ -571,6 +571,28 @@ test('testTree keeps a parent only when it failed in its own right — spec list
   assert.deepStrictEqual(tap.failed, ['["P","child"]', '["S"]']);
 });
 
+test('testTree: a failing leaf keeps its own listing — it never vouches for a same-named parent elsewhere (#3043)', () => {
+  // A > P is a failing leaf (listed once); B > P is a suite failing only through its child c.
+  const lines = ['▶ A', '  ✖ P (1ms)', '✖ A (2ms)', '▶ B', '  ▶ P', '    ✖ c (1ms)', '  ✖ P (2ms)', '✖ B (3ms)', 'ℹ tests 2', '', '✖ failing tests:', '',
+    'test at tests/a.test.js:2:3', '✖ P (1ms)', '', 'test at tests/a.test.js:6:5', '✖ c (1ms)'];
+  const t = testTree(lines.join('\n'), 'spec');
+  assert.deepStrictEqual(t.failed, ['["A","P"]', '["B","P","c"]']);
+  assert.strictEqual(t.wellFormed, true);
+  // Two same-named parents with one spare listing: which one failed in its own right is unknowable.
+  const ambiguous = ['▶ P', '  ✖ x (1ms)', '✖ P (2ms)', '▶ Q', '  ▶ P', '    ✖ y (1ms)', '  ✖ P (2ms)', '✖ Q (3ms)', '', '✖ failing tests:', '',
+    'test at tests/a.test.js:2:3', '✖ x (1ms)', '', 'test at tests/a.test.js:6:5', '✖ y (1ms)', '', 'test at tests/a.test.js:5:3', '✖ P (2ms)'];
+  assert.strictEqual(testTree(ambiguous.join('\n'), 'spec').wellFormed, false);
+});
+
+test('testTree and tapBlocks read a TAP YAML block as data — `failureType:` or `not ok` lines inside expected/actual text are not points (#3043)', () => {
+  const tap = ['# Subtest: K', 'not ok 1 - K', '  ---', "  failureType: 'testCodeFailure'", '  ...',
+    '# Subtest: L', 'not ok 2 - L', '  ---', "  failureType: 'testCodeFailure'", '  expected: |-', '    summary', "    failureType: 'subtestsFailed'", '    not ok 1 - Foo', "  location: '/r/tests/a.test.js:9:1'", '  ...', '# fail 2'].join('\n');
+  const t = testTree(tap, 'tap');
+  assert.deepStrictEqual(t.failed, ['["K"]', '["L"]']);
+  assert.strictEqual(t.all.get('Foo'), undefined);
+  assert.deepStrictEqual(failingTestsByFile(tap, 'tap', { cwd: '/r' }).get('tests/a.test.js'), ['L']);
+});
+
 test('testTree treats any ` # …` suffix as neither passed nor failed — t.skip(reason) included (#3043)', () => {
   const t = testTree(['﹣ works (0.1ms) # windows only', '✔ works (1ms)'].join('\n'), 'spec');
   assert.strictEqual(t.all.get('works'), 2, 'the skipped twin still counts, so the name is not unique');

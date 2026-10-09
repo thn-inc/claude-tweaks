@@ -139,7 +139,9 @@ function multisetMinus(a, b) {
 // work that outlived its test, and the like. Node reports them as a separate
 // file-level failure only when no test in the file failed, so beside any
 // failing test they are visible here and nowhere else.
-const RUNNER_ERROR_RE = /^(?:ℹ|#) Error: |generated asynchronous activity after the test ended/m;
+// (TAP prints a test's own console output as `# …` lines, so a bare
+// `# Error:` is not Node's; the phrase is in every variant of its diagnostic.)
+const RUNNER_ERROR_RE = /^ℹ Error: |generated asynchronous activity after the test ended/m;
 
 // The family of a single-file log that accounts for its whole failure — spec
 // or tap, counts parsed, nothing cancelled, no runner-level error diagnostic,

@@ -320,7 +320,6 @@ const SPEC_TREE_RE = /^( *)([✔✖﹣]) (.+) \(\d[\d.]*ms\)( # .*)?$/;
 const SPEC_OPEN_RE = /^( *)▶ (.*)$/;
 const TAP_POINT_RE = /^( *)(not ok|ok)(?= |$)(?: \d+)?(?: - )?(.*?)( # (?:SKIP|TODO)\b.*)?$/i;
 const TAP_OPEN_RE = /^( *)# Subtest: (.*)$/;
-const TAP_INHERITED_RE = /^\s*failureType:\s*'subtestsFailed'/;
 function testTree(text, family) {
   const all = new Map();
   const passed = new Map();
@@ -329,7 +328,8 @@ function testTree(text, family) {
   let wellFormed = true;
   const bump = (map, name) => map.set(name, (map.get(name) || 0) + 1);
   const open = [];
-  let lastFailure = null;
+  let lastPoint = null;
+  let yaml = null;
   const point = (indent, name, ok, fail) => {
     const top = open[open.length - 1];
     let parent = false;
@@ -342,8 +342,8 @@ function testTree(text, family) {
     bump(all, name);
     bump(paths, qualified);
     if (ok) bump(passed, name);
-    lastFailure = fail ? { qualified, name, parent, inherited: false } : null;
-    if (fail) failures.push(lastFailure);
+    lastPoint = { indent, failure: fail ? { qualified, name, parent, inherited: false } : null };
+    if (fail) failures.push(lastPoint.failure);
   };
   if (family !== 'spec' && family !== 'tap') return { all, passed, paths, failed: [], wellFormed };
   const listed = new Map();
@@ -363,7 +363,20 @@ function testTree(text, family) {
       const m = line.match(SPEC_TREE_RE);
       if (m) point(m[1].length, m[3], m[2] === '✔' && !m[4], m[2] === '✖' && !m[4]);
     } else {
-      if (lastFailure && TAP_INHERITED_RE.test(line)) { lastFailure.inherited = true; continue; }
+      // A point's YAML diagnostics block (`---` … `...`, two spaces deeper
+      // than the point) is data, never test points — an assertion's
+      // expected/actual text can hold `not ok …` or `failureType:` lines.
+      // Only the block's own top-level `failureType` key is read: a parent
+      // whose failure is only its subtests' says 'subtestsFailed'.
+      if (yaml) {
+        if (line === `${yaml.pad}...`) yaml = null;
+        else if (yaml.failure && yaml.failure.parent && line === `${yaml.pad}failureType: 'subtestsFailed'`) yaml.failure.inherited = true;
+        continue;
+      }
+      if (lastPoint && line === `${' '.repeat(lastPoint.indent + 2)}---`) {
+        yaml = { pad: ' '.repeat(lastPoint.indent + 2), failure: lastPoint.failure };
+        continue;
+      }
       const o = line.match(TAP_OPEN_RE);
       if (o) { open.push({ indent: o[1].length, name: o[2] }); continue; }
       const m = line.match(TAP_POINT_RE);
@@ -373,11 +386,19 @@ function testTree(text, family) {
   if (open.length > 0) wellFormed = false;
   if (family === 'spec') {
     // A spec parent failed in its own right only when the failing section
-    // lists it; each listing vouches for one parent.
-    for (const f of failures) {
-      if (!f.parent) continue;
-      if (listed.get(f.name)) listed.set(f.name, listed.get(f.name) - 1); else f.inherited = true;
-    }
+    // lists it. Failing leaves take their own listings first; what is left
+    // under a name vouches for that name's parents — none left: all
+    // inherited; one per parent: all their own; anything else is ambiguous,
+    // and the tree is no evidence.
+    const take = (name) => { if (listed.get(name)) listed.set(name, listed.get(name) - 1); };
+    failures.filter((f) => !f.parent).forEach((f) => take(f.name));
+    const parentsByName = new Map();
+    failures.filter((f) => f.parent).forEach((f) => parentsByName.set(f.name, [...(parentsByName.get(f.name) || []), f]));
+    parentsByName.forEach((parents, name) => {
+      const left = listed.get(name) || 0;
+      if (left === 0) parents.forEach((f) => { f.inherited = true; });
+      else if (left !== parents.length) wellFormed = false;
+    });
   }
   const failed = failures.filter((f) => !f.inherited).map((f) => f.qualified);
   return { all, passed, paths, failed, wellFormed };
@@ -404,10 +425,29 @@ function specEntryCount(text) { return specEntries(stripAnsi(text).split('\n')).
 function tapBlocks(lines) {
   const blocks = [];
   let current = null;
-  for (const line of lines) {
-    if (/^\s*not ok\b/.test(line)) { current = { line, body: [] }; blocks.push(current); continue; }
-    if (/^\s*(ok \d|# )/.test(line)) { current = null; continue; }
-    if (current) current.body.push(line);
+  let pointPad = null;
+  let yamlPad = null;
+  for (const raw of lines) {
+    const line = raw.replace(/\r$/, '');
+    // A point's YAML block (`---` … `...`, two spaces deeper) is its body,
+    // never a new point — an assertion's expected/actual text can hold
+    // `not ok …` lines.
+    if (yamlPad !== null) {
+      if (current) current.body.push(raw);
+      if (line === `${yamlPad}...`) yamlPad = null;
+      continue;
+    }
+    if (pointPad !== null && line === `${pointPad}  ---`) {
+      yamlPad = `${pointPad}  `;
+      if (current) current.body.push(raw);
+      continue;
+    }
+    const notOk = line.match(/^(\s*)not ok\b/);
+    if (notOk) { current = { line: raw, body: [] }; blocks.push(current); pointPad = notOk[1]; continue; }
+    const ok = line.match(/^(\s*)ok \d/);
+    if (ok) { current = null; pointPad = ok[1]; continue; }
+    if (/^\s*# /.test(line)) { current = null; pointPad = null; continue; }
+    if (current) current.body.push(raw);
   }
   return blocks;
 }
