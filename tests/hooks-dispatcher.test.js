@@ -7,6 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { readRunState } = require('../plugin/bin/lib/hooks/context');
+const { shouldRunFull } = require('../plugin/bin/lib/hooks/bash-prefilter');
 const { linkedWorktreeOf } = require('./helpers/git-fixtures');
 const { skipUnderRoot } = require('./helpers/root');
 
@@ -601,11 +602,12 @@ test('hooks.json registers a PreToolUse matcher for ExitWorktree (unfiltered, li
   assert.match(entry.hooks[0].command, /bin\/hooks\.js" pre-tool-use$/);
 });
 
-test("hooks.json's PreToolUse Bash `if` patterns include Bash(git worktree *)", () => {
+test("hooks.json's PreToolUse Bash handler is unconditional and the prefilter covers git worktree", () => {
   const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
   const bashEntry = config.hooks.PreToolUse.find((e) => e.matcher === 'Bash');
-  const ifs = bashEntry.hooks.map((h) => h.if);
-  assert.ok(ifs.includes('Bash(git worktree *)'), 'expected PreToolUse\'s Bash matcher to include an "if": "Bash(git worktree *)" entry');
+  assert.strictEqual(bashEntry.hooks.length, 1);
+  assert.ok(!('if' in bashEntry.hooks[0]));
+  assert.strictEqual(shouldRunFull('pre-tool-use', { tool_name: 'Bash', tool_input: { command: 'git worktree add ../w' } }), true);
 });
 
 test('hooks.json registers a PostToolUse matcher for Skill (unfiltered, literal tool-name match)', () => {
@@ -649,19 +651,18 @@ test('hooks.json registers a PostToolUse matcher for Write (unfiltered, literal 
   assert.match(writeEntry.hooks[0].command, /bin\/hooks\.js" post-tool-use$/);
 });
 
-test('hooks.json registers a PostToolUse matcher for Bash (pattern-filtered via `if`)', () => {
+test('hooks.json registers ONE unconditional PostToolUse handler for Bash (#3074)', () => {
   const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
   const bashEntry = config.hooks.PostToolUse.find((e) => e.matcher === 'Bash');
   assert.ok(bashEntry, 'expected a PostToolUse Bash matcher entry');
-  assert.ok(bashEntry.hooks.length > 0, 'expected at least one Bash `if`-filtered hook entry');
-  for (const hook of bashEntry.hooks) {
-    assert.strictEqual(hook.type, 'command');
-    assert.ok('if' in hook, 'PostToolUse Bash matcher hooks must be pattern-filtered via "if"');
-    assert.match(hook.command, /bin\/hooks\.js" post-tool-use$/);
-  }
+  assert.strictEqual(bashEntry.hooks.length, 1);
+  const hook = bashEntry.hooks[0];
+  assert.strictEqual(hook.type, 'command');
+  assert.ok(!('if' in hook), 'the PostToolUse Bash handler must be unconditional — the prefilter in bin/hooks.js replaces the "if" patterns');
+  assert.match(hook.command, /bin\/hooks\.js" post-tool-use$/);
 });
 
-test("hooks.json's PreToolUse/PostToolUse Bash `if` patterns cover every VALUE_FLAGS entry git-command.js's gitTargets() resolves (finding regression)", () => {
+test("the Bash prefilter covers every VALUE_FLAGS entry git-command.js's gitTargets() resolves (finding regression)", () => {
   // git-command.js's gitTargets() is written and unit-tested to correctly
   // resolve a commit/push target through `-c`, `--exec-path`, and
   // `--namespace` (VALUE_FLAGS), not just `-C` — but the parser is only ever
@@ -670,14 +671,10 @@ test("hooks.json's PreToolUse/PostToolUse Bash `if` patterns cover every VALUE_F
   // `git -c user.name=x commit -m y` previously never even reached the
   // parser: no registered `if` pattern matched its literal text, so both
   // the worktree-always deny and the E1 wrong-checkout deny silently never
-  // fired for this shape.
-  const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
-  const requiredPatterns = ['Bash(git -c *)', 'Bash(git --exec-path=*)', 'Bash(git --namespace=*)'];
-  for (const event of ['PreToolUse', 'PostToolUse']) {
-    const bashEntry = config.hooks[event].find((e) => e.matcher === 'Bash');
-    const ifs = bashEntry.hooks.map((h) => h.if);
-    for (const pattern of requiredPatterns) {
-      assert.ok(ifs.includes(pattern), `expected ${event}'s Bash matcher to include an "if": "${pattern}" entry`);
+  // fired for this shape. The prefilter now plays the matcher's role.
+  for (const event of ['pre-tool-use', 'post-tool-use']) {
+    for (const command of ['git -c user.name=x commit -m y', 'git --exec-path=/x commit -m y', 'git --namespace=n push']) {
+      assert.strictEqual(shouldRunFull(event, { tool_name: 'Bash', tool_input: { command } }), true, `${event} skips '${command}'`);
     }
   }
 });
@@ -779,14 +776,14 @@ test('#750: a compound Bash command with no policy violation never logs a gate-d
   ].join(' && ');
   const hooksConfig = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
   const bashEntry = hooksConfig.hooks.PreToolUse.find((e) => e.matcher === 'Bash');
-  assert.ok(bashEntry.hooks.length > 10, 'expected many registered "if" entries under the Bash matcher (the mechanism under test)');
-  for (const { if: ifPattern } of bashEntry.hooks) {
+  assert.strictEqual(bashEntry.hooks.length, 1, 'one unconditional handler (#3074)');
+  for (let i = 0; i < 28; i += 1) { // the pre-#3074 fan-out count, kept as a stress repeat
     const result = runHook(['pre-tool-use'], {
       input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: compoundCommand } }),
       cwd: project,
     });
-    assert.strictEqual(result.code, 0, `invocation simulating "if": "${ifPattern}" should not error`);
-    assert.doesNotMatch(result.stdout, /"permissionDecision":"deny"/, `invocation simulating "if": "${ifPattern}" must not deny — no policy is set`);
+    assert.strictEqual(result.code, 0, `repeat ${i}: should not error`);
+    assert.doesNotMatch(result.stdout, /"permissionDecision":"deny"/, `repeat ${i}: must not deny — no policy is set`);
   }
   assert.ok(!fs.existsSync(path.join(run, 'events.jsonl')), 'no gate-denial (or any) event should ever have been written across all simulated invocations');
 });
