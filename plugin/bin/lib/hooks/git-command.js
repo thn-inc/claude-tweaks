@@ -444,18 +444,20 @@ function gitTargets(command, cwd) {
 }
 
 // Best-effort detection of non-git, non-Edit/Write direct file-write shapes in
-// a Bash command. Every shape here is one hooks.json can ALSO gate structurally
-// via an if-matcher (`Bash(cp *)`, `Bash(sed *)`, ...) — that pairing is the
-// whole design constraint. A branch here without a matcher there is dead code,
-// because the hook process never spawns; that asymmetry is exactly what let
+// a Bash command. Every shape here is paired with a word in bash-prefilter.js's
+// PRE_TOOL_USE_WORDS, which imports WRITE_SHAPES below — so a shape added there
+// is covered by construction. The pairing is the design constraint: a branch
+// here whose command word the prefilter skips is dead code, because bin/hooks.js
+// exits before the full handler loads; that asymmetry is exactly what let
 // `sed -i` bypass the gate silently for months (#70). The test in
-// tests/hooks-gate-coverage.test.js now asserts the two lists agree.
+// tests/hooks-gate-coverage.test.js asserts the prefilter word set covers it.
 //
 // Still NOT covered, and deliberately (see the coverage block in
-// skills/_shared/policy-schema.md for the measured rationale):
-//   - bare shell redirection (`>`, `>>`) — no command word for an if-matcher to
-//     recognize, so catching it means firing the hook on EVERY Bash call.
-//     Measured at 42 ms idle / 68 ms under three-way contention per call.
+// skills/_shared/policy-schema-coverage.md for the measured rationale):
+//   - bare shell redirection (`>`, `>>`) — no command word for the prefilter to
+//     key on, so catching it means running the full handler on EVERY Bash call.
+//     Full path measured at 106.5 ms best idle / 152.3 ms under three-way
+//     contention per call, vs 57.8 / 97.9 ms for the skip path (Windows, #3074).
 //   - `python -c`, `sh -c`, `awk` program strings — the write target lives
 //     inside an opaque program and is not statically knowable at any cost.
 //
@@ -515,7 +517,8 @@ function hasInPlaceFlag(flags) {
 // The Bash write shapes this function recognizes. Load-bearing, not
 // descriptive: the guard below drops any segment whose command word is absent
 // here, so adding a branch without adding its name makes that branch dead
-// code. pre-tool-use.js's GATE_COVERAGE re-exports this list, and
+// code. pre-tool-use.js's GATE_COVERAGE re-exports this list, bash-prefilter.js
+// imports it for its PRE_TOOL_USE_WORDS, and
 // tests/hooks-gate-coverage.test.js pins it to the prose in
 // skills/_shared/policy-schema.md — so widening this array is what forces the
 // documentation to be updated (#138).
