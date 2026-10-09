@@ -65,6 +65,10 @@ Three conventions follow from how this repo works, and all are visible below:
 
 * Close the Windows-only gaps left by the v6.137.0 release… ([#3040](https://github.com/thn-inc/claude-tweaks/issues/3040)) ([2c2a8c2](https://github.com/thn-inc/claude-tweaks/commit/2c2a8c2c3a92ea5e7c852832abefde85c1f02481))
 
+### Highlights
+* Pipelines on a development machine with known environment-specific test failures can now verify against the base branch instead of re-running the full suite at every phase.
+* On Windows, Impeccable engine failures now report the real cause, and release verification checks the marketplace-mirror hook.
+
 ## [6.137.0](https://github.com/thn-inc/claude-tweaks/compare/v6.136.0...v6.137.0) (2026-10-08)
 
 
