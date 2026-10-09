@@ -53,6 +53,18 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.138.0](https://github.com/thn-inc/claude-tweaks/compare/v6.137.0...v6.138.0) (2026-10-09)
+
+
+### Features
+
+* Make flow verification workable on a dev checkout with a… ([#3043](https://github.com/thn-inc/claude-tweaks/issues/3043)) ([968dd5b](https://github.com/thn-inc/claude-tweaks/commit/968dd5be75acf6f1e7016ab19881e043df3b9e2c))
+
+
+### Bug Fixes
+
+* Close the Windows-only gaps left by the v6.137.0 release… ([#3040](https://github.com/thn-inc/claude-tweaks/issues/3040)) ([2c2a8c2](https://github.com/thn-inc/claude-tweaks/commit/2c2a8c2c3a92ea5e7c852832abefde85c1f02481))
+
 ## [6.137.0](https://github.com/thn-inc/claude-tweaks/compare/v6.136.0...v6.137.0) (2026-10-08)
 
 
