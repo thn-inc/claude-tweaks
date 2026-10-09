@@ -53,6 +53,18 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.139.0](https://github.com/thn-inc/claude-tweaks/compare/v6.138.0...v6.139.0) (2026-10-09)
+
+
+### Features
+
+* Exclude non-spec-shaped candidates from the dispatch queue pull before claiming ([#3073](https://github.com/thn-inc/claude-tweaks/issues/3073)) ([d775014](https://github.com/thn-inc/claude-tweaks/commit/d77501487103497100eca38c80f6ca8d69ad096b)), closes [#2829](https://github.com/thn-inc/claude-tweaks/issues/2829)
+
+
+### Bug Fixes
+
+* Normalize the plugin root in the not-spec-shaped fixture test on Windows ([#3076](https://github.com/thn-inc/claude-tweaks/issues/3076)) ([cef435b](https://github.com/thn-inc/claude-tweaks/commit/cef435b77d974cd1e9d5995bcbd15c23897d7d48)), closes [#2829](https://github.com/thn-inc/claude-tweaks/issues/2829)
+
 ## [6.138.0](https://github.com/thn-inc/claude-tweaks/compare/v6.137.0...v6.138.0) (2026-10-09)
 
 
