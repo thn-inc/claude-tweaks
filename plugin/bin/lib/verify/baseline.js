@@ -31,7 +31,8 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
   return {
     repoRoot: () => git(['rev-parse', '--show-toplevel']),
     resolveCommit: (ref) => {
-      try { return git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]) || null; } catch { return null; }
+      // --end-of-options: a ref spelled like a flag is a (non-existent) ref, never a git option.
+      try { return git(['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`]) || null; } catch { return null; }
     },
     // `git merge-base --is-ancestor`: exit 0 → true, exit 1 → false; any
     // other failure throws (the caller's adjudication-error path), never a
@@ -57,7 +58,13 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
     addWorktree: (sha) => {
       const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-'));
       const dir = path.join(parent, 'wt');
-      git(['worktree', 'add', '--detach', dir, sha]);
+      try {
+        git(['worktree', 'add', '--detach', dir, sha]);
+      } catch (err) {
+        // The caller never learns `dir` on a throw, so its cleanup cannot run — remove the parent here.
+        try { rmSync(parent, { recursive: true, force: true }); } catch { /* best effort */ }
+        throw err;
+      }
       return dir;
     },
     // Never silent: a scratch that survives every attempt is named on stderr
@@ -230,8 +237,15 @@ async function adjudicate({
   }
 
   // A --cwd subdir: failing files are relative to it, so the base-side path
-  // and cwd are offset by the same subdir (Review Focus 5).
-  const sub = path.relative(git.repoRoot(), headDir).replace(/\\/g, '/');
+  // and cwd are offset by the same subdir (Review Focus 5). A --cwd that does
+  // not sit under git's own toplevel spelling (a junction, a subst drive, an
+  // 8.3 name) would put the base-side run outside the scratch worktree —
+  // possibly onto HEAD's own tree — so it is never adjudicated.
+  const root = git.repoRoot();
+  const sub = path.relative(root, headDir).replace(/\\/g, '/');
+  if (sub === '..' || sub.startsWith('../') || path.isAbsolute(sub)) {
+    return ineligible(`working directory ${headDir} does not resolve under the repository root ${root}`);
+  }
   const repoRel = (file) => (sub ? `${sub}/${file}` : file);
   const atBase = work.map((w) => git.fileExistsAt(baseSha, repoRel(w.file)));
   const unchanged = work.map((w, k) => atBase[k] && git.sameAtBase(baseSha, repoRel(w.file)));
@@ -281,7 +295,7 @@ async function adjudicate({
     // counts only when HEAD resolves no dependencies either — Node's own
     // resolution: no node_modules at the HEAD directory or any ancestor, and
     // no NODE_PATH (inherited or the check's own --cmd-env).
-    const headRoot = git.repoRoot();
+    const headRoot = root;
     const failsToLoadAtBase = (k) => {
       const ev = baseEv[k];
       const r = headRuns[k];

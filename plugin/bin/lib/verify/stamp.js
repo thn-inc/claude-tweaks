@@ -99,6 +99,10 @@ function readStamp(gitDir, fsImpl = fs) {
     if (typeof parsed !== 'object' || parsed === null || typeof parsed.sha !== 'string') return null;
     if (!SHA_RE.test(parsed.sha)) return null;
     if (parsed.fullSha !== undefined && parsed.fullSha !== null && !SHA_RE.test(parsed.fullSha)) return null;
+    // A `baseline` key the runner did not write (a scalar, null, an array) is
+    // malformed — read as absent, never as a clean full pass (#3043).
+    if (parsed.baseline !== undefined
+      && (parsed.baseline === null || typeof parsed.baseline !== 'object' || Array.isArray(parsed.baseline))) return null;
     return parsed;
   }
   let bare;

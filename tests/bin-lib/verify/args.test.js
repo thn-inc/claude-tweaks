@@ -258,6 +258,10 @@ test('--baseline with --baseline-cmd parses (#3043)', () => {
   assert.deepStrictEqual(got.baselineCmds, [{ name: 'tests', template: 'node --test {file}' }]);
 });
 
+test('an empty --baseline (an unset shell variable) is a usage error, never a silent no-adjudication (#3043)', () => {
+  assert.throws(() => parseArgs(['--cmd', 'tests=npm test', '--baseline', '', '--baseline-cmd', 'tests=node --test {file}']), /--baseline needs a ref, got an empty value/);
+});
+
 test('--baseline without --baseline-cmd is a usage error (#3043)', () => {
   assert.throws(() => parseArgs(['--cmd', 'tests=npm test', '--baseline', 'origin/main']), /--baseline requires at least one --baseline-cmd/);
 });

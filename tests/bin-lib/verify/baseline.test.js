@@ -586,6 +586,39 @@ test('M1: a scratch worktree that survives cleanup is named on stderr with the m
   assert.deepStrictEqual(quiet, [], 'a removal that succeeds says nothing');
 });
 
+test('a working directory outside the repository root as git spells it is never adjudicated — the base-side run cannot leave the scratch tree (#3043)', async () => {
+  const { p, dir } = logFile(SPEC(['tests/a.test.js']));
+  const { git, runOne, calls } = fakes({ outcomes: { 'baseline:tests/a.test.js': 1 } });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: path.join('/elsewhere', 'app'), logDir: dir, runOne, git });
+  assert.strictEqual(r.eligible, false);
+  assert.match(r.reason, /does not resolve under the repository root/);
+  assert.deepStrictEqual(calls.runs, []);
+  assert.deepStrictEqual(calls.added, [], 'no scratch worktree is created');
+});
+
+test('realGit.resolveCommit reads a flag-shaped ref as a ref, never as a git option (#3043)', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-'));
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  git('init', '-q');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+  git('add', '.');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'base');
+  const rg = realGit(repo);
+  assert.strictEqual(rg.resolveCommit('HEAD'), git('rev-parse', 'HEAD'));
+  assert.strictEqual(rg.resolveCommit('--all'), null);
+});
+
+test('realGit.addWorktree removes its temp parent when `git worktree add` fails (#3043)', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-'));
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  const removed = [];
+  const rg = realGit(repo, { rmSync: (dirPath, opts) => { removed.push(dirPath); fs.rmSync(dirPath, opts); } });
+  assert.throws(() => rg.addWorktree('0'.repeat(40)));
+  assert.strictEqual(removed.length, 1);
+  assert.match(path.basename(removed[0]), /^ct-verify-base-/);
+  assert.strictEqual(fs.existsSync(removed[0]), false);
+});
+
 test('realGit.sameAtBase: true for a working-tree file whose blob matches the commit, false once edited or absent (#3043)', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-'));
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();

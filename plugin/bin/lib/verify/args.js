@@ -82,7 +82,12 @@ function parseArgs(argv) {
       if (flag === '--integration-branch') { integrationBranch = value; continue; }
       if (flag === '--run') { run = value; continue; }
       if (flag === '--cwd') { cwd = value; continue; }
-      if (flag === '--baseline') { baseline = value; continue; }
+      if (flag === '--baseline') {
+        // An unset shell variable would otherwise switch adjudication off without a word.
+        if (value === '') throw new UsageError('--baseline needs a ref, got an empty value');
+        baseline = value;
+        continue;
+      }
       if (flag === '--baseline-cmd') {
         // #3043: split on the first `=` only, so the template keeps later `=` intact.
         const eq = value.indexOf('=');

@@ -152,6 +152,16 @@ test('readStamp returns null on unparseable JSON — never falls back to the bar
   assert.strictEqual(readStamp('/g', fsImpl), null);
 });
 
+test('readStamp returns null for a `baseline` key the runner did not write — scalar, null or array — never a clean full pass (#3043)', () => {
+  const SHA = '0123456789abcdef0123456789abcdef01234567';
+  for (const baseline of [true, 'x', null, []]) {
+    const fsImpl = fakeFs({ [path.join('/g', STAMP_JSON_NAME)]: JSON.stringify({ sha: SHA, scope: 'full', fullSha: SHA, baseline }) });
+    assert.strictEqual(readStamp('/g', fsImpl), null, JSON.stringify(baseline));
+  }
+  const ok = fakeFs({ [path.join('/g', STAMP_JSON_NAME)]: JSON.stringify({ sha: SHA, scope: 'full', fullSha: SHA, baseline: { base: 'origin/main' } }) });
+  assert.deepStrictEqual(readStamp('/g', ok).baseline, { base: 'origin/main' });
+});
+
 test('readStamp returns null when the JSON parses but is not an object with a string sha', () => {
   assert.strictEqual(readStamp('/g', fakeFs({ [path.join('/g', STAMP_JSON_NAME)]: '"abc"' })), null);
   assert.strictEqual(readStamp('/g', fakeFs({ [path.join('/g', STAMP_JSON_NAME)]: '{"scope":"full"}' })), null);
