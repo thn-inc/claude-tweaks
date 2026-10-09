@@ -220,9 +220,15 @@ async function adjudicate({
       return ineligible(`unclassified failure(s): ${unmatched} failing ${unmatched === 1 ? 'entry names' : 'entries name'} no test file in ${c.name}`);
     }
     if (family === 'spec') {
+      // The spec reporter lists a cancelled test (a timeout under load) in the
+      // failing section while `ℹ fail` excludes it, so the full run's entries
+      // add up to fail + cancelled. A cancelled HEAD test is then held to the
+      // usual evidence: it fails at base, or shows its own pass in isolation.
       const entries = specEntryCount(text);
-      if (entries !== counts.fail) {
-        return ineligible(`${c.name} failing entries (${entries}) do not account for ℹ fail ${counts.fail}`);
+      const cancelled = cancelledCount(text, family) || 0;
+      if (entries !== counts.fail + cancelled) {
+        const accounted = cancelled ? `ℹ fail ${counts.fail} + ℹ cancelled ${cancelled}` : `ℹ fail ${counts.fail}`;
+        return ineligible(`${c.name} failing entries (${entries}) do not account for ${accounted}`);
       }
     }
     const headFileLevel = fileLevelFailures(text, family, { cwd: headDir });

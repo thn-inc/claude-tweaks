@@ -461,6 +461,18 @@ test('a file-level isolated failure never qualifies as baseline-in-isolation (#3
   assert.deepStrictEqual(r.attributable, [R]);
 });
 
+test('a full run with a cancelled test is adjudicated: its entries add up to fail + cancelled, and the cancelled test needs its own isolated pass (#3043)', async () => {
+  // HEAD: `x` fails (base's), `slow` is cancelled under load — listed but not counted in ℹ fail.
+  const head = NAMED({ fails: [['x'], ['slow', '1:1', "  'test did not finish before its parent and was cancelled'"]], fail: 1, cancelled: 1 });
+  const ok = await isolationCase(NAMED({ fails: [['x']], passes: ['slow'] }), { head });
+  assert.strictEqual(ok.eligible, true);
+  assert.deepStrictEqual(ok.baselineFailing, [R]);
+  assert.deepStrictEqual(ok.baselineIsolated[R].waived, ['slow']);
+  // The same cancelled test, cancelled again in isolation, proves nothing.
+  const again = await isolationCase(NAMED({ fails: [['x'], ['slow']], fail: 1, cancelled: 1 }), { head });
+  assert.deepStrictEqual(again.attributable, [R]);
+});
+
 test('a base run with a cancelled test, or whose failure timed out, is no evidence — even when HEAD fails the same names (#3043)', async () => {
   const head = NAMED({ fails: [['x']] });
   const cancelledBase = NAMED({ fails: [['x']], cancelled: 1 });
