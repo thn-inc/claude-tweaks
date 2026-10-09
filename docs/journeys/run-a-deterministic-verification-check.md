@@ -102,6 +102,7 @@ files:
 - **Should feel:** The runner, not the agent, does the by-file comparison against base that used to be hand-run. A branch that adds no failure gets a verified stamp, so `/claude-tweaks:test` and `/claude-tweaks:review` Step 1.5 stop re-running a ~16-minute suite that can never exit 0 here. A branch that does add a failure is named, with no reading of the log required.
 - **Should understand:** Adjudication runs only when a check fails.
   - **The comparison.** Each failing test file runs once at the base commit, in a scratch detached worktree that is removed afterwards, and once in isolation at HEAD. A test file that fails to load at both counts only when the two logs match once roots and durations are removed, so the error has to be the same one.
+  - **Load failures need more than a matching log.** The file must also be unchanged since base and fail at the same sites at base and in the full run (a load failure at `1:1` never covers a file-scoped hook failure). HEAD must also resolve no dependencies: no `node_modules` at its directory or any ancestor, and no `NODE_PATH`, inherited or from the check's own `--cmd-env`. The scratch worktree carries no untracked dependencies, so on a checkout with dependencies installed a load failure is always attributable.
   - **baseline:** the isolated HEAD run fails only tests the base run fails, compared by suite path (`X > works`). Each path occurs once in its tree, names are read byte-for-byte, and a malformed tree is no evidence. A new failing test beside an old environment failure, a test moved between suites, or a loop-generated sibling is therefore not covered. A base log with a timed-out or cancelled test is no evidence either.
   - **Waived failures:** a file whose full run also failed extra tests under load still counts as baseline when the isolated run shows a `✔` pass for every extra one. A test that never ran proves nothing. Such a file prints a `baseline-in-isolation` CAVEAT naming the waived tests.
   - **flaky** needs the same positive evidence: every full-run failure must show its own pass in the isolated run.
@@ -110,6 +111,8 @@ files:
   - **attributable:** everything else, including any file absent at base.
   - **Exit code and table.** The exit code is the gate. An adjudicated pass exits 0 and shows `pass (baseline-adjudicated vs origin/main: {b} baseline, {f} flaky)` in the table. Meanwhile `report.json`'s `pass` and each check's `exitCode` stay raw.
   - **Stamp.** The stamp gains a `baseline` key (no legacy bare-SHA twin), and `--stamp-status` reads `match: false`, `verifiedHead: true`, `baselineAdjudicated: true`. The stamp means "this branch added no failure", not "the suite is green"; hosted CI stays authoritative.
+  - **The marker carries forward.** A later scoped or `none` run anchored on that pass's `fullSha` (Step 8) copies the same `baseline` key onto its own stamp, so `--stamp-status` keeps reading `baselineAdjudicated: true` until a full run writes a fresh stamp.
+  - **Limits beyond test identity.** Only test failures are adjudicated: a check whose non-zero exit also comes from something else (a coverage threshold, a post-step chained into the command) while its test failures are all baseline reads as a pass. The base-contains-HEAD refusal checks ancestry, so a base that absorbed this branch through a squash merge is not caught.
   - **When it refuses.** Anything it cannot classify with evidence prints `Baseline: not adjudicated — {reason}` and exits 1. That covers:
     - a fail-fast skip
     - a spawn error
@@ -118,7 +121,13 @@ files:
     - unparsed counts, or spec entries that do not add up to `ℹ fail`
     - a TAP block naming no file
     - a base that already contains HEAD
+    - a check with no numeric exit (signal-killed)
+    - an unreadable check log
+    - a spec failing entry naming no test file
+    - a working directory that does not resolve under the repository root as git spells it
+    - an adjudicator error (for example, the scratch worktree could not be created)
   - An unresolvable ref exits 2 before anything runs.
+  - Any other malformed baseline flag also exits 2 before anything runs: an empty `--baseline` value, `--baseline` with no `--baseline-cmd`, a `--baseline-cmd` whose template lacks `{file}` or that names no `--cmd`, and either flag beside `--stamp-status` or `--changed-files`.
 - **Red flags:**
   - An exit 0 while any `ATTRIBUTABLE:` line printed.
   - A pass over a failure in a file that does not exist at base.
