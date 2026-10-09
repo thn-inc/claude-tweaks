@@ -295,7 +295,6 @@ async function adjudicate({
     // counts only when HEAD resolves no dependencies either — Node's own
     // resolution: no node_modules at the HEAD directory or any ancestor, and
     // no NODE_PATH (inherited or the check's own --cmd-env).
-    const headRoot = root;
     const failsToLoadAtBase = (k) => {
       const ev = baseEv[k];
       const r = headRuns[k];
@@ -303,7 +302,7 @@ async function adjudicate({
       if (headResolvesDeps || (envOf(work[k].check) || {}).NODE_PATH) return false;
       if (!r || typeof r.exitCode !== 'number' || r.exitCode === 0) return false;
       const text = readLog(r.logPath);
-      return text !== null && normalizeLog(text, [headRoot]) === normalizeLog(ev.text, [scratch]);
+      return text !== null && normalizeLog(text, [root]) === normalizeLog(ev.text, [scratch]);
     };
     // A full-run failing test passed in the isolated log only when its leaf
     // name occurs there exactly once and that once is a pass. Absence is no

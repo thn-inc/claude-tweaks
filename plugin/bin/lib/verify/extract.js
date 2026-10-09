@@ -241,6 +241,9 @@ const SPEC_FAIL_NAME_RE = /^✖ (.+) \(\d[\d.]*ms\)\s*$/;
 // at HEAD.
 const TAP_NAME_RE = /^\s*not ok\b(?:\s+\d+)?(?:\s+-)?\s*(.*?)(\s+#\s*(?:SKIP|TODO)\b.*)?\s*$/i;
 
+const INCONCLUSIVE_RE = /test timed out after|testTimeoutFailure|cancelledBy|was cancelled|did not finish before/i;
+const TAP_LOCATION_RE = /location:\s*'.*:(\d+:\d+)'/;
+
 // The failing test names per relativized test file, in log order, as a
 // multiset (a name may repeat): Map<file, (string|null)[]>. spec: the
 // `✖ <name> (…)` line after each `test at` entry, minus its duration (null
@@ -252,11 +255,9 @@ const TAP_NAME_RE = /^\s*not ok\b(?:\s+\d+)?(?:\s+-)?\s*(.*?)(\s+#\s*(?:SKIP|TOD
 // Map. `located`: each name — file-level ones included — becomes
 // `<name>@<line>:<col>` (the failing site; null when the entry carries none),
 // so a load failure (`1:1`) and a file-scoped hook failure stay distinct.
-// `conclusiveOnly`: an entry whose
-// diagnostics say it timed out or was cancelled is dropped — it did not
-// finish, which proves nothing about whether it fails.
-const INCONCLUSIVE_RE = /test timed out after|testTimeoutFailure|cancelledBy|was cancelled|did not finish before/i;
-const TAP_LOCATION_RE = /location:\s*'.*:(\d+:\d+)'/;
+// `conclusiveOnly`: an entry whose diagnostics say it timed out or was
+// cancelled is dropped — it did not finish, which proves nothing about
+// whether it fails.
 function failingTestsByFile(text, family, { cwd = process.cwd(), located = false, conclusiveOnly = false } = {}) {
   const byFile = new Map();
   const add = (rel, name, loc, body) => {
