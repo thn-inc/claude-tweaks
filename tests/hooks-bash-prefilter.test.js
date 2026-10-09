@@ -89,3 +89,64 @@ test('earlyGate reads stdin only for the two tool-use events', () => {
   assert.deepStrictEqual(earlyGate('pre-tool-use', reader('not json')), { raw: 'not json', skip: false });
   assert.deepStrictEqual(earlyGate('post-tool-use', () => { throw new Error('EAGAIN'); }), { raw: '', skip: false });
 });
+
+// ── e2e: bin/hooks.js's early exit (#3074) ───────────────────────────────────
+const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
+
+const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
+const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prefilter-'));
+// A --require'd probe that records which modules this process loaded, so the
+// test can prove the skip path never loaded the heavy ones.
+const PROBE = path.join(SANDBOX, 'probe.js');
+fs.writeFileSync(PROBE, "process.on('exit', () => { require('fs').writeFileSync(process.env.CT_PROBE_OUT, JSON.stringify(Object.keys(require.cache))); });\n");
+
+function spawnHook(event, payload, { cwd = SANDBOX } = {}) {
+  const out = path.join(SANDBOX, `loaded-${process.hrtime.bigint()}.json`);
+  const stdout = execFileSync('node', ['--require', PROBE, HOOKS, event], {
+    input: typeof payload === 'string' ? payload : JSON.stringify(payload),
+    cwd, encoding: 'utf8',
+    env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', CT_PROBE_OUT: out },
+  });
+  return { stdout, loaded: JSON.parse(fs.readFileSync(out, 'utf8')) };
+}
+const loadedModule = (loaded, rel) => loaded.some((p) => p.replace(/\\/g, '/').endsWith(rel));
+
+test('e2e: an uninteresting Bash call exits 0 with no output and never loads the heavy modules', () => {
+  for (const event of ['pre-tool-use', 'post-tool-use']) {
+    const { stdout, loaded } = spawnHook(event, { ...bash('echo hi'), cwd: SANDBOX });
+    assert.strictEqual(stdout, '', event);
+    assert.ok(!loadedModule(loaded, 'lib/hooks/context.js'), `${event} loaded context.js on the skip path`);
+    assert.ok(!loadedModule(loaded, `lib/hooks/${event}.js`), `${event} loaded its event module on the skip path`);
+  }
+});
+
+test('e2e (probe discriminates): a covered Bash call DOES load the event module', () => {
+  const { loaded } = spawnHook('pre-tool-use', { ...bash('git status'), cwd: SANDBOX });
+  assert.ok(loadedModule(loaded, 'lib/hooks/pre-tool-use.js'));
+  assert.ok(loadedModule(loaded, 'lib/hooks/context.js'));
+});
+
+test('e2e: malformed stdin still reaches the full handler and exits 0', () => {
+  const { loaded } = spawnHook('pre-tool-use', 'not json');
+  assert.ok(loadedModule(loaded, 'lib/hooks/pre-tool-use.js'));
+});
+
+test('e2e: a non-Bash tool is never skipped', () => {
+  const { loaded } = spawnHook('post-tool-use', { tool_name: 'Skill', tool_input: { skill: 'x' }, cwd: SANDBOX });
+  assert.ok(loadedModule(loaded, 'lib/hooks/post-tool-use.js'));
+});
+
+// checkGitStashWarn (#1967) had no `Bash(git stash *)` predicate, so a plain
+// `git stash` never spawned the hook and the warning was unreachable for its
+// most common spelling (the #70 matcher/parser asymmetry). The prefilter's
+// `git` word makes it reachable.
+test('e2e: a plain `git stash` from a linked worktree now reaches checkGitStashWarn', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const { stdout } = spawnHook('pre-tool-use', { ...bash('git stash'), cwd: wt }, { cwd: wt });
+  assert.match(stdout, /git stash is repository-wide/);
+});
