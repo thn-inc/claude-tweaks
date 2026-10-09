@@ -10,7 +10,7 @@
 // perf/statusline-render.test.js does (wall-clock under sibling-suite load).
 'use strict';
 
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -19,36 +19,56 @@ const path = require('node:path');
 
 const HOOKS = path.resolve(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-perf-prefilter-'));
-const SKIP_PAYLOAD = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'echo hi' }, cwd: SANDBOX });
+// A fresh, non-policy git repo: the full-path payload (`git commit -m x`) makes the
+// hook evaluate the commit, but nothing is committed. Never the claude-tweaks repo.
+const REPO = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-perf-prefilter-repo-'));
+execFileSync('git', ['init', '-q', REPO]);
 
-const runControl = () => execFileSync('node', ['-e', ''], { cwd: SANDBOX });
-const runSkip = () => execFileSync('node', [HOOKS, 'pre-tool-use'], {
-  input: SKIP_PAYLOAD, cwd: SANDBOX, env: { ...process.env, PIPELINE_RUN_DIR: '' },
+after(() => {
+  fs.rmSync(SANDBOX, { recursive: true, force: true });
+  fs.rmSync(REPO, { recursive: true, force: true });
 });
 
-function bestOf(attempts, fn) {
-  let best = Infinity;
-  for (let i = 0; i < attempts; i += 1) {
-    const start = Date.now();
-    fn();
-    best = Math.min(best, Date.now() - start);
-  }
-  return best;
-}
+const payload = (command) => JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: REPO });
+const SKIP_PAYLOAD = payload('echo hi');
+const FULL_PAYLOAD = payload('git commit -m x');
 
-test('bin/hooks.js skip path stays under 30ms above bare-Node startup', () => {
-  // Budget basis, measured idle (16-core Windows box, Node 24, best/median of 30):
-  // bare `node -e ""` 54.8/73.4ms, skip path (`echo hi`) 57.8/90.1ms, so the skip
-  // path's own share is ~3ms best (~17ms median). The full path (`git commit -m x`,
-  // heavy requires + policy load) is 106.5/134.2ms, i.e. ~52ms above bare Node.
-  // 30ms is ~10x the skip share and sits below the full path's ~52ms, so a
-  // regression that makes the skip path pay the heavy requires fails here.
-  // Verified to discriminate: replacing the early-exit with `if (false)` in
-  // bin/hooks.js fails this assertion (35, 37, 42ms above control over three runs;
-  // the margin over 30ms is modest). The first budget, 60ms, was lowered to 30ms
-  // because the full path's best-case ~52ms overhead left it too close to pass.
-  const control = bestOf(10, runControl);
-  const skip = bestOf(10, runSkip);
-  const cost = skip - control;
-  assert.ok(cost < 30, `skip path cost ${cost}ms above bare Node (${skip}ms absolute, ${control}ms control)`);
+const runControl = () => execFileSync('node', ['-e', ''], { cwd: REPO });
+const runHook = (input) => execFileSync('node', [HOOKS, 'pre-tool-use'], {
+  input, cwd: REPO, env: { ...process.env, PIPELINE_RUN_DIR: '' }, stdio: ['pipe', 'pipe', 'pipe'],
+});
+
+const time = (fn) => {
+  const start = process.hrtime.bigint();
+  fn();
+  return Number(process.hrtime.bigint() - start) / 1e6;
+};
+
+test('bin/hooks.js skip path is a thin layer: well under the full path, under an absolute ceiling', () => {
+  // Budget basis (machine-specific: 16-core Windows box, Node 24, idle, best of 30):
+  // bare `node -e ""` 54.8ms, skip path (`echo hi`) 57.8ms, full path (`git commit -m x`,
+  // heavy requires + policy load) 106.5ms. So the skip path's own share is ~3ms and
+  // the full path's is ~52ms. Absolute milliseconds drift with load, so the
+  // discriminating assertion is the RATIO skipCost < fullCost / 2, which is
+  // load-independent: each attempt runs an interleaved control/skip/full triplet, so
+  // drift hits all three alike, and each series keeps its minimum over 15 attempts (a
+  // min of per-attempt differences would let one slow control sample go negative). If the
+  // early exit is disabled, skip pays the heavy requires too and skip ~ full, which
+  // fails the ratio. The absolute ceiling (60ms) only catches a gross regression.
+  let control = Infinity;
+  let skip = Infinity;
+  let full = Infinity;
+  for (let i = 0; i < 15; i += 1) {
+    control = Math.min(control, time(runControl));
+    skip = Math.min(skip, time(() => runHook(SKIP_PAYLOAD)));
+    full = Math.min(full, time(() => runHook(FULL_PAYLOAD)));
+  }
+  const skipCost = skip - control;
+  const fullCost = full - control;
+  assert.ok(
+    skipCost < fullCost / 2,
+    `skip path cost ${skipCost.toFixed(1)}ms is not under half the full path cost ${fullCost.toFixed(1)}ms `
+    + '- the early exit may no longer be skipping the heavy requires',
+  );
+  assert.ok(skipCost < 60, `skip path cost ${skipCost.toFixed(1)}ms above bare Node exceeds the 60ms ceiling`);
 });
