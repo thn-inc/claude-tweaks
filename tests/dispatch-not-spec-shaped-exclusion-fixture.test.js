@@ -64,7 +64,9 @@ function runSnippet(groups) {
     timeout: 10000,
     env: {
       ...process.env,
-      CLAUDE_PLUGIN_ROOT: path.join(ROOT, 'plugin'),
+      // Forward slashes: the snippet interpolates this into a JS string
+      // literal, where a win32 backslash path would be read as escapes.
+      CLAUDE_PLUGIN_ROOT: path.join(ROOT, 'plugin').split(path.sep).join('/'),
       DISPATCH_GROUPS: dispatchGroups,
       DISPATCH_EXCLUSIONS: exclusions,
       DISPATCH_SHAPE_GATE_ERR: path.join(scratch, 'dispatch-shape-gate.err'),
