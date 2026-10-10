@@ -36,6 +36,7 @@ function defaultGhApiDelete(args, host) {
   try {
     cp.execFileSync('gh', ['api', '--method', 'DELETE', ...args, ...hostArgs], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GH_TIMEOUT_MS,
+      windowsHide: true,
     });
     return { ok: true };
   } catch (e) {

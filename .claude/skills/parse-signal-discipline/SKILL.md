@@ -131,6 +131,17 @@ When mechanizing a prose heuristic into a deterministic check:
    Review caught it, and `c610df577` anchored the pattern at both ends, including the suffix the
    writer always appends. Anchor both ends against what the writer emits, and pin a truncated copy
    and a tail-carrying copy of an accepted input with their own assertions.
+7. **A parsed list that feeds a pass verdict owes an independent count to reconcile against.** An
+   extractor that returns N items cannot say it missed one more, so an undercount reads exactly
+   like a complete list. That is the same silent false negative as a merged `null`, one level up.
+   `plugin/bin/lib/verify/baseline.js`'s `adjudicate` (#3043) may turn a failing test run into a
+   pass only when its extracted failing files account for the whole failure, so it checks them
+   against counts the log states separately. For spec output, the `test at` entries
+   (`specEntryCount`) must equal the summary's `ℹ fail N`. In spec and TAP output, every failing
+   entry or `not ok` block must name a test file (`countUnmatchedFailures` returns 0). An output
+   family with no such cross-check is refused outright ("has no failure-accounting guard"). Each
+   mismatch returns `{eligible: false, reason}` naming both numbers, never a verdict over the
+   files it did find. When no independent count exists for an input, the list cannot gate a pass.
 
 ## When to use
 

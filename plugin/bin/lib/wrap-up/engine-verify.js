@@ -35,7 +35,7 @@ const { readRunStateWithParent } = require('../hooks/context');
 // had) -- one options object, reused by construction.
 function makeDefaultRunner(cmd) {
   return function run(args, cwd) {
-    return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000 });
+    return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, windowsHide: true });
   };
 }
 

@@ -136,6 +136,10 @@ step's own reopen logic or a later rejected push. With both collision directions
 root, the branch this step queries is always freshly created, so `gh pr list --head {branch}` only
 ever matches a PR this exact run itself opened (resume case) — the CLOSED-match reopen branch above
 still exists for that legitimate resume, just never for a same-name-collision retry anymore.
+That holds on the creation path only: a run that adopted its worktree (a dispatched group, a
+multi-spec shared worktree) skips Steps 1.5/1.6 with the rest of worktree creation, so
+`build/adopted-branch-collision-check.md` covers it instead — it stops on a same-name `origin`
+branch whose tip is not in the adopted worktree's history, before this file's Step 2 push (#2844).
 
 ### Step 2: Push the branch
 
@@ -176,7 +180,22 @@ next phase's own phase-exit push (`_shared/git-discipline.md`) naturally retries
 
 ### Step 3: Compose the body and create the draft PR
 
-Skipped when Step 1 found a reusable open PR. Otherwise, compose:
+Skipped when Step 1 found a reusable open PR. Otherwise, compose the body via
+`composePrEarlyBody` (`bin/lib/flow/pr-body.js`, #2997) — that module, not this prose, owns
+the template's literal text; the shape below is what it produces, never hand-composed again:
+
+```bash
+node -e "const {composePrEarlyBody}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/flow/pr-body.js');
+  process.stdout.write(composePrEarlyBody({
+    runId: process.argv[1], specSummary: process.argv[2], target: process.argv[3],
+    nextStep: process.argv[4], fixesLines: JSON.parse(process.argv[5]), runDir: process.argv[6],
+  }))" "{run-id}" "{one-paragraph summary from the materialized spec's Overview section}" \
+  "{target}" "{next-step}" '["Fixes #{n}", ...]' "{run-dir}" \
+  > /tmp/pr-early-body-{run-id}-{n}.md
+```
+
+Composed shape (one `Fixes #{n}` line per record in the run — see "One `Fixes #{n}` line per
+record" below for the multi-record case):
 
 ```markdown
 <!-- claude-tweaks-run: {run-id} -->
@@ -184,7 +203,7 @@ claude-tweaks-run: {run-id}
 
 ### Spec summary
 
-{one-paragraph summary from the materialized spec's Overview section}
+{one-paragraph summary}
 
 ### Phases
 
@@ -213,7 +232,14 @@ The `<!-- claude-tweaks-run: {run-id} -->` marker is the **first line**, uncondi
 immediately followed by a plain-text companion line (`claude-tweaks-run: {run-id}`, no
 comment syntax) — it is the GitHub-side signal the sweep (`sweep-backstop` sub-issue) and the
 reconciler (`bin/lib/reconcile`) key on to recognize a plugin-created PR without a local
-run-dir join. Never omit either line, even when composing by hand.
+run-dir join. `composePrEarlyBody` never omits either line, and neither does a hand-composed
+fallback on a sandbox where the module can't be required (e.g. a `--record-json`-shaped,
+Node-subprocess-less context) — compose by hand from this section's shape in that case only.
+
+**A PR whose body is missing some or all of these markers (the #2996 shape) is repaired, not
+hand-fixed or skipped** — `_shared/pr-checklist-refresh.md`'s Phase-checklist update calls
+`repairPrBody` (same module) on every read before acting on it; see that file for the full
+repair procedure and its AUTO log line.
 
 **For a future caller resolving `{run-id}`/`{target}` from this PR body (#958):** prefer this
 Step 3 template's own `### Resume` line over reconstructing `{target}`/`{run-dir}` from local

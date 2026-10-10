@@ -48,7 +48,7 @@ function parseArgs(argv) {
 }
 
 function defaultExecFile(cmd, args, opts = {}) {
-  return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024, timeout: 30000, ...opts });
+  return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024, timeout: 30000, ...opts, windowsHide: true });
 }
 
 // The ceiling AND the veto window, resolved in-process with the same precedence

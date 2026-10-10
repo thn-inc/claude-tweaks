@@ -52,7 +52,7 @@ The engine module resolves the active install itself — read `installed_plugins
 Prints one JSON envelope to stdout:
 
 - **`{ok: true, pluginRoot, launcher, pluginVersion, engineVersion, scope}`** — `pluginRoot` is the plugin's install directory (the value `native-routing.md`'s dispatch rule reads); `launcher` is the resolved `impeccable`/`impeccable.cmd` script path; `pluginVersion`/`engineVersion` are the installed plugin's and cached engine's own version strings — informational, not a gate; `scope` is `"project"` or `"user"` (a project-scope entry wins over the user-scope install when both exist for this working directory).
-- **`{ok: false, reason, fix?, detail?}`** — one of the six reasons in `## Degradation` below.
+- **`{ok: false, reason, fix?, detail?}`** — one of the six reasons in `## Degradation` below. `resolve` itself returns five of them: `not-installed`, `upgrade-required`, and `engine-not-installed` (each with a `fix`), plus `timeout` and `exec-failed` (each with a `detail`, no `fix`) when the `engine-probe` handshake itself timed out, could not launch, or exited with anything other than 127 — so a resolver miss is not always an install problem.
 
 A `run <verb>` call (`## Invocation`) resolves internally first and returns the identical `{ok: false, ...}` shape on a resolution failure — a consumer never needs to call `resolve` before `run` just to check.
 
@@ -66,16 +66,16 @@ Earlier versions of this file pinned Layer 0's resolution to one exact plugin ve
 
 ## Degradation
 
-Six conditions, all returned as `{ok: false, reason, fix?, detail?}` by `plugin/bin/lib/impeccable-engine/index.js` (`FAILURE_REASONS` — treat this list as authoritative; a module change to it is the one thing that could make this table stale). Three carry a canned `fix` string from the module itself; the other three carry only a `detail` naming what went wrong, because there is no single fix to print.
+Six conditions, all returned as `{ok: false, reason, fix?, detail?}` by `plugin/bin/lib/impeccable-engine/index.js` (`FAILURE_REASONS` — treat this list as authoritative; a module change to it is the one thing that could make this table stale). Three carry a canned `fix` string from the module itself. `shape-mismatch` and `exec-failed` carry only a `detail` naming what went wrong, and `timeout` carries a `detail` only when it was `resolve()`'s own `engine-probe` that timed out — for those three there is no single fix to print.
 
 | `reason` | Meaning | User-facing skip wording | Fix |
 |---|---|---|---|
 | `not-installed` | No `impeccable@impeccable` entry in `installed_plugins.json` at all | `Impeccable plugin not installed` | `/plugin install impeccable@impeccable (Impeccable 4.2.2 or later)` (the module's own `fix` string) |
 | `upgrade-required` | An install exists, but its launcher script (`skills/impeccable/scripts/impeccable[.cmd]`) is missing — an install older than 4.2.2 | `Impeccable plugin is older than 4.2.2 (no engine launcher)` | `/plugin update impeccable@impeccable to 4.2.2 or later` (the module's `fix` string also names the missing launcher path) |
-| `engine-not-installed` | The launcher exists but `engine-probe` failed — the design-engine binary isn't cached yet | `Impeccable design engine not cached` | Run the launcher's own `engine-probe` subcommand (the module's `fix` string is the exact command for this machine) |
+| `engine-not-installed` | The launcher exists and `engine-probe` ran, but answered "no engine" (exit 127) — the design-engine binary isn't cached yet | `Impeccable design engine not cached` | Run the launcher's own `engine-probe` subcommand (the module's `fix` string is the exact command for this machine) |
 | `shape-mismatch` | The verb ran and returned JSON, but it didn't match the expected `signals`/`doctor`/… shape | `Impeccable {verb} output did not match the expected shape` | `detail` names the first field that failed validation — usually an engine/plugin version skew; re-run `engine-probe` or update the plugin |
-| `exec-failed` | The launcher exited non-zero, or crashed before producing output | `Impeccable {verb} unavailable (execution failed)` | `detail` carries the last lines of stderr — report it; usually a transient environment issue, not an install problem |
-| `timeout` | The run exceeded the engine module's 60-second timeout | `Impeccable {verb} timed out` | Retry; a persistent timeout points at something hanging inside the launcher, not this wrapper |
+| `exec-failed` | The launcher exited non-zero, or crashed before producing output — including an `engine-probe` that exited with anything other than 127, or could not be launched at all (a spawn error such as `EINVAL` or `ENOENT`) | `Impeccable {verb} unavailable (execution failed)` | `detail` carries the exit code and last lines of stderr, or the spawn error's `code` — report it; usually a transient environment issue, not an install problem |
+| `timeout` | The run, or `resolve()`'s own `engine-probe` handshake, exceeded the engine module's 60-second timeout | `Impeccable {verb} timed out` | Retry; a persistent timeout points at something hanging inside the launcher, not this wrapper (`detail` names `engine-probe` when the handshake was what hung) |
 
 **Execution failure is a skip, never an exception.** A single observed run — exit 0, clean JSON — is an observation from one run of one install, not a guarantee. `run()` wraps every spawn in a `try`/`catch` and every `reason` above is a returned value, never a thrown error reaching the caller — the same "neither function throws" contract the module's own header comment states.
 

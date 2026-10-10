@@ -24,7 +24,7 @@ const { execFileSync } = require('child_process');
 // POSTs below, which complete well under it (#1154 — gh-api-module-pattern's
 // "bound every remote-contacting call on the seam" rule).
 function defaultRunner(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000 });
+  return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000, windowsHide: true });
 }
 
 function errorText(err) {

@@ -14,7 +14,7 @@ const { listClaudeMd, listRules } = require('../harness-health/scope');
 function makeGitRunner(cwd) {
   return (args) => {
     try {
-      return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+      return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
     } catch {
       return null;
     }
@@ -111,7 +111,7 @@ function computeClaudeMdCommandRenamed(git, cwd, base) {
 // for the same file.
 function lineCount(filePath) {
   try {
-    const out = execFileSync('wc', ['-l', filePath], { encoding: 'utf8' });
+    const out = execFileSync('wc', ['-l', filePath], { encoding: 'utf8', windowsHide: true });
     return Number(out.trim().split(/\s+/)[0]);
   } catch {
     return 0;
@@ -129,7 +129,7 @@ function resolveBudgets(cwd) {
     const out = execFileSync(
       process.execPath,
       [scriptPath, '--values', 'harness-health-scoped-rule-budget', 'harness-health-always-loaded-budget'],
-      { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+      { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true },
     );
     const [scopedRuleBudget, alwaysLoadedBudget] = out.trim().split('\n').map(Number);
     return { scopedRuleBudget, alwaysLoadedBudget };

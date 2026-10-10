@@ -54,7 +54,7 @@ const WORK_BACKEND_RE = /^work-backend:\s*(\S+)\s*$/m;
 // spray the CLI's own stderr, and its diagnostic still survives on
 // `err.stderr` for any consumer module that classifies a failure by message.
 function execSync(bin, args, { cwd } = {}) {
-  return execFileSync(bin, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  return execFileSync(bin, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 }
 
 function defaultGit(args, opts) {
@@ -73,7 +73,7 @@ function defaultGhSync(args, opts) {
 // resolves every key the pack needs.
 function defaultResolvePolicy(keys, cwd) {
   const out = {};
-  const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
   try {
     const { result } = resolvePolicyConfig({ git, readFile, keys });

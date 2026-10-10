@@ -10,7 +10,7 @@ function has(cmd) {
   // below already applies to the node *path* via process.execPath.
   if (cmd === 'node') return true;
   try {
-    execSync(`${cmd} --version`, { stdio: 'ignore' });
+    execSync(`${cmd} --version`, { stdio: 'ignore', windowsHide: true });
     return true;
   } catch {
     return false;
@@ -60,7 +60,7 @@ function detectVersionManager() {
 function playwrightCliMessage() {
   let installed;
   try {
-    execSync('npx --no-install playwright-cli --version', { stdio: 'ignore' });
+    execSync('npx --no-install playwright-cli --version', { stdio: 'ignore', windowsHide: true });
     installed = true;
   } catch {
     installed = false;

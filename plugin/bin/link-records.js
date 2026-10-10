@@ -48,7 +48,7 @@ function parseArgs(argv) {
 const realDeps = {
   runner: link.defaultRunner,
   ghAvailable,
-  remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }),
+  remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true }),
   invalidateSnapshot,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
