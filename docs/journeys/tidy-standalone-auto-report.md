@@ -30,7 +30,7 @@ files:
 ### 2. Findings route by the table, not judgment
 - **Action:** Each scan finding routes per `step-6-auto.md`'s tier table (default `moderate`): reversible git-tracked cleanups and the additive Release Note repair (`[release-note]`, snapshot first) auto-apply, every other outward-facing GitHub write stages, no-op findings surface with their command.
 - **Expect:** The section a finding lands in is a stated function of its routing outcome (bucket mapping) — executed/converged → Applied; staged-executable → Approve; command-carrying no-ops → Yours; Keep/clean scans → Clean (counted, never itemized). Nothing renders information-only. A plan that a tracked repo file still cites is never deleted, even when its spec shipped: `git grep` of its basename (excluding `docs/superpowers/plans/` and `.claude-tweaks/`) finds the citation, and the plan lands in Yours. Its row names the plan and every citing file, with a `git grep -nF -- '{basename}'` command, so the maintainer can annotate or remove the citation and let the next sweep delete it (#3101).
-- **Red flags:** a plan with a code or ADR citation listed under Applied as `deleted`; a cited plan counted silently in Clean with no citing file named.
+- **Red flags:** a plan with a code or ADR citation listed under Applied as `deleted`; a cited plan counted silently in Clean with no citing file named; a plan deleted after the citation grep exited with anything other than 0 or 1 (a grep that could not run keeps the plan as cited-unverified, in the same Yours row with the error in place of the citing files).
 
 ### 3. The report renders before any question
 - **Action:** The hard gate requires the rendered report in the same response, above any `AskUserQuestion`.
