@@ -34,6 +34,10 @@ for (const command of [
   'echo "$(git rev-parse HEAD)"', 'xargs git add < files.txt', 'git stash', 'git stash pop',
   // $VAR program indirection (substituteVars) and adjacent-span quoting reach a covered word.
   'G=git; $G commit -m x', 'C=cp; $C a b', 'M=mkdir; $M -p d', '"g"it commit -m x',
+  // A program name CONCATENATED from an assignment and literal text: substituteVars
+  // rewrites prefix + value + suffix, so the handler resolves these too.
+  'G=gi; ${G}t commit -m x', 'X=it; g$X commit', 'X=c; ${X}p a.txt b.txt', 'X=mk; ${X}dir d',
+  'X=t; gi$X push', 'A=tr; ${A}uncate -s 0 f', 'G=gi\n${G}t push',
   ...WRITE_SHAPES.map((s) => `${s} a b`),
 ]) {
   test(`pre-tool-use runs the full handler for: ${command}`, () => {
@@ -44,7 +48,7 @@ for (const command of [
 for (const command of [
   'git commit -m x', 'cd x && git commit -m y', 'FOO=1 git push', 'env -C /x git commit -m y',
   'git -c user.name=x commit -m y', 'git worktree remove ../w', 'for n in 1 2; do git push; done',
-  'G=git; $G push',
+  'G=git; $G push', 'G=gi; ${G}t push',
 ]) {
   test(`post-tool-use runs the full handler for: ${command}`, () => {
     assert.strictEqual(shouldRunFull('post-tool-use', bash(command)), true);
@@ -162,6 +166,18 @@ test('e2e: $VAR program indirection reaches the worktree-always deny, same as th
     const { stdout } = spawnHook('pre-tool-use', { ...bash(command), cwd: project }, { cwd: project });
     assert.match(stdout, /"permissionDecision":"deny"/, command);
   }
+});
+
+// substituteVars also rewrites a token that merely CONTAINS a reference
+// (prefix + value + suffix), so `${G}t` is the program `git` to the handler even
+// though no single word of the command spells it.
+test('e2e: a CONCATENATED program name reaches the worktree-always deny too', () => {
+  const project = gitRepo();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(project, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
+  const command = 'G=gi; ${G}t commit -m x';
+  const { stdout } = spawnHook('pre-tool-use', { ...bash(command), cwd: project }, { cwd: project });
+  assert.match(stdout, /"permissionDecision":"deny"/, command);
 });
 
 // checkGitStashWarn (#1967) had no `Bash(git stash *)` predicate, so a plain

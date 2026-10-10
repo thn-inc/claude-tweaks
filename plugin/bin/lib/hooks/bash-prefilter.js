@@ -17,10 +17,12 @@
 // anything it cannot read to "run". It deliberately does not parse quoting —
 // `echo "git"` running the full handler is an accepted false positive.
 //
-// Known limit: it reads every word and every assignment value, so `G=git; $G
-// push` is reached, but a program name assembled from pieces (`G=gi; ${G}t
-// push`) or produced by command substitution (`$(echo git) push`) is not. The
-// handler cannot resolve the latter either, and the former is contrived.
+// It reads every word and every assignment value, so `G=git; $G push` is
+// reached, and any command holding both an assignment and a `$NAME` reference
+// runs the full handler, which covers a program name concatenated from pieces
+// (`G=gi; ${G}t push`, `X=it; g$X commit`) — substituteVars resolves those.
+// Known limit: a program name produced by command substitution (`$(echo git)
+// push`) is not reached, and the handler cannot resolve it either.
 //
 // Dependency-light by contract: fs plus git-command.js (which requires only
 // path). Adding a heavier require here moves cost onto EVERY Bash call.
@@ -40,6 +42,14 @@ const WORDS_BY_EVENT = Object.freeze({
 // position (`G=git; $G commit`), and the value is the only place the covered
 // word is spelled out.
 const SEPARATORS = /[\s;&|()<>`{}=]+/;
+
+// substituteVars also rewrites a token that merely CONTAINS a reference into
+// prefix + value + suffix (`G=gi; ${G}t push` is `git push`), so no single word
+// or assignment value spells the program. A command with BOTH a shell assignment
+// and a `$NAME`/`${NAME}` reference is exactly where that can happen, so it runs
+// the full handler. A false "run" (`P=/tmp; echo $P`) costs only the module load.
+const ASSIGNMENT = /(^|[\s;&|(`])[A-Za-z_][A-Za-z0-9_]*=/;
+const PARAM_REFERENCE = /\$\{?[A-Za-z_]/;
 
 function commandWords(command) {
   const words = new Set();
@@ -70,6 +80,7 @@ function shouldRunFull(event, input) {
   if (!input || typeof input !== 'object' || input.tool_name !== 'Bash') return true;
   const command = input.tool_input && input.tool_input.command;
   if (typeof command !== 'string') return true;
+  if (ASSIGNMENT.test(command) && PARAM_REFERENCE.test(command)) return true;
   const present = commandWords(command);
   return covered.some((word) => present.has(word));
 }
