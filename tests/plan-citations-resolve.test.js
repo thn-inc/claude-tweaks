@@ -52,7 +52,14 @@ test('no file outside docs/superpowers/plans/ cites a deleted plan without its d
 });
 
 const TIDY = path.join(ROOT, 'plugin', 'skills', 'tidy');
-const read = (f) => fs.readFileSync(path.join(TIDY, f), 'utf8').replace(/\r\n/g, '\n');
+
+function read(file) {
+  return fs.readFileSync(path.join(TIDY, file), 'utf8').replace(/\r\n/g, '\n');
+}
+
+function rowStartingWith(text, prefix) {
+  return text.split('\n').find((line) => line.startsWith(prefix));
+}
 
 test('/tidy keeps a plan a repo file still cites, naming the citing file, at scan and at pre-delete re-verify (#3101 AC2)', () => {
   const scan = read('scan-procedures.md');
@@ -64,17 +71,17 @@ test('/tidy keeps a plan a repo file still cites, naming the citing file, at sca
   assert.match(step4, /Yours \(\{N\}\)/, 'Step 4 must route a cited Keep to Yours');
   assert.match(step4, /Auto \(no-op, always surfaced\)/);
   const routing = read('collection-routing.md');
-  const planRow = routing.split('\n').find((l) => l.startsWith('| `[backlog]`, `[parked]`'));
+  const planRow = rowStartingWith(routing, '| `[backlog]`, `[parked]`');
   assert.ok(planRow, 'collection-routing.md Approve row not found');
   assert.match(planRow, /`\[plan\]` cited-Keep[^.]*\*\*Yours \(\{N\}\)\*\*/, 'a cited [plan] Keep must land in Yours');
   const auto = read('step-6-auto.md');
-  const row = auto.split('\n').find((l) => l.startsWith('| **Delete** (marked-as-specified design docs'));
+  const row = rowStartingWith(auto, '| **Delete** (marked-as-specified design docs');
   assert.ok(row, 'step-6-auto.md auto-apply Delete row not found');
   assert.match(row, /no repo file cites the plan's basename/, 'pre-delete re-verify must re-run the citation grep');
-  const judgment = auto.split('\n').find((l) => l.startsWith('| **Delete** (any case requiring judgment'));
+  const judgment = rowStartingWith(auto, '| **Delete** (any case requiring judgment');
   assert.ok(judgment, 'judgment Delete row not found');
   assert.match(judgment, /cites the plan's basename/, 'judgment Delete row must re-verify the citation check too');
-  const keepRow = auto.split('\n').find((l) => l.startsWith('| **Keep (cited plan)**'));
+  const keepRow = rowStartingWith(auto, '| **Keep (cited plan)**');
   assert.ok(keepRow, 'routing table must map a cited-plan Keep');
   assert.match(keepRow, /Auto \(no-op, always surfaced\)/);
 });
