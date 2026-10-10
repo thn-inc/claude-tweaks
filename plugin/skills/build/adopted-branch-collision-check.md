@@ -24,18 +24,45 @@ a remote tip not contained in `HEAD` would reject the push.
 **Procedure**, via `plugin/bin/lib/worktree/remote-branch-collision.js`'s
 `classifyRemoteBranch({ branch })` (unit-tested,
 `tests/bin-lib/worktree/remote-branch-collision.test.js`), with `{branch}` the adopted worktree's
-actual current branch (`git branch --show-current`) — never a name this run would have minted:
+actual current branch (`git branch --show-current`) — never a name this run would have minted.
+Run it from the worktree as one command — the module has no CLI of its own, and a hand-rolled
+multi-line `node -e` silently no-ops on Windows Git Bash (`bin/node-eval-file.js`'s header), which
+would read as a clean result:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$(git branch --show-current)" "$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)" <<'EOF'
+const m = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/worktree/remote-branch-collision.js');
+const [branch, repo] = process.argv.slice(1);
+const r = m.classifyRemoteBranch({ branch });
+const out = { state: r.state, reason: r.reason || null, remoteSha: r.remoteSha || null };
+if (r.state === 'foreign') {
+  out.card = m.formatStopCard({ branch, remoteSha: r.remoteSha, prLookup: repo ? m.findPrsForBranch({ branch, repo }) : null });
+}
+console.log(JSON.stringify(out));
+EOF
+```
+
+It prints one JSON line. No output, or output that does not parse, is not a result: re-run once,
+then treat it as `unreachable` with reason `no-output` (item 3). Branch on `state`:
 
 1. `absent` — no such branch on `origin`. Nothing to do; the push creates it.
 2. `mine` — `origin`'s tip is an ancestor of `HEAD`: this run's own earlier push (a resumed build,
    or a later record of the same multi-spec run). Nothing to do; never stop on this.
-3. `unreachable` — the remote lookup, the fetch of an unknown remote tip, or the ancestry check
-   failed (no network, no `origin`). **Fail open**, Step 1.6's own posture: log the degrade
-   distinctly and proceed, never treat "could not look" as `absent`.
+3. `unreachable` — could not determine. Log the degrade with its `reason` verbatim, never treat
+   "could not look" as `absent`, then branch on `remoteSha`:
+   - **`remoteSha` null** (`ls-remote-failed` — no network, no `origin` — or `no-output`):
+     **fail open**, Step 1.6's own posture, and proceed. `invalid-branch-name` with an empty
+     branch means a detached `HEAD`, not a network fault — log it as such; there is no branch for
+     the push to collide with.
+   - **`remoteSha` set** (`fetch-failed`, `ancestry-check-failed`): `origin` is confirmed to carry
+     the branch, only its relation to `HEAD` is unknown, and proceeding would reproduce the
+     rejected-push, local-only run this check exists to prevent. Stop as for `foreign` (item 4),
+     stating in the card that the relation could not be determined (`{reason}`) rather than that
+     the commit is not in this worktree's history.
 4. `foreign` — `origin`'s tip is not in `HEAD`'s history: a same-name branch left by an unrelated
    run. Gather PR context, best-effort, via `findPrsForBranch({ branch, repo })` (a failed lookup
    renders as PR status unknown, distinct from a confirmed no-PR result), then render the stop
-   card (`formatStopCard`):
+   card (`formatStopCard` — the command above prints it as `card`):
 
    ```markdown
    ## Build: Adopted branch collides with an unrelated branch on origin
