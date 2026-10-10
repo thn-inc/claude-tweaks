@@ -8,15 +8,68 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert');
 const {
-  PRE_TOOL_USE_WORDS, POST_TOOL_USE_WORDS, commandWords, shouldRunFull, earlyGate,
+  commandWords, shouldRunFull, earlyGate,
 } = require('../plugin/bin/lib/hooks/bash-prefilter');
-const { WRITE_SHAPES } = require('../plugin/bin/lib/hooks/git-command');
+const {
+  WRITE_SHAPES, GUARDED_PROGRAM_WORDS, gitTargets, fileWriteTargets, mkdirTargets,
+} = require('../plugin/bin/lib/hooks/git-command');
+const { teardownTargets } = require('../plugin/bin/lib/hooks/pre-tool-use');
 
 const bash = (command) => ({ tool_name: 'Bash', tool_input: { command } });
 
-test('pre-tool-use words are git, env, mkdir plus every WRITE_SHAPES entry', () => {
-  assert.deepStrictEqual([...PRE_TOOL_USE_WORDS].sort(), ['env', 'git', 'mkdir', ...WRITE_SHAPES].sort());
-  assert.deepStrictEqual([...POST_TOOL_USE_WORDS].sort(), ['env', 'git']);
+// #3092: the corpus is run through the REAL guard parsers, so a word dropped
+// from GUARDED_PROGRAM_WORDS (or a parser keyed on a word the constant never
+// learned) shows up as a targeted command the prefilter skips. Every entry
+// must produce a target; see the sanity test below. The corpus and
+// PARSERS_BY_EVENT are hand-kept: a parser branch keyed on a new word is caught
+// only once a corpus line exercises it, so a change that adds one adds its line here.
+const CWD = process.cwd();
+const DIFFERENTIAL_CORPUS = [
+  'cp a.txt b.txt', 'mv a.txt b.txt', 'echo x | tee out.txt', 'sed -i s/a/b/ f.txt',
+  'perl -pi -e s/a/b/ f.txt', 'install -m 644 a.txt dest.txt', 'ln -s a.txt link.txt',
+  'truncate -s 0 f.txt', 'dd if=/dev/zero of=f.bin count=1', 'mkdir -p newdir',
+  'git commit -m x', 'git push', 'git rm f.txt', 'env git commit -m x', 'env -i git push',
+  '/usr/bin/git commit -m x', 'git worktree remove ../w',
+  'G=git; $G commit -m x', 'C=cp; $C a.txt b.txt', 'X=mk; ${X}dir d',
+];
+const teardown = (command) => teardownTargets({ input: { tool_name: 'Bash', tool_input: { command } }, cwd: CWD });
+// post-tool-use.js runs only the git-family parsers (gitTargets + teardownTargets' Bash branch).
+const PARSERS_BY_EVENT = {
+  'pre-tool-use': [(c) => gitTargets(c, CWD), (c) => fileWriteTargets(c, CWD), (c) => mkdirTargets(c, CWD), teardown],
+  'post-tool-use': [(c) => gitTargets(c, CWD), teardown],
+};
+const targeted = (event, command) => PARSERS_BY_EVENT[event].some((parse) => parse(command).length > 0);
+
+test('every differential-corpus command produces at least one guard-parser target (corpus has not rotted)', () => {
+  for (const command of DIFFERENTIAL_CORPUS) {
+    assert.ok(targeted('pre-tool-use', command), `no parser targets ${JSON.stringify(command)} — fix or drop the corpus entry`);
+  }
+});
+
+for (const event of Object.keys(PARSERS_BY_EVENT)) {
+  test(`${event}: every command a guard parser targets takes the full-handler path (#3092)`, () => {
+    for (const command of DIFFERENTIAL_CORPUS) {
+      if (!targeted(event, command)) continue;
+      assert.strictEqual(shouldRunFull(event, bash(command)), true,
+        `${event} prefilter skips ${JSON.stringify(command)} although a guard parser targets it`);
+    }
+  });
+}
+
+test('every guarded program word except env is the sole trigger of some targeted corpus command', () => {
+  // Removing such a word from GUARDED_PROGRAM_WORDS makes its witness skip, so
+  // the differential tests above fail. `env` is superset hygiene: every env-wrapped
+  // command findGitLead resolves also carries `git`, so no witness can exist.
+  const all = Object.values(GUARDED_PROGRAM_WORDS).flat();
+  assert.ok(all.includes('env'), 'env must stay in the git family (findGitLead walks past it)');
+  for (const word of all.filter((w) => w !== 'env')) {
+    const witness = DIFFERENTIAL_CORPUS.find((command) => {
+      if (!targeted('pre-tool-use', command) || /=/.test(command.split(/\s/)[0])) return false;
+      const covered = [...commandWords(command)].filter((w) => all.includes(w));
+      return covered.length === 1 && covered[0] === word;
+    });
+    assert.ok(witness, `no corpus command is triggered by '${word}' alone — add one so dropping it fails`);
+  }
 });
 
 test('commandWords splits on whitespace and shell operators, strips quotes, takes basenames', () => {

@@ -28,13 +28,13 @@
 // path). Adding a heavier require here moves cost onto EVERY Bash call.
 'use strict';
 const fs = require('fs');
-const { WRITE_SHAPES } = require('./git-command');
+const { GUARDED_PROGRAM_WORDS } = require('./git-command');
 
-// `env` is kept for parity with the retired `Bash(env -*)` predicate; every
-// env-wrapped shape the handler acts on also carries a `git` or write-shape
-// word, so it is redundant in practice and costs nothing as superset hygiene.
-const PRE_TOOL_USE_WORDS = Object.freeze(['git', 'env', 'mkdir', ...WRITE_SHAPES]);
-const POST_TOOL_USE_WORDS = Object.freeze(['git', 'env']);
+// Both word sets come from git-command.js, where the parsers that key on these
+// words live (#3092): pre-tool-use runs every guard family, post-tool-use only the
+// git family (gitTargets and teardownTargets' Bash branch). No word is typed here.
+const PRE_TOOL_USE_WORDS = Object.freeze(Object.values(GUARDED_PROGRAM_WORDS).flat());
+const POST_TOOL_USE_WORDS = GUARDED_PROGRAM_WORDS.git;
 const WORDS_BY_EVENT = Object.freeze({
   'pre-tool-use': PRE_TOOL_USE_WORDS,
   'post-tool-use': POST_TOOL_USE_WORDS,
