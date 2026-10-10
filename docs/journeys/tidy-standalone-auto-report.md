@@ -4,6 +4,7 @@ files:
   - plugin/skills/tidy/step-6-interactive.md
   - plugin/skills/tidy/SKILL.md
   - plugin/skills/tidy/scan-procedures.md
+  - plugin/skills/tidy/collection-routing.md
   - plugin/skills/tidy/release-note-repair.md
   - plugin/bin/release-note-repair.js
   - plugin/bin/lib/reconcile/release-merged.js
@@ -28,7 +29,8 @@ files:
 
 ### 2. Findings route by the table, not judgment
 - **Action:** Each scan finding routes per `step-6-auto.md`'s tier table (default `moderate`): reversible git-tracked cleanups and the additive Release Note repair (`[release-note]`, snapshot first) auto-apply, every other outward-facing GitHub write stages, no-op findings surface with their command.
-- **Expect:** The section a finding lands in is a stated function of its routing outcome (bucket mapping) — executed/converged → Applied; staged-executable → Approve; command-carrying no-ops → Yours; Keep/clean scans → Clean (counted, never itemized). Nothing renders information-only.
+- **Expect:** The section a finding lands in is a stated function of its routing outcome (bucket mapping) — executed/converged → Applied; staged-executable → Approve; command-carrying no-ops → Yours; Keep/clean scans → Clean (counted, never itemized). Nothing renders information-only. A plan that a tracked repo file still cites is never deleted, even when its spec shipped: `git grep` of its basename (excluding `docs/superpowers/plans/` and `.claude-tweaks/`) finds the citation, and the plan lands in Yours. Its row names the plan and every citing file, with a `git grep -nF -- '{basename}'` command, so the maintainer can annotate or remove the citation and let the next sweep delete it (#3101).
+- **Red flags:** a plan with a code or ADR citation listed under Applied as `deleted`; a cited plan counted silently in Clean with no citing file named.
 
 ### 3. The report renders before any question
 - **Action:** The hard gate requires the rendered report in the same response, above any `AskUserQuestion`.
@@ -46,6 +48,7 @@ files:
 - Created during build of #695 (tidy standalone-auto report shape)
 - Updated during build of #2252 (Reconcile under squash): Step 1 now names the second merged-in-substance proof — squash provenance via the PR's own merge commit — beside cherry-equivalence for both branch checks; `plugin/bin/lib/reconcile/squash-provenance.js` added to `files:`
 - Updated during build of #2828 (tidy Release-Note repair): Steps 2 and 4 name the Fill Release Note carve-out; `plugin/skills/tidy/release-note-repair.md` and `plugin/bin/release-note-repair.js` added to `files:`
+- Updated during build of #3101 (tidy keeps a cited plan): Step 2 names the cited-plan Keep, routed to Yours with its citing files; `plugin/skills/tidy/collection-routing.md` added to `files:`
 
 ## Example render
 
