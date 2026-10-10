@@ -11,13 +11,22 @@
 //
 // The verified fix: multi-line JS handed to Node as a real FILE has no such
 // limitation on any shell — only the inline-argument form is affected. This
-// wrapper reads the JS source from stdin (never argv — arbitrarily complex
-// source containing quotes/backticks/newlines needs no shell-quoting
-// gymnastics that way), writes it to a temp `.cjs` file, and execs
-// `node <file> <args...>` on it — forwarding stdout/stderr/exit code
-// unchanged, so a call site swaps `node -e "<code>" <args...> <<'EOF' ...
-// EOF'` for what was previously `node -e "\n<code>\n" <args...>` and
-// nothing else about the surrounding shell changes.
+// wrapper reads the JS source from stdin (never argv), writes it to a temp
+// `.cjs` file, and execs `node <file> <args...>` on it — forwarding
+// stdout/stderr/exit code unchanged. A call site swaps `node -e "<code>"
+// <args...>` for:
+//
+//   node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" <args...> <<NODE_EVAL_EOF
+//   <code>
+//   NODE_EVAL_EOF
+//
+// The delimiter is deliberately unquoted, so `${CLAUDE_PLUGIN_ROOT}` inside the
+// body expands (#3091). That also makes the shell expand everything else an
+// unquoted heredoc expands: the body must carry no `$` other than `${CLAUDE_PLUGIN_ROOT}`,
+// and no unescaped backtick (write a literal one as \`). A backslash is consumed
+// when it precedes `$`, a backtick, another backslash, or a newline; a JS `\n` or a
+// regex `\d` is untouched. tests/node-eval-file-heredoc-syntax.test.js checks each
+// body's JS syntax, not this rule, so read the body before adding a `$` or backtick.
 //
 // Argv positions are preserved exactly as the replaced `node -e` form had
 // them: `node -e "<code>" a b` sets `process.argv` to `[node, a, b]` (no

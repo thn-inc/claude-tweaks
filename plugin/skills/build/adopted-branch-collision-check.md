@@ -28,7 +28,7 @@ actual current branch (`git branch --show-current`) — never a name this run wo
 Run it from the worktree as one command — the module has no CLI of its own, and a hand-rolled
 multi-line `node -e` silently no-ops on Windows Git Bash (`bin/node-eval-file.js`'s header), which
 would read as a clean result:
-
+The heredoc delimiter is unquoted so `${CLAUDE_PLUGIN_ROOT}` expands — keep the body free of any other `$` or unescaped backtick, per `bin/node-eval-file.js`'s header.
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$(git branch --show-current)" "$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)" <<NODE_EVAL_EOF
 const m = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/worktree/remote-branch-collision.js');
