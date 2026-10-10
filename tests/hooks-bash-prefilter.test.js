@@ -20,7 +20,9 @@ const bash = (command) => ({ tool_name: 'Bash', tool_input: { command } });
 // #3092: the corpus is run through the REAL guard parsers, so a word dropped
 // from GUARDED_PROGRAM_WORDS (or a parser keyed on a word the constant never
 // learned) shows up as a targeted command the prefilter skips. Every entry
-// must produce a target; see the sanity test below.
+// must produce a target; see the sanity test below. The corpus and
+// PARSERS_BY_EVENT are hand-kept: a parser branch keyed on a new word is caught
+// only once a corpus line exercises it, so a change that adds one adds its line here.
 const CWD = process.cwd();
 const DIFFERENTIAL_CORPUS = [
   'cp a.txt b.txt', 'mv a.txt b.txt', 'echo x | tee out.txt', 'sed -i s/a/b/ f.txt',

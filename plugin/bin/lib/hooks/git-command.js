@@ -536,7 +536,8 @@ const WRITE_SHAPES = Object.freeze(['cp', 'mv', 'tee', 'sed', 'perl', 'install',
 //   mkdir: mkdirTargets' command word
 //   write: fileWriteTargets' shapes
 // tests/hooks-bash-prefilter.test.js's differential corpus runs the real parsers
-// and fails when a targeted command's word is missing here.
+// and fails when a targeted command's word is missing here — for the commands it
+// lists, so a parser keyed on a new word also needs a corpus line there.
 const GUARDED_PROGRAM_WORDS = Object.freeze({
   git: Object.freeze(['git', 'env']),
   mkdir: Object.freeze(['mkdir']),
