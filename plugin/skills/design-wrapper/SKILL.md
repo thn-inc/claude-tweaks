@@ -211,7 +211,7 @@ Lazy-load these only when needed for the active mode:
 - `impeccable-cli.md` — Exact CLI invocation, JSON output schema, parsing rules. Pins the **CLI**.
 - `impeccable-plugin.md` — the `impeccable-engine.js resolve`/`run signals` CLI contract every consumer calls, plus Layer 0 itself: the flagless `run signals` invocation, its output shape, the six engine failure reasons, and the per-signal trust rules. Pins the **plugin** — a separate artifact on a separate version line from the CLI.
 - `claude-design-skill-comparison.md` — Decision record (#2690): why `design-wrapper` stays Impeccable-only relative to Anthropic's native `/design` skill, and the condition for revisiting it. Not loaded by any mode's dispatch logic — reference only.
-- `third-party-design-skill-comparisons.md` — Comparison notes for third-party design skills evaluated against Impeccable, one section per skill (first: Hallmark, #2695 — its `study` reference-matching is complementary, not redundant, and not adopted). Not loaded by any mode's dispatch logic — reference only.
+- `third-party-design-skill-comparisons.md` — Comparison notes for third-party design skills evaluated against Impeccable, one section per skill: Hallmark (#2695 — its `study` reference-matching is complementary, not redundant, and not adopted) and Taste / Web Design Guidelines (#2694 — Taste duplicates Impeccable's own anti-slop purpose, Web Design Guidelines' accessibility gap is real but structurally unpinnable; neither adopted). Not loaded by any mode's dispatch logic — reference only.
 
 ## Next Actions
 

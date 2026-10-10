@@ -152,3 +152,162 @@ without letting it emit `design.md` into an Impeccable-managed project.
   passes. That is the evidence this note lacks.
 - Impeccable gains its own external-reference intake (which would make `study` redundant), or
 - Hallmark ships tagged releases, giving `design-wrapper` something to pin.
+
+## Taste / Web Design Guidelines (#2694)
+
+### What was compared, and what was not
+
+**Compared from published source and live catalog probes, read on 2026-10-06.** Neither skill
+is installed in this session, registered in the Claude Code skill registry here, or present in
+any plugin marketplace this account has enabled — verified directly, the same way #2690 verified
+native `/design`'s invocation block, rather than assumed:
+
+- `SearchSkills` (keywords `taste`, `anti-slop design` and, separately, `web design guidelines`,
+  `vercel accessibility audit`) returned `{"results":[]}` for both.
+- Invoking either by name through the Skill tool returns `Unknown skill: taste. Did you mean
+  test?` and `Unknown skill: web-design-guidelines` respectively — the same "not registered"
+  signature #2690 used to distinguish absence from a deliberate invocation block (native
+  `/design`'s `disable-model-invocation` refusal reads differently from either of these).
+- `SearchPlugins` (keywords `taste`, `web design guidelines`) surfaces no plugin named or
+  described as Taste at all, but does surface **`audit-suite`** (community, Anthropic Directory
+  marketplace) — a 16-skill bundle whose description names `web-design-guidelines` and
+  `emil-design-engineering` (the same Emil critic `critics.md`'s roster already routes to) among
+  its bundled skills. `audit-suite` is listed, not enabled, for this account — it is one
+  `/plugin install` away, unlike Taste, which has no presence in this catalog under any name and
+  would require the external `npx skills add` installer instead.
+
+Everything below about what each skill *does* traces to its published source, read the same way
+the Hallmark section above reads `hallmark study` — a description-level comparison, not a
+hands-on trial. **Not exercised — the same gap the Hallmark section's own first Deliverable left
+open.** The record asked for a trial "against a sample build alongside Impeccable's own passes";
+that trial was not run, for the same reason native `/design` and Hallmark's trials were not run:
+nothing to invoke. Taste's source was read via its GitHub README (`Leonxlnx/taste-skill`, MIT,
+default branch `main`, no tagged commit to pin to — see Availability below); Web Design
+Guidelines' source was read via its `SKILL.md` on `vercel-labs/agent-skills`' default branch, plus
+the live rule source it itself fetches (`vercel-labs/web-interface-guidelines`). Not read in
+depth: Taste's eight non-default sub-skills (`gpt-taste`, `image-to-code`,
+`redesign-existing-projects`, `minimalist-ui`, `industrial-brutalist-ui`,
+`stitch-design-taste`, `full-output-enforcement`, the three `imagegen-*` skills) and Web Design
+Guidelines' full rule list beyond the category names its own documentation groups them under.
+
+### What Taste is
+
+Per its README: "The Anti-Slop Frontend Framework for AI Agents" — a family of SKILL.md files
+(no CLI, no deterministic scanner) compatible with Claude Code, Cursor, Codex, and others,
+installed via `npx skills add https://github.com/Leonxlnx/taste-skill`. The default skill
+(`design-taste-frontend`, "v2 experimental") reads the brief, infers a design language, and
+tunes three numeric 1–10 dials before generating UI: `DESIGN_VARIANCE` (layout experimentation),
+`MOTION_INTENSITY` (animation depth), `VISUAL_DENSITY` (information per viewport). Sub-skills
+specialize the same mechanism by output style (`minimalist-ui`, `industrial-brutalist-ui`),
+target model (`gpt-taste`), input mode (`image-to-code`), or task (`redesign-existing-projects`,
+three `imagegen-*` asset skills). The whole family is **generation-time** guidance: prose
+instructions the model follows *while writing code*, not a post-hoc scan or review step.
+
+### What Web Design Guidelines is
+
+A single-purpose audit skill: given a request to review UI code, it fetches the current Vercel
+Web Interface Guidelines live from `https://raw.githubusercontent.com/vercel-labs/web-interface-guidelines/main/command.md`,
+reads the files or patterns named, checks each against the fetched rule set, and reports
+violations in `file:line` format with a suggested fix. Published category coverage: accessibility
+(aria, semantic HTML, keyboard handlers), focus states, forms, animation (including
+`prefers-reduced-motion`), typography, images, performance, navigation/state, dark mode/theming,
+touch/interaction, and locale/i18n — order 100+ individual rules across those groups. It ships
+as part of Vercel's own `vercel-labs/agent-skills` catalog (install:
+`npx skills add vercel-labs/agent-skills@web-design-guidelines`) and is also reachable, bundled,
+through this account's `audit-suite` community plugin. It is **post-hoc audit only** — no
+generation guidance, no dials, nothing to tune.
+
+### Is either something Impeccable already does?
+
+| Capability | Impeccable (as wrapped by `design-wrapper`) | Verdict |
+|---|---|---|
+| Generation-time anti-slop steering (palette, layout, motion) | `explore` mode deals competing visual-identity directions via the engine's `concept-seed` verb; `polish`'s `animate`/`delight` dispatch is driven by `Design-intent:` metadata and audit `suggestion` fields, not numeric dials. Different mechanism, same stated goal as Taste's dials. | **Overlap** in purpose, different mechanism — not assessed head-to-head |
+| Deterministic anti-slop detection | `impeccable-cli.md`'s pinned 4.1.0 `detect --json` scans for named anti-patterns including `ai-color-palette` ("Purple/violet gradients and cyan-on-dark are the most recognizable tells of AI-generated UIs") — the identical complaint Taste's README opens with. | **Overlap** — same target, Impeccable's version is deterministic and version-pinned |
+| LLM craft critique (layout, typography, motion, rhythm) | `critics.md`'s roster (`emil-design-eng`, `review-animations`) plus Impeccable's native `critique`/`audit` cover exactly Taste's stated dimensions ("stronger layout, typography, motion, and rhythm"). Notably, Emil is also one of `audit-suite`'s bundled skills under its own name (`emil-design-engineering`) — the same critic reached two ways. | **Overlap** |
+| Accessibility / WCAG-style audit (contrast, aria, focus states, forms, i18n) | Not covered. Impeccable's `detect` rule set is anti-slop/aesthetic, not accessibility (no hit for `accessib`/`aria`/`contrast`/`focus-visible` anywhere in `impeccable-cli.md`). The LLM critics (`design-craft.md`'s relevance map, `critics.md`'s roster) are craft-focused, not compliance-focused. The only accessibility-adjacent check anywhere in this repo is `_shared/criteria-prelaunch.md`'s `alt-text` and `mobile-breakpoints` rows — `/claude-tweaks:code-health`'s `focus=prelaunch` lens, a presence-only check ("every `<img>` carries an `alt` attribute") on a completely different skill, not `design-wrapper`. | **Does not do** — the one genuine, unserved gap either skill points at |
+| Motion-preference accessibility specifically | Partial: `command-map.md`'s Frequency Gate guardrail notes "Impeccable's own mandatory `prefers-reduced-motion` rule baked into every `animate` call" — one of Web Design Guidelines' ~11 category groups is already enforced, narrowly, inside one command dispatch path. | **Partly** |
+| Portable design-system / token lock-in | `explore`'s Lock-in runs `document --seed`, writing Impeccable's `DESIGN.md`. Neither Taste nor Web Design Guidelines proposes a competing design-system file — Taste's dials are runtime parameters, not a locked artifact; Web Design Guidelines emits a violation report, not a token file. | **No collision** (unlike Hallmark's `design.md`) |
+
+**Answer to the record's question.** Taste's core value proposition — steer generation away from
+generic, AI-recognizable UI — is already Impeccable's stated purpose end to end: a deterministic
+detector for the exact anti-pattern Taste's README leads with, an `explore`-mode direction-dealing
+step, and an LLM critic roster covering the same craft dimensions. Nothing here claims Taste's
+*particular* dials produce worse or better output than Impeccable's mechanism — that comparison
+needs the trial this note could not run — but the *job* substantially duplicates Impeccable's,
+unlike Hallmark's external-reference intake, which filled a dimension nothing else covered. Web
+Design Guidelines is the opposite case: its accessibility/compliance rule set is **not**
+duplicated anywhere in this wrapper's Impeccable-routed passes, and is the one genuinely unserved
+need this record surfaces — the same shape of finding as Hallmark's "I have a reference I like"
+gap, just in a different dimension (compliance audit, not direction-setting).
+
+### Why it is not adopted
+
+1. **Taste duplicates Impeccable's own stated purpose**, per the capability table above, with no
+   trial evidence that its dial-based mechanism does the job better — the conservative call absent
+   evidence is not to add a second, unpinned path to the same goal.
+2. **Neither skill has a contract `design-wrapper` could pin the way it pins Impeccable.**
+   Taste: no tags, no releases (`Leonxlnx/taste-skill`'s Releases page: "There aren't any releases
+   here"); 167 commits against a 92.9k-star, 6.3k-fork, MIT repo, install tracks `main`. Web
+   Design Guidelines is the harder case: it does not even pin at *install* time — its own
+   `SKILL.md` instructs a **live fetch** of a third repository's `main` branch
+   (`vercel-labs/web-interface-guidelines/main/command.md`) on every single invocation, so the
+   rule set two runs of the identically-versioned skill check against can differ without the
+   skill itself changing at all. `impeccable-cli.md`'s and `impeccable-plugin.md`'s pin discipline
+   exists precisely to prevent this class of silent drift (`[IL-89]`) — a skill that is
+   unpinnable *by design* is the opposite of what that discipline asks for.
+3. **No dispatch contract to receive either output.** `design-wrapper`'s modes dispatch to a
+   fixed roster (`critics.md`) or Impeccable's own CLI/LLM surface (`impeccable-cli.md`,
+   `command-map.md`); a `file:line` violation list (Web Design Guidelines) or a tuned-dial
+   generation pass (Taste) has no normalized shape to merge into either, the same boundary
+   `critics.md`'s own header states for why there is no open manifest: "arbitrary skills' output
+   shapes cannot be normalized at the boundary."
+4. **Web Design Guidelines' gap is real but narrow enough to not justify a new routed dependency
+   today.** It is reachable without installing anything new as a manual, standalone audit (a
+   human or agent can run it directly, same as Hallmark's `study` "is a complete deliverable on
+   its own") without `design-wrapper` routing a mode to it.
+
+### Decision
+
+**Stay Impeccable-only; do not route any `design-wrapper` mode to either skill.** Taste
+duplicates Impeccable's anti-slop purpose through an unpinnable, unversioned mechanism with no
+evidence it outperforms Impeccable's own deterministic detector and critic roster. Web Design
+Guidelines points at a real gap — this wrapper has no accessibility/WCAG-style audit anywhere —
+but its live-fetch-on-every-run design is structurally unpinnable, worse than Hallmark's
+untagged-but-installed case, and it has no slot in the critic roster or command-map dispatch
+contract to land in. The accessibility gap is logged here as the record's actual finding, not
+papered over: a future accessibility critic row (the same unblocking condition `critics.md`'s
+"Native row" section already uses for a different gap — "added only if... Impeccable's native
+critique/audit prove insufficient") is the right shape for closing it, if and when it is pinnable.
+
+### Availability and stability
+
+**Taste** (`Leonxlnx/taste-skill`): public, MIT-licensed. Observed via web search on 2026-10-06:
+~92.9k stars, ~6.3k forks, 167 commits on `main`, 37 open issues, 36 open PRs (the record's own
+Gotchas text, carried from the source reel, cites "76k GitHub stars" — the two figures disagree,
+consistent with a fast-moving repo rather than a transcription error on either side; neither
+figure should be read as a stable count going forward). No tags, no releases. Install
+(`npx skills add https://github.com/Leonxlnx/taste-skill`) tracks the default branch.
+
+**Web Design Guidelines** (`vercel-labs/agent-skills`, `skills/web-design-guidelines/`): public,
+MIT-licensed, published by Vercel. No tags/releases observed for the skill path specifically; the
+most recent commit touching it was reported as short hash `ba46938` ("Fix SKILL.md frontmatter
+formatting for web-design-guidelines (#28)"), dated 2026-01-16 — read through a fetch-and-summarize
+tool rather than a direct `git log`, so treat the hash as indicative, not verified byte-for-byte.
+Independent of the skill's own commit history, its rule *source* (`vercel-labs/web-interface-guidelines`)
+is fetched live from `main` on every run — there is no version to report for what a given
+invocation actually checked against, by the skill's own design.
+
+### Revisit when
+
+- Someone runs the trial this record could not: install `audit-suite` (already visible in this
+  account's catalog, no external installer needed) or `vercel-labs/agent-skills@web-design-guidelines`
+  directly, and `Leonxlnx/taste-skill` via `npx skills add`, against the same sample build
+  Impeccable's asset-producer and finish-reviewer passes already cover — keep the real violation
+  list and the real generated output, and compare both against Impeccable's own `detect` findings
+  and critic feedback on the identical build.
+- `design-wrapper` grows an accessibility-focused critic row (closing the gap this note
+  identifies) — at that point Web Design Guidelines' rule *content* (not its live-fetch mechanism)
+  is the natural reference to pin a vendored snapshot against, or
+- Web Design Guidelines starts shipping a pinnable snapshot of its rule source instead of a live
+  per-run fetch, or Taste ships tagged releases — either would give `design-wrapper` something
+  to pin the way it pins Impeccable.
