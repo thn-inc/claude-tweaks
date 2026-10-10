@@ -61,6 +61,10 @@ Three conventions follow from how this repo works, and all are visible below:
 * Dispatch headless self-report: flow-step-2.8-claim-contest ([#2746](https://github.com/thn-inc/claude-tweaks/issues/2746)) ([48c6304](https://github.com/thn-inc/claude-tweaks/commit/48c63045a4d00f4e2bf8d6c4846546808ded9d08)), closes [#2802](https://github.com/thn-inc/claude-tweaks/issues/2802) [#2844](https://github.com/thn-inc/claude-tweaks/issues/2844)
 * hooks/hooks.json: if-gated Bash entries fan out to all 28… ([#3074](https://github.com/thn-inc/claude-tweaks/issues/3074)) ([666d97a](https://github.com/thn-inc/claude-tweaks/commit/666d97af57cbb48a102dfe3a8aad1210c37ce5e8))
 
+### Highlights
+* No user-visible change: closed out a resolved claim contest reported by a headless dispatch.
+* Bash commands that use shell variables or loops no longer launch the claude-tweaks hook dozens of times. Each Bash call now launches it at most once per hook event, which cuts process churn and command latency on busy machines.
+
 ## [6.139.0](https://github.com/thn-inc/claude-tweaks/compare/v6.138.0...v6.139.0) (2026-10-09)
 
 
