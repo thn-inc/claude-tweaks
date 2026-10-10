@@ -48,7 +48,7 @@ Signal keys, all optional (absent reads as zero/false):
 printf '%s' "$PAYLOAD" | node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-engine.js" record --run-dir "$PIPELINE_RUN_DIR"
 ```
 
-`record` reads one payload JSON from stdin, validates it, appends the row's `SCANNED` line to `decisions.md` and one telemetry line, updates `engine-state.json`, and echoes the `SCANNED` line it wrote. `--dry-run` suppresses the telemetry append only. A row may be recorded once; a second payload for the same `rowId` is rejected.
+`record` reads one payload JSON from stdin, validates it, appends the row's `SCANNED` line to `decisions.md` and one telemetry line, updates `engine-state.json`, and echoes the `SCANNED` line it wrote. `--dry-run` suppresses the telemetry append only. A row may be recorded once; a second payload for the same `rowId` is rejected. Several judged rows at once: write their payloads as one JSON array to a file and pass `record --run-dir "$PIPELINE_RUN_DIR" --batch <file>` (#2544) — one call, same per-row validation.
 
 **Ordering is not advisory.** `Memory` and `Upstream feedback` are judged **last**, after every earlier row has been recorded — including `Broken references`, which sits before them in registry order. Their input is the set of learnings *no earlier row claimed*, so judging them early routes a learning to memory that CLAUDE.md, a decision record, or a skill update was about to absorb.
 
@@ -158,15 +158,9 @@ Write those fields as a reader would say them: the target's name, what changes, 
 
 ## 6. Prose fallback
 
-**When the engine fails for any reason, execute this same mechanism manually.** This is unconditional and takes no diagnosis `[IL-14]`: enumerate the failure modes and the enumeration will be missing one.
-
-1. Walk SKILL.md's registry table top to bottom, in the order printed there.
-2. Evaluate each row's gate by the condition stated in that table. A closed row resolves to `n/a` with the stated reason.
-3. For each open row, apply its judge file to its scope — using the table's own cap where one is stated, narrowed under `fast-lane`.
-4. Write the row's `SCANNED` line by hand in the section 3 format, into `decisions.md`.
-5. Compose the phase-trace row by hand: `| {target} | {n/a | Clean | {n} applied | {n} staged | {a} applied, {s} staged} | {detail} |`.
-6. Honor sections 3 and 5 unchanged — the stage-only-rows check and the vocabulary rule are engine-enforced; the remaining three clauses of the applied precondition (additive-only, reversibility, confidence) are judgment-only and not engine-validated — under the fallback all of them bind the judge directly. The fallback runs as a single thread, so that one thread plays both roles section 1's ownership cell splits under the engine: it applies each `"action": "applied"` finding as a judge would, then commits it serially per section 4's discipline (audit, commit, attribute) — the same "never a judge-side commit" rule still holds, it is simply the same thread that steps into the controller role afterward rather than a separate committer.
-
-**The report MUST state `(engine unavailable — prose fallback ran)` in the Phase 2 table caption.** A hand-composed trace that looks engine-produced is worse than no trace: the trace's whole value is that it is mechanical, and a reader cannot tell the two apart from the table alone.
-
-Engine failure is never permission to skip a row. The silent skip is the failure this architecture exists to prevent; a fallback that quietly curates less than the engine would has reintroduced it.
+**When the engine fails for any reason, execute this same mechanism manually** — see
+`curation-engine-appendix.md`'s "6. Prose fallback" section for the full 6-step procedure, the
+required `(engine unavailable — prose fallback ran)` caption, and the no-silent-skip rule. This is
+unconditional and takes no diagnosis `[IL-14]`: enumerate the failure modes and the enumeration
+will be missing one. Read the appendix section only once the engine has actually failed — never
+needed on the common-case path where `plan`/`record`/`render` all exit 0.

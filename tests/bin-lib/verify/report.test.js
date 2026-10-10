@@ -192,3 +192,15 @@ test('composeReport carries flakyRetried/retryFailed/retryAttempts/retryDecision
   assert.deepStrictEqual(failed.checks.tests.retryFailed, ['tests/a.test.js']);
   assert.strictEqual('flakyRetried' in failed.checks.tests, false);
 });
+
+test('composeReport omits baselineAdjudicated when none is passed and carries it verbatim when given; pass stays raw (#3043)', () => {
+  const failing = { ...PASSING, exitCode: 1 };
+  const git = { sha: 'abc', dirty: false };
+  const plain = composeReport({ checks: [failing], startedAt: 't', durationMs: 1, git });
+  assert.strictEqual('baselineAdjudicated' in plain, false);
+  assert.strictEqual('baselineAdjudicated' in composeReport({ checks: [failing], startedAt: 't', durationMs: 1, git, baselineAdjudicated: null }), false);
+  const adjudicated = { base: 'main', baseSha: 'f'.repeat(40), eligible: true, verdict: 'pass', failingFiles: ['tests/a.test.js'], baselineFailing: ['tests/a.test.js'], flakyPassed: [], attributable: [] };
+  const report = composeReport({ checks: [failing], startedAt: 't', durationMs: 1, git, baselineAdjudicated: adjudicated });
+  assert.deepStrictEqual(report.baselineAdjudicated, adjudicated);
+  assert.strictEqual(report.pass, false);
+});

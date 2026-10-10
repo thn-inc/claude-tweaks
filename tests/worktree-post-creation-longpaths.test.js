@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #1782: `_shared/worktree-setup.md`'s Post-creation catch-up unconditionally
 // merges into every freshly created worktree, and its "Fail open on
 // fetch/merge command failure" paragraph used to route EVERY non-conflict
@@ -11,17 +11,25 @@ const path = require('path');
 // this repo's deeply nested `.claude-tweaks/pipelines/**/spec-*/work/*.md`
 // paths — into the same "log it and proceed" bucket, even though
 // `core.longpaths` is a fixable local misconfiguration, not a connectivity
-// problem. This suite pins the new Windows-specific paragraph that carves
-// that failure mode out of the fail-open path, plus its documented recovery
+// problem. This suite pins the Windows-specific paragraph that carves that
+// failure mode out of the fail-open path, plus its documented recovery
 // sequence, and the related `git -C <main-checkout>` diagnostic note.
+//
+// #2722: the recovery sequence itself (not needed by an ordinary,
+// non-failing catch-up) moved to its own sub-file,
+// `_shared/worktree-setup-windows-longpath.md` — worktree-setup.md keeps
+// only a short pointer paragraph naming the failure and citing that file.
+// This suite now pins the pointer's position/content in worktree-setup.md
+// separately from the recovery detail, which it pins against the sub-file.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const SHARED_WORKTREE_SETUP = read('plugin', 'skills', '_shared', 'worktree-setup.md');
+const LONGPATH_RECOVERY = read('plugin', 'skills', '_shared', 'worktree-setup-windows-longpath.md');
 const DONTS = read('docs', 'donts.md');
 
-function longpathsRegion() {
+function longpathsPointerRegion() {
   const start = SHARED_WORKTREE_SETUP.indexOf('## Post-creation catch-up');
   assert.notStrictEqual(start, -1, '## Post-creation catch-up heading missing — this test has lost its anchor');
   const failOpenIdx = SHARED_WORKTREE_SETUP.indexOf('**Fail open on fetch/merge command failure**', start);
@@ -32,11 +40,11 @@ function longpathsRegion() {
   return SHARED_WORKTREE_SETUP.slice(windowsIdx, failOpenIdx);
 }
 
-test('Post-creation catch-up: names Filename too long, core.longpaths, and repo-local scope, before Fail open', () => {
-  const region = longpathsRegion();
+test('Post-creation catch-up: names Filename too long and core.longpaths, before Fail open, and cites the recovery sub-file', () => {
+  const region = longpathsPointerRegion();
   assert.match(region, /Filename too long/);
   assert.match(region, /core\.longpaths/);
-  assert.match(region, /repo-local/, 'must state the repo-local scope rationale (linked worktrees share .git/config)');
+  assert.match(region, /_shared\/worktree-setup-windows-longpath\.md/, 'must cite the extracted recovery sub-file (#2722)');
 });
 
 test('Post-creation catch-up: the Fail-open paragraph explicitly excludes the Windows long-path failure', () => {
@@ -49,14 +57,17 @@ test('Post-creation catch-up: the Fail-open paragraph explicitly excludes the Wi
   );
 });
 
-test('Post-creation catch-up: documents the no-MERGE_HEAD symptom, the freshness check, and the reset-then-clean recovery', () => {
-  const region = longpathsRegion();
-  assert.match(region, /MERGE_HEAD/);
-  assert.match(region, /git status --porcelain/);
-  assert.match(region, /git reset --hard HEAD/);
-  assert.match(region, /git clean -f -d/);
-  assert.match(region, /freshly created worktree with no commits or edits/, 'must state the fresh-worktree-only condition explicitly');
-  assert.match(region, /git-discipline\.md/, 'must cite _shared/git-discipline.md\'s "never reset or discard" rule as the default this carves out');
+test('worktree-setup-windows-longpath.md: states the repo-local core.longpaths scope rationale', () => {
+  assert.match(LONGPATH_RECOVERY, /repo-local/, 'must state the repo-local scope rationale (linked worktrees share .git/config)');
+});
+
+test('worktree-setup-windows-longpath.md: documents the no-MERGE_HEAD symptom, the freshness check, and the reset-then-clean recovery', () => {
+  assert.match(LONGPATH_RECOVERY, /MERGE_HEAD/);
+  assert.match(LONGPATH_RECOVERY, /git status --porcelain/);
+  assert.match(LONGPATH_RECOVERY, /git reset --hard HEAD/);
+  assert.match(LONGPATH_RECOVERY, /git clean -f -d/);
+  assert.match(LONGPATH_RECOVERY, /freshly created worktree with no commits or edits/, 'must state the fresh-worktree-only condition explicitly');
+  assert.match(LONGPATH_RECOVERY, /git-discipline\.md/, 'must cite _shared/git-discipline.md\'s "never reset or discard" rule as the default this carves out');
 });
 
 test('Post-creation catch-up: the git -C main-checkout diagnostic rough edge is named once, with a cross-reference', () => {

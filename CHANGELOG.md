@@ -53,6 +53,214 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.139.2](https://github.com/thn-inc/claude-tweaks/compare/v6.139.1...v6.139.2) (2026-10-10)
+
+
+### Bug Fixes
+
+* Adopted-branch collision check fails open when… ([#3091](https://github.com/thn-inc/claude-tweaks/issues/3091)) ([7dd0242](https://github.com/thn-inc/claude-tweaks/commit/7dd0242b548ecaa665bbad258eeca63dae7c85a1))
+* Dispatch #N and #N,#M forms misreport a not-spec-shaped… ([#3084](https://github.com/thn-inc/claude-tweaks/issues/3084)) ([ec55811](https://github.com/thn-inc/claude-tweaks/commit/ec55811e3b6e8c0f8f80ea1775c66f31f619fcf2))
+
+### Highlights
+* The build-time check that stops a push onto someone else's same-name branch now actually runs, instead of silently passing when the plugin path is left to the shell.
+* Naming a record that is not spec-shaped in `/claude-tweaks:dispatch #N` now says so and tells you how to fix it, instead of wrongly claiming it already has an open PR.
+
+## [6.139.1](https://github.com/thn-inc/claude-tweaks/compare/v6.139.0...v6.139.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* Dispatch headless self-report: flow-step-2.8-claim-contest ([#2746](https://github.com/thn-inc/claude-tweaks/issues/2746)) ([48c6304](https://github.com/thn-inc/claude-tweaks/commit/48c63045a4d00f4e2bf8d6c4846546808ded9d08)), closes [#2802](https://github.com/thn-inc/claude-tweaks/issues/2802) [#2844](https://github.com/thn-inc/claude-tweaks/issues/2844)
+* hooks/hooks.json: if-gated Bash entries fan out to all 28… ([#3074](https://github.com/thn-inc/claude-tweaks/issues/3074)) ([666d97a](https://github.com/thn-inc/claude-tweaks/commit/666d97af57cbb48a102dfe3a8aad1210c37ce5e8))
+
+### Highlights
+* No user-visible change: closed out a resolved claim contest reported by a headless dispatch.
+* Bash commands that use shell variables or loops no longer launch the claude-tweaks hook dozens of times. Each Bash call now launches it at most once per hook event, which cuts process churn and command latency on busy machines.
+
+## [6.139.0](https://github.com/thn-inc/claude-tweaks/compare/v6.138.0...v6.139.0) (2026-10-09)
+
+
+### Features
+
+* Exclude non-spec-shaped candidates from the dispatch queue pull before claiming ([#3073](https://github.com/thn-inc/claude-tweaks/issues/3073)) ([d775014](https://github.com/thn-inc/claude-tweaks/commit/d77501487103497100eca38c80f6ca8d69ad096b)), closes [#2829](https://github.com/thn-inc/claude-tweaks/issues/2829)
+
+
+### Bug Fixes
+
+* Normalize the plugin root in the not-spec-shaped fixture test on Windows ([#3076](https://github.com/thn-inc/claude-tweaks/issues/3076)) ([cef435b](https://github.com/thn-inc/claude-tweaks/commit/cef435b77d974cd1e9d5995bcbd15c23897d7d48)), closes [#2829](https://github.com/thn-inc/claude-tweaks/issues/2829)
+
+## [6.138.0](https://github.com/thn-inc/claude-tweaks/compare/v6.137.0...v6.138.0) (2026-10-09)
+
+
+### Features
+
+* Make flow verification workable on a dev checkout with a… ([#3043](https://github.com/thn-inc/claude-tweaks/issues/3043)) ([968dd5b](https://github.com/thn-inc/claude-tweaks/commit/968dd5be75acf6f1e7016ab19881e043df3b9e2c))
+
+
+### Bug Fixes
+
+* Close the Windows-only gaps left by the v6.137.0 release… ([#3040](https://github.com/thn-inc/claude-tweaks/issues/3040)) ([2c2a8c2](https://github.com/thn-inc/claude-tweaks/commit/2c2a8c2c3a92ea5e7c852832abefde85c1f02481))
+
+### Highlights
+* Pipelines on a development machine with known environment-specific test failures can now verify against the base branch instead of re-running the full suite at every phase.
+* On Windows, Impeccable engine failures now report the real cause, and release verification checks the marketplace-mirror hook.
+
+## [6.137.0](https://github.com/thn-inc/claude-tweaks/compare/v6.136.0...v6.137.0) (2026-10-08)
+
+
+### Features
+
+* Add the impeccable-engine module and CLI: resolve, run… ([#2979](https://github.com/thn-inc/claude-tweaks/issues/2979)) ([fecef3f](https://github.com/thn-inc/claude-tweaks/commit/fecef3f1a0ebbfe5360e2c96012ff9aa40c66b6c))
+* Move design-wrapper Layer 0 and availability onto the… ([#2980](https://github.com/thn-inc/claude-tweaks/issues/2980)) ([be0fe58](https://github.com/thn-inc/claude-tweaks/commit/be0fe58f949de84f752e9bc1d6d86d45f807a614)), closes [#2981](https://github.com/thn-inc/claude-tweaks/issues/2981)
+* Re-pin Impeccable to the engine, re-record fixtures… ([#2985](https://github.com/thn-inc/claude-tweaks/issues/2985)) ([7ba57cd](https://github.com/thn-inc/claude-tweaks/commit/7ba57cda86aa932e7ba84cbed1e586b65b59ff9c))
+* Read the direction contract from Impeccable's surface… ([#2983](https://github.com/thn-inc/claude-tweaks/issues/2983)) ([57efb9e](https://github.com/thn-inc/claude-tweaks/commit/57efb9e3d215d396d1a7f199bdb33fd4c8385c5e)), closes [#2984](https://github.com/thn-inc/claude-tweaks/issues/2984)
+* Run design-wrapper explore mode's concept-seed through… ([#2982](https://github.com/thn-inc/claude-tweaks/issues/2982)) ([0e1842f](https://github.com/thn-inc/claude-tweaks/commit/0e1842f1b352d145019d681843a98067d4dc5f0b))
+
+
+### Bug Fixes
+
+* Hide the console window on every plugin/bin spawn ([#3038](https://github.com/thn-inc/claude-tweaks/issues/3038)) ([bb0789a](https://github.com/thn-inc/claude-tweaks/commit/bb0789acb243eae261e687ee87429fe480424913))
+* Run the Impeccable launcher through cmd.exe on Windows ([#3039](https://github.com/thn-inc/claude-tweaks/issues/3039)) ([23d7611](https://github.com/thn-inc/claude-tweaks/commit/23d7611de073a19b34190c934e9b5111a5cf6311))
+
+### Highlights
+* Updated the design-wrapper's Impeccable contract checks to the engine-based Impeccable 4.2.2+, so tests no longer fail depending on which old Impeccable versions are cached on a machine.
+* Restored design-wrapper's explore mode for Impeccable 4.2.2 and later, and documented that dealing design directions contacts Impeccable's catalog service.
+* Restored design review's reading of Impeccable's direction contract for Impeccable 4.2.2 and later, which records it in the surface brief instead of the built page.
+* Restored design-wrapper's project-context signals for Impeccable 4.2.2 and later, and made a missing or outdated Impeccable engine report why and how to fix it instead of failing silently.
+* Documentation health checks no longer propose a replacement commit citation without first
+* Added an internal helper that finds and runs the Impeccable design engine without ever downloading it, as the base for restoring design checks on Impeccable 4.2.2 and later.
+
+## [6.136.0](https://github.com/thn-inc/claude-tweaks/compare/v6.135.0...v6.136.0) (2026-10-04)
+
+
+### Features
+
+* Upstream defect report — `verify.js --changed-files`… ([#2744](https://github.com/thn-inc/claude-tweaks/issues/2744)) ([0153343](https://github.com/thn-inc/claude-tweaks/commit/015334398bb16cd4ab629d2047f51b4c41ad1ace)), closes [#2779](https://github.com/thn-inc/claude-tweaks/issues/2779)
+
+
+### Bug Fixes
+
+* Document the multi-spec rule for the PR verdict… ([#2860](https://github.com/thn-inc/claude-tweaks/issues/2860)) ([f8179fa](https://github.com/thn-inc/claude-tweaks/commit/f8179fa13a3cd2dc89dce9445b70b515f1c96bfc))
+* Dream scan stages transcript command text without path… ([#2968](https://github.com/thn-inc/claude-tweaks/issues/2968)) ([0c9205f](https://github.com/thn-inc/claude-tweaks/commit/0c9205fce20a23641131475014a6511b6b9d5b48))
+* flow-preflight misclassifies a claim-log-only… ([#2861](https://github.com/thn-inc/claude-tweaks/issues/2861)) ([a5f50c1](https://github.com/thn-inc/claude-tweaks/commit/a5f50c117d304a370fefd5d7af38b798f9f07de2))
+* Upstream defect report — `hooks.js teardown-run --merged`… ([#2747](https://github.com/thn-inc/claude-tweaks/issues/2747)) ([cc3426a](https://github.com/thn-inc/claude-tweaks/commit/cc3426a571ff8392e851a59aa0218b1fd8aa3a7b))
+
+### Highlights
+* Dream-pass proposals redact absolute paths in the quoted command, not just the error text.
+* Fixed run teardown on GitHub Enterprise remotes and made it remove the worktree before deleting the branch.
+* Added a sanctioned way to record verification expectations from a worktree-isolated wrap-up.
+* No user-visible change: reorganized the /specify skill files so shaping-mode checks have room to grow.
+* Made the list of places a skill's argument hint must match canonical and checked automatically.
+* Fixed changed-file detection returning nothing when the verification stamp is at the latest commit.
+* No user-visible change: compared the Hallmark design skill against Impeccable for design reviews.
+* No user-visible change — internal consolidation of how multi-spec pipeline runs locate their shared worktree and PR.
+* Multi-spec pipeline runs keep every spec's review verdict on the shared PR instead of the last one overwriting the rest.
+* Freshly started /flow runs are no longer mistaken for resumed ones after claiming their records.
+* No user-visible change — documentation accuracy fix.
+
+## [6.135.0](https://github.com/thn-inc/claude-tweaks/compare/v6.134.1...v6.135.0) (2026-10-04)
+
+
+### Features
+
+* Add a cross-session self-healing pass (a /dream-style… ([#2691](https://github.com/thn-inc/claude-tweaks/issues/2691)) ([1b7acee](https://github.com/thn-inc/claude-tweaks/commit/1b7acee21e962296b5d273f7d0a2ee895dcca22a))
+
+
+### Bug Fixes
+
+* acceptance-gap backstop counts NOT_PLANNED and DUPLICATE… ([#2854](https://github.com/thn-inc/claude-tweaks/issues/2854)) ([abf42ed](https://github.com/thn-inc/claude-tweaks/commit/abf42edeac667ab1d626978591c89313cda5163b))
+* console/resolve.js SECTION_MAP: the curation engine's own… ([#2773](https://github.com/thn-inc/claude-tweaks/issues/2773)) ([0b31553](https://github.com/thn-inc/claude-tweaks/commit/0b315536e562f9b872e3c2c1d21c46fbd2e4c10f))
+* github-pr-scan item 10's bulk PR fetch exceeds GitHub's… ([#2853](https://github.com/thn-inc/claude-tweaks/issues/2853)) ([1ae6e63](https://github.com/thn-inc/claude-tweaks/commit/1ae6e631c6d4ed09114ddfee3d7b35af510018f6))
+
+### Highlights
+* Added a cross-session pass that proposes fixes for failures that keep repeating across sessions.
+* No user-visible change: compared Claude Code's native design skill with Impeccable for design work.
+* Added a checklist for re-auditing verification instructions after a Claude model upgrade.
+* Added a plain-text assertion mode to upstream-drift fixtures, so a command that fails with plain-text output can be checked like one that emits JSON.
+* Tidy stops flagging records closed as not-planned or duplicate as missing an acceptance decision.
+* Fixed unattended Review Consoles silently skipping staged CLAUDE.md and decision-record proposals.
+* Added richer diagrams to implementation plans as they are written.
+* No user-visible change: scoped whether claude-tweaks needs an image and creative-workflow plugin.
+* No user-visible change: added an end-to-end test for how a flow run hands off its run directory.
+* Tidy's unsettled-run check completes on repositories with more than 50 pull requests instead of failing its PR fetch.
+
+## [6.134.1](https://github.com/thn-inc/claude-tweaks/compare/v6.134.0...v6.134.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* capture: work-types: native branch uses… ([#2932](https://github.com/thn-inc/claude-tweaks/issues/2932)) ([2de5713](https://github.com/thn-inc/claude-tweaks/commit/2de571361c190585b50dea655f6dd8e398a81a65))
+
+### Highlights
+* Fixed `/capture`'s native issue-type filing being refused inside worktree sessions and silently passing failures.
+
+## [6.134.0](https://github.com/thn-inc/claude-tweaks/compare/v6.133.0...v6.134.0) (2026-10-03)
+
+
+### Features
+
+* Add a harness cost-efficiency lens to claude-tweaks ([#2741](https://github.com/thn-inc/claude-tweaks/issues/2741)) ([127332c](https://github.com/thn-inc/claude-tweaks/commit/127332cfffee717aa2b2fa94356613c718ba815c))
+* Add App Store rejection checklist for vibecoded apps ([#2628](https://github.com/thn-inc/claude-tweaks/issues/2628)) ([5916b0e](https://github.com/thn-inc/claude-tweaks/commit/5916b0eac2fe93b6eb71f9bfa7180c35721fe545))
+* Add JWT algorithm-confusion checks to the security… ([#2657](https://github.com/thn-inc/claude-tweaks/issues/2657)) ([efdb9a0](https://github.com/thn-inc/claude-tweaks/commit/efdb9a0bef3aac8b831b7abffb040a85119dbc18)), closes [#2663](https://github.com/thn-inc/claude-tweaks/issues/2663) [#2666](https://github.com/thn-inc/claude-tweaks/issues/2666)
+* build: records whose Deliverables are wholly operational… ([#2554](https://github.com/thn-inc/claude-tweaks/issues/2554)) ([1b1d0d5](https://github.com/thn-inc/claude-tweaks/commit/1b1d0d5320461dfb04a3571c9e4a3d235dac15b9)), closes [#2745](https://github.com/thn-inc/claude-tweaks/issues/2745)
+* dispatch task-prompt's foreground-execution warning… ([#2533](https://github.com/thn-inc/claude-tweaks/issues/2533)) ([099f66a](https://github.com/thn-inc/claude-tweaks/commit/099f66a10300084910f0c1930858a924be5e89a0)), closes [#2668](https://github.com/thn-inc/claude-tweaks/issues/2668) [#2750](https://github.com/thn-inc/claude-tweaks/issues/2750) [#2751](https://github.com/thn-inc/claude-tweaks/issues/2751) [#2777](https://github.com/thn-inc/claude-tweaks/issues/2777) [#2784](https://github.com/thn-inc/claude-tweaks/issues/2784) [#2797](https://github.com/thn-inc/claude-tweaks/issues/2797) [#2801](https://github.com/thn-inc/claude-tweaks/issues/2801) [#2837](https://github.com/thn-inc/claude-tweaks/issues/2837)
+* friction logging: gate denials incurred in the main… ([#2543](https://github.com/thn-inc/claude-tweaks/issues/2543)) ([cdf1d72](https://github.com/thn-inc/claude-tweaks/commit/cdf1d7227e350c7a87423d71e29955aaf900498b)), closes [#2544](https://github.com/thn-inc/claude-tweaks/issues/2544) [#2546](https://github.com/thn-inc/claude-tweaks/issues/2546) [#2547](https://github.com/thn-inc/claude-tweaks/issues/2547) [#2550](https://github.com/thn-inc/claude-tweaks/issues/2550) [#2667](https://github.com/thn-inc/claude-tweaks/issues/2667) [#2714](https://github.com/thn-inc/claude-tweaks/issues/2714) [#2724](https://github.com/thn-inc/claude-tweaks/issues/2724) [#2740](https://github.com/thn-inc/claude-tweaks/issues/2740)
+* Release notes: pr-first post-publish step ([#2582](https://github.com/thn-inc/claude-tweaks/issues/2582)) ([8aae4a7](https://github.com/thn-inc/claude-tweaks/commit/8aae4a7d5cb78a5d919d95f67459bea7e5dfa7d5))
+
+
+### Bug Fixes
+
+* capture: `work-types: native` branch runs `gh issue… ([#2725](https://github.com/thn-inc/claude-tweaks/issues/2725)) ([0734897](https://github.com/thn-inc/claude-tweaks/commit/07348978faff4dee11580bc4a20879a280fb2899)), closes [#2726](https://github.com/thn-inc/claude-tweaks/issues/2726)
+* feedback session-evaluation: the self-assessment… ([#2730](https://github.com/thn-inc/claude-tweaks/issues/2730)) ([6a5c7f2](https://github.com/thn-inc/claude-tweaks/commit/6a5c7f270fbcdf42a5b52fca7f75f4fa85de5240))
+* Investigate: record [#2329](https://github.com/thn-inc/claude-tweaks/issues/2329) built with no landed… ([#2401](https://github.com/thn-inc/claude-tweaks/issues/2401)) ([c920b26](https://github.com/thn-inc/claude-tweaks/commit/c920b26c6088d71a4e5732f867861270dc38ef32))
+* log-decision.js: --section "/reflect" is… ([#2549](https://github.com/thn-inc/claude-tweaks/issues/2549)) ([397e3db](https://github.com/thn-inc/claude-tweaks/commit/397e3db5ec1236274af871e297d31a5fd5bff5ad)), closes [#2718](https://github.com/thn-inc/claude-tweaks/issues/2718) [#2720](https://github.com/thn-inc/claude-tweaks/issues/2720) [#2721](https://github.com/thn-inc/claude-tweaks/issues/2721) [#2722](https://github.com/thn-inc/claude-tweaks/issues/2722) [#2728](https://github.com/thn-inc/claude-tweaks/issues/2728) [#2729](https://github.com/thn-inc/claude-tweaks/issues/2729) [#2766](https://github.com/thn-inc/claude-tweaks/issues/2766) [#2838](https://github.com/thn-inc/claude-tweaks/issues/2838)
+* mirror-marketplace: release-notes step pushes from a… ([#2929](https://github.com/thn-inc/claude-tweaks/issues/2929)) ([59ffb85](https://github.com/thn-inc/claude-tweaks/commit/59ffb85df819e77f7ee6ccee84c2710f86efbd05)), closes [#2930](https://github.com/thn-inc/claude-tweaks/issues/2930)
+* Multiple skills re-ask decisions already resolved by… ([#2701](https://github.com/thn-inc/claude-tweaks/issues/2701)) ([2393d0a](https://github.com/thn-inc/claude-tweaks/commit/2393d0a3acea5eb71911a6473ca994818a64f500)), closes [#2705](https://github.com/thn-inc/claude-tweaks/issues/2705)
+* PR-early run lifecycle: dual-marker Fixes-#N block… ([#2686](https://github.com/thn-inc/claude-tweaks/issues/2686)) ([1669f11](https://github.com/thn-inc/claude-tweaks/commit/1669f115cb6ca9dac89e8e6c0cd8d7a6dd0c6d74))
+* reconcile: worktree reap fails with "Filename too long"… ([#2566](https://github.com/thn-inc/claude-tweaks/issues/2566)) ([a3383e2](https://github.com/thn-inc/claude-tweaks/commit/a3383e243a52be888f959cb4c6e3935758919b2a)), closes [#2676](https://github.com/thn-inc/claude-tweaks/issues/2676) [#2710](https://github.com/thn-inc/claude-tweaks/issues/2710)
+* Three pre-existing test failures observed on [#2595](https://github.com/thn-inc/claude-tweaks/issues/2595)'s… ([#2762](https://github.com/thn-inc/claude-tweaks/issues/2762)) ([77882ee](https://github.com/thn-inc/claude-tweaks/commit/77882ee55cf687b6f9ad99db8fd91bd89f180ce4))
+* Upstream gap report — `design-wrapper polish` has no way… ([#2743](https://github.com/thn-inc/claude-tweaks/issues/2743)) ([8d92cac](https://github.com/thn-inc/claude-tweaks/commit/8d92cacf2fc25dc2dbbe34ce6ecebb57838ac52c))
+
+### Highlights
+* Fixed the post-publish release-notes step failing on every release that carries release notes.
+* Bounded GIF encoding time and memory on high-detail walkthrough recordings.
+* Fixed prose-checking tests that fail on Windows checkouts with CRLF line endings.
+* No user-visible change: investigated a record that was built without a recorded claim.
+* No user-visible change: resolved three long-standing test failures seen on every local run.
+* Added a check that flags skills and subagents whose definitions cost more context than they need.
+* Added a way for design polish to leave spec-pinned copy unchanged.
+* Stopped the worktree guard from refusing non-git commands with runtime variables and GitHub GraphQL calls.
+* Added a lighter build path for records whose work is entirely operational.
+* Fixed native issue types failing on the current GitHub CLI when capturing a record.
+* Fixed multi-record pull requests closing a record that was deliberately left open.
+* Published release notes automatically after each release goes out.
+* Clarified the dispatch prompt's warning about waiting on background work.
+* Logged guard denials that happen in the main checkout before a run directory exists.
+* Added security checklist items that catch JWT algorithm-confusion attacks.
+* Fixed decision log headings being mangled into Windows paths under Git Bash.
+* Updated the prose conformance test guidance to run a snippet directly before falling back to byte-pinning it.
+* Stopped a failed judge dispatch from forcing a full transcript re-evaluation on the next feedback run.
+* Added an App Store submission readiness checklist for generated apps.
+* Fixed worktree cleanup failing on Windows when paths are too long.
+* No user-visible change: made room in the feedback skill before its next edit hits the size ceiling.
+* Stopped skills from re-asking decisions that earlier input or project policy already answered.
+
+## [6.133.0](https://github.com/thn-inc/claude-tweaks/compare/v6.132.0...v6.133.0) (2026-10-02)
+
+
+### Features
+
+* Add a reachability audit lens for skill/MCP routine… ([#2674](https://github.com/thn-inc/claude-tweaks/issues/2674)) ([5a6f137](https://github.com/thn-inc/claude-tweaks/commit/5a6f137ffe1d9368a424e0a7bdf10e6bab25939e))
+* Add an autonomous-agent blast-radius check to hardening… ([#2749](https://github.com/thn-inc/claude-tweaks/issues/2749)) ([693b28f](https://github.com/thn-inc/claude-tweaks/commit/693b28f0b7e17d1049594c6184c312a43177a28c))
+* worktree.always / ExitWorktree: no path for a session to… ([#2687](https://github.com/thn-inc/claude-tweaks/issues/2687)) ([fb968f7](https://github.com/thn-inc/claude-tweaks/commit/fb968f79bfe9341e89b640884707a28fb78feff0)), closes [#2696](https://github.com/thn-inc/claude-tweaks/issues/2696) [#2731](https://github.com/thn-inc/claude-tweaks/issues/2731)
+
+
+### Bug Fixes
+
+* harness-health validate-findings: a Skills curation judge… ([#2545](https://github.com/thn-inc/claude-tweaks/issues/2545)) ([482922b](https://github.com/thn-inc/claude-tweaks/commit/482922b45ffd1bfdca840f0096212fe50709a61f))
+* readClaimBlobsGitBatch's default runner rejects string… ([#2852](https://github.com/thn-inc/claude-tweaks/issues/2852)) ([de9873a](https://github.com/thn-inc/claude-tweaks/commit/de9873ad87791d4ada955921d2a49d6f10745dfd))
+* stage-item.js's per-writer filename counter silently… ([#2770](https://github.com/thn-inc/claude-tweaks/issues/2770)) ([1752ae7](https://github.com/thn-inc/claude-tweaks/commit/1752ae7093743667a32bdf46a1c375ae884629b8))
+
 ## [6.132.0](https://github.com/thn-inc/claude-tweaks/compare/v6.131.0...v6.132.0) (2026-10-01)
 
 

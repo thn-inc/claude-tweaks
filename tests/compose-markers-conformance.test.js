@@ -66,7 +66,7 @@ test('every when: marker in plugin/skills/**/*.md is well-formed and no fenced b
   for (const file of walk(SKILLS)) {
     const text = fs.readFileSync(file, 'utf8');
     if (!/<!--\s*when:/.test(text)) continue;
-    const rel = path.relative(SKILLS, file);
+    const rel = path.relative(SKILLS, file).split(path.sep).join('/');
     markedFiles.push(rel);
     problems.push(...checkMarkers(text, rel));
   }

@@ -73,6 +73,7 @@ function entryFor(check) {
 
 function composeReport({
   checks, startedAt, durationMs, git, testCountRegression = null, scope = null, flakyEscalation = [],
+  baselineAdjudicated = null,
 }) {
   const byName = {};
   for (const check of checks) byName[check.name] = entryFor(check);
@@ -91,6 +92,10 @@ function composeReport({
   // #1925: only when an allowlisted file has crossed the escalation
   // threshold — absence over an empty array, same as the fields above.
   if (Array.isArray(flakyEscalation) && flakyEscalation.length) report.flakyEscalation = flakyEscalation;
+  // #3043: the baseline adjudication (verify.js --baseline) — omitted when none
+  // ran. `pass` above stays the raw "every check exited 0"; the verdict lives
+  // only here.
+  if (baselineAdjudicated !== null) report.baselineAdjudicated = baselineAdjudicated;
   return report;
 }
 

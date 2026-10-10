@@ -4,13 +4,14 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #411: merge-path conversion — every pr-first merge site converges on
 // `_shared/pr-first-merge.md`. Prose-as-implementation, same convention as
 // the other pr-first sub-issues' test files — pin the key claims against the
 // actual file text.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 const MERGE = read('plugin', 'skills', '_shared', 'pr-first-merge.md');
 const MERGE_POST_MERGE = read('plugin', 'skills', '_shared', 'pr-first-merge-post-merge.md');
 const SETTLE = read('plugin', 'skills', 'dispatch', 'settle-and-merge.md');

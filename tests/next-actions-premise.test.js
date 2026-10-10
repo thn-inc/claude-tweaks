@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #680: a Next Actions option carrying a runnable, state-changing command
 // (a release bump) was marked (recommended) for work a prior release had
 // already carried — the recommendation rested on a premise nobody checked.
@@ -11,7 +11,7 @@ const path = require('path');
 // and the general skill-authoring.md convention sentence it derives from.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 const SUMMARY = read('plugin', 'skills', 'flow', 'summary-template.md');
 const AUTHORING = read('docs', 'skill-authoring.md');
 const GATE = read('plugin', 'skills', '_shared', 'release-recommendation-gate.md');

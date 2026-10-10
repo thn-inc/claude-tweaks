@@ -9,6 +9,28 @@
 // this comment ("the only deliberate non-zero exit is the pre-tool-use
 // deny") that never actually matched pre-tool-use.js's real behavior.
 'use strict';
+// #3074: Bash prefilter fast path. hooks.json registers ONE unconditional
+// Bash handler per tool-use event, so every Bash call spawns this process —
+// decide whether it is worth anything BEFORE the heavy requires below run.
+// bash-prefilter.js reads stdin once; `EARLY.raw` is handed to main() so the
+// full path never re-reads it. Only this process's own entry (require.main)
+// takes the fast path — a test require()ing this file for USAGE/main never does.
+// Never-break-a-session: the only statement that can throw here is the
+// require(), which runs before any stdin read, so a failed require leaves
+// EARLY = null and main() reads stdin itself. earlyGate never throws and always
+// returns the `raw` it read (`''` on a read failure); main() then uses that
+// `raw` rather than re-reading a drained stdin.
+// process.exit(0) on the skip path is safe for the same reason this file is
+// allowlisted in tests/bin-lib/exit-code-conformance.test.js: nothing is
+// pending on stdout to truncate. Kept as ONE braced require.main guard — that
+// test reads the file's first such guard as its entry point.
+let EARLY = null;
+if (require.main === module) {
+  try {
+    EARLY = require('./lib/hooks/bash-prefilter').earlyGate(process.argv[2]);
+  } catch { EARLY = null; }
+  if (EARLY && EARLY.skip) process.exit(0);
+}
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
@@ -83,6 +105,7 @@ const USAGE = {
   'record-pr': 'record-pr [--run <dir>] <number> <url>',
   'spec-status': 'spec-status --run <parent-dir> --spec <n> --status <pending|running|complete|failed|not-run> --phase <phase>',
   'close-run': 'close-run [--run <dir>]',
+  'delete-ledger': 'delete-ledger --run <dir> [--ledger <path>]',
   'teardown-run': 'teardown-run [--run <dir>] [--merged|--abandoned]',
   'archive-run': 'archive-run [--run <dir>]',
   'resolve-console': 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>]',
@@ -108,6 +131,7 @@ const HELP_FLAGS = new Set(['--help', '-h']);
 // ctxLib.resolveRunDir fallback, unchanged.
 const KNOWN_FLAGS = {
   'close-run': ['--run'],
+  'delete-ledger': ['--run', '--ledger'],
   'record-worktree': ['--run'],
   'record-pr': ['--run'],
   'spec-status': ['--run', '--spec', '--status', '--phase', '--now'],
@@ -118,7 +142,7 @@ const KNOWN_FLAGS = {
 // Declared flags that consume the following token as a value — the
 // unknown-flag scan below must skip that token rather than risk misreading
 // it as a flag itself (an argument value could itself start with "--").
-const VALUE_FLAGS = new Set(['--run', '--spec', '--status', '--phase', '--now', '--approve', '--decline']);
+const VALUE_FLAGS = new Set(['--run', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--ledger']);
 
 // First `--*`-shaped token in `args` that isn't declared for this verb, or
 // null when every `--*` token is declared (or there are none). Scans the
@@ -729,12 +753,13 @@ async function main(argv) {
     // pattern-matches literal mkdir/cp/redirect shell syntax in a Bash
     // command's text — a plain Node CLI whose own invocation carries none
     // of those tokens sidesteps that guard the same way bin/log-decision.js/
-    // bin/stage-item.js/bin/set-config.js already do, without special-
-    // casing this procedure inside the guard itself. Unlike those three
-    // (anchored --run only), this verb also validates --worktree is a real
-    // linked worktree of THIS repo (worktree-detect.js's repoInfo(),
-    // _shared/worktree-setup.md's "Adopt-or-create" section), which is why
-    // it lives here as a hooks.js subcommand rather than a fourth
+    // bin/stage-item.js/bin/set-config.js/bin/set-verify-expectations.js
+    // already do, without special-casing this procedure inside the guard
+    // itself. Unlike those four (anchored --run only), this verb also
+    // validates --worktree is a real linked worktree of THIS repo
+    // (worktree-detect.js's repoInfo(), _shared/worktree-setup.md's
+    // "Adopt-or-create" section), which is why it lives here as a hooks.js
+    // subcommand rather than another
     // standalone sibling CLI (docs/hooks.md's "state genuinely coupled to
     // hook enforcement itself" carve-out).
     //
@@ -955,6 +980,47 @@ async function main(argv) {
       // chain. Without this branch, a call that can't resolve any run dir
       // printed nothing and exited 0, indistinguishable from success.
       process.stdout.write('claude-tweaks: no pipeline run dir found — run not closed\n');
+    }
+    return 0;
+  }
+  if (cmd === 'delete-ledger') {
+    // #2546: gives wrap-up cleanup item 2 (ledger deletion) a verb — before
+    // this, deleting the run's ledger file was a hand-run `rm`/Bash call with
+    // no sanctioned CLI path. --run mirrors record-pr/spec-status's shape
+    // (unambiguous-only resolution, explicit --run always wins); --ledger
+    // overrides resolveLedgerPath's own run-dir-first/docs-plans-fallback
+    // resolution for the rare case (2+ *-ledger.md candidates) it can't
+    // disambiguate on its own.
+    const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
+    const {
+      runDir, invalidRunArg, rest, worktreeLocalFallback, candidates,
+    } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
+    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+    const ledgerArg = flagVal(rest, '--ledger');
+    if (invalidRunArg) {
+      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — ledger not deleted\n`);
+    } else if (candidates) {
+      process.stdout.write(`${renderCandidateRefusal('delete-ledger', candidates)}\nLedger not deleted.\n`);
+    } else if (!runDir) {
+      process.stdout.write('claude-tweaks: no pipeline run dir found — ledger not deleted\n');
+    } else {
+      const { resolveLedgerPath } = require('./lib/wrap-up/ledger-write');
+      const worktree = ctxLib.readRunState(runDir)?.worktree || process.cwd();
+      const resolved = resolveLedgerPath({ runDir, worktree, explicit: ledgerArg || null });
+      if (!resolved.ok && resolved.reason === 'ambiguous') {
+        process.stdout.write(`claude-tweaks: delete-ledger: ${resolved.candidates.length} candidate ledgers found, cannot pick one — pass --ledger <path> explicitly:\n${resolved.candidates.map((c) => `  ${c}`).join('\n')}\nLedger not deleted.\n`);
+      } else if (!resolved.ok && resolved.reason === 'rejected') {
+        process.stdout.write(`claude-tweaks: delete-ledger: --ledger ${resolved.candidates[0]} rejected (${resolved.detail}) — ledger not deleted\n`);
+      } else if (!resolved.ok) {
+        process.stdout.write(`claude-tweaks: delete-ledger: no ledger found for ${path.basename(runDir)} — not found\n`);
+      } else {
+        try {
+          fs.unlinkSync(resolved.path);
+          process.stdout.write(`claude-tweaks: deleted ledger ${resolved.path}\n`);
+        } catch (e) {
+          process.stdout.write(`claude-tweaks: delete-ledger: failed to delete ${resolved.path} (${e.message})\n`);
+        }
+      }
     }
     return 0;
   }
@@ -1471,7 +1537,9 @@ async function main(argv) {
   }
   const mod = loadModule(cmd);
   if (!mod || typeof mod.run !== 'function') return 0;
-  const input = ctxLib.parseInput(ctxLib.readStdin());
+  // #3074: stdin was already consumed by the early prefilter gate at the top
+  // of this file when this process was spawned as a tool-use hook.
+  const input = ctxLib.parseInput(EARLY ? EARLY.raw : ctxLib.readStdin());
   const cwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd();
   // Two views of the same runs, because enforcement and bookkeeping want
   // different things (#62).

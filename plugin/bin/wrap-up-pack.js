@@ -17,16 +17,18 @@ const { resolveTarget } = require('./lib/stage-item/write');
 const { safeReal } = require('./lib/hooks/worktree-detect');
 const { writeFileAtomic } = require('./lib/atomic-write');
 
-const USAGE = 'usage: wrap-up-pack.js --run <dir> [--json <path>] [--only <probe,...>]';
+const USAGE = 'usage: wrap-up-pack.js --run <dir> [--json <path>] [--only <probe,...>] [--print <probe>]';
 
 class UsageError extends Error {}
 
 function parseArgs(argv) {
-  const out = { run: null, json: null, only: null };
+  const out = {
+    run: null, json: null, only: null, print: null,
+  };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     const value = argv[i + 1];
-    if (flag === '--run' || flag === '--json' || flag === '--only') {
+    if (flag === '--run' || flag === '--json' || flag === '--only' || flag === '--print') {
       if (value === undefined || value.startsWith('--')) throw new UsageError(`${flag} requires a value`);
       if (flag === '--only') {
         const names = value.split(',').map((s) => s.trim()).filter(Boolean);
@@ -36,6 +38,13 @@ function parseArgs(argv) {
         const bad = names.find((n) => !PROBE_NAMES.includes(n));
         if (bad) throw new UsageError(`unknown probe: ${bad} (known: ${PROBE_NAMES.join(', ')})`);
         out.only = names;
+      } else if (flag === '--print') {
+        // #2546: prints just this probe's value instead of requiring a full
+        // JSON dump plus manual field extraction. Implemented as --only
+        // narrowed to this one probe (so only it actually runs) with a
+        // different stdout shape — see run() below.
+        if (!PROBE_NAMES.includes(value)) throw new UsageError(`unknown probe: ${value} (known: ${PROBE_NAMES.join(', ')})`);
+        out.print = value;
       } else {
         out[flag.slice(2)] = value;
       }
@@ -45,6 +54,7 @@ function parseArgs(argv) {
     throw new UsageError(`unknown flag: ${flag}`);
   }
   if (!out.run) throw new UsageError('--run <dir> is required');
+  if (out.print && out.only) throw new UsageError('--print and --only are mutually exclusive');
   return out;
 }
 
@@ -80,10 +90,22 @@ async function run(argv, deps = {}) {
     }
     file = path.join(parent, path.basename(requested));
   }
-  const pack = await gatherPack({ runDir: target.dir, cwd: cwd(), only: o.only, deps: deps.packDeps || {} });
+  const pack = await gatherPack({ runDir: target.dir, cwd: cwd(), only: o.print ? [o.print] : o.only, deps: deps.packDeps || {} });
   const text = `${JSON.stringify(pack, null, 2)}\n`;
   writeFileAtomic(file, text);
-  stdout(text);
+  if (o.print) {
+    // Defensive — PROBE_NAMES already guarded this at parse time, and
+    // gatherPack was asked to run exactly this one probe, so this should be
+    // unreachable in practice. Exits non-zero rather than printing
+    // `undefined` if gatherPack ever omits a validly-named probe.
+    if (!Object.prototype.hasOwnProperty.call(pack, o.print)) {
+      stderr(`wrap-up-pack.js: probe '${o.print}' is absent from the pack\n`);
+      return 1;
+    }
+    stdout(`${JSON.stringify(pack[o.print], null, 2)}\n`);
+  } else {
+    stdout(text);
+  }
   return 0;
 }
 

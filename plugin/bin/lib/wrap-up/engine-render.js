@@ -200,6 +200,27 @@ function strictCheck(state) {
   return { ok: missing.length === 0, missing };
 }
 
+// ---- procedure-head registry (#2546) ----------------------------------
+//
+// Maps a stable `procedure:<name>` --section value to a split skill file's
+// path, relative to the plugin payload root (the directory with `skills/`
+// directly beneath it — `plugin/` in this repo, `${CLAUDE_PLUGIN_ROOT}` in an
+// installed consumer). This registry is the single source of truth for valid
+// names, shared by the CLI's validation and this suite's own tests. No fs
+// here, per this module's header — reading the file off disk is the CLI's
+// job (bin/wrap-up-engine.js's runRender).
+const PROCEDURE_HEADS = {
+  'review-console': 'skills/wrap-up/review-console.md',
+  'curation-engine': 'skills/wrap-up/curation-engine.md',
+  'cleanup-procedures-execution': 'skills/wrap-up/cleanup-procedures-execution.md',
+  'pr-first-merge': 'skills/_shared/pr-first-merge.md',
+};
+
+function resolveProcedureHeadPath(name) {
+  return Object.prototype.hasOwnProperty.call(PROCEDURE_HEADS, name) ? PROCEDURE_HEADS[name] : null;
+}
+
 module.exports = {
   renderTrace, renderConsoleSections, renderConsoleSectionsMulti, strictCheck, worklistRows, FORBIDDEN_VOCABULARY,
+  PROCEDURE_HEADS, resolveProcedureHeadPath,
 };

@@ -1,5 +1,10 @@
 {
   "checks": { "tests": "npm test" },
+  "retry": { "tests": "node --test {file}" },
+  "flaky": {
+    "files": ["tests/bin-lib/log-decision/append.test.js"],
+    "maxRetries": 1
+  },
   "rules": [
     { "match": "plugin/skills/**", "suites": "*", "static": true },
     { "match": "plugin/**", "suites": "*", "static": true },

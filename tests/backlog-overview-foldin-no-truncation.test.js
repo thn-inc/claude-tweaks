@@ -17,10 +17,16 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execSync } = require('node:child_process');
+const { execSync, spawnSync } = require('node:child_process');
 
 const DOC = path.join(__dirname, '..', 'plugin', 'skills', 'backlog', 'overview-mode.md');
-const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
+// Forward slashes: the snippet interpolates ${CLAUDE_PLUGIN_ROOT} into a JS string literal
+// inside `node -e "…"`, where a win32 backslash path would be read as escape sequences.
+const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin').split(path.sep).join('/');
+
+// The extracted fence is bash, so run it under bash explicitly — execSync's default shell is
+// cmd.exe on win32, which has no `eval`. Skip, with a stated reason, when no bash is on PATH.
+const SKIP_NO_BASH = spawnSync('bash', ['--version'], { stdio: 'ignore' }).status === 0 ? false : 'bash not available';
 
 // Anchored on the fence's own eval line — unique to the second (merge) fence
 // via the `_DATED=` token, which the first (unsynced-only) fence never
@@ -29,7 +35,9 @@ const FENCE_ANCHOR =
   /```bash\n(eval "\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/session-tmp-resolve\.js" ST_BACKLOG_OVERVIEW_UNSYNCED=backlog-overview-unsynced\.json ST_BACKLOG_OVERVIEW_UNSYNCED_DATED=backlog-overview-unsynced-dated\.json[\s\S]*?)\n```/m;
 
 function extractFoldInSnippet() {
-  const doc = fs.readFileSync(DOC, 'utf8');
+  // LF-normalized: a core.autocrlf checkout reads fences as ```bash\r\n, and the \r
+  // would also ride into the snippet bash executes.
+  const doc = fs.readFileSync(DOC, 'utf8').replace(/\r\n/g, '\n');
   const match = FENCE_ANCHOR.exec(doc);
   assert.ok(match, 'extraction pattern is out of sync with overview-mode.md — update this test');
   return match[1];
@@ -47,13 +55,14 @@ function seedSession(sessionId, { githubRecord, unsyncedRecord }) {
 const GITHUB_RECORD = { number: 42, title: 'github-sourced record', facets: { risk: 'low' } };
 const UNSYNCED_RECORD = { title: 'unsynced-sourced record', facets: {}, filePath: 'specs/1-x.md' };
 
-test('overview-mode.md Step 1 fold-in script preserves both sources — no truncation before read', () => {
+test('overview-mode.md Step 1 fold-in script preserves both sources — no truncation before read', { skip: SKIP_NO_BASH }, () => {
   const sessionId = `fold-in-fix-${process.pid}-${Date.now()}`;
   const sessionDir = seedSession(sessionId, { githubRecord: GITHUB_RECORD, unsyncedRecord: UNSYNCED_RECORD });
 
   const snippet = extractFoldInSnippet();
   execSync(snippet, {
     encoding: 'utf8',
+    shell: 'bash',
     env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_CODE_SESSION_ID: sessionId },
   });
 
@@ -66,7 +75,7 @@ test('overview-mode.md Step 1 fold-in script preserves both sources — no trunc
   fs.rmSync(sessionDir, { recursive: true, force: true });
 });
 
-test('go-red control: the pre-#1388 single-redirect form loses the github-sourced record it truncated away', () => {
+test('go-red control: the pre-#1388 single-redirect form loses the github-sourced record it truncated away', { skip: SKIP_NO_BASH }, () => {
   // Frozen bytes of the fence this test's own extraction replaces (the exact
   // pre-fix script) — proves the assertion above can actually fail, per
   // skill-prose-conformance-tests' go-red discipline (IL-105). Never re-read
@@ -103,6 +112,7 @@ test('go-red control: the pre-#1388 single-redirect form loses the github-source
     () => {
       execSync(PRE_FIX_SNIPPET, {
         encoding: 'utf8',
+        shell: 'bash',
         stdio: ['ignore', 'ignore', 'ignore'],
         env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_CODE_SESSION_ID: sessionId },
       });

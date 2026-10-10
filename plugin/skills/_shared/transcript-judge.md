@@ -28,6 +28,10 @@ A consumer may also supply a **watermark payload** shape beyond `bytesAtDispatch
 (e.g. feedback's `filedRecords`/`dismissedSubjects`) — that shape is entirely consumer-owned
 and named in the consumer's own file, never here.
 
+A consumer may also **opt out of the self-assessment watermark write** (Degradation section below)
+when its fallback evaluates something other than the session's own conversational context —
+stated in the consumer's own file (reflect does).
+
 ## Transcript resolution
 
 Runs in the main thread, before dispatch.
@@ -105,14 +109,15 @@ after the watermark, when one exists. This skip check and the offset clause are 
 redundant: the offset clause narrows an unavoidable dispatch; this check avoids the dispatch
 altogether when narrowing it would leave nothing to evaluate.
 
-**Self-assessment is exempted, explicitly (not an oversight).** The Degradation section below
-states self-assessment "never reads or writes a watermark — there is no resolved transcript path
-to key one on." This skip check inherits that same exemption rather than inventing a parallel
-mechanism for it: self-assessment only fires when no transcript file resolves at all, so there is
-no `currentBytes` to compare and no stamp to check. A self-assessment run therefore always runs in
-full and never writes a stamp on this check's account — duplicate-filing guards across repeated
-self-assessment runs are the consumer's own concern, the same safety net that already covers a
-transcript-judged run's non-duplicate findings.
+**Self-assessment is exempted, explicitly (not an oversight).** This skip check runs only once a
+transcript path has resolved, and before any dispatch. Neither route into self-assessment
+(Degradation section below) leaves it anything to do: on the no-transcript-resolves route there is
+no `currentBytes` to compare and no stamp to check; on the terminal judge-dispatch-failure route
+this check already ran earlier in the same invocation and returned `false` — that is how the failed
+dispatch was reached. So it never re-runs on self-assessment's account — duplicate-filing guards
+across repeated self-assessment runs are the consumer's own concern, the same safety net that
+already covers a transcript-judged run's non-duplicate findings. Whether a self-assessment run
+writes a watermark is the Degradation section's concern, not this check's.
 
 ## The judge dispatch
 
@@ -187,8 +192,23 @@ The `(self-assessment)` tag is the full mitigation, deliberately. No separate co
 machinery, no lowered evidentiary bar — findings from this mode pass through the consumer's own
 human-gated confirmation exactly like a transcript-judged finding does.
 
-The self-assessment path never reads or writes a watermark — there is no resolved transcript path
-to key one on.
+**Watermark — narrower than a blanket exclusion.** The one true no-watermark case is the
+no-transcript-resolves route above: there is genuinely no resolved transcript path to key a
+watermark on, so none is written. The terminal-dispatch-failure route is different — a transcript
+path *did* resolve (resolution has to succeed before a dispatch can even be attempted), so there is
+exactly the same `transcriptPath` + `bytesAtDispatch` a successful dispatch would have written
+against. On that route, once the self-assessment evaluation completes, call `writeWatermark` the
+same way the Watermark write section below describes — reusing the `bytesAtDispatch` already
+captured before the failed dispatch attempt (never re-stat after; the same append-while-running
+race that section's own comment warns about) — with `evaluatedAt` as now, the consumer's own
+payload fields (parameterization point 4), and one addition: `mode: "self-assessment"` on the
+payload, so a later reader (or a human inspecting the watermark file) can tell a
+self-assessment-written watermark apart from a dispatched judge's. A reader written before this
+field existed treats its absence as the pre-existing dispatched-judge case, never as a new failure
+mode. The write rests on the self-assessment having evaluated the session's own conversational
+context; a consumer whose fallback evaluates something else (reflect's inline lens procedure reads
+gathered repo artifacts, not the session) opts out and writes no watermark on this route — its own
+file states the opt-out.
 
 ## After the judge returns
 
@@ -205,8 +225,10 @@ Model Selection section, then degrades to the self-assessment path above, noted 
 summary: the evaluation is never silently dropped.
 
 **Watermark write.** On a `DONE` or `DONE_WITH_CONCERNS` return from the judge (not
-`NEEDS_CONTEXT`/`BLOCKED`, and not the self-assessment degradation path above), call
-`writeWatermark` (with the consumer's own `{ consumer }` key) with:
+`NEEDS_CONTEXT`/`BLOCKED`) — or on completing a self-assessment evaluation reached via a terminal
+judge-dispatch failure, per the Degradation section's "Watermark — narrower than a blanket
+exclusion" paragraph above — call `writeWatermark` (with the consumer's own `{ consumer }` key)
+with:
 
 ```
 {
@@ -215,6 +237,9 @@ summary: the evaluation is never silently dropped.
                            // to the transcript while it runs, so re-stat-ing after return
                            // would race
   evaluatedAt,             // now
+  mode,                    // "self-assessment" on the terminal-dispatch-failure route above;
+                           // omitted (undefined) on an ordinary dispatched-judge write — a
+                           // reader treats an absent field as the pre-existing dispatched case
   ...consumer-owned payload fields (parameterization point 4's "watermark payload" note above)
 }
 ```

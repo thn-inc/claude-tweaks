@@ -107,6 +107,41 @@ When mechanizing a prose heuristic into a deterministic check:
    whole-branch review caught it by running the CLI twice — once with a declaration, once without —
    and diffing the stamp. Pass `null`, or another shape the callee branches on explicitly; never the
    same empty collection the populated-but-empty case produces.
+5. **A comparison between two fallibly-read values owes the "couldn't read" guard on every operand,
+   not just one.** The rule reaches past parsing to any classifier that compares inputs it had to
+   read, each of which comes back `null` when the read fails. An equality check turns an unread
+   side into a confident verdict: `null === 'anchor text'` reports "different", and `null === null`
+   would report "identical". `plugin/bin/lib/console/resolve.js`'s `classifyStagedItem` (#2773)
+   compares a `.shadow-dup` copy's text against its anchor's and has three outcomes:
+   `shadow-dup-duplicate`, `shadow-dup-divergent`, and the conservative `shadow-dup-collision` when
+   it can't tell. The first version guarded only the anchor's `siblingText`. A shadow copy whose
+   own read failed, while its anchor read fine, reached the comparison and came back
+   `shadow-dup-divergent`. Whole-branch review caught it, and `116707a7a` added the guard on `text`
+   too. Write the guard over every operand before the comparison, and pin the one-side-unreadable
+   case with its own test assertion, because tests that only cover "both readable" and "neither
+   supplied" pass with the one-sided guard.
+6. **A positive recogniser owes a whole-input match, not a prefix match.** When "recognised" is the
+   outcome that relaxes a safety classification, a start-anchored pattern lets a truncated or
+   tail-carrying input read as recognised: the couldn't-parse case hides inside the accepted one.
+   `plugin/bin/lib/log-decision/claim-log.js`'s `isClaimLogEntry` (#2861) decides whether a
+   `decisions.md` line is one of Step 2.8's claim-log lines, and a file holding only those lines
+   reads as a freshly minted run directory. Its first version tested the action text against a
+   start-anchored pattern, so a claim line cut mid-write and a claim prefix with another decision
+   behind it both classified `claim-log-only`. The build's tests covered whole-line junk and passed.
+   Review caught it, and `c610df577` anchored the pattern at both ends, including the suffix the
+   writer always appends. Anchor both ends against what the writer emits, and pin a truncated copy
+   and a tail-carrying copy of an accepted input with their own assertions.
+7. **A parsed list that feeds a pass verdict owes an independent count to reconcile against.** An
+   extractor that returns N items cannot say it missed one more, so an undercount reads exactly
+   like a complete list. That is the same silent false negative as a merged `null`, one level up.
+   `plugin/bin/lib/verify/baseline.js`'s `adjudicate` (#3043) may turn a failing test run into a
+   pass only when its extracted failing files account for the whole failure, so it checks them
+   against counts the log states separately. For spec output, the `test at` entries
+   (`specEntryCount`) must equal the summary's `ℹ fail N`. In spec and TAP output, every failing
+   entry or `not ok` block must name a test file (`countUnmatchedFailures` returns 0). An output
+   family with no such cross-check is refused outright ("has no failure-accounting guard"). Each
+   mismatch returns `{eligible: false, reason}` naming both numbers, never a verdict over the
+   files it did find. When no independent count exists for an input, the list cannot gate a pass.
 
 ## When to use
 

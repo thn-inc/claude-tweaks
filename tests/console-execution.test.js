@@ -1,16 +1,16 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #413: Console execution — reconciler executes answered consoles, live
 // accelerator, consoleAutoResolve. Prose-as-implementation, same convention
 // as the other pr-first sub-issues' test files — pin the key claims against
 // the actual file text.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 const EXEC = read('plugin', 'skills', '_shared', 'console-execution.md');
 const REVIEW_CONSOLE = read('plugin', 'skills', 'wrap-up', 'review-console.md');
 const REVIEW_CONSOLE_INTERACTIVE = read('plugin', 'skills', 'wrap-up', 'review-console-interactive.md');

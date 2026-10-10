@@ -350,11 +350,15 @@ the result:
 6. **Command succeeded**: confirm which of the two happened —
 
    ```bash
-   gh pr view {pr-number} --repo {owner}/{repo} --json state,mergedAt,autoMergeRequest
+   gh pr view {pr-number} --repo {owner}/{repo} --json state,mergedAt,autoMergeRequest,statusCheckRollup
    ```
 
-   - `state: MERGED` (checks were already green, or this was the no-`--auto` immediate-merge
-     degrade branch): outcome `merged`. Go to Step 4.
+   - `state: MERGED`: outcome `merged`. **Read `statusCheckRollup` before reporting it green
+     (#2705) — never infer "merged once CI passed" from `state` alone.** All entries
+     `COMPLETED`+`SUCCESS`/`NEUTRAL`/`SKIPPED` → report "merged, {names} concluded {conclusions}";
+     any entry still non-`COMPLETED` → report "merged — {name} had not concluded at merge time;
+     this repo has no required checks (see Signatures below), so `--auto` did not wait on it";
+     empty rollup → "merged — no status checks on this PR." Go to Step 4.
    - `state: OPEN` with `autoMergeRequest` present (checks still pending, auto-merge armed):
      outcome `armed`. **Do not poll or wait** — this call is done. The reconciler
      (`bin/lib/reconcile`) completes cleanup later, on merged-PR evidence, the same convergent
@@ -417,17 +421,12 @@ Replaces `ready-to-merge` (folded into `merged`/`armed` — see Step 3.6) and `p
 
 ## Comment ordering
 
-Anything that must land on the PR posts **before** the merge call (Step 3) — the verdict/brief
-comments from `_shared/pr-run-comments.md` already do, per their own citing sites' phase-exit
-ordering. Anything this procedure itself posts (the conflict/degrade comment) is
-**after**-the-fact information about why the merge didn't complete, so it posts once the outcome
-is known, never speculatively before.
+See `pr-first-merge-appendix.md`'s "Comment ordering" section for the posting-order rule
+governing anything this procedure comments on the PR.
 
 ## Local-merge fallback
 
 <!-- when: integration-model=local-merge -->
-Not this file's concern — `local-merge` projects keep each citing file's own pre-#411 procedure
-in substance: the branch-switch guard, the `close-run` E1 relief, the push-from-worktree rule,
-and (for `flow/worktree-merge.md`) the scratch-worktree conflict procedure. Each citing file
-keeps a compact section stating this rather than duplicating the old prose here.
+Not this file's concern under `pr-first` — see `pr-first-merge-appendix.md`'s "Local-merge
+fallback" section for what `local-merge` projects keep instead.
 <!-- /when -->

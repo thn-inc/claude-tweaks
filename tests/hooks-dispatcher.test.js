@@ -7,6 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { readRunState } = require('../plugin/bin/lib/hooks/context');
+const { shouldRunFull } = require('../plugin/bin/lib/hooks/bash-prefilter');
 const { linkedWorktreeOf } = require('./helpers/git-fixtures');
 const { skipUnderRoot } = require('./helpers/root');
 
@@ -601,11 +602,12 @@ test('hooks.json registers a PreToolUse matcher for ExitWorktree (unfiltered, li
   assert.match(entry.hooks[0].command, /bin\/hooks\.js" pre-tool-use$/);
 });
 
-test("hooks.json's PreToolUse Bash `if` patterns include Bash(git worktree *)", () => {
+test("hooks.json's PreToolUse Bash handler is unconditional and the prefilter covers git worktree", () => {
   const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
   const bashEntry = config.hooks.PreToolUse.find((e) => e.matcher === 'Bash');
-  const ifs = bashEntry.hooks.map((h) => h.if);
-  assert.ok(ifs.includes('Bash(git worktree *)'), 'expected PreToolUse\'s Bash matcher to include an "if": "Bash(git worktree *)" entry');
+  assert.strictEqual(bashEntry.hooks.length, 1);
+  assert.ok(!('if' in bashEntry.hooks[0]));
+  assert.strictEqual(shouldRunFull('pre-tool-use', { tool_name: 'Bash', tool_input: { command: 'git worktree add ../w' } }), true);
 });
 
 test('hooks.json registers a PostToolUse matcher for Skill (unfiltered, literal tool-name match)', () => {
@@ -649,35 +651,31 @@ test('hooks.json registers a PostToolUse matcher for Write (unfiltered, literal 
   assert.match(writeEntry.hooks[0].command, /bin\/hooks\.js" post-tool-use$/);
 });
 
-test('hooks.json registers a PostToolUse matcher for Bash (pattern-filtered via `if`)', () => {
+test('hooks.json registers ONE unconditional PostToolUse handler for Bash (#3074)', () => {
   const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
   const bashEntry = config.hooks.PostToolUse.find((e) => e.matcher === 'Bash');
   assert.ok(bashEntry, 'expected a PostToolUse Bash matcher entry');
-  assert.ok(bashEntry.hooks.length > 0, 'expected at least one Bash `if`-filtered hook entry');
-  for (const hook of bashEntry.hooks) {
-    assert.strictEqual(hook.type, 'command');
-    assert.ok('if' in hook, 'PostToolUse Bash matcher hooks must be pattern-filtered via "if"');
-    assert.match(hook.command, /bin\/hooks\.js" post-tool-use$/);
-  }
+  assert.strictEqual(bashEntry.hooks.length, 1);
+  const hook = bashEntry.hooks[0];
+  assert.strictEqual(hook.type, 'command');
+  assert.ok(!('if' in hook), 'the PostToolUse Bash handler must be unconditional — the prefilter in bin/hooks.js replaces the "if" patterns');
+  assert.match(hook.command, /bin\/hooks\.js" post-tool-use$/);
 });
 
-test("hooks.json's PreToolUse/PostToolUse Bash `if` patterns cover every VALUE_FLAGS entry git-command.js's gitTargets() resolves (finding regression)", () => {
+test("the Bash prefilter covers every VALUE_FLAGS entry git-command.js's gitTargets() resolves (finding regression)", () => {
   // git-command.js's gitTargets() is written and unit-tested to correctly
   // resolve a commit/push target through `-c`, `--exec-path`, and
   // `--namespace` (VALUE_FLAGS), not just `-C` — but the parser is only ever
-  // invoked at all if one of hooks.json's own `if` matchers first recognizes
-  // the command shape enough to spawn bin/hooks.js. A commit issued as
-  // `git -c user.name=x commit -m y` previously never even reached the
-  // parser: no registered `if` pattern matched its literal text, so both
-  // the worktree-always deny and the E1 wrong-checkout deny silently never
-  // fired for this shape.
-  const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
-  const requiredPatterns = ['Bash(git -c *)', 'Bash(git --exec-path=*)', 'Bash(git --namespace=*)'];
-  for (const event of ['PreToolUse', 'PostToolUse']) {
-    const bashEntry = config.hooks[event].find((e) => e.matcher === 'Bash');
-    const ifs = bashEntry.hooks.map((h) => h.if);
-    for (const pattern of requiredPatterns) {
-      assert.ok(ifs.includes(pattern), `expected ${event}'s Bash matcher to include an "if": "${pattern}" entry`);
+  // invoked at all if the command shape is first recognized enough to run the
+  // full handler. Before #3074 that recognition was hooks.json's per-pattern
+  // `if` matchers: a commit issued as `git -c user.name=x commit -m y` never
+  // even reached the parser (no registered `if` pattern matched its literal
+  // text), so both the worktree-always deny and the E1 wrong-checkout deny
+  // silently never fired for this shape. hooks.json now registers one
+  // unconditional handler and bash-prefilter.js plays the matcher's role.
+  for (const event of ['pre-tool-use', 'post-tool-use']) {
+    for (const command of ['git -c user.name=x commit -m y', 'git --exec-path=/x commit -m y', 'git --namespace=n push']) {
+      assert.strictEqual(shouldRunFull(event, { tool_name: 'Bash', tool_input: { command } }), true, `${event} skips '${command}'`);
     }
   }
 });
@@ -744,29 +742,29 @@ test('#1337: a gate-denial event is untagged when CT_HOOKS_TEST_MODE is not set'
   assert.strictEqual('test' in events[0], false, 'a real denial must not carry the test-mode tag');
 });
 
-// #750 deliverable 1: hooks.json registers checkWorktreeRequired's pre-tool-use
-// dispatch under MANY separate "if": "Bash(<shape> *)" entries on the SAME
-// Bash matcher (git commit/push/-C/-c/--exec-path/--namespace, cp, mv,
-// mkdir, tee, sed, perl, install, ln, truncate, dd, git worktree, ...) — the
-// harness independently evaluates each "if" against a real compound Bash
-// command and can spawn `pre-tool-use.js` once per matching entry for what
-// is, from the operator's perspective, ONE tool call. This reproduces that
-// shape directly (looping every registered "if" pattern's underlying command
-// shape against the SAME compound command, exactly as N separate harness
-// dispatches would) in a project with NO worktree-always policy — i.e. a
-// command that genuinely executes successfully, no actual denial anywhere.
+// #750 deliverable 1: before #3074, hooks.json registered checkWorktreeRequired's
+// pre-tool-use dispatch under MANY separate "if": "Bash(<shape> *)" entries on
+// the SAME Bash matcher, and the harness could spawn `pre-tool-use.js` once per
+// matching entry for what is, from the operator's perspective, ONE tool call.
+// hooks.json now registers ONE unconditional Bash handler (bash-prefilter.js
+// decides whether it is worth running), so that N-fold fan-out no longer exists
+// at the registration seam. The test below pins the single-handler invariant:
+// ONE invocation of the handler on a compound command spanning every former
+// `if` shape (git commit/push/-C/-c/--exec-path/--namespace, cp, mv, mkdir,
+// tee, sed, perl, install, ln, truncate, dd, git worktree, ...) in a project
+// with NO worktree-always policy — i.e. a command that genuinely executes
+// successfully, no actual denial anywhere — produces no gate-denial event.
 // checkWorktreeRequired's own fast-reject (`wtDetect.findPolicyFile` finds
-// nothing) means every one of those N invocations returns `{}` before ever
-// reaching the gate-denial write — so the burst reported in #750 cannot be
-// per-segment/per-matching-hook duplicate logging of a non-denial: this
-// invariant already holds structurally. (The reported burst's actual cause —
+// nothing) returns `{}` before ever reaching the gate-denial write — so the
+// burst reported in #750 cannot be per-segment/per-matching-hook duplicate
+// logging of a non-denial: this invariant already holds structurally. (The reported burst's actual cause —
 // a genuinely-denied SIBLING session's events landing in the WRONG run's
 // events.jsonl via fallback attribution — is a `resolveRun` cross-worktree
 // misattribution bug tracked separately: #721 fixed the narrower
 // unadopted-mint case, and the broader cross-worktree case is #1402/PR #1577,
 // already built+tested+reviewed and awaiting merge as of this writing — not
 // re-implemented here to avoid duplicating that in-flight fix.)
-test('#750: a compound Bash command with no policy violation never logs a gate-denial event, no matter how many registered "if" hook entries would independently fire on it', () => {
+test('#750: a compound Bash command with no policy violation logs no gate-denial event', () => {
   const project = gitRepo(); // no writeWorktreeAlwaysPolicy(project) -- nothing to enforce
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true });
@@ -779,16 +777,14 @@ test('#750: a compound Bash command with no policy violation never logs a gate-d
   ].join(' && ');
   const hooksConfig = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
   const bashEntry = hooksConfig.hooks.PreToolUse.find((e) => e.matcher === 'Bash');
-  assert.ok(bashEntry.hooks.length > 10, 'expected many registered "if" entries under the Bash matcher (the mechanism under test)');
-  for (const { if: ifPattern } of bashEntry.hooks) {
-    const result = runHook(['pre-tool-use'], {
-      input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: compoundCommand } }),
-      cwd: project,
-    });
-    assert.strictEqual(result.code, 0, `invocation simulating "if": "${ifPattern}" should not error`);
-    assert.doesNotMatch(result.stdout, /"permissionDecision":"deny"/, `invocation simulating "if": "${ifPattern}" must not deny — no policy is set`);
-  }
-  assert.ok(!fs.existsSync(path.join(run, 'events.jsonl')), 'no gate-denial (or any) event should ever have been written across all simulated invocations');
+  assert.strictEqual(bashEntry.hooks.length, 1, 'one unconditional handler (#3074)');
+  const result = runHook(['pre-tool-use'], {
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: compoundCommand } }),
+    cwd: project,
+  });
+  assert.strictEqual(result.code, 0, 'should not error');
+  assert.doesNotMatch(result.stdout, /"permissionDecision":"deny"/, 'must not deny — no policy is set');
+  assert.ok(!fs.existsSync(path.join(run, 'events.jsonl')), 'no gate-denial (or any) event should have been written');
 });
 
 // #1395: the gitignored-target exemption's own allow breadcrumb — unlike

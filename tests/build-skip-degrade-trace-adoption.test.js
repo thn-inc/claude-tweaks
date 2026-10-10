@@ -10,11 +10,11 @@
 // SKIP exclusion). This file covers the prose contract and /build's adoption sites.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 
+const { readText } = require('./helpers/read-skill');
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const AUTO_DECISION_LOG = read('plugin', 'skills', '_shared', 'auto-decision-log.md');
 const BUILD_SKILL = read('plugin', 'skills', 'build', 'SKILL.md');

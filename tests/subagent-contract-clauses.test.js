@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 // Two records landed in one change, in the same two files and largely the same
 // paragraphs: #124 supplied the *why* (the Subagent Contract is dispatch-correctness
@@ -24,20 +24,18 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 
 const FILES = {
-  'skills/_shared/subagent-output-contract.md': fs.readFileSync(
+  'skills/_shared/subagent-output-contract.md': readText(
     path.join(ROOT, 'plugin', 'skills', '_shared', 'subagent-output-contract.md'),
-    'utf8',
   ),
-  'CLAUDE.md': fs.readFileSync(path.join(ROOT, 'CLAUDE.md'), 'utf8'),
+  'CLAUDE.md': readText(path.join(ROOT, 'CLAUDE.md')),
 };
 
 // The fan-out section ("How to integrate at a dispatch site") and its "single assistant
 // message" sentence moved to subagent-dispatch-core.md at #2019 — read separately since the
 // clause-presence loop above (dispatch correctness / third-party exemption) still targets the
 // parent contract file, which keeps those two clauses.
-const DISPATCH_CORE = fs.readFileSync(
+const DISPATCH_CORE = readText(
   path.join(ROOT, 'plugin', 'skills', '_shared', 'subagent-dispatch-core.md'),
-  'utf8',
 );
 
 // The exemption's own text, isolated from the rest of the file, so the
@@ -164,9 +162,8 @@ test('the exempt dispatch names itself in both the contract and the call site (#
       'specific delegation rather than a general licence.',
   );
 
-  const reviewMode = fs.readFileSync(
+  const reviewMode = readText(
     path.join(ROOT, 'plugin', 'skills', 'design-wrapper', 'modes', 'review.md'),
-    'utf8',
   );
   assert.match(
     reviewMode,
@@ -222,7 +219,7 @@ const FAN_OUT_SITES = {
 };
 
 function readSite(relPath) {
-  return fs.readFileSync(path.join(ROOT, 'plugin', relPath), 'utf8');
+  return readText(path.join(ROOT, 'plugin', relPath));
 }
 
 for (const [skillName, relPath] of Object.entries(FAN_OUT_SITES)) {

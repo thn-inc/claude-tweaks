@@ -152,10 +152,44 @@ Read `merge-lane-reset.md` in this skill's directory and follow it, before the g
 runs — a best-effort breaker read (#311) and, only when tripped, the one `AskUserQuestion` that is
 the sole path back to a clear breaker.
 
+### Pre-dispatch freshness check (#2718)
+
+Immediately before dispatching any grant-check judgment call below — not just before Step 5's
+write — re-check whether `.grantSlice.selected`'s population is still current. A concurrent
+actor (another session, a scheduled Routine) can fully process the same `ready`+ungranted queue
+during the window between Step 1's fetch and this sub-stage's dispatch; spending the judgment
+budget on records already resolved is pure waste. One cheap, mechanical check, not a second
+judgment pass:
+
+```bash
+gh issue list --label ready --state open --json number -q '[.[].number]'
+```
+
+Intersect this freshly-fetched number list with `.grantSlice.selected`. An empty intersection
+means every originally-selected record has since lost `ready` (granted, closed, or relabeled by
+someone else) — skip the grant-check dispatch entirely for this sub-stage and report plainly:
+"Pre-dispatch freshness check: 0 of `{N}` originally-selected records are still ready — skipping
+grant-check (population already processed since Step 1's fetch)." A non-empty intersection
+narrows `selected` to just the still-current numbers (dropping any that fell out) and proceeds
+to the dispatch below unchanged — the common case, costing exactly one list call against the N
+judgment calls it guards, never a second per-record fetch.
+
 Bound the grant-check LLM pass independently of Step 2's budget. Read `.grantSlice.selected` and
 `.grantSlice.remaining` (already bounded to `--budget`, default 40, by Step 1's compute block) and
 `.blocked` from `session-scoped backlog-refine-worklist.json` — no separate script runs here. Below, `selected`
 and `blocked` refer to these two fields.
+
+**Grant-check is sequential-only (#2720) — never hand-parallelize this loop.** The dispatch below
+runs once per record, in order, each invocation fetching and caching that record's body at
+`assess-grant-{n}.json` (Step 3.5's cache, above) before moving to the next. This is what bounds
+the whole grant-check + Step 3.5 pipeline to exactly one `gh issue view`/body-fetch round trip per
+record: Step 3.5 reuses this cache instead of re-fetching. A caller that instead fans this loop out
+by hand — e.g. several parallel Task-agent dispatches, one per record slice — breaks that bound:
+each dispatch's own ephemeral context fetches independently, and none of them ever populates this
+run's session-scoped cache, so Step 3.5 re-fetches every record a second time. A large batch should
+reduce via `--budget {N}` (re-run to continue past `.grantSlice.remaining`, already reported above)
+rather than parallelize this loop — the sequential cache-reuse property is the point, not an
+incidental side effect of today's implementation.
 
 For every record in `selected`, invoke `/claude-tweaks:assess-agent-autonomy` in `grant-check` mode, once per record, every backlog refine session — never pre-filtered to "borderline" records:
 
@@ -282,11 +316,16 @@ Priority → Dependency repair → Needs you. Resolve and Re-authorize are the o
 proposal never resolves a co-occurring `bot:blocked`, and vice versa), so a record carrying both
 renders once in each (#1887).
 
-Read `refine-lanes.md` in this skill's directory for the full rendering procedure — the lane tables
-and paste-block templates, the consequence-line trust and `solution:unjustified` annotation templates, the
-count-summary line, the Needs-you lane, the ceiling/skip-case footers, the closing `Next:` line
-rule, and the confirm gate (`<!-- refine-confirm-gate -->`). For the Resolve lane specifically,
-`refine-lanes.md` points at `refine-record.md`'s own batch-table render and Step 4's per-choice
+`refine-lanes.md` in this skill's directory holds the full rendering procedure, organized one `##`
+section per lane (`Resolve`, `Re-authorize`, `Grant`, `Flag-back`, `Needs-decision`, `Priority`,
+`Dependency repair`, `Needs you`) plus the shared count-summary line, ceiling/skip-case footers,
+closing `Next:` line rule, and confirm gate (`<!-- refine-confirm-gate -->`) that apply regardless
+of which lanes rendered (#2722). **Read only the sections for lanes with at least one row this
+run** — a run whose population landed entirely in one lane (e.g. an `#N`-filtered run touching
+only Priority) has no rendering decision to make for a lane with zero rows, so its section's
+table/template/annotation prose never needs opening. Always read the shared sections above
+regardless of population. For the Resolve lane specifically, `refine-lanes.md` points at
+`refine-record.md`'s own batch-table render and Step 4's per-choice
 write mechanics rather than restating them — read that file for the choices, evidence column, and
 apply mechanics; only the *population* (whole-queue or `#N`-filtered, above) is new here.
 

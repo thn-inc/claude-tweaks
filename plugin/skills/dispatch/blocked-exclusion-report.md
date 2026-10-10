@@ -12,6 +12,12 @@ one line before the rest of this step's own output:
 
 `{n} excluded — blocked by an open dependency: #{a} (blocked by #{x}), #{b} (blocked by #{y}, #{z})`
 
+Then read the same file's `reason: 'target-missing'` entries (`records: [number], detail: {path}`
+each, #1983 — `queue-pull-script.md` names this report as their reader) and render one line per
+record, under the same exception and empty-array rules below:
+
+`#{number} excluded — named target {path} no longer exists at the integration tip (Close proposal staged)`
+
 **Exception — the headless drain steady state.** When this is drain (or `next`) and the
 zero-eligible-groups case (`SKILL.md` Step 3) applies, render nothing here either, same as that
 case's rule — a persistently-blocked queue must not turn an intended-silent Routine firing into

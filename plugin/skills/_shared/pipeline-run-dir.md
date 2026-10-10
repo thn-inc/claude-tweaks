@@ -1,6 +1,6 @@
 # Pipeline Run Directory Resolution — Shared
 
-Operational reference for skills that need to locate the active pipeline run directory. Ownership is split three ways. **`_shared/run-dir-resolution.md` owns the Resolution order and its Bash snippet** (#2019, extracted so a call site needing only those can compose a bundle under the 40 KB ceiling) — the canonical, complete ordered algorithm for finding the active run, cited by step number from `/capture`, `/tidy`'s `scan-procedures.md`, `flow/materialize.md`, and `_shared/auto-decision-log.md`. **This file owns `resolve-run-dir`'s CLI reference, Anchoring (write-pinning, guards), and the Worktree-local `--run` fallback.** `auto-mode-contract.md`'s "Pipeline run directory: location and collision-safety" section owns everything around both — directory structure, collision-safety rationale, cleanup/archival lifecycle, and gitignore treatment — and does not restate the ordering. Consult that section for anything not covered here.
+Operational reference for skills that need to locate the active pipeline run directory. Ownership is split three ways. **`_shared/run-dir-resolution.md` owns the Resolution order and its Bash snippet** (#2019, extracted so a call site needing only those can compose a bundle under the 40 KB ceiling) — the canonical, complete ordered algorithm for finding the active run, cited by step number from `/capture`, `/tidy`'s `scan-procedures.md`, `flow/materialize.md`, and `_shared/auto-decision-log.md`. **This file owns `resolve-run-dir`'s CLI reference (#2728: `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir` — a `bin/hooks.js` subcommand, never a standalone `bin/resolve-run-dir.js` script), Anchoring (write-pinning, guards), and the Worktree-local `--run` fallback.** `auto-mode-contract.md`'s "Pipeline run directory: location and collision-safety" section owns everything around both — directory structure, collision-safety rationale, cleanup/archival lifecycle, and gitignore treatment — and does not restate the ordering. Consult that section for anything not covered here.
 
 **Not the hook-side algorithm.** Hooks cannot see a skill's spec/topic, so `bin/lib/hooks/context.js`'s `resolveRun` answers a different question with different rules (ownership-scoped, no slug matching — see CLAUDE.md's Hooks section). A change to the order below does not change hook behavior, and vice versa.
 
@@ -99,7 +99,9 @@ When that happens, use `bin/log-decision.js` (`_shared/auto-decision-log.md`'s c
 appender) for a `decisions.md` entry, or `bin/stage-item.js` for a new staged file; `bin/set-config.js`
 writes a `config.yml` policy lever (`--run <run-dir> --key <lever> --value <value>`, or the
 `--run <run-dir> --set <key1>=<value1>,...` batch form that writes every lever in one call,
-refs #1376/#1580) the same way — none of the three are
+refs #1376/#1580) the same way, and `bin/set-verify-expectations.js` writes or updates
+`verify-expectations.json` (`--run <run-dir>` plus `--deferred`/`--issues`/`--oversight-exempt`/`--file`,
+refs #2764) — none of the four are
 subject to this tool-level pinning, and all work identically from a worktree session or the
 main checkout. Reach for `bin/set-config.js` rather than a hand-rolled `sed -i` on `config.yml`
 even from a Bash call: a `sed -i` target built from a shell variable set in an earlier command
@@ -146,28 +148,11 @@ sanctioned-write family, the fourth a single documented exception:
   `resolveRunArg` carries the one narrow exception to this rule — see **Worktree-local `--run`
   fallback (#280)** immediately below.
 
-### Initialized-run-dir requirement (#1566)
+### Initialized-run-dir requirement (#1566) — moved
 
-Anchoring under the main checkout is necessary but not sufficient — `resolveRunArg`'s plain
-anchored-directory branch also requires the resolved `--run` value to already be an
-**initialized** run dir (carrying at least one of `decisions.md`/`run-state.json`/`config.yml`,
-the same bar the `#280` fallback below already applied to its own narrower case). A real, anchored,
-but wholly empty directory (a stray `--run .` from a bare repo root, a caller bug interpolating
-`$RUN_ROOT` instead of the run dir) is rejected rather than silently accepted and written to.
-
-Two of the 8 shared callers opt out of this requirement via `resolveOpts.allowUninitialized`:
-**`record-worktree`**, the sole legitimate first-writer in the dispatch mint-then-claim handoff
-(`dispatch/SKILL.md` Step 4 mkdir-only mints a run dir, `flow/steps-and-gates.md` case 2 adopts it
-with no `config.yml` yet, `worktree-setup.md` Step 4.5's `record-worktree` call performs the actual
-first write into it); and **`archive-run`**, whose own downstream logic reports a stale,
-never-claimed mint with a specific orphaned-mint-sweep pointer rather than a generic rejection.
-That opt-in is narrower than it sounds: an uninitialized target must also sit under
-`.claude-tweaks/pipelines/` at a run-id-shaped path (the same bar the `#280` fallback below already
-enforces) — without this, `allowUninitialized` would itself reopen `--run .`/`--run $RUN_ROOT`
-against the main checkout root for exactly the two callers licensed to skip the initialization
-check. The other 6 callers (`record-pr`, `spec-status`, `close-run`, `teardown-run`,
-`check-resume-freshness`, `check-staged-inventory`) always target an already-initialized run dir in
-real use, so they keep the default.
+Moved to `_shared/pipeline-run-dir-initialized-check.md` (#2722) — `bin/*.js`-author detail (which
+of `resolveRunArg`'s 8 shared callers opt out via `resolveOpts.allowUninitialized`, and why) not
+needed by an ordinary skill-following worktree-creation catch-up. Read there.
 
 ### Worktree-local `--run` fallback (#280)
 
@@ -237,15 +222,15 @@ argument still holds there.
   CLIs' documented invocation-failure code — a deliberate, stated deviation from the family's
   exit 2.
 
-- **Sanctioned-write CLIs** — `bin/log-decision.js`, `bin/stage-item.js`, and `bin/set-config.js`
-  (`--run`, refs #1376) — the run-dir writers a worktree-isolated session invokes when tool-level
+- **Sanctioned-write CLIs** — `bin/log-decision.js`, `bin/stage-item.js`, `bin/set-config.js`
+  (`--run`, refs #1376), and `bin/set-verify-expectations.js` (`--run`, refs #2764) — the run-dir writers a worktree-isolated session invokes when tool-level
   pinning refuses the run dir (see the tool-level pinning note above). Each applies the same
   strict anchored-under-the-main-checkout rule, but through `bin/lib/stage-item/write.js`'s
   exported `resolveTarget` rather than `worktree-detect.js` directly, and refuses with exit **3**
   — their documented run-dir-failure code, kept distinct from their exit 2 (malformed
   invocation), with its own two messages ("run dir does not exist" versus "not anchored under
-  the main checkout (a worktree-local shadow)"). A fourth writer imports that `resolveTarget`
-  rather than re-deriving the predicate.
+  the main checkout (a worktree-local shadow)"). A further writer imports that `resolveTarget`
+  rather than re-deriving the predicate, as the third and fourth did.
 
 - **The composer CLI** — `bin/compose-context.js` (`--run`, #1988) — writes
   `{run}/context/{step}.md` yet takes the resolver family's anchored-or-outside rule

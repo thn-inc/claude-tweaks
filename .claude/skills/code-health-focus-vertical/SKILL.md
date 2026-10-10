@@ -22,6 +22,7 @@ A vertical is not shipped until every row below lands in the same change. A key 
 | `focus-mode.md` `## Criterion pinning` | One `` | `{focus}` | `{criterion}` | `{fragment}` | `` row |
 | `docs/getting-started.md` | The `/claude-tweaks:code-health` entry counts and names every shipped vertical |
 | `tests/bin-lib/code-health/candidates-{vertical}.test.js` | Generator tests (see the test matrix below) |
+| `focus-mode.md` `## F2` | Only for a generator that sets `notApplicable: true` (with its `notApplicableReason`): an exact `` focus={vertical}: not applicable — {reason} `` line and a stop, as `prelaunch`, `agent-trust-scope` and `app-store-readiness` have. Without it the firing falls through to the generic "no candidates" line and reads as a clean pass. #2628 missed this row |
 
 `tests/code-health-prelaunch-wiring.test.js` asserts that the pinning table and `FOCUS_GENERATORS` name exactly the same foci, in both directions. It catches a missing pinning row. It does not catch a missing Coverage pointer, fragment, or getting-started entry, so check those by hand.
 
@@ -34,12 +35,26 @@ A vertical is not shipped until every row below lands in the same change. A key 
 
 A wiring test for this pair follows the same shape as the generator-registration test above — see `tests/code-health-agent-trust-scope-wiring.test.js` for the worked example (it also pins the `docs/getting-started.md` vertical count, so one test file covers both halves of the registration set).
 
-## Four pitfalls
+## Extending an existing vertical
+
+Adding a candidate `kind` to a shipped generator adds no `FOCUS_GENERATORS` key, so `tests/code-health-prelaunch-wiring.test.js` has nothing to catch, and no test pins the prose kind lists to the generator's emitted literals. Derive the site list by grepping an existing kind of that vertical across `plugin/` (`grep -rln 'unguarded-ai-endpoint' plugin` for `security-hardening`), then update every hit in the same change:
+
+| Site | What it gets |
+|---|---|
+| The generator's module header | The new check in its check list, plus a Coverage bullet for it |
+| `plugin/skills/_shared/criteria-{vertical}.md` | The `kind` list, a What-to-flag and a What-NOT-to-flag entry, a Severity calibration placement, and a copy-paste prompt where the fragment has that section |
+| `plugin/skills/review/review-summary-template.md` (`/review` verticals only) | The new kind in that vertical's section's Kind column |
+| The vertical's Step 6.X pre-check in `plugin/skills/review/code-mode-steps.md` (`/review` verticals only) | A re-derivation of whether its path gate still admits the files the new check targets |
+
+The last row is pitfall 5 one level up. Step 6.6 skips unless the diff touches a `CLIENT_DIR_RE` or `ROUTE_DIR_RE` path, but the #2657/#2666 JWT and secrets-lifecycle checks scan repo-wide because their targets (`src/auth/jwt.js`, `config/secrets.js`) match neither gate, so a review of a diff touching only those files never runs them.
+
+## Five pitfalls
 
 1. **Require `./focus-generators` before `./candidates-dead-code`.** The registry autoloads every vertical. A vertical that requires `candidates-dead-code` first, and is then loaded directly (as its own test does), gets a half-built exports object from Node's circular require, so the shared helpers bind to `undefined`. `candidates-abstraction-police.js`'s require block documents the order. #2693 shipped it reversed.
 2. **A candidate's `file` must be a real file.** Code-health anchors are `relfile#Symbol`, and `areaId` is derived from the anchor's file. A site-level item with no file of its own (a missing `robots.txt`) anchors to a real file, such as the site's entry page as `{file}#{item id}`, never to a directory.
 3. **Test against real framework inputs, not the plan's rules.** Tests written from the plan pin the plan. #2693's first tests passed while Nuxt, Astro and SvelteKit layouts were invisible to the generator and its alt-text scan skipped components. Only fixtures in each framework's real file layout exposed that.
 4. **A generator that emits a status per item needs a reconciliation rule.** When the summary renders one checklist row per item, the fragment must tell the judge how a row's status follows from its verdicts (`criteria-prelaunch.md`: a `fail` whose candidates were all rejected becomes `pass (N rejected: {reason})`). Without it, the table and the filed findings contradict each other.
+5. **A path-heuristic gate copied from a sibling check is not automatically correct for a new check's semantics.** `CLIENT_DIR_RE` excludes paths whose directory name suggests client code — right for `scanClientSecrets` (client-embedded secrets), but a framework convention can put server-side code under the same directory name (Next.js App Router's `src/app` holds both client and server files), so reusing the same gate for a check whose target is server-side behavior (JWT validation, credential-env access) silently reintroduces false negatives. #2666/#2657's review caught `scanJwtValidation`/`scanSecretsLifecycle` reusing `scanClientSecrets`'s gate this way; by the time it was caught, tests already pinned the exclusion as deliberate, so the fix was disclosing the limitation in the Coverage block, not a behavior change — cheaper to re-derive whether a copied gate fits the new check's own scanning intent *before* writing the test that pins it.
 
 ## Test matrix
 

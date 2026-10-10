@@ -39,11 +39,11 @@ function parseCherryPickTrailer(message) {
 }
 
 function defaultGit(args) {
-  return execFileSync('git', args, { encoding: 'utf8' });
+  return execFileSync('git', args, { encoding: 'utf8', windowsHide: true });
 }
 
 function defaultGh(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', timeout: GH_TIMEOUT_MS });
+  return execFileSync('gh', args, { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true });
 }
 
 // Resolves every remote branch containing `sha`, excluding `ownBranch` (this

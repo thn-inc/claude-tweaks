@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #857: reflect's standalone Frontier singleton reads the transcript via the
 // shared transcript-judge harness (skills/_shared/transcript-judge.md, #856).
 // Pins the dispatch-prompt additions, the watermark write timing/payload,
@@ -16,7 +16,7 @@ const path = require('path');
 // evolving in place, not content scheduled for deletion.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const SKILL = read('plugin', 'skills', 'reflect', 'SKILL.md');
 const FULL_MODE = read('plugin', 'skills', 'reflect', 'full-mode.md');
@@ -269,5 +269,8 @@ test('full-mode.md clears the matched listDeclined entry\'s own fingerprint on a
 });
 
 test('full-mode.md\'s Don\'t-capture resolution passes subject: description to recordDecline', () => {
-  assert.match(FULL_MODE, /recordDecline\(fingerprint, \{ reason, source: 'reflect', subject: description \}\)/);
+  // #2544: the prose cites the CLI, which makes the recordDecline call itself.
+  assert.match(FULL_MODE, /declined-learning\.js" record-decline --source reflect/);
+  const CLI = read('plugin', 'bin', 'declined-learning.js');
+  assert.match(CLI, /recordDecline\(fingerprint, \{[^}]*subject: payload\.description,/);
 });

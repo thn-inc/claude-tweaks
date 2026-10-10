@@ -138,6 +138,54 @@ test('#1962: step 2 still adopts a matching run dir that is genuinely active wit
   assert.strictEqual(out.path, live);
 });
 
+// #2838: a mint-only `--create` call (no --standalone) must never adopt an
+// existing same-slug directory, dead OR alive — including one a live sibling
+// session minted seconds earlier. Before this fix, Step 2 ran unconditionally
+// whenever --spec-slug was given, so this exact scenario silently returned
+// the sibling's directory instead of minting a fresh one, handing both
+// sessions the same run dir and worktree (this record's own Current State).
+test('#2838: --create with --spec-slug never adopts an existing LIVE same-slug directory — always mints fresh', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const sibling = mkRunDir(main, '2026-01-01T000000-record-2785');
+  writeRunState(sibling, { status: 'active', worktree: wt }); // a genuinely live sibling run
+  const out = resolve({
+    cwd: main, env: {}, specSlug: 'record-2785', create: true,
+    now: new Date('2026-06-01T12:00:00Z'),
+  });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, true);
+  assert.notStrictEqual(out.path, sibling);
+  assert.strictEqual(path.basename(out.path), '2026-06-01T120000-record-2785');
+});
+
+// Without --create, the read-only resolution caller must keep today's
+// adopt-newest-matching behavior exactly (AC "Read-only resolve-run-dir
+// callers ... keep their current adopt-newest-matching behavior") — the
+// #2838 guard above is scoped to --create only.
+test('#2838: without --create, a matching directory is still adopted as before (read-only callers unaffected)', () => {
+  const main = gitRepo();
+  const run = mkRunDir(main, '2026-01-01T000000-record-2786');
+  const out = resolve({ cwd: main, env: {}, specSlug: 'record-2786' });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, false);
+  assert.strictEqual(out.path, run);
+});
+
+// A `--create --standalone --spec-slug` call (release/wrap-up's own shape)
+// is unaffected by the #2838 guard — it is scoped to --standalone-absent
+// mint calls only.
+test('#2838: --create with --standalone AND --spec-slug is unaffected by the mint-only guard', () => {
+  const main = gitRepo();
+  const out = resolve({
+    cwd: main, env: {}, specSlug: 'release', standalone: 'release', create: true,
+    now: new Date('2026-03-04T05:06:07Z'),
+  });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, true);
+  assert.strictEqual(path.basename(out.path), '2026-03-04T050607-release-standalone');
+});
+
 test('#1962: step 2 falls through to the next-newest match when the newest is dead', () => {
   const main = gitRepo();
   const older = mkRunDir(main, '2026-01-01T000000-record-91');

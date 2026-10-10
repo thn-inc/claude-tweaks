@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // Observed live 2026-08-13: a dispatch-created worktree's /flow invocation created its run
 // directory (config.yml/decisions.md/staged/, plus every spec-{N}/ subdirectory) *inside*
 // that worktree instead of the main checkout, contradicting _shared/pipeline-run-dir.md's own
@@ -16,7 +16,7 @@ const path = require('path');
 // explicitly, so a future edit can't silently drop it again.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 const MANIFESTO = read('plugin', 'skills', 'flow', 'manifesto.md');
 const FLOW_SKILL = read('plugin', 'skills', 'flow', 'SKILL.md');
 const MULTI_SPEC = read('plugin', 'skills', 'flow', 'multi-spec.md');

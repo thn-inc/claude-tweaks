@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #2704: _shared/worktree-setup.md's Post-creation catch-up told the caller to log a
 // branch-advancing merge to "the run's decisions.md" — but interactive worktree-always
 // sessions, /specify, /init's scratch worktree, and /routine create-and-update all run
@@ -11,7 +11,7 @@ const path = require('path');
 // unlogged. These tests pin the no-run-dir branch and its two citations.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const SETUP = read('plugin', 'skills', '_shared', 'worktree-setup.md');
 const NO_RUN_DIR = read('plugin', 'skills', '_shared', 'worktree-catchup-no-run-dir.md');

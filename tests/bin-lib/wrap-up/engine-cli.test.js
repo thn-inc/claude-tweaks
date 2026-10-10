@@ -227,6 +227,100 @@ test('record rejects a payload that fails engine-record validation with exit 1',
   assert.match(r.stderr, /result/);
 });
 
+// --- #2546: record --batch <file> ---
+
+function writeBatchFile(entries) {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-batch-')), 'batch.json');
+  fs.writeFileSync(file, JSON.stringify(entries));
+  return file;
+}
+
+test('record --batch records every entry in one invocation, verified by re-reading the resulting records', () => {
+  const runDir = planFreshRunDir();
+  const openRows = readState(runDir).worklist.rows.filter((row) => row.gate === 'open');
+  const entries = openRows.map((row) => ({
+    version: 1, rowId: row.id, result: 'clean', read: [], findings: [], gapDetection: 'not-run', detail: 'batched',
+  }));
+  const batchFile = writeBatchFile(entries);
+
+  const r = run(['record', '--run-dir', runDir, '--batch', batchFile, '--dry-run']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  // One SCANNED line printed per entry, in order.
+  const printedLines = r.stdout.trim().split('\n');
+  assert.strictEqual(printedLines.length, entries.length);
+  for (const line of printedLines) assert.match(line, /^SCANNED /);
+
+  // plan() pre-resolves every CLOSED row to n/a before the model reads
+  // anything (curation-engine.md section 1) — results already holds those
+  // before this batch runs, so the count check is scoped to the open rows
+  // this batch actually recorded, not the full results map.
+  const state = readState(runDir);
+  for (const row of openRows) {
+    assert.ok(Object.prototype.hasOwnProperty.call(state.results, row.id), `row ${row.id} should be recorded`);
+    assert.strictEqual(state.results[row.id].detail, 'batched');
+  }
+});
+
+test('record --batch with a non-array JSON file exits 1 with a clear message, not a crash', () => {
+  const runDir = planFreshRunDir();
+  const batchFile = writeBatchFile({ not: 'an array' });
+  const r = run(['record', '--run-dir', runDir, '--batch', batchFile, '--dry-run']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /non-empty JSON array/);
+});
+
+test('record --batch with an empty array exits 1', () => {
+  const runDir = planFreshRunDir();
+  const batchFile = writeBatchFile([]);
+  const r = run(['record', '--run-dir', runDir, '--batch', batchFile, '--dry-run']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /non-empty JSON array/);
+});
+
+test('record --batch pointing at a nonexistent file exits 1 naming the path, not a stack trace', () => {
+  const runDir = planFreshRunDir();
+  const r = run(['record', '--run-dir', runDir, '--batch', '/nonexistent/batch.json', '--dry-run']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /could not read \/nonexistent\/batch\.json/);
+});
+
+test('record --batch with malformed JSON content exits 1 naming the parse failure', () => {
+  const runDir = planFreshRunDir();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-batch-bad-'));
+  const file = path.join(dir, 'batch.json');
+  fs.writeFileSync(file, 'not json');
+  const r = run(['record', '--run-dir', runDir, '--batch', file, '--dry-run']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /not valid JSON/);
+});
+
+test('record --batch stops at the first failing entry, naming its index — entries before it stay recorded', () => {
+  const runDir = planFreshRunDir();
+  const openRows = readState(runDir).worklist.rows.filter((row) => row.gate === 'open');
+  assert.ok(openRows.length >= 2, 'fixture needs at least 2 open rows for this test');
+  const entries = [
+    { version: 1, rowId: openRows[0].id, result: 'clean', read: [], findings: [], gapDetection: 'not-run', detail: 'ok' },
+    { version: 1, rowId: openRows[1].id, result: 'bogus', gapDetection: 'not-run' }, // invalid result
+  ];
+  const batchFile = writeBatchFile(entries);
+
+  const r = run(['record', '--run-dir', runDir, '--batch', batchFile, '--dry-run']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /entry 1 \(of 2\) failed/);
+
+  const state = readState(runDir);
+  assert.ok(Object.prototype.hasOwnProperty.call(state.results, openRows[0].id), 'entry 0 should still be recorded despite entry 1 failing');
+  assert.ok(!Object.prototype.hasOwnProperty.call(state.results, openRows[1].id), 'entry 1 itself should not be recorded');
+});
+
+test('record --batch against a run dir with no engine-state.json exits 2, same precondition as single-payload record', () => {
+  const runDir = makeRunDir();
+  const batchFile = writeBatchFile([{ version: 1, rowId: 'skills', result: 'clean', read: [], findings: [], gapDetection: 'not-run', detail: 'x' }]);
+  const r = run(['record', '--run-dir', runDir, '--batch', batchFile, '--dry-run']);
+  assert.strictEqual(r.status, 2);
+  assert.match(r.stderr, /engine-state\.json/);
+});
+
 // ---- render -----------------------------------------------------------
 
 test('render --section trace contains the pinned header row', () => {
@@ -421,4 +515,69 @@ test('unknown verb exits 2 with usage', () => {
   const r = run(['bogus-verb']);
   assert.strictEqual(r.status, 2);
   assert.match(r.stderr, /usage: wrap-up-engine\.js/);
+});
+
+// --- #2546: render --section procedure:<name> ---
+
+test('render --section procedure:review-console emits the head file verbatim and excludes the appendix content', () => {
+  const r = run(['render', '--section', 'procedure:review-console']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /# Wrap-Up Review Console — Phase 4 \(CLOSE\)/);
+  // The appendix-only content (the Multi-spec defer protocol's 6-step body)
+  // must not appear in the head's own output — proves the split, not just
+  // that *some* markdown was printed.
+  assert.doesNotMatch(r.stdout, /Do NOT present the console/);
+});
+
+test('render --section procedure:curation-engine emits the head file and excludes its appendix content', () => {
+  const r = run(['render', '--section', 'procedure:curation-engine']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /# Curation Engine — the Phase 2 mechanism/);
+  assert.doesNotMatch(r.stdout, /Engine failure is never permission to skip a row/);
+});
+
+test('render --section procedure:cleanup-procedures-execution emits the head file and excludes its appendix content', () => {
+  const r = run(['render', '--section', 'procedure:cleanup-procedures-execution']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /# Wrap-Up Cleanup Procedures — execution detail/);
+  assert.doesNotMatch(r.stdout, /Delete unconditionally after \*\*2026-11-07\*\*/);
+});
+
+test('render --section procedure:pr-first-merge emits the head file and excludes its appendix content', () => {
+  const r = run(['render', '--section', 'procedure:pr-first-merge']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /# PR-First Merge — the one canonical merge procedure/);
+  assert.doesNotMatch(r.stdout, /keep each citing file's own pre-#411 procedure/);
+});
+
+test('render --section procedure:<unknown> exits 2 naming the unrecognized procedure, not a stack trace', () => {
+  const r = run(['render', '--section', 'procedure:not-a-real-one']);
+  assert.strictEqual(r.status, 2);
+  assert.match(r.stderr, /unknown procedure 'not-a-real-one'/);
+});
+
+test('render --section procedure: with an empty name exits 2 with a clear message', () => {
+  const r = run(['render', '--section', 'procedure:']);
+  assert.strictEqual(r.status, 2);
+  assert.match(r.stderr, /requires a name/);
+});
+
+test('render --section procedure:<name> combined with --run-dir exits 2 with usage', () => {
+  const runDir = planFreshRunDir();
+  const r = run(['render', '--section', 'procedure:review-console', '--run-dir', runDir]);
+  assert.strictEqual(r.status, 2);
+  assert.match(r.stderr, /usage: wrap-up-engine\.js/);
+});
+
+test('render --section procedure:<name> combined with --strict exits 2 with usage', () => {
+  const r = run(['render', '--section', 'procedure:review-console', '--strict']);
+  assert.strictEqual(r.status, 2);
+  assert.match(r.stderr, /usage: wrap-up-engine\.js/);
+});
+
+test('render --section with a bare unrecognized value (no procedure: prefix) still rejects with the original usage-error shape', () => {
+  const runDir = planFreshRunDir();
+  const r = run(['render', '--run-dir', runDir, '--section', 'bogus']);
+  assert.strictEqual(r.status, 2);
+  assert.match(r.stderr, /--section must be 'trace', 'console', or 'procedure:<name>'/);
 });

@@ -10,11 +10,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const SKILL = fs.readFileSync(path.join(ROOT, 'plugin/skills/pipeline-smoke-test/SKILL.md'), 'utf8');
+const SKILL = readText(path.join(ROOT, 'plugin/skills/pipeline-smoke-test/SKILL.md'));
 
 test('Step 4 cites verifyClaimRaceOutcome with its full call signature', () => {
   assert.match(SKILL, /verifyClaimRaceOutcome\(attemptRunIds, liveClaim, inProgressLabelCount\)/);

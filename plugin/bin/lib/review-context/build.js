@@ -13,7 +13,7 @@ const { execFileSync } = require('node:child_process');
 const MAX_BUFFER = 64 * 1024 * 1024;
 
 function realGit(args, opts = {}) {
-  return execFileSync('git', args, { encoding: 'utf8', maxBuffer: MAX_BUFFER, ...opts });
+  return execFileSync('git', args, { encoding: 'utf8', maxBuffer: MAX_BUFFER, ...opts, windowsHide: true });
 }
 
 // Precedence: explicit --dir, then run-dir-scoped (per-run unique by construction),

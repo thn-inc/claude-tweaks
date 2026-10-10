@@ -64,14 +64,19 @@ shared procedure.
 
 ## Watermark payload
 
-On a `DONE`/`DONE_WITH_CONCERNS` return (per `_shared/transcript-judge.md`'s watermark protocol,
-consumer key `feedback`), the payload is:
+On a `DONE`/`DONE_WITH_CONCERNS` return, or on completing a self-assessment evaluation reached via
+a terminal judge-dispatch failure (`_shared/transcript-judge.md`'s Degradation section) — both per
+`_shared/transcript-judge.md`'s watermark protocol, consumer key `feedback` — the payload is:
 
 ```
 {
   transcriptPath,
   bytesAtDispatch,
   evaluatedAt,
+  mode,                    // "self-assessment" when this payload was written from the
+                           // terminal-dispatch-failure self-assessment route above; omitted
+                           // (undefined) on an ordinary dispatched-judge write — a reader treats
+                           // an absent field as the pre-existing dispatched case
   sessionId,               // $CLAUDE_CODE_SESSION_ID at dispatch time — the transcript path
                            // is the load-bearing lookup key (per _shared/transcript-judge.md's
                            // Watermark key note), but a human or a future consumer reading the
@@ -113,12 +118,17 @@ invocation's Gather-2-sourced items only** — never Gather 1's queue candidates
 own local issue to close and are not what a later skip-check summary should point at. Read Step
 8's per-draft result table (SKILL.md Step 8 item 3) and keep the rows whose source item came from
 this gather; a row's status of `filed` or `dedup-hit` contributes its issue URL to `issueUrls` and
-its record identifier to `filedRecords`. `findingsFiled` is that filtered set's length. No stamp is
-written at all when Gather 2's dispatch was reported as failed in the run summary (per SKILL.md's
-failure-isolation rule) — an empty or all-failed batch still writes a stamp with `filedRecords: []`
-/ `findingsFiled: 0` / `issueUrls: []` only when the dispatch itself succeeded (`DONE`/
-`DONE_WITH_CONCERNS`) and simply found nothing to file, which is the ordinary "NO FINDING
-everywhere" case, not a failure.
+its record identifier to `filedRecords`. `findingsFiled` is that filtered set's length. A Gather-2
+dispatch reported as failed in the run summary (`bare-invocation.md`'s failure-isolation paragraph)
+still writes a stamp when self-assessment resolved a real transcript path — the
+terminal-dispatch-failure route into `_shared/transcript-judge.md`'s Degradation section, `mode:
+"self-assessment"` — scoped the same way, to whatever this invocation's self-assessment findings
+Step 8 actually filed. The one true no-stamp case is the no-transcript-resolves route (no
+`transcriptPath` ever resolved to key a stamp on — the same shared-contract exclusion). An empty or
+all-failed batch still writes a stamp with `filedRecords: []` / `findingsFiled: 0` / `issueUrls: []`
+whenever a stamp is written at all (dispatched `DONE`/`DONE_WITH_CONCERNS`, or self-assessment with
+a resolved transcript) and simply found nothing to file — the ordinary "NO FINDING everywhere" case,
+not a failure.
 
 ## After the judge returns
 

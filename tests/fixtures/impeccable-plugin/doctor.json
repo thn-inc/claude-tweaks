@@ -1,0 +1,20 @@
+{
+  "projectRoot": "/path/to/project",
+  "repoRoot": "/path/to/project",
+  "isMonorepo": false,
+  "productPath": "PRODUCT.md",
+  "designPath": "DESIGN.md",
+  "platform": null,
+  "ruleRegistryAvailable": true,
+  "findings": [
+    {
+      "id": "product-schema-legacy",
+      "artifact": "PRODUCT.md",
+      "path": "PRODUCT.md",
+      "severity": "route",
+      "summary": "PRODUCT.md has no schema stamp and none of the sections the current record adds (Positioning, Operating Context, Evidence on Hand, Product Principles), so it predates this version of the product record.",
+      "fix": "Offer `init`, which preserves confirmed answers and fills the gaps by interview. Do not rewrite the file from inference."
+    }
+  ],
+  "workspaces": []
+}

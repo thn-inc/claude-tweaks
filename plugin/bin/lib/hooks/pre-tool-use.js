@@ -34,6 +34,7 @@ const { resolveIntegrationBranch, preferRemoteTrackingRef, bareIntegrationName }
 const { runGit, FAILURE } = require('./git-exec');
 const { detectIntegrationModel, resolvePolicyConfig } = require('../policy-schema');
 const { isPathContained, escapeRegExp } = require('../shared-primitives');
+const { hasClaimLogFor } = require('../log-decision/claim-log');
 
 function pluginRoot() {
   return process.env.CLAUDE_PLUGIN_ROOT || '${CLAUDE_PLUGIN_ROOT}';
@@ -1279,9 +1280,7 @@ function getMaterializedRecordNumbers(worktreeRoot, runDir) {
 // at all — there is no partial-batch state for this line to misrepresent.
 function hasLoggedClaim(runDir, n) {
   try {
-    const body = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
-    if (new RegExp(`Step 2\\.8: claimed #${n}\\b`).test(body)) return true;
-    return /Step 2\.8: Claimed all \d+ targets under run\b/.test(body);
+    return hasClaimLogFor(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), n);
   } catch {
     return false;
   }

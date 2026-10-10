@@ -116,6 +116,31 @@ test('checkVersion: plugin-cache-glob reads each candidate\'s own version field,
   assert.strictEqual(result.status, 'ok');
 });
 
+// expandGlob must resolve an ABSOLUTE glob in whatever shape the platform's
+// own path functions produce. On win32 that is `C:\...` (drive root, backslash
+// separators) or `C:/...` (drive root, forward slashes); on posix `/...`. Each
+// is built from a real temp tree, so the test exercises the drive path on
+// Windows and the absolute posix path on Linux.
+for (const [label, toGlob] of [
+  ['the platform-native separator', (root) => globFor(root)],
+  ['forward slashes throughout', (root) => globFor(root).split(path.sep).join('/')],
+]) {
+  test(`checkVersion: plugin-cache-glob resolves an absolute glob written with ${label}`, () => {
+    const root = tmpDir();
+    writePluginCacheCandidate(root, 'slotA', '3.5.0', '3.5.0');
+    const glob = toGlob(root);
+    assert.ok(path.isAbsolute(glob), `precondition: the glob under test must be absolute: ${glob}`);
+    const entry = {
+      name: 'impeccable-plugin',
+      pinned: '3.5.0',
+      'installed-probe': { type: 'plugin-cache-glob', glob },
+    };
+    const result = checkVersion(entry);
+    assert.strictEqual(result.status, 'ok', `an installed candidate behind an absolute glob must not read as absent: ${result.detail}`);
+    assert.deepStrictEqual(result.installed, ['3.5.0']);
+  });
+}
+
 test('checkVersion: plugin-cache-glob is absent when the glob matches nothing', () => {
   const root = tmpDir();
   const entry = {
@@ -286,6 +311,86 @@ test('replayFixtures: ok and empty results for fixtures: []', () => {
   const result = replayFixtures(entry);
   assert.strictEqual(result.status, 'ok');
   assert.deepStrictEqual(result.results, []);
+});
+
+// ─── text-mode assertion (expect.textMatch, #2573) ────────────────────────
+
+test('replayFixtures: text-mode ok when the named stream contains the expected substring', () => {
+  const entry = {
+    name: 'impeccable-cli',
+    fixtures: [
+      { run: 'node -e "process.stderr.write(\'engine binary not found\');process.exit(127)"', expect: { exit: 127, stream: 'stderr', textMatch: 'engine binary not found' } },
+    ],
+  };
+  const result = replayFixtures(entry);
+  assert.strictEqual(result.status, 'ok');
+  assert.strictEqual(result.results[0].status, 'ok');
+});
+
+test('replayFixtures: text-mode mismatch names the expected substring and the checked stream', () => {
+  const entry = {
+    name: 'impeccable-cli',
+    fixtures: [
+      { run: 'node -e "process.stderr.write(\'something else entirely\');process.exit(127)"', expect: { exit: 127, stream: 'stderr', textMatch: 'engine binary not found' } },
+    ],
+  };
+  const result = replayFixtures(entry);
+  assert.strictEqual(result.status, 'mismatch');
+  assert.strictEqual(result.results[0].status, 'mismatch');
+  assert.ok(result.results[0].detail.includes('engine binary not found'), `detail must name the expected substring, got: ${result.results[0].detail}`);
+  assert.ok(result.results[0].detail.includes('stderr'), `detail must name the checked stream, got: ${result.results[0].detail}`);
+});
+
+test('replayFixtures: text-mode never attempts a JSON parse — a non-JSON stream still passes on a substring match', () => {
+  const entry = {
+    name: 'impeccable-cli',
+    fixtures: [
+      { run: 'node -e "process.stdout.write(\'plain text, not json\')"', expect: { exit: 0, stream: 'stdout', textMatch: 'not json' } },
+    ],
+  };
+  const result = replayFixtures(entry);
+  assert.strictEqual(result.status, 'ok');
+});
+
+test('replayFixtures: text-mode still enforces the exit-code check before the substring check', () => {
+  const entry = {
+    name: 'impeccable-cli',
+    fixtures: [
+      { run: 'node -e "process.stderr.write(\'engine binary not found\');process.exit(1)"', expect: { exit: 127, stream: 'stderr', textMatch: 'engine binary not found' } },
+    ],
+  };
+  const result = replayFixtures(entry);
+  assert.strictEqual(result.status, 'mismatch');
+  assert.ok(result.results[0].detail.includes('exit'), `detail must name the exit mismatch, got: ${result.results[0].detail}`);
+});
+
+test('#2573 AC5: a plain-text-stderr/exit-127 fixture (the #2480 engine-download-failure shape) round-trips — passes when behavior matches, fails with an informative detail on regression', () => {
+  // "An equivalent" per #2573's Deliverable 3 — a synthetic command standing
+  // in for Impeccable's engine-locate/download shim, which (per #2480) fails
+  // by writing a plain-text message to stderr and exiting 127. This proves
+  // the new text-mode assertion round-trips a real plain-text failure
+  // without needing a live, network-dependent engine-download to reproduce.
+  const engineDownloadFailureCmd = 'node -e "process.stderr.write(\'impeccable: engine binary not found and could not be downloaded\\n\');process.exit(127)"';
+  const entry = {
+    name: 'impeccable-cli',
+    fixtures: [
+      { run: engineDownloadFailureCmd, expect: { exit: 127, stream: 'stderr', textMatch: 'engine binary not found' } },
+    ],
+  };
+
+  const passing = replayFixtures(entry);
+  assert.strictEqual(passing.status, 'ok', `expected the real plain-text failure to pass, got: ${JSON.stringify(passing.results[0])}`);
+
+  // Simulate a regression: the engine shim's message wording changes.
+  const regressed = {
+    name: 'impeccable-cli',
+    fixtures: [
+      { run: 'node -e "process.stderr.write(\'impeccable: engine unavailable\\n\');process.exit(127)"', expect: { exit: 127, stream: 'stderr', textMatch: 'engine binary not found' } },
+    ],
+  };
+  const failing = replayFixtures(regressed);
+  assert.strictEqual(failing.status, 'mismatch');
+  assert.ok(failing.results[0].detail.includes('engine binary not found'), `regression detail must name the expected substring, got: ${failing.results[0].detail}`);
 });
 
 // ─── never-prints guard ──────────────────────────────────────────────────

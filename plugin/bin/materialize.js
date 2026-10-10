@@ -172,13 +172,13 @@ function parseArgs(argv) {
 }
 
 const realDeps = {
-  ghView: (owner, repo, n, host) => execFileSync('gh', ['issue', 'view', String(n), '--repo', repoSlug({ host, owner, repo }), '--json', 'number,title,body,labels,url'], { encoding: 'utf8' }),
+  ghView: (owner, repo, n, host) => execFileSync('gh', ['issue', 'view', String(n), '--repo', repoSlug({ host, owner, repo }), '--json', 'number,title,body,labels,url'], { encoding: 'utf8', windowsHide: true }),
   // #2590: closed PRs referencing this issue, searched by body text — used
   // to detect a sibling attempt that already reached this record's own
   // "premise disproved" conclusion. Read-only; no author-association gate
   // needed (unlike ghAuthorAssociation/runPremiseCheck, nothing here
   // executes body content — it only searches and pattern-matches it).
-  ghSearchClosedPRs: (owner, repo, n, host) => execFileSync('gh', ['pr', 'list', '--repo', repoSlug({ host, owner, repo }), '--state', 'closed', '--search', `#${n} in:body`, '--json', 'number,url,body'], { encoding: 'utf8', timeout: SIBLING_PREMISE_SEARCH_TIMEOUT_MS }),
+  ghSearchClosedPRs: (owner, repo, n, host) => execFileSync('gh', ['pr', 'list', '--repo', repoSlug({ host, owner, repo }), '--state', 'closed', '--search', `#${n} in:body`, '--json', 'number,url,body'], { encoding: 'utf8', timeout: SIBLING_PREMISE_SEARCH_TIMEOUT_MS, windowsHide: true }),
   // Security fix (see TRUSTED_AUTHOR_ASSOCIATIONS above): GitHub's REST API
   // computes author_association from the issue author's *current* repo
   // relationship — not body content, so it can't be spoofed by editing the
@@ -190,15 +190,15 @@ const realDeps = {
       'gh',
       ['api', `repos/${owner}/${repo}/issues/${n}`, '--jq', '.author_association']
         .concat(host && host !== 'github.com' ? ['--hostname', host] : []),
-      { encoding: 'utf8', timeout: AUTHOR_ASSOCIATION_TIMEOUT_MS },
+      { encoding: 'utf8', timeout: AUTHOR_ASSOCIATION_TIMEOUT_MS, windowsHide: true },
     ),
   ).trim(),
   ghAvailable,
-  remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }),
+  remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true }),
   // #117: commit distance from a record's Verified-as-of: stamp to current
   // HEAD, and that commit's own date — both scoped to computeDrift above.
-  gitRevListCount: (sha) => execFileSync('git', ['rev-list', '--count', `${sha}..HEAD`], { encoding: 'utf8' }),
-  gitCommitDate: (sha) => execFileSync('git', ['show', '-s', '--format=%cI', sha], { encoding: 'utf8' }),
+  gitRevListCount: (sha) => execFileSync('git', ['rev-list', '--count', `${sha}..HEAD`], { encoding: 'utf8', windowsHide: true }),
+  gitCommitDate: (sha) => execFileSync('git', ['show', '-s', '--format=%cI', sha], { encoding: 'utf8', windowsHide: true }),
   // #1829: the Premise-check: command, run from the checkout root.
   runPremiseCheck: runPremiseCheckDefault,
   cwd: () => process.cwd(),

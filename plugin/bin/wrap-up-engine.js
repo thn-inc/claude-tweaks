@@ -29,22 +29,37 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const wtDetect = require('./lib/hooks/worktree-detect');
+const { readRunState } = require('./lib/hooks/context');
+
+// The plugin payload root — the directory with `skills/` directly beneath it
+// (this repo: `plugin/`; an installed consumer: `${CLAUDE_PLUGIN_ROOT}`).
+// Resolved from this script's own location, never from `process.cwd()`, so
+// `render --section procedure:<name>` finds the real skill files regardless
+// of which directory it's invoked from (#2546).
+const PLUGIN_ROOT = path.join(__dirname, '..');
 
 const { gatherFacts } = require('./lib/wrap-up/facts');
 const { buildWorklist } = require('./lib/wrap-up/engine-plan');
 const { initState, recordResult, amendResult } = require('./lib/wrap-up/engine-record');
 const {
-  renderTrace, renderConsoleSections, renderConsoleSectionsMulti, strictCheck, worklistRows,
+  renderTrace, renderConsoleSections, renderConsoleSectionsMulti, strictCheck, worklistRows, resolveProcedureHeadPath,
 } = require('./lib/wrap-up/engine-render');
 const { runVerify, renderVerifyTable, resolveArchivedRunDir } = require('./lib/wrap-up/engine-verify');
+const { resolveLedgerPath, flipLedgerRow, TERMINAL_STATUSES } = require('./lib/wrap-up/ledger-write');
+const { appendEntry, formatEntry } = require('./lib/log-decision/append');
+const { writeFileAtomic } = require('./lib/atomic-write');
+const { validateFields, writeExpectations } = require('./lib/verify-expectations/write');
 
 const USAGE = [
   'usage: wrap-up-engine.js plan --run-dir <dir> --base <sha> [--ceremony <profile>] [--skill-budget n] [--doc-budget n] [--signals <json>] [--dry-run]',
   '       wrap-up-engine.js record --run-dir <dir> [--dry-run]   (payload JSON on stdin)',
+  '       wrap-up-engine.js record --run-dir <dir> --batch <file> [--dry-run]   (JSON array of payloads, one file)',
   '       wrap-up-engine.js amend --run-dir <dir>   (payload JSON on stdin)',
   '       wrap-up-engine.js render --run-dir <dir> [--strict] [--section trace|console] [--start-at n]',
+  '       wrap-up-engine.js render --section procedure:<name>   (no --run-dir, no --spec-state, no --strict)',
   '       wrap-up-engine.js render --section console --spec-state <id>=<path> [--spec-state <id>=<path> ...] [--start-at n] [--strict]   (no --run-dir)',
   '       wrap-up-engine.js verify --run-dir <dir> --base <ref>',
+  '       wrap-up-engine.js finish-console --run-dir <dir> --approve-all [--ledger <path>]   (JSON {memory?,upstream?,ledger?} on stdin)',
   '',
 ].join('\n');
 
@@ -57,6 +72,7 @@ function parseArgs(argv) {
   const out = {
     runDir: null, base: null, ceremony: null, skillBudget: null, docBudget: null,
     signals: null, dryRun: false, strict: false, section: null, startAt: null, specStates: [],
+    batch: null, approveAll: false, ledger: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
@@ -81,6 +97,9 @@ function parseArgs(argv) {
     if (a === '--section' && hasValue) { out.section = argv[i + 1]; i += 1; continue; }
     if (a === '--start-at' && hasValue) { out.startAt = argv[i + 1]; i += 1; continue; }
     if (a === '--spec-state' && hasValue) { out.specStates.push(argv[i + 1]); i += 1; continue; }
+    if (a === '--batch' && hasValue) { out.batch = argv[i + 1]; i += 1; continue; }
+    if (a === '--approve-all') { out.approveAll = true; continue; }
+    if (a === '--ledger' && hasValue) { out.ledger = argv[i + 1]; i += 1; continue; }
   }
   return out;
 }
@@ -96,6 +115,7 @@ function resolveRepoRoot(cwd) {
   try {
     const commonDir = execFileSync('git', ['rev-parse', '--git-common-dir'], {
       cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
     }).trim();
     if (!commonDir) return cwd;
     const abs = path.isAbsolute(commonDir) ? commonDir : path.resolve(cwd, commonDir);
@@ -236,9 +256,64 @@ function printLastDecisionLine(runDir) {
   process.stdout.write(`${decisionLines[decisionLines.length - 1]}\n`);
 }
 
+// #2546: `record --batch <file>` reads a JSON array of payloads from a file
+// instead of one stdin payload — the model no longer hand-assembles N
+// separate `record` invocations (or a scratch script looping over them) to
+// record a worklist's rows in one pass. Each entry is recorded in worklist
+// order, through the same recordResult() the single-payload path uses, so
+// engine-record.js's own validation and rowId-uniqueness rules apply
+// identically per entry. Sequential, fail-fast: a malformed array, or an
+// entry recordResult rejects, stops the batch at that index — entries
+// already recorded before the failure stay recorded (recordResult commits
+// each one independently; this verb does not roll earlier entries back),
+// so the caller re-runs a new --batch file containing only the remaining
+// entries rather than retrying the whole set.
+function runRecordBatch(args) {
+  let raw;
+  try {
+    raw = fs.readFileSync(args.batch, 'utf8');
+  } catch (e) {
+    process.stderr.write(`wrap-up-engine.js record --batch: could not read ${args.batch}: ${e.message}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  let entries;
+  try {
+    entries = JSON.parse(raw);
+  } catch (e) {
+    process.stderr.write(`wrap-up-engine.js record --batch: ${args.batch} is not valid JSON: ${e.message}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  if (!Array.isArray(entries) || entries.length === 0) {
+    process.stderr.write(`wrap-up-engine.js record --batch: ${args.batch} must be a non-empty JSON array of payloads\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const cwd = process.cwd();
+  const telemetryPath = args.dryRun ? null : resolveTelemetryPath(cwd);
+  if (telemetryPath) fs.mkdirSync(path.dirname(telemetryPath), { recursive: true });
+
+  for (let i = 0; i < entries.length; i += 1) {
+    try {
+      recordResult({
+        runDir: args.runDir, payload: entries[i], now: new Date(), dryRun: args.dryRun, telemetryPath,
+      });
+    } catch (e) {
+      process.stderr.write(`wrap-up-engine.js record --batch: entry ${i} (of ${entries.length}) failed: ${e.message}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    printLastDecisionLine(args.runDir);
+  }
+}
+
 function runRecord(args) {
   if (!args.runDir) { usageExit(); return; }
   if (!requireEngineState(args.runDir, 'record')) return;
+
+  if (args.batch) { runRecordBatch(args); return; }
 
   const payload = parseStdinPayload('record');
   if (!payload) return;
@@ -278,9 +353,41 @@ function runAmend(args) {
 
 function runRender(args) {
   const section = args.section || 'trace';
-  if (section !== 'trace' && section !== 'console') {
-    process.stderr.write(`wrap-up-engine.js render: --section must be 'trace' or 'console'\n`);
+  const procedureName = section.startsWith('procedure:') ? section.slice('procedure:'.length) : null;
+  if (section !== 'trace' && section !== 'console' && procedureName === null) {
+    process.stderr.write(`wrap-up-engine.js render: --section must be 'trace', 'console', or 'procedure:<name>'\n`);
     process.exitCode = 2;
+    return;
+  }
+
+  // #2546: `procedure:<name>` emits a registered split-file's operative-head
+  // excerpt verbatim — no engine-state.json, no --run-dir, no --strict. A
+  // caller that currently reads one of the four split files whole can read
+  // this excerpt instead, lowering per-run read volume without requiring a
+  // pipeline run to exist at all.
+  if (procedureName !== null) {
+    if (procedureName === '') {
+      process.stderr.write(`wrap-up-engine.js render: --section procedure:<name> requires a name\n`);
+      process.exitCode = 2;
+      return;
+    }
+    if (args.runDir || args.specStates.length > 0 || args.strict) { usageExit(); return; }
+    const relPath = resolveProcedureHeadPath(procedureName);
+    if (!relPath) {
+      process.stderr.write(`wrap-up-engine.js render: unknown procedure '${procedureName}'\n`);
+      process.exitCode = 2;
+      return;
+    }
+    const fullPath = path.join(PLUGIN_ROOT, relPath);
+    let markdown;
+    try {
+      markdown = fs.readFileSync(fullPath, 'utf8');
+    } catch (e) {
+      process.stderr.write(`wrap-up-engine.js render: could not read procedure '${procedureName}' at ${fullPath}: ${e.message}\n`);
+      process.exitCode = 2;
+      return;
+    }
+    process.stdout.write(markdown.endsWith('\n') ? markdown : `${markdown}\n`);
     return;
   }
 
@@ -393,6 +500,154 @@ function runVerifyVerb(args) {
   process.exitCode = exitCode;
 }
 
+// #2546: consolidates the Review Console's three "outcome write" steps the
+// skill text previously hand-assembled separately — writing
+// verify-expectations.json, logging the terminal decision plus each M#/U#
+// outcome, and flipping the ledger rows those outcomes resolve — into one
+// call. Takes a JSON payload on stdin describing what was already decided
+// (the model still decides WHAT to approve; this verb only commits the
+// bookkeeping trail for that decision) — it never applies a staged patch,
+// writes a skill/doc/journey update, or creates a work record itself; those
+// remain the existing per-section apply steps in review-console.md's "On
+// approval." `--approve-all` is required (the only mode this verb supports
+// today — a plain name rather than a flag with no alternative would be
+// equally valid; the flag form was chosen to read naturally at the call
+// site and to leave room for a future non-approve-all mode without a
+// breaking rename).
+//
+// Payload shape (all three arrays optional, default []):
+//   { "memory": [{ "file": "...", "indexFile": "..." }, ...],
+//     "upstream": [{ "url": "..." }, ...],
+//     "ledger": [{ "item": 3, "status": "deferred", "resolution": "..." }, ...] }
+//
+// Atomicity (Gotchas, record #2544): the three writes are NOT transactional
+// across each other — verify-expectations.json first, then the decision
+// log, then ledger flips, in that fixed order. A failure stops immediately;
+// writes already completed stay completed (verify-expectations.json is
+// idempotent to re-run, and the decision log is append-only, so re-running
+// after fixing the cause re-derives the same state rather than duplicating
+// it — only a partially-flipped ledger needs the operator to check which
+// rows the stderr message named before resolved). This is a documented
+// best-effort posture, not a bug: building real cross-file-format
+// transactionality for three unrelated artifacts is out of scope for a
+// bookkeeping-consolidation CLI — the exit code and stderr message are the
+// recovery contract.
+function validateFinishConsolePayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return 'stdin JSON must be an object with optional "memory"/"upstream"/"ledger" array fields';
+  }
+  const memory = payload.memory ?? [];
+  const upstream = payload.upstream ?? [];
+  const ledger = payload.ledger ?? [];
+  // memory/upstream shape is the writer library's own check — one rule for
+  // both writers of verify-expectations.json (#2764).
+  const fieldsError = validateFields({ memory, upstream });
+  if (fieldsError) return fieldsError;
+  if (!Array.isArray(ledger)) return '"ledger" must be an array';
+  for (const [i, l] of ledger.entries()) {
+    if (!l || !Number.isInteger(l.item) || l.item <= 0) return `ledger[${i}].item must be a positive integer`;
+    if (!TERMINAL_STATUSES.includes(l.status)) return `ledger[${i}].status must be one of ${TERMINAL_STATUSES.join(', ')}`;
+    if (l.status !== 'observation' && !String(l.resolution || '').trim()) return `ledger[${i}].resolution is required for status '${l.status}'`;
+  }
+  return null;
+}
+
+function runFinishConsole(args) {
+  if (!args.runDir || !args.approveAll) { usageExit(); return; }
+
+  const payload = parseStdinPayload('finish-console');
+  if (!payload) return;
+  const validationError = validateFinishConsolePayload(payload);
+  if (validationError) {
+    process.stderr.write(`wrap-up-engine.js finish-console: ${validationError}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const memory = payload.memory ?? [];
+  const upstream = payload.upstream ?? [];
+  const ledgerUpdates = payload.ledger ?? [];
+
+  // Step 1: verify-expectations.json (read-modify-write — preserve every
+  // field this verb doesn't itself own, same discipline
+  // review-console.md's step 11 documents for oversightExempt/issues).
+  try {
+    writeExpectations({ runDir: args.runDir, fields: { memory, upstream } });
+  } catch (e) {
+    process.stderr.write(`wrap-up-engine.js finish-console: step 1 (verify-expectations.json) failed: ${e.message}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  // Step 2: decision log — one terminal header, then one line per outcome.
+  const now = new Date();
+  try {
+    const header = formatEntry({
+      status: 'AUTO', now, step: 'Review Console',
+      text: `Approved via finish-console --approve-all. ${memory.length} memory, ${upstream.length} upstream, ${ledgerUpdates.length} ledger update(s)`,
+      reversibility: 'per item',
+    });
+    const lines = [
+      ...memory.map((m) => formatEntry({
+        status: 'AUTO', now, step: 'Review Console', text: `Memory update applied: ${m.file} (index: ${m.indexFile})`, reversibility: 'high',
+      })),
+      ...upstream.map((u) => formatEntry({
+        status: 'AUTO', now, step: 'Review Console', text: `Upstream feedback filed: ${u.url}`, reversibility: 'high',
+      })),
+      ...ledgerUpdates.map((l) => formatEntry({
+        status: 'AUTO', now, step: 'Review Console', text: `Ledger item #${l.item} -> ${l.status}: ${l.resolution || '(no resolution text)'}`, reversibility: 'high',
+      })),
+    ];
+    appendEntry({ runDir: args.runDir, section: '/wrap-up', entry: [header, ...lines].join('\n') });
+  } catch (e) {
+    process.stderr.write(`wrap-up-engine.js finish-console: step 2 (decision log) failed: ${e.message} — step 1 (verify-expectations.json) already completed\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  // Step 3: ledger flips — skipped entirely (not an error) when the payload
+  // named no ledger updates.
+  if (ledgerUpdates.length > 0) {
+    const worktree = readRunState(args.runDir)?.worktree || process.cwd();
+    const resolved = resolveLedgerPath({ runDir: args.runDir, worktree, explicit: args.ledger || null });
+    if (!resolved.ok) {
+      const detail = resolved.reason === 'ambiguous'
+        ? `${resolved.candidates.length} candidate ledgers found, cannot pick one — pass --ledger <path> explicitly:\n${resolved.candidates.map((c) => `  ${c}`).join('\n')}`
+        : resolved.reason === 'rejected'
+          ? `--ledger ${resolved.candidates[0]} rejected (${resolved.detail})`
+          : 'no ledger found';
+      process.stderr.write(`wrap-up-engine.js finish-console: step 3 (ledger flips) failed: ${detail} — steps 1-2 already completed\n`);
+      process.exitCode = 1;
+      return;
+    }
+    let text;
+    try {
+      text = fs.readFileSync(resolved.path, 'utf8');
+    } catch (e) {
+      process.stderr.write(`wrap-up-engine.js finish-console: step 3 (ledger flips) failed: could not read ${resolved.path}: ${e.message} — steps 1-2 already completed\n`);
+      process.exitCode = 1;
+      return;
+    }
+    for (const [i, l] of ledgerUpdates.entries()) {
+      try {
+        text = flipLedgerRow(text, l);
+      } catch (e) {
+        process.stderr.write(`wrap-up-engine.js finish-console: step 3 (ledger flips) failed at ledger[${i}]: ${e.message} — steps 1-2 already completed; ${i} of ${ledgerUpdates.length} ledger row(s) flipped so far were written together at the end, so NONE have been written yet\n`);
+        process.exitCode = 1;
+        return;
+      }
+    }
+    try {
+      writeFileAtomic(resolved.path, text);
+    } catch (e) {
+      process.stderr.write(`wrap-up-engine.js finish-console: step 3 (ledger flips) failed to write ${resolved.path}: ${e.message} — steps 1-2 already completed\n`);
+      process.exitCode = 1;
+      return;
+    }
+  }
+
+  process.stdout.write(`finish-console: approved — ${memory.length} memory, ${upstream.length} upstream, ${ledgerUpdates.length} ledger update(s) written.\n`);
+}
+
 function main() {
   const verb = process.argv[2];
   const args = parseArgs(process.argv.slice(3));
@@ -425,6 +680,7 @@ function main() {
   if (verb === 'amend') { runAmend(args); return; }
   if (verb === 'render') { runRender(args); return; }
   if (verb === 'verify') { runVerifyVerb(args); return; }
+  if (verb === 'finish-console') { runFinishConsole(args); return; }
 
   usageExit();
 }
