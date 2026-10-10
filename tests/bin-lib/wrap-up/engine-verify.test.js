@@ -31,6 +31,17 @@ function makeCleanRepoRoot() {
   return makeTmpDir('verify-clean-reporoot-');
 }
 
+// plans-ledger's "found, not owned" scoping (#2552) orders residue against
+// the run dir's own creation time via filesystem timestamps -- a plain
+// back-to-back mkdirSync sequence is ordered correctly in practice (this
+// filesystem's statSync reports sub-millisecond birthtime/mtime, as probed
+// directly), but a real, measurable gap removes any dependency on a given
+// CI runner's filesystem clock resolution.
+function busyWaitMs(ms) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) { /* spin */ }
+}
+
 // resolveParent (#1841) resolves a record's native GraphQL parent instead of
 // the invalid-on-gh<2.96 `gh issue view --json parent` REST call these
 // acceptance-labeling fixtures used to fake by matching `args.includes('parent')`
@@ -324,6 +335,53 @@ test('plans-ledger check fails when a .superpowers/sdd/ leftover directory is pr
   }
 });
 
+// ---- plans-ledger: "found, not owned" scoping (#2552 AC4) ----
+//
+// A gitignored .superpowers/sdd/*-archive leftover (or an untracked plan
+// file) that predates this run's own run-dir creation was left by an
+// earlier/concurrent session, never referenced by this run -- it is
+// reported as informational ('skip'), not attributed to this run as a
+// 'fail'.
+
+test('plans-ledger check reports "found, not owned" (skip) for a .superpowers/sdd/ leftover that predates this run\'s own run dir', () => {
+  const repoRoot = makeCleanRepoRoot();
+  const oldSddDir = path.join(repoRoot, '.superpowers', 'sdd', '2020-01-01-ancient-topic');
+  fs.mkdirSync(oldSddDir, { recursive: true });
+  busyWaitMs(10);
+  const runDir = makeTmpDir('verify-plans-ledger-not-owned-');
+  try {
+    const result = runVerify({ runDir, base: 'main', repoRoot, cwd: repoRoot, deps: { git: () => '', gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'plans-ledger');
+    assert.strictEqual(row.result, 'skip');
+    assert.match(row.detail, /found, not owned/);
+    assert.match(row.detail, /2020-01-01-ancient-topic/);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test('plans-ledger check fails on a leftover newer than the run dir, naming it, without letting an older not-owned leftover mask it', () => {
+  const repoRoot = makeCleanRepoRoot();
+  const oldSddDir = path.join(repoRoot, '.superpowers', 'sdd', '2020-01-01-ancient-topic');
+  fs.mkdirSync(oldSddDir, { recursive: true });
+  busyWaitMs(10);
+  const runDir = makeTmpDir('verify-plans-ledger-mixed-');
+  busyWaitMs(10);
+  const newSddDir = path.join(repoRoot, '.superpowers', 'sdd', '2026-08-21-fresh-topic');
+  fs.mkdirSync(newSddDir, { recursive: true });
+  try {
+    const result = runVerify({ runDir, base: 'main', repoRoot, cwd: repoRoot, deps: { git: () => '', gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'plans-ledger');
+    assert.strictEqual(row.result, 'fail');
+    assert.match(row.detail, /2026-08-21-fresh-topic/);
+    assert.doesNotMatch(row.detail, /2020-01-01-ancient-topic/);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
 test('design-caches check passes when cache dir does not exist', () => {
   const runDir = makeTmpDir('verify-design-caches-clean-');
   const repoRoot = makeCleanRepoRoot();
@@ -569,6 +627,47 @@ test('run-dir-archived check passes for a real (ISO-timestamped) single-spec run
   try {
     const runDir = path.join(repoRoot, '.claude-tweaks', 'pipelines', runId);
     const result = runVerify({ runDir: archivePath, originalRunDir: runDir, base: 'main', repoRoot, deps: { git: () => '', gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'run-dir-archived');
+    assert.strictEqual(row.result, 'pass', row.detail);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+// ---- run-dir-archived: invoked already pointed at the archive path (#2552
+// AC1) ----
+//
+// Before the fix, this invocation shape had no way to pass: `originalRunDir`
+// (the raw --run-dir CLI arg, never auto-substituted by resolveArchivedRunDir)
+// equaled the archive path itself, so `fs.existsSync(originalPath)` was true
+// and the check reported "original path still present" -- misreading the
+// archive copy as the not-yet-archived original.
+
+test('run-dir-archived check passes when --run-dir is pointed directly at the already-archived path (#2552 AC1)', () => {
+  const runId = '2026-01-01T000000-spec-20';
+  const repoRoot = makeCleanRepoRoot();
+  const archivePath = path.join(repoRoot, '.claude-tweaks', 'pipelines', 'archive', runId);
+  fs.mkdirSync(archivePath, { recursive: true });
+  try {
+    // Both runDir and originalRunDir are the archive path itself -- the
+    // shape wrap-up-engine.js verify's CLI entry produces when --run-dir
+    // names the post-archival path directly (resolveArchivedRunDir is a
+    // no-op there, since the given path already exists).
+    const result = runVerify({ runDir: archivePath, originalRunDir: archivePath, base: 'main', repoRoot, deps: { git: () => '', gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'run-dir-archived');
+    assert.strictEqual(row.result, 'pass', row.detail);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('run-dir-archived check passes when --run-dir is pointed at the archived path for a multi-spec spec-{N}/ subdirectory (#2552 AC1, nested shape)', () => {
+  const parentId = 'test-archived-parent-903';
+  const repoRoot = makeCleanRepoRoot();
+  const archiveSpecDir = path.join(repoRoot, '.claude-tweaks', 'pipelines', 'archive', parentId, 'spec-900');
+  fs.mkdirSync(archiveSpecDir, { recursive: true });
+  try {
+    const result = runVerify({ runDir: archiveSpecDir, originalRunDir: archiveSpecDir, base: 'main', repoRoot, deps: { git: () => '', gh: () => '' } });
     const row = result.rows.find((r) => r.check === 'run-dir-archived');
     assert.strictEqual(row.result, 'pass', row.detail);
   } finally {
@@ -986,6 +1085,63 @@ test('reference-repairs check fails when Initiative-Fix commit diff touches a fi
   const row = result.rows.find((r) => r.check === 'reference-repairs');
   assert.strictEqual(row.result, 'fail');
   assert.match(row.detail, /docs\/b\.md/);
+});
+
+// ---- reference-repairs: pr-first verification via the PR's own (pre-squash)
+// commit list (#2552 AC3/AC6) ----
+
+test('reference-repairs check verifies via the PR\'s own commit list under pr-first, ignoring an unrelated file a squash commit on main would also show', () => {
+  const runDir = makeTmpDir('verify-refrepair-prfirst-pass-');
+  fs.writeFileSync(path.join(runDir, 'engine-state.json'), JSON.stringify({
+    version: 1,
+    results: { references: { findings: [{ action: 'applied', kind: 'broken-link', summary: 'fix', targetPath: 'docs/a.md' }] } },
+  }));
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ pr: { number: 1200 } }));
+  const gitCalls = [];
+  const fakeGit = (args) => {
+    gitCalls.push(args);
+    if (args[0] === 'remote') return 'https://github.com/org/repo.git';
+    throw new Error(`unexpected git call in pr-first path: ${args.join(' ')}`);
+  };
+  const fakeGh = (args) => {
+    if (args[0] === 'pr' && args[1] === 'view') {
+      return JSON.stringify({
+        commits: [
+          { oid: 'aaa1111', messageHeadline: 'Initiative-Fix: repair refs', messageBody: '' },
+          { oid: 'bbb2222', messageHeadline: 'Unrelated feature change', messageBody: '' },
+        ],
+      });
+    }
+    if (args[0] === 'api' && args[1] === 'repos/org/repo/commits/aaa1111') return '["docs/a.md"]';
+    throw new Error(`unexpected gh call: ${args.join(' ')}`);
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'reference-repairs');
+  assert.strictEqual(row.result, 'pass', row.detail);
+  // Never diffs the squash commit on main -- only the PR's own (pre-squash)
+  // commit list, which is what lets this scenario tell the unrelated
+  // bundled-in file apart from the actual repair.
+  assert.ok(!gitCalls.some((a) => a[0] === 'log' || a[0] === 'diff-tree'), 'must not fall back to the local squash-commit diff under pr-first');
+});
+
+test('reference-repairs check still fails under pr-first when a repair genuinely did not land (no Initiative-Fix: commit on the PR)', () => {
+  const runDir = makeTmpDir('verify-refrepair-prfirst-fail-');
+  fs.writeFileSync(path.join(runDir, 'engine-state.json'), JSON.stringify({
+    version: 1,
+    results: { references: { findings: [{ action: 'applied', kind: 'broken-link', summary: 'fix', targetPath: 'docs/a.md' }] } },
+  }));
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ pr: { number: 1201 } }));
+  const fakeGit = (args) => (args[0] === 'remote' ? 'https://github.com/org/repo.git' : '');
+  const fakeGh = (args) => {
+    if (args[0] === 'pr' && args[1] === 'view') {
+      return JSON.stringify({ commits: [{ oid: 'ccc3333', messageHeadline: 'Unrelated feature change', messageBody: '' }] });
+    }
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'reference-repairs');
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /no Initiative-Fix: commit found on PR #1201/);
 });
 
 test('acceptance-labeling check renders unknown (gh absent) when gh probe throws', () => {
