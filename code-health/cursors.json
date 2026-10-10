@@ -266,5 +266,9 @@
   "plugin/bin/lib/skill-audit": {
     "lastSweptMs": 1791429066696,
     "lastHash": "a79edc005b84338f8b07a2df8785071a8524eed3"
+  },
+  "plugin/bin/lib/smoke-test": {
+    "lastSweptMs": 1791601695660,
+    "lastHash": "5111626b55a70f1fd609c3c38ffd6c6c2a517522"
   }
 }
