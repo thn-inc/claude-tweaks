@@ -367,7 +367,11 @@ is atomic regardless of whether the label add/remove succeeds.
 - **Added** alongside claim acquisition — bootstrap-then-add, the same check-then-create
   pattern every label in this codebase uses (see `_shared/label-bootstrap.md` for the
   canonical snippet and the full work-record `LABELS_JSON`; `/dispatch` is the
-  claim-acquiring consumer).
+  claim-acquiring consumer). **MCP transport (`gh` absent):** `issue_write`'s `labels` field
+  is a full replacement, not a merge — see `_shared/github-write-transport.md`'s **Full-replace hazard**
+  section. Read current labels first (`issue_read`, `get_labels`), merge via
+  `mergeLabelNames` (`bin/lib/issues/label-write.js`, `add: ['bot:in-progress']`), and write
+  that full array — never `labels: ['bot:in-progress']` alone.
 - **Removed** alongside claim release — every release removes it, regardless of outcome
   (`wrap-up/cleanup-procedures-execution.md` Section E, its duplicate in `flow/multispec-review-console.md`,
   and — for a single-spec issue-mode run the user chooses not to merge — the same Section E
