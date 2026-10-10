@@ -192,9 +192,8 @@ test('node-eval-file.js header and the adopted-branch snippet state the unquoted
   assert.ok(header.includes('\\`'), 'header must say a literal backtick is written escaped');
   const snippet = fs.readFileSync(path.join(SKILLS_DIR, 'build', 'adopted-branch-collision-check.md'), 'utf8')
     .replace(/\r\n/g, '\n');
-  const beforeFence = snippet.slice(0, snippet.indexOf('<<NODE_EVAL_EOF'));
-  const lastPara = beforeFence.slice(beforeFence.lastIndexOf('\n\n'));
-  // The paragraph already cited the header for the Windows `node -e` no-op before #3102, so pin the new sentence itself.
-  assert.match(lastPara, /keep the body free of any other `\$` or unescaped backtick, per `bin\/node-eval-file\.js`'s header/,
+  const fenceAt = snippet.lastIndexOf('```bash', snippet.indexOf('<<NODE_EVAL_EOF'));
+  // Checks the sentence sits beside the fence without depending on blank-line placement (#3102).
+  assert.match(snippet.slice(Math.max(0, fenceAt - 1200), fenceAt), /keep the body free of any other `\$` or unescaped backtick, per `bin\/node-eval-file\.js`'s header/,
     'adopted-branch snippet must cite the header rule beside its fence');
 });
