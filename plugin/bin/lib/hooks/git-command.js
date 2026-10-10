@@ -456,8 +456,9 @@ function gitTargets(command, cwd) {
 // skills/_shared/policy-schema-coverage.md for the measured rationale):
 //   - bare shell redirection (`>`, `>>`) — no command word for the prefilter to
 //     key on, so catching it means running the full handler on EVERY Bash call.
-//     Full path measured at 106.5 ms best idle / 152.3 ms under three-way
-//     contention per call, vs 57.8 / 97.9 ms for the skip path (Windows, #3074).
+//     Marginal cost per redirecting call = full path minus skip path: about
+//     49 ms idle (106.5 - 57.8) / 54 ms under three-way contention
+//     (152.3 - 97.9), best of 30 (Windows, #3074).
 //   - `python -c`, `sh -c`, `awk` program strings — the write target lives
 //     inside an opaque program and is not statically knowable at any cost.
 //
@@ -520,7 +521,7 @@ function hasInPlaceFlag(flags) {
 // code. pre-tool-use.js's GATE_COVERAGE re-exports this list, bash-prefilter.js
 // imports it for its PRE_TOOL_USE_WORDS, and
 // tests/hooks-gate-coverage.test.js pins it to the prose in
-// skills/_shared/policy-schema.md — so widening this array is what forces the
+// skills/_shared/policy-schema-coverage.md — so widening this array is what forces the
 // documentation to be updated (#138).
 const WRITE_SHAPES = Object.freeze(['cp', 'mv', 'tee', 'sed', 'perl', 'install', 'ln', 'truncate', 'dd']);
 
@@ -686,7 +687,7 @@ function fileWriteTargets(command, cwd) {
 
 // mkdir target parser — deliberately separate from WRITE_SHAPES/fileWriteTargets
 // (#692): WRITE_SHAPES feeds the worktree-always Bash-write gate's coverage,
-// which tests/hooks-gate-coverage.test.js pins to skills/_shared/policy-schema.md's
+// which tests/hooks-gate-coverage.test.js pins to skills/_shared/policy-schema-coverage.md's
 // prose; folding mkdir in there would widen that unrelated gate as a side effect.
 // The pipeline-shadow guard (pre-tool-use.js) is this function's only consumer.
 // mkdir takes no flag that both consumes a value AND could plausibly be confused
