@@ -653,5 +653,11 @@ test('every shipped skill has a parseable Anti-Patterns table', () => {
   //   `git diff 6d0f768a4...HEAD -- 'plugin/skills/*/SKILL.md' | grep -E '^[-+]\|'` —
   //   the five `+|` rows under `## Anti-Patterns` are among its matches. Measured by
   //   running this parser, not by adding 5.
-  assert.strictEqual(total, 421);
+  //
+  //   421 -> 422, #2732 (flow: PR-early requirement made explicit). One row ADDED to
+  //   plugin/skills/flow/SKILL.md's existing Anti-Patterns table: "Hand-executing
+  //   Step 4's materialize-and-commit prose without a literal `Skill`-tool call for
+  //   `/claude-tweaks:build`". Measured by RUNNING the parser on the working tree
+  //   (actual 422), not by adding 1 to 421 (`[IL-99]`).
+  assert.strictEqual(total, 422);
 });
