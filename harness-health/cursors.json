@@ -170,5 +170,9 @@
   "skill:node-test-output-evidence": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1791523040816
+  },
+  "skill:windows-checkout-test-parity": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1791609391052
   }
 }
