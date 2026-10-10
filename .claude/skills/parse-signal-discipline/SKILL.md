@@ -142,6 +142,25 @@ When mechanizing a prose heuristic into a deterministic check:
    family with no such cross-check is refused outright ("has no failure-accounting guard"). Each
    mismatch returns `{eligible: false, reason}` naming both numbers, never a verdict over the
    files it did find. When no independent count exists for an input, the list cannot gate a pass.
+8. **A shell-out check owes a branch on the exit code when the tool's "no result" and "could not
+   run" both print nothing.** `grep` exits 1 for no match and 2 for an error; `git grep` exits 1
+   for no match and 128 when it cannot run. Reading empty output as "no match" collapses the two.
+   /tidy's plan citation check (#3101, `plugin/skills/tidy/scan-procedures.md`'s "Citation check
+   before any plan Delete") first did exactly that on an irreversible Delete path: a `git grep`
+   that could not run read as "uncited". Review caught it, and `c753dc11b` made exit 1 the only
+   "no citation" result, with any other non-zero exit keeping the plan as cited-unverified.
+   Branch on the exit code, not the output, and on a destructive path make the failure arm fail
+   closed.
+9. **A probe that skill prose tells the agent to run owes the same split, and two things break it
+   that a code check never meets.** Each Bash tool call starts a fresh shell, so a variable an
+   earlier call set is unset in the probe's call: the probe reads an empty path and reports the
+   benign "absent". Resolve every path inside the snippet itself. And the probe can fail outright
+   (non-zero exit, no output, output that does not parse), so the prose needs an explicit branch
+   for that case, routed to the could-not-tell report and never left to fall through to the benign
+   one. `plugin/skills/dispatch/exclusions-unreadable-report.md` (#3104) slipped on both, one
+   review round each: its probe first read `$DISPATCH_EXCLUSIONS` from an earlier call
+   (`aab721418` made it resolve the session-tmp path itself), and then it had no branch for a
+   failed probe (`39129d212` added one that reports "exclusion reason unknown").
 
 ## When to use
 
@@ -150,6 +169,8 @@ When mechanizing a prose heuristic into a deterministic check:
   on.
 - Reviewing an existing parser of this kind and checking whether its "nothing found" return path
   actually merges two different situations.
+- Writing a check that shells out to a tool, or a probe in skill prose the agent runs, where an
+  empty result could mean either "nothing found" or "the check did not run" (fix-shape items 8-9).
 
 ## When not to use
 
