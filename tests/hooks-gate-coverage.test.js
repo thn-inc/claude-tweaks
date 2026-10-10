@@ -185,7 +185,9 @@ test('env-with-flags git shapes reach the full handler, in both events (#3074)',
   }
 
   // Parser side: the shapes the predicate exists for really do resolve.
-  assert.deepStrictEqual(gitTargets('env -C /main-checkout git commit -m "x"', '/repo'), [{ action: 'commit', dir: '/main-checkout' }]);
+  // path.resolve: gitTargets resolves an -C dir to an absolute path, which on
+  // Windows carries the drive letter (C:\main-checkout).
+  assert.deepStrictEqual(gitTargets('env -C /main-checkout git commit -m "x"', '/repo'), [{ action: 'commit', dir: path.resolve('/main-checkout') }]);
   assert.deepStrictEqual(gitTargets('env -u FOO git push', '/repo'), [{ action: 'push', dir: '/repo' }]);
 });
 

@@ -19,12 +19,17 @@
 // (EARLY = null, main() reads stdin itself). That is safe because the only
 // statement that can throw before stdin is read is the require() — earlyGate's
 // own stdin reader and JSON.parse are already wrapped and never throw.
+// process.exit(0) on the skip path is safe for the same reason this file is
+// allowlisted in tests/bin-lib/exit-code-conformance.test.js: nothing is
+// pending on stdout to truncate. Kept as ONE braced require.main guard — that
+// test reads the file's first such guard as its entry point.
 let EARLY = null;
-try {
-  const bashPrefilter = require('./lib/hooks/bash-prefilter');
-  if (require.main === module) EARLY = bashPrefilter.earlyGate(process.argv[2]);
-} catch { EARLY = null; }
-if (EARLY && EARLY.skip) process.exit(0);
+if (require.main === module) {
+  try {
+    EARLY = require('./lib/hooks/bash-prefilter').earlyGate(process.argv[2]);
+  } catch { EARLY = null; }
+  if (EARLY && EARLY.skip) process.exit(0);
+}
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
