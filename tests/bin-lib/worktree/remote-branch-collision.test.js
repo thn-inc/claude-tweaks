@@ -2,9 +2,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { originWithTwoClones } = require('../../helpers/git-fixtures');
 const {
   isSafeBranchName,
   readRemoteTip,
@@ -145,36 +144,7 @@ test('formatStopCard: names the branch, the short sha, the PR state, and all thr
 
 // --- real git: the mine / foreign distinction against an actual remote ---
 
-function makeRepos() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'remote-branch-collision-'));
-  const origin = path.join(root, 'origin.git');
-  const work = path.join(root, 'work');
-  const other = path.join(root, 'other');
-  const env = {
-    ...process.env,
-    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test',
-    GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test',
-    GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
-  };
-  const run = (cwd, args) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  const commit = (cwd, name) => {
-    fs.writeFileSync(path.join(cwd, name), name);
-    run(cwd, ['add', name]);
-    run(cwd, ['commit', '-q', '-m', name]);
-  };
-  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin], { env });
-  for (const dir of [work, other]) {
-    execFileSync('git', ['init', '-q', '-b', 'main', dir], { env });
-    run(dir, ['remote', 'add', 'origin', origin]);
-  }
-  commit(work, 'base');
-  run(work, ['push', '-q', 'origin', 'main']);
-  run(other, ['pull', '-q', 'origin', 'main']);
-  return {
-    root, work, other, run, commit,
-    gitIn: (cwd) => (args) => run(cwd, args),
-  };
-}
+const makeRepos = () => originWithTwoClones('remote-branch-collision-');
 
 test('real git: this run\'s own earlier push is mine; an unrelated same-name branch is foreign', (t) => {
   const r = makeRepos();

@@ -5,17 +5,18 @@
 // used a quoted heredoc (<<'EOF'), so the `${CLAUDE_PLUGIN_ROOT}` inside its require() was never
 // shell-expanded: with the variable left to the shell the require threw, stdout was empty, and the
 // skill's prose read that as `unreachable`/`no-output` — failing open, the silent pass #2844
-// exists to prevent. Fixture repos follow tests/bin-lib/worktree/remote-branch-collision.test.js's
-// makeRepos; extraction follows tests/dispatch-not-spec-shaped-exclusion-fixture.test.js.
+// exists to prevent. Fixture repos come from tests/helpers/git-fixtures.js's originWithTwoClones
+// (shared with tests/bin-lib/worktree/remote-branch-collision.test.js); extraction follows
+// tests/dispatch-not-spec-shaped-exclusion-fixture.test.js.
 'use strict';
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
+const { originWithTwoClones } = require('./helpers/git-fixtures');
 
 const ROOT = path.join(__dirname, '..');
 const CHECK = readText(path.join(ROOT, 'plugin', 'skills', 'build', 'adopted-branch-collision-check.md'));
@@ -32,39 +33,12 @@ function extractSnippet() {
   return CHECK.slice(bodyStart, end);
 }
 
-function makeRepos() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adopted-branch-snippet-'));
-  const origin = path.join(root, 'origin.git');
-  const work = path.join(root, 'work');
-  const other = path.join(root, 'other');
-  const env = {
-    ...process.env,
-    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test',
-    GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test',
-    GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
-  };
-  const run = (cwd, args) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  const commit = (cwd, name) => {
-    fs.writeFileSync(path.join(cwd, name), name);
-    run(cwd, ['add', name]);
-    run(cwd, ['commit', '-q', '-m', name]);
-  };
-  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin], { env });
-  for (const dir of [work, other]) {
-    execFileSync('git', ['init', '-q', '-b', 'main', dir], { env });
-    run(dir, ['remote', 'add', 'origin', origin]);
-  }
-  commit(work, 'base');
-  run(work, ['push', '-q', 'origin', 'main']);
-  run(other, ['pull', '-q', 'origin', 'main']);
-  return { root, work, other, env, run, commit };
-}
-
 function runSnippet(r) {
   const stdout = execFileSync('bash', ['-c', extractSnippet()], {
     cwd: r.work,
     timeout: 60000,
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...r.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT },
   });
   const lines = stdout.trim().split('\n').filter(Boolean);
@@ -73,7 +47,7 @@ function runSnippet(r) {
 }
 
 test('the collision-check snippet, run verbatim with CLAUDE_PLUGIN_ROOT left to the shell, classifies absent / mine / foreign (#3091)', (t) => {
-  const r = makeRepos();
+  const r = originWithTwoClones('adopted-branch-snippet-');
   t.after(() => fs.rmSync(r.root, { recursive: true, force: true }));
 
   r.run(r.work, ['checkout', '-q', '-b', 'worktree-record-1']);
