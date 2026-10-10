@@ -1,7 +1,8 @@
 {
-  "runId": "2026-10-02T061950-record-2688",
-  "sessionId": "2e91bf6c-72ae-55bc-951d-42d9bd69335a",
-  "claimedAt": "2026-10-02T06:23:51.873Z",
-  "ttlHours": 72,
-  "host": "vm"
+  "released": true,
+  "runId": "2026-10-10T130853-tidy-standalone",
+  "reason": "swept: issue closed",
+  "releasedAt": "2026-10-10T19:43:50.213Z",
+  "link": "https://github.com/thn-inc/claude-tweaks/pull/2897",
+  "sweptFrom": "2026-10-02T061950-record-2688"
 }
