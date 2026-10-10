@@ -94,7 +94,10 @@ function earlyGate(event, readRaw = () => fs.readFileSync(0, 'utf8')) {
   try { raw = readRaw(); } catch { raw = ''; }
   let input = null;
   try { input = JSON.parse(raw); } catch { input = null; }
-  return { raw, skip: !shouldRunFull(event, input) };
+  // stdin is already drained, so `raw` must survive even if the decision throws.
+  let skip = false;
+  try { skip = !shouldRunFull(event, input); } catch { skip = false; }
+  return { raw, skip };
 }
 
 module.exports = { PRE_TOOL_USE_WORDS, POST_TOOL_USE_WORDS, commandWords, shouldRunFull, earlyGate };
