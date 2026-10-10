@@ -27,14 +27,14 @@ files:
 - **URL:** a Bash tool call such as `echo hi`, `ls -la`, `gh issue view 3074`
 - **Action:** run it.
 - **Should feel:** the same as bare `node` startup. The hook's skip path costs a few milliseconds above a `node -e ""` launch and prints nothing.
-- **Should understand:** `bin/lib/hooks/bash-prefilter.js` runs at the top of `bin/hooks.js`, before its heavy requires. It decides from the raw payload whether the command contains a covered word (git, env, mkdir, or a write shape) anywhere, as a shell word or path basename. If not, the hook exits 0 silently. `perf/hooks-prefilter.test.js` pins this: skip cost under half of full cost.
+- **Should understand:** `bin/lib/hooks/bash-prefilter.js` runs at the top of `bin/hooks.js`, before its heavy requires. It runs the full handler when the command contains a covered word (git, env, mkdir, or a write shape) anywhere, as a shell word or path basename, or when it holds both a shell assignment and a `$NAME` reference. Otherwise the hook exits 0 silently. `perf/hooks-prefilter.test.js` pins this: skip cost under half of full cost.
 - **Red flags:** stdout or a systemMessage from the hook on a plain command. `context.js` or `pre-tool-use.js` loaded on that path. Any non-zero hook exit.
 
 ### 3. Attempt a covered write from the main checkout, however spelled — main checkout of a `worktree-always` repo
-- **URL:** a Bash tool call such as `git commit -m x`, `cd x && git commit -m y`, `/usr/bin/git commit -m x`, `env -i git commit -m x`, or `G=git; $G commit -m x`
+- **URL:** a Bash tool call such as `git commit -m x`, `cd x && git commit -m y`, `/usr/bin/git commit -m x`, `env -i git commit -m x`, `G=git; $G commit -m x`, or `G=gi; ${G}t commit -m x`
 - **Action:** run it from the main checkout, with no linked worktree.
 - **Should feel:** consistently refused. Every spelling meets the same `worktree-always` deny with the same remediation, and none slips through because of how it was written.
-- **Should understand:** the prefilter is a superset of what the full handler can act on. It treats `=` as a separator, so a same-command assignment's value (`G=git`) is seen as the word `git`. It strips quotes, so `"g"it` is seen too. That covers what `git-command.js`'s `substituteVars` resolves. Path-qualified git and `env`-wrapped git are covered end to end. Known limits that remain: concatenated expansion (`G=gi; ${G}t`) and command substitution producing the program name (`$(echo git) push`); the handler cannot resolve the latter either.
+- **Should understand:** the prefilter is a superset of what the full handler can act on. It treats `=` as a separator, so a same-command assignment's value (`G=git`) is seen as the word `git`. It strips quotes, so `"g"it` is seen too. A program name concatenated from pieces (`G=gi; ${G}t`, `X=it; g$X`) spells no covered word anywhere, so any command holding both an assignment and a `$NAME`/`${NAME}` reference runs the full handler. Together these cover what `git-command.js`'s `substituteVars` resolves. Path-qualified git and `env`-wrapped git are covered end to end. The known limit that remains is command substitution producing the program name (`$(echo git) push`); the handler cannot resolve it either.
 - **Red flags:** a shape the parser resolves a target for (`gitTargets`, `fileWriteTargets`, `mkdirTargets`) that is allowed with empty hook stdout. That is a prefilter false skip, a silent gate bypass.
 
 ### 4. Stash from inside a linked worktree — worktree session
@@ -45,5 +45,5 @@ files:
 - **Red flags:** no warning for a bare `git stash` in a linked worktree. A deny instead of a warning.
 
 ## Origin
-- Created during build of #3074. The per-pattern `if` layout fanned out to 28 + 18 hook launches per `$VAR`/loop Bash call on Windows. It was replaced by one unconditional handler per event and a fail-open command-word prefilter in `bin/hooks.js`. The live launch count was measured with a process-level counter: base 28/18 on loop and `$TEMP` probes, branch 1/1 on every probe. The final whole-branch review caught and closed a `G=git; $G commit` worktree-always bypass in the first prefilter cut.
+- Created during build of #3074. The per-pattern `if` layout fanned out to 28 + 18 hook launches per `$VAR`/loop Bash call on Windows. It was replaced by one unconditional handler per event and a fail-open command-word prefilter in `bin/hooks.js`. The live launch count was measured with a process-level counter: base 28/18 on loop and `$TEMP` probes, branch 1/1 on every probe. The final whole-branch review caught and closed a `G=git; $G commit` worktree-always bypass in the first prefilter cut. `/claude-tweaks:review` then caught a concatenated-name bypass (`G=gi; ${G}t commit`), closed by the assignment-plus-`$` fail-open rule.
 - Related journeys: `recover-from-a-bookkeeping-stamp-deny.md` (another deny the same pre-tool-use hook issues).
