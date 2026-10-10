@@ -41,7 +41,9 @@ const PLUGIN_ROOT = path.join(__dirname, '..');
 const { gatherFacts } = require('./lib/wrap-up/facts');
 const { buildWorklist } = require('./lib/wrap-up/engine-plan');
 const { initState, recordResult, amendResult } = require('./lib/wrap-up/engine-record');
-const { renderTrace, renderConsoleSections, renderConsoleSectionsMulti, strictCheck, resolveProcedureHeadPath } = require('./lib/wrap-up/engine-render');
+const {
+  renderTrace, renderConsoleSections, renderConsoleSectionsMulti, strictCheck, worklistRows, resolveProcedureHeadPath,
+} = require('./lib/wrap-up/engine-render');
 const { runVerify, renderVerifyTable, resolveArchivedRunDir } = require('./lib/wrap-up/engine-verify');
 const { resolveLedgerPath, flipLedgerRow, TERMINAL_STATUSES } = require('./lib/wrap-up/ledger-write');
 const { appendEntry, formatEntry } = require('./lib/log-decision/append');
@@ -457,8 +459,31 @@ function runRender(args) {
   // it fatal.
   process.stdout.write(`${output}\n`);
 
+  const check = strictCheck(state);
+
+  // #2688: `render --section console` renders only 'findings' results, so a
+  // run dir where `plan` ran but `record` was never invoked for any open row
+  // produces nothing to print — the CLI used to say so nowhere, on either
+  // path (empty stdout + silent exit 0, or empty stdout + a bare exit 2 under
+  // --strict). Detect that specific precondition — every open row still
+  // missing from `results` — and name it, rather than let the absence of
+  // output stand for the absence of a diagnostic. A run where `record` ran
+  // (even producing zero findings) is unaffected: at least one open row's id
+  // is present in `results` by then, so `neverRecorded` is false.
+  if (section === 'console') {
+    const rows = worklistRows(state.worklist) || [];
+    const openRows = rows.filter((row) => row.gate !== 'closed');
+    const neverRecorded = openRows.length > 0 && openRows.every((row) => check.missing.includes(row.id));
+    if (neverRecorded) {
+      process.stderr.write(
+        `wrap-up-engine.js render: no recorded results in ${args.runDir} — `
+        + `\`record\` was never run for any open row (ran \`plan\` only). `
+        + 'Run `record` for each open row before rendering the console section.\n',
+      );
+    }
+  }
+
   if (args.strict) {
-    const check = strictCheck(state);
     if (!check.ok) process.exitCode = 2;
   }
 }
