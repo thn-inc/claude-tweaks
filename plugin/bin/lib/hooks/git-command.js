@@ -449,8 +449,8 @@ function gitTargets(command, cwd) {
 // is covered by construction. The pairing is the design constraint: a branch
 // here whose command word the prefilter skips is dead code, because bin/hooks.js
 // exits before the full handler loads; that asymmetry is exactly what let
-// `sed -i` bypass the gate silently for months (#70). The test in
-// tests/hooks-gate-coverage.test.js asserts the prefilter word set covers it.
+// `sed -i` bypass the gate silently for months (#70). The differential corpus in
+// tests/hooks-bash-prefilter.test.js pins the pairing against this parser (#3092).
 //
 // Still NOT covered, and deliberately (see the coverage block in
 // skills/_shared/policy-schema-coverage.md for the measured rationale):
@@ -529,7 +529,10 @@ const WRITE_SHAPES = Object.freeze(['cp', 'mv', 'tee', 'sed', 'perl', 'install',
 // a new word is reached by adding it here, never by editing a second list (#3092).
 //   git:   findGitLead's lead (`git`, or a path ending `/git`, which the prefilter
 //          reaches by basename) and the `env` wrapper it walks past —
-//          gitTargets, resolvedGitSegments, and teardownTargets (pre-tool-use.js)
+//          gitTargets, resolvedGitSegments, and teardownTargets (pre-tool-use.js).
+//          `env` is superset hygiene, kept for parity with the retired
+//          `Bash(env -*)` predicate: every env-wrapped command these parsers
+//          resolve also carries `git`, so no test can witness it alone.
 //   mkdir: mkdirTargets' command word
 //   write: fileWriteTargets' shapes
 // tests/hooks-bash-prefilter.test.js's differential corpus runs the real parsers
