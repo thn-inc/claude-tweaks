@@ -53,6 +53,14 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.139.2](https://github.com/thn-inc/claude-tweaks/compare/v6.139.1...v6.139.2) (2026-10-10)
+
+
+### Bug Fixes
+
+* Adopted-branch collision check fails open when… ([#3091](https://github.com/thn-inc/claude-tweaks/issues/3091)) ([7dd0242](https://github.com/thn-inc/claude-tweaks/commit/7dd0242b548ecaa665bbad258eeca63dae7c85a1))
+* Dispatch #N and #N,#M forms misreport a not-spec-shaped… ([#3084](https://github.com/thn-inc/claude-tweaks/issues/3084)) ([ec55811](https://github.com/thn-inc/claude-tweaks/commit/ec55811e3b6e8c0f8f80ea1775c66f31f619fcf2))
+
 ## [6.139.1](https://github.com/thn-inc/claude-tweaks/compare/v6.139.0...v6.139.1) (2026-10-10)
 
 
