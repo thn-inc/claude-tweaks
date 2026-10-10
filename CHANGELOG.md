@@ -61,6 +61,10 @@ Three conventions follow from how this repo works, and all are visible below:
 * Adopted-branch collision check fails open when… ([#3091](https://github.com/thn-inc/claude-tweaks/issues/3091)) ([7dd0242](https://github.com/thn-inc/claude-tweaks/commit/7dd0242b548ecaa665bbad258eeca63dae7c85a1))
 * Dispatch #N and #N,#M forms misreport a not-spec-shaped… ([#3084](https://github.com/thn-inc/claude-tweaks/issues/3084)) ([ec55811](https://github.com/thn-inc/claude-tweaks/commit/ec55811e3b6e8c0f8f80ea1775c66f31f619fcf2))
 
+### Highlights
+* The build-time check that stops a push onto someone else's same-name branch now actually runs, instead of silently passing when the plugin path is left to the shell.
+* Naming a record that is not spec-shaped in `/claude-tweaks:dispatch #N` now says so and tells you how to fix it, instead of wrongly claiming it already has an open PR.
+
 ## [6.139.1](https://github.com/thn-inc/claude-tweaks/compare/v6.139.0...v6.139.1) (2026-10-10)
 
 
