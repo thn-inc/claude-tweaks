@@ -34,13 +34,25 @@ phase-exit push, `_shared/git-discipline.md`), check `run-state.json`'s `pr` fie
   this section cannot fully diagnose.
 - **Set**: read the current body — `gh pr view {number} --json body` when `gh` is present,
   `mcp__github__pull_request_read` (`get` method) when it is absent
-  (`_shared/github-write-transport.md`'s Detection rule). Locate the checklist span using
-  whichever delimiter pair this read actually returned: the `<!-- phases-start -->`/
-  `<!-- phases-end -->` pair on a `gh`-present read (the real body, unsanitized); the
-  `[claude-tweaks-phases-start]`/`[claude-tweaks-phases-end]` pair on a `gh`-absent MCP read
-  (the HTML-comment pair is invisibly stripped from what this read returns, per
-  `_shared/pr-early-run-lifecycle.md`'s Root cause section, even though it still exists in the
-  stored body). Flip that phase's checklist row from
+  (`_shared/github-write-transport.md`'s Detection rule).
+
+  **Repair before locating anything (#2997).** Run `repairPrBody` (`bin/lib/flow/pr-body.js` —
+  the same module `_shared/pr-early-run-lifecycle.md`'s Step 3 composes with) against the body
+  this read returned, unconditionally — it is a no-op when every marker is already present, so
+  calling it every time costs nothing. When it restores anything (the #2996 shape: a PR opened
+  without the template, or with some markers stripped), use its returned body for the rest of
+  this update and log one line naming what came back: `AUTO {time} — PR checklist refresh:
+  restored {restored.join(', ')} on PR #{number} (body carried none/some of the expected
+  markers). Reversibility: high (gh pr edit).` This replaces the former best-effort skip on a
+  missing delimiter pair — a missing marker is now restored, never silently left absent.
+
+  Locate the checklist span using
+  whichever delimiter pair this (possibly-repaired) body actually carries: the
+  `<!-- phases-start -->`/`<!-- phases-end -->` pair on a `gh`-present read (the real body,
+  unsanitized); the `[claude-tweaks-phases-start]`/`[claude-tweaks-phases-end]` pair on a
+  `gh`-absent MCP read (the HTML-comment pair is invisibly stripped from what this read
+  returns, per `_shared/pr-early-run-lifecycle.md`'s Root cause section, even though it still
+  exists in the stored body). Flip that phase's checklist row from
   `- [ ] {phase}` to `- [x] {phase}` inside whichever span was found, leaving everything else —
   including the *other* delimiter pair, which this read may not even show — untouched, then
   write back through the same transport that did the read, to
@@ -134,8 +146,11 @@ above), not necessarily every phase this run actually completed.
 5. Log: `AUTO {time} — PR-early run lifecycle: refreshed PR #{number} title/checklist before merge. Reversibility: high (gh pr edit).`
 
 Best-effort, like the phase-checklist update it extends — a failed `gh pr edit` at any step above
-logs a warning and the merge proceeds; a stale title/checklist/`Fixes` block is cosmetic, never a
-merge blocker.
+logs a warning and the merge proceeds; a stale title or an unchecked-but-present checklist row is
+cosmetic, never a merge blocker. A **missing** run marker, phases pair, or `Fixes` block is not
+cosmetic (#2997): step 2 above already repairs it via `repairPrBody` before this refresh reaches
+step 3's rewrite, so by the time step 3 runs, a span to replace always exists — restoration is
+mechanical and happens before the merge sequence runs, never a new pipeline stop.
 
 ## Merge-time gh-absent degrade
 
