@@ -11,7 +11,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
+const { execFileSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
+const { sessionTmpPath } = require('../plugin/bin/lib/session-tmp');
 
 const DISPATCH = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch');
 const SKILL = readText(path.join(DISPATCH, 'SKILL.md'));
@@ -117,4 +121,60 @@ test('dispatch #N reports an unreadable dispatch-exclusions.json as reason-unkno
   assert.ok(probe, 'the report must carry a one-line node probe');
   const bytes = Buffer.byteLength(SKILL, 'utf8');
   assert.ok(bytes < 46080, `dispatch/SKILL.md is ${bytes} B LF -- must stay under 46080`);
+});
+
+// The report's probe must run in a fresh shell (Step 2 is its own Bash call, so `$DISPATCH_EXCLUSIONS` is
+// empty by then, and an empty path reads as `absent`). Execute the shipped line itself, no shell.
+test('the unreadable-exclusions probe self-resolves its path and tells unreadable from absent from ok when executed (#3104 AC1)', () => {
+  const report = readText(path.join(DISPATCH, 'exclusions-unreadable-report.md'));
+  assert.ok(!report.includes('$DISPATCH_EXCLUSIONS'), 'the probe must not depend on a shell variable that does not survive between Bash calls');
+  const OPEN = 'node -e "';
+  const CLOSE = '" "${CLAUDE_PLUGIN_ROOT}"';
+  const fence = report.slice(report.indexOf('```bash\n') + 8, report.indexOf('\n```', report.indexOf('```bash\n')));
+  const line = fence.split('\n').find((l) => l.startsWith(OPEN));
+  assert.ok(line && line.endsWith(CLOSE), 'the bash fence must carry one `node -e "..." "${CLAUDE_PLUGIN_ROOT}"` probe line');
+  const js = line.slice(OPEN.length, line.length - CLOSE.length);
+
+  const id = `t3104-${process.pid}-${Date.now()}`;
+  const file = sessionTmpPath(id, 'dispatch-exclusions.json');
+  assert.ok(file, 'sessionTmpPath must accept the test session id');
+  const root = path.dirname(file);
+  const run = () => JSON.parse(execFileSync(process.execPath, ['-e', js, path.join(__dirname, '..', 'plugin')], {
+    env: { ...process.env, CLAUDE_CODE_SESSION_ID: id },
+    encoding: 'utf8',
+  }));
+  try {
+    fs.writeFileSync(file, '{ not json');
+    const corrupt = run();
+    assert.equal(corrupt.status, 'unreadable');
+    assert.ok(typeof corrupt.error === 'string' && corrupt.error.length > 0, 'an unreadable status must carry an error string');
+    assert.equal(corrupt.path, file);
+
+    fs.rmSync(file);
+    const absent = run();
+    assert.equal(absent.status, 'absent');
+    assert.equal(absent.path, file);
+
+    fs.writeFileSync(file, '[]');
+    const ok = run();
+    assert.equal(ok.status, 'ok');
+    assert.equal(ok.path, file);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  assert.ok(!fs.existsSync(root), 'test temp directory must be cleaned up');
+});
+
+test('the unreadable-exclusions report maps absent to the reason-unknown line, only ok to absent-from-queue (#3104 AC1)', () => {
+  const report = readText(path.join(DISPATCH, 'exclusions-unreadable-report.md'));
+  const okBranch = report.split('\n').findIndex((l) => l.startsWith('- `status: "ok"`'));
+  const unknownBranch = report.split('\n').findIndex((l) => l.startsWith('- `status: "absent"` or `status: "unreadable"`'));
+  assert.ok(okBranch >= 0 && unknownBranch > okBranch, 'ok and absent/unreadable branches must be separate bullets');
+  const okText = report.split('\n').slice(okBranch, unknownBranch).join(' ');
+  assert.match(okText, /Report it as absent from this firing's queue/, 'only status ok is reported as absent from the queue');
+  assert.ok(!/absent"/.test(okText), 'the ok branch must not also cover status absent');
+  const unknownText = report.split('\n').slice(unknownBranch).join(' ').replace(/\s+/g, ' ');
+  assert.match(unknownText, /exclusion reason unknown: this firing's dispatch-exclusions\.json at \{path\} \{could not be read \(\{error\}\) \| was not found\}/);
+  assert.match(unknownText, /Step 2 always writes the file/, 'the report must say why absent is never nothing-excluded here');
+  assert.match(report, /`#N,#M` member[\s\S]*the rest of\s+the list proceeds/, 'the entry condition must cover the list form');
 });

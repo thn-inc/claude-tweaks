@@ -9,6 +9,8 @@
 
 const fs = require('fs');
 
+const NOT_AN_ARRAY = 'not a JSON array';
+
 // #3104: the same read as readExclusions, but it reports *why* there are no
 // entries instead of collapsing absent and unreadable into []. dispatch #N must
 // not call a record "absent from this firing's queue" when the file that would
@@ -27,7 +29,7 @@ function readExclusionsStatus(path) {
   } catch (err) {
     return { status: 'unreadable', entries: [], error: err.message };
   }
-  if (!Array.isArray(parsed)) return { status: 'unreadable', entries: [], error: 'not a JSON array' };
+  if (!Array.isArray(parsed)) return { status: 'unreadable', entries: [], error: NOT_AN_ARRAY };
   return { status: 'ok', entries: parsed, error: null };
 }
 
@@ -45,7 +47,7 @@ function readExclusionsStatus(path) {
 function readExclusions(path) {
   const r = readExclusionsStatus(path);
   if (r.status === 'unreadable') {
-    if (r.error === 'not a JSON array') {
+    if (r.error === NOT_AN_ARRAY) {
       console.error(`readExclusions: ${path} did not contain a JSON array -- treating as empty`);
     } else {
       console.error(`readExclusions: ${path} unreadable (${r.error}) -- treating as empty`);
