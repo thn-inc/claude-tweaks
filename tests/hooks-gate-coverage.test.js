@@ -205,8 +205,8 @@ test('PostToolUse carries an EnterWorktree matcher group for the post-tool-use E
 // #703: checkPostTeardownReanchor hard-gates on tool_name === 'ExitWorktree'
 // (for the action:remove shape) and on a raw `git worktree remove ...` Bash
 // command — a PostToolUse registration without a matching matcher, or a
-// prefilter that skips the command, makes it dead at the registration seam, the same #70 dead-branch shape the
-// EnterWorktree test above guards against.
+// prefilter that skips the command, makes it dead at the registration seam,
+// the same #70 dead-branch shape the EnterWorktree test above guards against.
 test('PostToolUse carries an ExitWorktree matcher group for the post-teardown re-anchor backstop', () => {
   const hooks = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
   const group = hooks.hooks.PostToolUse.find((e) => e.matcher === 'ExitWorktree');

@@ -60,7 +60,9 @@ function commandWords(command) {
 
 // Own-property lookup: `WORDS_BY_EVENT['toString']` would otherwise resolve to
 // an Object.prototype member and read as a governed event.
-const wordsFor = (event) => (Object.prototype.hasOwnProperty.call(WORDS_BY_EVENT, event) ? WORDS_BY_EVENT[event] : null);
+function wordsFor(event) {
+  return Object.prototype.hasOwnProperty.call(WORDS_BY_EVENT, event) ? WORDS_BY_EVENT[event] : null;
+}
 
 function shouldRunFull(event, input) {
   const covered = wordsFor(event);
