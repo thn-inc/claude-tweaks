@@ -65,3 +65,13 @@ test('pr-early-run-lifecycle.md no longer claims the pushed branch is always fre
   assert.match(text, /That holds on the creation path only/);
   assert.match(text, /build\/adopted-branch-collision-check\.md/);
 });
+
+test('the adopted-branch collision stop is registered in auto-mode-contract.md\'s HARD-GATE row, and the build sub-file cites the registration (#3094)', () => {
+  const contract = read('plugin', 'skills', '_shared', 'auto-mode-contract.md');
+  const row = contract.split('\n').find((l) => l.includes('HARD-GATE / BLOCKED / STOP conditions'));
+  assert.ok(row, 'HARD-GATE / BLOCKED / STOP row not found');
+  assert.match(row, /`\/build`'s adopted-branch collision stop \(`build\/adopted-branch-collision-check\.md`/);
+  // The registered cases must stay the ones the sub-file stops on (items 3-4).
+  assert.match(row, /`foreign`, or `unreachable` with a `remoteSha`/);
+  assert.match(norm(CHECK), /a registered HARD-GATE \(`_shared\/auto-mode-contract\.md`'s HARD-GATE \/ BLOCKED \/ STOP row\)/);
+});

@@ -142,6 +142,15 @@ test('formatStopCard: names the branch, the short sha, the PR state, and all thr
   assert.match(formatStopCard({ branch: 'b', remoteSha: SHA_A, prLookup: { ok: true, prs: [] } }), /no PR found/);
 });
 
+test('formatStopCard with a reason: names it and does not claim the commit is outside HEAD\'s history (#3093)', () => {
+  const card = formatStopCard({ branch: 'b', remoteSha: SHA_A, prLookup: { ok: true, prs: [] }, reason: 'fetch-failed' });
+  assert.match(card, /^## Build: Adopted branch collides with an unrelated branch on origin/);
+  assert.match(card, /could not be determined \(`fetch-failed`\)/);
+  assert.doesNotMatch(card, /is not in this worktree's history/);
+  assert.match(card, /no PR found/);
+  assert.match(card, /git branch -m b-\{suffix\}/);
+});
+
 // --- real git: the mine / foreign distinction against an actual remote ---
 
 const makeRepos = () => originWithTwoClones('remote-branch-collision-');

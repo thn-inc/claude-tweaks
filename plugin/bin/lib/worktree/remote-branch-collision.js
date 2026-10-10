@@ -139,14 +139,21 @@ function describePrs(prLookup) {
     .join(', ');
 }
 
-function formatStopCard({ branch, remoteSha, prLookup }) {
+// `reason` set → the unknown-relation card (`unreachable` with a remoteSha:
+// fetch-failed / ancestry-check-failed, adopted-branch-collision-check.md item 3):
+// the branch is confirmed on origin but its relation to HEAD could not be
+// determined, so the card must not claim the commit is outside HEAD's history.
+function formatStopCard({ branch, remoteSha, prLookup, reason }) {
   const short = String(remoteSha || '').slice(0, 9);
+  const relation = reason
+    ? `its relation to this worktree's history could not be determined (\`${reason}\`)`
+    : "that commit is not in this worktree's history";
+  const outcome = reason ? 'may be rejected' : 'would be rejected';
   return [
     '## Build: Adopted branch collides with an unrelated branch on origin',
     '',
-    `\`${branch}\` already exists on \`origin\` at \`${short}\`, and that commit is not in this ` +
-      `worktree's history — ${describePrs(prLookup)}. Pushing this branch would be rejected ` +
-      'non-fast-forward.',
+    `\`${branch}\` already exists on \`origin\` at \`${short}\`, and ${relation} — ` +
+      `${describePrs(prLookup)}. Pushing this branch ${outcome} non-fast-forward.`,
     '',
     `Options: (1) rename this worktree's local branch (\`git branch -m ${branch}-{suffix}\`) and ` +
       're-run, (2) delete the stale remote branch ' +
