@@ -1,7 +1,7 @@
 {
+  "released": true,
   "runId": "2026-10-10T133006-record-3092",
-  "sessionId": "c63a90d8-a966-4c1d-9f9c-e6f4b20d3a53",
-  "claimedAt": "2026-10-10T13:30:12.397Z",
-  "ttlHours": 72,
-  "host": "Djoef-PC-WE8Swd"
+  "reason": "merged via PR #3100",
+  "releasedAt": "2026-10-10T14:34:58.326Z",
+  "link": "https://github.com/thn-inc/claude-tweaks/pull/3100"
 }
