@@ -317,3 +317,76 @@ test('defaultDeps().resolvePolicy applies computeDerivedDefaults, so merge-verif
   assert.strictEqual(typeof resolved['merge-verification'].value, 'string', `merge-verification must be derived, got ${JSON.stringify(resolved['merge-verification'])}`);
   assert.strictEqual(typeof resolved['integration-model'].value, 'string', `integration-model must be derived, got ${JSON.stringify(resolved['integration-model'])}`);
 });
+
+// #2861: /flow Step 2.8 logs its claim to decisions.md BEFORE Step 3 runs this
+// classifier, so a freshly minted dir is never byte-empty by the time it is read.
+const NO_SPEC = { git: (args) => (args[0] === 'ls-tree' ? '' : 'feat-branch\n') };
+const CLAIM_ONLY = '## /flow\n- AUTO 18:42:06 — Step 2.8: claimed #7 (bin/claim-targets.js, transport: git). Reversibility: high.\n';
+
+function adoptionFor(decisions, extra = {}) {
+  const fx = mainRoot();
+  if (decisions !== null) fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), decisions);
+  for (const [name, text] of Object.entries(extra)) fs.writeFileSync(path.join(fx.runDir, name), text);
+  return { fx, a: computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: deps(fx, NO_SPEC) }) };
+}
+
+test('a decisions.md holding only Step 2.8 claim-log lines classifies as case 2, single-target and batch forms (#2861 AC1)', () => {
+  const batch = '## /flow\n- AUTO 02:30:28 — Step 2.8: Claimed all 2 targets under run 2026-09-06T000000-record-7 (claim-targets.js exit 0). Reversibility: high.\n';
+  for (const text of [CLAIM_ONLY, batch]) {
+    const { fx, a } = adoptionFor(text);
+    assert.strictEqual(a.case, 2, text);
+    assert.strictEqual(a.hasOtherContent, false);
+    assert.deepStrictEqual(a.backfills, []);
+    assert.strictEqual(a.note, ADOPTION_NOTES[2].replace('{path}', fs.realpathSync(fx.runDir)));
+  }
+});
+
+test('the claim line the real log-decision CLI writes from claim-targets.md\'s argv classifies as case 2 (#2861 AC1, writer-generated)', () => {
+  const fx = mainRoot();
+  fs.mkdirSync(path.join(fx.root, '.git'));
+  const logDecision = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'log-decision.js'));
+  const code = logDecision.run(
+    ['--run', fx.runDir, '--status', 'AUTO', '--section', '/flow', '--step', 'Step 2.8', '--reversibility', 'high', '--text', 'claimed #7 (bin/claim-targets.js, transport: git)'],
+    { now: () => Date.parse('2026-09-06T12:00:00Z'), cwd: () => fx.root, mainRoot: fx.root, stdout: () => {}, stderr: () => {} },
+  );
+  assert.strictEqual(code, 0);
+  assert.deepStrictEqual(fs.readdirSync(fx.runDir), ['decisions.md'], 'the writer leaves nothing but decisions.md behind (no lock residue)');
+  const a = computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: deps(fx, NO_SPEC) });
+  assert.strictEqual(a.case, 2);
+});
+
+test('a missing, empty, or whitespace-only decisions.md still classifies as case 2 (#2861, unchanged)', () => {
+  for (const text of [null, '', '  \n\n']) assert.strictEqual(adoptionFor(text).a.case, 2, JSON.stringify(text));
+});
+
+test('any non-claim decisions.md content still classifies as case 3 with the same backfills as before (#2861 AC2)', () => {
+  const mixed = `${CLAIM_ONLY}- AUTO 18:42:16 — Manifesto: design-critique resolved to auto (source: default). Reversibility: n/a.\n`;
+  const headerOnly = '# Auto-Decision Log — pipeline 2026-09-06T000000-record-7\n\nPipeline config snapshot:\n- mode: auto\n';
+  const unparseable = `${CLAIM_ONLY}Step 2.8: claimed #7\n`;
+  for (const text of [mixed, headerOnly, '## /flow\n', unparseable, '## /build\n- AUTO 10:00:00 — x. Reversibility: high.\n', 'x\n']) {
+    const { a } = adoptionFor(text);
+    assert.strictEqual(a.case, 3, JSON.stringify(text));
+    assert.strictEqual(a.hasOtherContent, true);
+    assert.deepStrictEqual(a.backfills, ['worktree registration', 'PR-early lifecycle', 'materialize commit']);
+  }
+});
+
+test('a decisions.md that exists but cannot be read is content, never a fresh mint (#2861)', () => {
+  const fx = mainRoot();
+  const readFile = (p) => {
+    if (path.basename(p) === 'decisions.md') {
+      const e = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e;
+    }
+    return fs.readFileSync(p, 'utf8');
+  };
+  const a = computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: deps(fx, { ...NO_SPEC, readFile }) });
+  assert.strictEqual(a.case, 3);
+  assert.strictEqual(a.hasOtherContent, true);
+});
+
+test('claim-log-only decisions.md beside a non-empty events.jsonl is still case 3; with config.yml it is still case 1 (#2861)', () => {
+  assert.strictEqual(adoptionFor(CLAIM_ONLY, { 'events.jsonl': '{"event":"x"}\n' }).a.case, 3);
+  const withConfig = adoptionFor(CLAIM_ONLY, { 'config.yml': 'mode: auto\n' }).a;
+  assert.strictEqual(withConfig.case, 1);
+  assert.strictEqual(withConfig.hasOtherContent, false);
+});

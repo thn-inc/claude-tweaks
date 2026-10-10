@@ -76,6 +76,62 @@ function rollbackMint(dirPath) {
 // unfiltered .sort().reverse() would rank it first and shadow live runs.
 const RUN_ID_RE = /^\d{4}-\d{2}-\d{2}T/;
 
+function isPlainObject(v) {
+  return Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+}
+
+function hasPrNumber(state) {
+  return isPlainObject(state.pr) && Number.isInteger(state.pr.number);
+}
+
+// The one multi-spec parent fallback (#2858). A /flow multi-spec run hands
+// each spec's skills a per-spec run dir ({parent-run-id}/spec-{N}/) that
+// carries its own status, while the run's shared worktree/PR stamps live on
+// the PARENT run dir (record-worktree / record-pr write there). Reads the
+// per-spec run-state.json and, behind the /^spec-/ basename gate, fills a
+// missing worktree / pr / prExempt field by field from the parent's — a
+// usable per-spec value always wins. `requireRunIdParent` adds the stricter
+// "parent basename is run-id-shaped" gate pre-tool-use.js's perSpecPathspec
+// applies. `read` is injectable for callers that read through their own deps.
+// Never throws: a missing, unreadable, malformed, or non-object file reads as
+// null. Returns { state, parentRunDir, filled } — parentRunDir is set
+// whenever the gate passed (even when the parent file is unreadable), and
+// `filled` names the fields taken from the parent.
+function readRunStateWithParent(runDir, { read = readRunState, requireRunIdParent = false } = {}) {
+  if (typeof runDir !== 'string' || !runDir) return { state: null, parentRunDir: null, filled: [] };
+  const safeRead = (dir) => {
+    try {
+      const v = read(dir);
+      return isPlainObject(v) ? v : null;
+    } catch { return null; }
+  };
+  const own = safeRead(runDir);
+  if (!/^spec-/.test(path.basename(runDir))) return { state: own, parentRunDir: null, filled: [] };
+  const parentRunDir = path.dirname(runDir);
+  if (requireRunIdParent && !RUN_ID_RE.test(path.basename(parentRunDir))) return { state: own, parentRunDir: null, filled: [] };
+  const parent = safeRead(parentRunDir);
+  if (!parent) return { state: own, parentRunDir, filled: [] };
+  const state = { ...(own || {}) };
+  const filled = [];
+  // The per-spec side is judged by shape (a usable value wins); the parent
+  // side only by truthiness, so a hand-corrupted parent stamp still reaches
+  // the caller exactly as written and each caller keeps its own verdict on it
+  // (precondition.js fails open on one; resolvePrNumber returns it).
+  if (!(typeof state.worktree === 'string' && state.worktree) && parent.worktree) {
+    state.worktree = parent.worktree;
+    filled.push('worktree');
+  }
+  if (!hasPrNumber(state) && parent.pr) {
+    state.pr = parent.pr;
+    filled.push('pr');
+  }
+  if (!state.prExempt && parent.prExempt) {
+    state.prExempt = parent.prExempt;
+    filled.push('prExempt');
+  }
+  return { state: own || filled.length ? state : null, parentRunDir, filled };
+}
+
 // #848: a near-miss shape — the same 8-digit-date + T + 6-digit-time prefix
 // as a canonical run-id, minus the dashes (e.g. `20260817T173343-spec-764`,
 // the exact form a hand-composed `date -u +%Y%m%dT%H%M%S` mint produced
@@ -650,6 +706,6 @@ function appendEvent(runDir, type, data, attribution) {
 
 module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
-  readRunState, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, RUN_ID_RE, findNonCanonicalRunDirs,
+  readRunState, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, RUN_ID_RE, findNonCanonicalRunDirs,
   rollbackMint, isStaleClaim, stampAdHocRunDirForDenial,
 };

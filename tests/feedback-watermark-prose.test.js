@@ -139,7 +139,7 @@ test('SKILL.md frontmatter argument-hint includes --full', () => {
 test('SKILL.md "$ARGUMENTS is parsed as" intro line includes --full', () => {
   assert.match(
     SKILL,
-    /`\$ARGUMENTS` is parsed as `\[<learning text>\] \[--kind=<value>\] \[--upstream <owner\/name>\] \[--dry-run\] \[--queue\] \[--full\] \[--pre-confirmed\]`:/,
+    /`\$ARGUMENTS` is parsed as `\[<learning text>\] \[--kind=defect\|gap\] \[--upstream <owner\/name>\] \[--dry-run\] \[--queue\] \[--full\] \[--pre-confirmed\]`:/,
   );
 });
 

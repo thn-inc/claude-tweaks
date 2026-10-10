@@ -18,17 +18,25 @@ const { runGit } = require('./git-exec');
 const { parseWorktreeList, isWorktreeLocked, resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
 const { mainCheckoutRoot } = require('./worktree-detect');
 const { fallbackBranch, worktreePathForBranch } = require('./run-integrity');
+const { parseRepo } = require('../repo-resolve');
 
 const GH_TIMEOUT_MS = 15000;
 
 // Injectable seam (gh-api-module-pattern): real `gh` shelled out to by default; a fixture test
 // passes a fake here instead of touching the network. Mirrors reconcile/release-merged.js's own
 // ghApi() shape (encoding, stdio, timeout) rather than inventing a second one.
-function defaultGhApiDelete(args) {
+// `host` (optional; omitted/'github.com' = no flag) threads --hostname onto the raw `gh api
+// repos/{owner}/{repo}/...` call the same way release.js/link.js/native-dependencies.js already
+// do (#2240 convention) — the REST path itself is never host-qualified, only owner/repo, so a
+// GitHub Enterprise Server remote needs this separate flag or the call silently targets
+// github.com instead.
+function defaultGhApiDelete(args, host) {
   const cp = require('child_process');
+  const hostArgs = host && host !== 'github.com' ? ['--hostname', host] : [];
   try {
-    cp.execFileSync('gh', ['api', '--method', 'DELETE', ...args], {
+    cp.execFileSync('gh', ['api', '--method', 'DELETE', ...args, ...hostArgs], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GH_TIMEOUT_MS,
+      windowsHide: true,
     });
     return { ok: true };
   } catch (e) {
@@ -52,11 +60,15 @@ function modeGateSkip(mode, branch, isIntegrationBranch, label) {
   return null;
 }
 
-function repoSlugOf(root) {
+// -> { host, owner, repo } | null. Delegates to repo-resolve.js's shared parseRepo (the one
+// owner/repo/host regex in the codebase, #1177) instead of this module's own narrower
+// owner/repo-only regex, which discarded the host segment a GitHub Enterprise Server remote
+// carries — the discarded host was exactly what made Step 5's `gh api` call below always target
+// github.com regardless of the actual remote.
+function repoSpecOf(root) {
   const remote = runGit(['remote', 'get-url', 'origin'], root);
   if (remote.failure || !remote.stdout) return null;
-  const m = /[:/]([^/]+\/[^/]+?)(\.git)?$/.exec(remote.stdout);
-  return m ? m[1] : null;
+  return parseRepo(remote.stdout);
 }
 
 // Branch registered for `worktreePath` in `git worktree list --porcelain`, or null when the
@@ -206,19 +218,42 @@ function teardownRun(runDir, opts = {}) {
     lines.push('worktree: skipped — worktree locked');
   } else {
     const rm = runGit(['worktree', 'remove', effectiveWorktreePath], root);
-    if (rm.failure) lines.push(`worktree: skipped — removal failed${rm.stderr ? ` (${rm.stderr})` : ''}`);
-    else {
+    if (rm.failure) {
+      // #2747: a worktree removal can fail while having already half-reaped the worktree (its
+      // `.git` file gone, but the registration in `git worktree list` still present) — git's own
+      // porcelain output calls this `prunable`. Left alone, that stale registration then makes
+      // Step 4's branch delete fail too, since git still considers the branch checked out there.
+      // A plain `git worktree prune` clears it, so check for exactly that state and retry via
+      // prune before giving up — never an unconditional prune-and-retry, since a *different*
+      // failure (permissions, a dirty working tree) must still surface as a real failure rather
+      // than being masked by a prune that wouldn't have helped it anyway.
+      const listAfter = runGit(['worktree', 'list', '--porcelain'], root);
+      const entryAfter = (!listAfter.failure && listAfter.stdout !== null)
+        ? parseWorktreeList(listAfter.stdout).find((w) => w.path === effectiveWorktreePath)
+        : null;
+      if (entryAfter && entryAfter.prunable) {
+        const prune = runGit(['worktree', 'prune'], root);
+        if (!prune.failure) {
+          lines.push(`worktree: removed via prune ${effectiveWorktreePath} (removal had failed: ${rm.stderr || 'no error text'})`);
+        } else {
+          lines.push(`worktree: skipped — removal failed (${rm.stderr || 'no error text'}); prune also failed (${prune.stderr || 'no error text'})`);
+        }
+      } else {
+        lines.push(`worktree: skipped — removal failed${rm.stderr ? ` (${rm.stderr})` : ''}`);
+      }
+    } else {
       lines.push(`worktree: removed ${effectiveWorktreePath}${recoveredWorktreePath ? ' (resolved via branch-name fallback — no worktree recorded in run-state.json)' : ''}`);
     }
   }
 
-  // Step 4 (local branch delete) — only under --merged.
+  // Step 4 (local branch delete) — only under --merged. Runs after Step 3's prune-retry above, so
+  // a worktree that was merely left in a stale `prunable` registration no longer blocks this.
   const branchSkip = modeGateSkip(mode, branch, isIntegrationBranch, 'branch');
   if (branchSkip) {
     lines.push(branchSkip);
   } else {
     const del = runGit(['branch', '-D', branch], root);
-    if (del.failure) lines.push(`branch: skipped — delete failed for ${branch}`);
+    if (del.failure) lines.push(`branch: skipped — delete failed for ${branch}${del.stderr ? ` (${del.stderr})` : ''}`);
     else lines.push(`branch: deleted ${branch}`);
   }
 
@@ -228,11 +263,14 @@ function teardownRun(runDir, opts = {}) {
   if (refSkip) {
     lines.push(refSkip);
   } else {
-    const slug = repoSlugOf(root);
-    if (!slug) {
+    const repoSpec = repoSpecOf(root);
+    if (!repoSpec) {
       lines.push('remote ref: skipped — could not resolve owner/repo');
     } else {
-      const result = ghApiDelete([`repos/${slug}/git/refs/heads/${branch}`]);
+      const result = ghApiDelete(
+        [`repos/${repoSpec.owner}/${repoSpec.repo}/git/refs/heads/${branch}`],
+        repoSpec.host,
+      );
       if (result.ok) lines.push(`remote ref: deleted${result.alreadyGone ? ' (already gone)' : ''} refs/heads/${branch}`);
       else lines.push(`remote ref: skipped — ${result.error}`);
     }
@@ -241,4 +279,4 @@ function teardownRun(runDir, opts = {}) {
   return { lines };
 }
 
-module.exports = { teardownRun, branchOfWorktree, repoSlugOf, defaultGhApiDelete };
+module.exports = { teardownRun, branchOfWorktree, repoSpecOf, defaultGhApiDelete };

@@ -53,6 +53,113 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.139.0](https://github.com/thn-inc/claude-tweaks/compare/v6.138.0...v6.139.0) (2026-10-09)
+
+
+### Features
+
+* Exclude non-spec-shaped candidates from the dispatch queue pull before claiming ([#3073](https://github.com/thn-inc/claude-tweaks/issues/3073)) ([d775014](https://github.com/thn-inc/claude-tweaks/commit/d77501487103497100eca38c80f6ca8d69ad096b)), closes [#2829](https://github.com/thn-inc/claude-tweaks/issues/2829)
+
+
+### Bug Fixes
+
+* Normalize the plugin root in the not-spec-shaped fixture test on Windows ([#3076](https://github.com/thn-inc/claude-tweaks/issues/3076)) ([cef435b](https://github.com/thn-inc/claude-tweaks/commit/cef435b77d974cd1e9d5995bcbd15c23897d7d48)), closes [#2829](https://github.com/thn-inc/claude-tweaks/issues/2829)
+
+## [6.138.0](https://github.com/thn-inc/claude-tweaks/compare/v6.137.0...v6.138.0) (2026-10-09)
+
+
+### Features
+
+* Make flow verification workable on a dev checkout with a… ([#3043](https://github.com/thn-inc/claude-tweaks/issues/3043)) ([968dd5b](https://github.com/thn-inc/claude-tweaks/commit/968dd5be75acf6f1e7016ab19881e043df3b9e2c))
+
+
+### Bug Fixes
+
+* Close the Windows-only gaps left by the v6.137.0 release… ([#3040](https://github.com/thn-inc/claude-tweaks/issues/3040)) ([2c2a8c2](https://github.com/thn-inc/claude-tweaks/commit/2c2a8c2c3a92ea5e7c852832abefde85c1f02481))
+
+### Highlights
+* Pipelines on a development machine with known environment-specific test failures can now verify against the base branch instead of re-running the full suite at every phase.
+* On Windows, Impeccable engine failures now report the real cause, and release verification checks the marketplace-mirror hook.
+
+## [6.137.0](https://github.com/thn-inc/claude-tweaks/compare/v6.136.0...v6.137.0) (2026-10-08)
+
+
+### Features
+
+* Add the impeccable-engine module and CLI: resolve, run… ([#2979](https://github.com/thn-inc/claude-tweaks/issues/2979)) ([fecef3f](https://github.com/thn-inc/claude-tweaks/commit/fecef3f1a0ebbfe5360e2c96012ff9aa40c66b6c))
+* Move design-wrapper Layer 0 and availability onto the… ([#2980](https://github.com/thn-inc/claude-tweaks/issues/2980)) ([be0fe58](https://github.com/thn-inc/claude-tweaks/commit/be0fe58f949de84f752e9bc1d6d86d45f807a614)), closes [#2981](https://github.com/thn-inc/claude-tweaks/issues/2981)
+* Re-pin Impeccable to the engine, re-record fixtures… ([#2985](https://github.com/thn-inc/claude-tweaks/issues/2985)) ([7ba57cd](https://github.com/thn-inc/claude-tweaks/commit/7ba57cda86aa932e7ba84cbed1e586b65b59ff9c))
+* Read the direction contract from Impeccable's surface… ([#2983](https://github.com/thn-inc/claude-tweaks/issues/2983)) ([57efb9e](https://github.com/thn-inc/claude-tweaks/commit/57efb9e3d215d396d1a7f199bdb33fd4c8385c5e)), closes [#2984](https://github.com/thn-inc/claude-tweaks/issues/2984)
+* Run design-wrapper explore mode's concept-seed through… ([#2982](https://github.com/thn-inc/claude-tweaks/issues/2982)) ([0e1842f](https://github.com/thn-inc/claude-tweaks/commit/0e1842f1b352d145019d681843a98067d4dc5f0b))
+
+
+### Bug Fixes
+
+* Hide the console window on every plugin/bin spawn ([#3038](https://github.com/thn-inc/claude-tweaks/issues/3038)) ([bb0789a](https://github.com/thn-inc/claude-tweaks/commit/bb0789acb243eae261e687ee87429fe480424913))
+* Run the Impeccable launcher through cmd.exe on Windows ([#3039](https://github.com/thn-inc/claude-tweaks/issues/3039)) ([23d7611](https://github.com/thn-inc/claude-tweaks/commit/23d7611de073a19b34190c934e9b5111a5cf6311))
+
+### Highlights
+* Updated the design-wrapper's Impeccable contract checks to the engine-based Impeccable 4.2.2+, so tests no longer fail depending on which old Impeccable versions are cached on a machine.
+* Restored design-wrapper's explore mode for Impeccable 4.2.2 and later, and documented that dealing design directions contacts Impeccable's catalog service.
+* Restored design review's reading of Impeccable's direction contract for Impeccable 4.2.2 and later, which records it in the surface brief instead of the built page.
+* Restored design-wrapper's project-context signals for Impeccable 4.2.2 and later, and made a missing or outdated Impeccable engine report why and how to fix it instead of failing silently.
+* Documentation health checks no longer propose a replacement commit citation without first
+* Added an internal helper that finds and runs the Impeccable design engine without ever downloading it, as the base for restoring design checks on Impeccable 4.2.2 and later.
+
+## [6.136.0](https://github.com/thn-inc/claude-tweaks/compare/v6.135.0...v6.136.0) (2026-10-04)
+
+
+### Features
+
+* Upstream defect report — `verify.js --changed-files`… ([#2744](https://github.com/thn-inc/claude-tweaks/issues/2744)) ([0153343](https://github.com/thn-inc/claude-tweaks/commit/015334398bb16cd4ab629d2047f51b4c41ad1ace)), closes [#2779](https://github.com/thn-inc/claude-tweaks/issues/2779)
+
+
+### Bug Fixes
+
+* Document the multi-spec rule for the PR verdict… ([#2860](https://github.com/thn-inc/claude-tweaks/issues/2860)) ([f8179fa](https://github.com/thn-inc/claude-tweaks/commit/f8179fa13a3cd2dc89dce9445b70b515f1c96bfc))
+* Dream scan stages transcript command text without path… ([#2968](https://github.com/thn-inc/claude-tweaks/issues/2968)) ([0c9205f](https://github.com/thn-inc/claude-tweaks/commit/0c9205fce20a23641131475014a6511b6b9d5b48))
+* flow-preflight misclassifies a claim-log-only… ([#2861](https://github.com/thn-inc/claude-tweaks/issues/2861)) ([a5f50c1](https://github.com/thn-inc/claude-tweaks/commit/a5f50c117d304a370fefd5d7af38b798f9f07de2))
+* Upstream defect report — `hooks.js teardown-run --merged`… ([#2747](https://github.com/thn-inc/claude-tweaks/issues/2747)) ([cc3426a](https://github.com/thn-inc/claude-tweaks/commit/cc3426a571ff8392e851a59aa0218b1fd8aa3a7b))
+
+### Highlights
+* Dream-pass proposals redact absolute paths in the quoted command, not just the error text.
+* Fixed run teardown on GitHub Enterprise remotes and made it remove the worktree before deleting the branch.
+* Added a sanctioned way to record verification expectations from a worktree-isolated wrap-up.
+* No user-visible change: reorganized the /specify skill files so shaping-mode checks have room to grow.
+* Made the list of places a skill's argument hint must match canonical and checked automatically.
+* Fixed changed-file detection returning nothing when the verification stamp is at the latest commit.
+* No user-visible change: compared the Hallmark design skill against Impeccable for design reviews.
+* No user-visible change — internal consolidation of how multi-spec pipeline runs locate their shared worktree and PR.
+* Multi-spec pipeline runs keep every spec's review verdict on the shared PR instead of the last one overwriting the rest.
+* Freshly started /flow runs are no longer mistaken for resumed ones after claiming their records.
+* No user-visible change — documentation accuracy fix.
+
+## [6.135.0](https://github.com/thn-inc/claude-tweaks/compare/v6.134.1...v6.135.0) (2026-10-04)
+
+
+### Features
+
+* Add a cross-session self-healing pass (a /dream-style… ([#2691](https://github.com/thn-inc/claude-tweaks/issues/2691)) ([1b7acee](https://github.com/thn-inc/claude-tweaks/commit/1b7acee21e962296b5d273f7d0a2ee895dcca22a))
+
+
+### Bug Fixes
+
+* acceptance-gap backstop counts NOT_PLANNED and DUPLICATE… ([#2854](https://github.com/thn-inc/claude-tweaks/issues/2854)) ([abf42ed](https://github.com/thn-inc/claude-tweaks/commit/abf42edeac667ab1d626978591c89313cda5163b))
+* console/resolve.js SECTION_MAP: the curation engine's own… ([#2773](https://github.com/thn-inc/claude-tweaks/issues/2773)) ([0b31553](https://github.com/thn-inc/claude-tweaks/commit/0b315536e562f9b872e3c2c1d21c46fbd2e4c10f))
+* github-pr-scan item 10's bulk PR fetch exceeds GitHub's… ([#2853](https://github.com/thn-inc/claude-tweaks/issues/2853)) ([1ae6e63](https://github.com/thn-inc/claude-tweaks/commit/1ae6e631c6d4ed09114ddfee3d7b35af510018f6))
+
+### Highlights
+* Added a cross-session pass that proposes fixes for failures that keep repeating across sessions.
+* No user-visible change: compared Claude Code's native design skill with Impeccable for design work.
+* Added a checklist for re-auditing verification instructions after a Claude model upgrade.
+* Added a plain-text assertion mode to upstream-drift fixtures, so a command that fails with plain-text output can be checked like one that emits JSON.
+* Tidy stops flagging records closed as not-planned or duplicate as missing an acceptance decision.
+* Fixed unattended Review Consoles silently skipping staged CLAUDE.md and decision-record proposals.
+* Added richer diagrams to implementation plans as they are written.
+* No user-visible change: scoped whether claude-tweaks needs an image and creative-workflow plugin.
+* No user-visible change: added an end-to-end test for how a flow run hands off its run directory.
+* Tidy's unsettled-run check completes on repositories with more than 50 pull requests instead of failing its PR fetch.
+
 ## [6.134.1](https://github.com/thn-inc/claude-tweaks/compare/v6.134.0...v6.134.1) (2026-10-03)
 
 

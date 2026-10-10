@@ -9,6 +9,28 @@
 // this comment ("the only deliberate non-zero exit is the pre-tool-use
 // deny") that never actually matched pre-tool-use.js's real behavior.
 'use strict';
+// #3074: Bash prefilter fast path. hooks.json registers ONE unconditional
+// Bash handler per tool-use event, so every Bash call spawns this process —
+// decide whether it is worth anything BEFORE the heavy requires below run.
+// bash-prefilter.js reads stdin once; `EARLY.raw` is handed to main() so the
+// full path never re-reads it. Only this process's own entry (require.main)
+// takes the fast path — a test require()ing this file for USAGE/main never does.
+// Never-break-a-session: the only statement that can throw here is the
+// require(), which runs before any stdin read, so a failed require leaves
+// EARLY = null and main() reads stdin itself. earlyGate never throws and always
+// returns the `raw` it read (`''` on a read failure); main() then uses that
+// `raw` rather than re-reading a drained stdin.
+// process.exit(0) on the skip path is safe for the same reason this file is
+// allowlisted in tests/bin-lib/exit-code-conformance.test.js: nothing is
+// pending on stdout to truncate. Kept as ONE braced require.main guard — that
+// test reads the file's first such guard as its entry point.
+let EARLY = null;
+if (require.main === module) {
+  try {
+    EARLY = require('./lib/hooks/bash-prefilter').earlyGate(process.argv[2]);
+  } catch { EARLY = null; }
+  if (EARLY && EARLY.skip) process.exit(0);
+}
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
@@ -731,12 +753,13 @@ async function main(argv) {
     // pattern-matches literal mkdir/cp/redirect shell syntax in a Bash
     // command's text — a plain Node CLI whose own invocation carries none
     // of those tokens sidesteps that guard the same way bin/log-decision.js/
-    // bin/stage-item.js/bin/set-config.js already do, without special-
-    // casing this procedure inside the guard itself. Unlike those three
-    // (anchored --run only), this verb also validates --worktree is a real
-    // linked worktree of THIS repo (worktree-detect.js's repoInfo(),
-    // _shared/worktree-setup.md's "Adopt-or-create" section), which is why
-    // it lives here as a hooks.js subcommand rather than a fourth
+    // bin/stage-item.js/bin/set-config.js/bin/set-verify-expectations.js
+    // already do, without special-casing this procedure inside the guard
+    // itself. Unlike those four (anchored --run only), this verb also
+    // validates --worktree is a real linked worktree of THIS repo
+    // (worktree-detect.js's repoInfo(), _shared/worktree-setup.md's
+    // "Adopt-or-create" section), which is why it lives here as a hooks.js
+    // subcommand rather than another
     // standalone sibling CLI (docs/hooks.md's "state genuinely coupled to
     // hook enforcement itself" carve-out).
     //
@@ -1514,7 +1537,9 @@ async function main(argv) {
   }
   const mod = loadModule(cmd);
   if (!mod || typeof mod.run !== 'function') return 0;
-  const input = ctxLib.parseInput(ctxLib.readStdin());
+  // #3074: stdin was already consumed by the early prefilter gate at the top
+  // of this file when this process was spawned as a tool-use hook.
+  const input = ctxLib.parseInput(EARLY ? EARLY.raw : ctxLib.readStdin());
   const cwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd();
   // Two views of the same runs, because enforcement and bookkeeping want
   // different things (#62).

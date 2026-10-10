@@ -72,7 +72,7 @@ function makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote, runn
   const realDeps = {
     ghAvailable,
     remoteUrl,
-    runner: (args) => execFileSync('gh', args, { encoding: 'utf8', timeout: runnerTimeoutMs, maxBuffer: LARGE_MAX_BUFFER_BYTES }),
+    runner: (args) => execFileSync('gh', args, { encoding: 'utf8', timeout: runnerTimeoutMs, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true }),
     stdout: (s) => process.stdout.write(s),
     stderr: (s) => process.stderr.write(s),
   };

@@ -19,6 +19,8 @@ const { selectTarget, listDocs } = require('./lib/docs-health/scope');
 const path = require('path');
 const { computeInboundReferences } = require('./lib/docs-health/findability');
 const { checkTrackedFreshness } = require('./lib/docs-health/freshness');
+const { verifyCommits } = require('./lib/docs-health/commit-ref');
+const { readIntegrationBranch } = require('./lib/policy');
 
 const TOOL_NAME = 'docs-health';
 const retryQueueCommands = makeRetryQueueCommands({ readDurableState, writeDurableState });
@@ -70,6 +72,9 @@ function parseArgs(argv) {
     else if (a === '--fail-on-high-churn') args['fail-on-high-churn'] = argv[++i];
     else if (a === '--budget') args.budget = Number(argv[++i]);
     else if (a === '--min-confidence') args['min-confidence'] = argv[++i];
+    else if (a === '--integration-branch') args.integrationBranch = argv[++i];
+    else if (a === '--remote') args.remote = argv[++i];
+    else if (a === '--no-deepen') args.noDeepen = true;
     else args._.push(a);
   }
   return args;
@@ -326,6 +331,35 @@ function cmdCheckFreshness(args) {
   process.stdout.write(JSON.stringify({ result }, null, 2) + '\n');
 }
 
+// Classifies each commit hash against complete history (#2866) — see
+// lib/docs-health/commit-ref.js for the six outcomes and the shallow-clone
+// posture. Classification is data, so every outcome exits 0; only a missing
+// hash argument is a usage error.
+function cmdVerifyCommit(args) {
+  const hashes = args._.slice(1);
+  if (hashes.length === 0) {
+    process.stderr.write(
+      'usage: docs-health.js verify-commit <sha>... [--root <dir>] [--integration-branch <name>] ' +
+      '[--remote <name>] [--no-deepen]\n',
+    );
+    process.exitCode = 2;
+    return;
+  }
+  // Canonical resolution (_shared/integration-branch.md): an explicit flag
+  // wins; absent that, the integration-branch policy key; only when neither
+  // resolves does verifyCommits fall back to <remote>/HEAD itself (#2866).
+  const root = args.root || process.cwd();
+  const integrationBranch = args.integrationBranch || readIntegrationBranch(root) || null;
+  const result = verifyCommits({
+    root,
+    hashes,
+    integrationBranch,
+    remote: args.remote || 'origin',
+    deepen: !args.noDeepen,
+  });
+  process.stdout.write(JSON.stringify({ result }, null, 2) + '\n');
+}
+
 function main(argv) {
   const args = parseArgs(argv);
   const cmd = args._[0];
@@ -337,6 +371,7 @@ function main(argv) {
   if (cmd === 'word-count') return cmdWordCount(args);
   if (cmd === 'find-refs') return cmdFindRefs(args);
   if (cmd === 'check-freshness') return cmdCheckFreshness(args);
+  if (cmd === 'verify-commit') return cmdVerifyCommit(args);
   if (cmd === 'retry-queue' && args._[1] === 'drain') return retryQueueCommands.drain(args);
   if (cmd === 'retry-queue' && args._[1] === 'update') {
     const code = retryQueueCommands.update({ ...args, _: args._.slice(1) });
@@ -349,6 +384,7 @@ function main(argv) {
     'validate-findings <file> [--target <id>] [--issues <file>] [--min-confidence <level>] [--dry-run], ' +
     'churn-report [--fail-on-high-churn <r>], mark <fingerprint> <declined>, status, ' +
     'word-count <path>, find-refs <path> [--root <dir>], check-freshness <path> [--root <dir>], ' +
+    'verify-commit <sha>... [--root <dir>] [--integration-branch <name>] [--remote <name>] [--no-deepen], ' +
     'retry-queue drain, retry-queue update <results.json>\n',
   );
   process.exitCode = 2;
@@ -356,4 +392,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { parseArgs, cmdNextTarget, cmdValidateFindings, cmdChurnReport, cmdMark, cmdStatus, cmdWordCount, cmdFindRefs, cmdCheckFreshness, deriveDocId, main };
+module.exports = { parseArgs, cmdNextTarget, cmdValidateFindings, cmdChurnReport, cmdMark, cmdStatus, cmdWordCount, cmdFindRefs, cmdCheckFreshness, cmdVerifyCommit, deriveDocId, main };

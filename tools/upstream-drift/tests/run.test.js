@@ -207,7 +207,7 @@ test('buildFindings: a missing upstream file outranks a merely unmatched literal
       results: [{
         file: 'plugin/skills/design-wrapper/modes/live.md',
         claims: 'live mode boots a server',
-        upstreamPath: 'skills/impeccable/scripts/live.mjs',
+        upstreamPath: 'skills/impeccable/scripts/impeccable',
         status: 'missing-file',
         detail: 'does not exist',
       }],

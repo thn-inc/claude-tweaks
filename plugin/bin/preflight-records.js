@@ -49,7 +49,7 @@ function parseArgs(argv) {
 
 function repoRoot() {
   try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' }).trim();
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8', windowsHide: true }).trim();
   } catch {
     return process.cwd();
   }
@@ -65,7 +65,7 @@ function readFileSafe(filePath) {
 
 const realDeps = {
   runner: preflight.defaultRunner,
-  remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }),
+  remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true }),
   // The deps-resolved work-links policy value (--work-links overrides this).
   // Never throws: readFileSafe swallows a missing/unreadable policy.yml,
   // repoRoot falls back to cwd outside a git repo, and resolvePolicyKeys is

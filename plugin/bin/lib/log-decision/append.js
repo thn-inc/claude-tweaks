@@ -53,6 +53,16 @@ function formatEntry({ status, now, step, spec, text, reversibility = 'n/a', lev
   return line;
 }
 
+// The inverse of formatEntry's fixed prefix: `- {STATUS} {HH:MM:SS} — {location}: {action}`.
+// Returns null for anything that is not an entry line (a heading, a blank, a
+// hand-written note) — callers must treat null as "not an entry", never as a match.
+const ENTRY_RE = new RegExp(`^- (${STATUSES.join('|')}) (\\d{2}:\\d{2}:\\d{2}) — (.+?): (.*)$`);
+
+function parseEntry(line) {
+  const m = ENTRY_RE.exec(String(line));
+  return m ? { status: m[1], time: m[2], location: m[3], action: m[4] } : null;
+}
+
 // Walk up from `startDir` for the nearest ancestor containing a `.git` entry.
 // Returns { dir, isFile } for the first hit, or null if none exists above the
 // filesystem root.
@@ -167,5 +177,5 @@ function appendEntry({ runDir, section, entry }) {
 }
 
 module.exports = {
-  STATUSES, formatEntry, resolveTarget, appendEntry, hms, normalizeSection,
+  STATUSES, formatEntry, parseEntry, resolveTarget, appendEntry, hms, normalizeSection,
 };

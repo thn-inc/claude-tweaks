@@ -43,6 +43,42 @@ function redactPaths(s) {
   return s.replace(PATH_TOKEN_RE, '<path>');
 }
 
+// Best-effort credential redaction (#2968). Pattern-based, so it errs toward
+// hiding: anything that merely looks like a credential is replaced (e.g.
+// `--max_tokens=100` is redacted too). It is not a guarantee that a secret of
+// an unrecognized shape cannot reach a staged proposal — dream-pass.md says so.
+const SECRET_NAME = '[A-Za-z0-9_-]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIAL)[A-Za-z0-9_-]*';
+const SECRET_PATTERNS = [
+  // `Authorization: Bearer x` / `Authorization: token x` / `Authorization: x`
+  [/\b(authorization:\s*)(?:(bearer|basic|token)\s+)?[^\s'"]+/gi, (m, header, scheme) => `${header}${scheme ? `${scheme} ` : ''}<secret>`],
+  // a bare `Bearer x` / `Basic x` credential outside an Authorization header
+  [/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, (m, scheme) => `${scheme} <secret>`],
+  // `NAME=value` and `--name=value`, NAME containing a credential word; quoted values whole
+  [new RegExp(`(\\b${SECRET_NAME}=)("[^"]*"|'[^']*'|[^\\s'"]+)`, 'gi'), '$1<secret>'],
+  // `--name value`
+  [new RegExp(`(--${SECRET_NAME}\\s+)("[^"]*"|'[^']*'|[^\\s'"-][^\\s'"]*)`, 'gi'), '$1<secret>'],
+  // well-known token prefixes: GitHub, OpenAI-style, Slack, AWS access key ids
+  [/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})\b/g, '<secret>'],
+];
+
+function redactSecrets(s) {
+  return SECRET_PATTERNS.reduce((acc, [re, replacement]) => acc.replace(re, replacement), s);
+}
+
+// The one redaction every transcript-derived field goes through before it
+// can reach a staged proposal, report.md, or decisions.md. Secrets first, so
+// a slash-bearing secret value is replaced whole rather than half-eaten by
+// the path pattern. Input is capped first: SECRET_NAME's unbounded runs
+// backtrack quadratically on a long keyword-bearing run (a multi-megabyte
+// tool output), and every caller truncates to at most MAX_ERROR_CHARS after
+// redacting, so text past the cap can never reach an output anyway.
+const PRE_REDACT_CHARS = 2048;
+
+function redact(s) {
+  const capped = s.length > PRE_REDACT_CHARS ? s.slice(0, PRE_REDACT_CHARS) : s;
+  return redactPaths(redactSecrets(capped));
+}
+
 // List every `{configDir}/projects/*/*.jsonl` file whose mtime falls within
 // the last `windowDays` days of `now`. Bounded by design (the record's
 // Technical Approach: "not the full corpus unbounded") — a nightly pass
@@ -112,7 +148,7 @@ function normalizeErrorLine(text) {
   // all (an empty stderr), and "exit code N" alone is still a real,
   // groupable signal in that case, not nothing.
   const first = (lines.length > 1 && /^Exit code \d+$/i.test(lines[0])) ? lines[1] : lines[0];
-  return truncate(redactPaths(first).toLowerCase().replace(/\s+/g, ' ').trim(), MAX_NORMALIZED_CHARS);
+  return truncate(redact(first).toLowerCase().replace(/\s+/g, ' ').trim(), MAX_NORMALIZED_CHARS);
 }
 
 // Parse one transcript file into a list of findings — one per is_error
@@ -146,7 +182,7 @@ function extractErrorFindings({ filePath, sessionId, deps = fs }) {
         const tool = toolUseById.get(block.tool_use_id) || {};
         const toolName = tool.name || 'unknown';
         const command = tool.input && tool.input.command;
-        const commandVerb = toolName === 'Bash' ? bashCommandVerb(command) : toolName;
+        const commandVerb = toolName === 'Bash' ? redact(bashCommandVerb(command)) : toolName;
         const errorText = toolResultText(block.content);
         const normalized = normalizeErrorLine(errorText);
         if (!normalized) continue;
@@ -157,8 +193,8 @@ function extractErrorFindings({ filePath, sessionId, deps = fs }) {
           sessionId,
           filePath,
           timestamp: o.timestamp || null,
-          command: typeof command === 'string' ? truncate(command, MAX_COMMAND_CHARS) : null,
-          errorExcerpt: truncate(redactPaths(errorText.trim()), MAX_ERROR_CHARS),
+          command: typeof command === 'string' ? truncate(redact(command), MAX_COMMAND_CHARS) : null,
+          errorExcerpt: truncate(redact(errorText.trim()), MAX_ERROR_CHARS),
         });
       }
     }
@@ -298,4 +334,7 @@ module.exports = {
   bashCommandVerb,
   normalizeErrorLine,
   redactPaths,
+  redactSecrets,
+  redact,
+  SECRET_NAME,
 };

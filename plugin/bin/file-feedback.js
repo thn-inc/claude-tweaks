@@ -77,7 +77,7 @@ const realDeps = {
   // runner locally instead, since it never calls fileOne.
   runner: feedback.defaultRunner,
   ghAvailable,
-  remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }),
+  remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true }),
   readDraftsFile: (p) => JSON.parse(fs.readFileSync(p, 'utf8')),
   tmpFile: () => os.tmpdir() + '/feedback-body-' + Date.now() + Math.random() + '.md',
   writeFile: fs.writeFileSync,

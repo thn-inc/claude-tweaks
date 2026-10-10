@@ -8,7 +8,7 @@ Every record body opens with a short metadata block — plain body-metadata line
 
 **`mobile` means a native app surface** — SwiftUI, UIKit, Compose, React Native, Flutter — not a web page viewed on a phone. A responsive web layout is `web`; use `mobile` only when the code being changed is native app code. The distinction is load-bearing rather than descriptive: `/claude-tweaks:design-wrapper` routes `mobile` to Impeccable's native track and skips the two web-only surfaces (the bundled HTML detector behind `test` mode, and `live` mode) rather than running them and reporting a pass they could not have failed. Declaring `mobile` on a responsive web feature therefore turns the design CLI gate off for it. `desktop` takes the web path on a stated assumption — see the track-resolution table in `skills/design-wrapper/SKILL.md`, which is the single source of truth for how each value routes. `terminal` is a CLI/TUI surface — help text, output formatting, prompts, exit codes; it is declared only, never sniffed (no file extension implies it), and it takes the design pipeline's terminal track (`skills/design-wrapper/terminal-routing.md`). `Parent:` is decomposition-mode-only, present on a sub-issue's body only under `work-backend: github-issues` + `work-links: body-text` **and only when that decomposition kept a parent** (`/specify`'s Step 2.6 collapse decision produces parentless records — `specify/decomposition-mode.md`) — the one combination with no other way to record a sub-issue's own parent (`work-links: native`'s sub-issue relationship is queryable from either side; `work-backend: local-files` carries `facets.parent`). `/claude-tweaks:review`'s Step 1.6 (`skills/review/SKILL.md`) reads it to resolve a sub-issue's parent when checking for a `## Cross-Spec Promises` section (`_shared/work-record.md`).
 
-`Design-seed:` is the one metadata line **`/specify` never writes**. The template declares it so the line is a recognized body-metadata field rather than stray prose when it does appear; the *value* can only be written after the build, because it comes from the direction contract Impeccable puts in the built artifact and `/specify` runs before any code exists. `/claude-tweaks:design-wrapper`'s `review` mode writes it post-build, per `_shared/design-contract.md`. Do not copy `Design-intent:`'s pattern here and go looking for a value at shaping time — there is nothing to read yet. The field is **never required**: a `ready` sub-issue without one is normal and stays valid, exactly as with `Surface:`, and no structural check may start demanding it. Most records will never carry one, since most work is not a new design surface.
+`Design-seed:` is the one metadata line **`/specify` never writes**. The template declares it so the line is a recognized body-metadata field rather than stray prose when it does appear; the *value* can only be written after the build, because it comes from the direction contract Impeccable records in the relevant surface brief and `/specify` runs before any code exists. `/claude-tweaks:design-wrapper`'s `review` mode writes it post-build, per `_shared/design-contract.md`. Do not copy `Design-intent:`'s pattern here and go looking for a value at shaping time — there is nothing to read yet. The field is **never required**: a `ready` sub-issue without one is normal and stays valid, exactly as with `Surface:`, and no structural check may start demanding it. Most records will never carry one, since most work is not a new design surface.
 
 `Ui-stack:` names the UI component library / styling approach a frontend build should use — e.g. `shadcn/ui + Tailwind`, or an explicit `none — no preference, defer to reference codebase` when the record's author genuinely has no opinion. `/claude-tweaks:specify`'s Step 2.5c2 (`design-pre-steps.md`, immediately after the Design-intent question) writes it, following the same auto-mode/`ui-stack` policy-key precedence Step 2.5c already uses for `Design-intent:`. Omitted for backend/infra/terminal records — the same frontend-only gate that already governs `Design-intent:`.
 
@@ -16,7 +16,7 @@ Every record body opens with a short metadata block — plain body-metadata line
 Surface: {web | mobile | desktop | backend | infra | terminal}
 Design-intent: {bold | quiet | minimal | delightful | onboarding | none}
 Ui-stack: {free-form component-library/styling-approach string (e.g. "shadcn/ui + Tailwind"), or an explicit no-preference answer — omitted for backend/infra/terminal, same as Design-intent:}
-Design-seed: {the seed key from the built artifact's Impeccable direction contract, copied verbatim — NOT written by /specify; see below}
+Design-seed: {the seed key from the surface brief's Impeccable direction contract, copied verbatim — NOT written by /specify; see below}
 Visual-reference: {path to an accepted shape-time scaffold file — omitted when /specify's Step 2.5b-ii variant-exploration step was skipped, declined, or not offered (non-frontend records)}
 Parent: {#N — decomposition-mode sub-issues under work-links: body-text only, and only when Step 2.6 kept a parent; omitted otherwise (a collapsed decomposition, native links, work-backend: local-files, and Shaping mode)}
 
@@ -179,37 +179,7 @@ Never write a bare "zero matches anywhere" AC alongside a tombstone requirement 
 
 ## Empirical Premise-Check Deliverables
 
-When a spec's technical approach rests on an assumption about how an external system, harness, or tool actually behaves — an undocumented payload shape, an unconfirmed API contract, an assumed invocation path — write a blocking first deliverable ("Task 0") that captures the real behavior before any other deliverable's fixtures are written. Word its scope as an enumeration, not a single check, and cover every path that reaches the feature, not just every shape the resulting payload can take:
-
-- **Who initiates it** — a person typing the trigger directly (a slash command, a manual action), the model invoking it as part of its own reasoning, a Task-dispatched subagent invoking it on the model's behalf, and a headless/non-interactive run (`claude -p`, a scheduled Routine) invoking it with no one watching. These are different code paths through the harness and can diverge in whether an event fires at all, not just in what it contains.
-- **Every shape the payload can take once it does fire** — qualified vs. bare identifiers, success vs. failure, nested vs. top-level invocation.
-
-Enumerating only the second list and skipping the first is the failure mode to design against: it reads as thorough (every input shape is covered) while silently leaving out an entire initiation path that never produces an event to shape-check in the first place — a gap no fixture built from the captured shapes can catch, because the missing case never got captured. Name each initiator path explicitly in the Task 0 deliverable's own text; do not let "covers all invocation shapes" stand in for it.
-
-A Task 0 deliverable's captured behavior — or any other flagged-but-unvalidated assumption in this
-spec's `## Gotchas` section, an inline `<!-- ambiguity: -->` marker, or an `## Open Questions` row —
-is not fully resolved just because implementation happened. `skills/review/code-mode-steps.md`
-Step 1's **Risk-Marker Verification** sub-check independently re-checks every such marker against
-the artifact's real external validator/schema/tool at whole-branch review time, and routes an
-unresolved one to `BLOCKED` — the review-side half of the same rule this section states from the
-spec-authoring side.
-
-**Plan-authoring corollary.** When a deliverable itself adds new *binding* skill prose to a
-review/build gate — a Gate-table row, a forced-disposition instruction, not merely descriptive
-prose — include a deliverable that pins it with a conformance test (`skill-prose-conformance-tests`'
-"documented convention this project wants enforced against every future addition" case), the same
-way a code path earns regression coverage. A plan that adds a Gate-table row with no test task is
-the same brief-compliance gap this section already exists to close, one layer further in.
-
-### Third-Party CLI/API Behavior Task 0
-
-When the premise being checked is specifically how a **third-party CLI or API** behaves — not this project's own harness — name a blocking empirical Task 0 as a deliberate option rather than letting it get rediscovered per-record. Its three constituent parts, all required:
-
-- **Safe probe target** — a throwaway/disposable target the probe can act against without touching real state (a scratch repo, an unprotected test branch, a sandboxed resource) — never the project's own production data or an artifact anyone else depends on.
-- **Mandatory teardown** — the Task 0 deliverable itself includes tearing the probe target back down, unconditionally, whether the probe confirmed or reversed the assumed premise.
-- **Literal-capture rule** — record the actually-observed behavior verbatim (the exact output, timing, or status — not a paraphrase) in the spec's `## Gotchas` or `## Technical Approach`, so a later reader can check the captured fact rather than re-trust the original assumption.
-
-Example: #560's Task 0 probed `gh pr merge --auto`'s actual merge timing against a throwaway PR opened on a disposable base branch, tore that branch down unconditionally after capturing the result, and recorded the literal observed behavior — which reversed the plan's assumed premise (`gh pr merge --auto` does not wait for anything on an unprotected repo; it merges immediately) before any other deliverable's fixtures were written.
+When a spec's technical approach rests on an assumption about how an external system, harness, or tool actually behaves — an undocumented payload shape, an unconfirmed API contract, an assumed invocation path, or a third-party CLI/API's behavior — read `empirical-premise-check-deliverables.md` in this skill's directory and write the blocking "Task 0" deliverable it describes before any other deliverable's fixtures are written. Read it too whenever the spec carries any flagged-but-unvalidated assumption (a `## Gotchas` assumption, an inline ambiguity marker, an `## Open Questions` row) — its Risk-Marker Verification paragraph says how review re-checks those — or a deliverable adds new *binding* skill prose to a review/build gate, which its Plan-authoring corollary requires pinning with a conformance-test deliverable.
 
 ## Gate-Authoring Deliverables
 

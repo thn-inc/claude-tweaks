@@ -41,14 +41,14 @@ function applyRetryResults(check, attempts) {
 // Serial, plan order; a file stops at its first pass; the first file to
 // exhaust maxRetries ends the run (remaining files are not attempted).
 async function runRetries({
-  check, plan, maxRetries, logDir, runOne, spawnImpl, now, cwd,
+  check, plan, maxRetries, logDir, runOne, spawnImpl, now, cwd, env = null,
 }) {
   const attempts = [];
   for (const { file, cmd } of plan.command) {
     let passed = false;
     for (let attempt = 1; attempt <= maxRetries && !passed; attempt++) {
       const r = await runOne({
-        name: retryLogName(check.name, file, attempt), command: cmd, logDir, spawnImpl, now, cwd,
+        name: retryLogName(check.name, file, attempt), command: cmd, logDir, spawnImpl, now, cwd, env,
       });
       const record = { file, attempt, exitCode: r.exitCode, logPath: r.logPath, durationMs: r.durationMs };
       if (r.spawnError !== undefined) record.spawnError = r.spawnError;

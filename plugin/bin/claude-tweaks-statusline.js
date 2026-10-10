@@ -84,6 +84,7 @@ function resolveMainProjectDir(dir) {
       stdio: ['ignore', 'pipe', 'ignore'],
       encoding: 'utf8',
       cwd: dir,
+      windowsHide: true,
     }).trim();
     if (!commonDir) return dir;
     const absCommonDir = path.isAbsolute(commonDir) ? commonDir : path.resolve(dir, commonDir);
@@ -117,6 +118,7 @@ function readOriginRemote(dir) {
       stdio: ['ignore', 'pipe', 'ignore'],
       encoding: 'utf8',
       cwd: dir,
+      windowsHide: true,
     }).trim();
     return url || null;
   } catch {
@@ -203,6 +205,7 @@ function renderGit(cwd) {
       stdio: ['ignore', 'pipe', 'ignore'],
       encoding: 'utf8',
       cwd,
+      windowsHide: true,
     });
     const { branch, dirty } = parseStatusBranch(output);
     if (!branch) return null;

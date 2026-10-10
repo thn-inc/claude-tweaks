@@ -46,6 +46,7 @@ const { runVerify, renderVerifyTable, resolveArchivedRunDir } = require('./lib/w
 const { resolveLedgerPath, flipLedgerRow, TERMINAL_STATUSES } = require('./lib/wrap-up/ledger-write');
 const { appendEntry, formatEntry } = require('./lib/log-decision/append');
 const { writeFileAtomic } = require('./lib/atomic-write');
+const { validateFields, writeExpectations } = require('./lib/verify-expectations/write');
 
 const USAGE = [
   'usage: wrap-up-engine.js plan --run-dir <dir> --base <sha> [--ceremony <profile>] [--skill-budget n] [--doc-budget n] [--signals <json>] [--dry-run]',
@@ -112,6 +113,7 @@ function resolveRepoRoot(cwd) {
   try {
     const commonDir = execFileSync('git', ['rev-parse', '--git-common-dir'], {
       cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
     }).trim();
     if (!commonDir) return cwd;
     const abs = path.isAbsolute(commonDir) ? commonDir : path.resolve(cwd, commonDir);
@@ -512,17 +514,11 @@ function validateFinishConsolePayload(payload) {
   const memory = payload.memory ?? [];
   const upstream = payload.upstream ?? [];
   const ledger = payload.ledger ?? [];
-  if (!Array.isArray(memory)) return '"memory" must be an array';
-  if (!Array.isArray(upstream)) return '"upstream" must be an array';
+  // memory/upstream shape is the writer library's own check — one rule for
+  // both writers of verify-expectations.json (#2764).
+  const fieldsError = validateFields({ memory, upstream });
+  if (fieldsError) return fieldsError;
   if (!Array.isArray(ledger)) return '"ledger" must be an array';
-  for (const [i, m] of memory.entries()) {
-    if (!m || typeof m.file !== 'string' || !m.file || typeof m.indexFile !== 'string' || !m.indexFile) {
-      return `memory[${i}] must be {file, indexFile} (both non-empty strings)`;
-    }
-  }
-  for (const [i, u] of upstream.entries()) {
-    if (!u || typeof u.url !== 'string' || !u.url) return `upstream[${i}] must be {url} (a non-empty string)`;
-  }
   for (const [i, l] of ledger.entries()) {
     if (!l || !Number.isInteger(l.item) || l.item <= 0) return `ledger[${i}].item must be a positive integer`;
     if (!TERMINAL_STATUSES.includes(l.status)) return `ledger[${i}].status must be one of ${TERMINAL_STATUSES.join(', ')}`;
@@ -549,16 +545,8 @@ function runFinishConsole(args) {
   // Step 1: verify-expectations.json (read-modify-write — preserve every
   // field this verb doesn't itself own, same discipline
   // review-console.md's step 11 documents for oversightExempt/issues).
-  const expectationsPath = path.join(args.runDir, 'verify-expectations.json');
-  let existing = {};
   try {
-    existing = JSON.parse(fs.readFileSync(expectationsPath, 'utf8'));
-  } catch { existing = {}; }
-  const expectations = {
-    ...existing, version: 1, memory, upstream,
-  };
-  try {
-    writeFileAtomic(expectationsPath, `${JSON.stringify(expectations, null, 2)}\n`);
+    writeExpectations({ runDir: args.runDir, fields: { memory, upstream } });
   } catch (e) {
     process.stderr.write(`wrap-up-engine.js finish-console: step 1 (verify-expectations.json) failed: ${e.message}\n`);
     process.exitCode = 1;

@@ -76,6 +76,7 @@ const GIT_TIMEOUT_MS = 10000;
 function defaultRunner(args, opts = {}) {
   return execFileSync('git', args, {
     encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, ...opts,
+    windowsHide: true,
   });
 }
 
