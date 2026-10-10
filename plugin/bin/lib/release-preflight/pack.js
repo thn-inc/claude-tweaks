@@ -42,7 +42,7 @@ const PUBLISHED_RE = /\bpublished\b/;
 // YAML parser: one `on:` block, its three spellings.
 function indentOf(line) { return /^[ \t]*/.exec(line)[0].length; }
 
-function stripComment(value) { return value.replace(/\s+#.*$/, '').trim(); }
+function stripComment(value) { return value.replace(/(^|\s+)#.*$/, '').trim(); } // `(^|\s+)`: the key regexes' `[ \t]*` already ate the gap, so a comment can start the value
 
 // The value side of a `release` key in flow form. Empty (a key with no value,
 // or the next entry starting) means every activity type; otherwise `published`
@@ -94,7 +94,7 @@ function blockTriggersRelease(lines, start, onIndent) {
 }
 
 function workflowPublishesRelease(text) {
-  const lines = String(text).split('\n');
+  const lines = String(text).split(/\r?\n/); // CRLF checkouts: `on:\r` never matches ON_LINE_RE's `(.*)$`
   const i = lines.findIndex((l) => ON_LINE_RE.test(l));
   if (i === -1) return false;
   const inline = stripComment(ON_LINE_RE.exec(lines[i])[1]);
@@ -108,7 +108,7 @@ function defaultDeps(cwd) {
     // over a whole untagged history is the one call that outgrows execFileSync's
     // 1 MB default (this repo's own is ~1.02 MB at 6.121.0), and an ENOBUFS
     // there degrades unreleased, proposedVersion and lastTag together.
-    git: (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...EXEC_OPTS }),
+    git: (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...EXEC_OPTS, windowsHide: true }),
     execFileAsync: async (cmd, args, opts = {}) => (await execFileAsync(cmd, args, { cwd, encoding: 'utf8', ...EXEC_OPTS, ...opts })).stdout,
     readFile: (p) => { try { return fs.readFileSync(p, 'utf8'); } catch (e) { if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return null; throw e; } },
     readdir: (p) => { try { return fs.readdirSync(p); } catch (e) { if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return []; throw e; } },

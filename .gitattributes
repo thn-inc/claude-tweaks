@@ -1,0 +1,5 @@
+# tools/upstream-drift pins these committed upstream snapshots by the sha256 of their raw bytes
+# (tools/upstream-drift/checks.js#checkContentPins). `-text` turns off end-of-line conversion for
+# them, so a core.autocrlf checkout (Windows) keeps the committed LF bytes instead of rewriting
+# them to CRLF and failing the pins.
+tools/upstream-drift/fixtures/** -text

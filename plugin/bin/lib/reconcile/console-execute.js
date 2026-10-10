@@ -182,7 +182,7 @@ async function fetchIssueGrant(repoRoot, issueNumber) {
 // same posture as every other best-effort read in this file.
 function resolveVetoWindowHours(runDir, repoRoot) {
   try {
-    const git = (args) => execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8' });
+    const git = (args) => execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8', windowsHide: true });
     const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
     const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['grant-veto-window-hours'] });
     const entry = result['grant-veto-window-hours'];

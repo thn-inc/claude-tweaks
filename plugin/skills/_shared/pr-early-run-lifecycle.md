@@ -136,6 +136,10 @@ step's own reopen logic or a later rejected push. With both collision directions
 root, the branch this step queries is always freshly created, so `gh pr list --head {branch}` only
 ever matches a PR this exact run itself opened (resume case) — the CLOSED-match reopen branch above
 still exists for that legitimate resume, just never for a same-name-collision retry anymore.
+That holds on the creation path only: a run that adopted its worktree (a dispatched group, a
+multi-spec shared worktree) skips Steps 1.5/1.6 with the rest of worktree creation, so
+`build/adopted-branch-collision-check.md` covers it instead — it stops on a same-name `origin`
+branch whose tip is not in the adopted worktree's history, before this file's Step 2 push (#2844).
 
 ### Step 2: Push the branch
 

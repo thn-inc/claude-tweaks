@@ -215,8 +215,9 @@ test('live: impeccable-engine.js resolve() finds a usable 4.2.2+ install with a 
 });
 
 test('live: the resolved launcher\'s engine-probe output matches /^impeccable-engine \\S+$/', { skip: liveEngineSkip }, () => {
-  const { execFileSync } = require('node:child_process');
-  const out = execFileSync(liveResolved.launcher, ['engine-probe'], {
+  // Through the module's own spawn: on Windows the launcher is impeccable.cmd, which a raw
+  // execFileSync refuses (EINVAL) — launchSpec wraps it in cmd.exe /c.
+  const out = engine.defaultDeps().spawn(liveResolved.launcher, ['engine-probe'], {
     encoding: 'utf8',
     env: Object.assign({}, process.env, { IMPECCABLE_LAUNCHER_PROBE: '1' }),
   });

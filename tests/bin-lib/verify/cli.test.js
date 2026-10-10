@@ -23,7 +23,7 @@ function tmpDir() {
 function runCli(args, opts = {}) {
   const cwd = opts.cwd || tmpDir();
   return new Promise((resolve) => {
-    execFile(process.execPath, [CLI, ...args], { maxBuffer: 10 * 1024 * 1024, cwd },
+    execFile(process.execPath, [CLI, ...args], { maxBuffer: 10 * 1024 * 1024, cwd, ...(opts.env ? { env: opts.env } : {}) },
       (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr, cwd }));
   });
 }
@@ -551,6 +551,30 @@ function commitFile(r, rel, content) {
   r.git('add', rel);
   r.git('commit', '-q', '-m', `add ${rel}`);
 }
+
+test('--scope: a none run anchored on a baseline-adjudicated full stamp carries its baseline marker forward (#3043)', async () => {
+  const r = scopedRepo([
+    { match: 'src/**', suites: ['unit'], static: true },
+    { match: 'docs/**', suites: [], static: false },
+  ]);
+  const head = r.git('rev-parse', 'HEAD').trim();
+  const marker = { base: 'origin/main', baseSha: 'b'.repeat(40), baselineFailing: ['tests/env.test.js'], flakyPassed: [] };
+  fs.writeFileSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json'), JSON.stringify({
+    sha: head, dirty: false, scope: 'full', fullSha: head, base: null, changedFiles: [], suitesRun: ['unit', 'other'],
+    flakyRetried: [], reportPath: path.join(r.gitDir, 'report.json'), at: new Date().toISOString(), baseline: marker,
+  }));
+  commitFile(r, 'docs/a.md', 'docs');
+  const run = await runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.match(run.stdout, /^Scope: none/m);
+  const s = stampOf(r.gitDir);
+  assert.strictEqual(s.scope, 'none');
+  assert.strictEqual(s.fullSha, head);
+  assert.deepStrictEqual(s.baseline, marker);
+  const status = JSON.parse((await runCli(['--stamp-status'], { cwd: r.repo })).stdout);
+  assert.strictEqual(status.baselineAdjudicated, true);
+  assert.strictEqual(status.verifiedHead, true);
+});
 
 test('--scope: full → none → scoped across three commits, anchored to the first full pass (#1922 AC4)', async () => {
   const r = scopedRepo([
@@ -1502,4 +1526,168 @@ test('#2779: tool-scoped mode\'s synthesized tests command runs with the tests c
   assert.strictEqual(run2.code, 0, run2.stderr);
   assert.match(run2.stdout, /^Scope: tool-scoped/m);
   assert.strictEqual(fs.readFileSync(out, 'utf8'), 'on');
+});
+
+// #3043: a repo whose base commit already carries a failing test file.
+function baselineRepo() {
+  const r = tmpGitRepo();
+  fs.mkdirSync(path.join(r.repo, 'tests'));
+  fs.writeFileSync(path.join(r.repo, 'tests', 'env.test.js'), "require('node:test')('env', () => { throw new Error('env-specific'); });\n");
+  fs.writeFileSync(path.join(r.repo, 'tests', 'ok.test.js'), "require('node:test')('ok', () => {});\n");
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'base');
+  const baseSha = r.git('rev-parse', 'HEAD').trim();
+  return { ...r, baseSha, opts: { cwd: r.repo, env: nestedRunEnv() } };
+}
+const SUITE = 'tests=node --test --test-reporter=tap tests/env.test.js tests/ok.test.js';
+const PER_FILE = 'tests=node --test --test-reporter=tap {file}';
+// A `node --test` child of this suite inherits NODE_TEST_CONTEXT, which makes a
+// nested `node --test` run the file bare (no reporter output, exit 0 on a
+// failing test) — the fixtures' inner runs need it stripped to be real runs.
+function nestedRunEnv() {
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  return env;
+}
+
+test('--baseline: failures that also fail at base exit 0, stamp a baseline pass, and --stamp-status says verifiedHead (#3043 AC1)', async () => {
+  const r = baselineRepo();
+  fs.writeFileSync(path.join(r.repo, 'README.md'), 'change\n');
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'head');
+  const { code, stdout } = await runCli(['--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 0, stdout);
+  assert.match(stdout, /Baseline: adjudicated against .* 1 also fail at base, 0 flaky \(passed in isolation\), 0 attributable/);
+  assert.ok(stdout.includes(`| tests | pass (baseline-adjudicated vs ${r.baseSha}: 1 baseline, 0 flaky) |`), stdout);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.pass, false);
+  assert.strictEqual(report.checks.tests.exitCode, 1, 'report.json keeps the raw exit code');
+  assert.strictEqual(report.baselineAdjudicated.verdict, 'pass');
+  assert.deepStrictEqual(report.baselineAdjudicated.attributable, []);
+  const status = JSON.parse((await runCli(['--stamp-status'], r.opts)).stdout);
+  assert.strictEqual(status.verifiedHead, true);
+  assert.strictEqual(status.match, false);
+  assert.strictEqual(status.baselineAdjudicated, true);
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass')), 'no legacy twin for an adjudicated pass');
+});
+
+test('--baseline: a file that passes at base but fails at HEAD exits 1 naming it, and writes no stamp (#3043 AC2)', async () => {
+  const r = baselineRepo();
+  fs.writeFileSync(path.join(r.repo, 'tests', 'ok.test.js'), "require('node:test')('ok', () => { throw new Error('regressed'); });\n");
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'break ok');
+  const { code, stdout } = await runCli(['--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 1);
+  assert.match(stdout, /ATTRIBUTABLE: tests\/ok\.test\.js/);
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')));
+});
+
+test('--baseline: an unresolvable ref exits 2 before any check runs (#3043)', async () => {
+  const r = baselineRepo();
+  const { code, stderr } = await runCli(['--cmd', SUITE, '--baseline', 'no-such-ref', '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 2);
+  assert.match(stderr, /--baseline: no-such-ref does not resolve to a commit/);
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify', 'tests.log')));
+});
+
+test('--baseline: a passing run never adjudicates and stamps exactly as before (#3043)', async () => {
+  const r = baselineRepo();
+  const { code, stdout } = await runCli(['--cmd', 'tests=node --test tests/ok.test.js', '--baseline', r.baseSha, '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 0);
+  assert.doesNotMatch(stdout, /Baseline:/);
+  const status = JSON.parse((await runCli(['--stamp-status'], r.opts)).stdout);
+  assert.strictEqual(status.match, true);
+  assert.strictEqual(status.baselineAdjudicated, false);
+});
+
+// A commit on top of the base, so HEAD is not contained in it (I1).
+function headCommit(r) {
+  fs.writeFileSync(path.join(r.repo, 'README.md'), 'change\n');
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'head');
+}
+
+test('--baseline: a base that already contains HEAD is not adjudicated and exits 1 (#3043 I1)', async () => {
+  const r = baselineRepo();
+  const { code, stdout } = await runCli(['--cmd', SUITE, '--baseline', 'HEAD', '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 1, stdout);
+  assert.ok(stdout.includes(`Baseline: not adjudicated — base HEAD (${r.baseSha.slice(0, 9)}) already contains HEAD — nothing to compare against`), stdout);
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')), 'no stamp');
+});
+
+test('--baseline: a failing check with no extractable file is not adjudicated and exits 1 (#3043)', async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  const { code, stdout } = await runCli(['--cmd', 'tests=node -e "process.exit(3)"', '--baseline', r.baseSha, '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 1);
+  assert.match(stdout, /Baseline: not adjudicated — no-parse/);
+});
+
+test('--baseline: a file failing only in the full run is flaky — exit 0 with a CAVEAT line naming its isolated log (#3043 I3)', async () => {
+  const r = baselineRepo();
+  // Fails once (the full run consumes the marker), then passes at base and in isolation.
+  const marker = path.join(tmpDir(), 'flake-once');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'flaky.test.js'), `const fs = require('fs');\nrequire('node:test')('flaky', () => { if (fs.existsSync(${JSON.stringify(marker)})) { fs.unlinkSync(${JSON.stringify(marker)}); throw new Error('flake'); } });\n`);
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'add flaky');
+  const baseSha = r.git('rev-parse', 'HEAD').trim();
+  headCommit(r);
+  fs.writeFileSync(marker, '');
+  const { code, stdout } = await runCli(['--cmd', 'tests=node --test --test-reporter=tap tests/env.test.js tests/flaky.test.js', '--baseline', baseSha, '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 0, stdout);
+  assert.ok(stdout.includes(`| tests | pass (baseline-adjudicated vs ${baseSha}: 1 baseline, 1 flaky) |`), stdout);
+  assert.match(stdout, /^CAVEAT: baseline-flaky: tests\/flaky\.test\.js — failed in the full run, passed in isolation at HEAD; see .*tests-isolated-tests\+flaky\.test\.js\.log$/m);
+});
+
+test('--baseline: a file failing beyond its base tests only in the full run is baseline — exit 0 with a baseline-in-isolation CAVEAT (#3043)', async () => {
+  const r = baselineRepo();
+  // `old` fails everywhere; `once` fails only in the full run (it consumes the marker).
+  const marker = path.join(tmpDir(), 'fail-once');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'mixed.test.js'), `const fs = require('fs');\nconst test = require('node:test');\ntest('old', () => { throw new Error('env'); });\ntest('once', () => { if (fs.existsSync(${JSON.stringify(marker)})) { fs.unlinkSync(${JSON.stringify(marker)}); throw new Error('load'); } });\n`);
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'add mixed');
+  const baseSha = r.git('rev-parse', 'HEAD').trim();
+  headCommit(r);
+  fs.writeFileSync(marker, '');
+  const { code, stdout } = await runCli(['--cmd', 'tests=node --test --test-reporter=tap tests/mixed.test.js', '--baseline', baseSha, '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 0, stdout);
+  assert.ok(stdout.includes(`| tests | pass (baseline-adjudicated vs ${baseSha}: 1 baseline, 0 flaky) |`), stdout);
+  assert.match(stdout, /^CAVEAT: baseline-in-isolation: tests\/mixed\.test\.js — in isolation at HEAD it failed only tests that also fail at base; passed there, waived from the full run: once; see .*tests-isolated-tests\+mixed\.test\.js\.log$/m);
+});
+
+test('--baseline: the verify event carries the adjudication verdict (#3043)', async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  const runDir = anchoredRunDir(r.repo);
+  const { code, stdout } = await runCli(['--run', runDir, '--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 0, stdout);
+  const ev = JSON.parse(fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').pop());
+  assert.strictEqual(ev.baselineAdjudicated, 'pass');
+  assert.strictEqual(ev.pass, false, 'the event, like report.json, keeps the raw pass');
+});
+
+test('--baseline: an adjudicator that throws (the scratch worktree cannot be created) is "adjudication error", exits 1, writes the report (#3043)', async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  // A plain file where git keeps its worktree registry: `git worktree add` fails.
+  fs.writeFileSync(path.join(r.gitDir, 'worktrees'), 'not a directory\n');
+  const runDir = anchoredRunDir(r.repo);
+  const { code, stdout } = await runCli(['--run', runDir, '--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 1, stdout);
+  assert.match(stdout, /^Baseline: not adjudicated — adjudication error: /m);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.baselineAdjudicated.eligible, false);
+  assert.match(report.baselineAdjudicated.reason, /^adjudication error: /);
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')), 'no stamp');
+  const ev = JSON.parse(fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').pop());
+  assert.strictEqual(ev.baselineAdjudicated, 'ineligible');
+});
+
+test('--baseline: the scratch worktree is gone after the run (#3043)', async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  const { stdout } = await runCli(['--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', PER_FILE], r.opts);
+  assert.match(stdout, /Baseline: adjudicated against/, 'a scratch worktree was actually created');
+  const list = r.git('worktree', 'list', '--porcelain');
+  assert.strictEqual((list.match(/^worktree /gm) || []).length, 1, list);
 });

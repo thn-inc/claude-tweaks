@@ -124,7 +124,7 @@ function shouldEscalate(entry) {
 const DEFAULT_RUN_TIMEOUT_MS = 30000;
 
 function defaultRun(cmd, args, opts = {}) {
-  return execFileSync(cmd, args, { encoding: 'utf8', timeout: DEFAULT_RUN_TIMEOUT_MS, ...opts });
+  return execFileSync(cmd, args, { encoding: 'utf8', timeout: DEFAULT_RUN_TIMEOUT_MS, ...opts, windowsHide: true });
 }
 
 // namespace: the top-level path segment under the health-state branch's root

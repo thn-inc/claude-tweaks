@@ -215,6 +215,7 @@ function tryGit(args, cwd, timeoutMs) {
       encoding: 'utf8',
       timeout: timeoutMs,
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
     });
     return { ok: true, out };
   } catch (err) {
