@@ -53,6 +53,14 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.139.3](https://github.com/thn-inc/claude-tweaks/compare/v6.139.2...v6.139.3) (2026-10-10)
+
+
+### Bug Fixes
+
+* bin/wrap-up-engine.js: render fails silently when the… ([#2688](https://github.com/thn-inc/claude-tweaks/issues/2688)) ([79bc95c](https://github.com/thn-inc/claude-tweaks/commit/79bc95c706945d834ceb2910eaa89c8a16c2208d))
+* PR-early lifecycle can open a run's PR without its… ([#2997](https://github.com/thn-inc/claude-tweaks/issues/2997)) ([50de5f4](https://github.com/thn-inc/claude-tweaks/commit/50de5f4b0d34ba9f026665281701b981d80e214d))
+
 ## [6.139.2](https://github.com/thn-inc/claude-tweaks/compare/v6.139.1...v6.139.2) (2026-10-10)
 
 
