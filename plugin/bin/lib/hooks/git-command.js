@@ -456,9 +456,8 @@ function gitTargets(command, cwd) {
 // skills/_shared/policy-schema-coverage.md for the measured rationale):
 //   - bare shell redirection (`>`, `>>`) — no command word for the prefilter to
 //     key on, so catching it means running the full handler on EVERY Bash call.
-//     Marginal cost per redirecting call = full path minus skip path: about
-//     49 ms idle (106.5 - 57.8) / 54 ms under three-way contention
-//     (152.3 - 97.9), best of 30 (Windows, #3074).
+//     The measured marginal cost (full path minus skip path) is in
+//     skills/_shared/policy-schema-coverage.md.
 //   - `python -c`, `sh -c`, `awk` program strings — the write target lives
 //     inside an opaque program and is not statically knowable at any cost.
 //
