@@ -53,6 +53,14 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.139.1](https://github.com/thn-inc/claude-tweaks/compare/v6.139.0...v6.139.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* Dispatch headless self-report: flow-step-2.8-claim-contest ([#2746](https://github.com/thn-inc/claude-tweaks/issues/2746)) ([48c6304](https://github.com/thn-inc/claude-tweaks/commit/48c63045a4d00f4e2bf8d6c4846546808ded9d08)), closes [#2802](https://github.com/thn-inc/claude-tweaks/issues/2802) [#2844](https://github.com/thn-inc/claude-tweaks/issues/2844)
+* hooks/hooks.json: if-gated Bash entries fan out to all 28… ([#3074](https://github.com/thn-inc/claude-tweaks/issues/3074)) ([666d97a](https://github.com/thn-inc/claude-tweaks/commit/666d97af57cbb48a102dfe3a8aad1210c37ce5e8))
+
 ## [6.139.0](https://github.com/thn-inc/claude-tweaks/compare/v6.138.0...v6.139.0) (2026-10-09)
 
 
