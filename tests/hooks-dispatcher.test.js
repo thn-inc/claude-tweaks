@@ -748,15 +748,14 @@ test('#1337: a gate-denial event is untagged when CT_HOOKS_TEST_MODE is not set'
 // matching entry for what is, from the operator's perspective, ONE tool call.
 // hooks.json now registers ONE unconditional Bash handler (bash-prefilter.js
 // decides whether it is worth running), so that N-fold fan-out no longer exists
-// at the registration seam. The test below keeps the stress/idempotence form:
-// it repeats the handler N times (one per former `if` shape: git commit/push/-C/
-// -c/--exec-path/--namespace, cp, mv, mkdir, tee, sed, perl, install, ln,
-// truncate, dd, git worktree, ...) against the SAME compound command in a
-// project with NO worktree-always policy — i.e. a command that genuinely
-// executes successfully, no actual denial anywhere.
+// at the registration seam. The test below pins the single-handler invariant:
+// ONE invocation of the handler on a compound command spanning every former
+// `if` shape (git commit/push/-C/-c/--exec-path/--namespace, cp, mv, mkdir,
+// tee, sed, perl, install, ln, truncate, dd, git worktree, ...) in a project
+// with NO worktree-always policy — i.e. a command that genuinely executes
+// successfully, no actual denial anywhere — produces no gate-denial event.
 // checkWorktreeRequired's own fast-reject (`wtDetect.findPolicyFile` finds
-// nothing) means every one of those N invocations returns `{}` before ever
-// reaching the gate-denial write — so the burst reported in #750 cannot be
+// nothing) returns `{}` before ever reaching the gate-denial write — so the burst reported in #750 cannot be
 // per-segment/per-matching-hook duplicate logging of a non-denial: this
 // invariant already holds structurally. (The reported burst's actual cause —
 // a genuinely-denied SIBLING session's events landing in the WRONG run's
@@ -765,7 +764,7 @@ test('#1337: a gate-denial event is untagged when CT_HOOKS_TEST_MODE is not set'
 // unadopted-mint case, and the broader cross-worktree case is #1402/PR #1577,
 // already built+tested+reviewed and awaiting merge as of this writing — not
 // re-implemented here to avoid duplicating that in-flight fix.)
-test('#750: a compound Bash command with no policy violation never logs a gate-denial event, no matter how many times the single Bash handler is repeated on it', () => {
+test('#750: a compound Bash command with no policy violation logs no gate-denial event', () => {
   const project = gitRepo(); // no writeWorktreeAlwaysPolicy(project) -- nothing to enforce
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true });
@@ -779,15 +778,13 @@ test('#750: a compound Bash command with no policy violation never logs a gate-d
   const hooksConfig = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
   const bashEntry = hooksConfig.hooks.PreToolUse.find((e) => e.matcher === 'Bash');
   assert.strictEqual(bashEntry.hooks.length, 1, 'one unconditional handler (#3074)');
-  for (let i = 0; i < 28; i += 1) { // the pre-#3074 fan-out count, kept as a stress repeat
-    const result = runHook(['pre-tool-use'], {
-      input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: compoundCommand } }),
-      cwd: project,
-    });
-    assert.strictEqual(result.code, 0, `repeat ${i}: should not error`);
-    assert.doesNotMatch(result.stdout, /"permissionDecision":"deny"/, `repeat ${i}: must not deny — no policy is set`);
-  }
-  assert.ok(!fs.existsSync(path.join(run, 'events.jsonl')), 'no gate-denial (or any) event should ever have been written across all simulated invocations');
+  const result = runHook(['pre-tool-use'], {
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: compoundCommand } }),
+    cwd: project,
+  });
+  assert.strictEqual(result.code, 0, 'should not error');
+  assert.doesNotMatch(result.stdout, /"permissionDecision":"deny"/, 'must not deny — no policy is set');
+  assert.ok(!fs.existsSync(path.join(run, 'events.jsonl')), 'no gate-denial (or any) event should have been written');
 });
 
 // #1395: the gitignored-target exemption's own allow breadcrumb — unlike
