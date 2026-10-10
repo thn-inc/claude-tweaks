@@ -4,7 +4,7 @@ Full reference for every skill in the claude-tweaks plugin, grouped by where it 
 
 ### Plan phase
 
-**`/claude-tweaks:init`** — One-time project bootstrap. Scans the codebase, generates a CLAUDE.md with project-specific conventions and philosophy, creates workflow directories (`specs/`, `docs/plans/`, `docs/journeys/`), sets up browser integration (agent-browser), builds a documentation registry (`docs/REGISTRY.md`) mapping docs to code areas for automatic updates, and discovers existing user journeys.
+**`/claude-tweaks:init`** — One-time project bootstrap. Scans the codebase, generates a CLAUDE.md with project-specific conventions and philosophy, creates workflow directories (`specs/`, `docs/plans/`, `docs/journeys/`), sets up browser integration (playwright-cli), builds a documentation registry (`docs/REGISTRY.md`) mapping docs to code areas for automatic updates, and discovers existing user journeys.
 
 **Port isolation** — `/init` Step 6.5 offers to rewrite literal dev-server ports (in `vite.config.*`, `vue.config.*`, Compose files, and a few other common spots) to read from the environment instead, then sets the `port-services` policy key (e.g. `port-services: web,api`). From then on, every session in the project leases its own 10-port block (`~/.claude-tweaks/ports.json`, machine-wide, verified free by binding) — SessionStart writes it into `.env.local`, the statusline shows it (`:20010`), and it's released automatically when the worktree is torn down. Different worktrees of the same project never collide on ports again.
 
@@ -107,7 +107,7 @@ Stories include `source_files:` and `journey:` fields for change-aware scoping a
 
 **`/claude-tweaks:walkthrough`** — Executes an existing schema-v2 story through Playwright CLI, captures one PNG frame per step, and encodes a shareable animated GIF plus an ordered caption list — a walkthrough that survives outside the disposable QA-screenshot tree `.claude-tweaks/artifacts/` prunes after 30 days. The codec (PNG decode, median-cut palette quantization, LZW, GIF89a) is entirely vendored under `plugin/bin/lib/gif/` — zero npm dependencies, consistent with this plugin's install model. Resolves its target story from a direct path, `--story <name>`, `#N` (matched against a record's Key Files/journeys), or the current branch's changed files; `--base <url>` is always required — no dev-server auto-detection, since a walkthrough recorded against the wrong environment is silently wrong. One question at the end picks where the GIF is saved (default `docs/walkthroughs/`); nothing is committed on your behalf.
 
-**`/claude-tweaks:browse`** — Browser automation via agent-browser. Defines session naming, screenshot/trace paths, and operation vocabulary used by /stories, /visual-review, and /review.
+**`/claude-tweaks:browse`** — Browser automation via playwright-cli. Defines session naming, screenshot/trace paths, and operation vocabulary used by /stories, /visual-review, and /review.
 
 **`/claude-tweaks:research`** — Deep web research with citation-audited reports. Four runtime modes from quick (~2-5 min) to ultradeep (~20-45 min, multi-persona red-team). Delegates to Claude Code's built-in `/deep-research` Dynamic Workflow when available; falls back to a lean inline method otherwise. Reports land under `.claude-tweaks/research/`. Its `verify [brief-path|#N]` mode is the exception to "no fixed lifecycle position" — it grounds a design's assumptions against this repo, its dependencies, and the web, run before `/superpowers:brainstorming` (human-invoked, not reachable from `/flow`).
 
