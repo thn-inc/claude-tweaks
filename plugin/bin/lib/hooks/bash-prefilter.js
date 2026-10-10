@@ -33,7 +33,7 @@ const { WRITE_SHAPES } = require('./git-command');
 // `env` is kept for parity with the retired `Bash(env -*)` predicate; every
 // env-wrapped shape the handler acts on also carries a `git` or write-shape
 // word, so it is redundant in practice and costs nothing as superset hygiene.
-const PRE_TOOL_USE_WORDS =Object.freeze(['git', 'env', 'mkdir', ...WRITE_SHAPES]);
+const PRE_TOOL_USE_WORDS = Object.freeze(['git', 'env', 'mkdir', ...WRITE_SHAPES]);
 const POST_TOOL_USE_WORDS = Object.freeze(['git', 'env']);
 const WORDS_BY_EVENT = Object.freeze({
   'pre-tool-use': PRE_TOOL_USE_WORDS,

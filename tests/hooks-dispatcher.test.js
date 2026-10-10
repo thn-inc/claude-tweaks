@@ -755,9 +755,9 @@ test('#1337: a gate-denial event is untagged when CT_HOOKS_TEST_MODE is not set'
 // with NO worktree-always policy — i.e. a command that genuinely executes
 // successfully, no actual denial anywhere — produces no gate-denial event.
 // checkWorktreeRequired's own fast-reject (`wtDetect.findPolicyFile` finds
-// nothing) returns `{}` before ever reaching the gate-denial write — so the burst reported in #750 cannot be
-// per-segment/per-matching-hook duplicate logging of a non-denial: this
-// invariant already holds structurally. (The reported burst's actual cause —
+// nothing) returns `{}` before ever reaching the gate-denial write — so the
+// burst reported in #750 cannot be per-segment/per-matching-hook duplicate
+// logging of a non-denial: this invariant already holds structurally. (The reported burst's actual cause —
 // a genuinely-denied SIBLING session's events landing in the WRONG run's
 // events.jsonl via fallback attribution — is a `resolveRun` cross-worktree
 // misattribution bug tracked separately: #721 fixed the narrower
