@@ -159,6 +159,12 @@ test('pre-tool-use.js branches on GATE_COVERAGE.teardownTools, not a duplicated 
 // asymmetry the WRITE_SHAPES test above guards against: a parser branch the
 // handler never runs for is dead code), and that the parser really does
 // resolve a target for the shapes.
+//
+// Note: these pin the SHAPES reaching the handler, not the word `env`. `env` is
+// kept in PRE_TOOL_USE_WORDS for parity with the retired `Bash(env -*)`
+// predicate, but every env-wrapped shape the handler acts on also carries a
+// `git` (or write-shape) word, so removing `env` from the set would not turn
+// these red — and there is no env-only shape the handler resolves to pin.
 test('every env-git shape gitTargets resolves reaches the full handler, in both events (#590, #3074)', () => {
   for (const event of ['pre-tool-use', 'post-tool-use']) {
     for (const command of ['env git commit -m x', 'env git push', 'env git -C . commit -m x',
@@ -176,7 +182,8 @@ test('every env-git shape gitTargets resolves reaches the full handler, in both 
 // env's own flags ahead of git (`env -C <dir> git commit`, `env -u NAME git
 // push`) sit between `env` and `git` — the prefilter must still run the full
 // handler for exactly the shape findGitLead's -C/--chdir handling exists to
-// resolve (same #70 matcher/parser asymmetry).
+// resolve (same #70 matcher/parser asymmetry). As above, this pins the shapes,
+// not the word `env` — each command here also carries the word `git`.
 test('env-with-flags git shapes reach the full handler, in both events (#3074)', () => {
   for (const event of ['pre-tool-use', 'post-tool-use']) {
     for (const command of ['env -C /main-checkout git commit -m "x"', 'env -u FOO git push', 'env -i git commit -m x']) {
