@@ -19,6 +19,13 @@ const fs = require('fs');
 const path = require('path');
 const { GATE_COVERAGE } = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { WRITE_SHAPES, fileWriteTargets, gitTargets } = require('../plugin/bin/lib/hooks/git-command');
+const { shouldRunFull, PRE_TOOL_USE_WORDS } = require('../plugin/bin/lib/hooks/bash-prefilter');
+
+const runsFull = (event, command) => shouldRunFull(event, { tool_name: 'Bash', tool_input: { command } });
+function bashGroupOf(group) {
+  const hooks = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
+  return hooks.hooks[group].find((e) => e.matcher === 'Bash');
+}
 
 const SCHEMA = path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-coverage.md');
 const BEGIN = '<!-- gate-coverage:begin -->';
@@ -114,32 +121,20 @@ test('every GATE_COVERAGE field is load-bearing, not a parallel hand-kept list',
     'GATE_COVERAGE.bashWriteShapes must BE git-command.js\'s list, not a copy of it');
 });
 
-test('every WRITE_SHAPES entry has a matching hooks.json if-matcher (#70)', () => {
-  // The hook is a PreToolUse command gated by `if:` predicates. A shape the
-  // parser handles but no predicate names is DEAD CODE — the hook process
-  // never spawns for it — and it reads exactly like working coverage. That is
-  // how `sed -i` bypassed the gate for months while fileWriteTargets looked
-  // fine. Assert the two lists agree in both directions.
-  const hooks = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
-  const bashPre = hooks.hooks.PreToolUse.find((e) => e.matcher === 'Bash');
-  assert.ok(bashPre, 'PreToolUse must carry a Bash matcher group');
-
-  const matched = new Set();
-  for (const h of bashPre.hooks) {
-    if (!h.if) {
-      // A predicate-less entry fires on every Bash call — that is the
-      // unconditional matcher policy-schema-coverage.md declines on measured cost.
-      // If one is ever added deliberately, this test needs rewriting, not
-      // deleting.
-      assert.fail('PreToolUse Bash carries an unconditional hook — see the measured cost in policy-schema-coverage.md');
-    }
-    const m = /^Bash\(([^ )*]+)/.exec(h.if);
-    if (m) matched.add(m[1]);
+test('every WRITE_SHAPES entry is a pre-tool-use prefilter word, and the Bash group is one unconditional handler (#70, #3074)', () => {
+  // The #70 hazard, restated for the single-handler layout: a shape the parser
+  // handles but the prefilter skips is DEAD CODE — bin/hooks.js exits before
+  // the parser runs — and reads exactly like working coverage.
+  for (const group of ['PreToolUse', 'PostToolUse']) {
+    const g = bashGroupOf(group);
+    assert.ok(g, `${group} must carry a Bash matcher group`);
+    assert.strictEqual(g.hooks.length, 1, `${group}'s Bash group must be ONE handler — per-pattern entries fan out 28x/18x when Claude Code cannot evaluate them (#3074)`);
+    assert.ok(!('if' in g.hooks[0]), `${group}'s Bash handler must carry no "if" — the prefilter in bin/hooks.js replaces it`);
   }
-
   for (const shape of WRITE_SHAPES) {
-    assert.ok(matched.has(shape),
-      `WRITE_SHAPES includes '${shape}' but hooks/hooks.json has no Bash(${shape} *) predicate — the hook never spawns, so the parser branch is dead code`);
+    assert.ok(PRE_TOOL_USE_WORDS.includes(shape),
+      `WRITE_SHAPES includes '${shape}' but the pre-tool-use prefilter skips it — the parser branch is dead code`);
+    assert.strictEqual(runsFull('pre-tool-use', `${shape} a b`), true, shape);
   }
 });
 
@@ -159,33 +154,23 @@ test('pre-tool-use.js branches on GATE_COVERAGE.teardownTools, not a duplicated 
     'pre-tool-use.js must branch on GATE_COVERAGE.teardownTools, not a hardcoded comparison');
 });
 
-// #590: gitTargets now also recognizes `env git ...` — pin that hooks.json
-// carries a matching `if` predicate for both PreToolUse and PostToolUse (the
-// same #70 asymmetry the WRITE_SHAPES test above guards against: a parser
-// branch nothing spawns the hook for is dead code), and that the parser
-// really does resolve a target for the shape each new predicate names.
-test('every env-git `if` predicate this fix adds has a parser-recognized counterpart, in both PreToolUse and PostToolUse (#590)', () => {
-  const hooks = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
-  // Exact literal predicates this fix adds — mirrors the six existing bare-`git`
-  // predicates one-for-one, so this list is deliberately hand-typed rather than
-  // derived from ENV_GIT_ACTIONS: -C/-c keep their trailing space (`Bash(git -C *)`
-  // already does), --exec-path=/--namespace= don't (`Bash(git --exec-path=*)`).
-  const ENV_GIT_PREDICATES = [
-    'Bash(env git commit *)',
-    'Bash(env git push *)',
-    'Bash(env git -C *)',
-    'Bash(env git -c *)',
-    'Bash(env git --exec-path=*)',
-    'Bash(env git --namespace=*)',
-  ];
-
-  for (const group of ['PreToolUse', 'PostToolUse']) {
-    const bashGroup = hooks.hooks[group].find((e) => e.matcher === 'Bash');
-    assert.ok(bashGroup, `${group} must carry a Bash matcher group`);
-    const ifs = bashGroup.hooks.map((h) => h.if).filter(Boolean);
-    for (const predicate of ENV_GIT_PREDICATES) {
-      assert.ok(ifs.includes(predicate),
-        `${group}'s Bash group is missing an "if": "${predicate}" predicate — gitTargets recognizes this 'env git' shape but the hook would never spawn for it`);
+// #590: gitTargets now also recognizes `env git ...` — pin that the prefilter
+// runs the full handler for each such shape in both events (the same #70
+// asymmetry the WRITE_SHAPES test above guards against: a parser branch the
+// handler never runs for is dead code), and that the parser really does
+// resolve a target for the shapes.
+//
+// Note: these pin the SHAPES reaching the handler, not the word `env`. `env` is
+// kept in PRE_TOOL_USE_WORDS for parity with the retired `Bash(env -*)`
+// predicate, but every env-wrapped shape the handler acts on also carries a
+// `git` (or write-shape) word, so removing `env` from the set would not turn
+// these red — and there is no env-only shape the handler resolves to pin.
+test('every env-git shape gitTargets resolves reaches the full handler, in both events (#590, #3074)', () => {
+  for (const event of ['pre-tool-use', 'post-tool-use']) {
+    for (const command of ['env git commit -m x', 'env git push', 'env git -C . commit -m x',
+      'env git -c a=b commit -m x', 'env git --exec-path=/x commit -m x', 'env git --namespace=n push']) {
+      assert.strictEqual(runsFull(event, command), true,
+        `${event}'s prefilter skips '${command}' — gitTargets recognizes this 'env git' shape but the handler would never run for it`);
     }
   }
 
@@ -195,21 +180,21 @@ test('every env-git `if` predicate this fix adds has a parser-recognized counter
 });
 
 // env's own flags ahead of git (`env -C <dir> git commit`, `env -u NAME git
-// push`) match none of the literal `env git ...` predicates above — the flag
-// sits between `env` and `git` — so without a `Bash(env -*)` predicate the
-// hook never spawns for exactly the shape findGitLead's -C/--chdir handling
-// exists to resolve (same #70 matcher/parser asymmetry).
-test('the `Bash(env -*)` predicate covers env-with-flags git shapes, in both PreToolUse and PostToolUse', () => {
-  const hooks = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
-  for (const group of ['PreToolUse', 'PostToolUse']) {
-    const bashGroup = hooks.hooks[group].find((e) => e.matcher === 'Bash');
-    const ifs = bashGroup.hooks.map((h) => h.if).filter(Boolean);
-    assert.ok(ifs.includes('Bash(env -*)'),
-      `${group}'s Bash group is missing an "if": "Bash(env -*)" predicate — gitTargets resolves env-flag git shapes but the hook would never spawn for them`);
+// push`) sit between `env` and `git` — the prefilter must still run the full
+// handler for exactly the shape findGitLead's -C/--chdir handling exists to
+// resolve (same #70 matcher/parser asymmetry). As above, this pins the shapes,
+// not the word `env` — each command here also carries the word `git`.
+test('env-with-flags git shapes reach the full handler, in both events (#3074)', () => {
+  for (const event of ['pre-tool-use', 'post-tool-use']) {
+    for (const command of ['env -C /main-checkout git commit -m "x"', 'env -u FOO git push', 'env -i git commit -m x']) {
+      assert.strictEqual(runsFull(event, command), true, `${event} skips '${command}'`);
+    }
   }
 
   // Parser side: the shapes the predicate exists for really do resolve.
-  assert.deepStrictEqual(gitTargets('env -C /main-checkout git commit -m "x"', '/repo'), [{ action: 'commit', dir: '/main-checkout' }]);
+  // path.resolve: gitTargets resolves an -C dir to an absolute path, which on
+  // Windows carries the drive letter (C:\main-checkout).
+  assert.deepStrictEqual(gitTargets('env -C /main-checkout git commit -m "x"', '/repo'), [{ action: 'commit', dir: path.resolve('/main-checkout') }]);
   assert.deepStrictEqual(gitTargets('env -u FOO git push', '/repo'), [{ action: 'push', dir: '/repo' }]);
 });
 
@@ -227,10 +212,10 @@ test('PostToolUse carries an EnterWorktree matcher group for the post-tool-use E
 });
 
 // #703: checkPostTeardownReanchor hard-gates on tool_name === 'ExitWorktree'
-// (for the action:remove shape) and on a Bash(git worktree remove ...)
-// command — a PostToolUse group without matching matchers/predicates makes
-// it dead at the registration seam, the same #70 dead-branch shape the
-// EnterWorktree test above guards against.
+// (for the action:remove shape) and on a raw `git worktree remove ...` Bash
+// command — a PostToolUse registration without a matching matcher, or a
+// prefilter that skips the command, makes it dead at the registration seam,
+// the same #70 dead-branch shape the EnterWorktree test above guards against.
 test('PostToolUse carries an ExitWorktree matcher group for the post-teardown re-anchor backstop', () => {
   const hooks = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
   const group = hooks.hooks.PostToolUse.find((e) => e.matcher === 'ExitWorktree');
@@ -239,32 +224,24 @@ test('PostToolUse carries an ExitWorktree matcher group for the post-teardown re
     'the ExitWorktree PostToolUse group must invoke hooks.js post-tool-use');
 });
 
-test('PostToolUse\'s Bash group carries a `git worktree *` if-predicate for the post-teardown re-anchor backstop (#703)', () => {
-  const hooks = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
-  const bashPost = hooks.hooks.PostToolUse.find((e) => e.matcher === 'Bash');
-  assert.ok(bashPost, 'PostToolUse must carry a Bash matcher group');
-  const ifs = bashPost.hooks.map((h) => h.if).filter(Boolean);
-  assert.ok(ifs.includes('Bash(git worktree *)'),
-    'PostToolUse\'s Bash group is missing an "if": "Bash(git worktree *)" predicate — checkPostTeardownReanchor would never spawn for a raw `git worktree remove` Bash call');
+test('post-tool-use\'s prefilter runs the full handler for a raw `git worktree` command (#703, #3074)', () => {
+  assert.strictEqual(runsFull('post-tool-use', 'git worktree remove ../w'), true,
+    'post-tool-use skips a raw `git worktree remove` — checkPostTeardownReanchor would never run for it');
 });
 
 // #976 (IL-141): the general-purpose sibling of the WRITE_SHAPES #70 test
 // above, for GATE_COVERAGE.gitActions instead — a git action gitTargets()
-// classifies but hooks.json names no `Bash(git {action} *)` predicate for is
-// the identical dead-code hazard: the hook never spawns, so the classifier
-// branch never runs for real traffic. Checked for BOTH PreToolUse and
+// classifies but bash-prefilter.js has no word for (hooks.json no longer names
+// per-action `Bash(git {action} *)` predicates; the prefilter is the gate now)
+// is the identical dead-code hazard: the full handler never runs, so the
+// classifier branch never runs for real traffic. Checked for BOTH PreToolUse and
 // PostToolUse (commit/push already carry entries in both; a new action must
 // too, or post-tool-use.js's commit-breadcrumb loop silently never logs it).
-test('every GATE_COVERAGE.gitActions entry has a matching hooks.json if-matcher, in both PreToolUse and PostToolUse (#976)', () => {
-  const hooks = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
-  for (const group of ['PreToolUse', 'PostToolUse']) {
-    const bashGroup = hooks.hooks[group].find((e) => e.matcher === 'Bash');
-    assert.ok(bashGroup, `${group} must carry a Bash matcher group`);
-    const ifs = bashGroup.hooks.map((h) => h.if).filter(Boolean);
+test('every GATE_COVERAGE.gitActions entry reaches the full handler, in both events (#976, #3074)', () => {
+  for (const event of ['pre-tool-use', 'post-tool-use']) {
     for (const action of GATE_COVERAGE.gitActions) {
-      const predicate = `Bash(git ${action} *)`;
-      assert.ok(ifs.includes(predicate),
-        `${group}'s Bash group is missing an "if": "${predicate}" predicate — GATE_COVERAGE.gitActions includes '${action}' but the hook would never spawn for it`);
+      assert.strictEqual(runsFull(event, `git ${action} x`), true,
+        `${event}'s prefilter skips 'git ${action}' — GATE_COVERAGE.gitActions includes it but the handler would never run`);
     }
   }
 });
