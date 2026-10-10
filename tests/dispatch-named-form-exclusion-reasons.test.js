@@ -178,4 +178,7 @@ test('the unreadable-exclusions report maps absent to the reason-unknown line, o
   assert.match(unknownText, /exclusion reason unknown: this firing's dispatch-exclusions\.json at \{path\} \{could not be read \(\{error\}\) \| was not found\}/);
   assert.match(unknownText, /Step 2 always writes the file/, 'the report must say why absent is never nothing-excluded here');
   assert.match(report, /`#N,#M` member[\s\S]*the rest of\s+the list proceeds/, 'the entry condition must cover the list form');
+  // #3104 review: a probe that fails outright (non-zero exit, no output, non-JSON) has ruled nothing out either.
+  assert.match(unknownText, /The probe itself fails: .*the status probe failed .*Never fall back to "absent from this firing's queue"/,
+    'a failed probe must route to the reason-unknown line, never to absent');
 });

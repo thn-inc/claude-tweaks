@@ -27,3 +27,8 @@ node -e "const r=process.argv[1];const {sessionTmpPath}=require(r+'/bin/lib/sess
   excluded (e.g. `not-spec-shaped`) would read as merely missing, which is the misreport class
   #3084 removed. `absent` is never "nothing excluded" here: Step 2 always writes the file, so a
   missing file at this point means the wrong path or a cleared tmp dir.
+- The probe itself fails: it exits non-zero, prints nothing, or prints something that does not
+  parse as JSON with a `status` field. That can happen when `CLAUDE_PLUGIN_ROOT` is empty, a
+  `require` fails, or the tmp directory cannot be created. A failed probe has ruled nothing out,
+  so report the same reason-unknown line with `the status probe failed ({exit code or stderr})` in
+  place of the read result, and stop. Never fall back to "absent from this firing's queue".
