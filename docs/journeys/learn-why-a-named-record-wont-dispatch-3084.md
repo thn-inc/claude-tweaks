@@ -5,6 +5,8 @@ files:
   - plugin/skills/dispatch/not-spec-shaped-exclusion-report.md
   - plugin/skills/dispatch/open-pr-exclusion-report.md
   - plugin/skills/dispatch/blocked-exclusion-report.md
+  - plugin/skills/dispatch/exclusions-unreadable-report.md
+  - plugin/bin/lib/dispatch/exclusions.js
 ---
 
 # Learn Why a Named Record Won't Dispatch
@@ -30,6 +32,13 @@ files:
 - **Should understand:** The reason shown is the one the queue pull recorded, never inferred; a not-spec-shaped record is never described as having an open PR (#3084's fix — before it, only `open-pr` entries were read).
 - **Red flags:** "already has an open PR" for a record with no PR; a `missing:` list that disagrees with the record body; no remedy command.
 
+### 2b. The exclusion list itself can't be read
+- **URL:** `plugin/skills/dispatch/exclusions-unreadable-report.md`
+- **Action:** `#N` clears the label checks, is missing from `dispatch-groups.json`, and has no entry in `dispatch-exclusions.json`. Dispatch runs that file's one-line probe. The probe resolves the session-scoped path itself, then calls `readExclusionsStatus`. When the file is unreadable or not found, dispatch reports `#N — exclusion reason unknown: this firing's dispatch-exclusions.json at {path} could not be read ({error}) … Re-run the queue pull (Step 2), then name #N again.` and stops.
+- **Should feel:** Honest. The maintainer is told the reason is unknown rather than being handed a guess.
+- **Should understand:** Only a readable file with no entry means "absent from this firing's queue". Step 2 always writes the file, so if it is missing or corrupt at this point, the evidence is gone, not that nothing excluded the record (#3104).
+- **Red flags:** A record reported "absent from this firing's queue" while the probe printed `unreadable` or `absent`; the reason-unknown line without the file path or the re-run remedy.
+
 ### 3. Name several records at once
 - **URL:** `plugin/skills/dispatch/SKILL.md` `#N[,#M,#O...]` bullet
 - **Action:** Run `/claude-tweaks:dispatch #N,#M` where `#N` is excluded and `#M` is eligible. `#N` appears in the `notFound` report with the same named reason as step 2; `#M`'s group proceeds to Step 4.
@@ -41,3 +50,4 @@ files:
 - Created during `/claude-tweaks:build` of record #3084 (2026-10-10): the `#N` and `#N,#M` forms now name every exclusion reason that removes a record from `dispatch-groups.json`, including #2829's `not-spec-shaped`.
 - Related specs: #2829/#3073 (not-spec-shaped queue-pull exclusion), #1224 (open-PR exclusion), #1983 (target-missing), #1984 (shipped)
 - Updated during build of #3103: names `blocked`, the fifth removing exclusion, in Step 1 and the Success state; `blocked-exclusion-report.md` added to `files:`
+- Updated during build of #3104: Step 2b covers an unreadable or missing `dispatch-exclusions.json`, reported as reason unknown and never as absent; `exclusions-unreadable-report.md` and `exclusions.js` added to `files:`
