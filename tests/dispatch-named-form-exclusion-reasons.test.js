@@ -105,3 +105,16 @@ test('the #3084 journey names every removing exclusion reason, with a matching c
     assert.ok(success.includes(`\`${reason}\``), `journey Success state does not name the \`${reason}\` exclusion`);
   }
 });
+
+test('dispatch #N reports an unreadable dispatch-exclusions.json as reason-unknown, never as absent, within the byte ceiling (#3104)', () => {
+  assert.ok(SINGLE.includes('exclusions-unreadable-report.md'), '#N bullet must cite exclusions-unreadable-report.md for the unreadable case');
+  const report = readText(path.join(DISPATCH, 'exclusions-unreadable-report.md'));
+  assert.ok(report.includes('readExclusionsStatus'), 'the report must probe readExclusionsStatus, not readExclusions');
+  assert.match(report, /reason unknown/, 'the report line must say the reason is unknown');
+  assert.match(report, /never .*absent from this firing's queue/, 'the report must forbid the absent misreport');
+  assert.ok(report.includes('Step 2'), 'the report must route the human to re-run the queue pull (Step 2)');
+  const probe = report.split('\n').find((l) => l.includes('readExclusionsStatus') && l.trimStart().startsWith('node '));
+  assert.ok(probe, 'the report must carry a one-line node probe');
+  const bytes = Buffer.byteLength(SKILL, 'utf8');
+  assert.ok(bytes < 46080, `dispatch/SKILL.md is ${bytes} B LF -- must stay under 46080`);
+});
