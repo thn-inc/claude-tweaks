@@ -82,9 +82,10 @@ then treat it as `unreachable` with reason `no-output` (item 3). Branch on `stat
    **Auto mode:** same posture as Step 1.6 — this is **not** a lever
    `_shared/auto-mode-contract.md` lists as silenceable (the remote branch may belong to someone
    else's live work, and a rename changes the branch a session adopted from unrelated prior work).
-   Render the card and **stop the build** before the materialize commit — the same HARD-GATE
-   posture `flow/claim-targets.md` uses for a claim contest. Never let it degrade to a failed push
-   and a local-only run.
+   Render the card and **stop the build** before the materialize commit — a registered HARD-GATE
+   (`_shared/auto-mode-contract.md`'s HARD-GATE / BLOCKED / STOP row), the same posture
+   `flow/claim-targets.md` uses for a claim contest. Never let it degrade to a failed push and a
+   local-only run.
 
 **Out of scope:** the creation path (Step 1.6 owns it), and cleaning up stale remote branches a
 failed attempt leaves behind — this check reports the collision, it does not delete anything.
