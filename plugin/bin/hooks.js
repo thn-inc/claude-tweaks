@@ -15,8 +15,15 @@
 // bash-prefilter.js reads stdin once; `EARLY.raw` is handed to main() so the
 // full path never re-reads it. Only this process's own entry (require.main)
 // takes the fast path — a test require()ing this file for USAGE/main never does.
-const bashPrefilter = require('./lib/hooks/bash-prefilter');
-const EARLY = require.main === module ? bashPrefilter.earlyGate(process.argv[2]) : null;
+// Never-break-a-session: any failure here falls through to the full path
+// (EARLY = null, main() reads stdin itself). That is safe because the only
+// statement that can throw before stdin is read is the require() — earlyGate's
+// own stdin reader and JSON.parse are already wrapped and never throw.
+let EARLY = null;
+try {
+  const bashPrefilter = require('./lib/hooks/bash-prefilter');
+  if (require.main === module) EARLY = bashPrefilter.earlyGate(process.argv[2]);
+} catch { EARLY = null; }
 if (EARLY && EARLY.skip) process.exit(0);
 const fs = require('fs');
 const path = require('path');

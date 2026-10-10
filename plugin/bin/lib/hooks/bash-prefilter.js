@@ -17,6 +17,11 @@
 // anything it cannot read to "run". It deliberately does not parse quoting —
 // `echo "git"` running the full handler is an accepted false positive.
 //
+// Known limit: it reads every word and every assignment value, so `G=git; $G
+// push` is reached, but a program name assembled from pieces (`G=gi; ${G}t
+// push`) or produced by command substitution (`$(echo git) push`) is not. The
+// handler cannot resolve the latter either, and the former is contrived.
+//
 // Dependency-light by contract: fs plus git-command.js (which requires only
 // path). Adding a heavier require here moves cost onto EVERY Bash call.
 'use strict';
@@ -30,21 +35,35 @@ const WORDS_BY_EVENT = Object.freeze({
   'post-tool-use': POST_TOOL_USE_WORDS,
 });
 
-const SEPARATORS = /[\s;&|()<>`{}]+/;
+// `=` is a separator so every assignment VALUE is a piece of its own:
+// substituteVars (git-command.js) can put an assigned value into the program
+// position (`G=git; $G commit`), and the value is the only place the covered
+// word is spelled out.
+const SEPARATORS = /[\s;&|()<>`{}=]+/;
 
 function commandWords(command) {
   const words = new Set();
   for (const piece of command.split(SEPARATORS)) {
-    const unquoted = piece.replace(/^["'\\]+|["'\\]+$/g, '').replace(/\.exe$/i, '');
+    // Quotes are dropped everywhere in the piece, not just at its ends: the
+    // handler's tokenizer merges adjacent spans, so `"g"it` is the word `git`.
+    const unquoted = piece.replace(/["']+/g, '').replace(/\.exe$/i, '');
     if (!unquoted) continue;
+    // `\` is both a Windows path separator (`C:\Git\bin\git.exe`) and a shell
+    // escape (`g\it`), so both readings are added — extra words only widen the
+    // superset.
     const cut = Math.max(unquoted.lastIndexOf('/'), unquoted.lastIndexOf('\\'));
     words.add(cut >= 0 ? unquoted.slice(cut + 1) : unquoted);
+    words.add(unquoted.slice(unquoted.lastIndexOf('/') + 1).replace(/\\/g, ''));
   }
   return words;
 }
 
+// Own-property lookup: `WORDS_BY_EVENT['toString']` would otherwise resolve to
+// an Object.prototype member and read as a governed event.
+const wordsFor = (event) => (Object.prototype.hasOwnProperty.call(WORDS_BY_EVENT, event) ? WORDS_BY_EVENT[event] : null);
+
 function shouldRunFull(event, input) {
-  const covered = WORDS_BY_EVENT[event];
+  const covered = wordsFor(event);
   if (!covered) return true;
   if (!input || typeof input !== 'object' || input.tool_name !== 'Bash') return true;
   const command = input.tool_input && input.tool_input.command;
@@ -57,7 +76,7 @@ function shouldRunFull(event, input) {
 // stdin cannot be read a second time. Returns null (and reads nothing) for
 // every event this filter does not govern.
 function earlyGate(event, readRaw = () => fs.readFileSync(0, 'utf8')) {
-  if (!WORDS_BY_EVENT[event]) return null;
+  if (!wordsFor(event)) return null;
   let raw = '';
   try { raw = readRaw(); } catch { raw = ''; }
   let input = null;

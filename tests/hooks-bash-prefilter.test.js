@@ -5,7 +5,7 @@
 // handler. It must be a SUPERSET of the old per-pattern `if` predicates —
 // a false "skip" silently drops enforcement, a false "run" costs one module load.
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const {
   PRE_TOOL_USE_WORDS, POST_TOOL_USE_WORDS, commandWords, shouldRunFull, earlyGate,
@@ -32,6 +32,8 @@ for (const command of [
   'git -C . status', 'git worktree add ../w', 'git worktree remove ../w', '/usr/bin/git commit -m x',
   'for f in a b; do sed -i s/x/y/ "$f"; done', 'P=/tmp; cp a "$P/b"', 'mkdir -p "$TEMP/d"',
   'echo "$(git rev-parse HEAD)"', 'xargs git add < files.txt', 'git stash', 'git stash pop',
+  // $VAR program indirection (substituteVars) and adjacent-span quoting reach a covered word.
+  'G=git; $G commit -m x', 'C=cp; $C a b', 'M=mkdir; $M -p d', '"g"it commit -m x',
   ...WRITE_SHAPES.map((s) => `${s} a b`),
 ]) {
   test(`pre-tool-use runs the full handler for: ${command}`, () => {
@@ -42,6 +44,7 @@ for (const command of [
 for (const command of [
   'git commit -m x', 'cd x && git commit -m y', 'FOO=1 git push', 'env -C /x git commit -m y',
   'git -c user.name=x commit -m y', 'git worktree remove ../w', 'for n in 1 2; do git push; done',
+  'G=git; $G push',
 ]) {
   test(`post-tool-use runs the full handler for: ${command}`, () => {
     assert.strictEqual(shouldRunFull('post-tool-use', bash(command)), true);
@@ -68,6 +71,13 @@ test('fails open to "run" on anything it cannot read', () => {
     assert.strictEqual(shouldRunFull(event, { tool_name: 'Bash' }), true);
     assert.strictEqual(shouldRunFull(event, { tool_name: 'Bash', tool_input: { command: 42 } }), true);
   }
+});
+
+test('an event name that is an Object.prototype key is not a governed event', () => {
+  let reads = 0;
+  assert.strictEqual(earlyGate('toString', () => { reads += 1; return '{}'; }), null);
+  assert.strictEqual(reads, 0);
+  assert.strictEqual(shouldRunFull('constructor', bash('echo hi')), true);
 });
 
 test('never skips a non-Bash tool', () => {
@@ -99,6 +109,7 @@ const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prefilter-'));
+after(() => { fs.rmSync(SANDBOX, { recursive: true, force: true }); });
 // A --require'd probe that records which modules this process loaded, so the
 // test can prove the skip path never loaded the heavy ones.
 const PROBE = path.join(SANDBOX, 'probe.js');
@@ -138,6 +149,19 @@ test('e2e: malformed stdin still reaches the full handler and exits 0', () => {
 test('e2e: a non-Bash tool is never skipped', () => {
   const { loaded } = spawnHook('post-tool-use', { tool_name: 'Skill', tool_input: { skill: 'x' }, cwd: SANDBOX });
   assert.ok(loadedModule(loaded, 'lib/hooks/post-tool-use.js'));
+});
+
+// The handler substitutes same-command literal assignments into the program word
+// (git-command.js substituteVars), so `G=git; $G commit` resolves to a commit
+// target. The prefilter must see the assigned value, or the deny is dropped.
+test('e2e: $VAR program indirection reaches the worktree-always deny, same as the literal spelling', () => {
+  const project = gitRepo();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(project, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
+  for (const command of ['git commit -m x', 'G=git; $G commit -m x']) {
+    const { stdout } = spawnHook('pre-tool-use', { ...bash(command), cwd: project }, { cwd: project });
+    assert.match(stdout, /"permissionDecision":"deny"/, command);
+  }
 });
 
 // checkGitStashWarn (#1967) had no `Bash(git stash *)` predicate, so a plain
