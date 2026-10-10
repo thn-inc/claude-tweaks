@@ -188,6 +188,7 @@ Check for overflow, cramped layouts, or hidden content at each size. Only test r
 #### Performance
 - Vitals are unavailable from this walk's own browser session (Vitals unavailability note, Step 1) — omit this subsection's findings unless QA data supplies vitals separately (see "QA-informed reimagining" below).
 - If a vitals source is available (QA data): LCP > 2.5s, CLS > 0.1, INP > 200ms → flag as Major performance findings; TTFB > 800ms, FCP > 1.8s → flag as Minor.
+- **Measure first (#2692).** Before proposing or applying any performance fix, record a baseline with a free tool — the Lighthouse CLI, or the PageSpeed Insights API's free tier — rather than guessing at impact. This is guidance to run a baseline, not a claim that this walk's own browser session measures it (see the vitals-unavailability note above); name the tool used when a baseline is recorded.
 
 #### UX Heuristics (#2655)
 

@@ -165,6 +165,7 @@ Never delete anything here — report only. A path under `{ctx-dir}` is a siblin
 - Are shared utilities used instead of reinventing (check existing packages)?
 - Are imports from the right packages (not duplicating types inline)?
 - Does the code follow patterns documented in `.claude/skills/*.md`? Append a `review/skill` ledger entry when the code **diverges** from a skill (flag it in the findings table too — the code may be correct and the skill stale), **extends** a documented pattern with a new wrinkle worth capturing (enrichment), or establishes a reusable pattern in a domain **no skill covers** (tag the entry `[skill: NEW - {name}]` — hyphen, not em-dash, for tooling friendliness). Keep it to a one-line entry — `/claude-tweaks:wrap-up`'s Skills curation row does the deep analysis.
+- **Duplicate-version files instead of in-place edits.** Does the diff introduce a new file or function with a version-suffix name pattern (`v2`, `-new`, `-copy`, `_updated`, or equivalent) sitting alongside an unremoved original the diff neither deleted nor fully migrated away from? This formalizes CLAUDE.md's "don't use feature flags or backwards-compatibility shims when you can just change the code" instruction (Philosophy/Don'ts) into an automated check, rather than relying on the instruction alone (#2669). False-positive guard: do not flag a legitimate, deliberately versioned external-facing artifact (e.g. an API route intentionally versioned as `/v2/` for external consumers) — this targets abandoned/duplicated internal code, not a deliberate external contract.
 
 ### 3b: Security
 
@@ -192,6 +193,9 @@ Never delete anything here — report only. A path under `{ctx-dir}` is a siblin
 - No unnecessary re-renders (React)?
 - Database queries have proper indexes?
 - Pagination used for unbounded lists?
+- **Polling instead of realtime push.** Does the diff introduce a fixed-interval polling loop (`setInterval`/recursive `setTimeout`, or an equivalent polling construct) against a data source that already exposes, or could reasonably expose, a realtime push/subscription mechanism (e.g. a Supabase/Convex subscription, a websocket, SSE)? This formalizes CLAUDE.md's "don't use feature flags or backwards-compatibility shims when you can just change the code" spirit — preferring the direct mechanism over a workaround — into an automated check (#2669). False-positive guard: do not flag polling against a data source with no realtime alternative available (e.g. a third-party REST API with no push option) — polling is the correct choice there.
+- **Oversized or legacy-format images.** Does the diff add an image in a legacy format (e.g. BMP, uncompressed TIFF) or an oversized bitmap where a modern, smaller format (WebP/AVIF) or a vector format would serve — without any accompanying compression/conversion step? (#2692)
+- **Unused loaded resources.** Does the diff add a script, stylesheet, or font load (a `<script>`/`<link>` tag, an import, a CDN reference) that nothing in the diff actually references or uses? (#2692)
 
 ### 3e: Architecture
 
