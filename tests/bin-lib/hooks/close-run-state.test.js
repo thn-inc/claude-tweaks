@@ -131,3 +131,57 @@ test('closeRunState: explicit: true bypasses the live-worktree refusal, same as 
     fs.rmSync(worktree, { recursive: true, force: true });
   }
 });
+
+function readEventTypes(dir) {
+  let raw;
+  try { raw = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8'); } catch { return []; }
+  return raw.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l).type);
+}
+
+// #2553: a run whose run-state.json already reads `status: clean` at the
+// moment ExitWorktree/close runs again (e.g. a second close reached while
+// wrap-up is mid-archival) must not get a false `close-without-wrapup`
+// terminal-state signal — nothing about this run's wrap-up state changed,
+// only its own already-clean status is being re-observed.
+test('closeRunState: status already "clean" suppresses close-without-wrapup even when no wrapup event was ever seen', () => {
+  const dir = makeTmpRunDir();
+  try {
+    fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ sessionId: 's1', status: 'clean' }));
+    const r = closeRunState(dir, { explicit: true, callerIdentity: { sessionId: 's1' } });
+    assert.strictEqual(r.status, 'closed');
+    assert.strictEqual(r.wrapupSeen, false);
+    assert.ok(!readEventTypes(dir).includes('close-without-wrapup'), 'an already-clean run must not log a false close-without-wrapup event');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// AC8's negative control: a genuinely non-clean run with no recorded wrapup
+// must still get the real close-without-wrapup signal — the fix narrows the
+// false positive without suppressing a true one.
+test('closeRunState: a genuinely active (non-clean) run with no wrapup event still logs close-without-wrapup', () => {
+  const dir = makeTmpRunDir();
+  try {
+    fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ sessionId: 's1', status: 'active' }));
+    const r = closeRunState(dir, { explicit: true, callerIdentity: { sessionId: 's1' } });
+    assert.strictEqual(r.status, 'closed');
+    assert.strictEqual(r.wrapupSeen, false);
+    assert.ok(readEventTypes(dir).includes('close-without-wrapup'), 'a genuinely non-clean, no-wrapup close must still be flagged');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// No run-state.json at all (never recorded any status) must behave like the
+// pre-fix default — status isn't provably "clean", so the signal still fires.
+test('closeRunState: missing run-state.json (no status to compare) still logs close-without-wrapup', () => {
+  const dir = makeTmpRunDir();
+  try {
+    fs.writeFileSync(path.join(dir, 'decisions.md'), '# decisions\n');
+    const r = closeRunState(dir, { explicit: true, callerIdentity: { sessionId: 's1' } });
+    assert.strictEqual(r.status, 'closed');
+    assert.ok(readEventTypes(dir).includes('close-without-wrapup'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

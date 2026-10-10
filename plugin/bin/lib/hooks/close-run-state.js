@@ -51,8 +51,24 @@ function hasUnarchivedWork(runDir) {
 // session) defeated for a sibling closing a DIFFERENT sibling's bound run.
 // `callerIdentity = { sessionId, cwd }` replaces the bare `sessionId`
 // option; hooks.js's callers thread `process.cwd()` through as `cwd`.
+// #2553: `treatCleanAsAlreadyClosed` (default true) distinguishes the two
+// genuinely different shapes that share this one function. For `hooks.js`'s
+// `close-run` verb and `teardown-run.js`'s own Step 1 — the "ExitWorktree/
+// close teardown path" the issue names — a run whose run-state.json already
+// reads `status: clean` at entry means a PRIOR closeRunState call already
+// resolved the wrapupSeen question for this exact run (e.g. wrap-up's own
+// close, moments before ExitWorktree's teardown redundantly calls close
+// again on the same, already-settled run) — re-emitting close-without-wrapup
+// here is a false terminal-state signal, not a new finding, so the default
+// suppresses it. `archive-merged.js`'s own internal call is different: its
+// caller (`archiveRunDir`) ALREADY wrote `status: 'clean'` as its own
+// bookkeeping step moments earlier in the SAME synchronous archive sequence —
+// never via a prior closeRunState call — so for that one caller, this is the
+// FIRST (and only) real close-without-wrapup check for this run, and must
+// run exactly as before; that caller passes `treatCleanAsAlreadyClosed:
+// false` to opt out.
 function closeRunState(runDir, {
-  explicit = false, callerIdentity = null, checkLiveWorktree = true,
+  explicit = false, callerIdentity = null, checkLiveWorktree = true, treatCleanAsAlreadyClosed = true,
 } = {}) {
   const prev = ctxLib.readRunState(runDir);
   const verdict = ctxLib.classifyOwnership(callerIdentity || {}, prev);
@@ -100,8 +116,16 @@ function closeRunState(runDir, {
   // invocation. Warn, never block — dispatch's close-before-merge is sanctioned,
   // and a human-typed /claude-tweaks:wrap-up leaves no event at all (measured,
   // #371 finding (e)), so absence is not proof the procedure was skipped.
+  // #2553: a run whose run-state.json already reads `status: clean` at this
+  // point is already closed (clean) and mid-archival elsewhere (e.g. wrap-up's
+  // own flow calling close-run a second time, or ExitWorktree racing a close
+  // wrap-up itself just performed) — emitting `close-without-wrapup` for that
+  // case is a false terminal-state signal, not a real skipped-wrapup finding.
+  // `prev` was already read above (before the foreign-owner check), so this
+  // costs no extra read.
+  const alreadyClean = treatCleanAsAlreadyClosed && !!(prev && prev.status === 'clean');
   const wrapupSeen = !!(ctxLib.scanWrapupEvents(runDir) || {}).wrapup;
-  if (!wrapupSeen) {
+  if (!wrapupSeen && !alreadyClean) {
     ctxLib.appendEvent(runDir, 'close-without-wrapup', {});
   }
 
