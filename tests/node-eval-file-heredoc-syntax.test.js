@@ -182,16 +182,18 @@ test('queue-pull-script.md and next-ranking.md contain no multi-line `node -e "`
     assert.doesNotMatch(markdown, multilineOpen, `${rel} still has a multi-line node -e "..." block`);
   }
 });
+
 test('node-eval-file.js header and the adopted-branch snippet state the unquoted NODE_EVAL_EOF convention (#3102)', () => {
-  const header = fs.readFileSync(path.join(ROOT, 'plugin', 'bin', 'node-eval-file.js'), 'utf8')
-    .replace(/\r\n/g, '\n').split("'use strict';")[0];
+  function readLf(file) {
+    return fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  }
+  const header = readLf(path.join(ROOT, 'plugin', 'bin', 'node-eval-file.js')).split("'use strict';")[0];
   assert.match(header, /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/node-eval-file\.js" <args\.\.\.> <<NODE_EVAL_EOF/,
     'header must show the unquoted <<NODE_EVAL_EOF call-site form');
   assert.ok(!header.includes("<<'EOF'"), "header still documents the retired quoted <<'EOF' form");
   assert.match(header, /no `\$` other than `\$\{CLAUDE_PLUGIN_ROOT\}`/, 'header must state the no-other-$ rule');
   assert.ok(header.includes('\\`'), 'header must say a literal backtick is written escaped');
-  const snippet = fs.readFileSync(path.join(SKILLS_DIR, 'build', 'adopted-branch-collision-check.md'), 'utf8')
-    .replace(/\r\n/g, '\n');
+  const snippet = readLf(path.join(SKILLS_DIR, 'build', 'adopted-branch-collision-check.md'));
   const fenceAt = snippet.lastIndexOf('```bash', snippet.indexOf('<<NODE_EVAL_EOF'));
   // Checks the sentence sits beside the fence without depending on blank-line placement (#3102).
   assert.match(snippet.slice(Math.max(0, fenceAt - 1200), fenceAt), /keep the body free of any other `\$` or unescaped backtick, per `bin\/node-eval-file\.js`'s header/,
