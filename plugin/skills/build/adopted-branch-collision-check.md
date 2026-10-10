@@ -30,7 +30,7 @@ multi-line `node -e` silently no-ops on Windows Git Bash (`bin/node-eval-file.js
 would read as a clean result:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$(git branch --show-current)" "$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)" <<'EOF'
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$(git branch --show-current)" "$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)" <<NODE_EVAL_EOF
 const m = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/worktree/remote-branch-collision.js');
 const [branch, repo] = process.argv.slice(1);
 const r = m.classifyRemoteBranch({ branch });
@@ -39,7 +39,7 @@ if (r.state === 'foreign') {
   out.card = m.formatStopCard({ branch, remoteSha: r.remoteSha, prLookup: repo ? m.findPrsForBranch({ branch, repo }) : null });
 }
 console.log(JSON.stringify(out));
-EOF
+NODE_EVAL_EOF
 ```
 
 It prints one JSON line. No output, or output that does not parse, is not a result: re-run once,
