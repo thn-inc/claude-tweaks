@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { GATE_COVERAGE } = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { WRITE_SHAPES, fileWriteTargets, gitTargets } = require('../plugin/bin/lib/hooks/git-command');
-const { shouldRunFull, PRE_TOOL_USE_WORDS } = require('../plugin/bin/lib/hooks/bash-prefilter');
+const { shouldRunFull } = require('../plugin/bin/lib/hooks/bash-prefilter');
 
 const runsFull = (event, command) => shouldRunFull(event, { tool_name: 'Bash', tool_input: { command } });
 function bashGroupOf(group) {
@@ -131,9 +131,8 @@ test('every WRITE_SHAPES entry is a pre-tool-use prefilter word, and the Bash gr
     assert.strictEqual(g.hooks.length, 1, `${group}'s Bash group must be ONE handler — per-pattern entries fan out 28x/18x when Claude Code cannot evaluate them (#3074)`);
     assert.ok(!('if' in g.hooks[0]), `${group}'s Bash handler must carry no "if" — the prefilter in bin/hooks.js replaces it`);
   }
+  // The word-set pairing itself is pinned by the differential corpus in tests/hooks-bash-prefilter.test.js (#3092).
   for (const shape of WRITE_SHAPES) {
-    assert.ok(PRE_TOOL_USE_WORDS.includes(shape),
-      `WRITE_SHAPES includes '${shape}' but the pre-tool-use prefilter skips it — the parser branch is dead code`);
     assert.strictEqual(runsFull('pre-tool-use', `${shape} a b`), true, shape);
   }
 });
