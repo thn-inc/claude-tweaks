@@ -35,8 +35,9 @@ const m = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/worktree/remote-branch-collisio
 const [branch, repo] = process.argv.slice(1);
 const r = m.classifyRemoteBranch({ branch });
 const out = { state: r.state, reason: r.reason || null, remoteSha: r.remoteSha || null };
-if (r.state === 'foreign') {
-  out.card = m.formatStopCard({ branch, remoteSha: r.remoteSha, prLookup: repo ? m.findPrsForBranch({ branch, repo }) : null });
+if (r.state === 'foreign' || (r.state === 'unreachable' && r.remoteSha)) {
+  const reason = r.state === 'foreign' ? null : r.reason;
+  out.card = m.formatStopCard({ branch, remoteSha: r.remoteSha, prLookup: repo ? m.findPrsForBranch({ branch, repo }) : null, reason });
 }
 console.log(JSON.stringify(out));
 NODE_EVAL_EOF
@@ -56,13 +57,13 @@ then treat it as `unreachable` with reason `no-output` (item 3). Branch on `stat
      the push to collide with.
    - **`remoteSha` set** (`fetch-failed`, `ancestry-check-failed`): `origin` is confirmed to carry
      the branch, only its relation to `HEAD` is unknown, and proceeding would reproduce the
-     rejected-push, local-only run this check exists to prevent. Stop as for `foreign` (item 4),
-     stating in the card that the relation could not be determined (`{reason}`) rather than that
-     the commit is not in this worktree's history.
+     rejected-push, local-only run this check exists to prevent. Stop as for `foreign` (item 4) —
+     the command prints this case's `card` too, stating that the relation could not be determined
+     (`{reason}`) rather than that the commit is not in this worktree's history.
 4. `foreign` — `origin`'s tip is not in `HEAD`'s history: a same-name branch left by an unrelated
    run. Gather PR context, best-effort, via `findPrsForBranch({ branch, repo })` (a failed lookup
    renders as PR status unknown, distinct from a confirmed no-PR result), then render the stop
-   card (`formatStopCard` — the command above prints it as `card`):
+   card (`formatStopCard` — the command above prints it as `card`, for this case and item 3's):
 
    ```markdown
    ## Build: Adopted branch collides with an unrelated branch on origin

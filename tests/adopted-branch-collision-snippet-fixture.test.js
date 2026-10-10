@@ -70,3 +70,43 @@ test('the collision-check snippet, run verbatim with CLAUDE_PLUGIN_ROOT left to 
   assert.strictEqual(foreign.remoteSha, r.run(r.other, ['rev-parse', 'HEAD']).trim());
   assert.match(foreign.card, /worktree-record-1/, 'foreign must carry the stop card naming the branch');
 });
+
+// A stub plugin root: the real node-eval-file.js and the real formatStopCard, with
+// classifyRemoteBranch pinned to an `unreachable` result — the one state a fixture repo
+// cannot produce on demand (a fetch that fails after ls-remote succeeds).
+function stubPluginRoot(t, result) {
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'adopted-branch-stub-root-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, 'bin', 'lib', 'worktree'), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, 'plugin', 'bin', 'node-eval-file.js'), path.join(dir, 'bin', 'node-eval-file.js'));
+  // node-eval-file.js requires ./lib/session-tmp; re-export the real one rather than copying its dependency chain.
+  fs.writeFileSync(path.join(dir, 'bin', 'lib', 'session-tmp.js'),
+    `module.exports = require(${JSON.stringify(path.join(ROOT, 'plugin', 'bin', 'lib', 'session-tmp.js').split(path.sep).join('/'))});`);
+  const real = path.join(ROOT, 'plugin', 'bin', 'lib', 'worktree', 'remote-branch-collision.js').split(path.sep).join('/');
+  fs.writeFileSync(path.join(dir, 'bin', 'lib', 'worktree', 'remote-branch-collision.js'), [
+    `const real = require(${JSON.stringify(real)});`,
+    `module.exports = { ...real, classifyRemoteBranch: () => (${JSON.stringify(result)}), findPrsForBranch: () => ({ ok: true, prs: [] }) };`,
+  ].join('\n'));
+  return dir.split(path.sep).join('/');
+}
+
+test('the snippet prints the unknown-relation card for unreachable with remoteSha set, and no card without one (#3093)', (t) => {
+  const r = originWithTwoClones('adopted-branch-unreachable-');
+  t.after(() => fs.rmSync(r.root, { recursive: true, force: true }));
+  r.run(r.work, ['checkout', '-q', '-b', 'worktree-record-2']);
+  const run = (result) => {
+    const stdout = execFileSync('bash', ['-c', extractSnippet()], {
+      cwd: r.work, timeout: 60000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...r.env, CLAUDE_PLUGIN_ROOT: stubPluginRoot(t, result) },
+    });
+    return JSON.parse(stdout.trim());
+  };
+  const sha = 'c19a97b7a4ff1b8e9ff51f5834326eaabbd189b5';
+  const known = run({ state: 'unreachable', reason: 'fetch-failed', remoteSha: sha });
+  assert.strictEqual(known.state, 'unreachable');
+  assert.match(known.card, /`worktree-record-2` already exists on `origin` at `c19a97b7a`/);
+  assert.match(known.card, /could not be determined \(`fetch-failed`\)/);
+  assert.doesNotMatch(known.card, /is not in this worktree's history/);
+  const unknown = run({ state: 'unreachable', reason: 'ls-remote-failed', remoteSha: null });
+  assert.strictEqual(unknown.card, undefined, 'unreachable without a remoteSha fails open — no stop card');
+});
