@@ -203,9 +203,9 @@ test('PostToolUse carries an EnterWorktree matcher group for the post-tool-use E
 });
 
 // #703: checkPostTeardownReanchor hard-gates on tool_name === 'ExitWorktree'
-// (for the action:remove shape) and on a Bash(git worktree remove ...)
-// command — a PostToolUse group without matching matchers/predicates makes
-// it dead at the registration seam, the same #70 dead-branch shape the
+// (for the action:remove shape) and on a raw `git worktree remove ...` Bash
+// command — a PostToolUse registration without a matching matcher, or a
+// prefilter that skips the command, makes it dead at the registration seam, the same #70 dead-branch shape the
 // EnterWorktree test above guards against.
 test('PostToolUse carries an ExitWorktree matcher group for the post-teardown re-anchor backstop', () => {
   const hooks = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
@@ -222,9 +222,10 @@ test('post-tool-use\'s prefilter runs the full handler for a raw `git worktree` 
 
 // #976 (IL-141): the general-purpose sibling of the WRITE_SHAPES #70 test
 // above, for GATE_COVERAGE.gitActions instead — a git action gitTargets()
-// classifies but hooks.json names no `Bash(git {action} *)` predicate for is
-// the identical dead-code hazard: the hook never spawns, so the classifier
-// branch never runs for real traffic. Checked for BOTH PreToolUse and
+// classifies but bash-prefilter.js has no word for (hooks.json no longer names
+// per-action `Bash(git {action} *)` predicates; the prefilter is the gate now)
+// is the identical dead-code hazard: the full handler never runs, so the
+// classifier branch never runs for real traffic. Checked for BOTH PreToolUse and
 // PostToolUse (commit/push already carry entries in both; a new action must
 // too, or post-tool-use.js's commit-breadcrumb loop silently never logs it).
 test('every GATE_COVERAGE.gitActions entry reaches the full handler, in both events (#976, #3074)', () => {

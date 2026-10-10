@@ -666,12 +666,13 @@ test("the Bash prefilter covers every VALUE_FLAGS entry git-command.js's gitTarg
   // git-command.js's gitTargets() is written and unit-tested to correctly
   // resolve a commit/push target through `-c`, `--exec-path`, and
   // `--namespace` (VALUE_FLAGS), not just `-C` — but the parser is only ever
-  // invoked at all if one of hooks.json's own `if` matchers first recognizes
-  // the command shape enough to spawn bin/hooks.js. A commit issued as
-  // `git -c user.name=x commit -m y` previously never even reached the
-  // parser: no registered `if` pattern matched its literal text, so both
-  // the worktree-always deny and the E1 wrong-checkout deny silently never
-  // fired for this shape. The prefilter now plays the matcher's role.
+  // invoked at all if the command shape is first recognized enough to run the
+  // full handler. Before #3074 that recognition was hooks.json's per-pattern
+  // `if` matchers: a commit issued as `git -c user.name=x commit -m y` never
+  // even reached the parser (no registered `if` pattern matched its literal
+  // text), so both the worktree-always deny and the E1 wrong-checkout deny
+  // silently never fired for this shape. hooks.json now registers one
+  // unconditional handler and bash-prefilter.js plays the matcher's role.
   for (const event of ['pre-tool-use', 'post-tool-use']) {
     for (const command of ['git -c user.name=x commit -m y', 'git --exec-path=/x commit -m y', 'git --namespace=n push']) {
       assert.strictEqual(shouldRunFull(event, { tool_name: 'Bash', tool_input: { command } }), true, `${event} skips '${command}'`);
@@ -741,17 +742,18 @@ test('#1337: a gate-denial event is untagged when CT_HOOKS_TEST_MODE is not set'
   assert.strictEqual('test' in events[0], false, 'a real denial must not carry the test-mode tag');
 });
 
-// #750 deliverable 1: hooks.json registers checkWorktreeRequired's pre-tool-use
-// dispatch under MANY separate "if": "Bash(<shape> *)" entries on the SAME
-// Bash matcher (git commit/push/-C/-c/--exec-path/--namespace, cp, mv,
-// mkdir, tee, sed, perl, install, ln, truncate, dd, git worktree, ...) — the
-// harness independently evaluates each "if" against a real compound Bash
-// command and can spawn `pre-tool-use.js` once per matching entry for what
-// is, from the operator's perspective, ONE tool call. This reproduces that
-// shape directly (looping every registered "if" pattern's underlying command
-// shape against the SAME compound command, exactly as N separate harness
-// dispatches would) in a project with NO worktree-always policy — i.e. a
-// command that genuinely executes successfully, no actual denial anywhere.
+// #750 deliverable 1: before #3074, hooks.json registered checkWorktreeRequired's
+// pre-tool-use dispatch under MANY separate "if": "Bash(<shape> *)" entries on
+// the SAME Bash matcher, and the harness could spawn `pre-tool-use.js` once per
+// matching entry for what is, from the operator's perspective, ONE tool call.
+// hooks.json now registers ONE unconditional Bash handler (bash-prefilter.js
+// decides whether it is worth running), so that N-fold fan-out no longer exists
+// at the registration seam. The test below keeps the stress/idempotence form:
+// it repeats the handler N times (one per former `if` shape: git commit/push/-C/
+// -c/--exec-path/--namespace, cp, mv, mkdir, tee, sed, perl, install, ln,
+// truncate, dd, git worktree, ...) against the SAME compound command in a
+// project with NO worktree-always policy — i.e. a command that genuinely
+// executes successfully, no actual denial anywhere.
 // checkWorktreeRequired's own fast-reject (`wtDetect.findPolicyFile` finds
 // nothing) means every one of those N invocations returns `{}` before ever
 // reaching the gate-denial write — so the burst reported in #750 cannot be
@@ -763,7 +765,7 @@ test('#1337: a gate-denial event is untagged when CT_HOOKS_TEST_MODE is not set'
 // unadopted-mint case, and the broader cross-worktree case is #1402/PR #1577,
 // already built+tested+reviewed and awaiting merge as of this writing — not
 // re-implemented here to avoid duplicating that in-flight fix.)
-test('#750: a compound Bash command with no policy violation never logs a gate-denial event, no matter how many registered "if" hook entries would independently fire on it', () => {
+test('#750: a compound Bash command with no policy violation never logs a gate-denial event, no matter how many times the single Bash handler is repeated on it', () => {
   const project = gitRepo(); // no writeWorktreeAlwaysPolicy(project) -- nothing to enforce
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true });
