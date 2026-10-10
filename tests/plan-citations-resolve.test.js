@@ -50,3 +50,18 @@ function danglingCitations() {
 test('no file outside docs/superpowers/plans/ cites a deleted plan without its deletion commit (#3101 AC1)', () => {
   assert.deepEqual(danglingCitations(), []);
 });
+
+const TIDY = path.join(ROOT, 'plugin', 'skills', 'tidy');
+const read = (f) => fs.readFileSync(path.join(TIDY, f), 'utf8').replace(/\r\n/g, '\n');
+
+test('/tidy keeps a plan a repo file still cites, naming the citing file, at scan and at pre-delete re-verify (#3101 AC2)', () => {
+  const scan = read('scan-procedures.md');
+  const step4 = scan.slice(scan.indexOf('## Step 4: Audit Execution Plans'), scan.indexOf('Also glob `docs/plans/*-ledger.md`'));
+  assert.match(step4, /basename/, 'Step 4 must grep for the plan basename');
+  assert.match(step4, /excluding `docs\/superpowers\/plans\/` and `\.claude-tweaks\/`/);
+  assert.match(step4, /Keep \(cited by \{file\}\)/, 'Step 4 must name the citing file in its Keep');
+  const auto = read('step-6-auto.md');
+  const row = auto.split('\n').find((l) => l.startsWith('| **Delete** (marked-as-specified design docs'));
+  assert.ok(row, 'step-6-auto.md auto-apply Delete row not found');
+  assert.match(row, /no repo file cites the plan's basename/, 'pre-delete re-verify must re-run the citation grep');
+});
