@@ -21,7 +21,13 @@ const DELETED = /deleted[^0-9a-f\n]{0,20}[0-9a-f]{7,40}/;
 function walk(rel, out) {
   if (SKIP_DIRS.has(rel)) return;
   let entries;
-  try { entries = fs.readdirSync(path.join(ROOT, rel), { withFileTypes: true }); } catch { return; }
+  try {
+    entries = fs.readdirSync(path.join(ROOT, rel), { withFileTypes: true });
+  } catch (err) {
+    // Only a missing optional root (e.g. .claude/skills) is skippable; anything else would make the invariant pass vacuously.
+    if (err.code === 'ENOENT') return;
+    throw err;
+  }
   for (const e of entries) {
     const child = path.join(rel, e.name);
     if (e.isDirectory()) walk(child, out);
