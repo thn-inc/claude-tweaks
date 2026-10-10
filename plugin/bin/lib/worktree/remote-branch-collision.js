@@ -28,11 +28,12 @@ function defaultGit(args) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 30000,
+    windowsHide: true,
   });
 }
 
 function defaultGh(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', timeout: GH_TIMEOUT_MS });
+  return execFileSync('gh', args, { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true });
 }
 
 const SHA_RE = /^[0-9a-f]{40,64}$/;
