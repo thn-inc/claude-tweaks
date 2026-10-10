@@ -167,13 +167,14 @@ test('the unreadable-exclusions probe self-resolves its path and tells unreadabl
 
 test('the unreadable-exclusions report maps absent to the reason-unknown line, only ok to absent-from-queue (#3104 AC1)', () => {
   const report = readText(path.join(DISPATCH, 'exclusions-unreadable-report.md'));
-  const okBranch = report.split('\n').findIndex((l) => l.startsWith('- `status: "ok"`'));
-  const unknownBranch = report.split('\n').findIndex((l) => l.startsWith('- `status: "absent"` or `status: "unreadable"`'));
+  const lines = report.split('\n');
+  const okBranch = lines.findIndex((l) => l.startsWith('- `status: "ok"`'));
+  const unknownBranch = lines.findIndex((l) => l.startsWith('- `status: "absent"` or `status: "unreadable"`'));
   assert.ok(okBranch >= 0 && unknownBranch > okBranch, 'ok and absent/unreadable branches must be separate bullets');
-  const okText = report.split('\n').slice(okBranch, unknownBranch).join(' ');
+  const okText = lines.slice(okBranch, unknownBranch).join(' ');
   assert.match(okText, /Report it as absent from this firing's queue/, 'only status ok is reported as absent from the queue');
   assert.ok(!/absent"/.test(okText), 'the ok branch must not also cover status absent');
-  const unknownText = report.split('\n').slice(unknownBranch).join(' ').replace(/\s+/g, ' ');
+  const unknownText = lines.slice(unknownBranch).join(' ').replace(/\s+/g, ' ');
   assert.match(unknownText, /exclusion reason unknown: this firing's dispatch-exclusions\.json at \{path\} \{could not be read \(\{error\}\) \| was not found\}/);
   assert.match(unknownText, /Step 2 always writes the file/, 'the report must say why absent is never nothing-excluded here');
   assert.match(report, /`#N,#M` member[\s\S]*the rest of\s+the list proceeds/, 'the entry condition must cover the list form');
