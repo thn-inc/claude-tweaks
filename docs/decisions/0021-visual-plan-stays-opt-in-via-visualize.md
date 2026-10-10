@@ -40,7 +40,7 @@ used.
 **Prototype.** As the record's own Technical Approach specified, one in-flight record was used as
 the prototype subject — #2689 itself, since it was already being specified and built. Its text
 spec (GitHub issue #2689, materialized to this run's own pipeline directory) and its
-implementation plan (`docs/superpowers/plans/2026-10-03-visual-plan-evaluate-prototype.md`) were
+implementation plan (`docs/superpowers/plans/2026-10-03-visual-plan-evaluate-prototype.md`, deleted `a3ddd1cb`) were
 both produced through the existing pipeline unchanged. A companion visual-plan artifact was then
 hand-authored for the same record's plan: `docs/plans/2689-visual-plan-flowchart.html` — a
 four-box flowchart of this record's own evaluate → prototype → decide flow, themed from this

@@ -90,3 +90,18 @@ test('not-spec-shaped-exclusion-report.md routes a lone missing Release Note to 
   assert.ok(NOT_SPEC_SHAPED_REPORT.includes('`#{number} excluded — not spec-shaped (missing: {missing, comma-joined}). Run {remedy}.`'),
     'the per-record line the remedy is spliced into is missing');
 });
+
+test('the #3084 journey names every removing exclusion reason, with a matching count (#3103)', () => {
+  const journey = readText(path.join(__dirname, '..', 'docs', 'journeys', 'learn-why-a-named-record-wont-dispatch-3084.md'));
+  const lines = journey.split('\n');
+  const success = lines.find((l) => l.startsWith('**Success state:**'));
+  const step1 = lines.find((l) => l.startsWith('- **Should understand:** A record can carry every grant'));
+  assert.ok(success && step1, 'journey anchor lines not found -- anchor out of sync with the live file');
+  const COUNT_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+  const expectedCount = `${COUNT_WORDS[REMOVING_REASONS.length]} reasons`;
+  assert.ok(step1.includes(`for ${expectedCount}`), `Step 1 must say "${expectedCount}"`);
+  for (const reason of REMOVING_REASONS) {
+    assert.ok(step1.includes(`\`${reason}\``), `journey Step 1 does not name the \`${reason}\` exclusion`);
+    assert.ok(success.includes(`\`${reason}\``), `journey Success state does not name the \`${reason}\` exclusion`);
+  }
+});

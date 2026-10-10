@@ -25,6 +25,9 @@ a remote tip not contained in `HEAD` would reject the push.
 `classifyRemoteBranch({ branch })` (unit-tested,
 `tests/bin-lib/worktree/remote-branch-collision.test.js`), with `{branch}` the adopted worktree's
 actual current branch (`git branch --show-current`) — never a name this run would have minted.
+
+The heredoc delimiter is unquoted so `${CLAUDE_PLUGIN_ROOT}` expands — keep the body free of any other `$` or unescaped backtick, per `bin/node-eval-file.js`'s header.
+
 Run it from the worktree as one command — the module has no CLI of its own, and a hand-rolled
 multi-line `node -e` silently no-ops on Windows Git Bash (`bin/node-eval-file.js`'s header), which
 would read as a clean result:
