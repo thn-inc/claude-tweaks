@@ -53,6 +53,23 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.140.0](https://github.com/thn-inc/claude-tweaks/compare/v6.139.2...v6.140.0) (2026-10-11)
+
+
+### Features
+
+* Fix stale agent-browser claims; warn on CLAUDE.md + AGENTS.md… ([#2717](https://github.com/thn-inc/claude-tweaks/issues/2717), [#2794](https://github.com/thn-inc/claude-tweaks/issues/2794), [#2798](https://github.com/thn-inc/claude-tweaks/issues/2798)) ([0e042d4](https://github.com/thn-inc/claude-tweaks/commit/0e042d440b25f28ff5879a7938bcc7df580a7ae7))
+* Flag polling, duplicate-version, and perf anti-patterns… ([#2669](https://github.com/thn-inc/claude-tweaks/issues/2669), [#2692](https://github.com/thn-inc/claude-tweaks/issues/2692)) ([c79eba4](https://github.com/thn-inc/claude-tweaks/commit/c79eba4fa72f77a3a7625112d31487e159f1ea35))
+* specify: return channel for staged red-team findings… ([#2699](https://github.com/thn-inc/claude-tweaks/issues/2699), [#2700](https://github.com/thn-inc/claude-tweaks/issues/2700), [#2703](https://github.com/thn-inc/claude-tweaks/issues/2703)) ([64a2984](https://github.com/thn-inc/claude-tweaks/commit/64a29842d2bb8bf842043ab6562edc30a163edcf))
+
+
+### Bug Fixes
+
+* bin/wrap-up-engine.js: render fails silently when the… ([#2688](https://github.com/thn-inc/claude-tweaks/issues/2688)) ([79bc95c](https://github.com/thn-inc/claude-tweaks/commit/79bc95c706945d834ceb2910eaa89c8a16c2208d))
+* PR-early lifecycle can open a run's PR without its… ([#2997](https://github.com/thn-inc/claude-tweaks/issues/2997)) ([50de5f4](https://github.com/thn-inc/claude-tweaks/commit/50de5f4b0d34ba9f026665281701b981d80e214d))
+* Repoint the citations [#3097](https://github.com/thn-inc/claude-tweaks/issues/3097) left dangling and make /tidy… ([#3101](https://github.com/thn-inc/claude-tweaks/issues/3101)) ([4a7502c](https://github.com/thn-inc/claude-tweaks/commit/4a7502c37969912fcfb8b709d8ed65bec33f37a6)), closes [#3102](https://github.com/thn-inc/claude-tweaks/issues/3102) [#3103](https://github.com/thn-inc/claude-tweaks/issues/3103) [#3104](https://github.com/thn-inc/claude-tweaks/issues/3104)
+* writeStagedItem allocate:true race test intermittently… ([#3105](https://github.com/thn-inc/claude-tweaks/issues/3105)) ([0925f45](https://github.com/thn-inc/claude-tweaks/commit/0925f458b66a29b520646a9f1c873e67a9c1e147))
+
 ## [6.139.2](https://github.com/thn-inc/claude-tweaks/compare/v6.139.1...v6.139.2) (2026-10-10)
 
 
