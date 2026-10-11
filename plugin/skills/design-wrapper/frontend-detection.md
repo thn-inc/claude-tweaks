@@ -1,6 +1,6 @@
 # Frontend Detection — Sniff Rules + Body-Metadata Spec
 
-Reference for the wrapper's 3-layer detection logic — Layers 1-3, the layers that can actually decide. (Layer 0, the context-signals enrichment layer, sits above them in resolution order but decides nothing; see the precedence summary below and `impeccable-plugin.md`.) Layer 3 (file-extension sniff) is detailed here. Layer 2 reads the record's `Surface:` body-metadata line (lifted into the materialized header — spec 20), which `/specify` writes on every new sub-issue record today; pre-v4.5 specs predate the field, so an absent value is normal and falls through to Layer 3.
+Reference for the wrapper's 3-layer detection logic — Layers 1-3, the layers that can actually decide. (Layer 0, the engine's `signals` enrichment layer, sits above them in resolution order but decides nothing; see the precedence summary below and `impeccable-plugin.md`.) Layer 3 (file-extension sniff) is detailed here. Layer 2 reads the record's `Surface:` body-metadata line (lifted into the materialized header — spec 20), which `/specify` writes on every new sub-issue record today; pre-v4.5 specs predate the field, so an absent value is normal and falls through to Layer 3.
 
 ## Layer 3 — File-extension sniff (fallback)
 
@@ -78,7 +78,7 @@ For Layer 2 detection, see `Surface:` values in `skills/specify/spec-template.md
 ## Detection precedence summary
 
 ```
-Context signals (Layer 0 — ENRICHMENT ONLY, no branch)
+Engine signals (Layer 0 — ENRICHMENT ONLY, no branch)
     │
     ├─ resolved            → carry signals forward
     ├─ absent / off-pin    → carry nothing forward

@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #410: PR as run surface — verdict/brief/failure comments on the PR, the
 // failure tombstone, and PR-state reads in /help and /tidy. Prose-as-
 // implementation, same convention as pr-early-run-lifecycle.test.js — pin
@@ -11,7 +11,7 @@ const path = require('path');
 // drift from what it promises.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 const COMMENTS = read('plugin', 'skills', '_shared', 'pr-run-comments.md');
 const LIFECYCLE = read('plugin', 'skills', '_shared', 'pr-early-run-lifecycle.md');
 const SETTLE = read('plugin', 'skills', 'dispatch', 'settle-and-merge.md');
@@ -25,7 +25,11 @@ const REVIEW_SKILL =
   read('plugin', 'skills', 'review', 'code-mode-steps.md');
 const STATUS_SCAN = read('plugin', 'skills', 'help', 'status-scan.md');
 const SCAN_PROCEDURES = read('plugin', 'skills', 'tidy', 'scan-procedures.md');
-const SESSION_START = read('plugin', 'bin', 'lib', 'hooks', 'session-start.js');
+// #2736: the stale-run PR-suffix logic this suite pins below moved out of
+// session-start.js into session-residue.js (shared with `hooks.js
+// check-session-residue`) — session-start.js now only renders the banner
+// from that module's returned lines.
+const SESSION_RESIDUE = read('plugin', 'bin', 'lib', 'hooks', 'session-residue.js');
 
 test('the pr-first gate is one condition, stated once, in pr-run-comments.md', () => {
   assert.match(COMMENTS, /run-state\.json.*carries a `pr` object/);
@@ -151,9 +155,9 @@ test("tidy's tombstone row explicitly agrees with the reconciler's own never-rea
   assert.match(SCAN_PROCEDURES, /same as `bin\/lib\/reconcile\/reap-merged\.js`'s own `pr-closed-unmerged` skip decision/);
 });
 
-test('session-start.js appends the recorded PR URL to a stale-run line only when run-state carries one', () => {
-  assert.match(SESSION_START, /state && state\.pr && state\.pr\.url/);
-  assert.match(SESSION_START, /\$\{prSuffix\}/);
+test('session-residue.js appends the recorded PR URL to a stale-run line only when run-state carries one', () => {
+  assert.match(SESSION_RESIDUE, /state && state\.pr && state\.pr\.url/);
+  assert.match(SESSION_RESIDUE, /\$\{prSuffix\}/);
 });
 
 // #2592: a multi-spec /flow run shares one PR, and each spec's own review posted the same

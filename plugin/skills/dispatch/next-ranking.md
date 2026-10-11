@@ -25,7 +25,7 @@ group and reproduces the identical stop. Both reasons are checked together, via 
 `groupIsExcluded(g, entries, ['oversized', 'firing'])` call — no separate key derivation for each.
 
 ```bash
-eval "$(node -e "
+eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" <<NODE_EVAL_EOF
   const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
   const os = require('os'); const path = require('path');
   const files = { DISPATCH_GROUPS: 'dispatch-groups.json', DISPATCH_EXCLUSIONS: 'dispatch-exclusions.json', DISPATCH_NEXT_PICK: 'dispatch-next-pick.json' };
@@ -33,8 +33,9 @@ eval "$(node -e "
     const p = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
     console.log(varName + '=' + JSON.stringify(p));
   }
-")"
-node -e "
+NODE_EVAL_EOF
+)"
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$PRIORITY_FILTER" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" > "$DISPATCH_NEXT_PICK" <<NODE_EVAL_EOF
   const { readExclusions, groupIsExcluded } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const RANK = { high: 0, medium: 1, low: 2 };
   const bandOf = (r) => (r.facets.priority ? RANK[r.facets.priority] : 3);
@@ -57,7 +58,7 @@ node -e "
   const ranked = candidates
     .sort((x, y) => bandOf(x.rep) - bandOf(y.rep) || new Date(x.rep.createdAt) - new Date(y.rep.createdAt));
   console.log(JSON.stringify(ranked.length ? ranked[0].group : null));
-" "$PRIORITY_FILTER" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" > "$DISPATCH_NEXT_PICK"
+NODE_EVAL_EOF
 ```
 
 A `null` result (no eligible groups, none matching `--priority`, every remaining group was

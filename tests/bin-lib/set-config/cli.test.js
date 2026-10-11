@@ -176,3 +176,49 @@ test('cli: --set combined with --key/--value is exit 2', () => {
   assert.equal(code, 2);
   assert.ok(err.join('').includes('cannot be combined'));
 });
+
+// #2735: the Manifesto's auto-mode batch write also prints the FYI table as
+// a mechanical side effect, since a prose "render this table" instruction
+// was observed being silently skipped by the orchestrating model.
+const FULL_MANIFESTO_BATCH_AUTO = 'mode=auto,scope-creep=add-to-plan,overlap=companion,' +
+  'design-intent=none,leftover-default=defer,auto-fix-threshold=lint+type,' +
+  'review-auto-apply-ceiling=medium,tidy-aggressiveness=moderate,ceremony-profile=standard,' +
+  'model-stance=default,merge-verification=merge-when-green,design-critique=auto,' +
+  'merge-authorization=ask';
+
+test('cli: a full 13-lever --set batch with mode=auto also prints the Manifesto FYI table', () => {
+  const { main, runDir } = fixture();
+  const { deps, out } = fakeDeps(main);
+  const code = run(['--run', runDir, '--set', FULL_MANIFESTO_BATCH_AUTO], deps);
+  assert.equal(code, 0);
+  const printed = out.join('');
+  assert.ok(printed.includes('### Pipeline Config (auto)'));
+  assert.ok(printed.includes('| Ceremony profile | standard |'));
+  assert.ok(printed.includes('→ proceeding (no approval needed)'));
+  assert.ok(printed.includes('run with `confirm` to review/override'));
+});
+
+test('cli: a full 13-lever --set batch with mode=hybrid does NOT print the auto FYI table', () => {
+  const { main, runDir } = fixture();
+  const { deps, out } = fakeDeps(main);
+  const batch = FULL_MANIFESTO_BATCH_AUTO.replace('mode=auto', 'mode=hybrid');
+  const code = run(['--run', runDir, '--set', batch], deps);
+  assert.equal(code, 0);
+  assert.ok(!out.join('').includes('Pipeline Config'));
+});
+
+test('cli: a partial --set batch (even with mode=auto) does NOT print the Manifesto FYI table', () => {
+  const { main, runDir } = fixture();
+  const { deps, out } = fakeDeps(main);
+  const code = run(['--run', runDir, '--set', 'mode=auto,ceremony-profile=standard'], deps);
+  assert.equal(code, 0);
+  assert.ok(!out.join('').includes('Pipeline Config'));
+});
+
+test('cli: the single-key form never prints the Manifesto FYI table, even for mode=auto', () => {
+  const { main, runDir } = fixture();
+  const { deps, out } = fakeDeps(main);
+  const code = run(['--run', runDir, '--key', 'mode', '--value', 'auto'], deps);
+  assert.equal(code, 0);
+  assert.ok(!out.join('').includes('Pipeline Config'));
+});

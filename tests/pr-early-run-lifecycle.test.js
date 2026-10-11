@@ -1,16 +1,16 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #409: a pr-first run is born public — draft PR at run start, one push +
 // checklist flip per phase exit, thereafter. The procedure is prose, not
 // code, so prose is what has to be pinned — these tests catch the doc
 // drifting out from under the deliverables/ACs it was written to satisfy.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 const LIFECYCLE = read('plugin', 'skills', '_shared', 'pr-early-run-lifecycle.md');
 const GIT_DISCIPLINE = read('plugin', 'skills', '_shared', 'git-discipline.md');
 const WORKTREE_SETUP = read('plugin', 'skills', 'build', 'worktree-setup.md');
@@ -221,4 +221,85 @@ test('bin/hooks.js record-pr verb writes run-state.json.pr through writeRunState
   // goes red.
   assert.match(HOOKS_JS, /ctxLib\.writeRunState\(runDir, \{ pr: /);
   assert.match(HOOKS_JS, /\{ number, url: urlArg \}/);
+});
+
+// #2997: nothing composed the PR-early body mechanically — the agent running
+// /flow's PR-early step wrote it by hand, so a run could open a PR missing
+// the run marker / phase checklist / Fixes block (observed on PR #2996).
+// bin/lib/flow/pr-body.js now owns that template's literal text, and these
+// tests pin the cite-instead-of-restate change plus the module's own output.
+const { composePrEarlyBody, repairPrBody } = require('../plugin/bin/lib/flow/pr-body');
+
+test('#2997: Step 3 composes the body via composePrEarlyBody (bin/lib/flow/pr-body.js) instead of hand-composing it', () => {
+  assert.match(LIFECYCLE, /composePrEarlyBody/);
+  assert.match(LIFECYCLE, /bin\/lib\/flow\/pr-body\.js/);
+});
+
+test('#2997 AC1: a run PR body produced by composePrEarlyBody passes RUN_MARKER, both delimiter pairs, and one Fixes line per target', () => {
+  const body = composePrEarlyBody({
+    runId: '2026-10-06T031832-record-2997',
+    specSummary: 'One paragraph.',
+    target: '#2997',
+    nextStep: 'build',
+    fixesLines: ['Fixes #2997'],
+  });
+  // RUN_MARKER is the HTML-comment-form regex _shared/github-pr-scan.md keys on.
+  const RUN_MARKER = /<!-- claude-tweaks-run: ([^ ]+) -->/;
+  assert.match(body, RUN_MARKER);
+  assert.match(body, /<!-- phases-start -->[\s\S]*<!-- phases-end -->/);
+  assert.match(body, /<!-- fixes-start -->[\s\S]*<!-- fixes-end -->/);
+  assert.match(body, /Fixes #2997/);
+});
+
+test('#2997 AC2/AC4: repairPrBody restores a #2996-shaped body (no markers at all) and preserves its freeform text', () => {
+  const freeform = '## Summary\n\nOpened without the template.\n';
+  const { body, restored } = repairPrBody({ body: freeform, runId: 'r1', fixesLines: ['Fixes #42'] });
+  assert.deepEqual(restored, ['run marker', 'phases block', 'fixes block']);
+  assert.ok(body.includes('Opened without the template.'));
+  assert.match(body, /<!-- claude-tweaks-run: r1 -->/);
+  assert.match(body, /<!-- phases-start -->/);
+  assert.match(body, /<!-- fixes-start -->/);
+});
+
+test('#2997 AC3: a missing Fixes/phases/run-marker block is no longer described as cosmetic', () => {
+  assert.doesNotMatch(
+    CHECKLIST_REFRESH,
+    /stale title\/checklist\/`Fixes` block is cosmetic/,
+    'the old sentence lumped a missing Fixes block in with a merely-stale title/checklist — #2997 corrects that',
+  );
+  assert.match(CHECKLIST_REFRESH, /missing.{0,40}run marker, phases pair, or `Fixes` block is not\s*\ncosmetic/);
+  assert.match(CHECKLIST_REFRESH, /repairPrBody/);
+});
+
+test('#2997: pr-checklist-refresh.md\'s Phase-checklist update repairs a body carrying no markers instead of skipping', () => {
+  assert.match(CHECKLIST_REFRESH, /Repair before locating anything \(#2997\)/);
+  assert.match(CHECKLIST_REFRESH, /This replaces the former best-effort skip on a\s*\n\s*missing delimiter pair/);
+});
+
+// #2997 follow-up (found during /claude-tweaks:wrap-up's Skills curation row): Step 3's
+// "Composed shape" fence is a prose/code twin of composePrEarlyBody's actual output — a
+// fenced template, not a table, which is exactly the shape prose-code-twin-pin's own
+// Anti-Patterns table now names. The tests above only assert each side's own literals
+// separately (markers present, module cited); neither pins the fence against the real
+// composer output, so a sixth phase row or a renamed delimiter on either side would leave
+// both green. Extract the fence by structure and assert byte equality (modulo the
+// composer's own trailing newline, which the fence — embedded inside the prose — doesn't
+// carry) against calling the composer with the fence's own placeholder text.
+test('#2997 follow-up: Step 3\'s "Composed shape" fence is byte-identical to composePrEarlyBody\'s real output', () => {
+  const stepIdx = LIFECYCLE.indexOf('### Step 3: Compose the body');
+  assert.ok(stepIdx !== -1, 'Step 3 heading not found');
+  const fenceMatch = LIFECYCLE.slice(stepIdx).match(/```markdown\n([\s\S]*?)\n```/);
+  assert.ok(fenceMatch, 'no ```markdown fence found under Step 3');
+  const fence = fenceMatch[1];
+
+  const composed = composePrEarlyBody({
+    runId: '{run-id}',
+    specSummary: '{one-paragraph summary}',
+    target: '{target}',
+    nextStep: '{next-step}',
+    fixesLines: ['Fixes #{n}'],
+    runDir: '{run-dir}',
+  });
+
+  assert.strictEqual(fence, composed.replace(/\n$/, ''), 'the prose fence and the composer\'s real output have drifted apart');
 });

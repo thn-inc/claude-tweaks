@@ -3,7 +3,7 @@
 // argument-hint frontmatter extraction, shared by the argument-hint <-> ##
 // Input sync guard (tests/argument-hint-input.test.js) and every test file
 // that needs a skill's argument-hint value for its own, unrelated assertions
-// (tests/reference-card-argument-hint.test.js, tests/batch-ref-argument.test.js,
+// (tests/argument-hint-mirrors.test.js, tests/batch-ref-argument.test.js,
 // tests/specify-batch-input.test.js, tests/specify-next-mode.test.js). Those
 // four files used to `require('./argument-hint-input.test.js')` directly,
 // which re-executes that file's own `test()` calls inside each importer's
@@ -29,4 +29,17 @@ function extractArgumentHint(content) {
   return raw;
 }
 
-module.exports = { extractArgumentHint };
+// Returns the text between the `## Input` heading and the next `## `
+// heading (or end of file). No `\Z`/lookahead-to-end trick -- JS regex has
+// neither, so this scans heading start indices directly instead.
+function inputSectionBody(content) {
+  const headings = [...content.matchAll(/^## .*$/gm)];
+  const start = headings.find((m) => m[0] === '## Input');
+  if (!start) return null;
+  const startIdx = start.index + start[0].length;
+  const next = headings.find((m) => m.index > start.index);
+  const endIdx = next ? next.index : content.length;
+  return content.slice(startIdx, endIdx);
+}
+
+module.exports = { extractArgumentHint, inputSectionBody };

@@ -14,7 +14,9 @@ notes: >
   Tidy already has first-class standalone-auto support: Step 6's aggressiveness
   routing (moderate by default) auto-applies reversible git-tracked cleanups
   and stages outward-facing GitHub writes to decisions.md rather than blocking
-  on interactive input. This only takes effect when the target project's own CLAUDE.md
+  on interactive input — except the Fill Release Note row's own named carve-out
+  (skills/_shared/auto-mode-contract.md), which auto-applies one additive
+  ## Release Note section, snapshotted first. This only takes effect when the target project's own CLAUDE.md
   already sets `auto-mode: default-on` — a bare scheduled firing has no other
   way to supply an auto-mode signal, and without that project policy the
   routine will block on an interactive prompt that never gets answered. `Task`

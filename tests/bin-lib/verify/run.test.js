@@ -313,3 +313,72 @@ test('runOne never overrides a caller-set NO_COLOR/FORCE_COLOR value (#1837)', a
     if (priorForceColor === undefined) delete process.env.FORCE_COLOR; else process.env.FORCE_COLOR = priorForceColor;
   }
 });
+
+test('runOne merges a check env into the spawn env option, over the inherited environment, leaving the command string alone (#2779)', async () => {
+  const prior = process.env.VERIFY_RUN_TEST_INHERITED;
+  process.env.VERIFY_RUN_TEST_INHERITED = 'inherited';
+  try {
+    const { spawnImpl, spawned, spawnedOpts } = makeFakeSpawn({ 'run-x': { exit: 0 } });
+    await runOne({
+      name: 'foo', command: 'run-x', logDir: tmpLogDir(), spawnImpl, now: Date.now,
+      env: { MY_VAR: '1', VERIFY_RUN_TEST_INHERITED: 'overridden' },
+    });
+    // Delivered through child_process's `env` option, not shell syntax.
+    assert.deepStrictEqual(spawned, ['run-x']);
+    assert.strictEqual(spawnedOpts[0].env.MY_VAR, '1');
+    assert.strictEqual(spawnedOpts[0].env.VERIFY_RUN_TEST_INHERITED, 'overridden');
+    // Merged with, not a replacement for, the inherited environment.
+    assert.strictEqual(spawnedOpts[0].env.PATH, process.env.PATH);
+    assert.strictEqual(spawnedOpts[0].env.NO_COLOR, process.env.NO_COLOR === undefined ? '1' : process.env.NO_COLOR);
+  } finally {
+    if (prior === undefined) delete process.env.VERIFY_RUN_TEST_INHERITED; else process.env.VERIFY_RUN_TEST_INHERITED = prior;
+  }
+});
+
+test('runOne on win32 drops an inherited case variant of a check env name, so the check value is the one the child gets (#2779)', async () => {
+  // Windows env names are case-insensitive and spawn keeps only the
+  // lexicographically first of two case variants — an inherited upper-case
+  // name would otherwise beat the check's own lower-case spelling.
+  const prior = process.env.VERIFY_RUN_TEST_CASEVAR;
+  process.env.VERIFY_RUN_TEST_CASEVAR = 'inherited';
+  try {
+    const win = makeFakeSpawn({ 'run-x': { exit: 0 } });
+    await runOne({
+      name: 'foo', command: 'run-x', logDir: tmpLogDir(), spawnImpl: win.spawnImpl, now: Date.now,
+      env: { verify_run_test_casevar: 'mine' }, platform: 'win32',
+    });
+    assert.strictEqual(win.spawnedOpts[0].env.verify_run_test_casevar, 'mine');
+    assert.ok(!('VERIFY_RUN_TEST_CASEVAR' in win.spawnedOpts[0].env));
+    // Every other inherited name is untouched.
+    assert.strictEqual(win.spawnedOpts[0].env.PATH, process.env.PATH);
+
+    // Elsewhere names are case-sensitive: both spellings are distinct variables.
+    const posix = makeFakeSpawn({ 'run-x': { exit: 0 } });
+    await runOne({
+      name: 'foo', command: 'run-x', logDir: tmpLogDir(), spawnImpl: posix.spawnImpl, now: Date.now,
+      env: { verify_run_test_casevar: 'mine' }, platform: 'linux',
+    });
+    assert.strictEqual(posix.spawnedOpts[0].env.verify_run_test_casevar, 'mine');
+    assert.strictEqual(posix.spawnedOpts[0].env.VERIFY_RUN_TEST_CASEVAR, 'inherited');
+  } finally {
+    if (prior === undefined) delete process.env.VERIFY_RUN_TEST_CASEVAR; else process.env.VERIFY_RUN_TEST_CASEVAR = prior;
+  }
+});
+
+test('runChecks gives each check only its own env; a check without one spawns exactly as before (#2779)', async () => {
+  const { spawnImpl, spawned, spawnedOpts } = makeFakeSpawn({ 'cmd-foo': { exit: 0 }, 'cmd-bar': { exit: 0 } });
+  const results = await runChecks({
+    cmds: [
+      { name: 'foo', command: 'cmd-foo', env: { MY_VAR: '1' } },
+      { name: 'bar', command: 'cmd-bar' },
+    ],
+    logDir: tmpLogDir(), spawnImpl,
+  });
+  const optsOf = (command) => spawnedOpts[spawned.indexOf(command)];
+  assert.strictEqual(optsOf('cmd-foo').env.MY_VAR, '1');
+  assert.ok(!('MY_VAR' in optsOf('cmd-bar').env));
+  // The --cmd-only spawn is byte-for-byte the pre-flag options object.
+  assert.deepStrictEqual(optsOf('cmd-bar'), { shell: true, env: { NO_COLOR: '1', FORCE_COLOR: '0', ...process.env } });
+  // The env map never leaks into a recorded result (and so never into report.json).
+  for (const r of results) assert.ok(!('env' in r));
+});

@@ -541,6 +541,86 @@ test('archiveRunDir: single-spec run with no work/ (mint or pre-materialize) sti
   assert.equal(fs.existsSync(runDir), false);
 });
 
+// #2816 (a): a `work/` directory left behind by a `/flow`/`/build`
+// materialize hard-gate stop — mkdir'd for the header that never landed, so
+// it is both empty AND untracked (there was never anything to `git add`).
+// Before this fix, the unconditional `git mv work archive/{run}/work`
+// failed on that empty directory (git refuses to mv a path with nothing to
+// stage) and the whole archival was refused with `git-mv-failed`, even
+// though every other entry in the run dir was perfectly archivable.
+test('archiveRunDir: empty untracked work/ (materialize hard-gate-stop leftover) archives cleanly — work absent from movedEntries, no git-mv-failed', () => {
+  const root = makeRepo();
+  const runId = '2026-09-29T105914-record-2663';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(path.join(runDir, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), '# decisions\n');
+  fs.writeFileSync(path.join(runDir, 'events.jsonl'), '{"type":"start"}\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+
+  const result = archiveRunDir(root, runDir);
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.movedEntries.includes('work'), false, 'the empty work/ dir must never be queued as a moved entry');
+
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  // Every other entry archived normally.
+  assert.equal(fs.existsSync(path.join(archiveDir, 'decisions.md')), true);
+  assert.equal(fs.existsSync(path.join(archiveDir, 'events.jsonl')), true);
+  const state = JSON.parse(fs.readFileSync(path.join(archiveDir, 'run-state.json'), 'utf8'));
+  assert.equal(state.status, 'clean');
+  // work/ never moved (there was nothing to move) — absent at either path.
+  assert.equal(fs.existsSync(path.join(archiveDir, 'work')), false);
+  assert.equal(fs.existsSync(runDir), false, 'old run dir must not survive on disk');
+});
+
+// #2816 (b): #953's distinct, still-refusal-worthy shape — a `work/`
+// directory that is untracked but NOT empty. This must keep failing with
+// `git-mv-failed` exactly as before; the fix above only widens the
+// empty-directory case, never the non-empty one.
+test('archiveRunDir: non-empty untracked work/ still refuses git-mv-failed (unchanged #953 behavior)', () => {
+  const root = makeRepo();
+  const runId = '2026-08-30T090000-record-953';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(path.join(runDir, 'work'), { recursive: true });
+  // Present on disk, deliberately never `git add`/committed.
+  fs.writeFileSync(path.join(runDir, 'work', '953-spec.md'), '# spec 953\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+
+  const result = archiveRunDir(root, runDir);
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.reason, 'git-mv-failed');
+
+  // Nothing moved — the untracked file is still exactly where it was.
+  assert.equal(
+    fs.readFileSync(path.join(runDir, 'work', '953-spec.md'), 'utf8'),
+    '# spec 953\n',
+  );
+});
+
+// #2816 (c): any refusal reached after the `archiving` marker (writeRunState
+// above) is written, with nothing yet moved, must leave the filesystem
+// exactly as it found it — no half-written `archive/{run}/` twin (this
+// record's Current State: a `writeRunState(archiveDir, { status:
+// 'archiving' })` call that ran before the failing move left exactly this
+// twin behind, with no automatic cleanup). Uses the pre-existing
+// `tracked-entry` refusal (a stray git-tracked file outside `work/`, #593)
+// as its trigger — that refusal fires before anything is ever queued to
+// move, so it is a clean probe of the "nothing yet moved" branch.
+test('archiveRunDir: a refusal after the archiving marker leaves no archive/{run}/run-state.json (or any archive twin) behind', () => {
+  const root = makeRepo();
+  const runId = '2026-08-30T090000-record-2816-refusal';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  commitPath(root, `.claude-tweaks/pipelines/${runId}/notes.md`, '# stray tracked file\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+
+  const result = archiveRunDir(root, runDir);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'tracked-entry');
+
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  assert.equal(fs.existsSync(path.join(archiveDir, 'run-state.json')), false, 'no partial archive-twin run-state.json must survive a refusal that moved nothing');
+  assert.equal(fs.existsSync(archiveDir), false, 'the whole archive/{run}/ twin must be removed, not just left half-populated');
+});
+
 // #652 AC 1: a commit failure after a successful git mv must not leave the
 // main checkout's tracked working tree dirty — the old path must be restored
 // on disk AND in the index, not just left as an uncommitted rename.
@@ -2451,6 +2531,17 @@ test('archiveRunDir: differing spec-{n}/work twin returns work-twin-conflict and
   const tracked = trackedFiles(root);
   assert.ok(tracked.includes(`.claude-tweaks/pipelines/${runId}/spec-1/work/1-spec.md`));
   assert.ok(tracked.includes(`.claude-tweaks/pipelines/archive/${runId}/spec-1/work/1-spec.md`));
+  // #2816 follow-up: `tracked` above is a git-index read (git ls-files) —
+  // it stays true even if the archive twin's file was deleted from disk,
+  // since git does not notice a working-tree deletion until a status/add
+  // runs. This call's own `refuseAfterMarker` (added by #2816) must not
+  // have swept the pre-existing archive twin off disk while cleaning up
+  // its "archiving" marker on this genuinely-content refusal.
+  assert.equal(
+    fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId, 'spec-1', 'work', '1-spec.md')),
+    true,
+    'the pre-existing archive twin must still exist on disk, not just in the git index',
+  );
 });
 
 // Same idempotent-twin fix, single-spec (top-level work/) layout — the more

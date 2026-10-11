@@ -149,6 +149,7 @@ function defaultGhApi(args) {
   try {
     const stdout = execFileSync('gh', ['api', ...args], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
+      windowsHide: true,
     });
     return { stdout, failure: null, status: null };
   } catch (e) {
