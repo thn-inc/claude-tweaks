@@ -1,33 +1,37 @@
 #!/usr/bin/env node
 // bin/resolve-ambiguity.js — mechanically resolve one staged red-team finding
 // against a record body already fetched to a local file (#2699).
-//   node bin/resolve-ambiguity.js <body-file> --marker "<text>" --resolution "<text>" --out <body-file> [--help]
+//   node bin/resolve-ambiguity.js <body-file> (--marker "<text>" | --marker-file <file>)
+//     (--resolution "<text>" | --resolution-file <file>) --out <body-file> [--help]
 // Pure local transform (compose-then-write-once, matching this repo's other
 // bin/ record-editing helpers — compose-record.js, link-records.js): reads the
 // current body from <body-file> (fetched by the caller via `gh issue view
 // --json body -q .body` or the equivalent MCP `issue_read`/`get_file_contents`
-// call — this CLI never touches gh or MCP itself), replaces the FIRST verbatim
-// occurrence of --marker with --resolution, and writes the result to --out.
-// Also reports whether `ready` is restorable per spec-template.md's structural
-// check: zero remaining `<!-- ambiguity: -->` markers AND no surviving
-// `## Open Questions` heading. The caller writes the body back
-// (`gh issue edit --body-file` / `create_or_update_file`) and conditionally
-// re-adds `ready` — see specify/decomposition-mode-closeout.md's "Staged for
-// caller" resolution pointer.
+// call — this CLI never touches gh or MCP itself), replaces the single
+// verbatim occurrence of the marker (a full `<!-- ambiguity: ... -->` comment
+// or a whole `## Open Questions` row) with the resolution, drops the Open
+// Questions section once its last row is gone, and writes the result to --out.
+// The *-file forms exist so record-derived text never passes through a shell
+// (backticks, `$(...)`, quotes); one trailing newline is stripped from each.
+// Also reports whether `ready` is restorable: the body passes the spec-shaped
+// gate (materialize-format.js's shapeGate) and no `## Open Questions` heading
+// survives. The caller writes the body back (`gh issue edit --body-file` /
+// `create_or_update_file`) and conditionally re-adds `ready` — see
+// specify/decomposition-mode-closeout.md's "Staged for caller" procedure.
 // Exit 0 = replaced, --out written (stdout: {out, markersRemaining,
-//   openQuestionsRemaining, readyRestorable});
-// 2 = malformed invocation, or --out could not be written;
-// 3 = --marker not found verbatim in the body (nothing written).
+//   openQuestionsRemaining, openQuestionsRemoved, readyRestorable});
+// 2 = malformed invocation, an unreadable input file, or --out could not be written;
+// 3 = the marker is not in the body, or occurs more than once (nothing written).
 'use strict';
 
 const fs = require('fs');
 const { resolveAmbiguityMarker } = require('./lib/issues/ambiguity-resolve');
 
-const USAGE = 'usage: resolve-ambiguity.js <body-file> --marker "<text>" --resolution "<text>" --out <body-file> [--help]\n';
+const USAGE = 'usage: resolve-ambiguity.js <body-file> (--marker "<text>" | --marker-file <file>) (--resolution "<text>" | --resolution-file <file>) --out <body-file> [--help]\n';
 
 function parseArgs(argv) {
   const o = {
-    bodyFile: null, marker: null, resolution: null, out: null, help: false,
+    bodyFile: null, marker: null, markerFile: null, resolution: null, resolutionFile: null, out: null, help: false,
   };
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
@@ -35,7 +39,9 @@ function parseArgs(argv) {
     const next = () => argv[++i] ?? null;
     if (a === '--help' || a === '-h') o.help = true;
     else if (a === '--marker') o.marker = next();
+    else if (a === '--marker-file') o.markerFile = next();
     else if (a === '--resolution') o.resolution = next();
+    else if (a === '--resolution-file') o.resolutionFile = next();
     else if (a === '--out') o.out = next();
     else if (a.startsWith('--')) return { error: `unknown argument: ${a}` };
     else positional.push(a);
@@ -52,24 +58,47 @@ const realDeps = {
   stderr: (s) => process.stderr.write(s),
 };
 
+// A file written by an editor or a heredoc ends in a newline the marker text
+// itself doesn't carry — strip exactly one.
+const stripTrailingNewline = (s) => s.replace(/\r?\n$/, '');
+
 function run(argv, deps = realDeps) {
   const o = parseArgs(argv);
   const usageError = (message) => { deps.stderr(`resolve-ambiguity.js: ${message}\n${USAGE}`); return 2; };
   if (o.error) return usageError(o.error);
   if (o.help) { deps.stdout(USAGE); return 0; }
   if (!o.bodyFile) return usageError('<body-file> is required');
-  if (o.marker === null || o.marker === '') return usageError('--marker <text> is required');
-  if (o.resolution === null) return usageError('--resolution <text> is required');
+  if (o.marker !== null && o.markerFile !== null) return usageError('pass --marker or --marker-file, not both');
+  if (o.resolution !== null && o.resolutionFile !== null) return usageError('pass --resolution or --resolution-file, not both');
+  if ((o.marker === null || o.marker === '') && !o.markerFile) return usageError('--marker <text> or --marker-file <file> is required');
+  if (o.resolution === null && !o.resolutionFile) return usageError('--resolution <text> or --resolution-file <file> is required');
   if (!o.out) return usageError('--out <body-file> is required');
 
-  let body;
-  try { body = deps.readFile(o.bodyFile); } catch (err) {
-    return usageError(`could not read <body-file>: ${o.bodyFile} (${err && err.message})`);
+  const read = (label, p) => {
+    try { return { value: deps.readFile(p) }; } catch (err) {
+      return { error: usageError(`could not read ${label}: ${p} (${err && err.message})`) };
+    }
+  };
+
+  const body = read('<body-file>', o.bodyFile);
+  if (body.error !== undefined) return body.error;
+  let marker = o.marker;
+  if (o.markerFile) {
+    const r = read('--marker-file', o.markerFile);
+    if (r.error !== undefined) return r.error;
+    marker = stripTrailingNewline(r.value);
+    if (marker === '') return usageError(`--marker-file is empty: ${o.markerFile}`);
+  }
+  let resolution = o.resolution;
+  if (o.resolutionFile) {
+    const r = read('--resolution-file', o.resolutionFile);
+    if (r.error !== undefined) return r.error;
+    resolution = stripTrailingNewline(r.value);
   }
 
   let result;
   try {
-    result = resolveAmbiguityMarker(body, o.marker, o.resolution);
+    result = resolveAmbiguityMarker(body.value, marker, resolution);
   } catch (err) {
     deps.stderr(`resolve-ambiguity.js: ${err && err.message}\n`);
     return 3;
@@ -84,6 +113,7 @@ function run(argv, deps = realDeps) {
     out: o.out,
     markersRemaining: result.markersRemaining,
     openQuestionsRemaining: result.openQuestionsRemaining,
+    openQuestionsRemoved: result.openQuestionsRemoved,
     readyRestorable: result.readyRestorable,
   })}\n`);
   return 0;

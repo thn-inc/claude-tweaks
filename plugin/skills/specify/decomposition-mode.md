@@ -276,7 +276,7 @@ skill's directory) plus `collapse-decision.md` (already read for Step 2.6) — c
 prompt from those two alone. Do **not** open `decomposition-mode-closeout.md`, `record-creation.md`,
 `record-creation-subissues.md`, `record-creation-linking.md`, `red-team.md`, or `spec-template.md`
 yourself — the delegated subagent reads them independently, so reading them here spends context
-on prose it will never execute (measured: 77,687 B / 26% of one session's tool-result bytes).
+on prose it will never execute (#2700).
 The Required-inputs table already covers every input Steps 3-9 consume
 (work units ← Step 2, collapse ← Step 2.6, dependency graph ← Steps 1-2, design pre-step answers
 ← Step 2.5, diagram suggestions ← Step 2.5d, design doc, run context) — nothing here is missing.

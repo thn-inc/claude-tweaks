@@ -4,41 +4,82 @@
 // `gh`/MCP; this module only knows how to edit a body string in memory.
 'use strict';
 
-// Matches an inline `<!-- ambiguity: ... -->` marker as written by
-// specify/red-team.md's write-back procedure. Non-greedy across the comment
-// body so multiple markers in one document are each matched separately.
-const AMBIGUITY_MARKER_RE = /<!--\s*ambiguity:[\s\S]*?-->/g;
+const {
+  shapeGate, stripCodeSpans, ORIGINAL_REQUEST_RE,
+} = require('./materialize-format');
+
+// The opening of a red-team marker (specify/red-team.md's write-back). Same
+// pattern the spec-shaped gate uses (materialize-format.js's
+// PLACEHOLDER_PATTERNS), so an unterminated `<!-- ambiguity:` still counts.
+const AMBIGUITY_OPEN_RE = /<!--\s*ambiguity:/g;
+
+// spec-template.md's `## Open Questions (optional)` heading, at levels 2-4, in
+// any case, with or without a trailing qualifier. Matching loosely fails
+// closed: a surviving variant heading keeps `ready` off rather than letting it
+// back on.
+const OPEN_QUESTIONS_HEADING_RE = /^(#{2,4})[ \t]+open questions\b.*$/im;
+
+// The authored part of a body — everything before `## Original request`, with
+// fenced blocks and inline code spans stripped — exactly the text
+// materialize-format.js's shapeGate tests for placeholders. A marker quoted
+// in a code span or inherited in the original request is not an open one.
+function authoredText(body) {
+  const at = body.search(ORIGINAL_REQUEST_RE);
+  return stripCodeSpans(at === -1 ? body : body.slice(0, at));
+}
 
 function countAmbiguityMarkers(body) {
   if (typeof body !== 'string') return 0;
-  const matches = body.match(AMBIGUITY_MARKER_RE);
+  const matches = authoredText(body).match(AMBIGUITY_OPEN_RE);
   return matches ? matches.length : 0;
 }
 
-// True when a `## Open Questions` heading (spec-template.md's optional
-// section, any heading level 2-4) is still present in the body. Step 6
-// Self-Review deletes the whole section once every row is resolved ("When all
-// rows are resolved, delete the section" — spec-template.md), so a surviving
-// heading is itself the signal of an unresolved section; this function never
-// tries to distinguish a heading-with-rows from a bare leftover heading,
-// matching spec-template.md's own structural check exactly.
 function hasOpenQuestionsSection(body) {
   if (typeof body !== 'string') return false;
-  return /^#{2,4}[ \t]+Open Questions[ \t]*$/m.test(body);
+  return OPEN_QUESTIONS_HEADING_RE.test(authoredText(body));
 }
 
-// The exact restore condition spec-template.md's structural check states:
-// zero remaining ambiguity markers AND no surviving Open Questions section.
+// `ready` is restorable when the body passes the spec-shaped gate `ready`
+// itself asserts (_shared/work-record.md, implemented by shapeGate: required
+// sections present and no TBD/TODO/ambiguity placeholder) and no Open
+// Questions section survives (spec-template.md: resolve every row, then
+// delete the section).
 function readyRestorable(body) {
-  return countAmbiguityMarkers(body) === 0 && !hasOpenQuestionsSection(body);
+  if (typeof body !== 'string') return false;
+  return shapeGate(body).ok && !hasOpenQuestionsSection(body);
 }
 
-// Replaces the FIRST verbatim occurrence of `markerText` — either the full
-// `<!-- ambiguity: ... -->` comment text or the flagged sentence next to it,
-// whichever the caller matched against — with `resolutionText`. Throws when
-// `markerText` isn't found verbatim: a near-miss (whitespace/quoting drift
-// between what the caller read and what it's replacing) must be a hard stop,
-// never a silent no-op that leaves the marker in place while reporting success.
+// Deletes an Open Questions section whose table has no data rows left (only
+// the header and separator rows, plus blank lines) — spec-template.md's "When
+// all rows are resolved, delete the section". A section with any other
+// content is left alone.
+function dropEmptyOpenQuestions(body) {
+  const lines = body.split('\n');
+  const start = lines.findIndex((l) => OPEN_QUESTIONS_HEADING_RE.test(l.replace(/\r$/, '')));
+  if (start === -1) return { body, removed: false };
+  const level = lines[start].match(/^#+/)[0].length;
+  let end = start + 1;
+  while (end < lines.length) {
+    const m = lines[end].match(/^(#+)[ \t]/);
+    if (m && m[1].length <= level) break;
+    end++;
+  }
+  const content = lines.slice(start + 1, end).map((l) => l.trim()).filter((l) => l !== '');
+  const tableRows = content.filter((l) => l.startsWith('|'));
+  const separator = (l) => /^\|[\s:|-]+\|$/.test(l);
+  const dataRows = tableRows.filter((l, i) => i > 0 && !separator(l));
+  if (content.length !== tableRows.length || dataRows.length > 0) return { body, removed: false };
+  let from = start;
+  while (from > 0 && lines[from - 1].trim() === '') from--;
+  return { body: [...lines.slice(0, from), ...lines.slice(end)].join('\n'), removed: true };
+}
+
+// Replaces the single verbatim occurrence of `markerText` — the full
+// `<!-- ambiguity: ... -->` comment, or a whole `## Open Questions` table row
+// — with `resolutionText`, then drops the Open Questions section if that left
+// it with no rows. Throws (err.code NOT_FOUND or AMBIGUOUS) unless the text
+// occurs exactly once: a near-miss or a repeated string must stop, never
+// edit the wrong place or silently leave the marker in.
 function resolveAmbiguityMarker(body, markerText, resolutionText) {
   if (typeof body !== 'string') {
     throw new Error('resolveAmbiguityMarker: body must be a string');
@@ -51,19 +92,32 @@ function resolveAmbiguityMarker(body, markerText, resolutionText) {
   }
   const idx = body.indexOf(markerText);
   if (idx === -1) {
-    throw new Error(`resolveAmbiguityMarker: markerText not found verbatim in body: ${JSON.stringify(markerText)}`);
+    const err = new Error(`resolveAmbiguityMarker: markerText not found verbatim in body: ${JSON.stringify(markerText)}`);
+    err.code = 'NOT_FOUND';
+    throw err;
   }
-  const newBody = body.slice(0, idx) + resolutionText + body.slice(idx + markerText.length);
+  if (body.indexOf(markerText, idx + 1) !== -1) {
+    const err = new Error(`resolveAmbiguityMarker: markerText occurs more than once in body — pass the full marker comment or row: ${JSON.stringify(markerText)}`);
+    err.code = 'AMBIGUOUS';
+    throw err;
+  }
+  let end = idx + markerText.length;
+  // An empty resolution for text that fills its whole line (an Open Questions
+  // row) deletes the line, newline included, so the table stays contiguous.
+  const wholeLine = (idx === 0 || body[idx - 1] === '\n') && /^\r?\n/.test(body.slice(end));
+  if (resolutionText === '' && wholeLine) end += body[end] === '\r' ? 2 : 1;
+  const replaced = body.slice(0, idx) + resolutionText + body.slice(end);
+  const { body: newBody, removed } = dropEmptyOpenQuestions(replaced);
   return {
     body: newBody,
     markersRemaining: countAmbiguityMarkers(newBody),
     openQuestionsRemaining: hasOpenQuestionsSection(newBody),
+    openQuestionsRemoved: removed,
     readyRestorable: readyRestorable(newBody),
   };
 }
 
 module.exports = {
-  AMBIGUITY_MARKER_RE,
   countAmbiguityMarkers,
   hasOpenQuestionsSection,
   readyRestorable,

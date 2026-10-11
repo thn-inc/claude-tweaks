@@ -110,26 +110,23 @@ Present a summary. The `Collapse outcome` line below renders in every decomposit
 ### Staged for caller (optional — render only when a decision-worthy finding was left unresolved)
 | Record | Flagged text | Suggested resolution |
 |--------|-------------|----------------------|
-| {ref} | {the exact `<!-- ambiguity: ... -->` marker text, or the flagged sentence, verbatim} | {the resolution the red-team persona proposed, or "—" if none was proposed} |
+| {ref} | {the whole `<!-- ambiguity: ... -->` comment, or the whole `## Open Questions` table row, verbatim — never just the flagged sentence, which leaves the marker behind} | {the resolution the red-team persona proposed, or "—" if none was proposed} |
 ```
 
-**Resolving a `### Staged for caller` row.** For each row, decide the resolution (an `AskUserQuestion` call or your own judgment), then apply it mechanically with `bin/resolve-ambiguity.js` — no hand-rolled `gh issue view` + `node -e` + `gh issue edit` surgery:
+**Resolving a `### Staged for caller` row.** Decide the resolution (an `AskUserQuestion` call or your own judgment), then apply it with `bin/resolve-ambiguity.js`, one row at a time, since each row re-fetches the body the previous one wrote. `{n}` below is the bare issue number: `#{n}` would start a bash comment.
 
 ```bash
-# 1. Fetch the current body to a file (gh, or the MCP equivalent read):
-gh issue view {ref} --json body -q .body > /tmp/body-{ref}.txt
-
-# 2. Apply the resolution — reports whether `ready` is restorable:
-node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-ambiguity.js" /tmp/body-{ref}.txt \
-  --marker "{the row's Flagged text, verbatim}" \
-  --resolution "{your chosen resolution text}" \
-  --out /tmp/body-{ref}-resolved.txt
-
-# 3. Write the result back, restoring `ready` only when step 2 reported readyRestorable: true:
-gh issue edit {ref} --body-file /tmp/body-{ref}-resolved.txt [--add-label ready]
+eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" RA_BODY=resolve-ambiguity-body.txt RA_MARKER=resolve-ambiguity-marker.txt RA_RESOLUTION=resolve-ambiguity-resolution.txt RA_OUT=resolve-ambiguity-out.txt)"
+gh issue view {n} --json body -q .body > "$RA_BODY" && echo "$RA_MARKER $RA_RESOLUTION"
 ```
 
-`bin/resolve-ambiguity.js` never touches `gh`/MCP itself — it is a pure local transform (fetch-then-transform-then-write, the same compose-then-write-once discipline every write in this skill uses) — so step 1's fetch and step 3's write-back use whichever transport (`gh` or the MCP `issue_read`/`create_or_update_file` equivalents) this run is already using elsewhere. `readyRestorable` matches `spec-template.md`'s exact structural check: zero remaining `<!-- ambiguity: -->` markers AND no surviving `## Open Questions` heading — never restore `ready` when it reports `false`, even if this row's own marker was the last one you expected to find.
+Write the row's Flagged text to `$RA_MARKER` and your resolution to `$RA_RESOLUTION` with the Write tool, never through the shell, because record text carries backticks, `$` and quotes a shell would run or rewrite. For an Open Questions row, first fold its answer into the right section of `$RA_BODY`, then use an empty resolution file: that deletes the row, and the section goes with its last row. Then apply and write back:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-ambiguity.js" "$RA_BODY" --marker-file "$RA_MARKER" --resolution-file "$RA_RESOLUTION" --out "$RA_OUT" && gh issue edit {n} --body-file "$RA_OUT"
+```
+
+Exit 3 means the text is not in the body, or occurs more than once: nothing was written and the `&&` skips the write-back, so re-read the body and pass the whole comment or row. Exit 2 is a malformed call or an unreadable or unwritable file. Add `ready` back (`gh issue edit {n} --add-label ready`) only when the CLI printed `"readyRestorable":true`, meaning the body passes the spec-shaped check `ready` asserts (`_shared/work-record.md`) and no `## Open Questions` heading is left. The CLI is a pure local transform: without `gh`, fetch and write back with the MCP `issue_read`/`create_or_update_file` equivalents, and under `local-files` read and write the record file through `local-store.js`, restoring `ready` by setting `facets.stage` back the way `red-team.md`'s step 5 cleared it.
 
 `{ref}` is `#{N}` under `work-backend: github-issues`, the bare record id under `local-files` — same convention as Step 1's Overlap Analysis (`overlap-resolution.md`).
 

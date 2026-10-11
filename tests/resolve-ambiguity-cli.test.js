@@ -42,14 +42,14 @@ test('missing --marker is malformed — exit 2', () => {
   const deps = fakeDeps();
   const code = run(['/body.txt', '--resolution', 'y', '--out', '/out.txt'], deps);
   assert.equal(code, 2);
-  assert.match(deps.calls.stderr.join(''), /--marker <text> is required/);
+  assert.match(deps.calls.stderr.join(''), /--marker <text> or --marker-file <file> is required/);
 });
 
 test('missing --resolution is malformed — exit 2', () => {
   const deps = fakeDeps();
   const code = run(['/body.txt', '--marker', 'x', '--out', '/out.txt'], deps);
   assert.equal(code, 2);
-  assert.match(deps.calls.stderr.join(''), /--resolution <text> is required/);
+  assert.match(deps.calls.stderr.join(''), /--resolution <text> or --resolution-file <file> is required/);
 });
 
 test('missing --out is malformed — exit 2', () => {
@@ -98,14 +98,14 @@ test('marker not found verbatim — exit 3, nothing written', () => {
 
 // --- success ----------------------------------------------------------------
 
-test('success: replaces the marker, writes --out, reports readyRestorable true', () => {
+test('success: replaces the marker and writes --out; a body that is not spec-shaped is not ready-restorable', () => {
   const deps = fakeDeps();
   const code = run(['/body.txt', '--marker', '<!-- ambiguity: which store? -->', '--resolution', 'Uses Redis.', '--out', '/out.txt'], deps);
   assert.equal(code, 0);
   assert.equal(deps.files['/out.txt'], 'Before. Uses Redis. After.');
   const printed = JSON.parse(deps.calls.stdout[0]);
   assert.deepEqual(printed, {
-    out: '/out.txt', markersRemaining: 0, openQuestionsRemaining: false, readyRestorable: true,
+    out: '/out.txt', markersRemaining: 0, openQuestionsRemaining: false, openQuestionsRemoved: false, readyRestorable: false,
   });
 });
 
@@ -128,4 +128,65 @@ test('--out cannot be written — exit 2', () => {
   const code = run(['/body.txt', '--marker', '<!-- ambiguity: which store? -->', '--resolution', 'x', '--out', '/out.txt'], deps);
   assert.equal(code, 2);
   assert.match(deps.calls.stderr.join(''), /could not write --out file/);
+});
+
+// --- #2699 review fixes ------------------------------------------------------
+
+const SHAPED = [
+  '## Current State', 'x', '',
+  '## Deliverables', '- [ ] y <!-- ambiguity: `which` store? -->', '',
+  '## Acceptance Criteria', '- [ ] z', '',
+  '## Release Note', 'n', '',
+].join('\n');
+
+test('an empty --marker "" is malformed — exit 2, not a lib-level exit 3', () => {
+  const deps = fakeDeps();
+  const code = run(['/body.txt', '--marker', '', '--resolution', 'y', '--out', '/out.txt'], deps);
+  assert.equal(code, 2);
+  assert.deepEqual(deps.calls.writeFile, []);
+});
+
+test('--marker and --marker-file together are malformed — exit 2', () => {
+  const deps = fakeDeps();
+  const code = run(['/body.txt', '--marker', 'x', '--marker-file', '/m.txt', '--resolution', 'y', '--out', '/out.txt'], deps);
+  assert.equal(code, 2);
+  assert.match(deps.calls.stderr.join(''), /not both/);
+});
+
+test('--marker-file/--resolution-file carry shell-hostile text verbatim, minus one trailing newline', () => {
+  const deps = fakeDeps();
+  deps.files['/body.txt'] = SHAPED;
+  deps.files['/m.txt'] = '<!-- ambiguity: `which` store? -->\n';
+  deps.files['/r.txt'] = 'Uses `$(redis)` "as is".\n';
+  const code = run(['/body.txt', '--marker-file', '/m.txt', '--resolution-file', '/r.txt', '--out', '/out.txt'], deps);
+  assert.equal(code, 0);
+  assert.ok(deps.files['/out.txt'].includes('- [ ] y Uses `$(redis)` "as is".\n'), deps.files['/out.txt']);
+  assert.equal(JSON.parse(deps.calls.stdout[0]).readyRestorable, true);
+});
+
+test('an empty --marker-file is malformed — exit 2', () => {
+  const deps = fakeDeps();
+  deps.files['/m.txt'] = '\n';
+  const code = run(['/body.txt', '--marker-file', '/m.txt', '--resolution', 'y', '--out', '/out.txt'], deps);
+  assert.equal(code, 2);
+  assert.match(deps.calls.stderr.join(''), /--marker-file is empty/);
+});
+
+test('marker text that occurs more than once — exit 3, nothing written', () => {
+  const deps = fakeDeps();
+  deps.files['/body.txt'] = 'See X. Later: X. <!-- ambiguity: p -->';
+  const code = run(['/body.txt', '--marker', 'X.', '--resolution', 'Y.', '--out', '/out.txt'], deps);
+  assert.equal(code, 3);
+  assert.deepEqual(deps.calls.writeFile, []);
+});
+
+test('a surviving Open Questions section keeps readyRestorable false at the CLI', () => {
+  const deps = fakeDeps();
+  deps.files['/body.txt'] = `${SHAPED}\n## Open Questions\n\n| Persona | Finding |\n|---|---|\n| Maintainer | q |\n`;
+  const code = run(['/body.txt', '--marker', '<!-- ambiguity: `which` store? -->', '--resolution', 'Redis.', '--out', '/out.txt'], deps);
+  assert.equal(code, 0);
+  const printed = JSON.parse(deps.calls.stdout[0]);
+  assert.equal(printed.markersRemaining, 0);
+  assert.equal(printed.openQuestionsRemaining, true);
+  assert.equal(printed.readyRestorable, false);
 });
