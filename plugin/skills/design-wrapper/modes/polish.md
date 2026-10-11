@@ -28,6 +28,23 @@ If `<spec>` was passed and lists scoped files, intersect with `git diff --name-o
 
 If zero files remain after filtering, return `{skipped: "no UI files changed"}`. If `git diff --name-only` itself fails (non-git directory, git error, mid-rebase state), return `{skipped: "unable to resolve target files (git diff failed)"}` immediately — see `../SKILL.md`'s Input section for this shared fallback-failure rule.
 
+### Step 2.5: Resolve record-declared polish constraints (#2743)
+
+Read three optional values before any dispatch: a caller-supplied **pinned-copy list**, and two body-metadata lines read from `<spec>`'s metadata block (the lines before its first blank line — same location as `Design-intent:`). A standalone invocation with no caller-supplied list reads it from `<spec>` the same way, if present; `/claude-tweaks:flow`'s polish-execution.md is the usual source (see that file's derivation).
+
+- **Pinned-copy list** — exact copy strings no dispatched command may change this phase, derived upstream from the record's own spec text and `exact: true` e2e assertions (derivation lives in `skills/flow/polish-execution.md`, not here — this mode only consumes the resulting list). Absent or empty means no constraint applies; this is the common case.
+- **`Polish-skip:`** — a comma-separated list of Impeccable command names the record author declares unsafe to run this phase (e.g. `Polish-skip: clarify, onboard`). Absent means nothing is skipped.
+- **`Polish-scope:`** — `record-created` restricts the refinement set (Step 4 only) to files this record's branch **added**, not every file Step 2 resolved. Absent or `all-changed` (the default) leaves Step 2's resolution unchanged for every step. Suggestion-driven and intent-driven dispatch (Steps 5-6) are never narrowed by this value — they are already scoped to the files their own trigger names (an audit finding's file, the full diff for an intent), so restricting the refinement set's default scope doesn't also need to touch them.
+
+These three apply uniformly across Steps 4-6 below:
+
+- **Skip check (every step).** Before dispatching any command — refinement-set membership, a suggestion-driven match, or an intent-driven value, alike — check its bare name against `Polish-skip:`. A match is never dispatched: append a `kind: "skipped-by-record"` entry to `staged_suggestions` instead (see Output to caller) and move to the next command. This is never a silent drop — the record author made an explicit call, and that call is always visible at the Wrap-Up Review Console, the same way a `manual-only` suggestion is.
+- **Pinned-copy suffix (every step, when the list is non-empty).** Append this suffix to a surviving dispatch's target argument, **after** any other fixed suffix that step already applies (the refinement set's job-statement suffix, `animate`'s Frequency Gate guardrail) — pinned-copy is always last:
+
+  > "Pinned copy — do not change these exact strings under any circumstance, in any file, even if they look inconsistent with the surrounding change: {pinned-copy list, comma-separated, each double-quoted}."
+
+  This is a hard constraint stated in the dispatched command's own prompt, not a post-hoc diff check — catching a rewrite after it happens is more expensive than preventing it via the dispatch prompt itself (the record's own Technical Approach). An empty list appends nothing and every dispatch proceeds exactly as it did before this section existed.
+
 ### Step 3: Read prior audit findings cache
 
 The `review` mode writes findings to a per-spec cache alongside the ledger: `docs/plans/YYYY-MM-DD-{feature}-audit.json` (or `docs/plans/audit-{spec-slug}.json` when invoked outside a flow context).
@@ -72,7 +89,11 @@ as it did before this field existed — the three original branches apply unchan
 
 ### Step 4: Refinement-set dispatch (always invoked when frontend)
 
-Invoke each via the Skill tool, in order:
+**`Polish-scope: record-created` filter.** When Step 2.5 resolved this value, before dispatching, intersect the target file list with files this branch **added** (`git diff --name-status` entries with status `A` against the merge-base) — drop any file in Step 2's resolution that already existed before this record's changes. If the intersection is empty, skip the refinement set entirely for this record and return a `note` of `"No refinement set — all resolved files pre-dated this record (Polish-scope: record-created)"` in place of dispatching (Suggestion-driven and intent-driven dispatch, Steps 5-6, are unaffected — see Step 2.5).
+
+**Skip check and pinned-copy suffix.** Apply Step 2.5's skip check to each of the three commands below before dispatching it, and append Step 2.5's pinned-copy suffix (when the list is non-empty) to each surviving dispatch's target argument, after the job-statement suffix below.
+
+Invoke each surviving command via the Skill tool, in order:
 
 - `/impeccable:impeccable polish <files>` — final design system alignment
 - `/impeccable:impeccable clarify <files>` — UX copy improvement
@@ -113,7 +134,7 @@ For each finding, in cache order:
 
 3. **No usable `suggestion` → stage as an unclassified observation.** If the field is absent, `null`, empty, or resolves to nothing in that table, append one `kind: "unclassified"` entry to `staged_suggestions` carrying the finding's `id` and `category` verbatim, plus its `message` as the entry's `description`. (The cache field is `message`; the staged field is `description` — see `review.md`'s Step 5 cache shape, which is the producer of both.) Never fall back to keyword-mapping the finding onto a command — that is the mechanism this step replaced — and never drop it silently. It reaches the Review Console as an observation for a human to route.
 
-4. **Anything else → dispatch normally.**
+4. **Anything else →** apply Step 2.5's skip check first (a `Polish-skip:` match stages a `kind: "skipped-by-record"` entry instead, same as any other step) **then dispatch normally**, appending Step 2.5's pinned-copy suffix to the target argument when the list is non-empty.
 
 **Batching, across all findings regardless of category.** When several findings name the **same** command, dispatch it once with the union of their affected files, de-duplicated. When findings name **different** commands, dispatch each named command once, each scoped to the union of the files whose findings named it. Staged entries follow the same union rule per command; an unclassified entry is never merged with another, since it names no command to merge on.
 
@@ -121,7 +142,7 @@ For each finding, in cache order:
 
 ### Step 6: Intent-driven dispatch
 
-Read `Design-intent:` from the record's body-metadata line (lifted into the materialized header — spec 20; written by `/claude-tweaks:specify`; the canonical field definition lives in `skills/specify/spec-template.md`; the dispatch table is in `../command-map.md` Step 3). For each declared intent value, invoke the matching command via the Skill tool on the same scoped file list used in Steps 4–5.
+Read `Design-intent:` from the record's body-metadata line (lifted into the materialized header — spec 20; written by `/claude-tweaks:specify`; the canonical field definition lives in `skills/specify/spec-template.md`; the dispatch table is in `../command-map.md` Step 3). For each declared intent value, apply Step 2.5's skip check (a `Polish-skip:` match stages a `kind: "skipped-by-record"` entry instead of dispatching) then invoke the matching command via the Skill tool on the same scoped file list used in Steps 4–5, appending Step 2.5's pinned-copy suffix (when the list is non-empty) after any other fixed suffix that command already carries (e.g. `animate`'s Frequency Gate guardrail below) — pinned-copy is always last.
 
 **Multi-intent ordering.** When the user declared comma-separated intents (e.g., `design-intent: bold, delightful`), invoke commands in the order declared. The fixed `delight` → `animate` pairing for `delightful` is preserved even when interleaved with other intents — treat `delightful` as a single dispatch unit that produces two commands. The wrapper does not run a re-verify cycle between intent commands; the polish phase as a whole shares a single re-verify cycle (capped by `/flow`'s polish phase, see flow's polish-phase decision tree).
 
@@ -166,6 +187,8 @@ counts once). Emit the clause once per polish invocation, exactly as `decision_s
 omit it when `N` is zero. Example: `Dispatched 3 Impeccable commands on 2 files — refinement-set:
 polish, clarify, harden; craft-context: 4 critic findings inlined.`
 
+When one or more commands were skipped via `Polish-skip:` (Step 2.5), append a trailing clause `; skipped-by-record: {comma-separated command names}` to the sentence, after the `craft-context` clause when both apply. Skipped commands are never counted in `N` or the category list — nothing was dispatched for them, same rule as any other staged entry.
+
 When `commands_invoked` is empty, do not build `decision_summary` — omit the field entirely from the output.
 
 ### Step 8: `--dry-run` short-circuit
@@ -188,7 +211,8 @@ When the caller passes `--dry-run`, run Steps 1-7 exactly as above to compute th
   ],
   "staged_suggestions": [
     { "kind": "manual-only", "command": "/impeccable:impeccable overdrive", "files": ["..."], "trigger": "audit:slop" },
-    { "kind": "unclassified", "id": "<finding id>", "category": "slop", "description": "<finding description>", "files": ["..."], "trigger": "audit:slop" }
+    { "kind": "unclassified", "id": "<finding id>", "category": "slop", "description": "<finding description>", "files": ["..."], "trigger": "audit:slop" },
+    { "kind": "skipped-by-record", "command": "/impeccable:impeccable clarify", "files": ["..."], "trigger": "record:Polish-skip" }
   ],
   "files_modified": [ "<path>", ... ],
   "decision_summary": "Dispatched 6 Impeccable commands on 3 files — refinement-set: polish; suggestion-driven: typeset (audit:typography), bolder (audit:slop); intent-driven: bolder (intent:bold), delight (intent:delightful), animate (intent:delightful); craft-context: 2 critic findings inlined."
@@ -201,6 +225,7 @@ When the caller passes `--dry-run`, run Steps 1-7 exactly as above to compute th
 |--------|--------------|---------|
 | `manual-only` | `command` | A finding's `suggestion` named a manual-only command. There is a command to run; the wrapper declined to run it automatically. |
 | `unclassified` | `id`, `category`, `description` | The finding had no usable `suggestion`. There is **no** command — the entry is an observation for a human to route. |
+| `skipped-by-record` | `command` | The command would otherwise have dispatched (refinement-set, suggestion-driven, or intent-driven) but its bare name appeared in the record's own `Polish-skip:` body-metadata line (Step 2.5). There is a command and it was named by this phase's own dispatch logic, not a finding — the record author explicitly opted out of it for this run. |
 
 An `unclassified` entry has no `command` field at all, by construction: inventing one is the keyword-mapping this mode retired. A consumer that renders staged entries must not assume `command` is present — `skills/flow/polish-execution.md`'s `{command} {files} — ...` template predates the `unclassified` kind and needs the branch added. That is tracked as part of the cross-skill sweep in record #148; until it lands, an `unclassified` entry still reaches `{run-dir}/staged/` and `decisions.md`, but renders with an empty command slot.
 
@@ -242,3 +267,5 @@ Note `decision_summary` is absent from the empty-`commands_invoked` case above �
 | Pattern | Why It Fails |
 |---------|-------------|
 | Deriving a command from a `craft-critic` finding | It has no `suggestion` by construction — it is refinement **context**, never a dispatch key; keyword-mapping a finding onto a command is the mechanism Step 5 retired. |
+| Dispatching a command the record named in `Polish-skip:` | Defeats the author's explicit, spec-level override — exactly the incident #2743 exists to prevent (a pinned-copy spec whose e2e suite asserts `exact: true` strings had `clarify` rewrite them). Stage it instead (Step 2.5). |
+| Treating a non-empty pinned-copy list as a post-hoc diff check | The constraint belongs in the dispatched command's own prompt (Step 2.5's suffix) — catching a rewrite after it already happened costs more than preventing it. |

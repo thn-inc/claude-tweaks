@@ -85,8 +85,13 @@ function expandGlobSegments(baseDir, segments, failures) {
 function expandGlob(globPattern) {
   const pattern = globPattern.startsWith('~') ? path.join(os.homedir(), globPattern.slice(1)) : globPattern;
   const baseDir = path.isAbsolute(pattern) ? path.parse(pattern).root : '.';
+  // Segments are what follows the root. Splitting the whole pattern would make
+  // a win32 drive (`C:`) its own segment, re-joined under the root it is
+  // already part of; and win32 accepts both separators, so split on either
+  // there. Posix keeps `/` alone — a backslash is a legal filename character.
+  const rest = baseDir === '.' ? pattern : pattern.slice(baseDir.length);
   const failures = [];
-  const paths = expandGlobSegments(baseDir, pattern.split('/').filter(Boolean), failures);
+  const paths = expandGlobSegments(baseDir, rest.split(path.sep === '\\' ? /[\\/]+/ : '/').filter(Boolean), failures);
   return { paths, failures };
 }
 
@@ -354,6 +359,20 @@ function checkOneFixture(fixture, cwd, runFixture) {
   }
 
   const wanted = expect.stream;
+
+  // Text-mode assertion (#2573): a substring match on the named stream, for
+  // a command whose expected output is plain text rather than JSON (e.g. a
+  // failure path that writes a plain-text message and a non-zero exit).
+  // Mutually exclusive with the JSON-mode `keys` assertion below —
+  // manifest.js's validation enforces that exactly one mode is specified
+  // per fixture, so this function never sees both on the same fixture.
+  if (typeof expect.textMatch === 'string') {
+    if (!streams[wanted].includes(expect.textMatch)) {
+      return mismatch(`expected ${wanted} to contain ${JSON.stringify(expect.textMatch)}, but it did not (observed ${wanted}: ${JSON.stringify(streams[wanted].slice(0, 200))})`);
+    }
+    return { run: fixture.run, status: 'ok', detail: 'observed output matched expect', observed };
+  }
+
   const other = wanted === 'stderr' ? 'stdout' : 'stderr';
 
   const parsed = tryParseJson(streams[wanted].trim());

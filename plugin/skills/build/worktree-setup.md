@@ -6,6 +6,8 @@ Runs only when the user specified `worktree` (or it's the default). Skipped enti
 
 **Still run Step 4.5 (record the assignment) even on this skip path.** It is the one step in this procedure a worktree created outside it never receives on its own: `/flow`'s multi-spec up-front creation (`skills/flow/multi-spec.md`'s "Shared worktree" Step 1) has two branches — its **Created** branch (not isolated, or dirty) runs this file's full procedure, Step 4.5 included, when it creates the shared worktree; its **Adopted** branch (already isolated, clean tree — the common case under this project's `worktree-always` policy, since an interactive `/flow` is always already isolated by the time it runs) is a pure detection-plus-skip that records the current branch name and stamps nothing (`_shared/worktree-setup.md`'s Adopt-or-create section). `dispatch/sequential-execution.md`'s `EnterWorktree` call stamps nothing either — a dispatched run arrives at this point with no `run-state.json` `worktree` field at all. For both the Adopted branch and the dispatch case, this unconditional re-run is the only stamp such a run ever gets. Step 4.5 is documented there as "an idempotent restamp," so running it unconditionally here is always safe, never destructive to a prior stamp. Without this, the working-directory hook (E1) denies this run's very first commit — the gap #778 traced to this guard, and the retry-with-restamp workaround `dispatch/task-prompt.md` documents for a denied first commit exists only because this step was skipped instead of re-run. Step 6 (open the draft PR) is unaffected either way — it is invoked separately from `build/SKILL.md` Spec Step 1, never from within this numbered procedure (see Step 6 below).
 
+**Also run the adopted-branch remote collision check on this skip path (#2844).** Steps 1.5/1.6 guard a branch name that is about to be created; an adopted branch skipped both, so nothing has probed `origin` for its name. Under `integration-model: pr-first`, before Spec Step 1's materialize commit and Step 6's push, read `build/adopted-branch-collision-check.md` in this skill's directory and follow it — it classifies a same-name branch on `origin` as absent, this run's own earlier push (resume — proceed), or unrelated (stop card), so a stale remote branch is caught here rather than as a rejected push.
+
 ## Base ref — branch from local HEAD, not stale origin
 
 For why `worktree.baseRef` matters and what `fresh` vs `head` do, see
@@ -158,59 +160,13 @@ re-derived regexes.
 
 ## Cherry-pick source-branch PR check (#1957)
 
-Runs later than Steps 1.5/1.6 — in Common Step 2's per-commit loop, **after each commit lands**,
-since it needs a commit to inspect. Extends Step 1.6 (guards this record's own branch name) to a
-second shape: a build reusing *another* record's code via `git cherry-pick` without checking
-whether that record's branch backs an open PR. #1821: a build cherry-picked a commit believing
-its source branch abandoned, but that branch backed a still-open, review-passed PR — two open PRs
-with byte-identical implementation, caught only by an off-lens manual review.
-
-**Trigger — narrow by design.** `git cherry-pick -x <sha>` appends a
-`(cherry picked from commit <sha>)` trailer; `cherry-pick` without `-x` does not. Only that
-trailer is scanned for — a git-native, zero-false-positive signal. A manual port of code (hand
-copy-pasted, or cherry-picked without `-x`) leaves no such trailer and is not caught by this
-check — the same accepted-gap class Step 1.6 carries for its own remote-lookup failure; don't
-imply broader coverage than this mechanism gives.
-
-**Procedure**, via `plugin/bin/lib/worktree/cherry-pick-provenance.js`'s
-`checkCherryPickProvenance({ message, ownBranch, repo })` (unit-tested,
-`tests/bin-lib/worktree/cherry-pick-provenance.test.js`):
-
-1. No trailer — nothing to do (an ordinary commit is never scanned further; no overhead on the
-   common case).
-2. Trailer found — resolve remote branches containing `{sha}` (`git branch -r --contains {sha}`),
-   excluding this record's own branch. Multiple branches can come back — check every one.
-3. Lookup fails (no network/`origin`) — **fail open**, Step 1.6's own posture: log the degrade
-   distinctly and proceed, never treat "unreachable" as "no other branch."
-4. No other branch contains `{sha}` — nothing to do.
-5. Per candidate branch, check for an open PR: `gh pr list --repo {owner}/{repo} --head "{branch}"
-   --state open --json number,url,isDraft`. A per-branch failure degrades that branch distinctly
-   from "confirmed no open PR."
-6. No open PR anywhere — nothing to do.
-7. An open PR is found — render the stop card (`formatStopCard`), naming the commit, source
-   branch(es), and PR number/URL:
-
-   ```markdown
-   ## Build: Cherry-picked commit reused from another record's open-PR branch
-
-   Commit `{sha}` carries a `(cherry picked from commit {sha})` trailer. Its source commit is
-   also reachable from: `{branch}` (open PR #{number} — {url}).
-
-   Options: (1) stop and route to the existing PR (reuse/resume that prior work instead of
-   duplicating it), (2) proceed anyway, explicitly choosing to duplicate the implementation
-   (record this choice in `decisions.md`).
-   ```
-
-   **Interactive mode:** `AskUserQuestion` with these two options, recommending (1).
-   **Auto mode:** same posture as Step 1.6 — this is **not** a lever
-   `_shared/auto-mode-contract.md` lists as silenceable (no safe default: the build can't know
-   whether the other PR's author abandoned it or is still working it). Render the card and
-   **stop the build** before this commit's next step — the same HARD-GATE posture
-   `flow/claim-targets.md` uses for a claim contest.
-
-**Out of scope:** a review-time Cherry-Pick Provenance Check (none exists in
-`plugin/skills/review/` — this is the earliest of at most two catch points) and #1944's
-specify-time near-duplicate *record* detection (duplicate issue content, not duplicate code).
+Runs later than Steps 1.5/1.6 — in Common Step 2's per-commit loop, after each commit lands,
+since it needs a commit to inspect: a git-native `(cherry picked from commit {sha})` trailer scan
+that stops the build (not a silenceable auto-mode lever) when the cherry-picked source is also
+reachable from another record's branch backing a still-open PR (#1821's incident; #1944 is the
+separate specify-time near-duplicate-record check, out of scope here). Read
+`build/cherry-pick-provenance-check.md` in this skill's directory and follow it now — extracted
+to stay under the composed-bytes ceiling.
 
 ## Consent prompt (v5.1.0+)
 

@@ -6,6 +6,7 @@ files:
   - plugin/skills/release/bookkeeping.md
   - plugin/skills/release/routine-template.yml
   - plugin/bin/release-preflight.js
+  - plugin/bin/lib/release-preflight/pack.js
   - plugin/bin/release-local.js
   - plugin/skills/review/SKILL.md
 ---
@@ -24,7 +25,7 @@ files:
 - **Action:** Step 1 runs the preflight fact pack into the run directory; Step 3 runs `/claude-tweaks:review base:v1.2.0` over the first-parent history since the last tag; Step 4 renders the console — records shipped, the driving commit, the review verdict, CI on the tip, whether a publish hook is configured, the overrides — and stops before Step 5.
 - **Should feel:** Like reading the release before it exists — nothing merged, nothing tagged, but every finding the real run would block on is already staged.
 - **Should understand:** The review is not optional and not skippable by `--dry-run`, `--train` or `--allow-blocking`; a Critical or High finding marks the run `review: blocking` and only a human who has read it can override.
-- **Red flags:** A console row rendered green from a degraded pack field; a `Records shipped` row that silently dropped a commit with no `(#N)` suffix instead of listing it as unattributed.
+- **Red flags:** A console row rendered green from a degraded pack field; a `Records shipped` row that silently dropped a commit with no `(#N)` suffix instead of listing it as unattributed; the console reporting no publish hook on a Windows (CRLF) checkout of a repo whose workflow fires on `release: published` — the verify step would then skip the hook check silently (#3040).
 
 ### 2. Nothing to release — a quiet stop
 - **URL:** the same command on a `main` with only `chore:`/`docs:` commits since the tag
@@ -52,3 +53,4 @@ files:
 - Steps 1-4 built in this session
 - Renamed from `release-a-version-2256.md` by #2257 (lifecycle wiring) — this is the payload's own release journey, for any consuming project using `/claude-tweaks:release`. It originally did **not** replace `release-a-plugin-version.md`: this repo's own release ran through a separate `plugin/bin/release.js <minor|patch>` mechanism until #2259 migrated this repo onto the shipped path. `release-a-plugin-version.md` was retired as part of that migration; this journey now covers this repo's own releases too.
 - Related specs: #2254 (local engine), #2255 (preflight pack), #2258 (release train Routine), #2250 (design)
+- Step 1 red flags updated for #3040 (the preflight pack's publish-hook probe now reads CRLF workflow files)

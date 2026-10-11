@@ -93,6 +93,16 @@
 //    genuine content it could reply to — logged as a violation, this misfires
 //    the same way #2036 does, just one dispatch level deeper. See
 //    isAsyncWaitSignal below.
+// 5. (fixed, #2714) #2041 only catches an interim reply whose IMMEDIATELY
+//    PRECEDING transcript entry is itself an async signal. A nested
+//    dispatcher's interim reply composed after intervening tool calls
+//    (dispatching a further nested agent, reading a sibling's output) no
+//    longer has an async signal as its immediately-preceding entry, so #2041
+//    never fires even though the reply is still legitimately mid-dispatch.
+//    Closed via an explicit marker convention a dispatching agent's own
+//    interim replies can carry — see isInterimProgressReply/INTERIM_MARKER_RE
+//    below and `_shared/subagent-output-contract.md`'s matching dispatch-side
+//    instruction.
 'use strict';
 const fs = require('fs');
 const ctxLib = require('./context');
@@ -135,6 +145,32 @@ function detectStatus(text) {
   const window = candidates.slice(0, 3).concat(candidates.slice(-3));
   if (window.some((l) => LENIENT_RE.test(l))) return { compliant: true, variant: 'lenient' };
   return { compliant: false, variant: null };
+}
+
+// #2714: a dispatched agent that is itself a nested dispatcher (fanning out
+// further async `Agent`-tool calls) must yield control across several of its
+// own turns before its real final reply — each interim turn narrates
+// progress on the still-pending nested work (e.g. "2 of 8 back. Lens 3b-b
+// surfaced two HIGH findings…"). The existing `isAsyncWaitSignal`/
+// `asyncWaitCheckpoint` filter only catches the narrower case where such a
+// turn immediately follows an async signal in the transcript; an interim
+// turn composed after intervening tool calls (reading a sibling's output,
+// dispatching the next nested agent) has no such signal immediately before
+// it, so that filter never fires. This is a SEPARATE, explicit marker
+// convention a dispatching agent's own interim (non-final) replies can
+// carry — deliberately a different label than `STATUS: {WORD}`
+// (`_shared/subagent-output-contract.md`'s Implementer Status Protocol is
+// for an agent's FINAL reply only; reusing that same word namespace for an
+// interim checkpoint would blur the two). A reply whose last non-empty line
+// matches this marker is never graded as a final reply at all — no log,
+// not even the informational `'lenient'` variant — the same silent-skip
+// shape `asyncWaitCheckpoint` already uses one tier up.
+const INTERIM_MARKER_RE = /^INTERIM_STATUS: /;
+
+function isInterimProgressReply(trimmedText) {
+  const nonEmpty = trimmedText.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+  if (nonEmpty.length === 0) return false;
+  return INTERIM_MARKER_RE.test(nonEmpty[nonEmpty.length - 1]);
 }
 
 // #2344: verdict words belonging to OTHER dispatch-site contracts (this
@@ -344,6 +380,13 @@ function run(ctx) {
   // #2345 zero-tool-use-verdict check below: an async-wait checkpoint is not
   // graded at all, so it must log nothing, not even that independent signal.
   if (asyncWaitCheckpoint) return {};
+  // #2714: a nested dispatcher's own interim progress-update reply, composed
+  // after intervening tool calls (so it has no async signal immediately
+  // before it and the #2041 filter above never fires) — not this agent's
+  // final reply either. Same silent no-op posture as asyncWaitCheckpoint
+  // immediately above: must run before the #2345 zero-tool-use-verdict
+  // check below, since an interim checkpoint is not graded at all.
+  if (isInterimProgressReply(trimmedText)) return {};
   if (toolUseCount === 0) {
     ctxLib.appendEvent(ownedRun.dir, 'zero-tool-use-verdict', { firstLine }, ownedRun.attribution);
   }
@@ -380,4 +423,4 @@ function run(ctx) {
   return { json: { systemMessage: 'claude-tweaks: a subagent reply is missing the Subagent Contract status line (STATUS: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, as the last non-empty line). Logged to events.jsonl.' } };
 }
 
-module.exports = { run, isExemptAgentType, isAsyncWaitSignal, detectStatus, classifyViolationVariant, countToolUseBlocks };
+module.exports = { run, isExemptAgentType, isAsyncWaitSignal, detectStatus, classifyViolationVariant, countToolUseBlocks, isInterimProgressReply };

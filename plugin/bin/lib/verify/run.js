@@ -12,7 +12,7 @@ const path = require('path');
 const STAGE1 = ['types', 'lint'];
 
 function runOne({
-  name, command, logDir, spawnImpl, now, cwd,
+  name, command, logDir, spawnImpl, now, cwd, env: checkEnv = null, platform = process.platform,
 }) {
   const logPath = path.join(logDir, `${name}.log`);
   const stream = fs.createWriteStream(logPath);
@@ -43,7 +43,20 @@ function runOne({
     // text when told to; the extractor's own stripAnsi stays authoritative
     // for runners that ignore both. Caller-set values win (a project that
     // deliberately forces colour on keeps it).
-    const env = { NO_COLOR: '1', FORCE_COLOR: '0', ...process.env };
+    // #2779: a check's own --cmd-env variables merge last, over the inherited
+    // environment, and reach the child through spawn's `env` option — never
+    // as a `VAR=val` prefix on the command string, which cmd.exe rejects.
+    // On Windows names are case-insensitive and spawn keeps only the
+    // lexicographically first of two case variants, so an inherited variant
+    // of a check's own name is dropped first — otherwise `PATH` inherited
+    // would beat a check's `path`. Spread, never Object.assign: a variable
+    // literally named __proto__ must stay data.
+    const inherited = { NO_COLOR: '1', FORCE_COLOR: '0', ...process.env };
+    if (checkEnv && platform === 'win32') {
+      const mine = new Set(Object.keys(checkEnv).map((k) => k.toUpperCase()));
+      for (const k of Object.keys(inherited)) if (mine.has(k.toUpperCase())) delete inherited[k];
+    }
+    const env = { ...inherited, ...checkEnv };
     try {
       child = spawnImpl(command, cwd ? { shell: true, cwd, env } : { shell: true, env });
     } catch (err) {

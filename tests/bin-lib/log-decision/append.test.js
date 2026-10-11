@@ -4,7 +4,9 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { formatEntry, resolveTarget, appendEntry, STATUSES } = require('../../../plugin/bin/lib/log-decision/append');
+const {
+  formatEntry, resolveTarget, appendEntry, STATUSES, normalizeSection,
+} = require('../../../plugin/bin/lib/log-decision/append');
 
 // The schema line _shared/auto-decision-log.md documents — a test-side parser, so
 // every entry the module emits is proven readable by the documented shape.
@@ -126,6 +128,43 @@ test('resolveTarget: mainRoot undefined + cwd where mainCheckoutRoot cannot be d
   const cwdNoGit = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-nogit-cwd-'));
   // mainRoot omitted entirely -> undefined, the production default.
   assert.deepEqual(resolveTarget({ runDir: foreignRun, cwd: cwdNoGit }), { ok: false, reason: 'not-anchored' });
+});
+
+// #2549: a `--section` value MSYS-mangled into a Windows path under Git Bash
+// is normalized back to the intended `/{skill}` form before it reaches the
+// decisions.md heading.
+test('normalizeSection: reverses the MSYS-mangled Git-for-Windows path shape', () => {
+  assert.equal(normalizeSection('C:/Program Files/Git/reflect'), '/reflect');
+  assert.equal(normalizeSection('C:/Program Files/Git/wrap-up'), '/wrap-up');
+});
+
+test('normalizeSection: a slash-free value is treated as the slash-free calling form', () => {
+  assert.equal(normalizeSection('reflect'), '/reflect');
+  assert.equal(normalizeSection('wrap-up'), '/wrap-up');
+});
+
+test('normalizeSection: an already-correct leading-slash value passes through unchanged (no double slash)', () => {
+  assert.equal(normalizeSection('/reflect'), '/reflect');
+});
+
+test('normalizeSection: falsy input passes through unchanged', () => {
+  assert.equal(normalizeSection(null), null);
+  assert.equal(normalizeSection(undefined), undefined);
+  assert.equal(normalizeSection(''), '');
+});
+
+test('appendEntry: an MSYS-mangled section value writes the normalized `## /reflect` heading', () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-run-'));
+  appendEntry({ runDir, section: 'C:/Program Files/Git/reflect', entry: '- AUTO 10:00:00 — a: b. Reversibility: high.' });
+  const text = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+  assert.equal(text, '## /reflect\n- AUTO 10:00:00 — a: b. Reversibility: high.\n');
+});
+
+test('appendEntry: a slash-free section value writes the same `## /reflect` heading as its slash-prefixed form', () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-run-'));
+  appendEntry({ runDir, section: 'reflect', entry: '- AUTO 10:00:00 — a: b. Reversibility: high.' });
+  const text = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+  assert.equal(text, '## /reflect\n- AUTO 10:00:00 — a: b. Reversibility: high.\n');
 });
 
 test('appendEntry: creates the file, then inserts under the named section before the next heading', () => {

@@ -48,7 +48,7 @@ The predicates referenced below (`isBacklog`, `isParked`, `isBotBlocked`) and `c
 come from `require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-buckets.js')`
 (`bin/lib/issues/record-buckets.js`).
 
-**Worklist rule (Shapes 1, 2, 3, 4, 5, 7, 8).** Per `_shared/work-record.md`'s worklist rule — a
+**Worklist rule (Shapes 1, 2, 3, 4, 4.5, 5, 7, 8).** Per `_shared/work-record.md`'s worklist rule — a
 headless unit skips any record another unit is already asking a human to decide — every
 record-scoped shape below excludes a record carrying a `needs:*`-prefixed label from its own
 findings, before applying that shape's own classification. `work-backend: github-issues`: exclude
@@ -117,6 +117,35 @@ The prose-only row's live-evidence guard exists because a trigger can state its 
 `facets.stage === 'ready'` and (`facets.risk === null` or `facets.size === null`). Labels are projection, not truth (`_shared/work-record.md`) — a `ready` record reaching this state without scoring usually means the label was hand-added on GitHub rather than stamped by `/claude-tweaks:specify`'s Shaping mode or a health skill's born-ready filing. `/claude-tweaks:backlog refine`'s own grant sub-stage would flag the identical gap reactively when it next pulls the `ready` queue; this surfaces it proactively during hygiene instead of waiting for a refine run.
 
 → Collect each as: `[scoring] {title} — missing {risk|size|both} — flag for scoring (/claude-tweaks:specify re-stamps it)`
+
+### Shape 4.5 — `ready` record missing only its Release Note
+
+Both drivers. Numbered 4.5 rather than appended, for the same reason as Shape 5.5 — Shapes 5, 6,
+7, and 8 keep the numbers other files already cite.
+
+`facets.stage === 'ready'` and the body's **only** spec-shape gap is `## Release Note`, judged by
+`compose-record.js --check` (#2827) — the Materialization gate's own checker, so this shape and
+`/flow`'s gate never disagree. Exit 4 with exactly one gap line reading `missing section: ##
+Release Note` or `empty section: ## Release Note` matches; exit 0, or any other gap alone or
+alongside it, does not (`/claude-tweaks:backlog refine`'s flag-back owns those); any other exit is
+a scan error for that record, never a match. `release-note-repair.js scan` applies the whole rule
+— both worklist-rule checks above included, the second against the fixed staged-action text
+`Fill Release Note (insert one ## Release Note section; labels unchanged)` — so do not re-filter
+its output:
+
+```bash
+eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" TIDY_RECORDS_FACETED=tidy-records-faceted.json)"
+node "${CLAUDE_PLUGIN_ROOT}/bin/release-note-repair.js" scan --driver {work-backend} --records "$TIDY_RECORDS_FACETED" --out "{release-note-candidates-file}"
+```
+
+`{work-backend}` is the driver this step resolved; `{release-note-candidates-file}` is the absolute
+path the dispatcher substituted into this prompt (`SKILL.md`'s Step 1 note). The scan writes every
+candidate there — this agent's 15-row table cap never truncates the repair list — and prints at
+most one summary line. Exit 2 (an unusable records file or `--out`): report one
+`[release-note] scan failed` row, severity `medium`.
+
+→ Collect the summary line as one row, Path:Line `—`, severity `info`. Composing and writing the
+Release Note are the main thread's (`release-note-repair.md`), never this agent's.
 
 ### Shape 5 — `bot:blocked` needing re-triage
 
@@ -294,10 +323,21 @@ that path, and with no sweep here would stay invisible permanently.
 
 Classification is entirely `needsBackstop`'s (`bin/lib/issues/acceptance.js`) — do not reimplement
 the disposition taxonomy. That predicate is backend-agnostic: it reads `{state, labels,
-hasParent}`, and a local record translates as `facets.closed === true` → `state: 'CLOSED'`,
+hasParent, stateReason}`, and a local record translates as `facets.closed === true` → `state: 'CLOSED'`,
 `facets.acceptance` → the one-element `['demo:' + facets.acceptance]` and empty when unset (the
 identical translation Shape 7 and `wrap-up/verification-brief.md`'s `local-files` paths already
 use), and `facets.parent !== null` → `hasParent`.
+
+`facets.notPlanned` → `stateReason: 'NOT_PLANNED'` is the same translation, added so a
+record closed not-planned is excluded from this shape exactly as its `github-issues` counterpart
+excludes a `NOT_PLANNED`/`DUPLICATE` `stateReason`. `_shared/work-record.md`'s lifecycle spine
+names the conceptual closed-as-not-planned state (wontfix, duplicate, absorbed) but this driver
+has only the one `not-planned` frontmatter flag to represent all of it — there is no separate
+local-files translation for `DUPLICATE`, since the driver has no sub-classification to translate
+into it. In practice a local record reaches this flag only when set by hand: `tidy`'s own Delete
+and Absorb actions (`tidy/actions-local-files.md`) remove the record file outright rather than
+marking it not-planned, so this path exists for the manual case, not as this driver's primary
+not-planned route.
 
 **Excluding decomposed sub-issues is load-bearing, not a refinement.** `needsBackstop` returns
 `false` for anything passed `hasParent: true`, because a sub-issue's acceptance lives on its parent
@@ -331,6 +371,10 @@ node -e "
       state: r.facets.closed ? 'CLOSED' : 'OPEN',
       labels: r.facets.acceptance ? ['demo:' + r.facets.acceptance] : [],
       hasParent: r.facets.parent !== null,
+      // local-files has no native stateReason — facets.notPlanned already conflates
+      // wontfix/duplicate/absorbed into one flag (_shared/work-record.md's lifecycle
+      // spine), so it maps onto NOT_PLANNED only; there is no local-files DUPLICATE case.
+      stateReason: r.facets.notPlanned ? 'NOT_PLANNED' : undefined,
     }))
     .forEach((r) => console.log(r.path + '\t[acceptance-gap] ' + r.id + ': ' + r.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo ' + r.id));
 " "$RISK_FLOOR" "$SIZE_FLOOR"
