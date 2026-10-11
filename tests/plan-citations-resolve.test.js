@@ -70,12 +70,16 @@ function rowStartingWith(text, prefix) {
 test('/tidy keeps a plan a repo file still cites, naming the citing file, at scan and at pre-delete re-verify (#3101 AC2)', () => {
   const scan = read('scan-procedures.md');
   const step4 = scan.slice(scan.indexOf('## Step 4: Audit Execution Plans'), scan.indexOf('Also glob `docs/plans/*-ledger.md`'));
-  assert.match(step4, /basename/, 'Step 4 must grep for the plan basename');
-  assert.match(step4, /excluding `docs\/superpowers\/plans\/` and `\.claude-tweaks\/`/);
-  assert.match(step4, /Keep \(cited by \{file\}\)/, 'Step 4 must name the citing file in its Keep');
-  assert.match(step4, /git -C "\{REPO_ROOT\}" grep -lF -- '\{basename\}' -- ':!docs\/superpowers\/plans\/' ':!\.claude-tweaks\/'/, 'Step 4 must name the tracked-files-only git grep');
-  assert.match(step4, /Yours \(\{N\}\)/, 'Step 4 must route a cited Keep to Yours');
-  assert.match(step4, /Auto \(no-op, always surfaced\)/);
+  assert.match(step4, /Before any plan Delete:\*\* run `plan-citation-check\.md`/, 'Step 4 must route every plan Delete through the citation check');
+  // The rule itself lives in its own sub-file: scan-procedures.md is byte-capped (release-lifecycle-byte-budget.test.js).
+  const check = read('plan-citation-check.md');
+  assert.match(check, /basename/, 'the citation check must grep for the plan basename');
+  assert.match(check, /excluding `docs\/superpowers\/plans\/` and `\.claude-tweaks\/`/);
+  assert.match(check, /Keep \(cited by \{file\}\)/, 'the citation check must name the citing file in its Keep');
+  assert.match(check, /git -C "\{REPO_ROOT\}" grep -lF -- '\{basename\}' -- ':!docs\/superpowers\/plans\/' ':!\.claude-tweaks\/'/, 'the citation check must name the tracked-files-only git grep');
+  assert.match(check, /Yours \(\{N\}\)/, 'the citation check must route a cited Keep to Yours');
+  assert.match(check, /Auto \(no-op, always surfaced\)/);
+  assert.match(check, /Any other non-zero exit means the check could not run/, 'a failed grep must fail closed');
   const routing = read('collection-routing.md');
   const planRow = rowStartingWith(routing, '| `[backlog]`, `[parked]`');
   assert.ok(planRow, 'collection-routing.md Approve row not found');
