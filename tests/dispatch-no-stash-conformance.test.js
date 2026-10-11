@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #1967: the #1864 review call ran `git stash` / `git stash pop` to compare
 // against a baseline and popped a SIBLING worktree's WIP stash — the stash
 // stack is repository-wide, shared by every linked worktree of the same main
@@ -16,7 +16,7 @@ const path = require('path');
 // guard.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const TASK_PROMPT = read('plugin', 'skills', 'dispatch', 'task-prompt.md');
 const BUILD_DISPATCH = read('plugin', 'skills', 'build', 'dispatch.md');

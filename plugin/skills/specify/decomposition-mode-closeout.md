@@ -131,7 +131,7 @@ gh issue edit {ref} --body-file /tmp/body-{ref}-resolved.txt [--add-label ready]
 
 `bin/resolve-ambiguity.js` never touches `gh`/MCP itself — it is a pure local transform (fetch-then-transform-then-write, the same compose-then-write-once discipline every write in this skill uses) — so step 1's fetch and step 3's write-back use whichever transport (`gh` or the MCP `issue_read`/`create_or_update_file` equivalents) this run is already using elsewhere. `readyRestorable` matches `spec-template.md`'s exact structural check: zero remaining `<!-- ambiguity: -->` markers AND no surviving `## Open Questions` heading — never restore `ready` when it reports `false`, even if this row's own marker was the last one you expected to find.
 
-`{ref}` is `#{N}` under `work-backend: github-issues`, the bare record id under `local-files` — same convention as Step 1's Overlap Analysis.
+`{ref}` is `#{N}` under `work-backend: github-issues`, the bare record id under `local-files` — same convention as Step 1's Overlap Analysis (`overlap-resolution.md`).
 
 **`needs:definition` origin closure.** When `$ORIGIN_RECORD_NUM` is set (this run was reached via the `needs:definition` redirect — `specify/SKILL.md`'s Resolve-the-input case 1), what happens to the origin record depends on this run's collapse decision (Step 2.6):
 

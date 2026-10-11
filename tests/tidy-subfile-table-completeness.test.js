@@ -14,6 +14,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -23,7 +24,7 @@ test('every plugin/skills/tidy/*.md sibling file appears in the tidy row of docs
     .filter((name) => name.endsWith('.md') && name !== 'SKILL.md');
   assert.ok(siblingFiles.length > 0, 'expected at least one tidy sub-file -- a glob/path mistake would make this test vacuous');
 
-  const body = fs.readFileSync(path.join(ROOT, 'docs/plugin-structure.md'), 'utf8');
+  const body = readText(path.join(ROOT, 'docs/plugin-structure.md'));
   const rowMatch = body.match(/^\| tidy \| ([^|]+) \|/m);
   assert.ok(rowMatch, "docs/plugin-structure.md is missing a '| tidy | ... |' row");
   const listedFiles = new Set(rowMatch[1].split(',').map((s) => s.trim()));

@@ -197,22 +197,13 @@ actually disagrees with the integration branch's tip, or with the branch it was 
 from; read both sides and produce a merged result, or surface it to the user if genuinely
 ambiguous. This is the one case where "unconditional" still needs a human/agent decision.
 
-**Windows: `Filename too long`.** This repo tracks paths well past 180 characters under
-`.claude-tweaks/pipelines/**/spec-*/work/{n}-spec.md` (longest observed 225); with a Windows
-checkout prefix these can exceed the default ~260-character `MAX_PATH`, and `core.longpaths` is
-off by default in Git for Windows. A fetch/merge above that fails with `Filename too long` is a
-fixable local misconfiguration, not a connectivity failure — it must **not** take the fail-open
-path below. `git config --get core.longpaths`; when unset or `false`, `git config core.longpaths
-true` (repo-local — linked worktrees share the main checkout's `.git/config`, so one setting
-covers every worktree of this repo; `--global` is the operator's own choice, not this procedure's)
-and retry the merge. This failure can leave the merge partially applied: it self-aborts with no
-`MERGE_HEAD` (`git merge --abort` finds nothing to abort), and the incoming files land as
-untracked additions, so a naive retry fails again with "untracked working tree files would be
-overwritten." Recovery — safe **only** on a freshly created worktree with no commits or edits of
-its own (`_shared/git-discipline.md`'s "never reset or discard" rule is the default this carves
-out): confirm freshness (`git log --oneline origin/{integration-branch}..HEAD` prints nothing and
-`git status --porcelain` shows only the untracked leftovers), then `git reset --hard HEAD` and
-`git clean -f -d -- {leftover paths}`, then retry the merge.
+**Windows: `Filename too long`.** A fetch/merge above that fails with this error is a fixable
+local misconfiguration (`core.longpaths` off by default in Git for Windows, colliding with this
+repo's deeply nested `.claude-tweaks/pipelines/**/spec-*/work/{n}-spec.md` paths), not a
+connectivity failure — it must **not** take the fail-open path below. Read
+`_shared/worktree-setup-windows-longpath.md` in this directory and follow it (#2722) — the
+`core.longpaths` fix and the reset-then-clean recovery sequence — only when this specific failure
+is hit; it never applies to the ordinary catch-up path below.
 
 **Fail open on fetch/merge command failure**, distinctly from a conflict and distinctly from the
 Windows long-path failure above (excluded from this path — it is a fixable misconfiguration, not
@@ -227,7 +218,8 @@ own repair-loop guidance asks for elsewhere in this plugin.
 
 **Log the correction when it changes anything.** When either merge actually advances the
 worktree's branch (`git rev-parse HEAD` differs before and after — not a no-op), the calling
-procedure appends an entry to the run's `decisions.md` under its own heading:
+procedure appends an entry to the run's `decisions.md` under its own heading (no run dir:
+`_shared/worktree-catchup-no-run-dir.md`):
 `AUTO {time} — Post-creation catch-up: worktree branch advanced from {before short} to {after
 short} ({N} commit(s) from {origin/{integration-branch} or EXPECTED_BASE}). Reversibility: high
 (worktree has no other commits yet).` A no-op merge (branch tip unchanged) writes nothing — this

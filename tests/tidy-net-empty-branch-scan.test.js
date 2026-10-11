@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #613: tidy's worktree/branch scan flags a branch that is net-empty vs. its
 // merge-base as reclaimable, even when unmerged — the canonical /specify
 // residue shape (a design doc committed then deleted, netting zero across
@@ -14,7 +14,7 @@ const path = require('path');
 // the test is a conformance grep over the literal skill text.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 const SCAN_PROCEDURES = read('plugin', 'skills', 'tidy', 'scan-procedures.md');
 const STEP6 = read('plugin', 'skills', 'tidy', 'step-6-auto.md');
 const NET_EMPTY_SECTION = STEP6.slice(

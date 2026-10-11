@@ -83,9 +83,11 @@ means there:
 |---|---|
 | Reporting a landed-but-unverified mutation as `HELD` | `HELD` means nothing landed; this is `PARTIAL` |
 | Mapping one engine exit code to one outcome word | Split the ambiguous code on stderr or a re-probe |
+| A snippet that rewrites the engine's exit (`cmd \|\| exit 4`) ahead of prose that branches on its codes | End it with a bare `\|\| exit`, which re-raises the engine's own code — `\|\| exit 4` turned `compose-record.js --check`'s exit 2 into 4 and made the non-gap branch unreachable (`plugin/skills/specify/shaping-mode-stamping.md`, `2042a3948`). Pin it by running the snippet against a fake CLI that exits 2; a `\|\| exit\b` regex also matches `\|\| exit 4` |
 | "Re-run the skill" as the recovery for `PARTIAL` | Name the idempotent per-item writes |
 | Booking the value the skill gated on | Book the value the engine returned |
 | A per-record failure in the last loop with no summary slot | A `bookkeeping: {k} of {n} failed` line whenever k > 0 |
+| A gate/precondition failure that exits before any mutating step, with no `decisions.md` entry | `HELD` is a real outcome too — log it with the gate's stated reason, the same as `failed`/`PARTIAL`/`released` (`plugin/skills/_shared/local-merge-auto-finish.md`'s composer-failure fix: a `compose-subject.js` shaping-defect exit used to leave the run silent — a bare, unlogged process exit — not a logged `HELD`) |
 
 ## When not to use
 
@@ -96,5 +98,5 @@ something else and must be described after the fact.
 ## Origin
 
 Derived at wrap-up from the seven-spec run that shipped `/claude-tweaks:release` (#2251-#2258) —
-ledger row 115 of `docs/plans/2026-09-11-release-skill-ledger.md`, rulings 13, 14, 19, 20 and
+ledger row 115 of `docs/plans/2026-09-11-release-skill-ledger.md` (resolved and removed), rulings 13, 14, 19, 20 and
 review rows 104-108.

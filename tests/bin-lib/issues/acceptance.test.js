@@ -109,6 +109,34 @@ test('needsBackstop is unchanged when hasParent is absent or not literally true'
   assert.equal(needsBackstop({ state: 'CLOSED', labels: [], hasParent: undefined }), true);
 });
 
+test('needsBackstop excludes a NOT_PLANNED closure even with no disposition', () => {
+  assert.equal(needsBackstop({ state: 'CLOSED', labels: [], stateReason: 'NOT_PLANNED' }), false);
+});
+
+test('needsBackstop excludes a DUPLICATE closure even with no disposition', () => {
+  assert.equal(needsBackstop({ state: 'CLOSED', labels: [], stateReason: 'DUPLICATE' }), false);
+});
+
+test('needsBackstop still fires for a COMPLETED closure with no disposition', () => {
+  // A normal completed-merge closure must not be swept up by the new branch.
+  assert.equal(needsBackstop({ state: 'CLOSED', labels: [], stateReason: 'COMPLETED' }), true);
+});
+
+test('needsBackstop returns false for NOT_PLANNED even when already dispositioned', () => {
+  // The two suppression paths (stateReason and disposition) must agree, not conflict.
+  assert.equal(
+    needsBackstop({ state: 'CLOSED', labels: ['demo:approved'], stateReason: 'NOT_PLANNED' }),
+    false,
+  );
+});
+
+test('needsBackstop suppresses a NOT_PLANNED sub-issue too (both reasons compose)', () => {
+  assert.equal(
+    needsBackstop({ state: 'CLOSED', labels: [], stateReason: 'NOT_PLANNED', hasParent: true }),
+    false,
+  );
+});
+
 const CLOSED = (n) => ({ number: n, state: 'CLOSED' });
 const OPEN = (n) => ({ number: n, state: 'OPEN' });
 

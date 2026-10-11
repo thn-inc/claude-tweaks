@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #856: extraction of plugin/skills/_shared/transcript-judge.md from
 // plugin/skills/feedback/session-evaluation.md. Pins the shared file's own
 // content (the consumer-invariant mechanics moved verbatim) and the fact
@@ -15,7 +15,7 @@ const path = require('path');
 // rather than content scheduled for deletion.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const SHARED = read('plugin', 'skills', '_shared', 'transcript-judge.md');
 const SESSION_EVAL = read('plugin', 'skills', 'feedback', 'session-evaluation.md');
@@ -42,13 +42,40 @@ test('transcript-judge.md documents the main-session-only scope statement', () =
 });
 
 test('transcript-judge.md documents project-slug derivation with the doubled-hyphen rule', () => {
-  assert.match(SHARED, /each `\/`,\s*\n\s*space, and `\.` in that path is replaced by `-`/);
-  assert.match(SHARED, /produces a doubled hyphen where the directory separator and the/);
+  assert.match(SHARED, /each `\/`,\s+space, and `\.` in that path is replaced by `-`/);
+  assert.match(SHARED, /produces a doubled hyphen where\s+the directory separator and the/);
 });
 
 test('transcript-judge.md documents the mtime-newest fallback with mandatory disclosure', () => {
-  assert.match(SHARED, /pick the newest\s*\n`\.jsonl` file in the resolved project-slug directory by mtime/);
+  assert.match(SHARED, /pick the newest `\.jsonl` file by mtime/);
   assert.match(SHARED, /never silent newest-wins/);
+});
+
+// #2696: resolution now searches for the session-id filename across the whole
+// projects root before falling back to the cwd-derived slug directory, so it
+// survives a worktree cwd change mid-session. Pins the new Primary section and
+// the CLAUDE_CONFIG_DIR root reuse (same override claude-tweaks-statusline.js
+// already uses for a relocated config home).
+
+test('transcript-judge.md documents the projects root using CLAUDE_CONFIG_DIR, reusing the statusline override', () => {
+  assert.match(SHARED, /\*\*Projects root:\*\* `\$\{CLAUDE_CONFIG_DIR:-~\/\.claude\}\/projects`/);
+  assert.match(SHARED, /claude-tweaks-statusline\.js.*resolveConfigDir.*already uses/);
+});
+
+test('transcript-judge.md documents primary resolution by session-id filename search', () => {
+  assert.match(SHARED, /\*\*Primary — search by session-id filename\.\*\*/);
+  assert.match(SHARED, /search every\s+immediate subdirectory of the projects root for a file named exactly `<session-id>\.jsonl`/);
+  assert.match(SHARED, /find "\$\{CLAUDE_CONFIG_DIR:-\$HOME\/\.claude\}\/projects" -mindepth 2 -maxdepth 2/);
+});
+
+test('transcript-judge.md documents the primary search survives a worktree cwd change mid-session', () => {
+  assert.match(SHARED, /survive a\s+worktree cwd change mid-session/);
+});
+
+test('transcript-judge.md documents zero-match and multi-match handling for the primary search before falling to the Fallback', () => {
+  assert.match(SHARED, /\*\*Exactly one match:\*\* use it\./);
+  assert.match(SHARED, /\*\*More than one match\*\* \(pathological/);
+  assert.match(SHARED, /\*\*Zero matches, or `\$CLAUDE_CODE_SESSION_ID` unset:\*\* proceed to the Fallback below\./);
 });
 
 // --- 3. Watermark protocol moved verbatim, including timing and degrade-open ---
@@ -66,6 +93,37 @@ test('transcript-judge.md documents watermark write-failure degrade-open', () =>
 
 test('transcript-judge.md documents the watermark write is gated on DONE\\/DONE_WITH_CONCERNS only', () => {
   assert.match(SHARED, /On a `DONE` or `DONE_WITH_CONCERNS` return from the judge \(not/);
+});
+
+// --- 3b. #2730: self-assessment writes a watermark too, when a transcript path resolved ---
+
+test('transcript-judge.md narrows the self-assessment watermark exclusion to the no-transcript-resolves route only', () => {
+  assert.match(SHARED, /\*\*Watermark — narrower than a blanket exclusion\.\*\*/);
+  assert.match(SHARED, /The one true no-watermark case is the\nno-transcript-resolves route/);
+  assert.doesNotMatch(SHARED, /The self-assessment path never reads or writes a watermark/);
+});
+
+test('transcript-judge.md documents the self-assessment write reuses bytesAtDispatch captured before the failed dispatch', () => {
+  assert.match(SHARED, /reusing the `bytesAtDispatch` already\ncaptured before the failed dispatch attempt/);
+});
+
+test('transcript-judge.md documents the mode: "self-assessment" payload field and its absent-field fallback', () => {
+  assert.match(SHARED, /mode: "self-assessment"` on the\npayload/);
+  assert.match(SHARED, /treats its absence as the pre-existing dispatched-judge case, never as a new failure\nmode/);
+});
+
+test('transcript-judge.md Watermark write section also fires for the terminal-dispatch-failure self-assessment route', () => {
+  assert.match(
+    SHARED,
+    /or on completing a self-assessment evaluation reached via a terminal\njudge-dispatch failure/,
+  );
+  assert.match(SHARED, /mode,\s*\/\/ "self-assessment" on the terminal-dispatch-failure route above/);
+});
+
+test('transcript-judge.md lets a consumer whose fallback does not evaluate the session opt out, and reflect states that opt-out', () => {
+  assert.match(SHARED, /opts out and writes no watermark on this route — its own\nfile states the opt-out/);
+  const REFLECT = read('plugin', 'skills', 'reflect', 'SKILL.md');
+  assert.match(REFLECT, /reflect opts out of `_shared\/transcript-judge\.md`'s self-assessment watermark write/);
 });
 
 // --- 4. Self-assessment degradation + record-failure clause moved verbatim ---

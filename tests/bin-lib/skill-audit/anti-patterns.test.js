@@ -247,8 +247,8 @@ test('every shipped skill has a parseable Anti-Patterns table', () => {
   //
   //   358 -> 362, `doctor` mode routing Impeccable's design-record findings
   //   into /tidy (#150). Four rows ADDED to design-wrapper/SKILL.md, none
-  //   evicted: "Passing `--fix` to `doctor.mjs`", "Passing any flag but
-  //   `--json` to `doctor.mjs`", "Collapsing `route`/`mention`/`auto` into
+  //   evicted: "Passing `--fix` to the doctor verb", "Passing any flag but
+  //   `--json` to the doctor verb", "Collapsing `route`/`mention`/`auto` into
   //   claude-tweaks' severity words in the wrapper's return", and "Running
   //   Layer 3's file sniff before `doctor`". Verified rather than assumed, in
   //   both directions: `git diff origin/main...HEAD -- 'skills/*/SKILL.md' |

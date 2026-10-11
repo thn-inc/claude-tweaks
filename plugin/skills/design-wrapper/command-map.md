@@ -79,6 +79,8 @@ These three are deterministic enough that running them on every frontend polish 
 
 **Why the suffix is not the job-type inference this wrapper rejects.** It is a fixed constant about a *pipeline phase*, not a per-record lookup over a job-type enum: the polish phase runs only after `/review` has passed on already-built code, so every invocation of it is definitionally a scoped refinement. The wrapper reads nothing about the record to decide the suffix, and there is no branch in which it is varied or omitted.
 
+**Pinned-copy / skip overrides and scope restriction (#2743).** Before any refinement-set command dispatches, `modes/polish.md`'s Step 2.5 applies first: a command named in the record's `Polish-skip:` body-metadata line is not dispatched (staged instead, `kind: "skipped-by-record"`); when the record declares `Polish-scope: record-created`, the target file list is further restricted to files this branch added, not every file the diff touched; and when the record's pinned-copy list is non-empty, every surviving dispatch's target argument also carries the pinned-copy suffix, appended **after** the job-statement suffix above. This file does not restate the derivation, the file-scope mechanic, or the exact suffix text — see `modes/polish.md` Step 2.5 (and Step 4 for the scope filter) for all three.
+
 ### Step 2 — Suggestion-driven (driven by each audit finding's own `suggestion`)
 
 Read the audit findings cache written by `review` mode (`docs/plans/...-audit.json`). When no audit cache exists, this step is a no-op — Step 1 and Step 3 still run.
@@ -96,6 +98,8 @@ The rules below govern the dispatch. They apply to **every** finding, whatever i
 4. **A finding with no usable `suggestion` is staged as an unclassified observation.** When the field is absent, empty, or names something that is not a command in the Full command map table, append an entry to `staged_suggestions` carrying the finding's `id`, `category`, and `description` (see `modes/polish.md`'s Output to caller for the entry shape) and log it to the decision log. It is **never** mapped to a command by keyword — that is the mechanism this section replaced, and reintroducing it here under another name would defeat the change — and it is never silently dropped.
 
 **`category` is not a dispatch key.** A finding's `category` field (e.g. `slop`, per `impeccable-cli.md`'s schema table) is better than keyword-matching `description`, but only inside the keyword-matching model this section removed. It carries through as metadata on a staged entry so a human can group related findings at the Review Console. It selects no command.
+
+**Pinned-copy / skip overrides (#2743).** The same `modes/polish.md` Step 2.5 check applies here: a `suggestion`-named command in the record's `Polish-skip:` line is staged (`kind: "skipped-by-record"`, same staging shape as rule 1 above) rather than dispatched, and a non-empty pinned-copy list appends its suffix to the dispatch's target argument. See Step 2.5 for both.
 
 ### Step 3 — Intent-driven
 
@@ -117,6 +121,8 @@ Read `Design-intent:` from the record's body-metadata line (lifted into the mate
 > "Apply a frequency gate before animating: keyboard-initiated actions and actions triggered 100+ times per day get no animation (instant state change only); daily/occasional actions get subtle, fast motion; rare (monthly-or-less) actions may receive expressive motion. Decide whether to animate first, using this gate — then apply your own duration/easing rules."
 
 This is a fixed guardrail, not creative drift — same category as Impeccable's own mandatory `prefers-reduced-motion` rule baked into every `animate` call. It does not depend on audit signal or `design-intent` value to apply; append it every time this wrapper dispatches `animate`. `delight` does not carry this suffix: `delight` covers content and personality (copy, illustration, celebratory moments) with its own restraint framework, and a trigger-frequency gate keyed to "keyboard-initiated → never" would conflict with moments `delight` deliberately wants to celebrate (e.g. a first-time keyboard-shortcut reveal).
+
+**Pinned-copy / skip overrides (#2743).** Same `modes/polish.md` Step 2.5 check: an intent-named command in the record's `Polish-skip:` line is staged (`kind: "skipped-by-record"`) rather than dispatched, and a non-empty pinned-copy list appends its suffix after the Frequency Gate suffix above when both apply to the same `animate` dispatch — pinned-copy is always last.
 
 **Manual-only commands.** The manual-only commands (see the Full command map table above for current membership; `extract`'s row there also notes its `/claude-tweaks:tidy` Step 5.5 surfacing) are not intent-driven — they remain manual-only, surfaced only as `survey`-mode recommendations when their "would help" criteria match. This keeps the auto-dispatch surface conservative — manual-only commands produce the most aggressive creative drift (`overdrive` especially), so they require explicit user invocation rather than auto-dispatch from `Design-intent:` body-metadata.
 

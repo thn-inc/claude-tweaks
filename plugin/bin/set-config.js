@@ -27,10 +27,74 @@
 // family: bin/log-decision.js (decisions.md), bin/stage-item.js (staged/),
 // this (config.yml levers — the ceremony escape hatch's downgrade path, and
 // the Manifesto's own batch write).
+//
+// Manifesto FYI render (#2735): flow/manifesto.md mandates that a default
+// `auto`-mode `/flow` run render a `### Pipeline Config (auto)` table plus a
+// `-> proceeding (no approval needed)` line as visible output — but that
+// render was prose the orchestrating model had to remember to compose
+// *after* this CLI's write call, and it was observed being silently
+// skipped. When a `--set` batch supplies exactly the 13 canonical Manifesto
+// levers (any order) with `mode=auto`, this is unambiguously that write
+// call, so success also prints the FYI table itself — a mechanical side
+// effect of the write, not a separate step to forget. Any other invocation
+// shape (single-key form, a partial batch, `mode` other than `auto`) prints
+// only the existing per-lever lines, unchanged.
 'use strict';
 
 const { resolveTarget } = require('./lib/stage-item/write');
 const { MANIFESTO_LEVERS, validateLever, setConfigLever } = require('./lib/set-config/write');
+
+// Canonical lever numbering/labels, per manifesto.md's "Canonical lever
+// numbering" paragraph — presentation-only, so kept here rather than in
+// lib/set-config/write.js (which owns validation/persistence, not render).
+const LEVER_LABELS = Object.freeze({
+  mode: 'Mode',
+  'scope-creep': 'Scope-creep',
+  overlap: 'Overlap',
+  'design-intent': 'Design intent',
+  'leftover-default': 'Leftover routing',
+  'auto-fix-threshold': 'Auto-fix threshold',
+  'review-auto-apply-ceiling': 'Review auto-apply ceiling',
+  'tidy-aggressiveness': 'Tidy aggressiveness',
+  'ceremony-profile': 'Ceremony profile',
+  'model-stance': 'Model stance',
+  'merge-verification': 'Merge verification',
+  'design-critique': 'Design critique',
+  'merge-authorization': 'Merge authorization',
+});
+
+// results: array of { key, value, file, previous } from the write loop.
+// Renders the auto-mode FYI table in canonical lever order (MANIFESTO_LEVERS
+// order, not batch-argument order — a `--set` caller may list keys in any
+// order).
+function renderManifestoFyi(results) {
+  const byKey = new Map(results.map((r) => [r.key, r.value]));
+  const rows = MANIFESTO_LEVERS.map((key) => `| ${LEVER_LABELS[key]} | ${byKey.get(key)} |`);
+  return [
+    '### Pipeline Config (auto)',
+    '',
+    '| Lever | Value |',
+    '|---|---|',
+    ...rows,
+    '',
+    '→ proceeding (no approval needed) · run with `confirm` to review/override',
+    '',
+  ].join('\n');
+}
+
+// True only for the exact call shape the Manifesto step's batch write makes
+// (flow/manifesto.md's "Write mechanism" section): all 13 canonical levers,
+// no more, no fewer, with mode=auto. A partial batch (e.g. the ceremony
+// escape hatch's downgrade-in-place write, or steps-and-gates.md case 3's
+// recovery when the run's own mode is not auto) never matches.
+function isManifestoAutoBatch(results) {
+  if (results.length !== MANIFESTO_LEVERS.length) return false;
+  const keys = new Set(results.map((r) => r.key));
+  if (keys.size !== MANIFESTO_LEVERS.length) return false;
+  for (const lever of MANIFESTO_LEVERS) if (!keys.has(lever)) return false;
+  const modeResult = results.find((r) => r.key === 'mode');
+  return !!modeResult && modeResult.value === 'auto';
+}
 
 const USAGE = 'usage: set-config.js --run <run-dir> --key <lever> --value <value> [--help]\n' +
   '       set-config.js --run <run-dir> --set <lever1>=<value1>,<lever2>=<value2>,... [--help]\n';
@@ -159,9 +223,10 @@ function run(argv, deps = realDeps) {
   for (const r of results) {
     deps.stdout(`${r.file} (${r.key}: ${r.previous == null ? 'unset' : r.previous} -> ${r.value})\n`);
   }
+  if (isManifestoAutoBatch(results)) deps.stdout(renderManifestoFyi(results));
   return 0;
 }
 
-module.exports = { run, parseArgs };
+module.exports = { run, parseArgs, renderManifestoFyi, isManifestoAutoBatch };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

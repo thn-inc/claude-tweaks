@@ -43,7 +43,7 @@ function ghAvailable(deps = {}) {
 }
 
 function remoteUrl() {
-  return execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' });
+  return execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true });
 }
 
 // A parseRepo result (or any { host, owner, repo }) -> the slug `gh --repo`
