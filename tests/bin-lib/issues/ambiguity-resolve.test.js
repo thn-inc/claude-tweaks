@@ -104,6 +104,13 @@ test('resolveAmbiguityMarker: replaces the marker and reports ready restorable',
   assert.equal(result.readyRestorable, true);
 });
 
+test('resolveAmbiguityMarker: resolves a marker whose comment spans lines', () => {
+  const marker = '<!-- ambiguity: Skeptical Reviewer — a long\nfinding; suggested: x -->';
+  const result = resolveAmbiguityMarker(shaped(marker), marker, 'Settled: x.');
+  assert.equal(result.body, shaped('Settled: x.'));
+  assert.equal(result.readyRestorable, true);
+});
+
 test('resolveAmbiguityMarker: readyRestorable stays false when another marker remains', () => {
   const result = resolveAmbiguityMarker(shaped('<!-- ambiguity: a --> <!-- ambiguity: b -->'), '<!-- ambiguity: a -->', 'resolved a');
   assert.equal(result.markersRemaining, 1);

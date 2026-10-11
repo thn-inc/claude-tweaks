@@ -25,6 +25,12 @@ test('the resolve procedure passes record text by file, never inside shell quote
   assert.doesNotMatch(CLOSEOUT, /\/tmp\/body-/);
 });
 
+test('every fence that uses the $RA_* paths resolves them itself — shell variables do not survive between Bash calls (#2699 review)', () => {
+  const fences = CLOSEOUT.match(/```bash\r?\n[\s\S]*?```/g).filter((f) => f.includes('$RA_'));
+  assert.ok(fences.length >= 2, 'the fetch and apply fences both use $RA_* paths');
+  for (const fence of fences) assert.match(fence, /eval "\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/session-tmp-resolve\.js" RA_BODY=/);
+});
+
 test('the write-back only runs when the CLI succeeds, and exit 3 is documented (#2699 review)', () => {
   assert.match(CLOSEOUT, /--out "\$RA_OUT" && gh issue edit \{n\} --body-file "\$RA_OUT"/);
   assert.match(CLOSEOUT, /Exit 3 means the text is not in the body, or occurs more than once/);
