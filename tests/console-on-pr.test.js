@@ -1,16 +1,16 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #412: Console-on-PR — render the Wrap-Up Review Console as a PR comment
 // with a checkbox answer protocol, under integration-model: pr-first.
 // Prose-as-implementation, same convention as the other pr-first sub-issues'
 // test files — pin the key claims against the actual file text.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 const CONSOLE_ON_PR = read('plugin', 'skills', '_shared', 'console-on-pr.md');
 const REVIEW_CONSOLE_INTERACTIVE = read('plugin', 'skills', 'wrap-up', 'review-console-interactive.md');
 const MULTISPEC_CONSOLE = read('plugin', 'skills', 'flow', 'multispec-review-console.md');

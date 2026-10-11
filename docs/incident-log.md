@@ -1731,3 +1731,28 @@ Cost on this build: one review round across two findings, both fixed in the same
 **Removal condition:** retire this entry and its `docs/donts.md` rule once a mechanical check (a
 grep-based lint, or a shared `lstat`-backed helper new filesystem-check code is required to route
 through) flags a name-keyed or existence-only check with no accompanying type check.
+
+## IL-162 — Redaction regexes run over uncapped transcript tool output
+
+During #2968's `plugin/bin/lib/dream/scan.js` build (2026-10-04), the plan specified new
+secret-redaction regexes — a keyword-bearing `[A-Za-z0-9_-]*KEYWORD[A-Za-z0-9_-]*` name followed
+by a `[^\s'"]+`-style value class — and applied them through `redact()` to raw transcript tool
+output with no input-length bound. The per-task reviewer passed it. Only the review phase's
+error-handling lens caught the quadratic backtracking a long keyword-bearing run triggers,
+direct-verified at 290 ms for 48k characters and 1744 ms for 120k; a single tool output can run
+to megabytes.
+
+The fix (`0a8a9999c`) slices input to 2048 characters before any pattern runs — every caller
+truncates to at most 300 after redacting, so nothing past the cap could reach an output anyway —
+and pins it with a timing test in `tests/bin-lib/dream/scan.test.js` that fails pre-fix (1744 ms
+against a 500 ms bound). The question had come up once before: #1837's review flagged the
+unbounded `[\s\S]*?` in `plugin/bin/lib/issues/materialize-format.js`'s code-span stripper, which
+was capped at 2000 characters defensively. Both inputs are sized by something outside the code —
+a transcript, a tool result, an issue body — so the regex's worst case is whatever that source
+hands it.
+
+Cost on this build: one review-fix cycle — a fix commit, a new timing test, and a full-suite
+re-run.
+
+**Removal condition:** retire this entry and its `docs/donts.md` rule once a mechanical check (a
+lint for unbounded quantifiers over externally-sized input, or a shared bounded-match helper such

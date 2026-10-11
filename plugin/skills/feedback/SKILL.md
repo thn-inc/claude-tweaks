@@ -30,7 +30,7 @@ publishes nothing — see `upstream-draft.md` in this skill's directory, and
 
 ## Input
 
-`$ARGUMENTS` is parsed as `[<learning text>] [--kind=<value>] [--upstream <owner/name>] [--dry-run] [--queue] [--full] [--pre-confirmed]`:
+`$ARGUMENTS` is parsed as `[<learning text>] [--kind=defect|gap] [--upstream <owner/name>] [--dry-run] [--queue] [--full] [--pre-confirmed]`:
 
 | Argument | Behavior |
 |----------|----------|

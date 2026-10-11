@@ -138,6 +138,16 @@ These challenge the project's DESIGN.md, not the diff — the wrapper never edit
 
 > Findings are advisory — they inform the verdict but were not auto-applied. To action them inline, route through Step 3 Routing's resolution flow with category `Agent Trust Scope`. This audits the project's own committed `.claude/settings.json` permission posture only — never a claim about an agent's actual real-world reach (`criteria-agent-trust-scope.md`'s "What NOT to flag").
 
+### App Store Readiness (from Step 6.66, code-health's `focus=app-store-readiness`)
+
+{Include when Step 6.66's pre-check found mobile-app files in scope and at least one candidate survived judgment. Omit when the pre-check skipped (no mobile-app files in the diff scope), when the result was `notApplicable: true` (no mobile-app signal), or when candidates were found but none survived judgment (note the latter in the summary footer instead: "App Store Readiness pass ran — no actionable findings.").}
+
+| File | Kind | Severity | Finding |
+|------|------|----------|---------|
+| {file}:{line} | {missing-apple-signin-parity / external-payment-no-iap / missing-account-deletion / incomplete-demo-login / unverified-ipad-layout / unlabeled-paid-screenshot / dead-support-privacy-link / coming-soon-placeholder / missing-ugc-report-path / broken-restore-purchases} | {low/medium/high} | {message, per `criteria-app-store-readiness.md`'s calibration} |
+
+> Findings are advisory — they inform the verdict but were not auto-applied. To action them inline, route through Step 3 Routing's resolution flow with category `App Store Readiness`. Each row is a static-text signal for Apple App Store review risk, not a verified rejection — confirm against the actual code path before treating a finding as settled (`criteria-app-store-readiness.md`'s "What NOT to flag").
+
 ### Code Simplification
 - {summary of simplifier changes, or "No simplifications needed"}
 

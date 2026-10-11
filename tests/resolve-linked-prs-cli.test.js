@@ -153,7 +153,7 @@ test('success: one runner call, a number-keyed JSON line on stdout, exit 0', () 
   assert.equal(deps.calls.runner.length, 1, 'exactly one gh api graphql call');
   assert.equal(deps.calls.stderr.length, 0, 'success path writes nothing to stderr');
   assert.equal(deps.calls.stdout.length, 1, 'exactly one stdout write');
-  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: 1572, mentions: [] } });
+  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: 1572, mentions: [], hasClosingPRReference: true } });
 });
 
 test('success: owner/repo parsed from the origin remote when --repo is absent', () => {
@@ -171,7 +171,7 @@ test('success: no linked PR reports openPR null', () => {
   });
   const code = run(['1224'], deps);
   assert.equal(code, 0);
-  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: null, mentions: [] } });
+  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: null, mentions: [], hasClosingPRReference: false } });
 });
 
 test('success: a merged (not open) linked PR reports openPR null', () => {
@@ -182,7 +182,7 @@ test('success: a merged (not open) linked PR reports openPR null', () => {
   });
   const code = run(['1224'], deps);
   assert.equal(code, 0);
-  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: null, mentions: [] } });
+  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: null, mentions: [], hasClosingPRReference: true } });
 });
 
 test('success: a comma list of numbers resolves in ONE runner call, one key per requested number', () => {
@@ -202,8 +202,8 @@ test('success: a comma list of numbers resolves in ONE runner call, one key per 
   assert.equal(code, 0);
   assert.equal(deps.calls.runner.length, 1, 'one aliased call covers the whole list, never one call per number');
   assert.deepEqual(JSON.parse(deps.calls.stdout[0]), {
-    1224: { openPR: 1572, mentions: [] },
-    257: { openPR: null, mentions: [] },
+    1224: { openPR: 1572, mentions: [], hasClosingPRReference: true },
+    257: { openPR: null, mentions: [], hasClosingPRReference: false },
   });
 });
 

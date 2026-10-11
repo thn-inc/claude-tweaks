@@ -28,6 +28,14 @@ const {
   scanClientSecrets,
   scanMissingOwnership,
   scanUnguardedAiEndpoint,
+  scanJwtValidation,
+  scanSecretsLifecycle,
+  scanPrivacyPolicyMismatch,
+  scanSharedAgentIdentity,
+  scanUnauditedDelegation,
+  scanUnescapedOutput,
+  scanUnrestrictedUpload,
+  scanUnverifiedWebhook,
 } = require('../../../plugin/bin/lib/code-health/candidates-security-hardening');
 
 // Assembled at runtime, never as a contiguous source-file literal: GitHub push protection's
@@ -178,6 +186,366 @@ test('scanUnguardedAiEndpoint: does not flag an AI SDK call with a rate-limit gu
   const candidates = [];
   scanUnguardedAiEndpoint('routes/chat.js', "rateLimit(req); const r = await anthropic.messages.create({ model: 'claude' });", candidates);
   assert.strictEqual(candidates.length, 0);
+});
+
+// ── JWT validation (#2657): alg-confusion / alg:none / long-lived-token ────
+
+test('scanJwtValidation: flags a verify call with no algorithms allowlist (AC: alg:none / algorithm-confusion)', () => {
+  const candidates = [];
+  scanJwtValidation('server/routes/auth.js', 'const payload = jwt.verify(req.headers.authorization, SECRET);', candidates);
+  const kinds = candidates.map((c) => c.kind);
+  assert.ok(kinds.includes('jwt-alg-not-pinned'));
+});
+
+test('scanJwtValidation: does not flag a verify call with an explicit algorithms allowlist', () => {
+  const candidates = [];
+  scanJwtValidation('server/routes/auth.js', 'const payload = jwt.verify(req.headers.authorization, SECRET, { algorithms: ["HS256"] });', candidates);
+  assert.strictEqual(candidates.filter((c) => c.kind === 'jwt-alg-not-pinned').length, 0);
+});
+
+test('scanJwtValidation: flags a sign call with no expiresIn option (AC: long-lived token)', () => {
+  const candidates = [];
+  scanJwtValidation('server/routes/auth.js', 'const token = jwt.sign({ userId: user.id }, SECRET);', candidates);
+  const kinds = candidates.map((c) => c.kind);
+  assert.ok(kinds.includes('jwt-long-lived-token'));
+});
+
+test('scanJwtValidation: does not flag a sign call with an expiresIn option (AC: short-lived + refresh flow)', () => {
+  const candidates = [];
+  scanJwtValidation('server/routes/auth.js', 'const token = jwt.sign({ userId: user.id }, SECRET, { expiresIn: "15m" });', candidates);
+  assert.strictEqual(candidates.filter((c) => c.kind === 'jwt-long-lived-token').length, 0);
+});
+
+test('scanJwtValidation: a correctly-guarded sample (both algorithms and expiresIn pinned) produces no false positives', () => {
+  const candidates = [];
+  scanJwtValidation(
+    'server/routes/auth.js',
+    'const payload = jwt.verify(token, SECRET, { algorithms: ["HS256"] });\nconst fresh = jwt.sign({ userId: 1 }, SECRET, { expiresIn: "15m" });',
+    candidates,
+  );
+  assert.deepStrictEqual(candidates, []);
+});
+
+test('scanJwtValidation: does not scan a pure client-dir file', () => {
+  const candidates = [];
+  scanJwtValidation('client/src/auth.js', 'const payload = jwt.verify(token, SECRET);', candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+// ── Secrets lifecycle (#2666): manager / rotation-procedure / rotation-schedule ─
+
+test('scanSecretsLifecycle: flags credential env access with no secrets-manager SDK import (AC: .env-only app)', () => {
+  const candidates = [];
+  scanSecretsLifecycle('server/config.js', 'const apiKey = process.env.THIRD_PARTY_API_KEY;', candidates);
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'secrets-no-manager');
+});
+
+test('scanSecretsLifecycle: does not flag a known-public env var name (e.g. *_PUBLIC_KEY)', () => {
+  const candidates = [];
+  scanSecretsLifecycle('server/config.js', 'const key = process.env.STRIPE_PUBLISHABLE_KEY;', candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+test('scanSecretsLifecycle: a secrets-manager import with no rotation mention flags no-rotation-procedure', () => {
+  const candidates = [];
+  scanSecretsLifecycle(
+    'server/config.js',
+    'const { SecretsManagerClient } = require("@aws-sdk/client-secrets-manager");\nconst apiKey = process.env.THIRD_PARTY_API_KEY;',
+    candidates,
+  );
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'no-rotation-procedure');
+});
+
+test('scanSecretsLifecycle: a rotation mention with no automation signal flags no-rotation-schedule', () => {
+  const candidates = [];
+  scanSecretsLifecycle(
+    'server/config.js',
+    'const { SecretsManagerClient } = require("@aws-sdk/client-secrets-manager");\nconst apiKey = process.env.THIRD_PARTY_API_KEY;\n// manual dual-key rotation: new key verified, old key revoked',
+    candidates,
+  );
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'no-rotation-schedule');
+});
+
+test('scanSecretsLifecycle: a distant, unrelated automation signal does not suppress a genuinely manual-only rotation (windowed, not whole-file)', () => {
+  const candidates = [];
+  const text =
+    'const { SecretsManagerClient } = require("@aws-sdk/client-secrets-manager");\n' +
+    'const apiKey = process.env.THIRD_PARTY_API_KEY;\n' +
+    '// Rotation of the API key must be done manually by an on-call engineer.\n' +
+    'x'.repeat(500) +
+    '\ncron.schedule("0 0 * * *", unrelatedJob);';
+  scanSecretsLifecycle('server/config.js', text, candidates);
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'no-rotation-schedule');
+});
+
+test('scanSecretsLifecycle: a lowercase/camelCase credential-shaped env name is recognized (case-insensitive)', () => {
+  const candidates = [];
+  scanSecretsLifecycle('server/config.js', 'const apiKey = process.env.thirdPartyApiKey;', candidates);
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'secrets-no-manager');
+});
+
+test('scanSecretsLifecycle: a sample app with manager + documented + scheduled rotation produces no findings (AC: clean pass)', () => {
+  const candidates = [];
+  scanSecretsLifecycle(
+    'server/config.js',
+    'const { SecretsManagerClient } = require("@aws-sdk/client-secrets-manager");\nconst apiKey = process.env.THIRD_PARTY_API_KEY;\n// dual-key rotation runs on a scheduled cron job every 30 days',
+    candidates,
+  );
+  assert.deepStrictEqual(candidates, []);
+});
+
+test('scanSecretsLifecycle: does not scan a pure client-dir file', () => {
+  const candidates = [];
+  scanSecretsLifecycle('client/src/config.js', 'const apiKey = process.env.THIRD_PARTY_API_KEY;', candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+// ── Privacy-policy accuracy (#2663) ─────────────────────────────────────────
+
+test('scanPrivacyPolicyMismatch: flags a third-party service used in code but not named in the privacy policy', () => {
+  const root = tmpGitRepo();
+  write(root, 'PRIVACY.md', 'We do not sell your data. We use cookies for session management.');
+  write(root, 'server/routes/chat.js', 'const mixpanel = require("mixpanel"); mixpanel.track("signup");');
+  const candidates = [];
+  scanPrivacyPolicyMismatch(['PRIVACY.md', 'server/routes/chat.js'], root, candidates);
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'privacy-policy-mismatch');
+  assert.match(candidates[0].evidence, /Mixpanel/);
+});
+
+test('scanPrivacyPolicyMismatch: produces no false-positive flag when the policy correctly names the integrated service', () => {
+  const root = tmpGitRepo();
+  write(root, 'PRIVACY.md', 'We use Mixpanel for product analytics.');
+  write(root, 'server/routes/chat.js', 'const mixpanel = require("mixpanel"); mixpanel.track("signup");');
+  const candidates = [];
+  scanPrivacyPolicyMismatch(['PRIVACY.md', 'server/routes/chat.js'], root, candidates);
+  assert.deepStrictEqual(candidates, []);
+});
+
+test('scanPrivacyPolicyMismatch: no candidate at all when the repo has no privacy-policy file (existence is prelaunch\'s job, not this check\'s)', () => {
+  const root = tmpGitRepo();
+  write(root, 'server/routes/chat.js', 'const mixpanel = require("mixpanel"); mixpanel.track("signup");');
+  const candidates = [];
+  scanPrivacyPolicyMismatch(['server/routes/chat.js'], root, candidates);
+  assert.deepStrictEqual(candidates, []);
+});
+
+// ── End-to-end: all three sibling-record checks surface through scanSecurityHardening ─
+
+test('scanSecurityHardening: a fixture carrying the three new violation patterns flags all three kinds', () => {
+  const root = tmpGitRepo();
+  write(root, 'server/routes/auth.js', 'const payload = jwt.verify(req.headers.authorization, SECRET);');
+  write(root, 'server/config.js', 'const apiKey = process.env.THIRD_PARTY_API_KEY;');
+  write(root, 'PRIVACY.md', 'We do not sell your data.');
+  write(root, 'server/routes/chat.js', 'const mixpanel = require("mixpanel"); mixpanel.track("signup");');
+
+  const result = scanSecurityHardening(root);
+  assert.strictEqual(result.discoveryFailed, false);
+  const kinds = new Set(result.candidates.map((c) => c.kind));
+  assert.ok(kinds.has('jwt-alg-not-pinned'), 'expected a jwt-alg-not-pinned finding');
+  assert.ok(kinds.has('secrets-no-manager'), 'expected a secrets-no-manager finding');
+  assert.ok(kinds.has('privacy-policy-mismatch'), 'expected a privacy-policy-mismatch finding');
+});
+
+// ── #2751: shared-agent-identity (identity/delegation-audit gaps) ─────────
+
+test('scanSharedAgentIdentity: flags a credential identifier reused across two distinct agent-like call sites', () => {
+  const candidates = [];
+  scanSharedAgentIdentity('lib/agents.js', `
+const AGENT_API_TOKEN = process.env.AGENT_API_TOKEN;
+callAgentA(AGENT_API_TOKEN);
+callAgentB(AGENT_API_TOKEN);
+`, candidates);
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'shared-agent-identity');
+});
+
+test('scanSharedAgentIdentity: does not flag a credential identifier used at only one call site', () => {
+  const candidates = [];
+  scanSharedAgentIdentity('lib/agents.js', `
+const AGENT_API_TOKEN = process.env.AGENT_API_TOKEN;
+callAgentA(AGENT_API_TOKEN);
+`, candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+test('scanSharedAgentIdentity: does not flag a credential reused across non-agent-like callees', () => {
+  const candidates = [];
+  scanSharedAgentIdentity('lib/agents.js', `
+const AGENT_API_TOKEN = process.env.AGENT_API_TOKEN;
+logRequest(AGENT_API_TOKEN);
+formatHeader(AGENT_API_TOKEN);
+`, candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+test('scanUnauditedDelegation: flags a delegation call with no log/trace/audit signal nearby', () => {
+  const candidates = [];
+  scanUnauditedDelegation('lib/orchestrator.js', "agent.call(subAgentId, payload);", candidates);
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'shared-agent-identity');
+});
+
+test('scanUnauditedDelegation: does not flag a delegation call with a logger signal nearby', () => {
+  const candidates = [];
+  scanUnauditedDelegation('lib/orchestrator.js', "logger.info('delegating'); agent.call(subAgentId, payload);", candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+test('AC (#2751): a fixture with a shared-identity pattern produces a shared-agent-identity finding via the full scan', () => {
+  const root = tmpGitRepo();
+  write(root, 'lib/agents.js', `
+const AGENT_API_TOKEN = process.env.AGENT_API_TOKEN;
+function callAgentA(token) { return dispatchToAgentA(token); }
+function callAgentB(token) { return dispatchToAgentB(token); }
+callAgentA(AGENT_API_TOKEN);
+callAgentB(AGENT_API_TOKEN);
+`);
+
+  const result = scanSecurityHardening(root);
+  assert.strictEqual(result.discoveryFailed, false);
+  const kinds = new Set(result.candidates.map((c) => c.kind));
+  assert.ok(kinds.has('shared-agent-identity'), 'expected a shared-agent-identity finding');
+});
+
+// ── #2668: unescaped-output (XSS via unsanitized raw-HTML sinks) ──────────
+
+test('scanUnescapedOutput: flags dangerouslySetInnerHTML with no sanitizer signal nearby', () => {
+  const candidates = [];
+  scanUnescapedOutput('client/src/Comment.jsx', "function Comment({ body }) { return <div dangerouslySetInnerHTML={{ __html: body }} />; }", candidates);
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'unescaped-output');
+});
+
+test('scanUnescapedOutput: does not flag dangerouslySetInnerHTML with a DOMPurify sanitizer nearby', () => {
+  const candidates = [];
+  scanUnescapedOutput('client/src/Comment.jsx', "const clean = DOMPurify.sanitize(body); function Comment() { return <div dangerouslySetInnerHTML={{ __html: clean }} />; }", candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+test('AC (#2668): a vulnerable unescaped-output fixture is flagged and a mitigated one is not', () => {
+  const vulnRoot = tmpGitRepo();
+  write(vulnRoot, 'client/src/Comment.jsx', `
+export function Comment({ body }) {
+  return <div dangerouslySetInnerHTML={{ __html: body }} />;
+}
+`);
+  const vulnResult = scanSecurityHardening(vulnRoot);
+  assert.ok(new Set(vulnResult.candidates.map((c) => c.kind)).has('unescaped-output'), 'expected an unescaped-output finding');
+
+  const cleanRoot = tmpGitRepo();
+  write(cleanRoot, 'client/src/Comment.jsx', `
+import DOMPurify from 'dompurify';
+export function Comment({ body }) {
+  const clean = DOMPurify.sanitize(body);
+  return <div dangerouslySetInnerHTML={{ __html: clean }} />;
+}
+`);
+  const cleanResult = scanSecurityHardening(cleanRoot);
+  assert.ok(!new Set(cleanResult.candidates.map((c) => c.kind)).has('unescaped-output'), 'sanitized output must not be flagged');
+});
+
+// ── #2668: unrestricted-upload (no type/size-limit guard on an upload handler) ─
+
+test('scanUnrestrictedUpload: flags a multer handler with no type/size-limit signal nearby', () => {
+  const candidates = [];
+  scanUnrestrictedUpload('server/routes/uploads.js', "const upload = multer({ dest: 'uploads/' });", candidates);
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'unrestricted-upload');
+});
+
+test('scanUnrestrictedUpload: does not flag a multer handler with a fileFilter and limits nearby', () => {
+  const candidates = [];
+  scanUnrestrictedUpload('server/routes/uploads.js', "const upload = multer({ dest: 'uploads/', fileFilter, limits: { fileSize: 1024 * 1024 } });", candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+test('AC (#2668): a vulnerable unrestricted-upload fixture is flagged and a mitigated one is not', () => {
+  const vulnRoot = tmpGitRepo();
+  write(vulnRoot, 'server/routes/uploads.js', `
+const multer = require('multer');
+const upload = multer({ dest: 'uploads/' });
+router.post('/upload', upload.single('file'), (req, res) => res.sendStatus(200));
+`);
+  const vulnResult = scanSecurityHardening(vulnRoot);
+  assert.ok(new Set(vulnResult.candidates.map((c) => c.kind)).has('unrestricted-upload'), 'expected an unrestricted-upload finding');
+
+  const cleanRoot = tmpGitRepo();
+  write(cleanRoot, 'server/routes/uploads.js', `
+const multer = require('multer');
+const upload = multer({
+  dest: 'uploads/',
+  fileFilter: (req, file, cb) => cb(null, allowedExtensions.includes(extname(file.originalname))),
+  limits: { fileSize: 2 * 1024 * 1024 },
+});
+router.post('/upload', upload.single('file'), (req, res) => res.sendStatus(200));
+`);
+  const cleanResult = scanSecurityHardening(cleanRoot);
+  assert.ok(!new Set(cleanResult.candidates.map((c) => c.kind)).has('unrestricted-upload'), 'validated upload must not be flagged');
+});
+
+// ── #2668: unverified-webhook (no signature-verification signal on a webhook route) ─
+
+test('scanUnverifiedWebhook: flags a webhook-named-file route handler with no signature-verification signal nearby', () => {
+  const candidates = [];
+  scanUnverifiedWebhook('server/routes/webhooks/stripe.js', "router.post('/webhooks/stripe', async (req, res) => { const event = req.body; res.sendStatus(200); });", candidates);
+  assert.strictEqual(candidates.length, 1);
+  assert.strictEqual(candidates[0].kind, 'unverified-webhook');
+});
+
+test('scanUnverifiedWebhook: does not flag a webhook handler with constructEvent signature verification nearby', () => {
+  const candidates = [];
+  scanUnverifiedWebhook('server/routes/webhooks/stripe.js', "router.post('/webhooks/stripe', async (req, res) => { const event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], secret); res.sendStatus(200); });", candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+test('scanUnverifiedWebhook: does not scan a file outside any recognized webhook path', () => {
+  const candidates = [];
+  scanUnverifiedWebhook('server/routes/orders.js', "router.post('/orders', async (req, res) => { res.sendStatus(200); });", candidates);
+  assert.strictEqual(candidates.length, 0);
+});
+
+test('AC (#2668): a vulnerable unverified-webhook fixture is flagged and a mitigated one is not', () => {
+  const vulnRoot = tmpGitRepo();
+  write(vulnRoot, 'server/routes/webhooks/stripe.js', `
+const router = require('express').Router();
+router.post('/webhooks/stripe', async (req, res) => {
+  const event = req.body;
+  if (event.type === 'payment_intent.succeeded') {
+    await markOrderPaid(event.data.object.id);
+  }
+  res.sendStatus(200);
+});
+module.exports = router;
+`);
+  const vulnResult = scanSecurityHardening(vulnRoot);
+  assert.ok(new Set(vulnResult.candidates.map((c) => c.kind)).has('unverified-webhook'), 'expected an unverified-webhook finding');
+
+  const cleanRoot = tmpGitRepo();
+  write(cleanRoot, 'server/routes/webhooks/stripe.js', `
+const router = require('express').Router();
+router.post('/webhooks/stripe', async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    return res.sendStatus(400);
+  }
+  if (event.type === 'payment_intent.succeeded') {
+    await markOrderPaid(event.data.object.id);
+  }
+  res.sendStatus(200);
+});
+module.exports = router;
+`);
+  const cleanResult = scanSecurityHardening(cleanRoot);
+  assert.ok(!new Set(cleanResult.candidates.map((c) => c.kind)).has('unverified-webhook'), 'signature-verified webhook must not be flagged');
 });
 
 // ── Discovery-failure passthrough (IL-115 shape, matches sibling verticals) ─

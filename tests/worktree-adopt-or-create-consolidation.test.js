@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #1711: /flow's multi-spec shared-worktree Step 1 ("Create once, up front") had no
 // "already isolated" detection before calling EnterWorktree(name=...) — under this
 // project's own worktree-always policy, an interactive session is always already
@@ -18,7 +18,7 @@ const path = require('path');
 // the detection logic inline.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const SHARED_WORKTREE_SETUP = read('plugin', 'skills', '_shared', 'worktree-setup.md');
 const BUILD_WORKTREE_SETUP = read('plugin', 'skills', 'build', 'worktree-setup.md');

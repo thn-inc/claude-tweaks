@@ -53,6 +53,16 @@ function formatEntry({ status, now, step, spec, text, reversibility = 'n/a', lev
   return line;
 }
 
+// The inverse of formatEntry's fixed prefix: `- {STATUS} {HH:MM:SS} — {location}: {action}`.
+// Returns null for anything that is not an entry line (a heading, a blank, a
+// hand-written note) — callers must treat null as "not an entry", never as a match.
+const ENTRY_RE = new RegExp(`^- (${STATUSES.join('|')}) (\\d{2}:\\d{2}:\\d{2}) — (.+?): (.*)$`);
+
+function parseEntry(line) {
+  const m = ENTRY_RE.exec(String(line));
+  return m ? { status: m[1], time: m[2], location: m[3], action: m[4] } : null;
+}
+
 // Walk up from `startDir` for the nearest ancestor containing a `.git` entry.
 // Returns { dir, isFile } for the first hit, or null if none exists above the
 // filesystem root.
@@ -98,6 +108,23 @@ function resolveTarget({ runDir, cwd = process.cwd(), mainRoot }) {
   return { ok: true, file: path.join(real, 'decisions.md') };
 }
 
+// Normalize a `--section` value before it's used to build a decisions.md
+// heading (#2549). Under Git Bash (MSYS) on Windows with MSYS_NO_PATHCONV
+// unset, MSYS's automatic path-conversion rewrites a leading-slash argument
+// into a Windows path before Node ever sees it — `--section "/reflect"`
+// arrives here as `--section "C:/Program Files/Git/reflect"`. Reverse that
+// shape first; otherwise, treat a value with no leading slash as the
+// slash-free calling form (the MSYS-proof alternative every future call site
+// can use) and prepend one. A value that already starts with `/` (the normal,
+// unmangled case) is returned unchanged — never double-slashed.
+function normalizeSection(section) {
+  if (!section) return section;
+  const msysMatch = /^[A-Za-z]:\/.*?\/Git\/(.+)$/.exec(section);
+  if (msysMatch) return `/${msysMatch[1]}`;
+  if (!section.startsWith('/')) return `/${section}`;
+  return section;
+}
+
 // { runDir, section?, entry } -> { file, created }. Append-only; never rewrites prior lines.
 //
 // Two concurrent invocations against the same run dir (e.g. two `node
@@ -131,7 +158,7 @@ function appendEntry({ runDir, section, entry }) {
     if (!section) {
       finalText = text + entry + '\n';
     } else {
-      const heading = `## ${section}`;
+      const heading = `## ${normalizeSection(section)}`;
       const lines = text ? text.split('\n') : [];
       if (lines.length && lines[lines.length - 1] === '') lines.pop();
       const start = lines.indexOf(heading);
@@ -149,4 +176,6 @@ function appendEntry({ runDir, section, entry }) {
   });
 }
 
-module.exports = { STATUSES, formatEntry, resolveTarget, appendEntry, hms };
+module.exports = {
+  STATUSES, formatEntry, parseEntry, resolveTarget, appendEntry, hms, normalizeSection,
+};

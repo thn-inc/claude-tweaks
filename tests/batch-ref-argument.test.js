@@ -55,9 +55,10 @@ test('specify Next Actions has a multiple-records-shaped row recommending a comm
 });
 
 test('shaping-mode Actions Performed documents the per-element outcome vocabulary and rules out skipped rows', () => {
-  const src = readFlat('plugin/skills/specify/shaping-mode-stamping.md');
+  // Actions Performed moved to shaping-mode-readback.md (#2841's split).
+  const src = readFlat('plugin/skills/specify/shaping-mode-readback.md');
   for (const token of ['`shaped`', '`already shaped, no-op`']) {
-    assert.ok(src.includes(token), `outcome token ${token} missing from shaping-mode-stamping.md Actions Performed`);
+    assert.ok(src.includes(token), `outcome token ${token} missing from shaping-mode-readback.md Actions Performed`);
   }
   // No `skipped` outcome: the batch branch's stop-all failure semantics mean an
   // unresolvable element never reaches shaping mode at all (SKILL.md's Input,

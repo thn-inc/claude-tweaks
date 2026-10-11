@@ -31,6 +31,8 @@ Before deleting the design doc, dispatch persona-instantiated agents in one para
 
 Each agent's input is a record reference, never inlined content: `work-backend: github-issues` — the sub-issue's number plus a `gh issue view` read instruction; `work-backend: local-files` — the sub-issue's record file path. Never both in the same dispatch. Findings are written **back into the record body** — inline `<!-- ambiguity: ... -->` HTML comments next to flagged sentences, or rows in an appended `## Open Questions` table — via compose-then-write-once, the same discipline every write in this skill uses, after the per-persona dedup and severity floor in `red-team.md`'s write-back procedure. A decision-worthy finding (critical, or one whose resolution would change the sub-issue's Deliverables/Acceptance-Criteria scope) is staged for the Review Console with the sub-issue's `ready` cleared, rather than left for Step 6 to self-resolve. No mid-flow prompt — Step 6 Self-Review picks up everything below that bar.
 
+**Delegated subagent with no run directory (`mechanical-handoff.md`'s dispatch, no Review Console to stage into).** `red-team.md`'s write-back step 5 asks the human when no run directory resolved, but a delegated subagent has no human to ask. Leave the finding as the inline `<!-- ambiguity: ... -->` marker (or `## Open Questions` row) it already is, with `ready` cleared as step 5 already requires, and report it in Step 9's `### Staged for caller` section (below) instead of a stage write. Plain interactive `/specify` is unaffected: it still asks per `red-team.md`. The caller resolves each row with `bin/resolve-ambiguity.js` (#2699) — see Step 9's template for the exact fields it needs.
+
 Read `red-team.md` in this skill's directory for the dispatch prompt (Template A block must remain inlined verbatim in the dispatch prompt at runtime per the Subagent Contract), the persona lens questions, and the write-back procedure.
 
 ---
@@ -104,9 +106,30 @@ Present a summary. The `Collapse outcome` line below renders in every decomposit
 
 ### Diagram suggestions (optional — render only when Step 2.5d emitted any)
 - {one or two `**Diagram suggestion:** …` blocks emitted by Step 2.5d}
+
+### Staged for caller (optional — render only when a decision-worthy finding was left unresolved)
+| Record | Flagged text | Suggested resolution |
+|--------|-------------|----------------------|
+| {ref} | {the whole `<!-- ambiguity: ... -->` comment, or the whole `## Open Questions` table row, verbatim — never just the flagged sentence, which leaves the marker behind} | {the resolution the red-team persona proposed, or "—" if none was proposed} |
 ```
 
-`{ref}` is `#{N}` under `work-backend: github-issues`, the bare record id under `local-files` — same convention as Step 1's Overlap Analysis.
+**Resolving a `### Staged for caller` row.** Decide the resolution (an `AskUserQuestion` call or your own judgment), then apply it with `bin/resolve-ambiguity.js`, one row at a time, since each row re-fetches the body the previous one wrote. `{n}` below is the bare issue number: `#{n}` would start a bash comment.
+
+```bash
+eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" RA_BODY=resolve-ambiguity-body.txt RA_MARKER=resolve-ambiguity-marker.txt RA_RESOLUTION=resolve-ambiguity-resolution.txt RA_OUT=resolve-ambiguity-out.txt)"
+gh issue view {n} --json body -q .body > "$RA_BODY" && echo "$RA_MARKER $RA_RESOLUTION"
+```
+
+Write the row's Flagged text to `$RA_MARKER` and your resolution to `$RA_RESOLUTION` with the Write tool, never through the shell, because record text carries backticks, `$` and quotes a shell would run or rewrite. For an Open Questions row, first fold its answer into the right section of `$RA_BODY`, then use an empty resolution file: that deletes the row, and the section goes with its last row. Then apply and write back:
+
+```bash
+eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" RA_BODY=resolve-ambiguity-body.txt RA_MARKER=resolve-ambiguity-marker.txt RA_RESOLUTION=resolve-ambiguity-resolution.txt RA_OUT=resolve-ambiguity-out.txt)"
+node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-ambiguity.js" "$RA_BODY" --marker-file "$RA_MARKER" --resolution-file "$RA_RESOLUTION" --out "$RA_OUT" && gh issue edit {n} --body-file "$RA_OUT"
+```
+
+Exit 3 means the text is not in the body, or occurs more than once: nothing was written and the `&&` skips the write-back, so re-read the body and pass the whole comment or row. Exit 2 is a malformed call or an unreadable or unwritable file. Add `ready` back (`gh issue edit {n} --add-label ready`) only when the CLI printed `"readyRestorable":true`, meaning the body passes the spec-shaped check `ready` asserts (`_shared/work-record.md`) and no `## Open Questions` heading is left. The CLI is a pure local transform: without `gh`, fetch and write back with the MCP `issue_read`/`create_or_update_file` equivalents, and under `local-files` copy the record's body (`local-store.js`'s `readRecord`) into `$RA_BODY`, then write the CLI's output back with `writeRecord`, setting `facets.stage` to `ready` in that same call only when `readyRestorable` is `true` (the mirror of how `red-team.md`'s step 5 cleared it).
+
+`{ref}` is `#{N}` under `work-backend: github-issues`, the bare record id under `local-files` — same convention as Step 1's Overlap Analysis (`overlap-resolution.md`).
 
 **`needs:definition` origin closure.** When `$ORIGIN_RECORD_NUM` is set (this run was reached via the `needs:definition` redirect — `specify/SKILL.md`'s Resolve-the-input case 1), what happens to the origin record depends on this run's collapse decision (Step 2.6):
 

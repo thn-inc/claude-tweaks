@@ -5,9 +5,11 @@
 class UsageError extends Error {}
 
 const USAGE =
-  'usage: verify.js --cmd <name>=<command> [--cmd <name>=<command> ...] [--json <path>] '
+  'usage: verify.js --cmd <name>=<command> [--cmd <name>=<command> ...] '
+  + '[--cmd-env <name>=<KEY=VALUE> ...] [--json <path>] '
   + '[--log-dir <dir>] [--count-stamp <path>] [--no-stamp] [--git-dir <dir>] [--run <dir>] '
   + '[--cwd <dir>] '
+  + '[--baseline <ref> --baseline-cmd <name>=<template-with-{file}> ...] '
   + '[--scope <path> [--base <ref>] [--integration-branch <name>]] '
   + '| verify.js --stamp-status [--git-dir <dir>] '
   + '| verify.js --changed-files [--base <ref>] [--integration-branch <name>]\n'
@@ -24,13 +26,30 @@ const USAGE =
   + 'verify.js invocation — a differently-named check (types-a, types-b, …) runs in the '
   + '"any other name" tier, serially after tests, and is skipped on an unrelated tests failure.';
 
-const VALUE_FLAGS = new Set(['--cmd', '--json', '--log-dir', '--count-stamp', '--git-dir', '--scope', '--base', '--integration-branch', '--run', '--cwd']);
+const VALUE_FLAGS = new Set(['--cmd', '--cmd-env', '--json', '--log-dir', '--count-stamp', '--git-dir', '--scope', '--base', '--integration-branch', '--run', '--cwd', '--baseline', '--baseline-cmd']);
+
+// --cmd-env (#2779): <check-name>=<KEY=VALUE>, repeatable. Split on the first
+// two `=` only, so VALUE keeps any later `=` intact.
+function parseCmdEnv(value) {
+  const eq = value.indexOf('=');
+  if (eq <= 0) throw new UsageError(`--cmd-env value must be <check-name>=<KEY=VALUE>, got: ${value}`);
+  const name = value.slice(0, eq);
+  const pair = value.slice(eq + 1);
+  const pairEq = pair.indexOf('=');
+  if (pairEq === -1) throw new UsageError(`--cmd-env ${name} must carry KEY=VALUE, got: ${pair}`);
+  const key = pair.slice(0, pairEq);
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+    throw new UsageError(`--cmd-env ${name} variable name must match [A-Za-z_][A-Za-z0-9_]*, got: ${key}`);
+  }
+  return { name, key, value: pair.slice(pairEq + 1) };
+}
 
 // argv = process.argv.slice(2). Throws UsageError on any malformed input —
 // the CLI prints message + USAGE to stderr and exits non-zero (AC6).
 // --stamp-status (#1921) is a read-only mode: it needs no --cmd at all.
 function parseArgs(argv) {
   const cmds = [];
+  const cmdEnvs = [];
   let json = null;
   let logDir = null;
   let countStamp = null;
@@ -43,6 +62,8 @@ function parseArgs(argv) {
   let changedFiles = false;
   let run = null;
   let cwd = null;
+  let baseline = null;
+  const baselineCmds = [];
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (flag === '--stamp-status') { stampStatus = true; continue; }
@@ -61,6 +82,20 @@ function parseArgs(argv) {
       if (flag === '--integration-branch') { integrationBranch = value; continue; }
       if (flag === '--run') { run = value; continue; }
       if (flag === '--cwd') { cwd = value; continue; }
+      if (flag === '--baseline') {
+        // An unset shell variable would otherwise switch adjudication off without a word.
+        if (value === '') throw new UsageError('--baseline needs a ref, got an empty value');
+        baseline = value;
+        continue;
+      }
+      if (flag === '--baseline-cmd') {
+        // #3043: split on the first `=` only, so the template keeps later `=` intact.
+        const eq = value.indexOf('=');
+        if (eq <= 0) throw new UsageError(`--baseline-cmd value must be <name>=<template-with-{file}>, got: ${value}`);
+        baselineCmds.push({ name: value.slice(0, eq), template: value.slice(eq + 1) });
+        continue;
+      }
+      if (flag === '--cmd-env') { cmdEnvs.push(parseCmdEnv(value)); continue; }
       const eq = value.indexOf('=');
       if (eq === -1) throw new UsageError(`--cmd value must be <name>=<command>, got: ${value}`);
       if (eq === 0) throw new UsageError(`--cmd value has an empty name: ${value}`);
@@ -77,6 +112,39 @@ function parseArgs(argv) {
     throw new UsageError(`unknown flag: ${flag}`);
   }
   if (cmds.length === 0 && !stampStatus && !changedFiles) throw new UsageError('at least one --cmd <name>=<command> is required');
+  // #2779: resolved after the loop so --cmd-env may precede its --cmd. A check
+  // carries an `env` key only when a --cmd-env named it — a --cmd-only
+  // invocation parses to exactly the shape it did before the flag existed.
+  // Object.fromEntries defines own properties, so a variable literally named
+  // __proto__ stays data rather than touching the prototype.
+  for (const c of cmds) {
+    const mine = cmdEnvs.filter((e) => e.name === c.name);
+    if (mine.length === 0) continue;
+    const keys = mine.map((e) => e.key);
+    const dup = keys.find((k, i) => keys.indexOf(k) !== i);
+    if (dup !== undefined) throw new UsageError(`duplicate --cmd-env variable for ${c.name}: ${dup}`);
+    c.env = Object.fromEntries(mine.map((e) => [e.key, e.value]));
+  }
+  const undeclared = cmdEnvs.find((e) => !cmds.some((c) => c.name === e.name));
+  if (undeclared) {
+    throw new UsageError(`--cmd-env "${undeclared.name}" names no declared --cmd (declared: ${cmds.map((c) => c.name).join(', ') || 'none'})`);
+  }
+  // #3043: the mode-conflict check runs first so a read-only mode carrying a
+  // baseline flag gets this message, not a generic one.
+  if ((stampStatus || changedFiles) && (baseline !== null || baselineCmds.length)) {
+    throw new UsageError('--baseline/--baseline-cmd apply to a check run — not to --stamp-status or --changed-files');
+  }
+  if (baseline !== null && baselineCmds.length === 0) throw new UsageError('--baseline requires at least one --baseline-cmd');
+  if (baseline === null && baselineCmds.length) throw new UsageError('--baseline-cmd requires --baseline');
+  const seenBaselineNames = new Set();
+  for (const b of baselineCmds) {
+    if (!cmds.some((c) => c.name === b.name)) {
+      throw new UsageError(`--baseline-cmd "${b.name}" names no declared --cmd (declared: ${cmds.map((c) => c.name).join(', ') || 'none'})`);
+    }
+    if (!b.template.includes('{file}')) throw new UsageError(`--baseline-cmd ${b.name} template must contain {file}, got: ${b.template}`);
+    if (seenBaselineNames.has(b.name)) throw new UsageError(`duplicate --baseline-cmd name: ${b.name}`);
+    seenBaselineNames.add(b.name);
+  }
   if (stampStatus && cmds.length) throw new UsageError('--stamp-status takes no --cmd');
   if (changedFiles && cmds.length) throw new UsageError('--changed-files takes no --cmd');
   if (changedFiles && scope !== null) throw new UsageError('--changed-files takes no --scope');
@@ -100,6 +168,7 @@ function parseArgs(argv) {
   }
   return {
     cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles, run, cwd,
+    baseline, baselineCmds,
   };
 }
 

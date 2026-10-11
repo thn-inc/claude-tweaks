@@ -70,6 +70,15 @@ if absent) or at end of file otherwise. Every consumer of this file writes throu
 hand-appending a formatted line per call site — with one documented exception: `FAILED`, which is
 hand-composed by its two writers (see the `STATUS` row below).
 
+**Windows / Git Bash invocation note (#2549).** Under Git Bash (MSYS) on Windows with
+`MSYS_NO_PATHCONV` unset, MSYS's automatic path-conversion rewrites a leading-slash `--section`
+value into a Windows path before Node ever sees it (`--section "/reflect"` arrives as `--section
+"C:/Program Files/Git/reflect"`). `bin/lib/log-decision/append.js`'s `normalizeSection` reverses
+this shape before it reaches the decisions.md heading, so every `--section "/{skill}"` call site
+below is already protected without changing its own invocation. Two ways to avoid the mangling
+in the first place, either sufficient on its own: export `MSYS_NO_PATHCONV=1` before invoking, or
+drop the leading slash (`--section reflect`) — the CLI adds it back internally.
+
 Each entry follows this shape:
 
 ```
