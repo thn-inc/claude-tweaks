@@ -168,14 +168,16 @@ test('writeStagedItem: two real OS processes racing the same allocate:true numbe
     p.on('error', reject);
   })));
 
-  const files = results.filter(Boolean);
-  assert.equal(new Set(files).size, WORKERS, 'every worker must land on a distinct file');
-  const contents = files.map((f) => fs.readFileSync(f, 'utf8'));
-  assert.equal(new Set(contents).size, WORKERS, 'every worker\'s content must survive — none clobbered');
   // Independent of the stdout capture above: the run dir itself must hold one staged file
   // per worker, so a future failure here means a lost update, not a capture problem.
   const onDisk = fs.readdirSync(path.join(runDir, 'staged')).filter((f) => f.startsWith('race-deviation-'));
   assert.equal(onDisk.length, WORKERS, `staged/ must hold one file per worker, found ${JSON.stringify(onDisk)}`);
+  assert.ok(results.every(Boolean), `every worker must print its staged path, got ${JSON.stringify(results)}`);
+
+  const files = results.filter(Boolean);
+  assert.equal(new Set(files).size, WORKERS, 'every worker must land on a distinct file');
+  const contents = files.map((f) => fs.readFileSync(f, 'utf8'));
+  assert.equal(new Set(contents).size, WORKERS, 'every worker\'s content must survive — none clobbered');
 });
 
 // With `mainRoot: null` passed *explicitly* (not `undefined`), `resolveTarget`'s
