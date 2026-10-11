@@ -235,6 +235,17 @@ test('#2997: Step 3 composes the body via composePrEarlyBody (bin/lib/flow/pr-bo
   assert.match(LIFECYCLE, /bin\/lib\/flow\/pr-body\.js/);
 });
 
+// #3120: the #2997 snippet was a multi-line `node -e` (writes nothing on Windows
+// Git Bash, bin/node-eval-file.js's header) with spec text in shell quotes and a
+// literal /tmp path. Step 3 now runs bin/compose-pr-body.js with the summary in a
+// file and session-scoped paths; these pins keep the old shapes from coming back.
+test('#3120: Step 3 composes through bin/compose-pr-body.js with the summary in a file, never an inline node -e', () => {
+  assert.match(LIFECYCLE, /bin\/compose-pr-body\.js" [^\n]*--summary-file "\$PR_EARLY_SUMMARY" --out "\$PR_EARLY_BODY"/);
+  assert.doesNotMatch(LIFECYCLE, /node -e "[^"\n]*\n/, 'no multi-line node -e');
+  assert.doesNotMatch(LIFECYCLE, /\/tmp\/pr-early-body/, 'no literal /tmp body path');
+  assert.match(LIFECYCLE, /--body-file "\$PR_EARLY_BODY"/);
+});
+
 test('#2997 AC1: a run PR body produced by composePrEarlyBody passes RUN_MARKER, both delimiter pairs, and one Fixes line per target', () => {
   const body = composePrEarlyBody({
     runId: '2026-10-06T031832-record-2997',

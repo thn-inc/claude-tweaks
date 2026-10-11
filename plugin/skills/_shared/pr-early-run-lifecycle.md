@@ -182,16 +182,22 @@ next phase's own phase-exit push (`_shared/git-discipline.md`) naturally retries
 
 Skipped when Step 1 found a reusable open PR. Otherwise, compose the body via
 `composePrEarlyBody` (`bin/lib/flow/pr-body.js`, #2997) — that module, not this prose, owns
-the template's literal text; the shape below is what it produces, never hand-composed again:
+the template's literal text; the shape below is what it produces, never hand-composed again.
+Resolve this run's paths, then write the one-paragraph summary from the materialized spec's
+Overview section to `$PR_EARLY_SUMMARY` with the Write tool, never through the shell: spec text
+carries backticks, `$` and quotes a shell would run or rewrite (#3120).
 
 ```bash
-node -e "const {composePrEarlyBody}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/flow/pr-body.js');
-  process.stdout.write(composePrEarlyBody({
-    runId: process.argv[1], specSummary: process.argv[2], target: process.argv[3],
-    nextStep: process.argv[4], fixesLines: JSON.parse(process.argv[5]), runDir: process.argv[6],
-  }))" "{run-id}" "{one-paragraph summary from the materialized spec's Overview section}" \
-  "{target}" "{next-step}" '["Fixes #{n}", ...]' "{run-dir}" \
-  > /tmp/pr-early-body-{run-id}-{n}.md
+eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_EARLY_SUMMARY=pr-early-summary-{run-id}.md PR_EARLY_BODY=pr-early-body-{run-id}.md)" && echo "$PR_EARLY_SUMMARY"
+```
+
+Then compose it with `bin/compose-pr-body.js`, one call (`--fixes` takes the run's record
+numbers, comma-separated; it writes one `Fixes #{n}` line each). A fresh Bash call does not
+inherit the previous one's variables, so the paths are resolved again:
+
+```bash
+eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_EARLY_SUMMARY=pr-early-summary-{run-id}.md PR_EARLY_BODY=pr-early-body-{run-id}.md)"
+node "${CLAUDE_PLUGIN_ROOT}/bin/compose-pr-body.js" --run-id "{run-id}" --target "{target}" --next-step "{next-step}" --run-dir "{run-dir}" --fixes {n}[,{m}...] --summary-file "$PR_EARLY_SUMMARY" --out "$PR_EARLY_BODY"
 ```
 
 Composed shape (one `Fixes #{n}` line per record in the run — see "One `Fixes #{n}` line per
@@ -337,17 +343,17 @@ A single-record run never writes or checks this line: there is no bundle `manife
 single-record run to rewrite against, so the one `Fixes #{n}` line it composes here at Step 3 stays
 unconditional, exactly as before.
 
-Write the body to `/tmp/pr-early-body-{run-id}-{n}.md` — scoped by this run's own `{run-id}`
-(the run-dir basename), not just the issue number, so a retried run's fresh write can never
-land on a stale file a prior attempt left at a fixed `{n}`-only path (worse on Windows, where
-`Write` and `Bash` can resolve `/tmp` differently). Before invoking `gh pr create`, re-read the
-file's first line back and confirm it is `<!-- claude-tweaks-run: {run-id} -->` for *this run's*
-`{run-id}` — second line of defense; hard-stop this step on a mismatch rather than push a wrong
-body.
+The body lands at `$PR_EARLY_BODY` — session-scoped (`_shared/session-tmp-root.md`) and keyed
+on this run's own `{run-id}` (the run-dir basename), so a retried run's fresh write can never
+land on a stale file a prior attempt or a sibling session left behind. Before invoking
+`gh pr create`, re-read the file's first line back and confirm it is
+`<!-- claude-tweaks-run: {run-id} -->` for *this run's* `{run-id}` — second line of defense;
+hard-stop this step on a mismatch rather than push a wrong body.
 
 ```bash
+eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_EARLY_BODY=pr-early-body-{run-id}.md)"
 gh pr create --repo {host}/{owner}/{repo} --draft --base {integration-branch} --head {branch} \
-  --title "{record title} (#{n})" --body-file /tmp/pr-early-body-{run-id}-{n}.md
+  --title "{record title} (#{n})" --body-file "$PR_EARLY_BODY"
 ```
 
 `{record title}` — the lowest-numbered record's title for a bundle; `{n}` likewise the
