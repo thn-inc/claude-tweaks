@@ -93,7 +93,7 @@ const realDeps = {
   runner: release.defaultRunner,
   gitRunner: gitDefaultRunner,
   ghAvailable,
-  remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }),
+  remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true }),
   now: () => Date.now(),
   cwd: () => process.cwd(),
   mainRoot: undefined,

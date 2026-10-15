@@ -221,6 +221,6 @@ function resolveProcedureHeadPath(name) {
 }
 
 module.exports = {
-  renderTrace, renderConsoleSections, renderConsoleSectionsMulti, strictCheck, FORBIDDEN_VOCABULARY,
+  renderTrace, renderConsoleSections, renderConsoleSectionsMulti, strictCheck, worklistRows, FORBIDDEN_VOCABULARY,
   PROCEDURE_HEADS, resolveProcedureHeadPath,
 };

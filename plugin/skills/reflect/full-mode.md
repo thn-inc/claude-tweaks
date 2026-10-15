@@ -44,6 +44,25 @@ SubagentStop hook it depends on fires unreliably for Task dispatches
 (`_shared/subagent-output-contract.md`, claude-code#27755) — so the lens should not treat its
 *absence* as proof of a clean run.
 
+**Transcript-grep fallback (#2553).** When `friction-events.js` returns `[]`, that is consistent
+with a genuinely frictionless run, but it is also consistent with a logging gap swallowing real
+denials the hooks never got a chance to write (e.g. a harness-level Bash refusal that happens
+before any `PreToolUse` hook ever runs — see `docs/hooks.md`'s "Not covered here: the harness's
+own compound-Bash refusal" — or any other denial whose own `appendEvent` call failed or was never
+reached). Before concluding "no friction," resolve this session's own transcript per
+`_shared/transcript-judge.md`'s Transcript resolution section and grep it for the deny-message
+signatures `Refusing to run it` and `requires an isolated worktree` (the literal substrings a
+harness-level or gate-level refusal's own message carries). Each match is one denial the log
+missed — report it as its own Friction-lens line (quoting the matched turn), distinct from and
+never merged into `friction-events.js`'s own aggregate count, since a raw transcript hit carries
+no event `type`/`variant` to classify by. This is a screening heuristic, not a replacement for
+fixing an underlying logging gap at its source — it stays useful even after a specific gap is
+fixed, for any future gap not yet caught. Skip this fallback entirely when `friction-events.js`
+already returned at least one event (a non-empty result means the log itself is already receiving
+hook-side denials this run, so the fallback's screening value is redundant) or when no transcript
+resolves at all (same self-assessment-exempted case `_shared/transcript-judge.md` already
+documents).
+
 **The genuine `contract-violation` count (#2344).** `subagent-stop.js` tags every logged
 `contract-violation` event with a `variant`: `'lenient'` (an old-shape but still-compliant reply,
 #2265), `'foreign-contract'` (the reply's first line is exactly a verdict word from ANOTHER

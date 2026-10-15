@@ -28,7 +28,7 @@ function defaultReadFile(p) {
 }
 
 function defaultGitRunner(args) {
-  return execFileSync('git', args, { encoding: 'utf8', timeout: GH_TIMEOUT_MS });
+  return execFileSync('git', args, { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true });
 }
 
 function fail(reason, message) {

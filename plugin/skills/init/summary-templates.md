@@ -13,7 +13,7 @@ What /init checked and found true about this repo and environment — the affirm
 |-------|--------|
 | Superpowers plugin | present |
 | Code simplifier | available |
-| agent-browser | installed (v{X.Y.Z}) / not installed — install hint surfaced |
+| playwright-cli | installed (v{X.Y.Z}) / not installed — install hint surfaced |
 | Git repo | yes |
 | Node (statusline) | v{X} present |
 | Statusline | wired to claude-tweaks wrapper |
@@ -33,7 +33,7 @@ What /init checked and found true about this repo and environment — the affirm
 | `docs/journeys/` | {created/exists} |
 | Git repo | {yes/no — warning if no} |
 | Worktree directory | {configured/skipped} |
-| Browser: agent-browser | {installed (vX.Y.Z) / not installed — install hint surfaced} |
+| Browser: playwright-cli | {installed (vX.Y.Z) / not installed — install hint surfaced} |
 
 ### Project Classification (Phase 3)
 | Dimension | Confirmed |
@@ -99,7 +99,7 @@ Everything below was checked against the current codebase and found accurate. Su
 |-------|--------|
 | Superpowers plugin | present |
 | Code simplifier | available |
-| agent-browser | installed (v{X.Y.Z}) |
+| playwright-cli | installed (v{X.Y.Z}) |
 | Git repo | yes |
 | Node (statusline) | v{X} present |
 | Statusline | wired to claude-tweaks wrapper |
