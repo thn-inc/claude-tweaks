@@ -48,6 +48,7 @@ const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
 const { resolveTarget: resolveStageTarget, writeStagedItem } = require('./lib/stage-item/write');
 const { resolvePluginVersion } = require('./lib/plugin-version');
+const { defaultRunner: runPremiseCommand, PREMISE_SELF_CHECK_TIMEOUT_MS } = require('./lib/health-core/premise-self-check');
 
 const USAGE = 'usage: materialize.js <n> --run-dir <dir> [--repo owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]\n';
 
@@ -86,12 +87,6 @@ function computeDrift(sha, deps) {
   return { sha, commits, ageDays, stale: commits >= DRIFT_THRESHOLD_COMMITS };
 }
 
-// #1829: the CLI's usual short timeout for a bound-but-arbitrary command a
-// record body names (same order of magnitude as repo-resolve.js's
-// GH_TIMEOUT_MS) — bound so a hostile or hung Premise-check: command can
-// never stall materialize.
-const PREMISE_CHECK_TIMEOUT_MS = 5000;
-
 // Security fix (whole-branch pre-release review, base b9c8bbd86): a
 // `Premise-check:` line is body text — anyone who can create or edit the
 // record's issue can write one, regardless of whether it was actually
@@ -117,20 +112,14 @@ const AUTHOR_ASSOCIATION_TIMEOUT_MS = GH_TIMEOUT_MS;
 // on a black-holed network (see .claude/skills/gh-api-module-pattern).
 const SIBLING_PREMISE_SEARCH_TIMEOUT_MS = GH_TIMEOUT_MS;
 
-// command -> exit code, run from the checkout root. Distinguishes "the
-// command ran and exited non-zero" (a normal outcome — execFileSync throws
-// on any non-zero exit, so this unwraps err.status back into a plain
-// return) from "the command could not be run at all" (ENOENT on /bin/sh,
-// a timeout — no exit code exists, so this re-throws for computePremise's
-// own catch to degrade to null).
+// command -> exit code, run from the checkout root. Shares health-core's
+// runner and 5 s bound with the filing-time self-check (#2633), so a
+// command is read here exactly the way it was read before filing. A
+// non-zero exit is a normal outcome; no exit code at all (ENOENT on
+// /bin/sh, a timeout) re-throws for computePremise's own catch to degrade
+// to null.
 function runPremiseCheckDefault(command) {
-  try {
-    execFileSync('/bin/sh', ['-c', command], { stdio: 'ignore', timeout: PREMISE_CHECK_TIMEOUT_MS });
-    return 0;
-  } catch (err) {
-    if (typeof err.status === 'number') return err.status;
-    throw err;
-  }
+  return runPremiseCommand(command, { timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS });
 }
 
 // command -> { command, exit, satisfiedAtBase } | null. null means "no
@@ -183,13 +172,13 @@ function parseArgs(argv) {
 }
 
 const realDeps = {
-  ghView: (owner, repo, n, host) => execFileSync('gh', ['issue', 'view', String(n), '--repo', repoSlug({ host, owner, repo }), '--json', 'number,title,body,labels,url'], { encoding: 'utf8' }),
+  ghView: (owner, repo, n, host) => execFileSync('gh', ['issue', 'view', String(n), '--repo', repoSlug({ host, owner, repo }), '--json', 'number,title,body,labels,url'], { encoding: 'utf8', windowsHide: true }),
   // #2590: closed PRs referencing this issue, searched by body text — used
   // to detect a sibling attempt that already reached this record's own
   // "premise disproved" conclusion. Read-only; no author-association gate
   // needed (unlike ghAuthorAssociation/runPremiseCheck, nothing here
   // executes body content — it only searches and pattern-matches it).
-  ghSearchClosedPRs: (owner, repo, n, host) => execFileSync('gh', ['pr', 'list', '--repo', repoSlug({ host, owner, repo }), '--state', 'closed', '--search', `#${n} in:body`, '--json', 'number,url,body'], { encoding: 'utf8', timeout: SIBLING_PREMISE_SEARCH_TIMEOUT_MS }),
+  ghSearchClosedPRs: (owner, repo, n, host) => execFileSync('gh', ['pr', 'list', '--repo', repoSlug({ host, owner, repo }), '--state', 'closed', '--search', `#${n} in:body`, '--json', 'number,url,body'], { encoding: 'utf8', timeout: SIBLING_PREMISE_SEARCH_TIMEOUT_MS, windowsHide: true }),
   // Security fix (see TRUSTED_AUTHOR_ASSOCIATIONS above): GitHub's REST API
   // computes author_association from the issue author's *current* repo
   // relationship — not body content, so it can't be spoofed by editing the
@@ -201,15 +190,15 @@ const realDeps = {
       'gh',
       ['api', `repos/${owner}/${repo}/issues/${n}`, '--jq', '.author_association']
         .concat(host && host !== 'github.com' ? ['--hostname', host] : []),
-      { encoding: 'utf8', timeout: AUTHOR_ASSOCIATION_TIMEOUT_MS },
+      { encoding: 'utf8', timeout: AUTHOR_ASSOCIATION_TIMEOUT_MS, windowsHide: true },
     ),
   ).trim(),
   ghAvailable,
-  remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }),
+  remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true }),
   // #117: commit distance from a record's Verified-as-of: stamp to current
   // HEAD, and that commit's own date — both scoped to computeDrift above.
-  gitRevListCount: (sha) => execFileSync('git', ['rev-list', '--count', `${sha}..HEAD`], { encoding: 'utf8' }),
-  gitCommitDate: (sha) => execFileSync('git', ['show', '-s', '--format=%cI', sha], { encoding: 'utf8' }),
+  gitRevListCount: (sha) => execFileSync('git', ['rev-list', '--count', `${sha}..HEAD`], { encoding: 'utf8', windowsHide: true }),
+  gitCommitDate: (sha) => execFileSync('git', ['show', '-s', '--format=%cI', sha], { encoding: 'utf8', windowsHide: true }),
   // #1829: the Premise-check: command, run from the checkout root.
   runPremiseCheck: runPremiseCheckDefault,
   cwd: () => process.cwd(),

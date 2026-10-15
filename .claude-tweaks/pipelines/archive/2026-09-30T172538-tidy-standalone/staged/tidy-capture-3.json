@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "capture",
+  "record": null,
+  "title": "acceptance-gap counts NOT_PLANNED closures as gaps",
+  "action": "Capture defect: needsBackstop ignores stateReason (188 of 581 not-planned)",
+  "command": "/claude-tweaks:capture (body: staged/tidy-capture-3.md)"
+ }
+]

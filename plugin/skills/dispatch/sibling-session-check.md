@@ -1,4 +1,4 @@
-# Sibling-session check (Step 4)
+# Sibling-session check (Steps 4-5)
 
 Branches, claims, and labels are all remote-facing signals — none of them can see a live
 session already standing in an unpushed worktree. `[IL-107]`'s actual incident was a
@@ -27,3 +27,22 @@ Branch on the printed line:
 
 This check is additive to the existing branches/claims/labels check that follows in Step 4,
 not a replacement for it, and it does not alter that check's own logic.
+
+## Worktree-resume check (Step 5, #2838)
+
+The check above runs at Step 4, before the mint — it cannot see a sibling session that creates
+its own worktree for this same group in the window between that check and Step 5's own
+worktree-creation call a few steps later. Close that window at the point it actually bites: when
+Step 5 creates and enters the group's worktree, check whether that call **resumed an existing
+worktree** rather than creating a fresh one — observed live (#2838, group #2785): a sibling
+session had already created worktree `dispatch-record-2785` seconds earlier, and `EnterWorktree`
+silently resumed it instead of refusing, with no error to catch.
+
+A resumed worktree is the sibling-conflict signal itself, independent of whatever Step 4's own
+check (above) reported — treat it exactly the same way: this dispatching session takes no further
+action inside that worktree. Exit it with `ExitWorktree(action: "keep")` (never tear down or
+touch content that may belong to the live sibling session), log the conflict to this firing's own
+`decisions.md` (`AUTO {time} — Step 5: worktree {name} was already present (sibling conflict) —
+skipped group [{issue list}] without dispatching either call.`), and skip this group entirely —
+neither of its two Task calls is dispatched. Proceed to the next group exactly as if this one had
+been skipped at Step 4.

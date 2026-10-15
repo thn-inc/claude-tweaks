@@ -6,9 +6,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const manifestModule = require('../../../plugin/bin/lib/flow/manifest');
+const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const {
   parseManifestYaml, serializeManifestYaml, readManifest, writeManifest,
-  formatElapsedMs, transitionSpec, composeFixesBlock,
+  formatElapsedMs, transitionSpec, composeFixesBlock, readDeferredClosures,
 } = manifestModule;
 
 function tmpRunDir() {
@@ -152,7 +153,7 @@ test('transitionSpec is the module\'s only status-mutation entry point, and ever
   // same call.
   assert.deepEqual(
     Object.keys(manifestModule).sort(),
-    ['VALID_STATUSES', 'composeFixesBlock', 'formatElapsedMs', 'parseManifestYaml', 'readManifest', 'serializeManifestYaml', 'transitionSpec', 'writeManifest'].sort(),
+    ['VALID_STATUSES', 'composeFixesBlock', 'formatElapsedMs', 'parseManifestYaml', 'readDeferredClosures', 'readManifest', 'serializeManifestYaml', 'transitionSpec', 'writeManifest'].sort(),
   );
 
   const dir = seedRunDir([{ id: 42, status: 'pending', subdir: 'spec-42/' }]);
@@ -255,4 +256,86 @@ test('#2015: composeFixesBlock preserves manifest order and handles an empty/mis
   );
   assert.deepEqual(composeFixesBlock([]), []);
   assert.deepEqual(composeFixesBlock(undefined), []);
+});
+
+// --- Deferred-closure decisions (#2686): a spec can complete every other
+// phase yet still carry a deliberate decision to withhold its own closing
+// keyword — composeFixesBlock's new second argument must override `complete`
+// for exactly that spec, and readDeferredClosures is what derives it from
+// each spec's own decisions.md.
+
+test('#2686: composeFixesBlock emits a deferred Refs line for a complete spec carrying a deferred-closure entry', () => {
+  const deferred = new Map([['1997', 'AC not fully met, pending manual step']]);
+  assert.deepEqual(
+    composeFixesBlock([{ id: 1996, status: 'complete' }, { id: 1997, status: 'complete' }], deferred),
+    ['Fixes #1996', 'Refs #1997 — deferred: AC not fully met, pending manual step'],
+  );
+});
+
+test('#2686: composeFixesBlock without a deferredClosures argument behaves exactly as before', () => {
+  assert.deepEqual(
+    composeFixesBlock([{ id: 42, status: 'complete' }]),
+    ['Fixes #42'],
+  );
+  assert.deepEqual(
+    composeFixesBlock([{ id: 42, status: 'complete' }], new Map()),
+    ['Fixes #42'],
+  );
+});
+
+function seedSpecDecisions(parentDir, specId, lines) {
+  const dir = path.join(parentDir, `spec-${specId}`);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'decisions.md'), lines.join('\n') + '\n');
+}
+
+// The exact shape bin/log-decision.js's formatEntry (its canonical writer)
+// produces, in both call shapes a real caller might use — with a `--spec`
+// location prefix, and without (falling back to `log-decision:`). Proves
+// the regex matches real writer output, not just a hand-idealized line.
+function deferredClosureLine({ specArg, id, reason }) {
+  return formatEntry({
+    status: 'AUTO',
+    now: new Date('2026-10-01T14:02:18Z'),
+    spec: specArg,
+    text: `deferred-closure: spec #${id} closing keyword withheld (${reason})`,
+    reversibility: 'high',
+  });
+}
+
+test('#2686: readDeferredClosures finds a matching entry written via the real formatEntry (with and without --spec)', () => {
+  const dir = tmpRunDir();
+  seedSpecDecisions(dir, 1997, [
+    '# Decisions',
+    deferredClosureLine({ specArg: 1997, id: 1997, reason: 'AC not fully met, pending manual step' }),
+  ]);
+  const withSpecArg = readDeferredClosures(dir, [{ id: 1997, status: 'complete' }]);
+  assert.equal(withSpecArg.get('1997'), 'AC not fully met, pending manual step');
+
+  const dir2 = tmpRunDir();
+  seedSpecDecisions(dir2, 1997, [
+    deferredClosureLine({ specArg: undefined, id: 1997, reason: 'AC not fully met, pending manual step' }),
+  ]);
+  const withoutSpecArg = readDeferredClosures(dir2, [{ id: 1997, status: 'complete' }]);
+  assert.equal(withoutSpecArg.get('1997'), 'AC not fully met, pending manual step');
+});
+
+test('#2686: readDeferredClosures ignores specs with no entry, no decisions.md, or a non-matching id', () => {
+  const dir = tmpRunDir();
+  seedSpecDecisions(dir, 42, ['- AUTO 09:00:00 — some unrelated decision. Reversibility: n/a.']);
+  seedSpecDecisions(dir, 7, [
+    deferredClosureLine({ specArg: 7, id: 9, reason: 'wrong spec' }),
+  ]);
+  const result = readDeferredClosures(dir, [
+    { id: 42, status: 'complete' }, // no deferred-closure line
+    { id: 7, status: 'complete' }, // line names a different spec id
+    { id: 99, status: 'complete' }, // no spec-99/ directory at all
+  ]);
+  assert.equal(result.size, 0);
+});
+
+test('#2686: readDeferredClosures handles an empty/missing specs list', () => {
+  const dir = tmpRunDir();
+  assert.deepEqual(readDeferredClosures(dir, []), new Map());
+  assert.deepEqual(readDeferredClosures(dir, undefined), new Map());
 });

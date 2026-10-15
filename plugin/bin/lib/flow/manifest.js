@@ -206,16 +206,67 @@ function transitionSpec({ runDir, specId, status, phase, now = new Date() }) {
 // title/description refresh" section) calls to correct the block against
 // actual outcomes before the PR is marked ready, so a `not-run`/`failed`
 // spec's issue is never closed by the merge commit.
-function composeFixesBlock(specs) {
+//
+// `deferredClosures` (#2686) — an optional Map of spec id (string) -> reason,
+// as returned by `readDeferredClosures` below. A spec present in this map
+// always emits a `Refs` line, even when its manifest status reads
+// `complete` — a spec can finish every other phase yet still carry a
+// deliberate decision (logged per `_shared/pr-early-run-lifecycle.md`'s
+// "Deferred-closure decisions" section) to withhold its own closing
+// keyword. This check runs before the status check so it can override
+// `complete`, never the other way around.
+function composeFixesBlock(specs, deferredClosures) {
+  const deferred = deferredClosures instanceof Map ? deferredClosures : new Map();
   return (specs || []).map((spec) => {
+    const deferredReason = deferred.get(String(spec.id));
+    if (deferredReason) return `Refs #${spec.id} — deferred: ${deferredReason}`;
     if (spec.status === 'complete') return `Fixes #${spec.id}`;
-    const reason = spec.status === 'not-run'
-      ? 'not run'
-      : spec.status === 'failed'
-        ? (spec.phase ? `failed at ${spec.phase}` : 'failed')
-        : spec.status; // pending/running — defensive; the refresh runs post-gate
+
+    let reason;
+    if (spec.status === 'not-run') reason = 'not run';
+    else if (spec.status === 'failed') reason = spec.phase ? `failed at ${spec.phase}` : 'failed';
+    else reason = spec.status; // pending/running — defensive; the refresh runs post-gate
+
     return `Refs #${spec.id} — not run/failed: ${reason}`;
   });
+}
+
+// One canonical entry shape, matched here and nowhere else (#2686):
+// `- AUTO {time} — {location}: deferred-closure: spec #{n} closing keyword
+// withheld ({reason}).` `{location}` is whatever `bin/log-decision.js`'s own
+// `formatEntry` inserts (`log-decision`, `spec #{n}`, a `--step` value, or
+// `spec #{n} — {step}`) — never anchored on, since every real call through
+// that CLI writes one. See `_shared/pr-early-run-lifecycle.md`'s
+// "Deferred-closure decisions" section — the single source for this shape;
+// do not add a second pattern for the same decision.
+const DEFERRED_CLOSURE_RE = /^-\s+AUTO\s+\S+\s+—.*\bdeferred-closure:\s+spec #(\d+)\s+closing keyword withheld\s+\(([^)]*)\)/;
+
+// runDir (the multi-spec parent) + specs (manifest.multispec.specs) ->
+// Map of spec id (string) -> reason, read from each spec's own
+// `spec-{id}/decisions.md` (`flow/multispec-run-dir-layout.md`'s per-spec
+// subdirectory convention — each spec's decisions are logged under its own
+// namespaced dir, never the parent's). A missing or unreadable per-spec
+// `decisions.md` is silently treated as "no deferred-closure entry" — the
+// same fail-open posture every other best-effort decisions.md scan in this
+// pipeline uses; a spec that never ran (no subdirectory at all) simply
+// contributes nothing.
+function readDeferredClosures(runDir, specs) {
+  const result = new Map();
+  for (const spec of specs || []) {
+    let text;
+    try {
+      text = fs.readFileSync(path.join(runDir, `spec-${spec.id}`, 'decisions.md'), 'utf8');
+    } catch {
+      continue;
+    }
+    for (const line of text.split('\n')) {
+      const match = DEFERRED_CLOSURE_RE.exec(line);
+      if (match && String(match[1]) === String(spec.id)) {
+        result.set(String(spec.id), match[2]);
+      }
+    }
+  }
+  return result;
 }
 
 module.exports = {
@@ -227,4 +278,5 @@ module.exports = {
   formatElapsedMs,
   transitionSpec,
   composeFixesBlock,
+  readDeferredClosures,
 };

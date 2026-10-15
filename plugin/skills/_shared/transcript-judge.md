@@ -28,26 +28,50 @@ A consumer may also supply a **watermark payload** shape beyond `bytesAtDispatch
 (e.g. feedback's `filedRecords`/`dismissedSubjects`) — that shape is entirely consumer-owned
 and named in the consumer's own file, never here.
 
+A consumer may also **opt out of the self-assessment watermark write** (Degradation section below)
+when its fallback evaluates something other than the session's own conversational context —
+stated in the consumer's own file (reflect does).
+
 ## Transcript resolution
 
 Runs in the main thread, before dispatch.
 
-**Path:** `~/.claude/projects/<project-slug>/<session-id>.jsonl`.
+**Projects root:** `${CLAUDE_CONFIG_DIR:-~/.claude}/projects` — the same override
+`plugin/bin/claude-tweaks-statusline.js`'s `resolveConfigDir` already uses for a relocated config
+home; no new mechanism.
 
-- **`<project-slug>`:** derived from the session's absolute working-directory path — each `/`,
-  space, and `.` in that path is replaced by `-`. Worked example: `/Users/alice/projects/my-app`
-  becomes `-Users-alice-projects-my-app`. A path segment starting with `.` (e.g. a `.claude`
-  segment inside a worktree path) produces a doubled hyphen where the directory separator and the
-  leading dot both convert — that doubling is correct, not a bug to normalize away.
-- **`<session-id>`:** the value of `$CLAUDE_CODE_SESSION_ID`.
+**Primary — search by session-id filename.** When `$CLAUDE_CODE_SESSION_ID` is set, search every
+immediate subdirectory of the projects root for a file named exactly `<session-id>.jsonl`:
 
-**Fallback — whenever the id-derived path does not resolve:** `$CLAUDE_CODE_SESSION_ID` unset, or
-set but no file exists at the derived path (a stale or rotated session id) — pick the newest
-`.jsonl` file in the resolved project-slug directory by mtime. Whenever this fallback ran at all,
-the rendered report names the chosen file together with its mtime; when the directory holds more
-than one `.jsonl` file, of any age, it also lists the ones ignored — never silent newest-wins.
-Only when no candidate `.jsonl` exists at all (or the directory itself doesn't exist) does the
-self-assessment degradation below apply.
+```bash
+find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects" -mindepth 2 -maxdepth 2 \
+  -name "${CLAUDE_CODE_SESSION_ID}.jsonl"
+```
+
+A near-globally-unique session id resolves the actively-growing transcript directly, regardless of
+which project-slug directory it currently lives under — this is what makes resolution survive a
+worktree cwd change mid-session: `EnterWorktree`/`ExitWorktree` moves the session into a new
+project-slug directory (the slug is derived from the literal cwd path, so it changes whenever the
+cwd does), but the file's name — `<session-id>.jsonl` — does not, so a filename search finds it
+under whichever directory it currently lives in without needing to guess that the new directory is
+"a worktree-suffixed variant" of any prior one.
+
+- **Exactly one match:** use it.
+- **More than one match** (pathological — a reused or colliding session id): pick the newest by
+  mtime, same transparency convention as the Fallback below — name the chosen file and mtime, and
+  list the ignored matches.
+- **Zero matches, or `$CLAUDE_CODE_SESSION_ID` unset:** proceed to the Fallback below.
+
+**Fallback — slug-derived single directory.** Derive `<project-slug>` from the session's current
+absolute working-directory path — each `/`, space, and `.` in that path is replaced by `-`. Worked
+example: `/Users/alice/projects/my-app` becomes `-Users-alice-projects-my-app`. A path segment
+starting with `.` (e.g. a `.claude` segment inside a worktree path) produces a doubled hyphen where
+the directory separator and the leading dot both convert — that doubling is correct, not a bug to
+normalize away. Within `<projects-root>/<project-slug>/`, pick the newest `.jsonl` file by mtime.
+Whenever this fallback ran at all, the rendered report names the chosen file together with its
+mtime; when the directory holds more than one `.jsonl` file, of any age, it also lists the ones
+ignored — never silent newest-wins. Only when no candidate `.jsonl` exists at all (or the directory
+itself doesn't exist) does the self-assessment degradation below apply.
 
 **Scope statement:** this resolves the **main session's own transcript only.** Any Task agent
 dispatched during this session wrote its own separate transcript file, which is out of scope here
@@ -85,14 +109,15 @@ after the watermark, when one exists. This skip check and the offset clause are 
 redundant: the offset clause narrows an unavoidable dispatch; this check avoids the dispatch
 altogether when narrowing it would leave nothing to evaluate.
 
-**Self-assessment is exempted, explicitly (not an oversight).** The Degradation section below
-states self-assessment "never reads or writes a watermark — there is no resolved transcript path
-to key one on." This skip check inherits that same exemption rather than inventing a parallel
-mechanism for it: self-assessment only fires when no transcript file resolves at all, so there is
-no `currentBytes` to compare and no stamp to check. A self-assessment run therefore always runs in
-full and never writes a stamp on this check's account — duplicate-filing guards across repeated
-self-assessment runs are the consumer's own concern, the same safety net that already covers a
-transcript-judged run's non-duplicate findings.
+**Self-assessment is exempted, explicitly (not an oversight).** This skip check runs only once a
+transcript path has resolved, and before any dispatch. Neither route into self-assessment
+(Degradation section below) leaves it anything to do: on the no-transcript-resolves route there is
+no `currentBytes` to compare and no stamp to check; on the terminal judge-dispatch-failure route
+this check already ran earlier in the same invocation and returned `false` — that is how the failed
+dispatch was reached. So it never re-runs on self-assessment's account — duplicate-filing guards
+across repeated self-assessment runs are the consumer's own concern, the same safety net that
+already covers a transcript-judged run's non-duplicate findings. Whether a self-assessment run
+writes a watermark is the Degradation section's concern, not this check's.
 
 ## The judge dispatch
 
@@ -167,8 +192,23 @@ The `(self-assessment)` tag is the full mitigation, deliberately. No separate co
 machinery, no lowered evidentiary bar — findings from this mode pass through the consumer's own
 human-gated confirmation exactly like a transcript-judged finding does.
 
-The self-assessment path never reads or writes a watermark — there is no resolved transcript path
-to key one on.
+**Watermark — narrower than a blanket exclusion.** The one true no-watermark case is the
+no-transcript-resolves route above: there is genuinely no resolved transcript path to key a
+watermark on, so none is written. The terminal-dispatch-failure route is different — a transcript
+path *did* resolve (resolution has to succeed before a dispatch can even be attempted), so there is
+exactly the same `transcriptPath` + `bytesAtDispatch` a successful dispatch would have written
+against. On that route, once the self-assessment evaluation completes, call `writeWatermark` the
+same way the Watermark write section below describes — reusing the `bytesAtDispatch` already
+captured before the failed dispatch attempt (never re-stat after; the same append-while-running
+race that section's own comment warns about) — with `evaluatedAt` as now, the consumer's own
+payload fields (parameterization point 4), and one addition: `mode: "self-assessment"` on the
+payload, so a later reader (or a human inspecting the watermark file) can tell a
+self-assessment-written watermark apart from a dispatched judge's. A reader written before this
+field existed treats its absence as the pre-existing dispatched-judge case, never as a new failure
+mode. The write rests on the self-assessment having evaluated the session's own conversational
+context; a consumer whose fallback evaluates something else (reflect's inline lens procedure reads
+gathered repo artifacts, not the session) opts out and writes no watermark on this route — its own
+file states the opt-out.
 
 ## After the judge returns
 
@@ -185,8 +225,10 @@ Model Selection section, then degrades to the self-assessment path above, noted 
 summary: the evaluation is never silently dropped.
 
 **Watermark write.** On a `DONE` or `DONE_WITH_CONCERNS` return from the judge (not
-`NEEDS_CONTEXT`/`BLOCKED`, and not the self-assessment degradation path above), call
-`writeWatermark` (with the consumer's own `{ consumer }` key) with:
+`NEEDS_CONTEXT`/`BLOCKED`) — or on completing a self-assessment evaluation reached via a terminal
+judge-dispatch failure, per the Degradation section's "Watermark — narrower than a blanket
+exclusion" paragraph above — call `writeWatermark` (with the consumer's own `{ consumer }` key)
+with:
 
 ```
 {
@@ -195,6 +237,9 @@ summary: the evaluation is never silently dropped.
                            // to the transcript while it runs, so re-stat-ing after return
                            // would race
   evaluatedAt,             // now
+  mode,                    // "self-assessment" on the terminal-dispatch-failure route above;
+                           // omitted (undefined) on an ordinary dispatched-judge write — a
+                           // reader treats an absent field as the pre-existing dispatched case
   ...consumer-owned payload fields (parameterization point 4's "watermark payload" note above)
 }
 ```

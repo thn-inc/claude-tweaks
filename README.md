@@ -17,6 +17,19 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 /claude-tweaks:init
 ```
 
+**Not listed in the Claude Code Templates "Mods" catalog (aitmpl.com)** — investigated (#2796) and
+decided against, not overlooked. A "Mod" there is a distinct, early-access packaging — a
+TypeScript `register(on, options)` function-hooks module under `.claude-plugin/plugin.json` +
+`hooks/hooks.json`, requiring Claude Code >= 2.1.259 with the non-default
+`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` flag set, and typechecked via the catalog's own `tsc`
+toolchain — not a thin wrapper around the `/plugin marketplace add` + `/plugin install` flow
+above. Listing would mean maintaining a second, structurally different plugin packaging (one
+with no TypeScript build step today) against an upstream API its own docs call unstable ("the
+`$` API may still change between releases"), submitted via PR into a third-party repository
+(`davila7/claude-code-templates`) under MIT license — ongoing dual-maintenance cost for a
+redundant distribution path, not a free listing. Revisit if the Mods format stabilizes and gains
+a way to wrap an existing marketplace plugin instead of requiring a rewrite.
+
 ## How it works
 
 ```
@@ -162,7 +175,7 @@ behind CLAUDE.md's `## Don'ts` rules.
 | Plugin / Tool | Source | Required |
 |---------------|--------|----------|
 | [Superpowers](https://github.com/obra/superpowers) | `/plugin install superpowers@claude-plugins-official` | Yes — brainstorming, planning, subagent execution, worktree management, systematic debugging |
-| agent-browser | `npm install -g agent-browser` | Optional — browser automation for /stories, /visual-review, /review qa |
+| playwright-cli | `npm install -g @playwright/cli` | Optional — browser automation for /stories, /visual-review, /review qa |
 | Node 18+ | brew/winget/scoop install nodejs | Yes — statusline. `/claude-tweaks:init` Step 8 offers to install via your package manager. |
 | git CLI | brew/winget/apt install git | Optional — required only for the git segment in the statusline; everything else degrades gracefully. |
 | `gh` CLI | `brew/winget/apt install gh`, then `gh auth login` | Yes, for most `work-backend: github-issues` write paths — required, unauthenticated is a hard gate. `/dispatch`'s whole queue/claim/settle/merge path is dual-transport, falling back to GitHub MCP tools automatically when `gh` isn't on PATH — see `_shared/github-write-transport.md` — but `gh` is still required for every other GitHub-write path in the plugin. |

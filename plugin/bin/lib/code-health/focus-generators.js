@@ -46,3 +46,6 @@ require('./candidates-abstraction-police');
 require('./candidates-test-hygiene');
 require('./candidates-experiment-cleanup');
 require('./candidates-security-hardening');
+require('./candidates-prelaunch');
+require('./candidates-agent-trust-scope');
+require('./candidates-app-store-readiness');

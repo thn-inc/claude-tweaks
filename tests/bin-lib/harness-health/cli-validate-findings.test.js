@@ -409,6 +409,7 @@ test('validate-findings: a patch finding against a real target file carries a Pr
     payloads[0].body.includes(`Premise-check: ! grep -qF -- 'See \`src/auth/session.js\`.' '${expectedPath}'`),
     `expected a Premise-check: line anchored on the resolved target path, got body:\n${payloads[0].body}`,
   );
+  assert.ok(!result.stderr.includes('dropped Premise-check:'), `a kept line must not log a drop, got:\n${result.stderr}`);
 });
 
 test('validate-findings: a patch finding against an unresolvable target carries no Premise-check: line', () => {
@@ -448,4 +449,66 @@ test('validate-findings: a finding whose target differs from --target/--kind nev
   const billingPayload = payloads.find((p) => p.target === 'billing');
   assert.ok(authPayload.body.includes('Premise-check:'), 'the finding matching --target/--kind must carry a Premise-check: line');
   assert.ok(!billingPayload.body.includes('Premise-check:'), 'a finding for a different target must not be anchored against auth.md');
+});
+
+// ── Filing-time self-check end-to-end (#2633) ───────────────────────────────
+
+test('validate-findings: an additive finding whose proposed string already exists in the target is filed with no Premise-check: line', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+  // The proposed newString is already present (the generic-anchor case #2633 guards against).
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth\n\nSee `src/auth/login.js`.\nSee `src/auth/session.js`.\n');
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding()]));
+
+  const result = runValidateFindings(root, findingsFile, ['--target', 'auth', '--kind', 'skill']);
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const payloads = JSON.parse(result.stdout);
+  assert.strictEqual(payloads.length, 1);
+  assert.ok(!payloads[0].body.includes('Premise-check:'), `expected the self-check to drop the line, got:\n${payloads[0].body}`);
+  assert.ok(
+    result.stderr.includes(`dropped Premise-check: line for finding ${payloads[0].id}`),
+    `a self-check drop must be logged to stderr, got:\n${result.stderr}`,
+  );
+});
+
+test('validate-findings: a RELATIVE --root still anchors the Premise-check on the real target (the self-check reads it, and drops an already-present anchor)', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth\n\nSee `src/auth/login.js`.\nSee `src/auth/session.js`.\n');
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding()]));
+
+  // --root relative to the CLI's own cwd: before the fix the target path stayed
+  // relative, the self-check (run with cwd: --root) resolved it one level too
+  // deep, read "unresolved", and kept a line that should have been dropped.
+  const result = spawnSync('node', [CLI, 'validate-findings', findingsFile, '--root', path.basename(root), '--target', 'auth', '--kind', 'skill'],
+    { encoding: 'utf8', cwd: path.dirname(root) });
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const payloads = JSON.parse(result.stdout);
+  assert.strictEqual(payloads.length, 1);
+  assert.ok(!payloads[0].body.includes('Premise-check:'), `expected the self-check to drop the line, got:\n${payloads[0].body}`);
+});
+
+test('validate-findings: a removal finding whose old string is already gone is filed with no Premise-check: line', () => {
+  const root = tmp();
+  // intent "remove" is only valid for assetType claude-md + classification
+  // restructural (validate-finding.js); scope.js's listClaudeMd resolves
+  // --kind claude-md --target CLAUDE to <root>/CLAUDE.md.
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# Project\n\nNothing stale here.\n');
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding({
+    assetType: 'claude-md', target: 'CLAUDE', classification: 'restructural',
+    intent: 'remove', oldString: 'See `src/auth/login.js`.', newString: '',
+  })]));
+
+  const result = runValidateFindings(root, findingsFile, ['--target', 'CLAUDE', '--kind', 'claude-md']);
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const payloads = JSON.parse(result.stdout);
+  assert.strictEqual(payloads.length, 1);
+  assert.ok(!payloads[0].body.includes('Premise-check:'), `expected the self-check to drop the line, got:\n${payloads[0].body}`);
+  assert.ok(
+    result.stderr.includes(`dropped Premise-check: line for finding ${payloads[0].id}`),
+    `a self-check drop must be logged to stderr, got:\n${result.stderr}`,
+  );
 });

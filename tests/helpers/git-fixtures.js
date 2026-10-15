@@ -89,4 +89,50 @@ function harnessWorktreeOf(main, name) {
   return fs.realpathSync(wt);
 }
 
-module.exports = { gitRepo, linkedWorktreeOf, harnessWorktreeOf, fixtureGit, FIXTURE_TIMEOUT_MS };
+// A bare `origin` plus two clones of it, `work` and `other`, sharing one pushed
+// `base` commit on `main` — the shape a remote-branch collision needs: `work`
+// is this run's checkout, `other` an unrelated checkout that can push a
+// same-name branch. Shared by tests/bin-lib/worktree/remote-branch-collision.test.js
+// and tests/adopted-branch-collision-snippet-fixture.test.js (#3091's review:
+// the second suite had grown a verbatim copy). `env` pins the git identity and
+// blanks GH_REPO/GH_HOST so a caller that spawns `gh` against these local-path
+// remotes never resolves an exported repo instead. The temp root is removed if
+// setup itself throws; the caller removes it after the test.
+function originWithTwoClones(prefix) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  try {
+    const origin = path.join(root, 'origin.git');
+    const work = path.join(root, 'work');
+    const other = path.join(root, 'other');
+    const env = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test',
+      GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test',
+      GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
+      GH_REPO: '', GH_HOST: '',
+    };
+    const run = (cwd, args) => fixtureGit(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const commit = (cwd, name) => {
+      fs.writeFileSync(path.join(cwd, name), name);
+      run(cwd, ['add', name]);
+      run(cwd, ['commit', '-q', '-m', name]);
+    };
+    fixtureGit(['init', '-q', '--bare', '-b', 'main', origin], { env, stdio: 'ignore' });
+    for (const dir of [work, other]) {
+      fixtureGit(['init', '-q', '-b', 'main', dir], { env, stdio: 'ignore' });
+      run(dir, ['remote', 'add', 'origin', origin]);
+    }
+    commit(work, 'base');
+    run(work, ['push', '-q', 'origin', 'main']);
+    run(other, ['pull', '-q', 'origin', 'main']);
+    return {
+      root, work, other, env, run, commit,
+      gitIn: (cwd) => (args) => run(cwd, args),
+    };
+  } catch (err) {
+    fs.rmSync(root, { recursive: true, force: true });
+    throw err;
+  }
+}
+
+module.exports = { gitRepo, linkedWorktreeOf, harnessWorktreeOf, originWithTwoClones, fixtureGit, FIXTURE_TIMEOUT_MS };

@@ -40,8 +40,7 @@ any decision outside the call sites above — this is not a general-purpose risk
 
 ## Input
 
-`$ARGUMENTS` is `{mode} [#{n}] [--base <ref>]` — `mode` selects one of `grant-check` |
-`merge-check` | `failure-check` | `ceremony-check`; `#{n}` is the record's issue number, when the
+`$ARGUMENTS` is `<grant-check|merge-check|failure-check|ceremony-check> [#{n}] [--base <ref>]` — the first token selects the mode; `#{n}` is the record's issue number, when the
 mode needs one. Each mode's own Step 1 ("Gather") is the source of truth for exactly what it
 fetches and how — they differ enough (some key off `#{n}`, `merge-check` doesn't consume it at
 all) that this router doesn't restate it.

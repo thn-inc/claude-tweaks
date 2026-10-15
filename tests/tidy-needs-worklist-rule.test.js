@@ -13,14 +13,14 @@ const readFlat = (rel) => read(rel).replace(/\s+/g, ' ');
 const STEP1_RECORDS = read('plugin/skills/tidy/step-1-records.md');
 const STEP1_RECORDS_FLAT = readFlat('plugin/skills/tidy/step-1-records.md');
 
-test('step-1-records.md states the worklist rule once, scoped to Shapes 1, 2, 3, 4, 5, 7, 8', () => {
-  assert.ok(STEP1_RECORDS_FLAT.includes('Worklist rule (Shapes 1, 2, 3, 4, 5, 7, 8)'), 'worklist-rule heading/scope statement missing');
+test('step-1-records.md states the worklist rule once, scoped to Shapes 1, 2, 3, 4, 4.5, 5, 7, 8', () => {
+  assert.ok(STEP1_RECORDS_FLAT.includes('Worklist rule (Shapes 1, 2, 3, 4, 4.5, 5, 7, 8)'), 'worklist-rule heading/scope statement missing');
   assert.ok(STEP1_RECORDS_FLAT.includes("`_shared/work-record.md`'s worklist rule"), 'must cite the shared worklist rule rather than restate it');
   assert.ok(STEP1_RECORDS_FLAT.includes('Shapes 5.5 and 6 are exempt'), 'must state the two exempt shapes explicitly');
 });
 
 test('worklist-rule paragraph sits before Shape 1', () => {
-  const ruleIdx = STEP1_RECORDS_FLAT.indexOf('Worklist rule (Shapes 1, 2, 3, 4, 5, 7, 8)');
+  const ruleIdx = STEP1_RECORDS_FLAT.indexOf('Worklist rule (Shapes 1, 2, 3, 4, 4.5, 5, 7, 8)');
   const shape1Idx = STEP1_RECORDS_FLAT.indexOf('### Shape 1');
   assert.ok(ruleIdx !== -1 && shape1Idx !== -1 && ruleIdx < shape1Idx, 'worklist rule must precede Shape 1');
 });

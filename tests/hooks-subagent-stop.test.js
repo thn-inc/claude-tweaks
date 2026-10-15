@@ -281,3 +281,36 @@ test('#1936: a compliant reply is never blocked and writes no retry-counter entr
   assert.strictEqual(events.length, 0);
   assert.deepStrictEqual(contractRetries.readRetried(sessionId), new Set(), 'a compliant reply must never touch the retry counter');
 });
+
+// #2714: a nested dispatcher's own interim progress-update reply (more async
+// work still pending) must not be graded as a final reply at all — no event,
+// not even the informational 'lenient' variant — when it carries the
+// INTERIM_STATUS marker as its trailing line, regardless of what preceded it
+// in the transcript (the gap #2041's narrower immediately-preceding-signal
+// filter leaves open).
+test('#2714 AC1: a reply ending with INTERIM_STATUS: logs no contract-violation event at all', () => {
+  const { out, events } = callSubstop('2 of 8 back. Lens 3b-b surfaced two HIGH findings.\nINTERIM_STATUS: waiting on 6 more lens agents');
+  assert.deepStrictEqual(out, {}, 'an interim progress reply must never produce a dispatcher-facing warning');
+  assert.strictEqual(events.length, 0, 'an interim progress reply must log nothing at all — not even the lenient variant');
+});
+
+test('#2714 AC1: the INTERIM_STATUS marker is recognized even with zero tool-use blocks in the transcript (no zero-tool-use-verdict either)', () => {
+  const { out, events } = callSubstop('Still waiting on nested agents.\nINTERIM_STATUS: 3 of 8 back', { toolUse: false });
+  assert.deepStrictEqual(out, {});
+  assert.strictEqual(events.length, 0, 'an interim checkpoint is not graded at all, so it must not log zero-tool-use-verdict either (same posture as asyncWaitCheckpoint)');
+});
+
+test('#2714 AC2: a final reply with no status line and no INTERIM_STATUS marker still produces exactly one genuine contract-violation — the fix narrows false positives without weakening real detection', () => {
+  const { out, events } = callSubstop('Finished the task. No status line here.');
+  assert.strictEqual(events.length, 1);
+  assert.strictEqual(events[0].type, 'contract-violation');
+  assert.strictEqual(events[0].variant, 'violation');
+  assert.match(out.json.systemMessage, /status line/i);
+});
+
+test('#2714: isInterimProgressReply recognizes the marker only as the trailing line, not mid-reply', () => {
+  assert.strictEqual(substop.isInterimProgressReply('Progress note.\nINTERIM_STATUS: 2 of 8 back'), true);
+  assert.strictEqual(substop.isInterimProgressReply('INTERIM_STATUS: 2 of 8 back\nMore narration after it.'), false, 'the marker must be the reply\'s LAST non-empty line, same positional rule as the canonical STATUS: line');
+  assert.strictEqual(substop.isInterimProgressReply('No marker at all.\nSTATUS: DONE'), false);
+  assert.strictEqual(substop.isInterimProgressReply(''), false);
+});

@@ -87,6 +87,16 @@ Bundle analog of `wrap-up/review-console-interactive.md`'s Console-on-PR section
 
 `pr-first` + `pr` on the parent `run-state.json` (one bundle PR — `_shared/pr-early-run-lifecycle.md`): read `_shared/console-on-pr.md`, compose the content below would, post, write `console.json` to the parent run dir. Live: also ask `AskUserQuestion` (`_shared/console-execution.md`). Headless: report `pending-review` + URL. Never both. No `pr` yet: fall through below.
 
+## Session-start residue check
+
+Run before "Present the consolidated console" below, in every mode this console reaches (the Auto-resolution short-circuit's own informational render included) — mirrors `wrap-up/review-console.md`'s own single-spec check exactly, run once here against the parent run dir rather than once per spec:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" check-session-residue --run "$MULTISPEC_PARENT_DIR"
+```
+
+When it reports pending residue, render a "Still pending from earlier" informational line naming each item and its resolution command, directly above the console tables — read-only, never a new `AskUserQuestion`, and never acted on here (same ownership-safety posture as SessionStart's own notice: a listed run may be live in a sibling session). Omit the line entirely when it reports none.
+
 ## Present the consolidated console
 
 Read `multispec-console-template.md` (this skill's directory) and render that exact shape — every section's column layout, the engine-vs-prose-fallback distinction, and the `[{genre}-convention]` row's three-way prompt. Worked example rows there are fictional; substitute this run's own per-spec `decisions.md`/`staged/` content, aggregated per "Numbering rules" above.
@@ -199,7 +209,7 @@ Halt before applying. Leave the parent run dir intact. User resumes with `/claud
 
 ## Empty-console fast path
 
-If every per-spec `decisions.md` passes `wrap-up/review-console.md`'s Empty-console fast path decision-bearing-entries test (no `AUTO`/`STAGED`/`KEPT-PROMPT`/`REFUSED`/`FAILED` entries — that file's `SCANNED`-exclusion rule applies per spec, cited rather than restated here) AND every per-spec `staged/` is empty AND the parent `staged/` is empty AND there are no skill or config updates across the run AND no cleanup actions apply across any spec AND no queue writes are pending across any spec, skip the console entirely. Log "Multi-spec Review Console: nothing to review" and archive silently.
+If every per-spec `decisions.md` passes `wrap-up/review-console.md`'s Empty-console fast path decision-bearing-entries test (no `AUTO`/`STAGED`/`KEPT-PROMPT`/`REFUSED`/`FAILED` entries — that file's `SCANNED`-exclusion rule applies per spec, cited rather than restated here) AND every per-spec `staged/` is empty AND the parent `staged/` is empty AND there are no skill or config updates across the run AND no cleanup actions apply across any spec AND no queue writes are pending across any spec AND the Session-start residue check above reports nothing pending, skip the console entirely. Log "Multi-spec Review Console: nothing to review" and archive silently. When every other condition holds but the residue check alone reports something pending, do not take this fast path — render the console with only the "Still pending from earlier" line and no other section, so the resurfaced residue is never silently dropped by an otherwise-empty run.
 
 ## Sort order
 

@@ -16,7 +16,7 @@ function git(root, ...args) {
 }
 
 // Main checkout on `trunk` (the integration branch, via policy.yml — never "main"), a fake
-// `origin` remote (repoSlugOf only reads its URL from git config, no network hit), and one
+// `origin` remote (repoSpecOf only reads its URL from git config, no network hit), and one
 // linked worktree on `feat-branch` recorded as the run's own worktree.
 function fixtureRepo() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-td-')));
@@ -250,4 +250,81 @@ test('AC9 (#2362): a recorded worktree that no longer exists must NOT trigger th
   assert.match(result.lines.join('\n'), /remote ref: skipped — no branch recorded/);
   assert.strictEqual(calls.length, 0, 'gh api delete must never be called — the branch must not be recovered for a recorded-but-gone worktree');
   assert.notStrictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '', 'the local branch must survive — it was never a target for deletion');
+});
+
+test('AC10 (#2747): a worktree left prunable after a failed removal (gitdir file gone, registration still present) is cleared via prune, which unblocks the branch delete', () => {
+  const { root, wt, runDir } = fixtureRepo();
+  writeRunState(runDir, { status: 'active', worktree: wt, sessionId: 'me' });
+  // Simulate the exact half-reaped state the incident describes: the worktree's gitdir link is
+  // gone, but `git worktree list` still carries its registration and reports it `prunable` — a
+  // state `git worktree remove` itself refuses to clean up (it requires validation to succeed
+  // first), but `git worktree prune` clears outright.
+  fs.rmSync(path.join(wt, '.git'), { force: true });
+
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  assert.match(result.lines.join('\n'), /worktree: removed via prune/);
+  assert.match(result.lines.join('\n'), /branch: deleted feat-branch/);
+  assert.match(result.lines.join('\n'), /remote ref: deleted refs\/heads\/feat-branch/);
+  assert.doesNotMatch(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.strictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
+});
+
+test('AC13 (#2747): a failed branch delete reports the underlying git error text, not just "skipped"', () => {
+  const { root, wt, runDir } = fixtureRepo();
+  writeRunState(runDir, { status: 'active', worktree: wt, sessionId: 'me' });
+  // Force `git branch -D feat-branch` to fail for a reason independent of worktree removal (which
+  // succeeds normally here) — a stale lock file on the branch's own ref, the same failure shape a
+  // crashed concurrent git process leaves behind.
+  fs.writeFileSync(path.join(root, '.git', 'refs', 'heads', 'feat-branch.lock'), '');
+
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  assert.match(result.lines.join('\n'), /worktree: removed/);
+  // The real git stderr this provokes spans multiple lines ("cannot lock ref ..." followed by a
+  // blank line and "Another git process seems to be running..."), so match across them with `s`
+  // rather than asserting a single-line shape.
+  assert.match(result.lines.join('\n'), /branch: skipped — delete failed for feat-branch \([\s\S]+\)/);
+  assert.match(result.lines.join('\n'), /cannot lock ref 'refs\/heads\/feat-branch'/);
+  assert.notStrictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '', 'the branch must survive a failed delete');
+});
+
+test('AC14 (#2747): defaultGhApiDelete threads --hostname onto the gh api call for a GitHub Enterprise Server host, and omits it for plain github.com', (t) => {
+  const cp = require('child_process');
+  let capturedArgs = null;
+  t.mock.method(cp, 'execFileSync', (bin, args) => { capturedArgs = args; return ''; });
+
+  defaultGhApiDelete(['repos/acme/widgets/git/refs/heads/x'], 'ghe.example.com');
+  assert.deepStrictEqual(
+    capturedArgs,
+    ['api', '--method', 'DELETE', 'repos/acme/widgets/git/refs/heads/x', '--hostname', 'ghe.example.com'],
+  );
+
+  defaultGhApiDelete(['repos/acme/widgets/git/refs/heads/x'], 'github.com');
+  assert.deepStrictEqual(capturedArgs, ['api', '--method', 'DELETE', 'repos/acme/widgets/git/refs/heads/x']);
+
+  defaultGhApiDelete(['repos/acme/widgets/git/refs/heads/x']);
+  assert.deepStrictEqual(capturedArgs, ['api', '--method', 'DELETE', 'repos/acme/widgets/git/refs/heads/x']);
+});
+
+test('AC15 (#2747): teardown-run resolves the GHE host from the origin remote and threads it through to ghApiDelete, so the remote-ref delete targets the right host', () => {
+  const { root, wt, runDir } = fixtureRepo();
+  git(root, 'remote', 'set-url', 'origin', 'git@ghe.example.com:acme/widgets.git');
+  writeRunState(runDir, { status: 'active', worktree: wt, sessionId: 'me' });
+
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged',
+    sessionId: 'me',
+    deps: { ghApiDelete: (args, host) => { calls.push({ args, host }); return { ok: true }; } },
+  });
+
+  assert.match(result.lines.join('\n'), /remote ref: deleted refs\/heads\/feat-branch/);
+  assert.deepStrictEqual(calls, [{ args: ['repos/acme/widgets/git/refs/heads/feat-branch'], host: 'ghe.example.com' }]);
 });

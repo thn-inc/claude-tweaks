@@ -7,6 +7,11 @@ Referenced by `skills/wrap-up/review-console-interactive.md`'s "Present the cons
 
 The pipeline auto-resolved {N} decisions and staged {M} items for your review. Every section below — the named batch sections, plus Queue writes, Memory updates, and Upstream feedback — resolves via the same terminal Approve all / Override / Stop choice. Approve all applies each section's own default (batch sections: apply; `Q#`/`M#`: their pre-checked `Apply` default; `U#`: filed when its staged draft carries a `**Causal:** systemic` tag, else its usual unchecked/declined default) with no further prompts, except rows marked drills-individually (listed above the terminal options when present — see `review-console-interactive.md`'s Hard requirements). Override is what still drills `Q#`/`M#`/`U#` individually — one or more chunked `multiSelect` calls, `_shared/batched-item-drill.md` for `Q#`/`M#`, `_shared/upstream-feedback-batch.md` for `U#` (see `review-console-interactive.md`'s Hard requirements for why).
 
+> **Still pending from earlier** (#2736 — render only when `check-session-residue` reported something; omit entirely otherwise, no row/number of its own, purely informational)
+>
+> - 2026-07-01T090000-record-42 (status: interrupted) — resolve with: review {run}/decisions.md and staged/ to resume, or close a finished run with: `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run <dir>`
+> - 2026-06-30T101500-tidy-standalone — staged proposal(s) awaiting approval: `/claude-tweaks:tidy --approve "<dir>"`
+
 #### Auto-applied (already in commits — override = revert)
 
 | # | Skill | What | Where | Status |

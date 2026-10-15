@@ -110,6 +110,12 @@ test('parseWorktreeList: a lock reason with no pid parses as locked, pid null', 
   assert.strictEqual(got[0].pid, null);
 });
 
+test('parseWorktreeList: a `prunable` line marks the entry prunable; entries without one are not', () => {
+  const got = parseWorktreeList('worktree /a\nbranch refs/heads/a\nprunable gitdir file points to non-existent location\n\nworktree /b\nbranch refs/heads/b\n\n');
+  assert.strictEqual(got[0].prunable, true);
+  assert.strictEqual(got[1].prunable, false);
+});
+
 test('parseWorktreeList: empty input yields an empty array', () => {
   assert.deepStrictEqual(parseWorktreeList(''), []);
 });

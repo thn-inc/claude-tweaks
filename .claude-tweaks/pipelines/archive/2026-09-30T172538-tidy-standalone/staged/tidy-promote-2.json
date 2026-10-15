@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "parked",
+  "record": 2667,
+  "title": "Add an AI-generated-design-tells checklist",
+  "action": "Promote — parked trigger met (#2655 closed)",
+  "command": "/claude-tweaks:specify #2667"
+ }
+]
