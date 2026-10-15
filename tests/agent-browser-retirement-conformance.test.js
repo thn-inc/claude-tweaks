@@ -136,20 +136,19 @@ function findFiles(dir) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       out.push(...findFiles(full));
-    } else if (entry.name.endsWith('.md') || entry.name.endsWith('.yml') || entry.name.endsWith('.yaml')) {
+    } else if (/\.(md|ya?ml)$/.test(entry.name)) {
       out.push(full);
     }
   }
   return out;
 }
 
-function findMatches(text) {
-  const lines = text.split('\n');
-  const matches = [];
-  lines.forEach((line, idx) => {
-    if (line.includes('agent-browser')) matches.push(idx + 1);
+function findMatchingLineNumbers(text) {
+  const lineNumbers = [];
+  text.split('\n').forEach((line, idx) => {
+    if (line.includes('agent-browser')) lineNumbers.push(idx + 1);
   });
-  return matches;
+  return lineNumbers;
 }
 
 test('ALLOWLIST entries each carry a non-empty reason and name a file that actually exists', () => {
@@ -172,10 +171,9 @@ test('no shipped skill instruction outside the ALLOWLIST mentions agent-browser'
     const rel = path.relative(ROOT, abs).split(path.sep).join('/');
     if (ALLOWLIST_FILES.has(rel)) continue;
 
-    const text = readText(abs);
-    const lines = findMatches(text);
-    if (lines.length > 0) {
-      violations.push(`${rel}:${lines.join(',')}`);
+    const lineNumbers = findMatchingLineNumbers(readText(abs));
+    if (lineNumbers.length > 0) {
+      violations.push(`${rel}:${lineNumbers.join(',')}`);
     }
   }
 
@@ -192,9 +190,8 @@ test('no shipped skill instruction outside the ALLOWLIST mentions agent-browser'
 test('every ALLOWLIST file still contains agent-browser (stale entries are removed, not left stale)', () => {
   const stale = [];
   for (const entry of ALLOWLIST) {
-    const abs = path.join(ROOT, entry.file);
-    const text = readText(abs);
-    if (findMatches(text).length === 0) stale.push(entry.file);
+    const text = readText(path.join(ROOT, entry.file));
+    if (findMatchingLineNumbers(text).length === 0) stale.push(entry.file);
   }
   assert.deepStrictEqual(
     stale,
