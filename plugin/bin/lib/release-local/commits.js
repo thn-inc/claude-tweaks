@@ -4,7 +4,11 @@
 // --first-parent, so --no-ff merges are one composer-written subject each).
 // An unparseable subject is reported as `unconventional`, never dropped
 // (.claude/skills/parse-signal-discipline): it is real signal that someone
-// bypassed the merge-time composer.
+// bypassed the merge-time composer. #2954: readCommits/conventionalHistory
+// also accept an opt-in `{ firstParent: false }` for a `pr-first` consumer
+// whose PRs land as plain (unconventional-subject) --no-ff merges — the
+// default stays first-parent for this module's other caller,
+// bin/release-local.js, which still depends on it.
 const { RELEASE_NOTE_FOOTER_RE } = require('../release-notes');
 const { compareVersions } = require('../changelog.js');
 
@@ -73,9 +77,18 @@ function parseCommit({ sha, subject, body = '' }) {
   };
 }
 
-function readCommits(git, tag, ref = 'HEAD') {
+// opts.firstParent (default true): the local engine's own semantics —
+// --no-ff merges are one composer-written subject each (see header comment
+// above) — so the default stays the first-parent walk for every existing
+// caller. Passing `{ firstParent: false }` is opt-in: it runs the range
+// without `--first-parent`, following every parent (release-please's own
+// commit-range semantics under a `pr-first` integration model, #2954).
+function readCommits(git, tag, ref = 'HEAD', opts = {}) {
   const range = tag ? `${tag}..${ref}` : ref;
-  const raw = git(['log', '--first-parent', `--format=%H${FIELD}%s${FIELD}%b${RECORD}`, range]);
+  const args = ['log'];
+  if (opts.firstParent !== false) args.push('--first-parent');
+  args.push(`--format=%H${FIELD}%s${FIELD}%b${RECORD}`, range);
+  const raw = git(args);
   return raw.split(RECORD)
     .filter((chunk) => chunk.trim() !== '')
     .map((chunk) => {
@@ -84,9 +97,9 @@ function readCommits(git, tag, ref = 'HEAD') {
     });
 }
 
-function conventionalHistory(git, ref = 'HEAD') {
+function conventionalHistory(git, ref = 'HEAD', opts = {}) {
   const tag = lastTag(git, ref);
-  return { lastTag: tag, commits: readCommits(git, tag, ref) };
+  return { lastTag: tag, commits: readCommits(git, tag, ref, opts) };
 }
 
 module.exports = { HEADER_RE, lastTag, parseCommit, readCommits, conventionalHistory };
