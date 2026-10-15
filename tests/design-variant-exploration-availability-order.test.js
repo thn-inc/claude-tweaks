@@ -32,7 +32,7 @@ test('explore.md: Availability check runs before Scope resolution', () => {
   const text = read('design-wrapper', 'modes', 'explore.md');
   requireOrder(
     text,
-    ['## Availability (exact-pin, checked before any option is presented)', '## Scope resolution'],
+    ['## Availability (checked before any option is presented)', '## Scope resolution'],
     'explore.md'
   );
 });
@@ -44,7 +44,7 @@ test('design-pre-steps.md Step 2.5b-ii: policy gate, then availability pre-check
     [
       '## Step 2.5b-ii: Variant exploration',
       '**Policy gate.**',
-      '**Exact-pin availability pre-check.**',
+      '**Availability pre-check.**',
       '### No `DESIGN.md` — identity branch',
       '### `DESIGN.md` present — layout branch',
     ],
@@ -54,7 +54,7 @@ test('design-pre-steps.md Step 2.5b-ii: policy gate, then availability pre-check
 
 test('design-pre-steps.md: both AskUserQuestion offer branches read EXPLORE_AVAILABLE, never recommend an unavailable pin', () => {
   const text = read('specify', 'design-pre-steps.md');
-  const occurrences = text.split('**Call `AskUserQuestion`** — Option 1 below renders per the Exact-pin availability pre-check above').length - 1;
+  const occurrences = text.split('**Call `AskUserQuestion`** — Option 1 below renders per the Availability pre-check above').length - 1;
   assert.strictEqual(occurrences, 2, 'both offer branches (identity, layout) must gate Option 1 on EXPLORE_AVAILABLE');
 });
 

@@ -229,6 +229,26 @@ test('hook (pr-first): the `on:` trigger decides, not any release: line — bloc
   assert.strictEqual((await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps().deps })).hook.value, false);
 });
 
+test('hook (pr-first): CRLF workflows are scanned like LF ones — a Windows checkout of mirror-marketplace.yml is a release hook (#3040)', async () => {
+  // Byte-shape of this repo's own .github/workflows/mirror-marketplace.yml on a
+  // core.autocrlf checkout: `on:\r` never matched ON_LINE_RE's `(.*)$`.
+  const mirror = 'name: mirror-marketplace\n\non:\n  release:\n    types: [published]\n\npermissions:\n  contents: write\n\njobs:\n  mirror:\n    runs-on: ubuntu-latest\n'.replace(/\n/g, '\r\n');
+  assert.strictEqual(await hookOf({ 'mirror-marketplace.yml': mirror }), true);
+  assert.strictEqual(await hookOf({ 'publish.yml': 'on: release\r\njobs: {}\r\n' }), true);
+  assert.strictEqual(await hookOf({ 'publish.yml': 'on:\r\n  release:\r\n    types:\r\n      - published\r\n' }), true);
+  assert.strictEqual(await hookOf({ 'publish.yml': 'on:\r\n  release:\r\n    types: [created]\r\njobs: {}\r\n' }), false);
+});
+
+test('hook (pr-first): an inline comment directly on `on:` or `release:` does not hide the block below it (#3040)', async () => {
+  // ON_LINE_RE's `[ \t]*` eats the gap before `#`, so the captured value is `# trigger` —
+  // stripComment must strip a comment that starts the value, not only one after whitespace.
+  const commentedOn = 'on:  # trigger\n  release:\n    types: [published]\n';
+  assert.strictEqual(await hookOf({ 'publish.yml': commentedOn }), true);
+  assert.strictEqual(await hookOf({ 'publish.yml': commentedOn.replace(/\n/g, '\r\n') }), true);
+  assert.strictEqual(await hookOf({ 'publish.yml': 'on:\n  release:  # note\n    types: [published]\n' }), true);
+  assert.strictEqual(await hookOf({ 'ci.yml': 'on: [push]  # ci only\n' }), false);
+});
+
 test("engine honours the run's pinned config.yml over policy.yml (ruling 13)", async () => {
   const runDir = path.join(ROOT, '.claude-tweaks/pipelines/2026-09-12T000000-release');
   const { deps } = fakeDeps({ files: { [path.join(runDir, 'config.yml')]: 'integration-model: local-merge\n' } });
