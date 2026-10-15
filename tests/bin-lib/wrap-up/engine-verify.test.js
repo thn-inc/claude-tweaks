@@ -768,10 +768,19 @@ test('AC1 (live git): a plans-ledger leftover created in a worktree is caught by
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   try {
+    const realGit = (args, cwd) => realExecFileSync('git', args, { cwd, encoding: 'utf8' });
+    // #3168: a run starts (the run dir is created), then leaves residue --
+    // never the reverse. The plans-ledger ownership check (engine-verify.js)
+    // treats an artifact strictly older than the run dir as pre-existing
+    // (not owned, 'skip'); on APFS (macOS) mtimes carry nanosecond
+    // resolution, so creating the leftover first made it deterministically
+    // older than runDir and this test failed ('skip' !== 'fail') on every
+    // macOS run. busyWaitMs gives the ordering a real margin rather than
+    // relying on two back-to-back syscalls landing in different ticks.
+    const runDir = makeTmpDir('verify-ac1-livewt-');
+    busyWaitMs(10);
     fs.mkdirSync(path.join(wt, 'docs', 'superpowers', 'plans'), { recursive: true });
     fs.writeFileSync(path.join(wt, 'docs', 'superpowers', 'plans', '2026-09-02-leftover-plan.md'), '# leftover\n');
-    const realGit = (args, cwd) => realExecFileSync('git', args, { cwd, encoding: 'utf8' });
-    const runDir = makeTmpDir('verify-ac1-livewt-');
 
     // Sanity check first: the main checkout's own git status must not see
     // the worktree-local leftover at all -- proving the pre-fix repoRoot-only
