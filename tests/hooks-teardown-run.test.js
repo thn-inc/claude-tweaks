@@ -328,3 +328,29 @@ test('AC15 (#2747): teardown-run resolves the GHE host from the origin remote an
   assert.match(result.lines.join('\n'), /remote ref: deleted refs\/heads\/feat-branch/);
   assert.deepStrictEqual(calls, [{ args: ['repos/acme/widgets/git/refs/heads/feat-branch'], host: 'ghe.example.com' }]);
 });
+
+test('AC16 (#3088): own-worktree teardown — no worktree recorded, local branch already deleted (ExitWorktree), but run-state.json pr.branch is set -> remote ref delete is still attempted', () => {
+  const { root, wt, runDir } = fixtureRepo();
+  // Simulate Section C's own-worktree path having already run: close-run cleared
+  // run-state.json's worktree field to null (hence writeRunState below passes
+  // worktree: null, not wt), and ExitWorktree(remove) already deleted both the
+  // worktree directory and its local branch.
+  execFileSync('git', ['worktree', 'remove', '--force', wt], { cwd: root });
+  execFileSync('git', ['branch', '-D', 'feat-branch'], { cwd: root });
+  writeRunState(runDir, {
+    status: 'active',
+    worktree: null,
+    sessionId: 'me',
+    pr: { number: 42, url: 'https://github.com/acme/widgets/pull/42', branch: 'feat-branch' },
+  });
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  assert.match(result.lines.join('\n'), /worktree: skipped — no worktree recorded/);
+  assert.match(result.lines.join('\n'), /branch: skipped — delete failed for feat-branch/);
+  assert.match(result.lines.join('\n'), /remote ref: deleted refs\/heads\/feat-branch/);
+  assert.strictEqual(calls.length, 1);
+  assert.deepStrictEqual(calls[0], ['repos/acme/widgets/git/refs/heads/feat-branch']);
+});

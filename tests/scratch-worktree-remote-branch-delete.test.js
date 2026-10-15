@@ -153,3 +153,11 @@ test('scratch-worktree.md §6 states why its ancestry check does not need Sectio
   assert.match(step6, /Cross-caller `pr-first` check/);
   assert.match(step6, /cleanup-procedures-execution\.md`'s Section C/);
 });
+
+test('cleanup-procedures-execution.md Section C has an own-worktree remote-branch-delete step after ExitWorktree (#3088)', () => {
+  const sectionC = CLEANUP_PROCEDURES_EXECUTION.indexOf('## C. Git Worktree');
+  const sectionD = CLEANUP_PROCEDURES_EXECUTION.indexOf('## D. Ephemeral dev server');
+  const section = CLEANUP_PROCEDURES_EXECUTION.slice(sectionC, sectionD);
+  assert.match(section, /Own-worktree remote-branch delete \(#3088\)/);
+  assert.match(section, /pr\.branch/);
+});

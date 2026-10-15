@@ -133,9 +133,25 @@ function teardownRun(runDir, opts = {}) {
   // decisions.md. `prevState.branch` is kept as a defensive first check even
   // though nothing in this codebase writes that top-level field today — it
   // costs nothing and protects a future writer that might.
+  // #3088: when no worktree was ever recorded (the own-worktree path, after
+  // close-run already cleared run-state.json's worktree field — see Section
+  // C step 5.5), fallbackBranch()'s own branchExists gate correctly protects
+  // run-integrity.js's shipped-unclosed detection (which needs a real local
+  // ref to run merge-base against) but wrongly also suppresses the branch
+  // NAME for this function's own remote-ref-delete purpose, which needs no
+  // local existence at all. record-pr already writes run-state.json's
+  // pr.branch via deriveBranch() at PR-creation time (#1672) specifically so
+  // it survives the worktree's own later removal — read it directly here as
+  // a final, narrower fallback, still gated the same `!worktreePath` way
+  // fallbackBranch() itself is gated (never fires when a worktree WAS
+  // recorded but is merely gone from disk — that case keeps its existing
+  // "no branch recorded" behavior unchanged, per AC9 below).
   const branch = (root ? branchOfWorktree(root, worktreePath) : null)
     || (prevState && prevState.branch)
-    || (!worktreePath && root ? fallbackBranch(root, runDir, prevState) : null)
+    || (!worktreePath && root
+      ? (fallbackBranch(root, runDir, prevState)
+        || (prevState && prevState.pr && typeof prevState.pr.branch === 'string' ? prevState.pr.branch : null))
+      : null)
     || null;
   // Fallback worktree-path recovery (#2362): only attempted when nothing was
   // recorded at all. Never overrides a recorded (even if now-stale) worktree

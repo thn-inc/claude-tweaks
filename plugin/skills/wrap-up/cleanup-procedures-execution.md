@@ -225,9 +225,27 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    branch itself), and the remote branch delete (`pr-first-merge-post-merge.md`'s `## Step 5:
    Delete the remote branch` mechanism, verbatim) — replacing what used to be 4-5 hand-assembled
    commands per run. **Own-worktree carve-out:** never call `teardown-run` against the worktree
-   the session is standing in — that removal path is `ExitWorktree` only, per step 4 above and
-   `[IL-58]`; `teardown-run`'s own worktree-removal step is for a worktree this session does not
-   occupy.
+   the session is standing in **while it is still live** — that removal path is `ExitWorktree`
+   only, per step 4 above and `[IL-58]`; `teardown-run`'s own worktree-removal step is for a
+   worktree this session does not occupy. Once step 4 has already removed it, step 5.5 below
+   calls `teardown-run` anyway, for a different reason.
+5.5. **Own-worktree remote-branch delete (#3088).** `ExitWorktree(remove)` in step 4 above
+   deletes the local branch along with the worktree — nothing in steps 1-4 deletes the remote
+   ref. Run the same command step 5 uses, now that nothing live remains for it to conflict with:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" teardown-run --run "$RUN_DIR" --merged
+   ```
+
+   Its archival and state-close steps are idempotent no-ops here (step 3.6 and Section B's own
+   archival already ran), its worktree-removal step reports "no worktree recorded" (already
+   gone), and its local-branch-delete step reports a harmless failure (already gone) — the step
+   that actually matters is its remote-ref delete, which resolves the branch name from
+   `run-state.json`'s `pr.branch` field even though the local branch no longer exists
+   (`teardown-run.js`'s branch resolution, #3088). This narrows, not contradicts, step 5's own
+   carve-out above: that carve-out is about never routing *worktree removal* through
+   `teardown-run` while the worktree is still live — calling it afterward, purely for this
+   leftover remote-ref cleanup, is the documented path.
 
 If no worktree exists for this spec, skip this section silently.
 
