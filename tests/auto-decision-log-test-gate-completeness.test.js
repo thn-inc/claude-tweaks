@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #1058: auto-decision-log.md's canonical entry schema did not require a
 // test-gate entry that names specific failure causes to account for every
 // failure in a stated count — a partial named list (e.g. "8 fail: {6 named
@@ -12,7 +12,7 @@ const path = require('path');
 // silently omitting 2.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const AUTO_DECISION_LOG = read('plugin', 'skills', '_shared', 'auto-decision-log.md');
 

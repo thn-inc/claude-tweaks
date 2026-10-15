@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #613: /specify's decomposition Step 9 detects when its own design-doc
 // deletion (Step 7) leaves the branch net-empty vs. its own fork point, and
 // emits a paste-ready teardown line in the run's summary — the other half of
@@ -12,7 +12,7 @@ const path = require('path');
 // Prose-as-implementation: conformance grep over the literal skill text.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 const CLOSEOUT = read('plugin', 'skills', 'specify', 'decomposition-mode-closeout.md');
 
 test('Step 9 template carries an optional Teardown section, rendered only on the net-empty finding', () => {

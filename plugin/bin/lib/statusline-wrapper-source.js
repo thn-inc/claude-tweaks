@@ -59,7 +59,7 @@ try {
       .catch(() => process.stdout.write(''))
       .then(() => process.exit(0));
   } else {
-    const child = spawn('node', [target], { stdio: 'inherit' });
+    const child = spawn('node', [target], { stdio: 'inherit', windowsHide: true });
     child.on('exit', (code) => process.exit(code || 0));
     child.on('error', () => process.exit(0));
   }

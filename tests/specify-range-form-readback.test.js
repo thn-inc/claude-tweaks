@@ -50,9 +50,10 @@ test('specify SKILL.md rejects a malformed range at case 1 rather than silently 
 
 test('shaping-mode.md documents mandatory read-back verification after each record write', () => {
   // #1346 split shaping-mode.md at the ### Metadata block boundary; the
-  // ### Read-back verification subsection landed in shaping-mode-stamping.md.
-  const src = readFlat('plugin/skills/specify/shaping-mode-stamping.md');
-  assert.ok(src.includes('### Read-back verification'), 'Read-back verification subsection missing from shaping-mode-stamping.md');
+  // ### Read-back verification subsection landed in shaping-mode-stamping.md,
+  // then #2841 split Read-back verification onward into shaping-mode-readback.md.
+  const src = readFlat('plugin/skills/specify/shaping-mode-readback.md');
+  assert.ok(src.includes('### Read-back verification'), 'Read-back verification subsection missing from shaping-mode-readback.md');
   assert.ok(src.includes('re-fetch the record fresh'), 'read-back re-fetch rule missing');
   assert.ok(src.includes('does **not** roll back the write or stop the batch'), 'read-back failure-isolation rule missing');
   // Ordering language: the read-back for record k must complete before record k+1 starts.

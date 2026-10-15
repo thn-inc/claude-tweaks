@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #685: tidy report rendering — width discipline, fenced column layout,
 // command-grouped Yours, conformance scan, condense. Prose-as-implementation:
 // pin the report contract's literal text so a later edit that drops a rule
@@ -11,7 +11,7 @@ const path = require('path');
 // today" claim matches the live argument-hints it is keyed on.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 const STEP6 = read('plugin', 'skills', 'tidy', 'step-6-auto.md');
 
 function section(text, startHeading, endHeading) {

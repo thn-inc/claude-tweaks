@@ -70,6 +70,15 @@ if absent) or at end of file otherwise. Every consumer of this file writes throu
 hand-appending a formatted line per call site — with one documented exception: `FAILED`, which is
 hand-composed by its two writers (see the `STATUS` row below).
 
+**Windows / Git Bash invocation note (#2549).** Under Git Bash (MSYS) on Windows with
+`MSYS_NO_PATHCONV` unset, MSYS's automatic path-conversion rewrites a leading-slash `--section`
+value into a Windows path before Node ever sees it (`--section "/reflect"` arrives as `--section
+"C:/Program Files/Git/reflect"`). `bin/lib/log-decision/append.js`'s `normalizeSection` reverses
+this shape before it reaches the decisions.md heading, so every `--section "/{skill}"` call site
+below is already protected without changing its own invocation. Two ways to avoid the mangling
+in the first place, either sufficient on its own: export `MSYS_NO_PATHCONV=1` before invoking, or
+drop the leading slash (`--section reflect`) — the CLI adds it back internally.
+
 Each entry follows this shape:
 
 ```
@@ -209,6 +218,15 @@ when they are written. This binds new and migrated call sites going forward — 
 that every existing `staged/` writer already goes through this CLI; several pre-date it (e.g.
 `test/SKILL.md`'s `test-fix-*.patch`, `reflect/SKILL.md`'s `reflect-*.md`) and migrate on their own
 schedule.
+
+By default `<n>` is the caller's own responsibility and a collision silently overwrites — correct
+when `<n>` is a stable identity key (e.g. materialize.js's `premise-satisfied-{issueNumber}`, where
+re-staging the same issue is an intentional update). Pass `--allocate` when `<n>` is instead a
+per-invocation counter that a sibling invocation in the same run dir could independently compute
+too (#2770: `build/architecture-alignment.md`'s `build-deviation-{N}` restarted at 1 per
+invocation and a second invocation clobbered the first's findings) — a collision then reallocates
+to the next free `{kind}-{n}` in that run dir's `staged/` instead of clobbering. See
+`bin/lib/stage-item/write.js`'s `writeStagedItem` for the full contract.
 
 **Regardless of worktree state.** `bin/log-decision.js` (above) is the sole append path for `decisions.md` — unconditional, regardless of whether the session sits in a worktree or the main checkout. The run directory is always anchored to the main checkout (`_shared/pipeline-run-dir.md`'s Anchoring section); a worktree session's `Edit`/`Write`/heredoc/redirect attempts against a file under it are refused by the harness regardless of whether a worktree exists for this run — worktree existence was never the deciding factor, and there is no separate append shape for the worktree case.
 

@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #410: PR as run surface — verdict/brief/failure comments on the PR, the
 // failure tombstone, and PR-state reads in /help and /tidy. Prose-as-
 // implementation, same convention as pr-early-run-lifecycle.test.js — pin
@@ -11,7 +11,7 @@ const path = require('path');
 // drift from what it promises.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 const COMMENTS = read('plugin', 'skills', '_shared', 'pr-run-comments.md');
 const LIFECYCLE = read('plugin', 'skills', '_shared', 'pr-early-run-lifecycle.md');
 const SETTLE = read('plugin', 'skills', 'dispatch', 'settle-and-merge.md');

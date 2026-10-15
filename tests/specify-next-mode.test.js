@@ -28,7 +28,9 @@ const SPECIFY_SKILL_FLAT = readFlat('plugin/skills/specify/SKILL.md');
 // keeps the body-shape edit; shaping-mode-stamping.md holds the metadata block onward).
 // Concatenate each pair, in file order, so every existing substring/ordering pin below
 // still resolves against the combined procedure exactly as it did pre-split.
-const NEXT_MODE_FLAT = readFlat('plugin/skills/specify/next-mode.md') + ' ' + readFlat('plugin/skills/specify/next-mode-shape.md');
+// #2841 split the Zero eligible/budget-exhausted (loop termination + close-out) section
+// out of next-mode.md into next-mode-closeout.md — append so existing pins still resolve.
+const NEXT_MODE_FLAT = readFlat('plugin/skills/specify/next-mode.md') + ' ' + readFlat('plugin/skills/specify/next-mode-shape.md') + ' ' + readFlat('plugin/skills/specify/next-mode-closeout.md');
 const DISPATCH_SKILL_FLAT = readFlat('plugin/skills/dispatch/SKILL.md');
 const SHAPING_MODE_FLAT = readFlat('plugin/skills/specify/shaping-mode.md') + ' ' + readFlat('plugin/skills/specify/shaping-mode-stamping.md');
 const CHALLENGE_SKILL_FLAT = readFlat('plugin/skills/challenge/SKILL.md');

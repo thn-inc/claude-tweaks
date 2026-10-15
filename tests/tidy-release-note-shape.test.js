@@ -9,10 +9,11 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { sessionTmpPath } = require('../plugin/bin/lib/session-tmp');
 const F = require('./bin-lib/release-note-repair/fixtures');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const PLUGIN_ROOT = path.join(ROOT, 'plugin');
-const DOC = fs.readFileSync(path.join(ROOT, 'plugin/skills/tidy/step-1-records.md'), 'utf8');
+const DOC = readText(path.join(ROOT, 'plugin/skills/tidy/step-1-records.md'));
 const FLAT = DOC.replace(/\s+/g, ' ');
 
 function shapeBlock() {

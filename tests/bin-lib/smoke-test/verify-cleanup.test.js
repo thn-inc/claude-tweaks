@@ -50,7 +50,7 @@ test('renderCleanupTable escapes a literal pipe in the artifact string, keeping 
   ]);
   const rowLine = table.split('\n')[2];
   // Split on unescaped `|` only -- a `\|` inside a cell is escaped content,
-  // not a column delimiter (see tests/reference-card-argument-hint.test.js's
+  // not a column delimiter (see tests/argument-hint-mirrors.test.js's
   // parseTakesRows for the same convention).
   const columns = rowLine.split(/(?<!\\)\|/).filter((_, i, arr) => i > 0 && i < arr.length - 1);
   assert.strictEqual(columns.length, 3);

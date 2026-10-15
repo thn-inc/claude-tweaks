@@ -31,6 +31,17 @@ function makeCleanRepoRoot() {
   return makeTmpDir('verify-clean-reporoot-');
 }
 
+// plans-ledger's "found, not owned" scoping (#2552) orders residue against
+// the run dir's own creation time via filesystem timestamps -- a plain
+// back-to-back mkdirSync sequence is ordered correctly in practice (this
+// filesystem's statSync reports sub-millisecond birthtime/mtime, as probed
+// directly), but a real, measurable gap removes any dependency on a given
+// CI runner's filesystem clock resolution.
+function busyWaitMs(ms) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) { /* spin */ }
+}
+
 // resolveParent (#1841) resolves a record's native GraphQL parent instead of
 // the invalid-on-gh<2.96 `gh issue view --json parent` REST call these
 // acceptance-labeling fixtures used to fake by matching `args.includes('parent')`
@@ -187,7 +198,11 @@ test('AC2: gh absent renders acceptance-labeling unknown, exit code reflects onl
   const repoRoot = makeCleanRepoRoot();
   try {
     const throwingGh = () => { throw new Error('command not found: gh'); };
-    const cleanGit = (args) => (args[0] === 'log' ? 'abc1234 fix\n' : '');
+    // carrier-commit's own textual match must pass via the branch log alone
+    // here -- gh is entirely absent in this fixture, so carrier-commit's
+    // ground-truth fallback (which also calls gh) would otherwise degrade
+    // to a 'fail' row this test isn't exercising.
+    const cleanGit = (args) => (args[0] === 'log' ? 'Fix wrap-up verify verb\n\nFixes #900\n' : '');
     const result = runVerify({ runDir: originalPath, base: 'main', repoRoot, cwd: repoRoot, deps: { git: cleanGit, gh: throwingGh } });
     const acceptanceRow = result.rows.find((r) => r.check === 'acceptance-labeling');
     assert.strictEqual(acceptanceRow.result, 'unknown');
@@ -218,7 +233,11 @@ test('acceptance-labeling check renders unknown -- not fail -- when a parent-res
   writeExpectations(runDir, { version: 1, memory: [], upstream: [], deferred: ['run-dir-archival'] });
   const cleanGit = (args) => {
     if (args[0] === 'remote') return 'https://github.com/org/repo.git';
-    if (args[0] === 'log' && args.some((a) => typeof a === 'string' && a.includes('Fixes #900'))) return 'abc1234 fix\n';
+    // carrier-commit's own textual match must pass here so this fixture's
+    // GraphQL-throwing gh fake (below) exercises acceptance-labeling's own
+    // parent-resolution failure in isolation, never carrier-commit's
+    // ground-truth fallback (which also calls gh api graphql).
+    if (args[0] === 'log') return 'Fix wrap-up verify verb\n\nFixes #900\n';
     return '';
   };
   const fakeGh = (args) => {
@@ -313,6 +332,53 @@ test('plans-ledger check fails when a .superpowers/sdd/ leftover directory is pr
     assert.match(row.detail, /2026-08-21-some-topic/);
   } finally {
     fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+// ---- plans-ledger: "found, not owned" scoping (#2552 AC4) ----
+//
+// A gitignored .superpowers/sdd/*-archive leftover (or an untracked plan
+// file) that predates this run's own run-dir creation was left by an
+// earlier/concurrent session, never referenced by this run -- it is
+// reported as informational ('skip'), not attributed to this run as a
+// 'fail'.
+
+test('plans-ledger check reports "found, not owned" (skip) for a .superpowers/sdd/ leftover that predates this run\'s own run dir', () => {
+  const repoRoot = makeCleanRepoRoot();
+  const oldSddDir = path.join(repoRoot, '.superpowers', 'sdd', '2020-01-01-ancient-topic');
+  fs.mkdirSync(oldSddDir, { recursive: true });
+  busyWaitMs(10);
+  const runDir = makeTmpDir('verify-plans-ledger-not-owned-');
+  try {
+    const result = runVerify({ runDir, base: 'main', repoRoot, cwd: repoRoot, deps: { git: () => '', gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'plans-ledger');
+    assert.strictEqual(row.result, 'skip');
+    assert.match(row.detail, /found, not owned/);
+    assert.match(row.detail, /2020-01-01-ancient-topic/);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test('plans-ledger check fails on a leftover newer than the run dir, naming it, without letting an older not-owned leftover mask it', () => {
+  const repoRoot = makeCleanRepoRoot();
+  const oldSddDir = path.join(repoRoot, '.superpowers', 'sdd', '2020-01-01-ancient-topic');
+  fs.mkdirSync(oldSddDir, { recursive: true });
+  busyWaitMs(10);
+  const runDir = makeTmpDir('verify-plans-ledger-mixed-');
+  busyWaitMs(10);
+  const newSddDir = path.join(repoRoot, '.superpowers', 'sdd', '2026-08-21-fresh-topic');
+  fs.mkdirSync(newSddDir, { recursive: true });
+  try {
+    const result = runVerify({ runDir, base: 'main', repoRoot, cwd: repoRoot, deps: { git: () => '', gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'plans-ledger');
+    assert.strictEqual(row.result, 'fail');
+    assert.match(row.detail, /2026-08-21-fresh-topic/);
+    assert.doesNotMatch(row.detail, /2020-01-01-ancient-topic/);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+    fs.rmSync(runDir, { recursive: true, force: true });
   }
 });
 
@@ -568,6 +634,47 @@ test('run-dir-archived check passes for a real (ISO-timestamped) single-spec run
   }
 });
 
+// ---- run-dir-archived: invoked already pointed at the archive path (#2552
+// AC1) ----
+//
+// Before the fix, this invocation shape had no way to pass: `originalRunDir`
+// (the raw --run-dir CLI arg, never auto-substituted by resolveArchivedRunDir)
+// equaled the archive path itself, so `fs.existsSync(originalPath)` was true
+// and the check reported "original path still present" -- misreading the
+// archive copy as the not-yet-archived original.
+
+test('run-dir-archived check passes when --run-dir is pointed directly at the already-archived path (#2552 AC1)', () => {
+  const runId = '2026-01-01T000000-spec-20';
+  const repoRoot = makeCleanRepoRoot();
+  const archivePath = path.join(repoRoot, '.claude-tweaks', 'pipelines', 'archive', runId);
+  fs.mkdirSync(archivePath, { recursive: true });
+  try {
+    // Both runDir and originalRunDir are the archive path itself -- the
+    // shape wrap-up-engine.js verify's CLI entry produces when --run-dir
+    // names the post-archival path directly (resolveArchivedRunDir is a
+    // no-op there, since the given path already exists).
+    const result = runVerify({ runDir: archivePath, originalRunDir: archivePath, base: 'main', repoRoot, deps: { git: () => '', gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'run-dir-archived');
+    assert.strictEqual(row.result, 'pass', row.detail);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('run-dir-archived check passes when --run-dir is pointed at the archived path for a multi-spec spec-{N}/ subdirectory (#2552 AC1, nested shape)', () => {
+  const parentId = 'test-archived-parent-903';
+  const repoRoot = makeCleanRepoRoot();
+  const archiveSpecDir = path.join(repoRoot, '.claude-tweaks', 'pipelines', 'archive', parentId, 'spec-900');
+  fs.mkdirSync(archiveSpecDir, { recursive: true });
+  try {
+    const result = runVerify({ runDir: archiveSpecDir, originalRunDir: archiveSpecDir, base: 'main', repoRoot, deps: { git: () => '', gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'run-dir-archived');
+    assert.strictEqual(row.result, 'pass', row.detail);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 // ---- plans-ledger / design-caches: '-uall' collapsed-directory fix and
 // dotfile exclusion (record #900 whole-branch re-review, findings #2/#4) ----
 
@@ -694,10 +801,7 @@ function writeSpecFile(runDir, specId, record) {
 test('carrier-commit check passes when a Fixes #{n} commit exists in range for every resolved issue', () => {
   const runDir = makeTmpDir('verify-carrier-pass-');
   writeSpecFile(runDir, '900', 900);
-  const fakeGit = (args) => {
-    if (args[0] === 'log' && args.some((a) => a.includes('Fixes #900'))) return 'abc1234 Fix wrap-up verify verb\n';
-    return '';
-  };
+  const fakeGit = (args) => (args[0] === 'log' ? 'Fix wrap-up verify verb\n\nFixes #900\n' : '');
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
   const row = result.rows.find((r) => r.check === 'carrier-commit');
   assert.strictEqual(row.result, 'pass');
@@ -723,13 +827,13 @@ test('carrier-commit check skips when no resolved issues found (conversation-bas
 // ---- resolvedIssueNumbers' verify-expectations.json `issues` fallback (#1223) ----
 //
 // No materialized header under work/ -- a current-branch (non-materialized) record run.
-// review-console.md's step 10 now populates `issues` in this case; these tests pin the
+// review-console.md's step 11 now populates `issues` in this case; these tests pin the
 // read side (resolvedIssueNumbers) actually consuming it, no longer dead code.
 
 test('carrier-commit check resolves issue numbers from verify-expectations.json issues key when no materialized header exists', () => {
   const runDir = makeTmpDir('verify-carrier-expissues-pass-');
   writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [900] });
-  const fakeGit = (args) => (args.some((a) => a.includes('Fixes #900')) ? 'abc1234 Fix wrap-up verify verb\n' : '');
+  const fakeGit = (args) => (args[0] === 'log' ? 'Fix wrap-up verify verb\n\nFixes #900\n' : '');
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
   const row = result.rows.find((r) => r.check === 'carrier-commit');
   assert.strictEqual(row.result, 'pass');
@@ -748,7 +852,7 @@ test('carrier-commit check prefers a materialized header over expectations issue
   const runDir = makeTmpDir('verify-carrier-header-priority-');
   writeSpecFile(runDir, '901', 901);
   writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [900] });
-  const fakeGit = (args) => (args.some((a) => a.includes('Fixes #901')) ? 'abc1234 Fix wrap-up verify verb\n' : '');
+  const fakeGit = (args) => (args[0] === 'log' ? 'Fix wrap-up verify verb\n\nFixes #901\n' : '');
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
   const row = result.rows.find((r) => r.check === 'carrier-commit');
   assert.strictEqual(row.result, 'pass', row.detail);
@@ -811,7 +915,7 @@ test('carrier-commit check passes from the branch log alone without ever calling
   const runDir = makeTmpDir('verify-carrier-branchlog-nogh-');
   writeSpecFile(runDir, '900', 900);
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ pr: { number: 1199 } }));
-  const fakeGit = (args) => (args.some((a) => a === '--grep=Fixes #900') ? 'abc1234 Fix wrap-up verify verb\n' : '');
+  const fakeGit = (args) => (args[0] === 'log' ? 'Fix wrap-up verify verb\n\nFixes #900\n' : '');
   const prBodyCalls = [];
   const fakeGh = (args) => {
     if (args[0] === 'pr' && args[1] === 'view') prBodyCalls.push(args);
@@ -821,6 +925,141 @@ test('carrier-commit check passes from the branch log alone without ever calling
   const row = result.rows.find((r) => r.check === 'carrier-commit');
   assert.strictEqual(row.result, 'pass');
   assert.deepStrictEqual(prBodyCalls, [], 'carrier-commit must never fetch a PR body when the branch log already carries the commit');
+});
+
+// ---- carrier-commit widened closing-keyword set + ground-truth fallback (#2676) ----
+
+test('carrier-commit check passes on a "Closes #N" commit (previously only "Fixes #N" matched)', () => {
+  const runDir = makeTmpDir('verify-carrier-closes-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = (args) => (args[0] === 'log' ? 'Widen carrier-commit keywords\n\nCloses #900\n' : '');
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('carrier-commit check passes on a "Resolves #N" commit', () => {
+  const runDir = makeTmpDir('verify-carrier-resolves-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = (args) => (args[0] === 'log' ? 'Widen carrier-commit keywords\n\nResolves #900\n' : '');
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('carrier-commit check matches case-insensitively ("FIXES #N")', () => {
+  const runDir = makeTmpDir('verify-carrier-case-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = (args) => (args[0] === 'log' ? 'Widen carrier-commit keywords\n\nFIXES #900\n' : '');
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('carrier-commit check matches an owner/repo#N-qualified closing keyword', () => {
+  const runDir = makeTmpDir('verify-carrier-ownerrepo-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = (args) => (args[0] === 'log' ? 'Widen carrier-commit keywords\n\nFixes org/repo#900\n' : '');
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('carrier-commit check never matches #N as a substring of a larger issue number', () => {
+  const runDir = makeTmpDir('verify-carrier-substring-');
+  writeSpecFile(runDir, '12', 12);
+  const fakeGit = (args) => (args[0] === 'log' ? 'Closes #123, unrelated to #12\n' : '');
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'fail', 'Closes #123 must never satisfy issue #12');
+});
+
+test('carrier-commit check passes via the ground-truth fallback: a CLOSED issue with a real closing-PR reference, even with no textual match anywhere', () => {
+  const runDir = makeTmpDir('verify-carrier-groundtruth-pass-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = fakeOriginGit(); // 'remote' resolves; 'log' (and everything else) returns '' -- no textual match at all
+  const calls = [];
+  const fakeGh = (args) => {
+    calls.push(args);
+    if (isGraphqlCall(args)) {
+      return JSON.stringify({
+        data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [{ number: 2000, state: 'MERGED' }] } } } },
+      });
+    }
+    if (args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ state: 'CLOSED' });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'pass', row.detail);
+  assert.ok(calls.some((a) => isGraphqlCall(a)), 'expected the ground-truth fallback to have run a linked-PR GraphQL call');
+});
+
+test('carrier-commit check still fails via the ground-truth fallback when the issue is CLOSED but has no closing-PR reference', () => {
+  const runDir = makeTmpDir('verify-carrier-groundtruth-noref-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = fakeOriginGit();
+  const fakeGh = (args) => {
+    if (isGraphqlCall(args)) {
+      return JSON.stringify({ data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [] } } } } });
+    }
+    if (args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ state: 'CLOSED' });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'fail', 'a manually-closed issue with no closing-PR reference must still be a genuine fail');
+  assert.match(row.detail, /900/);
+});
+
+test('carrier-commit check still fails via the ground-truth fallback when a closing-PR reference exists but the issue is still OPEN', () => {
+  const runDir = makeTmpDir('verify-carrier-groundtruth-open-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = fakeOriginGit();
+  const fakeGh = (args) => {
+    if (isGraphqlCall(args)) {
+      return JSON.stringify({
+        data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [{ number: 2000, state: 'OPEN' }] } } } },
+      });
+    }
+    if (args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ state: 'OPEN' });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'fail', 'an open issue must still fail even with an (unmerged) closing-PR reference');
+});
+
+test('carrier-commit check never runs the ground-truth fallback when the textual match already succeeded (no gh call at all)', () => {
+  const runDir = makeTmpDir('verify-carrier-groundtruth-skip-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = (args) => (args[0] === 'log' ? 'Closes #900\n' : '');
+  const calls = [];
+  const fakeGh = (args) => { calls.push(args); return ''; };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'pass');
+  // Other checks in this same runVerify pass (e.g. acceptance-labeling) also
+  // probe `gh --version` -- scope this assertion to carrier-commit's own
+  // ground-truth calls (a linked-PR GraphQL call or an `issue view`), never
+  // all gh calls in the pass.
+  assert.ok(!calls.some((a) => isGraphqlCall(a) || (a[0] === 'issue' && a[1] === 'view')),
+    `the ground-truth fallback must never fire when the textual match already succeeded, got: ${JSON.stringify(calls)}`);
+});
+
+test('carrier-commit check: a genuinely missing carrier commit (no text match, no closing-PR reference, no CLOSED state) still fails -- the existing coverage is not weakened', () => {
+  const runDir = makeTmpDir('verify-carrier-groundtruth-genuine-fail-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = fakeOriginGit();
+  const fakeGh = (args) => {
+    if (isGraphqlCall(args)) return JSON.stringify({ data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [] } } } } });
+    if (args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ state: 'OPEN' });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /900/);
 });
 
 test('reference-repairs check skips when engine-state.json has no applied references findings', () => {
@@ -846,6 +1085,63 @@ test('reference-repairs check fails when Initiative-Fix commit diff touches a fi
   const row = result.rows.find((r) => r.check === 'reference-repairs');
   assert.strictEqual(row.result, 'fail');
   assert.match(row.detail, /docs\/b\.md/);
+});
+
+// ---- reference-repairs: pr-first verification via the PR's own (pre-squash)
+// commit list (#2552 AC3/AC6) ----
+
+test('reference-repairs check verifies via the PR\'s own commit list under pr-first, ignoring an unrelated file a squash commit on main would also show', () => {
+  const runDir = makeTmpDir('verify-refrepair-prfirst-pass-');
+  fs.writeFileSync(path.join(runDir, 'engine-state.json'), JSON.stringify({
+    version: 1,
+    results: { references: { findings: [{ action: 'applied', kind: 'broken-link', summary: 'fix', targetPath: 'docs/a.md' }] } },
+  }));
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ pr: { number: 1200 } }));
+  const gitCalls = [];
+  const fakeGit = (args) => {
+    gitCalls.push(args);
+    if (args[0] === 'remote') return 'https://github.com/org/repo.git';
+    throw new Error(`unexpected git call in pr-first path: ${args.join(' ')}`);
+  };
+  const fakeGh = (args) => {
+    if (args[0] === 'pr' && args[1] === 'view') {
+      return JSON.stringify({
+        commits: [
+          { oid: 'aaa1111', messageHeadline: 'Initiative-Fix: repair refs', messageBody: '' },
+          { oid: 'bbb2222', messageHeadline: 'Unrelated feature change', messageBody: '' },
+        ],
+      });
+    }
+    if (args[0] === 'api' && args[1] === 'repos/org/repo/commits/aaa1111') return '["docs/a.md"]';
+    throw new Error(`unexpected gh call: ${args.join(' ')}`);
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'reference-repairs');
+  assert.strictEqual(row.result, 'pass', row.detail);
+  // Never diffs the squash commit on main -- only the PR's own (pre-squash)
+  // commit list, which is what lets this scenario tell the unrelated
+  // bundled-in file apart from the actual repair.
+  assert.ok(!gitCalls.some((a) => a[0] === 'log' || a[0] === 'diff-tree'), 'must not fall back to the local squash-commit diff under pr-first');
+});
+
+test('reference-repairs check still fails under pr-first when a repair genuinely did not land (no Initiative-Fix: commit on the PR)', () => {
+  const runDir = makeTmpDir('verify-refrepair-prfirst-fail-');
+  fs.writeFileSync(path.join(runDir, 'engine-state.json'), JSON.stringify({
+    version: 1,
+    results: { references: { findings: [{ action: 'applied', kind: 'broken-link', summary: 'fix', targetPath: 'docs/a.md' }] } },
+  }));
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ pr: { number: 1201 } }));
+  const fakeGit = (args) => (args[0] === 'remote' ? 'https://github.com/org/repo.git' : '');
+  const fakeGh = (args) => {
+    if (args[0] === 'pr' && args[1] === 'view') {
+      return JSON.stringify({ commits: [{ oid: 'ccc3333', messageHeadline: 'Unrelated feature change', messageBody: '' }] });
+    }
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'reference-repairs');
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /no Initiative-Fix: commit found on PR #1201/);
 });
 
 test('acceptance-labeling check renders unknown (gh absent) when gh probe throws', () => {
@@ -906,7 +1202,13 @@ test('acceptance-labeling check skips (never fails) an issue listed in verify-ex
     // exempted issue must never reach gh at all.
     throw new Error(`unexpected gh call: ${JSON.stringify(args)}`);
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  // carrier-commit's own textual match must pass via the branch log alone --
+  // this fixture's assertion below is about acceptance-labeling never
+  // calling gh beyond the probe, and carrier-commit's ground-truth fallback
+  // (triggered only when its own textual match fails) also calls gh.
+  const result = runVerify({
+    runDir, base: 'main', deps: { git: fakeOriginGit((args) => (args[0] === 'log' ? 'Fix wrap-up verify verb\n\nFixes #900\n' : '')), gh: fakeGh },
+  });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'skip', row.detail);
   assert.match(row.detail, /oversight floor/);
@@ -1077,6 +1379,43 @@ test('resolvePrNumber returns null when run-state.json exists directly at runDir
   const runDir = makeTmpDir('verify-prnum-nopr-');
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'ok' }));
   assert.strictEqual(resolvePrNumber(runDir), null);
+});
+
+test('resolvePrNumber (#2858): a per-spec run-state.json carrying only status still finds the parent PR', () => {
+  const parentDir = makeTmpDir('verify-prnum-statusonly-');
+  fs.writeFileSync(path.join(parentDir, 'run-state.json'), JSON.stringify({ pr: { number: 1199 } }));
+  const subDir = path.join(parentDir, 'spec-900');
+  fs.mkdirSync(subDir);
+  fs.writeFileSync(path.join(subDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  assert.strictEqual(resolvePrNumber(subDir), 1199);
+});
+
+test('resolvePrNumber (#2858): a per-spec pr wins over the parent pr; a null per-spec pr falls back to it', () => {
+  const parentDir = makeTmpDir('verify-prnum-precedence-');
+  fs.writeFileSync(path.join(parentDir, 'run-state.json'), JSON.stringify({ pr: { number: 1199 } }));
+  const subDir = path.join(parentDir, 'spec-900');
+  fs.mkdirSync(subDir);
+  fs.writeFileSync(path.join(subDir, 'run-state.json'), JSON.stringify({ pr: { number: 42 } }));
+  assert.strictEqual(resolvePrNumber(subDir), 42);
+  fs.writeFileSync(path.join(subDir, 'run-state.json'), JSON.stringify({ status: 'active', pr: null }));
+  assert.strictEqual(resolvePrNumber(subDir), 1199);
+});
+
+test('resolvePrNumber (#2858): a non-spec run dir with no run-state.json does not read a parent directory that happens to hold one', () => {
+  const parentDir = makeTmpDir('verify-prnum-gate-');
+  fs.writeFileSync(path.join(parentDir, 'run-state.json'), JSON.stringify({ pr: { number: 1199 } }));
+  const subDir = path.join(parentDir, '2026-10-04T000000-record-1');
+  fs.mkdirSync(subDir);
+  assert.strictEqual(resolvePrNumber(subDir), null);
+});
+
+test('resolvePrNumber (#2858): a parent carrying only prExempt resolves no PR', () => {
+  const parentDir = makeTmpDir('verify-prnum-exempt-');
+  fs.writeFileSync(path.join(parentDir, 'run-state.json'), JSON.stringify({ prExempt: 'initial-publish' }));
+  const subDir = path.join(parentDir, 'spec-900');
+  fs.mkdirSync(subDir);
+  fs.writeFileSync(path.join(subDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  assert.strictEqual(resolvePrNumber(subDir), null);
 });
 
 function writeExpectations(runDir, data) {
@@ -1347,7 +1686,7 @@ test('carrier-commit check runs git log against the injected cwd, not repoRoot',
   const fakeGit = (args, callCwd) => { calls.push({ args, cwd: callCwd }); return ''; };
   try {
     runVerify({ runDir, base: 'main', repoRoot, cwd, deps: { git: fakeGit, gh: () => '' } });
-    const call = calls.find((c) => c.args[0] === 'log' && c.args.some((a) => a.includes('Fixes #900')));
+    const call = calls.find((c) => c.args[0] === 'log' && c.args.includes('--format=%B'));
     assert.ok(call, 'expected a git log call for the resolved issue');
     assert.strictEqual(call.cwd, cwd);
     assert.notStrictEqual(call.cwd, repoRoot);

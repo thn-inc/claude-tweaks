@@ -8,6 +8,7 @@ const path = require('path');
 const {
   parseDeclaredOverrides, baseSkillName, listPipelineRunDirs, collectSkillInvocations, detectBypasses,
 } = require('../../../plugin/bin/lib/harness-health/override-bypass');
+const { readText } = require('../../helpers/read-skill');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'harness-health-override-scan.js');
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -26,7 +27,7 @@ function writeEvents(runDir, events) {
 // Superpowers overrides paragraph is caught by this test rather than a
 // frozen fixture going stale silently.
 test('parseDeclaredOverrides recognizes this repo\'s own CLAUDE.md "Superpowers overrides" declaration', () => {
-  const claudeMd = fs.readFileSync(path.join(REPO_ROOT, 'CLAUDE.md'), 'utf8');
+  const claudeMd = readText(path.join(REPO_ROOT, 'CLAUDE.md'));
   const overrides = parseDeclaredOverrides(claudeMd);
   assert.ok(
     overrides.some((o) => o.substitute === '/claude-tweaks:specify' && o.forbidden === '/superpowers:writing-plans'),

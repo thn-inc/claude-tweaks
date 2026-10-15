@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #2348: the Adopt-or-create gate's adopt branch had no check for a missing/stale local
 // `node_modules` — an adopted worktree with none at all silently walks up to the main
 // checkout's own (potentially stale) copy, producing misleading `ERR_MODULE_NOT_FOUND`
@@ -15,7 +15,7 @@ const path = require('path');
 // warning-not-HARD-GATE posture) without a test going red.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const SHARED_WORKTREE_SETUP = read('plugin', 'skills', '_shared', 'worktree-setup.md');
 const BUILD_WORKTREE_SETUP = read('plugin', 'skills', 'build', 'worktree-setup.md');

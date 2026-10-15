@@ -179,7 +179,9 @@ test('specify/next-mode.md contains the --source sweep component paragraph', () 
   // occurrences of "component step of" (checked via
   // `git show 0ac4d7a00:plugin/skills/specify/next-mode.md | grep -c "component step of"`
   // => 0) — this whole paragraph is new.
-  const source = read(SPECIFY_DIR, 'next-mode.md');
+  // #2841 split the Zero eligible or budget exhausted section (and this paragraph
+  // with it) out of next-mode.md into next-mode-closeout.md.
+  const source = read(SPECIFY_DIR, 'next-mode-closeout.md');
   assert.ok(
     source.includes(
       "**Under `--source sweep`,** this firing is a component step of `/claude-tweaks:sweep`",

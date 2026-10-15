@@ -26,6 +26,8 @@ const { execFileSync } = require('node:child_process');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve');
 const { fetchNativeParent } = require('../issues/native-dependencies');
+const { fetchLinkedPRs } = require('../issues/linked-prs');
+const { readRunStateWithParent } = require('../hooks/context');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
@@ -33,7 +35,7 @@ const { fetchNativeParent } = require('../issues/native-dependencies');
 // had) -- one options object, reused by construction.
 function makeDefaultRunner(cmd) {
   return function run(args, cwd) {
-    return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000 });
+    return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, windowsHide: true });
   };
 }
 
@@ -177,10 +179,29 @@ function expectationsUnknownDetail(expectations) {
 // for its `.claude-tweaks/pipelines/` lookups (that path genuinely only
 // exists in the main checkout, gitignored, never in a worktree) -- this
 // check alone reads `cwd`.
+// A found residue artifact is only attributable to THIS run when it's at
+// least as new as the run dir itself -- an artifact that predates the run's
+// own start was left by someone/something else and never touched by this
+// run (#2552). `birthtimeMs` is the honest "when was this created" answer,
+// but several filesystems common in CI containers (overlay/tmpfs) silently
+// report it as 0 or equal to `mtimeMs`, which would make every artifact look
+// simultaneous with the run dir instead of genuinely predating it -- prefer
+// it only when it looks real (> 0), else fall back to `mtimeMs` (set at
+// directory creation regardless of filesystem).
+function fsStartTimeMs(targetPath) {
+  try {
+    const st = fs.statSync(targetPath);
+    if (st.birthtimeMs && st.birthtimeMs > 0) return st.birthtimeMs;
+    return st.mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
 // `--porcelain=v1 -uall` (not the default `-uno`) so a wholly-untracked
 // directory reports every file inside it individually instead of collapsing
 // to one `?? {dir}/` line the suffix/name filters below could never match.
-registerCheck('plans-ledger', ({ cwd, deps }) => {
+registerCheck('plans-ledger', ({ runDir, cwd, deps }) => {
   let status;
   try {
     status = deps.git(['status', '--porcelain=v1', '-uall', '--', 'docs/superpowers/plans', 'docs/plans'], cwd);
@@ -204,8 +225,28 @@ registerCheck('plans-ledger', ({ cwd, deps }) => {
     }
   } catch { /* unreadable dir -- treat as no entries rather than throwing */ }
   const all = [...leftovers, ...sddEntries];
-  if (all.length) return { result: 'fail', detail: `${all.length} leftover artifact(s) remain: ${all.join(', ')}` };
-  return { result: 'pass', detail: '' };
+  if (!all.length) return { result: 'pass', detail: '' };
+
+  // Scope to artifacts this run could plausibly have created: anything
+  // whose own mtime/birthtime predates the run dir's creation was left by an
+  // earlier session (or another concurrent one) and is reported as
+  // informational, not attributed to this run as a fail (#2552). A stat
+  // failure (raced away between the scan above and here) fails closed --
+  // attribute it rather than let the race manufacture a false "not owned".
+  const runStartMs = fsStartTimeMs(runDir);
+  const owned = [];
+  const notOwned = [];
+  for (const entry of all) {
+    const full = path.isAbsolute(entry) ? entry : path.join(cwd, entry);
+    const entryMs = fsStartTimeMs(full);
+    if (runStartMs != null && entryMs != null && entryMs < runStartMs) {
+      notOwned.push(entry);
+    } else {
+      owned.push(entry);
+    }
+  }
+  if (owned.length) return { result: 'fail', detail: `${owned.length} leftover artifact(s) remain: ${owned.join(', ')}` };
+  return { result: 'skip', detail: `${notOwned.length} pre-existing artifact(s) found, not owned by this run: ${notOwned.join(', ')}` };
 });
 
 // ---- design caches deleted --------------------------------------------------
@@ -236,11 +277,38 @@ registerCheck('design-caches', ({ cwd, expectations, deps }) => {
 // archiveRunDir() produces: the original .claude-tweaks/pipelines/{run-id}/
 // path is gone, .claude-tweaks/pipelines/archive/{run-id}/ exists, and its
 // work/ subdirectory (when the run had one) is git-tracked at the new path.
+function pipelinesArchiveRoot(repoRoot) {
+  return path.join(repoRoot, '.claude-tweaks', 'pipelines', 'archive');
+}
+
+// True when `candidate` is itself inside .claude-tweaks/pipelines/archive/
+// (i.e. `--run-dir` was invoked already pointed at the post-archival path)
+// rather than at the pre-archival path archive-merged.js moved it from.
+function isUnderArchiveRoot(repoRoot, candidate) {
+  const rel = path.relative(pipelinesArchiveRoot(repoRoot), candidate);
+  return rel !== '' && rel !== '.' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
 registerCheck('run-dir-archived', ({ originalRunDir, repoRoot, expectations, deps }) => {
   const deferred = deferredSet(expectations);
   if (deferred.has('run-dir-archival')) return { result: 'skip', detail: 'deferred to parent console' };
-  const originalPath = path.resolve(originalRunDir);
-  const archivePath = path.join(repoRoot, '.claude-tweaks', 'pipelines', 'archive', archiveRelativeId(originalRunDir));
+  const givenPath = path.resolve(originalRunDir);
+  let originalPath;
+  let archivePath;
+  if (isUnderArchiveRoot(repoRoot, givenPath)) {
+    // #2552: `--run-dir` was invoked already pointed at the archived copy --
+    // that IS the archive path, not "the original path still present".
+    // Derive the pre-archival counterpart from its position under
+    // archive/ (the same relative segment archiveRelativeId() would have
+    // produced for it) so the "original path is gone" half of the check
+    // still means something under this invocation shape too.
+    archivePath = givenPath;
+    const relSegment = path.relative(pipelinesArchiveRoot(repoRoot), givenPath);
+    originalPath = path.join(repoRoot, '.claude-tweaks', 'pipelines', relSegment);
+  } else {
+    originalPath = givenPath;
+    archivePath = path.join(pipelinesArchiveRoot(repoRoot), archiveRelativeId(originalRunDir));
+  }
   if (fs.existsSync(originalPath)) return { result: 'fail', detail: `original path still present: ${originalPath}` };
   if (!fs.existsSync(archivePath)) return { result: 'fail', detail: `archive path missing: ${archivePath}` };
   const archivedWork = path.join(archivePath, 'work');
@@ -311,29 +379,53 @@ function resolvedIssueNumbers(runDir) {
 // ---- carrier commit -----------------------------------------------------------
 //
 // Under `worktree` mode + `integration-model: pr-first`, there is
-// deliberately no `Fixes #{n}` commit on the branch -- the run's draft PR
+// deliberately no closing-keyword commit on the branch -- the run's draft PR
 // body carries that line instead (execution-and-verification.md's
 // worktree/pr-first note). Only fall back to the PR body when a PR number
 // actually resolves for this run (resolvePrNumber); local-merge /
 // current-branch runs have no PR, and the branch-log commit is their only
 // carrier -- missing there stays a genuine `fail`, unchanged from before.
+//
+// #2676 -- GitHub recognizes a broader closing-keyword set than the literal
+// `Fixes #N` this check used to grep for: close/closes/closed, fix/fixes/
+// fixed, resolve/resolves/resolved, case-insensitive, optionally qualified
+// with an `owner/repo` prefix before the `#N`. Built once (shared by the
+// branch-log match and the PR-body fallback, per the record's Technical
+// Approach) rather than inlined twice. `\b` on both sides of `#${n}` makes
+// it a WHOLE reference match -- `#12` never matches inside `#123`, since a
+// digit is a word character and `\b` requires a class transition.
+const CLOSING_KEYWORDS_PATTERN = 'close[sd]?|fix(?:e[sd])?|resolve[sd]?';
+function closingKeywordMatches(text, n) {
+  const re = new RegExp(`\\b(?:${CLOSING_KEYWORDS_PATTERN})\\s+(?:[\\w.-]+/[\\w.-]+)?#${n}\\b`, 'i');
+  return re.test(text || '');
+}
+
 registerCheck('carrier-commit', ({ runDir, base, deps, cwd }) => {
   const issues = resolvedIssueNumbers(runDir);
   if (!issues.length) return { result: 'skip', detail: 'no resolved issue numbers found (conversation-based work, or no materialized headers and no expectations issues)' };
   const prNumber = resolvePrNumber(runDir);
+  let commitMessages;
+  try {
+    // One read for the whole range, matched in JS against every issue's own
+    // keyword regex below -- not one `--grep` call per issue (N `git log`
+    // spawns, and ties the match to the system regex engine's own ERE/BRE
+    // dialect rather than this module's own JS regex, the single source of
+    // truth the PR-body fallback below also matches against). `%B` (raw
+    // subject + body), not `%s` (subject only) -- the old `--grep=Fixes
+    // #{n}` matched against a commit's FULL message, and narrowing to the
+    // subject line here would silently stop catching a closing keyword
+    // placed in a commit's body instead.
+    commitMessages = deps.git(['log', `${base}..HEAD`, '--format=%B'], cwd);
+  } catch (err) {
+    return { result: 'unknown', detail: `git log failed: ${err.message}` };
+  }
   let prBody = null; // cached across issues once fetched -- never re-fetched per issue
   let prBodyFetched = false;
-  const missing = [];
+  const missingTextual = [];
   for (const n of issues) {
-    let out;
-    try {
-      out = deps.git(['log', `--grep=Fixes #${n}`, `${base}..HEAD`, '--oneline'], cwd);
-    } catch (err) {
-      return { result: 'unknown', detail: `git log failed: ${err.message}` };
-    }
-    if (out.trim()) continue;
+    if (closingKeywordMatches(commitMessages, n)) continue;
 
-    if (!prNumber) { missing.push(n); continue; }
+    if (!prNumber) { missingTextual.push(n); continue; }
     if (!prBodyFetched) {
       prBodyFetched = true;
       try {
@@ -342,11 +434,101 @@ registerCheck('carrier-commit', ({ runDir, base, deps, cwd }) => {
         return { result: 'unknown', detail: `gh pr view failed for PR #${prNumber}: ${err.message}` };
       }
     }
-    if (!prBody.includes(`Fixes #${n}`)) missing.push(n);
+    if (!closingKeywordMatches(prBody, n)) missingTextual.push(n);
   }
-  if (missing.length) return { result: 'fail', detail: `no carrier commit found for #${missing.join(', #')}` };
+  if (!missingTextual.length) return { result: 'pass', detail: '' };
+
+  // #2676 Deliverable 3 -- ground-truth fallback, scoped to only the issues
+  // the textual match above couldn't confirm (never run unconditionally for
+  // every issue -- the common case where the textual match already
+  // succeeded costs nothing extra). An issue the ground truth itself can't
+  // reach (no repo slug, a gh-absent environment, a network/GraphQL
+  // failure) degrades silently back into `stillMissing` below -- the same
+  // `fail` this check would already have produced before this fallback
+  // existed, never a new `unknown`: the fallback only ever adds passes, it
+  // never weakens the textual match's own `fail` signal into something
+  // softer.
+  let repoSpec = null;
+  try {
+    repoSpec = parseRepo(deps.git(['remote', 'get-url', 'origin'], cwd));
+  } catch { /* degrades to stillMissing below */ }
+  let linked = new Map();
+  if (repoSpec) {
+    try {
+      linked = fetchLinkedPRs({
+        numbers: missingTextual, owner: repoSpec.owner, repo: repoSpec.repo, runner: (args) => deps.gh(args, cwd),
+      });
+    } catch { /* gh-absent/network/GraphQL failure -- degrades to stillMissing below */ }
+  }
+  const stillMissing = [];
+  for (const n of missingTextual) {
+    const entry = linked.get(n);
+    if (!entry || !entry.hasClosingPRReference) { stillMissing.push(n); continue; }
+    let state = null;
+    try {
+      state = JSON.parse(deps.gh(['issue', 'view', String(n), '--json', 'state'], cwd)).state;
+    } catch { /* degrades to stillMissing below */ }
+    if (state !== 'CLOSED') stillMissing.push(n);
+  }
+  if (stillMissing.length) return { result: 'fail', detail: `no carrier commit found for #${stillMissing.join(', #')}` };
   return { result: 'pass', detail: '' };
 });
+
+// Under `integration-model: pr-first`, the PR that carries this run's
+// Initiative-Fix: commits gets squash-merged -- the N one-file commits on
+// the branch collapse into a single multi-file commit on `main`, which also
+// carries every OTHER change the PR made. Diffing that one squash commit
+// (the local-merge path below) can't tell a repair file from an unrelated
+// one anymore -- everything the PR touched looks like it was "touched by
+// the Initiative-Fix commit". Resolve scope from the PR's own (pre-squash)
+// commit list instead, where each repair is still its own one-file commit
+// (#2552). `resolvePrNumber` returning non-null is this file's existing
+// pr-first signal (carrier-commit above already keys off it the same way).
+function referenceRepairsViaPr({ prNumber, appliedSet, deps, cwd }) {
+  let commitsJson;
+  try {
+    commitsJson = deps.gh(['pr', 'view', String(prNumber), '--json', 'commits'], cwd);
+  } catch (err) {
+    return { result: 'unknown', detail: `gh pr view failed for PR #${prNumber}: ${err.message}` };
+  }
+  let commits;
+  try {
+    commits = JSON.parse(commitsJson).commits || [];
+  } catch (err) {
+    return { result: 'unknown', detail: `could not parse gh pr view commits for PR #${prNumber}: ${err.message}` };
+  }
+  const repairCommits = commits.filter((c) => `${c.messageHeadline || ''}\n${c.messageBody || ''}`.includes('Initiative-Fix:'));
+  if (!repairCommits.length) return { result: 'fail', detail: `no Initiative-Fix: commit found on PR #${prNumber}` };
+
+  let remote;
+  try {
+    remote = deps.git(['remote', 'get-url', 'origin'], cwd);
+  } catch (err) {
+    return { result: 'unknown', detail: `git remote get-url failed: ${err.message}` };
+  }
+  const repoSpec = parseRepo(remote);
+  if (!repoSpec) return { result: 'unknown', detail: 'could not resolve owner/repo for PR commit file lookup' };
+
+  const touched = new Set();
+  for (const c of repairCommits) {
+    let filesJson;
+    try {
+      filesJson = deps.gh(['api', `repos/${repoSpec.owner}/${repoSpec.repo}/commits/${c.oid}`, '--jq', '[.files[].filename]'], cwd);
+    } catch (err) {
+      return { result: 'unknown', detail: `gh api commit lookup failed for ${c.oid}: ${err.message}` };
+    }
+    let files;
+    try {
+      files = JSON.parse(filesJson);
+    } catch (err) {
+      return { result: 'unknown', detail: `could not parse commit file list for ${c.oid}: ${err.message}` };
+    }
+    for (const f of files) touched.add(f);
+  }
+  const extra = [...touched].filter((f) => !appliedSet.has(f));
+  if (extra.length) return { result: 'fail', detail: `Initiative-Fix: commit touches unrelated file(s): ${extra.join(', ')}` };
+  return { result: 'pass', detail: '' };
+}
 
 // ---- reference-repair commit scoping -------------------------------------------
 registerCheck('reference-repairs', ({ runDir, base, deps, cwd }) => {
@@ -361,6 +543,11 @@ registerCheck('reference-repairs', ({ runDir, base, deps, cwd }) => {
   const findings = (state.results && state.results.references && state.results.references.findings) || [];
   const applied = findings.filter((f) => f.action === 'applied').map((f) => f.targetPath).filter(Boolean);
   if (!applied.length) return { result: 'skip', detail: 'no applied reference-repair findings this run' };
+  const appliedSet = new Set(applied);
+
+  const prNumber = resolvePrNumber(runDir);
+  if (prNumber) return referenceRepairsViaPr({ prNumber, appliedSet, deps, cwd });
+
   let commitLog;
   try {
     commitLog = deps.git(['log', '--grep=Initiative-Fix:', `${base}..HEAD`, '--format=%H'], cwd);
@@ -379,7 +566,6 @@ registerCheck('reference-repairs', ({ runDir, base, deps, cwd }) => {
     }
     for (const f of diff.split('\n').filter(Boolean)) touched.add(f);
   }
-  const appliedSet = new Set(applied);
   const extra = [...touched].filter((f) => !appliedSet.has(f));
   if (extra.length) return { result: 'fail', detail: `Initiative-Fix: commit touches unrelated file(s): ${extra.join(', ')}` };
   return { result: 'pass', detail: '' };
@@ -438,22 +624,16 @@ function resolveParent(n, deps, cwd) {
 }
 
 // `verify`'s --run-dir may be the parent pipeline run directory, or (in a
-// multi-spec run) a spec-{N}/ subdirectory with no run-state.json of its
-// own -- checks runDir first, then one directory up. Absence or a parse/
-// shape failure at whichever path is checked returns null, which correctly
-// degrades to "no PR" (local-merge / degraded-pr-first) behavior in the
-// caller -- it never falls further than one level up, and it never treats a
-// present-but-PR-less run-state.json as a reason to keep searching.
+// multi-spec run) a spec-{N}/ subdirectory whose own run-state.json carries
+// no PR -- the run's shared PR stamp lives one directory up. Resolved through
+// hooks/context.js's readRunStateWithParent (#2858): per-field fill behind
+// the /^spec-/ basename gate, a per-spec pr winning over the parent's. Absence
+// or a parse/shape failure returns null, which correctly degrades to "no PR"
+// (local-merge / degraded-pr-first) behavior in the caller -- it never falls
+// further than one level up.
 function resolvePrNumber(runDir) {
-  const direct = path.join(runDir, 'run-state.json');
-  const statePath = fs.existsSync(direct) ? direct : path.join(path.dirname(runDir), 'run-state.json');
-  if (!fs.existsSync(statePath)) return null;
-  try {
-    const data = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-    return data.pr && data.pr.number ? data.pr.number : null;
-  } catch {
-    return null;
-  }
+  const { state } = readRunStateWithParent(runDir);
+  return state && state.pr && state.pr.number ? state.pr.number : null;
 }
 
 // ---- acceptance labeling ---------------------------------------------------

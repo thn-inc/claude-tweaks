@@ -84,7 +84,7 @@ Do not add narration, headers, or summaries before or after the table.
 
 **What it catches and the constraints** are the shared simplification criteria — read `_shared/criteria-simplification.md`. The same criteria are reused by `/claude-tweaks:code-health`'s simplification lens, so the reactive pass and the proactive sweep flag identical complexity. (The `code-simplifier` subagent applies them; the dispatch prompt above carries the scope and output contract.)
 
-**When dispatched with file-path scope** (rather than a diff range), the subagent optimizes the whole file — it has no way to know which lines the caller's own work actually touched. Before committing the returned changes, the caller should diff them against its own change scope and revert anything outside it, the same discipline `/review` Step 5 already applies to merge-provenance exclusions (`#174`).
+**When dispatched with file-path scope** (rather than a diff range), the subagent optimizes the whole file — it has no way to know which lines the caller's own work actually touched. The diff-and-revert check — diffing the returned changes against the caller's own change scope and reverting anything outside it, the same discipline `/review` Step 5 already applies to merge-provenance exclusions (`#174`) — must run only after the subagent's reply, carrying its required `STATUS:` line (see Step 2's output template above), has actually been received. A working-tree check taken before that reply arrives is not the agent's final state: the dispatch is asynchronous, so the agent may still be writing, and any edits it writes after an early revert survive uncaught into the caller's commit.
 
 ## Step 3: Verify
 
