@@ -10,8 +10,12 @@
 // spawn error, a base run with no numeric exit) is never "fails at base" — a
 // base run counts only when its own log names the file as failing with every
 // test that fails in it at HEAD, and a file is flaky only when its isolated
-// log shows tests ran and passed. git and runOne are injected so the tests
-// never touch a real repo; realGit is the CLI's seam.
+// log shows tests ran and passed. An isolated run that fails a test base does
+// not cover gets one retry (#3111) before being called attributable — when
+// the retry's own failures are covered by base (or it passes cleanly), the
+// extra failure did not reproduce and is reported flaky instead. git and
+// runOne are injected so the tests never touch a real repo; realGit is the
+// CLI's seam.
 'use strict';
 
 const fs = require('fs');
@@ -355,6 +359,17 @@ async function adjudicate({
       if (!waived.every(passedIn(tree))) return null;
       return { log: r.logPath, waived };
     };
+    // #3111: an isolated HEAD run that fails a test base does not cover would
+    // otherwise be attributable outright — but that extra failure may itself
+    // be a one-off flake rather than a real regression. Re-run the file once
+    // more in isolation before finalizing that verdict; when the retry's own
+    // failing set is covered by base (or the retry passes cleanly), the
+    // extra failure did not reproduce, so report it flaky instead.
+    const needsRetry = work.map((w, k) => (
+      Boolean(headRuns[k]) && typeof headRuns[k].exitCode === 'number' && headRuns[k].exitCode !== 0
+      && !failsToLoadAtBase(k) && !ranCleanly(headRuns[k], k) && !baselineInIsolation(headRuns[k], k)
+    ));
+    const retryRuns = await pool(work, concurrency, (w, k) => (needsRetry[k] ? run(w, 'isolated-retry', cwd) : null));
     const baselineFailing = [];
     const flakyPassed = [];
     const flakyLogs = {};
@@ -363,12 +378,14 @@ async function adjudicate({
     const failingByCheck = {};
     work.forEach((w, k) => {
       (failingByCheck[w.check] = failingByCheck[w.check] || []).push(w.file);
-      if (failsToLoadAtBase(k)) baselineFailing.push(w.file);
-      else if (ranCleanly(headRuns[k], k)) { flakyPassed.push(w.file); flakyLogs[w.file] = headRuns[k].logPath; }
-      else {
-        const iso = baselineInIsolation(headRuns[k], k);
-        if (iso) { baselineFailing.push(w.file); baselineIsolated[w.file] = iso; } else attributable.push(w.file);
+      if (failsToLoadAtBase(k)) { baselineFailing.push(w.file); return; }
+      if (ranCleanly(headRuns[k], k)) { flakyPassed.push(w.file); flakyLogs[w.file] = headRuns[k].logPath; return; }
+      const iso = baselineInIsolation(headRuns[k], k);
+      if (iso) { baselineFailing.push(w.file); baselineIsolated[w.file] = iso; return; }
+      if (needsRetry[k] && (ranCleanly(retryRuns[k], k) || baselineInIsolation(retryRuns[k], k))) {
+        flakyPassed.push(w.file); flakyLogs[w.file] = retryRuns[k].logPath; return;
       }
+      attributable.push(w.file);
     });
     return {
       ...header,

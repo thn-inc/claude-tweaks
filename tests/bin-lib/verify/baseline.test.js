@@ -38,7 +38,7 @@ function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, t
     removeWorktree: (dir) => { calls.removed.push(dir); },
   };
   const runOne = async ({ name, command, cwd }) => {
-    const kind = name.includes('-baseline-') ? 'baseline' : 'isolated';
+    const kind = name.includes('-baseline-') ? 'baseline' : (name.includes('-isolated-retry-') ? 'isolated-retry' : 'isolated');
     const file = command.replace('node --test ', '');
     calls.runs.push({ kind, file, cwd });
     if (throwOn && throwOn === `${kind}:${file}`) throw new Error('boom');
@@ -413,11 +413,13 @@ const NAMED = ({ fails = [], passes = [], skips = [], fail = fails.length, cance
 ].join('\n');
 
 // The full run fails tests/r.test.js on base's `x` plus a load-induced `slow`.
-const isolationCase = (isolatedLog, { isolatedCode = 1, baseLog = NAMED({ fails: [['x']], passes: ['slow'] }), head = NAMED({ fails: [['x'], ['slow']] }), sameAtBase } = {}) => {
+const isolationCase = (isolatedLog, {
+  isolatedCode = 1, baseLog = NAMED({ fails: [['x']], passes: ['slow'] }), head = NAMED({ fails: [['x'], ['slow']] }), sameAtBase, retryLog, retryCode,
+} = {}) => {
   const { p, dir } = logFile(head);
   const { git, runOne, calls } = fakes({
-    outcomes: { [`baseline:${R}`]: 1, [`isolated:${R}`]: isolatedCode },
-    logs: { [`baseline:${R}`]: baseLog, [`isolated:${R}`]: isolatedLog },
+    outcomes: { [`baseline:${R}`]: 1, [`isolated:${R}`]: isolatedCode, ...(retryCode !== undefined ? { [`isolated-retry:${R}`]: retryCode } : {}) },
+    logs: { [`baseline:${R}`]: baseLog, [`isolated:${R}`]: isolatedLog, ...(retryLog !== undefined ? { [`isolated-retry:${R}`]: retryLog } : {}) },
     sameAtBase,
   });
   return adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git })
@@ -433,10 +435,37 @@ test('a file failing beyond its base tests in the full run, but only base tests 
   assert.match(r.baselineIsolated[R].log, /tests-isolated-tests\+r\.test\.js\.log$/);
 });
 
-test('an isolated run failing a test base does not fail stays attributable (#3043)', async () => {
-  const r = await isolationCase(NAMED({ fails: [['x'], ['slow']] }));
+test('an isolated run failing a test base does not fail stays attributable when the retry reproduces it too (#3111 AC2)', async () => {
+  const r = await isolationCase(NAMED({ fails: [['x'], ['slow']] }), {
+    retryLog: NAMED({ fails: [['x'], ['slow']] }), retryCode: 1,
+  });
   assert.deepStrictEqual(r.attributable, [R]);
   assert.deepStrictEqual(r.baselineIsolated, {});
+  assert.deepStrictEqual(r.flakyPassed, []);
+});
+
+test('an isolated run failing a base-covered test plus an extra test is reported baseline-flaky when the retry does not reproduce the extra failure (#3111 AC1)', async () => {
+  const r = await isolationCase(NAMED({ fails: [['x'], ['slow']] }), {
+    retryLog: NAMED({ fails: [['x']], passes: ['slow'] }), retryCode: 1,
+  });
+  assert.deepStrictEqual(r.attributable, []);
+  assert.deepStrictEqual(r.flakyPassed, [R]);
+  assert.match(r.flakyLogs[R], /tests-isolated-retry-tests\+r\.test\.js\.log$/);
+  assert.strictEqual(r.verdict, 'pass');
+});
+
+test('an isolated run that already covers base on the first try never triggers a retry (#3111)', async () => {
+  const r = await isolationCase(NAMED({ fails: [['x']], passes: ['slow'] }));
+  assert.deepStrictEqual(r.baselineFailing, [R]);
+  assert.deepStrictEqual(r.calls.runs.filter((c) => c.kind === 'isolated-retry'), []);
+});
+
+test('an isolated run that passes cleanly on the first try never triggers a retry (#3043, #3111)', async () => {
+  const { p, dir } = logFile(SPEC([R]));
+  const { git, runOne, calls } = fakes({ outcomes: { [`baseline:${R}`]: 0, [`isolated:${R}`]: 0 } });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.deepStrictEqual(r.flakyPassed, [R]);
+  assert.deepStrictEqual(calls.runs.filter((c) => c.kind === 'isolated-retry'), []);
 });
 
 test('absence is not a pass: an isolated run cut short (the extra test never ran) or skipping it stays attributable (#3043)', async () => {
