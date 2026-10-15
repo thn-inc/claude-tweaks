@@ -134,3 +134,16 @@ test('the literal git/refs/heads ref-delete command is stated exactly once, cano
   const hits = Object.entries(files).filter(([, text]) => /git\/refs\/heads/.test(text)).map(([name]) => name);
   assert.deepStrictEqual(hits, ['MERGE_POST_MERGE'], `git/refs/heads must appear only in pr-first-merge-post-merge.md, found in: ${hits.join(', ')}`);
 });
+
+test('cleanup-procedures-execution.md Section C no longer claims the ancestry check holds for squash/rebase merges, and gives pr-first its own proof', () => {
+  const sectionC = CLEANUP_PROCEDURES_EXECUTION.indexOf('## C. Git Worktree');
+  const sectionD = CLEANUP_PROCEDURES_EXECUTION.indexOf('## D. Ephemeral dev server');
+  assert.ok(sectionC > 0 && sectionD > sectionC, 'Section C must exist and precede Section D');
+  const section = CLEANUP_PROCEDURES_EXECUTION.slice(sectionC, sectionD);
+  assert.doesNotMatch(section, /holds for `--no-ff`, fast-forward, and squash\/rebase merges alike/);
+  assert.doesNotMatch(section, /strictly stronger/);
+  assert.match(section, /integration-model: local-merge/);
+  assert.match(section, /integration-model: pr-first/);
+  assert.match(section, /gh pr view \{number\} --repo \{owner\}\/\{repo\} --json mergeCommit/);
+  assert.match(section, /git diff HEAD \{merge-commit\}/);
+});

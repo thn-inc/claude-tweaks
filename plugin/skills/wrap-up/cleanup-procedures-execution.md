@@ -177,24 +177,37 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    `cleanup-procedures-execution-appendix.md`'s "Step 4" section for an unverified caveat on this
    remedy's one known edge case.
 
-   **Prove it before passing `discard_changes: true` — the ancestry check, not a bare SHA
-   match.** Run `_shared/scratch-worktree.md`'s "Tearing down" (§6) ancestry check —
-   `git merge-base --is-ancestor HEAD origin/{integration-branch}` — against the branch this
-   worktree's branch actually merged into, rather than a `git rev-parse HEAD` equality test
-   (`[IL-45]`'s original mitigation): equality only holds after a fast-forward, and this file's
-   own merge procedure (`review-console.md`'s "On approval," `pr-first-merge.md` Step 3) uses
-   `--no-ff`, so the integration branch's tip is a *new* merge commit whose SHA never equals the
-   worktree branch's — an ancestry check is what actually proves the `--no-ff` case safe, not
-   just the fast-forward one. **Exit 0** authorizes `discard_changes: true` directly, with the
-   same one-line stated reason that file's §6 uses — no separate confirmation once the check has
-   actually run and passed; this is what "proven, not improvised" means for this call too. **Non-zero**
-   — stop and surface via `git log origin/{integration-branch}..HEAD --oneline`, same as that
-   file's own non-zero branch; never override on a non-zero result. `[IL-45]`'s content-diff
-   fallback (`git diff <branch> <default-branch>` empty) still applies for a branch discarded
-   without ever merging (no `origin/{integration-branch}` ancestry to prove) — the ancestry check
-   above is the primary proof whenever a merge actually happened, since it is strictly stronger:
-   it holds for `--no-ff`, fast-forward, and squash/rebase merges alike, all of which the SHA
-   equality test alone would reject.
+   **Prove it before passing `discard_changes: true` — a proof matching the merge shape, not a
+   bare SHA match.** Under `integration-model: local-merge` (`_shared/integration-model.md`),
+   merges land via `git merge --no-ff` (`_shared/local-merge-auto-finish.md`,
+   `dispatch/settle-and-merge.md`, `_shared/issue-claims.md`'s "Close-via-merge") or a plain
+   fast-forward — for both, run `_shared/scratch-worktree.md`'s "Tearing down" (§6) ancestry
+   check, `git merge-base --is-ancestor HEAD origin/{integration-branch}`, against the branch
+   this worktree's branch actually merged into, rather than a `git rev-parse HEAD` equality test
+   (`[IL-45]`'s original mitigation): equality only holds after a fast-forward, while `--no-ff`
+   produces a new merge commit whose SHA never equals the worktree branch's — an ancestry check
+   is what proves the `--no-ff` case safe, not just the fast-forward one. **Exit 0** authorizes
+   `discard_changes: true` directly, with the same one-line stated reason that file's §6 uses —
+   no separate confirmation once the check has actually run and passed. **Non-zero** — stop and
+   surface via `git log origin/{integration-branch}..HEAD --oneline`, same as that file's own
+   non-zero branch; never override on a non-zero result.
+
+   Under `integration-model: pr-first` (the GitHub default), every merge goes through
+   `_shared/pr-first-merge.md` Step 3's `gh pr merge --squash`, so the ancestry check above can
+   never pass here: a squash commit's parents never include this worktree branch's `HEAD`, by
+   construction, regardless of how clean the merge was. The primary proof for this shape is
+   instead a clean worktree plus an empty diff against the squash commit itself: read the PR's
+   merge commit — `gh pr view {number} --repo {owner}/{repo} --json mergeCommit -q
+   .mergeCommit.oid`, `{number}` from this run's `run-state.json` `pr.number` field — then run
+   `git diff HEAD {merge-commit}`. **Empty** authorizes `discard_changes: true` the same way
+   **Exit 0** does above (stated reason: "git diff HEAD {merge-commit} is empty — nothing to
+   lose"). **Non-empty** — stop and surface the diff, same as the ancestry check's non-zero
+   branch; never override. `[IL-45]`'s content-diff fallback (`git diff <branch>
+   <default-branch>` empty) still applies for a branch discarded without ever merging (no
+   `run-state.json` `pr` field at all) — that remains the path for "never merged," never the
+   normal `pr-first` case. Neither proof subsumes the other: the ancestry check only holds for
+   `--no-ff`/fast-forward, and the content-diff check is what `pr-first`'s squash shape actually
+   needs.
 
    For a worktree this session does **not** occupy, use `teardown-run` (below) instead of a raw
    `git worktree remove` — it already checks `git worktree list --porcelain` for you and skips
