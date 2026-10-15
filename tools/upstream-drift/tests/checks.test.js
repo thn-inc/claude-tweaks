@@ -116,6 +116,31 @@ test('checkVersion: plugin-cache-glob reads each candidate\'s own version field,
   assert.strictEqual(result.status, 'ok');
 });
 
+// expandGlob must resolve an ABSOLUTE glob in whatever shape the platform's
+// own path functions produce. On win32 that is `C:\...` (drive root, backslash
+// separators) or `C:/...` (drive root, forward slashes); on posix `/...`. Each
+// is built from a real temp tree, so the test exercises the drive path on
+// Windows and the absolute posix path on Linux.
+for (const [label, toGlob] of [
+  ['the platform-native separator', (root) => globFor(root)],
+  ['forward slashes throughout', (root) => globFor(root).split(path.sep).join('/')],
+]) {
+  test(`checkVersion: plugin-cache-glob resolves an absolute glob written with ${label}`, () => {
+    const root = tmpDir();
+    writePluginCacheCandidate(root, 'slotA', '3.5.0', '3.5.0');
+    const glob = toGlob(root);
+    assert.ok(path.isAbsolute(glob), `precondition: the glob under test must be absolute: ${glob}`);
+    const entry = {
+      name: 'impeccable-plugin',
+      pinned: '3.5.0',
+      'installed-probe': { type: 'plugin-cache-glob', glob },
+    };
+    const result = checkVersion(entry);
+    assert.strictEqual(result.status, 'ok', `an installed candidate behind an absolute glob must not read as absent: ${result.detail}`);
+    assert.deepStrictEqual(result.installed, ['3.5.0']);
+  });
+}
+
 test('checkVersion: plugin-cache-glob is absent when the glob matches nothing', () => {
   const root = tmpDir();
   const entry = {

@@ -45,8 +45,9 @@ function defaultDeps(root) {
     gh: (args, input) => execFileSync('gh', args, {
       cwd: root, encoding: 'utf8', timeout: GH_TIMEOUT_MS,
       input, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     }),
-    git: (args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
+    git: (args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
     readFile: (p) => { try { return fs.readFileSync(abs(p), 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } },
     writeFile: (p, text) => fs.writeFileSync(abs(p), text),
     stdout: (t) => process.stdout.write(t),
