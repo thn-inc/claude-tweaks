@@ -48,6 +48,11 @@ that needs no resolution, only inclusion:
    call. If you yourself dispatch nested subagents (via `superpowers:subagent-driven-development`,
    a review-lens fan-out, or any other Task/Agent call), give them this same instruction — the
    identical trap recurs one level deeper otherwise.
+8. **Selection labels** (#3131) — one literal line from the queue pull's own label snapshot
+   (`$DISPATCH_GROUPS`, never a fresh read): `Selection labels: #{n} bot:in-progress={yes|no}`,
+   one `#{n} …` entry per record in `{issue list}`, comma-separated. A Task call cannot see the
+   dispatcher's snapshot, so this is how Settle's contested-claim self-report learns whether the
+   record carried the claim's label projection when it was selected.
 
 Substitute this whole block, filled in with this firing's actual resolved values, as
 `{context-pack}` immediately after each call's opening `Task scope:` paragraph below. This is

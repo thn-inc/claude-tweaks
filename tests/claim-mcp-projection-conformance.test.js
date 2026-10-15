@@ -51,7 +51,20 @@ test('settle-and-merge.md claim-contest self-report names selection-time bot:in-
   const para = paragraphStarting(SETTLE, '**Selection-time projection line (contested-claim shape, #3131).**');
   assert.match(para, /queue pull/);
   assert.match(para, /snapshot/);
+  assert.match(para, /`Selection labels:` line/);
+  assert.match(para, /task-prompt\.md` item 8/);
   assert.match(para, /Selection-time projection: #\{target\} \{carried\|did not carry\}/);
   const enrich = SETTLE.indexOf('**Open-linked-PR enrichment for the contested-claim shape (#2402).**');
   assert.ok(enrich !== -1 && enrich < SETTLE.indexOf(para), 'the projection line paragraph follows the #2402 enrichment paragraph');
+});
+
+test('task-prompt.md context pack threads the selection-time label snapshot into the Task call (#3131)', () => {
+  const prompt = read('plugin/skills/dispatch/task-prompt.md');
+  const start = prompt.indexOf('## Context pack');
+  const end = prompt.indexOf('Substitute this whole block', start);
+  assert.ok(start !== -1 && end !== -1, 'context pack anchors must exist');
+  const pack = prompt.slice(start, end);
+  assert.match(pack, /^8\. \*\*Selection labels\*\* \(#3131\)/m);
+  assert.match(pack, /Selection labels: #\{n\} bot:in-progress=\{yes\|no\}/);
+  assert.match(pack, /\$DISPATCH_GROUPS/);
 });

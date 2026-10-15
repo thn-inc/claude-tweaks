@@ -69,7 +69,7 @@ this transport; see #2402.` A null `openPR`, a non-zero exit, or the MCP transpo
 to the card's own text unchanged — this is enrichment only, never a gate, and a lookup failure here
 never blocks or fails the self-report itself.
 
-**Selection-time projection line (contested-claim shape, #3131).** Also append ``Selection-time projection: #{target} {carried|did not carry} `bot:in-progress` when dispatch selected it.``, read from the queue pull's own label snapshot, never a fresh read, so a missing projection is diagnosable from the report alone. Never gates the self-report.
+**Selection-time projection line (contested-claim shape, #3131).** Also append ``Selection-time projection: #{target} {carried|did not carry} `bot:in-progress` when dispatch selected it.``, from the context pack's `Selection labels:` line (the queue pull snapshot, `task-prompt.md` item 8), never a fresh read. Never gates the self-report.
 
 **Headless ride-along special case (#1780).** When the failure this call is settling is instead
 `_shared/worktree-setup.md`'s Post-creation catch-up "Headless ride-along check" — reached during
