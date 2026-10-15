@@ -66,9 +66,8 @@ function stripComments(src) {
 // real entry point necessarily appears before it, never after.
 function extractGuard(src) {
   const re = /if\s*\(\s*require\.main\s*===\s*module\s*\)\s*/g;
-  const matches = [...src.matchAll(re)];
-  if (matches.length === 0) return null;
-  const m = matches[matches.length - 1];
+  const m = [...src.matchAll(re)].at(-1);
+  if (!m) return null;
   let i = m.index + m[0].length;
   if (src[i] === '{') {
     let depth = 0;
@@ -149,8 +148,8 @@ test('extractGuard selects the entry-point (last) require.main guard in hooks.js
   const content = stripComments(fs.readFileSync(path.join(ROOT, 'plugin', 'bin', 'hooks.js'), 'utf8'));
   const guard = extractGuard(content);
   assert.ok(guard !== null, 'hooks.js should still have a detectable require.main guard');
-  // The prefilter guard (line 28) only ever calls the early-exit skip path;
-  // the real entry-point guard (line 1570) is the one that drives main(...).
+  // The prefilter guard at the top of the file only ever calls the early-exit
+  // skip path; the real entry-point guard at the bottom drives main(...).
   assert.ok(
     /main\s*\(/.test(guard),
     `extractGuard should select the entry-point guard (the one invoking main(...)), not the prefilter guard -- got: ${guard.slice(0, 120)}`,

@@ -23,9 +23,9 @@
 // process.exit(0) on the skip path is safe for the same reason this file is
 // allowlisted in tests/bin-lib/exit-code-conformance.test.js: nothing is
 // pending on stdout to truncate. This guard runs before the real entry point
-// below (line ~1570) -- that test's extractGuard reads a file's LAST such
-// guard as its entry point, specifically so this earlier prefilter guard is
-// never mistaken for it.
+// at the bottom of the file -- that test's extractGuard reads a file's LAST
+// such guard as its entry point, so this earlier prefilter guard is never
+// mistaken for it.
 let EARLY = null;
 if (require.main === module) {
   try {
