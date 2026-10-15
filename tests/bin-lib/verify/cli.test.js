@@ -285,6 +285,28 @@ test('a failing run, a fail-fast skip, and --no-stamp write neither stamp file (
   }
 });
 
+test('#3063 AC1: a check that sleeps past its --cmd-timeout ends the run with exit 1, a timedOut report entry, and no stamp', async () => {
+  const { repo, gitDir } = tmpGitRepo();
+  const { code, stdout } = await runCli([
+    '--cmd', 'tests=node -e "setInterval(() => {}, 1000)"', '--cmd-timeout', 'tests=300',
+  ], { cwd: repo });
+  assert.strictEqual(code, 1);
+  const report = JSON.parse(fs.readFileSync(path.join(gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.pass, false);
+  assert.strictEqual(report.checks.tests.exitCode, null);
+  assert.strictEqual(report.checks.tests.timedOut, true);
+  assert.match(stdout, /\| tests \| fail \| .* \| timed out after [\d.]+s \|/);
+  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')), 'no stamp for a timed-out run');
+  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass')), 'no legacy stamp either');
+});
+
+test('#3063: a check that finishes well inside its --cmd-timeout is unaffected', async () => {
+  const { repo, gitDir } = tmpGitRepo();
+  const { code } = await runCli(['--cmd', 'tests=node -e 0', '--cmd-timeout', 'tests=5000'], { cwd: repo });
+  assert.strictEqual(code, 0);
+  assert.ok(fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')));
+});
+
 // #2341: only one --cmd name ("types") gets the fail-fast-before-tests
 // tier — the documented workaround for N independent typecheck commands is
 // a compound `--cmd types="a && b && c"`, proven working here: each half

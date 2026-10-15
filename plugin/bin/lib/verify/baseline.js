@@ -185,7 +185,7 @@ function readLog(logPath) {
 
 async function adjudicate({
   checks, baselineCmds, base, baseSha, cwd = null, logDir, runOne, spawnImpl, now = Date.now,
-  envOf = () => null, git, concurrency = 4, env = process.env,
+  envOf = () => null, timeoutOf = () => null, git, concurrency = 4, env = process.env,
 }) {
   const header = { base, baseSha };
   const ineligible = (reason) => ({ ...header, eligible: false, reason });
@@ -256,8 +256,13 @@ async function adjudicate({
   const atBase = work.map((w) => git.fileExistsAt(baseSha, repoRel(w.file)));
   const unchanged = work.map((w, k) => atBase[k] && git.sameAtBase(baseSha, repoRel(w.file)));
   let scratch = null;
+  // #3063: a single-file run bounds at the same timeout as the check's own
+  // full-suite --cmd-timeout (a generous bound — one file should finish
+  // well inside the budget the whole suite gets) when the caller declared
+  // one; absent a declared timeout this stays null, unchanged from before.
   const run = (w, kind, dir) => runOne({
-    name: `${w.check}-${kind}-${slug(w.file)}`, command: w.command, logDir, spawnImpl, now, cwd: dir, env: envOf(w.check),
+    name: `${w.check}-${kind}-${slug(w.file)}`, command: w.command, logDir, spawnImpl, now, cwd: dir,
+    env: envOf(w.check), timeout: timeoutOf(w.check),
   });
   const headResolvesDeps = Boolean(env.NODE_PATH) || hasNodeModulesUpward(headDir);
   try {
@@ -361,8 +366,15 @@ async function adjudicate({
     const baselineIsolated = {};
     const attributable = [];
     const failingByCheck = {};
+    // #3063 AC2: a per-file base/isolated run that times out is no evidence
+    // either way — `exitCode: null` already routes it to `attributable`
+    // below via every classifier's own numeric-exitCode guard; this just
+    // remembers which attributable files got there because of a timeout,
+    // so the caller can name it on stdout instead of a bare file list.
+    const timedOut = [];
     work.forEach((w, k) => {
       (failingByCheck[w.check] = failingByCheck[w.check] || []).push(w.file);
+      if ((baseRuns[k] && baseRuns[k].timedOut) || (headRuns[k] && headRuns[k].timedOut)) timedOut.push(w.file);
       if (failsToLoadAtBase(k)) baselineFailing.push(w.file);
       else if (ranCleanly(headRuns[k], k)) { flakyPassed.push(w.file); flakyLogs[w.file] = headRuns[k].logPath; }
       else {
@@ -381,6 +393,7 @@ async function adjudicate({
       flakyLogs,
       baselineIsolated,
       attributable,
+      timedOut,
     };
   } finally {
     if (scratch) git.removeWorktree(scratch);

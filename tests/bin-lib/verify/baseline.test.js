@@ -106,6 +106,65 @@ test('Review Focus 3: a base run killed by a signal (exitCode null) never counts
   assert.deepStrictEqual(r.attributable, ['tests/a.test.js']);
 });
 
+test('#3063 AC2: an isolated run that times out is no evidence — the file stays attributable and is named in r.timedOut', async () => {
+  const { p, dir } = logFile(SPEC(['tests/a.test.js']));
+  const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-timeout-test-'));
+  const git = {
+    repoRoot: () => '/repo',
+    fileExistsAt: () => true,
+    sameAtBase: () => true,
+    addWorktree: () => '/scratch',
+    removeWorktree: () => {},
+  };
+  const runOne = async ({ name, command }) => {
+    const logPath = path.join(logRoot, `${name}.log`);
+    const file = command.replace('node --test ', '');
+    // The isolated single-file rerun hangs past its bound — the same shape
+    // runOne itself produces on a real timeout (null exit, timedOut:true).
+    // The base rerun behaves like an ordinary failure, unaffected.
+    if (name.includes('-isolated-')) {
+      fs.writeFileSync(logPath, '');
+      return { name, command, exitCode: null, timedOut: true, durationMs: 1, logPath };
+    }
+    fs.writeFileSync(logPath, SPEC([file]));
+    return { name, command, exitCode: 1, durationMs: 1, logPath };
+  };
+  const r = await adjudicate({
+    checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40),
+    cwd: '/repo', logDir: dir, runOne, git,
+  });
+  assert.strictEqual(r.verdict, 'fail');
+  assert.deepStrictEqual(r.attributable, ['tests/a.test.js']);
+  assert.deepStrictEqual(r.baselineFailing, []);
+  assert.deepStrictEqual(r.flakyPassed, []);
+  assert.deepStrictEqual(r.timedOut, ['tests/a.test.js']);
+});
+
+test('#3063: timeoutOf is forwarded from adjudicate to each per-file run, bounded by the check\'s own --cmd-timeout', async () => {
+  const { p, dir } = logFile(SPEC(['tests/a.test.js']));
+  const { git, runOne: baseRunOne, calls } = fakes({ outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 } });
+  const seenTimeouts = [];
+  const runOne = async (args) => { seenTimeouts.push(args.timeout); return baseRunOne(args); };
+  await adjudicate({
+    checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40),
+    cwd: '/repo', logDir: dir, runOne, git, timeoutOf: (name) => (name === 'tests' ? 5000 : null),
+  });
+  assert.strictEqual(calls.runs.length, 2, 'one baseline + one isolated run');
+  assert.deepStrictEqual(seenTimeouts, [5000, 5000]);
+});
+
+test('#3063: adjudicate defaults timeoutOf to a no-op — every per-file run gets no timeout, unchanged from before', async () => {
+  const { p, dir } = logFile(SPEC(['tests/a.test.js']));
+  const { git, runOne: baseRunOne } = fakes({ outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 } });
+  const seenTimeouts = [];
+  const runOne = async (args) => { seenTimeouts.push(args.timeout); return baseRunOne(args); };
+  await adjudicate({
+    checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40),
+    cwd: '/repo', logDir: dir, runOne, git,
+  });
+  assert.deepStrictEqual(seenTimeouts, [null, null]);
+});
+
 test('Review Focus 4: the scratch worktree is removed even when a run throws (#3043)', async () => {
   const { p, dir } = logFile(SPEC(['tests/a.test.js']));
   const { git, runOne, calls } = fakes({ outcomes: {}, throwOn: 'baseline:tests/a.test.js' });
