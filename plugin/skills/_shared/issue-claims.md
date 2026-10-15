@@ -225,9 +225,13 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
   with `swept:`, validated before any `gh` call. The resulting tombstone's own `runId` is still the
   sweep run (never a fake owner) — `sweptFrom` is the separate field naming the original holder,
   and both the CLI's JSON envelope and its `decisions.md` line carry it.
-- **List all claims:** list the `claims/` directory on `CLAIMS_BRANCH`.
+- **List all claims:** list the `claims/` directory on `CLAIMS_BRANCH`, uncapped (#3098 —
+  the Contents API this used to call directly caps at 1000 entries, silently).
 <!-- when: transport=gh -->
-  - **gh CLI:** `gh api "repos/{owner}/{repo}/contents/claims?ref=${CLAIMS_BRANCH}" -q '.[].name'`
+  - **gh CLI:** `node "${CLAUDE_PLUGIN_ROOT}/bin/list-claims.js"` (wraps `claim-store.js`'s
+    `listClaimEntries`, a Git Trees API read with no 1000-entry cap; exits 3 on a `truncated`
+    tree response rather than returning a silently partial list — never sample or re-derive
+    this listing by hand)
 <!-- /when -->
 <!-- when: transport=mcp -->
   - **MCP:** the equivalent read-tree/list-directory tool call against `claims/` on
@@ -367,7 +371,11 @@ is atomic regardless of whether the label add/remove succeeds.
 - **Added** alongside claim acquisition — bootstrap-then-add, the same check-then-create
   pattern every label in this codebase uses (see `_shared/label-bootstrap.md` for the
   canonical snippet and the full work-record `LABELS_JSON`; `/dispatch` is the
-  claim-acquiring consumer).
+  claim-acquiring consumer). **MCP transport (`gh` absent):** `issue_write`'s `labels` field
+  is a full replacement, not a merge — see `_shared/github-write-transport.md`'s **Full-replace hazard**
+  section. Read current labels first (`issue_read`, `get_labels`), merge via
+  `mergeLabelNames` (`bin/lib/issues/label-write.js`, `add: ['bot:in-progress']`), and write
+  that full array — never `labels: ['bot:in-progress']` alone.
 - **Removed** alongside claim release — every release removes it, regardless of outcome
   (`wrap-up/cleanup-procedures-execution.md` Section E, its duplicate in `flow/multispec-review-console.md`,
   and — for a single-spec issue-mode run the user chooses not to merge — the same Section E

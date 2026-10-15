@@ -1613,7 +1613,16 @@ function archiveMerged({
       // instead of a bare sessionId — explicit: true still bypasses the
       // foreign-owner refusal regardless (see the comment above), so this
       // is a signature-consistency update, not a behavior change here.
-      const closeResult = closeRunState(archiveDir, { explicit: true, callerIdentity: { sessionId, cwd } });
+      // #2553: `treatCleanAsAlreadyClosed: false` — archiveRunDir (just
+      // above) already wrote `status: 'clean'` to archiveDir as its OWN
+      // bookkeeping step in this same synchronous sequence, never via a
+      // prior closeRunState call, so this is the first and only real
+      // close-without-wrapup check for this run; closeRunState's own
+      // already-clean suppression (meant for a genuinely repeated close —
+      // see that function's header comment) must not fire here.
+      const closeResult = closeRunState(archiveDir, {
+        explicit: true, callerIdentity: { sessionId, cwd }, treatCleanAsAlreadyClosed: false,
+      });
       if (!closeResult.writeOk) {
         // The move already succeeded — never roll it back over a close-write
         // failure; the run is physically archived either way. Just make the

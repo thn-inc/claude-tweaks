@@ -88,3 +88,40 @@ test('writeFileAtomic: real-filesystem round-trip — writes the file with corre
   assert.equal(fs.readFileSync(outPath, 'utf8'), 'hello world');
   assert.deepEqual(fs.readdirSync(tmpDir), ['out.txt'], 'no stray out.txt.tmp-* file left behind');
 });
+
+const transient = (code) => Object.assign(new Error(code), { code });
+
+test('writeFileAtomic: on Windows a transient rename race (EPERM/EACCES/EBUSY) is retried, then succeeds', () => {
+  for (const code of ['EPERM', 'EACCES', 'EBUSY']) {
+    let calls = 0;
+    const slept = [];
+    const rename = () => { calls += 1; if (calls < 3) throw transient(code); };
+    writeFileAtomic('/x/store.txt', 'a', { writeFile: () => {}, rename, unlink: () => {}, platform: 'win32', sleep: (ms) => slept.push(ms) });
+    assert.equal(calls, 3, code);
+    assert.deepEqual(slept, [5, 10], code);
+  }
+});
+
+test('writeFileAtomic: the Windows retry is bounded — a persistent EPERM rethrows the original error and removes the tmp file', () => {
+  let calls = 0;
+  let unlinked = false;
+  const rename = () => { calls += 1; throw transient('EPERM'); };
+  assert.throws(
+    () => writeFileAtomic('/x/store.txt', 'a', { writeFile: () => {}, rename, unlink: () => { unlinked = true; }, platform: 'win32', sleep: () => {} }),
+    (err) => err.code === 'EPERM',
+  );
+  assert.equal(calls, 9, 'one attempt plus eight retries');
+  assert.equal(unlinked, true);
+});
+
+test('writeFileAtomic: no retry off Windows, or for a non-transient error', () => {
+  let calls = 0;
+  const rename = () => { calls += 1; throw transient('EPERM'); };
+  assert.throws(() => writeFileAtomic('/x/s', 'a', { writeFile: () => {}, rename, unlink: () => {}, platform: 'linux', sleep: () => {} }));
+  assert.equal(calls, 1);
+  calls = 0;
+  const exdev = () => { calls += 1; throw transient('EXDEV'); };
+  assert.throws(() => writeFileAtomic('/x/s', 'a', { writeFile: () => {}, rename: exdev, unlink: () => {}, platform: 'win32', sleep: () => {} }));
+  assert.equal(calls, 1);
+});
+
