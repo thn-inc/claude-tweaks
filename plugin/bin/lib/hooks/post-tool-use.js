@@ -630,6 +630,19 @@ function run(ctx) {
     dirCursor.set(dir, idx + 1);
     return idx < list.length ? list[idx] : null;
   }
+  // #2553: a 'push' target carries no per-call commit of its own (unlike
+  // 'commit', which advances through nextCommitFor above) — it pushes
+  // whatever the dir's branch currently has at HEAD. Resolving that same HEAD
+  // hash here (once per distinct push dir, cached) gives the push breadcrumb
+  // a real `hash` to dedupe on below, instead of always logging `undefined`.
+  const pushHeadByDir = new Map();
+  function headHashFor(dir) {
+    if (!pushHeadByDir.has(dir)) {
+      const head = recentCommits(dir, 1);
+      pushHeadByDir.set(dir, head.length ? head[0].hash : null);
+    }
+    return pushHeadByDir.get(dir);
+  }
 
   // E2: commit breadcrumbs (log tier) — scoped to a run this session may write
   // to, NOT ctx.runDir (#62). This is the breadcrumb that was reported
@@ -639,12 +652,34 @@ function run(ctx) {
   // reading as this run's own work.
   const ownedRun = ctx.ownedRun || {};
   if (ownedRun.dir && hasCommand) {
+    // #2553: dedupe on the tuple (action, hash, dir) so a commit/push that's
+    // already recorded in this run's events.jsonl (a repeated breadcrumb from
+    // an earlier PostToolUse firing for the same real git action) is never
+    // logged twice. Seeded from the file's own prior 'commit'-typed events,
+    // then grown in-memory as this loop appends its own — so two targets in
+    // ONE compound command that resolve to the identical tuple dedupe against
+    // each other too, not just against history. A `hash` of `null`/`undefined`
+    // (lookup failed) never dedupes — only a real, resolved hash does, so a
+    // run that can't determine a commit's hash still gets every breadcrumb
+    // logged rather than silently collapsing unrelated unresolved events.
+    const existingLines = ctxLib.readEventLines(ownedRun.dir) || [];
+    const seen = new Set();
+    for (const ev of existingLines) {
+      if (!ev || ev.type !== 'commit' || !ev.hash) continue;
+      seen.add(`${ev.action}\u0000${ev.hash}\u0000${ev.dir}`);
+    }
     for (const target of targets) {
       const commit = target.action === 'commit' ? nextCommitFor(target.dir) : null;
+      const hash = commit ? commit.hash : (target.action === 'push' ? headHashFor(target.dir) : null);
+      if (hash) {
+        const key = `${target.action}\u0000${hash}\u0000${target.dir}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+      }
       ctxLib.appendEvent(ownedRun.dir, 'commit', {
         action: target.action,
         dir: target.dir,
-        hash: commit ? commit.hash : undefined,
+        hash: hash || undefined,
       }, ownedRun.attribution);
     }
   }
