@@ -231,33 +231,33 @@ The step is opt-in per project: the fence first resolves `specify-decomposition-
 ```bash
 SPECIFY_DECOMP_LOG=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values specify-decomposition-log)
 if [ "$SPECIFY_DECOMP_LOG" = "true" ]; then
-SPECIFY_DECOMP_MANIFEST=$(node -e "
-  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-  console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-decomp-manifest.json') || require('path').join(require('os').tmpdir(), 'specify-decomp-manifest.json'))
-")
-node -e "
-  const fs = require('fs');
-  const os = require('os');
-  const manifestPath = process.argv[1];
-  const logPath = 'docs/specify-decomposition-log.md';
-  const list = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : [];
-  const standard = list.filter((e) => e.ceremony === 'standard');
-  if (standard.length < 2) process.exit(0);
-  const claudeMd = fs.existsSync('CLAUDE.md') ? fs.readFileSync('CLAUDE.md', 'utf8') : '';
-  const wbLine = claudeMd.split('\n').find((l) => l.startsWith('work-backend:')) || '';
-  const prefix = wbLine.replace('work-backend:', '').trim() === 'github-issues' ? '#' : '';
-  const header = '# Specify Decomposition Event Log\n\nAppend-only, git-tracked record of every \`/claude-tweaks:specify\` decomposition run that produced 2 or more \`ceremony:standard\` sub-issues — the durable event a watch-item backlog record (e.g. #1350) can check for instead of needing the observing session\\'s own transcript.\n';
-  const existing = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : header;
-  const entry = '\n### ' + new Date().toISOString() + '\n\n'
-    + '- Sub-issues in this batch: ' + list.length + '\n'
-    + '- \`ceremony:standard\` sub-issues (' + standard.length + '): '
-    + standard.map((e) => prefix + e.num).join(', ') + '\n'
-    + '- Transcript pointer (this session): sessionId ' + (process.env.CLAUDE_CODE_SESSION_ID || '(none)')
-    + ', host ' + os.hostname() + ', cwd ' + process.cwd() + '\n';
-  fs.mkdirSync('docs', { recursive: true });
-  fs.writeFileSync(logPath, existing + entry);
-  console.error('Ceremony tally: ' + standard.length + ' ceremony:standard sub-issues — appended to ' + logPath);
-" "$SPECIFY_DECOMP_MANIFEST"
+  SPECIFY_DECOMP_MANIFEST=$(node -e "
+    const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
+    console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-decomp-manifest.json') || require('path').join(require('os').tmpdir(), 'specify-decomp-manifest.json'))
+  ")
+  node -e "
+    const fs = require('fs');
+    const os = require('os');
+    const manifestPath = process.argv[1];
+    const logPath = 'docs/specify-decomposition-log.md';
+    const list = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : [];
+    const standard = list.filter((e) => e.ceremony === 'standard');
+    if (standard.length < 2) process.exit(0);
+    const claudeMd = fs.existsSync('CLAUDE.md') ? fs.readFileSync('CLAUDE.md', 'utf8') : '';
+    const wbLine = claudeMd.split('\n').find((l) => l.startsWith('work-backend:')) || '';
+    const prefix = wbLine.replace('work-backend:', '').trim() === 'github-issues' ? '#' : '';
+    const header = '# Specify Decomposition Event Log\n\nAppend-only, git-tracked record of every \`/claude-tweaks:specify\` decomposition run that produced 2 or more \`ceremony:standard\` sub-issues — the durable event a watch-item backlog record (e.g. #1350) can check for instead of needing the observing session\\'s own transcript.\n';
+    const existing = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : header;
+    const entry = '\n### ' + new Date().toISOString() + '\n\n'
+      + '- Sub-issues in this batch: ' + list.length + '\n'
+      + '- \`ceremony:standard\` sub-issues (' + standard.length + '): '
+      + standard.map((e) => prefix + e.num).join(', ') + '\n'
+      + '- Transcript pointer (this session): sessionId ' + (process.env.CLAUDE_CODE_SESSION_ID || '(none)')
+      + ', host ' + os.hostname() + ', cwd ' + process.cwd() + '\n';
+    fs.mkdirSync('docs', { recursive: true });
+    fs.writeFileSync(logPath, existing + entry);
+    console.error('Ceremony tally: ' + standard.length + ' ceremony:standard sub-issues — appended to ' + logPath);
+  " "$SPECIFY_DECOMP_MANIFEST"
 fi
 ```
 
