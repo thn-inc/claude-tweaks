@@ -60,8 +60,18 @@ function readExclusions(path) {
 // [entry]) if absent. Callers loop for multiple entries of the same reason
 // (e.g. one per excluded candidate) -- there is no bulk variant, matching
 // the record's "one appendExclusion call site" extensibility claim (AC5).
+//
+// #3110: reads through readExclusionsStatus, not readExclusions -- an
+// unreadable file (corrupt JSON, non-array content, a permission error) must
+// never be silently treated as []: appendExclusion would then overwrite it
+// with [entry], clobbering every earlier pass's entries for this firing.
+// Absent is the normal first-pull case and still creates the file as today.
 function appendExclusion(path, entry) {
-  const entries = readExclusions(path);
+  const status = readExclusionsStatus(path);
+  if (status.status === 'unreadable') {
+    throw new Error(`appendExclusion: ${path} is unreadable (${status.error}) -- refusing to rewrite from an empty array`);
+  }
+  const entries = status.entries;
   entries.push(entry);
   fs.writeFileSync(path, JSON.stringify(entries));
 }
