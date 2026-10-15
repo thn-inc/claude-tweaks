@@ -104,35 +104,53 @@ flight: a live claim (`classifyClaimBlob` reads its `claims/issue-{n}.json` blob
 open linked PR (the same `closedByPullRequestsReferences` connection dispatch's open-PR exclusion
 reads — `record.js`'s `buildLinkedPRQuery` / `partitionByOpenLinkedPR`). File and anchor overlap
 alone never refuse, and `bot:in-progress` is not evidence: it is a projection that outlives the
-build. Build the state and decide in one call: write the finder's output to `$NEAR_DUP_HITS` and
-the candidates' snapshot entries to `$NEAR_DUP_SNAPSHOT` as JSON files first (never as inline
-shell arguments — a candidate title with an apostrophe would break the quoting):
+build. Build the state and decide in one call. First resolve this run's two session-scoped paths
+(`_shared/session-tmp-root.md` — `eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" NEAR_DUP_HITS=specify-near-dup-hits.json NEAR_DUP_SNAPSHOT=specify-near-dup-snapshot.json)"`
+prints them) and write the finder's output and the candidates' snapshot entries there as JSON —
+never as inline shell arguments, since a candidate title with an apostrophe breaks the quoting.
+Then run the call below; its first line re-resolves the same two paths:
 
 ```bash
 eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" NEAR_DUP_HITS=specify-near-dup-hits.json NEAR_DUP_SNAPSHOT=specify-near-dup-snapshot.json)"
 node -e "
 const { shapingRefusal, buildShapingState } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
-const { readClaimBlobGit } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims-git-cas.js');
-const { buildLinkedPRQuery } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+const { readClaimBlob, defaultGhApi } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claim-store.js');
+const { defaultRunner } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims-git-cas.js');
+const { buildLinkedPRQuery, normalizeLabelNames } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const [hits, snapshot] = [JSON.parse(fs.readFileSync(process.argv[1], 'utf8')), JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))];
-const numbers = hits.map((h) => h.number);
 const labelsByNumber = Object.fromEntries(snapshot.map((r) => [r.number, r.labels]));
+const numbers = hits.filter((h) => h.signals.includes('title-similarity') && normalizeLabelNames(labelsByNumber[h.number] || []).includes('ready')).map((h) => h.number);
 const claimContentByNumber = {};
-for (const n of numbers) { const r = readClaimBlobGit({ issueNumber: n }); claimContentByNumber[n] = r.failure || r.absent ? null : r.content; }
 let linkedPRRepoData = null;
-try { linkedPRRepoData = JSON.parse(execFileSync('gh', ['api', 'graphql', '-f', 'query=' + buildLinkedPRQuery(numbers), '-F', 'owner={owner}', '-F', 'repo={repo}'], { encoding: 'utf8' })).data.repository; } catch {}
+if (numbers.length) {
+  let slug = null;
+  try { slug = execFileSync('gh', ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], { encoding: 'utf8' }).trim(); } catch {}
+  let tip = null;
+  for (const n of numbers) {
+    const r = readClaimBlob({ gitRunner: defaultRunner, ghApi: defaultGhApi }, slug, n, tip);
+    if (!r.failure && r.via === 'git') tip = r.sha;
+    claimContentByNumber[n] = r.failure || r.absent ? null : r.content;
+  }
+  try { linkedPRRepoData = JSON.parse(execFileSync('gh', ['api', 'graphql', '-f', 'query=' + buildLinkedPRQuery(numbers), '-F', 'owner={owner}', '-F', 'repo={repo}'], { encoding: 'utf8' })).data.repository; } catch {}
+}
 const state = buildShapingState({ numbers, labelsByNumber, claimContentByNumber, linkedPRRepoData, now: Date.now() });
 const hit = shapingRefusal(hits, state);
 console.log(JSON.stringify(hit ? { refuse: true, hit, evidence: state[hit.number] } : { refuse: false }));
 " "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"
 ```
 
-A failed claim read or linked-PR query leaves that candidate "not in flight" — never a refusal.
-Under the MCP transport (no `gh`), read the claim blob and run the linked-PR query through
-`_shared/github-write-transport.md`'s read path instead, and pass the results to
-`buildShapingState` the same way. When `refuse: true` comes back, **stop shaping this record here**
+Only a title-similar `ready` candidate can refuse, so the call reads claims and linked PRs for those
+alone (one `git fetch` in total, chained through the first read's tip) and skips both reads when
+there are none. A failed claim read (the git read falls back to the contents API) or a failed
+linked-PR query leaves that candidate "not in flight" — never a refusal. With no `gh` (MCP
+transport), run the call unchanged: the git claim read still works wherever `git fetch` can read
+the remote, and the GraphQL call falls into its `catch` — the per-item PR-read degrade
+`_shared/github-write-transport.md` documents, since PR reads have no MCP equivalent. The screen
+fails open: a non-zero exit or no JSON line on stdout means do not refuse — quote the stderr in
+the shaping output beside the candidate table so the failure stays visible, and proceed to
+composition. When `refuse: true` comes back, **stop shaping this record here**
 — do not compose, stamp, or write `ready` for it. Instead, add the `needs:decision` label
 (bootstrap per `_shared/label-bootstrap.md` if this repo has never stamped it before) and post
 `_shared/work-record.md`'s canonical decision-comment, `{unit}` = `specify`:

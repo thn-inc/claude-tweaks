@@ -225,7 +225,7 @@ test('isGenericAnchor classifies each shape', () => {
   for (const g of ['--run-dir', '-x', '--run <dir>', '--key=value', '/claude-tweaks:dispatch', '/claude-tweaks:flow #3124 build', 'bot:in-progress', 'needs:decision', 'ready', 'parked']) {
     assert.strictEqual(isGenericAnchor(g), true, g);
   }
-  for (const k of ['plugin/bin/lib/issues/claims.js', 'classifyClaimBlob', 'near-duplicate.js:92', 'origin/main:claims/issue-1.json', 'readiness', 'c:\\Users\\x']) {
+  for (const k of ['plugin/bin/lib/issues/claims.js', 'classifyClaimBlob', 'near-duplicate.js:92', 'origin/main:claims/issue-1.json', 'readiness', 'c:\\Users\\x', '--run path rejected']) {
     assert.strictEqual(isGenericAnchor(k), false, k);
   }
 });
