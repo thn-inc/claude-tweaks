@@ -98,14 +98,12 @@ test('review-quality CALIBRATION block stays byte-identical between fragment and
 
 test('simplification fragment carries test-oracle constraint', () => {
   const body = readShared('criteria-simplification.md');
-  // Extract the Constraints section (text between ## Constraints and next ##)
   const constraintsStart = body.indexOf('## Constraints');
   assert.ok(constraintsStart !== -1, 'Constraints section exists');
   const nextHeading = body.indexOf('\n## ', constraintsStart + 1);
   const constraintsSectionEnd = nextHeading === -1 ? body.length : nextHeading;
   const constraintsSection = body.slice(constraintsStart, constraintsSectionEnd);
 
-  // Assert the section contains all three key terms together
   assert.match(constraintsSection, /expected value/i, 'mentions "expected value"');
   assert.match(constraintsSection, /oracle/i, 'mentions "oracle"');
   assert.match(constraintsSection, /test-local constant/i, 'mentions "test-local constant"');
@@ -113,7 +111,6 @@ test('simplification fragment carries test-oracle constraint', () => {
 
 test('/simplify dispatch Constraints line carries the test-oracle clause', () => {
   const skill = readSkill('simplify');
-  // Find the fenced block in Step 2
   const step2Start = skill.indexOf('## Step 2:');
   assert.ok(step2Start !== -1, 'Step 2 exists');
   const fencedBlockStart = skill.indexOf('```', step2Start);
@@ -122,12 +119,10 @@ test('/simplify dispatch Constraints line carries the test-oracle clause', () =>
   assert.ok(fencedBlockEnd !== -1, 'Fenced block closes');
   const fencedBlock = skill.slice(fencedBlockStart, fencedBlockEnd);
 
-  // Find the Constraints line
   const constraintsLineMatch = fencedBlock.match(/^- Constraints: .+$/m);
   assert.ok(constraintsLineMatch, 'Constraints line exists in the fenced block');
   const constraintsLine = constraintsLineMatch[0];
 
-  // Assert it contains both key terms
   assert.match(constraintsLine, /expected value/i, 'mentions "expected value"');
   assert.match(constraintsLine, /production constant/i, 'mentions "production constant"');
 });
