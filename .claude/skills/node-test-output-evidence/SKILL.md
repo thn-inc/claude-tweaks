@@ -65,6 +65,7 @@ An uncaught error from async work that outlived its test is reported as a separa
 - Reproduce a suspected parser hole with a real Node reporter log (spec and TAP) before fixing it, and keep that log's shape in the test. Every hole above was confirmed that way, and a hand-typed log tends to omit the line that caused the hole.
 - The comparison is by test identity, not by failure reason. A test that already fails at base covers any failure of the same test at HEAD. `plugin/skills/test/verification.md`'s "What it cannot see" states this limit, and the hosted CI check stays the authoritative gate.
 - A wholly file-level load failure counts as baseline only when its normalized isolated HEAD log equals the base log (`normalizeLog` strips roots and durations), not merely when it fails at the same `1:1` site.
+- `verify.js --stamp-status` exposes three related but distinct booleans: `match` (an unconditional full clean pass — deliberately `false` whenever `baselineAdjudicated` is `true`, even when `sha === head`), `verifiedHead` (HEAD is actually verified, by either path — this is the field Skip-if-recent and `/review` Step 1.5 read), and `baselineAdjudicated` (this pass relied on baseline adjudication). A reader checking only `match` can misread a legitimate baseline-adjudicated pass as "doesn't match HEAD, re-run" — check `verifiedHead` for pass/fail and `baselineAdjudicated` for which path produced it.
 
 ## Common Operations
 
