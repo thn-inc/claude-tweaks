@@ -206,7 +206,7 @@ wrapper object instead of its `.content` field).
 reader (`issue-claims-backstops.md`'s Batched read section), never to check only some blobs:
 
 ```bash
-gh api "repos/{owner}/{repo}/contents/claims?ref=claims-registry" -q '.[].name'
+node "${CLAUDE_PLUGIN_ROOT}/bin/list-claims.js"
 # for each claims/issue-<n>.json: gh issue view <n> --json state -q .state, then
 # "The lock" steps 1-2 against claims/issue-<n>.json to get CLASSIFY_INPUT, then classify.
 ```

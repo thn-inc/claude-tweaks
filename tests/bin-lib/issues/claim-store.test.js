@@ -162,9 +162,16 @@ test('writeClaimBlob: content that is not even a string (the caller forgot to se
 
 test('listClaimNames: happy path extracts names from the {name,sha} entries listClaimEntries returns', () => {
   const ghApi = (args) => {
-    assert.equal(args[0], 'repos/acme/w/contents/claims?ref=claims-registry');
-    assert.deepEqual(args.slice(1), ['-q', '[.[] | {name, sha}]']);
-    return { stdout: JSON.stringify([{ name: 'issue-1.json', sha: 'sha1' }, { name: 'issue-2.json', sha: 'sha2' }]), failure: null, status: null };
+    assert.equal(args[0], 'repos/acme/w/git/trees/claims-registry');
+    assert.deepEqual(args.slice(1, 3), ['-f', 'recursive=1']);
+    return {
+      stdout: JSON.stringify({
+        truncated: false,
+        entries: [{ name: 'issue-1.json', sha: 'sha1' }, { name: 'issue-2.json', sha: 'sha2' }],
+      }),
+      failure: null,
+      status: null,
+    };
   };
   const r = listClaimNames(ghApi, 'acme/w');
   assert.deepEqual(r, { names: ['issue-1.json', 'issue-2.json'], failure: null });
@@ -282,23 +289,53 @@ test('writeClaimBlob: a ghApi that never sets status (release-merged.js\'s own) 
   assert.deepEqual(r, { ok: false, failure: 'network-failure' });
 });
 
-test('listClaimEntries: returns name + sha per entry from the same single Contents-API call listClaimNames already made', () => {
+test('listClaimEntries: returns name + sha per entry from the same single Git Trees API call listClaimNames already made', () => {
   const { listClaimEntries } = require('../../../plugin/bin/lib/issues/claim-store');
   let seenArgs = null;
   const ghApi = (args) => {
     seenArgs = args;
-    return { stdout: JSON.stringify([{ name: 'issue-7.json', sha: 'sha7' }, { name: 'issue-9.json', sha: 'sha9' }]), failure: null, status: null };
+    return {
+      stdout: JSON.stringify({
+        truncated: false,
+        entries: [{ name: 'issue-7.json', sha: 'sha7' }, { name: 'issue-9.json', sha: 'sha9' }],
+      }),
+      failure: null,
+      status: null,
+    };
   };
   const r = listClaimEntries(ghApi, 'acme/w');
   assert.deepEqual(r, { entries: [{ name: 'issue-7.json', sha: 'sha7' }, { name: 'issue-9.json', sha: 'sha9' }], failure: null });
-  assert.match(seenArgs[0], /repos\/acme\/w\/contents\/claims\?ref=/);
+  assert.match(seenArgs[0], /repos\/acme\/w\/git\/trees\/claims-registry/);
+  assert.ok(seenArgs.includes('recursive=1'));
   assert.match(seenArgs.join(' '), /-q .*name.*sha/);
 });
 
 test('listClaimNames: still works, now a thin wrapper over listClaimEntries', () => {
   const { listClaimNames } = require('../../../plugin/bin/lib/issues/claim-store');
-  const ghApi = () => ({ stdout: JSON.stringify([{ name: 'issue-7.json', sha: 'sha7' }]), failure: null, status: null });
+  const ghApi = () => ({ stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-7.json', sha: 'sha7' }] }), failure: null, status: null });
   assert.deepEqual(listClaimNames(ghApi, 'acme/w'), { names: ['issue-7.json'], failure: null });
+});
+
+test('listClaimEntries: a tree response reporting more than 1000 blobs under claims/ returns every entry, uncapped (#3098 AC1)', () => {
+  const { listClaimEntries } = require('../../../plugin/bin/lib/issues/claim-store');
+  const big = [];
+  for (let i = 1; i <= 1333; i += 1) big.push({ name: `issue-${i}.json`, sha: `sha${i}` });
+  const ghApi = () => ({ stdout: JSON.stringify({ truncated: false, entries: big }), failure: null, status: null });
+  const r = listClaimEntries(ghApi, 'acme/w');
+  assert.equal(r.failure, null);
+  assert.equal(r.entries.length, 1333);
+  assert.deepEqual(r.entries[1332], { name: 'issue-1333.json', sha: 'sha1333' });
+});
+
+test('listClaimEntries: a truncated tree response surfaces as its own failure, never a silently partial list (#3098 AC3)', () => {
+  const { listClaimEntries } = require('../../../plugin/bin/lib/issues/claim-store');
+  const ghApi = () => ({
+    stdout: JSON.stringify({ truncated: true, entries: [{ name: 'issue-1.json', sha: 'sha1' }] }),
+    failure: null,
+    status: null,
+  });
+  const r = listClaimEntries(ghApi, 'acme/w');
+  assert.deepEqual(r, { entries: [], failure: 'truncated' });
 });
 
 test('classifyGhApiError: secondary rate limit is distinct from network-failure', () => {

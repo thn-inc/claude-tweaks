@@ -94,8 +94,8 @@ test('releaseMerged: a tombstoned claim with an unchanged sha is never re-fetche
 
   let readCalls = 0;
   const ghApi = (args) => {
-    if (args[0].includes('/contents/claims?')) {
-      return { stdout: JSON.stringify([{ name: 'issue-7.json', sha: 'tombstone-sha' }]), failure: null, status: null };
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-7.json', sha: 'tombstone-sha' }] }), failure: null, status: null };
     }
     if (args[0].includes('/contents/claims/issue-7.json')) {
       readCalls += 1;
@@ -130,9 +130,9 @@ test('releaseMerged: caches the blob sha actually classified, not the directory 
 
   let readCalls = 0;
   const ghApi = (args) => {
-    if (args[0].includes('/contents/claims?')) {
+    if (args[0].includes('/git/trees/claims-registry')) {
       // The listing's sha — stale by the time the read below happens.
-      return { stdout: JSON.stringify([{ name: 'issue-9.json', sha: 'listing-sha' }]), failure: null, status: null };
+      return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-9.json', sha: 'listing-sha' }] }), failure: null, status: null };
     }
     if (args[0].includes('/contents/claims/issue-9.json')) {
       readCalls += 1;
@@ -176,8 +176,8 @@ test('releaseMerged: a live claim with an unchanged sha is still re-fetched ever
 
   let readCalls = 0;
   const ghApi = (args) => {
-    if (args[0].includes('/contents/claims?')) {
-      return { stdout: JSON.stringify([{ name: 'issue-8.json', sha: 'live-sha' }]), failure: null, status: null };
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-8.json', sha: 'live-sha' }] }), failure: null, status: null };
     }
     if (args[0].includes('/contents/claims/issue-8.json')) {
       readCalls += 1;
@@ -229,8 +229,8 @@ test('releaseMerged: Phase 1.5 resolves prState via the pool and reaches a merge
     runId: 'run-1', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h',
   });
   const ghApi = (args) => {
-    if (args[0].includes('/contents/claims?')) {
-      return { stdout: JSON.stringify([{ name: 'issue-11.json', sha: 'live-sha' }]), failure: null, status: null };
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-11.json', sha: 'live-sha' }] }), failure: null, status: null };
     }
     if (args[0].includes('/contents/claims/issue-11.json')) {
       return { stdout: JSON.stringify({ content: liveContent, sha: 'live-sha' }), failure: null, status: null };
@@ -288,8 +288,8 @@ test('releaseMerged: a merged: release strips every GRANT_LABELS entry and logs 
   });
   const labelDeletes = [];
   const ghApi = (args) => {
-    if (args[0].includes('/contents/claims?')) {
-      return { stdout: JSON.stringify([{ name: 'issue-21.json', sha: 'live-sha' }]), failure: null, status: null };
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-21.json', sha: 'live-sha' }] }), failure: null, status: null };
     }
     if (args[0].includes('/contents/claims/issue-21.json')) {
       return { stdout: JSON.stringify({ content: liveContent, sha: 'live-sha' }), failure: null, status: null };
@@ -347,8 +347,8 @@ test('releaseMerged: an issue-closed release does not touch grant labels', async
   });
   const labelDeletes = [];
   const ghApi = (args) => {
-    if (args[0].includes('/contents/claims?')) {
-      return { stdout: JSON.stringify([{ name: 'issue-31.json', sha: 'live-sha' }]), failure: null, status: null };
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-31.json', sha: 'live-sha' }] }), failure: null, status: null };
     }
     if (args[0].includes('/contents/claims/issue-31.json')) {
       return { stdout: JSON.stringify({ content: liveContent, sha: 'live-sha' }), failure: null, status: null };
@@ -403,8 +403,8 @@ test('releaseMerged: does not revert a concurrent process\'s cache write made du
   });
   const CONCURRENT_LAST_RUN_AT = 123456789;
   const ghApi = (args) => {
-    if (args[0].includes('/contents/claims?')) {
-      return { stdout: JSON.stringify([{ name: 'issue-13.json', sha: 'live-sha' }]), failure: null, status: null };
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-13.json', sha: 'live-sha' }] }), failure: null, status: null };
     }
     if (args[0].includes('/contents/claims/issue-13.json')) {
       return { stdout: JSON.stringify({ content: liveContent, sha: 'live-sha' }), failure: null, status: null };
