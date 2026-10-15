@@ -107,7 +107,11 @@ plugin's PR-comment surface that edits rather than always-appends.
 
 **MCP transport (no `gh`, #3131).** The find and update steps above are `gh`-only, and there is no
 MCP comment-edit mapping — post a new comment with `add_issue_comment` on the PR's number instead
-of updating. Compose
+of updating. Before posting, list the PR's comments (`issue_read`, `get_comments`) and look for a
+prior comment of this kind by its marker; when one is found, make the new body's second line
+`Supersedes {prior comment URL} — this transport cannot edit comments.` so a reader knows which one
+is current, and log an `AUTO` line naming both comment ids. When the read cannot identify one (the
+read fails, or returns no marker), post without that line — never skip the post to avoid a duplicate. Compose
 the body per `_shared/github-write-transport.md`'s **Marker comments on the MCP path**, then
 read back the posted comment: when the read-back body begins `&lt;!--`, re-post once and trace a
 still-escaped result with that section's `SKIP` line, so an escaped verdict is visible in the run log.
@@ -130,7 +134,7 @@ call — never silently drop the content.
 
 | Pattern | Why It Fails |
 |---------|--------------|
-| Always appending a new PR comment instead of finding-and-updating by marker | A stale `verdict`/`brief` sitting above a fresh one misinforms a reader skimming the PR — the opposite of what "PR as run surface" is for |
+| Always appending a new PR comment instead of finding-and-updating by marker | A stale `verdict`/`brief` sitting above a fresh one misinforms a reader skimming the PR — the opposite of what "PR as run surface" is for. On the MCP transport, which cannot edit, the new post names the one it supersedes instead (**MCP transport** above) |
 | Re-deriving `integration-model` at a comment-posting call site instead of checking `run-state.json`'s `pr` field | Recreates the exact per-site drift `_shared/integration-model.md`'s run-scoped pin exists to prevent — a mid-run `gh` blip must not flip where comments post |
 | Treating a `gh` call failure the same as "no PR" | The first is a retryable transient failure; the second is a permanent routing decision for the rest of the run. Conflating them silently and permanently downgrades a `pr-first` run to issue-only comments after one network blip |
 | Counting retry attempts from only one source (the issue alone, or only the currently-linked PR) | A record whose attempts alternate between runs that opened a PR and runs that did not — or whose PR later closed — splits its "Attempt N failed" comments across sources; undercounting from a single source means the ceiling never trips (`#1963`) |
