@@ -299,6 +299,60 @@ test('extractFailingFiles: a YAML-quoted Windows TAP location line (doubled back
   assert.deepStrictEqual(extractFailingFiles(text, 'tap', { cwd: 'C:\\repo' }), ['tests/a.test.js']);
 });
 
+// #3155: a checkout path containing a space (e.g. this repo's own
+// `/Users/.../Code Workspaces/claude-tweaks`) truncated the extracted path
+// at the space under the old bare-whitespace-anchored regex, so a file
+// failing at both base and HEAD was never recognized as the same file and
+// misclassified `attributable`.
+test('extractFailingFiles: a TAP location line and stack frame naming a space-containing absolute path relativize intact (#3155 AC1)', () => {
+  const text = [
+    'not ok 1 - a fails',
+    '  ---',
+    "  location: '/tmp/a b/repo/tests/x.test.js:1:21'",
+    '  stack: |-',
+    '    at TestContext.<anonymous> (/tmp/a b/repo/tests/x.test.js:1:21)',
+    '  ...',
+    '# tests 1', '# pass 0', '# fail 1',
+  ].join('\n');
+  assert.deepStrictEqual(extractFailingFiles(text, 'tap', { cwd: '/tmp/a b/repo' }), ['tests/x.test.js']);
+});
+
+test('extractFailingFiles: a bare `at path:L:C` frame (no parens) with a space-containing path relativizes intact (#3155)', () => {
+  const text = [
+    'not ok 1 - a fails',
+    '  at /tmp/a b/repo/tests/x.test.js:1:21',
+    '# tests 1', '# pass 0', '# fail 1',
+  ].join('\n');
+  assert.deepStrictEqual(extractFailingFiles(text, 'tap', { cwd: '/tmp/a b/repo' }), ['tests/x.test.js']);
+});
+
+test('failingTestsByFile, fileLevelFailures, and countUnmatchedFailures all return the same intact relative path for a space-containing cwd (#3155 AC2)', () => {
+  const text = [
+    'not ok 1 - a fails',
+    '  ---',
+    "  location: '/tmp/a b/repo/tests/x.test.js:1:21'",
+    '  ...',
+    '# tests 1', '# pass 0', '# fail 1',
+  ].join('\n');
+  const opts = { cwd: '/tmp/a b/repo' };
+  assert.deepStrictEqual([...failingTestsByFile(text, 'tap', opts).keys()], ['tests/x.test.js']);
+  assert.deepStrictEqual([...fileLevelFailures(text, 'tap', opts)], []);
+  assert.strictEqual(countUnmatchedFailures(text, 'tap', opts), 0);
+});
+
+test('extractFailingFiles: a vitest/jest summary FAIL line with a space-containing path stops at the `>`/`(` terminator, not the internal space (#3155)', () => {
+  const text = [
+    'FAIL tests/a b/x.test.js > suite > case',
+    '❯ tests/a b/y.test.ts (3 tests | 1 failed)',
+  ].join('\n');
+  assert.deepStrictEqual(extractFailingFiles(text, 'summary'), ['tests/a b/x.test.js', 'tests/a b/y.test.ts']);
+});
+
+test('extractFailingFiles: pytest FAILED path::name with a space-containing path still stops at `::` (#3155)', () => {
+  const text = 'FAILED tests/a b/test_b.py::test_x - AssertionError';
+  assert.deepStrictEqual(extractFailingFiles(text, 'summary'), ['tests/a b/test_b.py']);
+});
+
 test('extractFailingFiles: generic family and a log with nothing parseable yield [] — no parse, no retry (AC1)', () => {
   assert.deepStrictEqual(extractFailingFiles(GENERIC_FIXTURE, 'generic'), []);
   assert.deepStrictEqual(extractFailingFiles('not ok 1 - fails with no frame\n# fail 1', 'tap'), []);
