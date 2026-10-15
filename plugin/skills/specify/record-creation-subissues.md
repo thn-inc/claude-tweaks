@@ -158,7 +158,7 @@ Add a `facets.solutionUnjustified: true` key to the object above only when this 
 
 Capture `$SUB_ISSUE_NUM` / `$SUB_ISSUE_ID` for every sub-issue (created or resumed via the Idempotency map) — Step 4's linking pass consumes them.
 
-**Accumulate this unit for the cross-reference pass below.** Append `{title, num_or_id, body}` (`$SUB_ISSUE_TITLE`, `$SUB_ISSUE_NUM`/`$SUB_ISSUE_ID`, `"$SPECIFY_SUB_ISSUE_BODY"`'s contents) to a session-scoped JSON array file, read-existing-then-append (this loop's compose-then-write-once temp files are overwritten each iteration, so this is the only place the whole batch's bodies survive past their own iteration):
+**Accumulate this unit for the cross-reference pass below.** Append `{title, num_or_id, body, ceremony}` (`$SUB_ISSUE_TITLE`, `$SUB_ISSUE_NUM`/`$SUB_ISSUE_ID`, `"$SPECIFY_SUB_ISSUE_BODY"`'s contents, `$SUB_ISSUE_CEREMONY`) to a session-scoped JSON array file, read-existing-then-append (this loop's compose-then-write-once temp files are overwritten each iteration, so this is the only place the whole batch's bodies survive past their own iteration):
 
 ```bash
 SPECIFY_DECOMP_MANIFEST=$(node -e "
@@ -167,10 +167,10 @@ SPECIFY_DECOMP_MANIFEST=$(node -e "
 ")
 node -e "const fs=require('fs');
   const path=process.argv[1];
-  const entry={title:process.argv[2], num:process.argv[3], body:fs.readFileSync(process.argv[4],'utf8')};
+  const entry={title:process.argv[2], num:process.argv[3], body:fs.readFileSync(process.argv[4],'utf8'), ceremony:process.argv[5]};
   const list=fs.existsSync(path)?JSON.parse(fs.readFileSync(path,'utf8')):[];
   list.push(entry);
-  fs.writeFileSync(path, JSON.stringify(list))" "$SPECIFY_DECOMP_MANIFEST" "$SUB_ISSUE_TITLE" "${SUB_ISSUE_NUM:-$SUB_ISSUE_ID}" "$SPECIFY_SUB_ISSUE_BODY"
+  fs.writeFileSync(path, JSON.stringify(list))" "$SPECIFY_DECOMP_MANIFEST" "$SUB_ISSUE_TITLE" "${SUB_ISSUE_NUM:-$SUB_ISSUE_ID}" "$SPECIFY_SUB_ISSUE_BODY" "$SUB_ISSUE_CEREMONY"
 ```
 
 **Write-path resilience.** A `gh` create failure for one sub-issue (any kept parent already exists on GitHub by this point) falls back to `local-store.js` for that sub-issue only — write it locally with `unsynced: true` (fingerprint preserved, so a later sync still dedups correctly) and continue with the rest of the batch rather than aborting the whole decomposition over one failure. `/tidy`'s Sync finding reconciles it onto GitHub on a later pass. The same rule applies to Step 4's linking edits below — a failed link is noted and the pass continues; nothing already created rolls back.
