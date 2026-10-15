@@ -393,11 +393,9 @@ test('file-level base failure + file-level HEAD failure but the checkout has nod
 // #3167: a `--baseline` scratch worktree reached through a symlinked parent
 // (macOS: `os.tmpdir()` -> `/var/folders/...` -> `/private/var/folders/...`)
 // must still relativize correctly against the base run's own absolute
-// paths, which node prints already realpath-resolved. Built host-OS
-// independent per the spec: pre-resolves the "real" scratch dir to its own
-// realpath first (a no-op on a host whose tmpdir isn't itself symlinked),
-// then adds exactly one deliberate symlink hop on top of that, so the test
-// exercises the same bug on every platform rather than only on macOS.
+// paths, which node prints already realpath-resolved. Host-OS independent:
+// the scratch dir is realpath'd first, then reached through one deliberate
+// symlink hop, so the bug reproduces on every platform, not only macOS.
 test('#3167: a base worktree reached through a symlinked parent still classifies a same-site failure as baseline (realpath)', async () => {
   const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-head-'));
   const realScratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-real-scratch-')));
@@ -411,16 +409,13 @@ test('#3167: a base worktree reached through a symlinked parent still classifies
   const { git, runOne } = fakes({
     outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 },
     logs: {
-      // What node actually prints when it really ran under the scratch
-      // worktree: the already-resolved real path, never the symlink the
-      // worktree was reached through.
+      // node prints the resolved real path, never the symlink.
       'baseline:tests/a.test.js': FILE_LEVEL(path.join(wtDir, 'tests/a.test.js')),
       'isolated:tests/a.test.js': FILE_LEVEL(path.join(fs.realpathSync(outer), 'tests/a.test.js')),
     },
     repoRoot: outer,
   });
-  // The fake addWorktree hands back the path through the symlink — the same
-  // shape `fs.mkdtempSync(os.tmpdir())` produces on macOS.
+  // Hand back the symlinked path, as `fs.mkdtempSync(os.tmpdir())` does on macOS.
   git.addWorktree = () => symWtDir;
   const r = await adjudicate({
     checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40),

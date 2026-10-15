@@ -183,17 +183,11 @@ const TEST_FILE_RE = /(?:\.(?:test|spec)\.[cm]?[jt]sx?|(?:^|\/)test_[^/]+\.py|_t
 // `location: 'path:line:col'` diagnostic newer runners print. Each
 // alternative is delimiter-anchored (a quote, a paren, or line-start/end) —
 // never bare whitespace — so the captured path can safely contain spaces or
-// a Windows drive-letter colon+backslash (`C:\repo\tests\x.test.js:42:10`).
-// #3155: the prior `(?:\(|\s|')(WIN_PATH):\d+:\d+\)?` form treated any
-// whitespace as a path start, so a checkout directory containing a space
-// (e.g. `Code Workspaces`) truncated the path at that space. Exactly one
-// capture group is set per match; consumers read whichever one matched.
-const TAP_FRAME_RE = new RegExp(
-  `(?:location:\\s*'(.+?):\\d+:\\d+'`
-  + `|\\((.+?):\\d+:\\d+\\)`
-  + `|\\bat\\s+(.+):\\d+:\\d+\\s*$)`,
-  'g',
-);
+// a Windows drive-letter colon+backslash (`C:\repo\tests\x.test.js:42:10`);
+// a whitespace anchor truncated a space-containing checkout path (#3155).
+// Exactly one capture group is set per match; consumers read whichever one
+// matched.
+const TAP_FRAME_RE = /(?:location:\s*'(.+?):\d+:\d+'|\((.+?):\d+:\d+\)|\bat\s+(.+):\d+:\d+\s*$)/g;
 // vitest (` FAIL  path > name`, `❯ path (n tests | m failed)`), jest
 // (`FAIL path`), pytest (`FAILED path::name`). The path capture is
 // unrestricted (`.+?`) so it can contain spaces (#3155); it stops at
@@ -202,7 +196,7 @@ const TAP_FRAME_RE = new RegExp(
 // #1925 — `:` must not be swallowed into the capture), or end of line for a
 // bare `FAIL path` — never at a bare space, which would truncate a
 // space-containing path.
-const SUMMARY_FAIL_RE = new RegExp(`^\\s*(?:FAIL|❯|FAILED)\\s+(.+?)(?=\\s>\\s|\\s\\(|::|$)`);
+const SUMMARY_FAIL_RE = /^\s*(?:FAIL|❯|FAILED)\s+(.+?)(?=\s>\s|\s\(|::|$)/;
 
 // A run of backslashes is ONE separator: node's TAP `location: '...'` line is
 // YAML-quoted, so on Windows it carries `\\` per separator — read as two, the

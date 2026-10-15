@@ -189,9 +189,8 @@ function readLog(logPath) {
 // (`/var` -> `/private/var`), while node reports the real path.
 // `extract.js`'s `relativize()` does a plain string-prefix compare, so a
 // symlinked dir never matches and every file under it is misclassified
-// `attributable`. Fails open to the original value (never throws) — tests
-// exercise this function with symbolic, non-existent paths (`/repo`,
-// `/scratch`), which `fs.realpathSync` cannot resolve.
+// `attributable`. Fails open to the original value — tests pass
+// non-existent paths (`/repo`, `/scratch`) that cannot be resolved.
 function tryRealpath(dir) {
   try { return fs.realpathSync(dir); } catch { return dir; }
 }
@@ -260,10 +259,8 @@ async function adjudicate({
   // not sit under git's own toplevel spelling (a junction, a subst drive, an
   // 8.3 name) would put the base-side run outside the scratch worktree —
   // possibly onto HEAD's own tree — so it is never adjudicated.
-  // Realpath this too (#3167) — headDir above is already realpath'd, and
-  // comparing it against a non-realpath'd root (git's own toplevel spelling
-  // can reflect whatever symlinked path it was invoked through) would make
-  // an ordinary in-repo cwd look like it falls outside the repository root.
+  // Realpath'd like headDir (#3167), or a symlinked toplevel spelling would
+  // put an ordinary in-repo cwd outside the repository root.
   const root = tryRealpath(git.repoRoot());
   const sub = path.relative(root, headDir).replace(/\\/g, '/');
   if (sub === '..' || sub.startsWith('../') || path.isAbsolute(sub)) {
@@ -278,9 +275,7 @@ async function adjudicate({
   });
   const headResolvesDeps = Boolean(env.NODE_PATH) || hasNodeModulesUpward(headDir);
   try {
-    // Realpath the scratch worktree dir for the same reason headDir is
-    // above — the git.addWorktree seam (real or injected) is not trusted to
-    // return an already-resolved path.
+    // Realpath'd like headDir (#3167): addWorktree may return a symlinked path.
     if (atBase.some(Boolean)) scratch = tryRealpath(git.addWorktree(baseSha));
     const baseDir = scratch && (sub ? path.join(scratch, ...sub.split('/')) : scratch);
     const baseRuns = await pool(work, concurrency, (w, k) => (atBase[k] ? run(w, 'baseline', baseDir) : null));
