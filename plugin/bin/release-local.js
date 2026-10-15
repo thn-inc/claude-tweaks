@@ -308,7 +308,7 @@ function writeInsideRoot(root, p, text) {
 function defaultDeps(root) {
   const abs = (p) => path.join(root, p);
   return {
-    git: (args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
+    git: (args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
     readFile: (p) => { try { return fs.readFileSync(abs(p), 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } },
     writeFile: (p, text) => writeInsideRoot(root, p, text),
     // precheck's plan-claim source, as plugin/bin/release.js provides it: a
@@ -328,7 +328,7 @@ function defaultDeps(root) {
     },
     // The hook is the project's own shell command (policy release-hook) — a
     // shell string by design; its exit code becomes this CLI's exit 5.
-    runHook: (cmd) => { const r = spawnSync(cmd, { cwd: root, shell: true, stdio: 'inherit' }); return r.status === null ? 1 : r.status; },
+    runHook: (cmd) => { const r = spawnSync(cmd, { cwd: root, shell: true, stdio: 'inherit', windowsHide: true }); return r.status === null ? 1 : r.status; },
     today: () => new Date().toISOString().slice(0, 10),
     stdout: (t) => process.stdout.write(t),
     stderr: (t) => process.stderr.write(t),

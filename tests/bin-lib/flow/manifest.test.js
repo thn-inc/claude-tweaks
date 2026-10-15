@@ -10,6 +10,7 @@ const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const {
   parseManifestYaml, serializeManifestYaml, readManifest, writeManifest,
   formatElapsedMs, transitionSpec, composeFixesBlock, readDeferredClosures,
+  readSingleRecordDeferredClosure,
 } = manifestModule;
 
 function tmpRunDir() {
@@ -153,7 +154,7 @@ test('transitionSpec is the module\'s only status-mutation entry point, and ever
   // same call.
   assert.deepEqual(
     Object.keys(manifestModule).sort(),
-    ['VALID_STATUSES', 'composeFixesBlock', 'formatElapsedMs', 'parseManifestYaml', 'readDeferredClosures', 'readManifest', 'serializeManifestYaml', 'transitionSpec', 'writeManifest'].sort(),
+    ['VALID_STATUSES', 'composeFixesBlock', 'formatElapsedMs', 'parseManifestYaml', 'readDeferredClosures', 'readManifest', 'readSingleRecordDeferredClosure', 'serializeManifestYaml', 'transitionSpec', 'writeManifest'].sort(),
   );
 
   const dir = seedRunDir([{ id: 42, status: 'pending', subdir: 'spec-42/' }]);
@@ -338,4 +339,64 @@ test('#2686: readDeferredClosures handles an empty/missing specs list', () => {
   const dir = tmpRunDir();
   assert.deepEqual(readDeferredClosures(dir, []), new Map());
   assert.deepEqual(readDeferredClosures(dir, undefined), new Map());
+});
+
+// --- readSingleRecordDeferredClosure (#3136): the single-record counterpart
+// to readDeferredClosures — a run with no bundle manifest.yml logs its own
+// deferred-closure entry to the run's own top-level decisions.md (never a
+// spec-{id}/ subdirectory, since there is no sibling spec to namespace
+// against), and composeFixesBlock must be able to consume that same
+// reason string via a one-entry Map, exactly as the bundle path already does.
+
+function seedTopLevelDecisions(dir, lines) {
+  fs.writeFileSync(path.join(dir, 'decisions.md'), lines.join('\n') + '\n');
+}
+
+test('#3136: readSingleRecordDeferredClosure finds a matching entry written via the real formatEntry (with and without --spec)', () => {
+  const dir = tmpRunDir();
+  seedTopLevelDecisions(dir, [
+    '# Decisions',
+    deferredClosureLine({ specArg: 1350, id: 1350, reason: 'AC not fully met, pending manual step' }),
+  ]);
+  assert.equal(readSingleRecordDeferredClosure(dir, 1350), 'AC not fully met, pending manual step');
+
+  const dir2 = tmpRunDir();
+  seedTopLevelDecisions(dir2, [
+    deferredClosureLine({ specArg: undefined, id: 1350, reason: 'AC not fully met, pending manual step' }),
+  ]);
+  assert.equal(readSingleRecordDeferredClosure(dir2, 1350), 'AC not fully met, pending manual step');
+});
+
+test('#3136: readSingleRecordDeferredClosure returns undefined for no entry, no decisions.md, or a non-matching id', () => {
+  const dir = tmpRunDir();
+  seedTopLevelDecisions(dir, ['- AUTO 09:00:00 — some unrelated decision. Reversibility: n/a.']);
+  assert.equal(readSingleRecordDeferredClosure(dir, 42), undefined);
+
+  const dir2 = tmpRunDir();
+  seedTopLevelDecisions(dir2, [deferredClosureLine({ specArg: undefined, id: 9, reason: 'wrong record' })]);
+  assert.equal(readSingleRecordDeferredClosure(dir2, 42), undefined);
+
+  const dir3 = tmpRunDir(); // no decisions.md at all
+  assert.equal(readSingleRecordDeferredClosure(dir3, 42), undefined);
+});
+
+test('#3136: composeFixesBlock consumes readSingleRecordDeferredClosure output for a manifest-less run', () => {
+  const dir = tmpRunDir();
+  seedTopLevelDecisions(dir, [
+    deferredClosureLine({ specArg: undefined, id: 1350, reason: 'AC not fully met, pending manual step' }),
+  ]);
+  const reason = readSingleRecordDeferredClosure(dir, 1350);
+  const deferred = reason !== undefined ? new Map([[String(1350), reason]]) : new Map();
+  assert.deepEqual(
+    composeFixesBlock([{ id: 1350, status: 'complete' }], deferred),
+    ['Refs #1350 — deferred: AC not fully met, pending manual step'],
+  );
+
+  const dirNoEntry = tmpRunDir();
+  const noReason = readSingleRecordDeferredClosure(dirNoEntry, 42);
+  const emptyDeferred = noReason !== undefined ? new Map([[String(42), noReason]]) : new Map();
+  assert.deepEqual(
+    composeFixesBlock([{ id: 42, status: 'complete' }], emptyDeferred),
+    ['Fixes #42'],
+  );
 });
