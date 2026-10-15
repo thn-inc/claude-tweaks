@@ -146,7 +146,7 @@ async function cmdStart(opts) {
       String(idleMinutes),
       '--__daemon__',
     ],
-    { detached: true, stdio: 'ignore' },
+    { detached: true, stdio: 'ignore', windowsHide: true },
   );
   child.unref();
 

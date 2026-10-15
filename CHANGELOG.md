@@ -53,6 +53,151 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.140.1](https://github.com/thn-inc/claude-tweaks/compare/v6.140.0...v6.140.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* PR-early body composer writes nothing on Windows and… ([#3120](https://github.com/thn-inc/claude-tweaks/issues/3120)) ([be11935](https://github.com/thn-inc/claude-tweaks/commit/be11935c91414ce9faf9104a2688ac17aa2da4b3))
+
+### Highlights
+* Fixed pull-request-first runs on Windows stopping before their draft PR opened, and stopped spec text from passing through the shell when the PR body is written.
+
+## [6.140.0](https://github.com/thn-inc/claude-tweaks/compare/v6.139.2...v6.140.0) (2026-10-11)
+
+
+### Features
+
+* Fix stale agent-browser claims; warn on CLAUDE.md + AGENTS.md… ([#2717](https://github.com/thn-inc/claude-tweaks/issues/2717), [#2794](https://github.com/thn-inc/claude-tweaks/issues/2794), [#2798](https://github.com/thn-inc/claude-tweaks/issues/2798)) ([0e042d4](https://github.com/thn-inc/claude-tweaks/commit/0e042d440b25f28ff5879a7938bcc7df580a7ae7))
+* Flag polling, duplicate-version, and perf anti-patterns… ([#2669](https://github.com/thn-inc/claude-tweaks/issues/2669), [#2692](https://github.com/thn-inc/claude-tweaks/issues/2692)) ([c79eba4](https://github.com/thn-inc/claude-tweaks/commit/c79eba4fa72f77a3a7625112d31487e159f1ea35))
+* specify: return channel for staged red-team findings… ([#2699](https://github.com/thn-inc/claude-tweaks/issues/2699), [#2700](https://github.com/thn-inc/claude-tweaks/issues/2700), [#2703](https://github.com/thn-inc/claude-tweaks/issues/2703)) ([64a2984](https://github.com/thn-inc/claude-tweaks/commit/64a29842d2bb8bf842043ab6562edc30a163edcf))
+
+
+### Bug Fixes
+
+* bin/wrap-up-engine.js: render fails silently when the… ([#2688](https://github.com/thn-inc/claude-tweaks/issues/2688)) ([79bc95c](https://github.com/thn-inc/claude-tweaks/commit/79bc95c706945d834ceb2910eaa89c8a16c2208d))
+* PR-early lifecycle can open a run's PR without its… ([#2997](https://github.com/thn-inc/claude-tweaks/issues/2997)) ([50de5f4](https://github.com/thn-inc/claude-tweaks/commit/50de5f4b0d34ba9f026665281701b981d80e214d))
+* Repoint the citations [#3097](https://github.com/thn-inc/claude-tweaks/issues/3097) left dangling and make /tidy… ([#3101](https://github.com/thn-inc/claude-tweaks/issues/3101)) ([4a7502c](https://github.com/thn-inc/claude-tweaks/commit/4a7502c37969912fcfb8b709d8ed65bec33f37a6)), closes [#3102](https://github.com/thn-inc/claude-tweaks/issues/3102) [#3103](https://github.com/thn-inc/claude-tweaks/issues/3103) [#3104](https://github.com/thn-inc/claude-tweaks/issues/3104)
+* writeStagedItem allocate:true race test intermittently… ([#3105](https://github.com/thn-inc/claude-tweaks/issues/3105)) ([0925f45](https://github.com/thn-inc/claude-tweaks/commit/0925f458b66a29b520646a9f1c873e67a9c1e147))
+
+### Highlights
+* Setup and docs now name the playwright-cli browser backend, and harness-health warns when a project has both CLAUDE.md and AGENTS.md, since Claude Code loads only CLAUDE.md by default.
+* /flow now states that its build step must be a real /claude-tweaks:build call, which opens the run's draft PR before any edit.
+* Spec decomposition can now hand unresolved red-team findings back to its caller, loads less before deciding whether to delegate, and no longer forces a gradual-replacement shape on low-risk infrastructure changes.
+* Code review now flags polling loops where realtime updates are available, leftover "v2"-style duplicate code, oversized or legacy-format images, and unused loaded resources, and recommends measuring page speed before optimizing.
+* No user-visible change.
+* /claude-tweaks:tidy no longer deletes a plan that code or a decision record still cites.
+* Made the wrap-up engine fail with a clear message when its console is rendered before any results were recorded.
+* No user-visible change: evaluated the Taste and Web Design Guidelines skills for design reviews.
+* Pipeline PRs now always carry the run marker, phase checklist and `Fixes` lines, and a PR opened without them is repaired before merge, so merging it closes its records.
+* No user-visible change.
+* No user-visible change.
+
+## [6.139.2](https://github.com/thn-inc/claude-tweaks/compare/v6.139.1...v6.139.2) (2026-10-10)
+
+
+### Bug Fixes
+
+* Adopted-branch collision check fails open when… ([#3091](https://github.com/thn-inc/claude-tweaks/issues/3091)) ([7dd0242](https://github.com/thn-inc/claude-tweaks/commit/7dd0242b548ecaa665bbad258eeca63dae7c85a1))
+* Dispatch #N and #N,#M forms misreport a not-spec-shaped… ([#3084](https://github.com/thn-inc/claude-tweaks/issues/3084)) ([ec55811](https://github.com/thn-inc/claude-tweaks/commit/ec55811e3b6e8c0f8f80ea1775c66f31f619fcf2))
+
+### Highlights
+* The build-time check that stops a push onto someone else's same-name branch now actually runs, instead of silently passing when the plugin path is left to the shell.
+* Naming a record that is not spec-shaped in `/claude-tweaks:dispatch #N` now says so and tells you how to fix it, instead of wrongly claiming it already has an open PR.
+
+## [6.139.1](https://github.com/thn-inc/claude-tweaks/compare/v6.139.0...v6.139.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* Dispatch headless self-report: flow-step-2.8-claim-contest ([#2746](https://github.com/thn-inc/claude-tweaks/issues/2746)) ([48c6304](https://github.com/thn-inc/claude-tweaks/commit/48c63045a4d00f4e2bf8d6c4846546808ded9d08)), closes [#2802](https://github.com/thn-inc/claude-tweaks/issues/2802) [#2844](https://github.com/thn-inc/claude-tweaks/issues/2844)
+* hooks/hooks.json: if-gated Bash entries fan out to all 28… ([#3074](https://github.com/thn-inc/claude-tweaks/issues/3074)) ([666d97a](https://github.com/thn-inc/claude-tweaks/commit/666d97af57cbb48a102dfe3a8aad1210c37ce5e8))
+
+### Highlights
+* No user-visible change: closed out a resolved claim contest reported by a headless dispatch.
+* Bash commands that use shell variables or loops no longer launch the claude-tweaks hook dozens of times. Each Bash call now launches it at most once per hook event, which cuts process churn and command latency on busy machines.
+
+## [6.139.0](https://github.com/thn-inc/claude-tweaks/compare/v6.138.0...v6.139.0) (2026-10-09)
+
+
+### Features
+
+* Exclude non-spec-shaped candidates from the dispatch queue pull before claiming ([#3073](https://github.com/thn-inc/claude-tweaks/issues/3073)) ([d775014](https://github.com/thn-inc/claude-tweaks/commit/d77501487103497100eca38c80f6ca8d69ad096b)), closes [#2829](https://github.com/thn-inc/claude-tweaks/issues/2829)
+
+
+### Bug Fixes
+
+* Normalize the plugin root in the not-spec-shaped fixture test on Windows ([#3076](https://github.com/thn-inc/claude-tweaks/issues/3076)) ([cef435b](https://github.com/thn-inc/claude-tweaks/commit/cef435b77d974cd1e9d5995bcbd15c23897d7d48)), closes [#2829](https://github.com/thn-inc/claude-tweaks/issues/2829)
+
+## [6.138.0](https://github.com/thn-inc/claude-tweaks/compare/v6.137.0...v6.138.0) (2026-10-09)
+
+
+### Features
+
+* Make flow verification workable on a dev checkout with a… ([#3043](https://github.com/thn-inc/claude-tweaks/issues/3043)) ([968dd5b](https://github.com/thn-inc/claude-tweaks/commit/968dd5be75acf6f1e7016ab19881e043df3b9e2c))
+
+
+### Bug Fixes
+
+* Close the Windows-only gaps left by the v6.137.0 release… ([#3040](https://github.com/thn-inc/claude-tweaks/issues/3040)) ([2c2a8c2](https://github.com/thn-inc/claude-tweaks/commit/2c2a8c2c3a92ea5e7c852832abefde85c1f02481))
+
+### Highlights
+* Pipelines on a development machine with known environment-specific test failures can now verify against the base branch instead of re-running the full suite at every phase.
+* On Windows, Impeccable engine failures now report the real cause, and release verification checks the marketplace-mirror hook.
+
+## [6.137.0](https://github.com/thn-inc/claude-tweaks/compare/v6.136.0...v6.137.0) (2026-10-08)
+
+
+### Features
+
+* Add the impeccable-engine module and CLI: resolve, run… ([#2979](https://github.com/thn-inc/claude-tweaks/issues/2979)) ([fecef3f](https://github.com/thn-inc/claude-tweaks/commit/fecef3f1a0ebbfe5360e2c96012ff9aa40c66b6c))
+* Move design-wrapper Layer 0 and availability onto the… ([#2980](https://github.com/thn-inc/claude-tweaks/issues/2980)) ([be0fe58](https://github.com/thn-inc/claude-tweaks/commit/be0fe58f949de84f752e9bc1d6d86d45f807a614)), closes [#2981](https://github.com/thn-inc/claude-tweaks/issues/2981)
+* Re-pin Impeccable to the engine, re-record fixtures… ([#2985](https://github.com/thn-inc/claude-tweaks/issues/2985)) ([7ba57cd](https://github.com/thn-inc/claude-tweaks/commit/7ba57cda86aa932e7ba84cbed1e586b65b59ff9c))
+* Read the direction contract from Impeccable's surface… ([#2983](https://github.com/thn-inc/claude-tweaks/issues/2983)) ([57efb9e](https://github.com/thn-inc/claude-tweaks/commit/57efb9e3d215d396d1a7f199bdb33fd4c8385c5e)), closes [#2984](https://github.com/thn-inc/claude-tweaks/issues/2984)
+* Run design-wrapper explore mode's concept-seed through… ([#2982](https://github.com/thn-inc/claude-tweaks/issues/2982)) ([0e1842f](https://github.com/thn-inc/claude-tweaks/commit/0e1842f1b352d145019d681843a98067d4dc5f0b))
+
+
+### Bug Fixes
+
+* Hide the console window on every plugin/bin spawn ([#3038](https://github.com/thn-inc/claude-tweaks/issues/3038)) ([bb0789a](https://github.com/thn-inc/claude-tweaks/commit/bb0789acb243eae261e687ee87429fe480424913))
+* Run the Impeccable launcher through cmd.exe on Windows ([#3039](https://github.com/thn-inc/claude-tweaks/issues/3039)) ([23d7611](https://github.com/thn-inc/claude-tweaks/commit/23d7611de073a19b34190c934e9b5111a5cf6311))
+
+### Highlights
+* Updated the design-wrapper's Impeccable contract checks to the engine-based Impeccable 4.2.2+, so tests no longer fail depending on which old Impeccable versions are cached on a machine.
+* Restored design-wrapper's explore mode for Impeccable 4.2.2 and later, and documented that dealing design directions contacts Impeccable's catalog service.
+* Restored design review's reading of Impeccable's direction contract for Impeccable 4.2.2 and later, which records it in the surface brief instead of the built page.
+* Restored design-wrapper's project-context signals for Impeccable 4.2.2 and later, and made a missing or outdated Impeccable engine report why and how to fix it instead of failing silently.
+* Documentation health checks no longer propose a replacement commit citation without first
+* Added an internal helper that finds and runs the Impeccable design engine without ever downloading it, as the base for restoring design checks on Impeccable 4.2.2 and later.
+
+## [6.136.0](https://github.com/thn-inc/claude-tweaks/compare/v6.135.0...v6.136.0) (2026-10-04)
+
+
+### Features
+
+* Upstream defect report — `verify.js --changed-files`… ([#2744](https://github.com/thn-inc/claude-tweaks/issues/2744)) ([0153343](https://github.com/thn-inc/claude-tweaks/commit/015334398bb16cd4ab629d2047f51b4c41ad1ace)), closes [#2779](https://github.com/thn-inc/claude-tweaks/issues/2779)
+
+
+### Bug Fixes
+
+* Document the multi-spec rule for the PR verdict… ([#2860](https://github.com/thn-inc/claude-tweaks/issues/2860)) ([f8179fa](https://github.com/thn-inc/claude-tweaks/commit/f8179fa13a3cd2dc89dce9445b70b515f1c96bfc))
+* Dream scan stages transcript command text without path… ([#2968](https://github.com/thn-inc/claude-tweaks/issues/2968)) ([0c9205f](https://github.com/thn-inc/claude-tweaks/commit/0c9205fce20a23641131475014a6511b6b9d5b48))
+* flow-preflight misclassifies a claim-log-only… ([#2861](https://github.com/thn-inc/claude-tweaks/issues/2861)) ([a5f50c1](https://github.com/thn-inc/claude-tweaks/commit/a5f50c117d304a370fefd5d7af38b798f9f07de2))
+* Upstream defect report — `hooks.js teardown-run --merged`… ([#2747](https://github.com/thn-inc/claude-tweaks/issues/2747)) ([cc3426a](https://github.com/thn-inc/claude-tweaks/commit/cc3426a571ff8392e851a59aa0218b1fd8aa3a7b))
+
+### Highlights
+* Dream-pass proposals redact absolute paths in the quoted command, not just the error text.
+* Fixed run teardown on GitHub Enterprise remotes and made it remove the worktree before deleting the branch.
+* Added a sanctioned way to record verification expectations from a worktree-isolated wrap-up.
+* No user-visible change: reorganized the /specify skill files so shaping-mode checks have room to grow.
+* Made the list of places a skill's argument hint must match canonical and checked automatically.
+* Fixed changed-file detection returning nothing when the verification stamp is at the latest commit.
+* No user-visible change: compared the Hallmark design skill against Impeccable for design reviews.
+* No user-visible change — internal consolidation of how multi-spec pipeline runs locate their shared worktree and PR.
+* Multi-spec pipeline runs keep every spec's review verdict on the shared PR instead of the last one overwriting the rest.
+* Freshly started /flow runs are no longer mistaken for resumed ones after claiming their records.
+* No user-visible change — documentation accuracy fix.
+
 ## [6.135.0](https://github.com/thn-inc/claude-tweaks/compare/v6.134.1...v6.135.0) (2026-10-04)
 
 

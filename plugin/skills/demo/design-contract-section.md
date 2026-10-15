@@ -7,11 +7,11 @@ nothing resolves, `SKILL.md` renders nothing and never reads this file. In the b
 heading" means `SKILL.md`'s `### The design contract this was built against`, and `### What
 shipped` is the brief section `SKILL.md` Step 2 already rendered.
 
-Design work built through Impeccable carries a **direction contract** in the opening comment of the
-artifact it produced — five blocks, written *before* the code. That is the one thing an acceptance
-gate cannot reconstruct afterward: once the artifact exists, the intent behind it is only inferable
-from the result, which is circular. Surfacing it here is what lets a human answer "is this what it
-was trying to be?" instead of only "does this look fine?".
+Design work built through Impeccable carries a **direction contract** recorded in the relevant
+surface brief's `## Direction contract` section — five blocks, written *before* the code. That is
+the one thing an acceptance gate cannot reconstruct afterward: once the artifact exists, the
+intent behind it is only inferable from the result, which is circular. Surfacing it here is what
+lets a human answer "is this what it was trying to be?" instead of only "does this look fine?".
 
 **When a contract resolves,** render this section under exactly this heading, above the verdict
 question, with the five blocks reproduced **verbatim** — never summarized, re-worded, or reordered.

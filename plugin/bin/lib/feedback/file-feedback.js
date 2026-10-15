@@ -29,7 +29,7 @@ const { findByMarker } = require('../issues/dedup-lookup');
 const GH_MAX_BUFFER = 64 * 1024 * 1024;
 
 function defaultRunner(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: GH_MAX_BUFFER });
+  return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: GH_MAX_BUFFER, windowsHide: true });
 }
 
 // Same shape as bin/lib/issues/link.js's errorText — a runner may throw a
