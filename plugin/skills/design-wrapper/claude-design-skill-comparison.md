@@ -48,7 +48,7 @@ directly themselves, outside of and independent from any `design-wrapper` dispat
 breaks `design-wrapper`'s return-value contract (every mode returns a structured result its
 caller or the human consumes) and breaks `explore`'s lock-in mechanism (the wrapper's own
 `explore` mode runs a browser-based worlds tournament, dealing competing visual-identity
-directions via Impeccable's `concept-seed.mjs`; upstream's `document --seed` writes
+directions via Impeccable's `concept-seed` engine verb; upstream's `document --seed` writes
 `DESIGN.md` directly from the wrapper's tournament flow). A native `/design` invocation from
 outside `design-wrapper` cannot feed results back into the wrapper's own contracts or state.
 
@@ -68,19 +68,19 @@ decision depends on:
 - **Programmatic invocation:** Impeccable's `/impeccable:impeccable` skill is callable via
   the Skill tool — that is the entire reason `design-wrapper` can wrap it. A human typing
   `/design` directly cannot work for callers that need a return value to consume.
-- **Partially version-pinned where it matters most:** The wrapper verifies an exact
-  plugin-version pin before dispatching Impeccable's bundled scripts (`doctor`'s
-  `doctor.mjs`, `explore`'s `concept-seed.mjs`) and, via its own `test` mode, Impeccable's
-  CLI binary — see `SKILL.md`'s Step 2 availability check. `explore`'s own lock-in step,
-  `document --seed`, is dispatched via the Skill tool like any LLM command (`review`,
-  `polish`, and others) and is unpinned by design, same as those. Native `/design` has no
-  pinning story at all — it's an unversioned research preview.
+- **Partially version-pinned where it matters most:** The wrapper resolves a compatible
+  4.2.2+ install before dispatching Impeccable's engine verbs (`doctor`'s `doctor`,
+  `explore`'s `concept-seed`) and, via its own `test` mode, Impeccable's CLI binary — see
+  `SKILL.md`'s Step 2 availability check. `explore`'s own lock-in step, `document --seed`,
+  is dispatched via the Skill tool like any LLM command (`review`, `polish`, and others) and
+  is unpinned by design, same as those. Native `/design` has no pinning story at all — it's
+  an unversioned research preview.
 - **Deterministic tooling:** `design-wrapper`'s own `test` mode dispatches Impeccable's CLI
   binary deterministically (see `impeccable-cli.md`); its `review` and `polish` modes
   dispatch Impeccable's LLM-driven critique/audit/refinement commands. The wrapper depends
   on this contract.
 - **Browser-based worlds/layout tournament:** `design-wrapper`'s own `explore` mode —
-  which deals competing directions via Impeccable's `concept-seed.mjs` and locks the pick
+  which deals competing directions via Impeccable's `concept-seed` engine verb and locks the pick
   through Impeccable's `document --seed` — offers the closest analog to native `/design`'s
   "artboard workflow built on artifacts". This browser-based visual-identity worlds
   tournament handles both genesis-moment direction pick and layout-variant comparison once
@@ -96,7 +96,7 @@ judgment that native `/design` is worse than Impeccable — no such judgment cou
 from this environment, since the native skill could not be exercised at all. It is a
 judgment that the Skill-tool invocation path (the only path `design-wrapper` has available)
 cannot reach native `/design`, while `design-wrapper`'s own `explore` mode already covers
-the artboard-workflow dimension via Impeccable's `concept-seed.mjs`/`document --seed`, with
+the artboard-workflow dimension via Impeccable's `concept-seed` verb/`document --seed`, with
 partial version pinning and state integration.
 
 ## Maturity note

@@ -9,6 +9,7 @@ const USAGE =
   + '[--cmd-env <name>=<KEY=VALUE> ...] [--json <path>] '
   + '[--log-dir <dir>] [--count-stamp <path>] [--no-stamp] [--git-dir <dir>] [--run <dir>] '
   + '[--cwd <dir>] '
+  + '[--baseline <ref> --baseline-cmd <name>=<template-with-{file}> ...] '
   + '[--scope <path> [--base <ref>] [--integration-branch <name>]] '
   + '| verify.js --stamp-status [--git-dir <dir>] '
   + '| verify.js --changed-files [--base <ref>] [--integration-branch <name>]\n'
@@ -25,7 +26,7 @@ const USAGE =
   + 'verify.js invocation — a differently-named check (types-a, types-b, …) runs in the '
   + '"any other name" tier, serially after tests, and is skipped on an unrelated tests failure.';
 
-const VALUE_FLAGS = new Set(['--cmd', '--cmd-env', '--json', '--log-dir', '--count-stamp', '--git-dir', '--scope', '--base', '--integration-branch', '--run', '--cwd']);
+const VALUE_FLAGS = new Set(['--cmd', '--cmd-env', '--json', '--log-dir', '--count-stamp', '--git-dir', '--scope', '--base', '--integration-branch', '--run', '--cwd', '--baseline', '--baseline-cmd']);
 
 // --cmd-env (#2779): <check-name>=<KEY=VALUE>, repeatable. Split on the first
 // two `=` only, so VALUE keeps any later `=` intact.
@@ -61,6 +62,8 @@ function parseArgs(argv) {
   let changedFiles = false;
   let run = null;
   let cwd = null;
+  let baseline = null;
+  const baselineCmds = [];
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (flag === '--stamp-status') { stampStatus = true; continue; }
@@ -79,6 +82,19 @@ function parseArgs(argv) {
       if (flag === '--integration-branch') { integrationBranch = value; continue; }
       if (flag === '--run') { run = value; continue; }
       if (flag === '--cwd') { cwd = value; continue; }
+      if (flag === '--baseline') {
+        // An unset shell variable would otherwise switch adjudication off without a word.
+        if (value === '') throw new UsageError('--baseline needs a ref, got an empty value');
+        baseline = value;
+        continue;
+      }
+      if (flag === '--baseline-cmd') {
+        // #3043: split on the first `=` only, so the template keeps later `=` intact.
+        const eq = value.indexOf('=');
+        if (eq <= 0) throw new UsageError(`--baseline-cmd value must be <name>=<template-with-{file}>, got: ${value}`);
+        baselineCmds.push({ name: value.slice(0, eq), template: value.slice(eq + 1) });
+        continue;
+      }
       if (flag === '--cmd-env') { cmdEnvs.push(parseCmdEnv(value)); continue; }
       const eq = value.indexOf('=');
       if (eq === -1) throw new UsageError(`--cmd value must be <name>=<command>, got: ${value}`);
@@ -113,6 +129,22 @@ function parseArgs(argv) {
   if (undeclared) {
     throw new UsageError(`--cmd-env "${undeclared.name}" names no declared --cmd (declared: ${cmds.map((c) => c.name).join(', ') || 'none'})`);
   }
+  // #3043: the mode-conflict check runs first so a read-only mode carrying a
+  // baseline flag gets this message, not a generic one.
+  if ((stampStatus || changedFiles) && (baseline !== null || baselineCmds.length)) {
+    throw new UsageError('--baseline/--baseline-cmd apply to a check run — not to --stamp-status or --changed-files');
+  }
+  if (baseline !== null && baselineCmds.length === 0) throw new UsageError('--baseline requires at least one --baseline-cmd');
+  if (baseline === null && baselineCmds.length) throw new UsageError('--baseline-cmd requires --baseline');
+  const seenBaselineNames = new Set();
+  for (const b of baselineCmds) {
+    if (!cmds.some((c) => c.name === b.name)) {
+      throw new UsageError(`--baseline-cmd "${b.name}" names no declared --cmd (declared: ${cmds.map((c) => c.name).join(', ') || 'none'})`);
+    }
+    if (!b.template.includes('{file}')) throw new UsageError(`--baseline-cmd ${b.name} template must contain {file}, got: ${b.template}`);
+    if (seenBaselineNames.has(b.name)) throw new UsageError(`duplicate --baseline-cmd name: ${b.name}`);
+    seenBaselineNames.add(b.name);
+  }
   if (stampStatus && cmds.length) throw new UsageError('--stamp-status takes no --cmd');
   if (changedFiles && cmds.length) throw new UsageError('--changed-files takes no --cmd');
   if (changedFiles && scope !== null) throw new UsageError('--changed-files takes no --scope');
@@ -136,6 +168,7 @@ function parseArgs(argv) {
   }
   return {
     cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles, run, cwd,
+    baseline, baselineCmds,
   };
 }
 

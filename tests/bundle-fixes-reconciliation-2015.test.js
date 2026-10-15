@@ -51,11 +51,11 @@ test('#2015: pr-early-run-lifecycle.md Step 3 template wraps Fixes in fixes-star
     'the Dual-marker scheme table must list the fixes-block end marker pair');
 });
 
-test('#2015: pr-checklist-refresh.md Pre-merge refresh rewrites the Fixes block from manifest.yml outcomes', () => {
+test('#2015: pr-checklist-refresh.md Pre-merge refresh rewrites the Fixes block from outcomes', () => {
   const text = norm(read(PR_CHECKLIST_REFRESH_PATH));
   const section = text.split('## Pre-merge title/description refresh')[1];
   assert.ok(section, 'the Pre-merge title/description refresh section must exist');
-  assert.match(section, /Rewrite the .Fixes. block from .manifest\.yml. outcomes/,
+  assert.match(section, /Rewrite the .Fixes. block from outcomes/,
     'the section must document an unconditional Fixes-block rewrite step');
   assert.match(section, /composeFixesBlock/,
     'the rewrite step must name the composeFixesBlock helper it calls');

@@ -85,8 +85,13 @@ function expandGlobSegments(baseDir, segments, failures) {
 function expandGlob(globPattern) {
   const pattern = globPattern.startsWith('~') ? path.join(os.homedir(), globPattern.slice(1)) : globPattern;
   const baseDir = path.isAbsolute(pattern) ? path.parse(pattern).root : '.';
+  // Segments are what follows the root. Splitting the whole pattern would make
+  // a win32 drive (`C:`) its own segment, re-joined under the root it is
+  // already part of; and win32 accepts both separators, so split on either
+  // there. Posix keeps `/` alone — a backslash is a legal filename character.
+  const rest = baseDir === '.' ? pattern : pattern.slice(baseDir.length);
   const failures = [];
-  const paths = expandGlobSegments(baseDir, pattern.split('/').filter(Boolean), failures);
+  const paths = expandGlobSegments(baseDir, rest.split(path.sep === '\\' ? /[\\/]+/ : '/').filter(Boolean), failures);
   return { paths, failures };
 }
 
