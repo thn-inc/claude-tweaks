@@ -152,6 +152,16 @@ test('readStamp returns null on unparseable JSON — never falls back to the bar
   assert.strictEqual(readStamp('/g', fsImpl), null);
 });
 
+test('readStamp returns null for a `baseline` key the runner did not write — scalar, null or array — never a clean full pass (#3043)', () => {
+  const SHA = '0123456789abcdef0123456789abcdef01234567';
+  for (const baseline of [true, 'x', null, []]) {
+    const fsImpl = fakeFs({ [path.join('/g', STAMP_JSON_NAME)]: JSON.stringify({ sha: SHA, scope: 'full', fullSha: SHA, baseline }) });
+    assert.strictEqual(readStamp('/g', fsImpl), null, JSON.stringify(baseline));
+  }
+  const ok = fakeFs({ [path.join('/g', STAMP_JSON_NAME)]: JSON.stringify({ sha: SHA, scope: 'full', fullSha: SHA, baseline: { base: 'origin/main' } }) });
+  assert.deepStrictEqual(readStamp('/g', ok).baseline, { base: 'origin/main' });
+});
+
 test('readStamp returns null when the JSON parses but is not an object with a string sha', () => {
   assert.strictEqual(readStamp('/g', fakeFs({ [path.join('/g', STAMP_JSON_NAME)]: '"abc"' })), null);
   assert.strictEqual(readStamp('/g', fakeFs({ [path.join('/g', STAMP_JSON_NAME)]: '{"scope":"full"}' })), null);
@@ -192,4 +202,15 @@ test('readStamp returns the JSON stamp as-is when sha is valid and fullSha is ab
     [path.join('/g', STAMP_JSON_NAME)]: JSON.stringify({ sha: VALID, scope: 'full' }),
   });
   assert.deepStrictEqual(readStamp('/g', fsImpl), { sha: VALID, scope: 'full' });
+});
+
+test('composeStamp omits baseline when none is passed and carries it verbatim when given (#3043)', () => {
+  const args = {
+    report: REPORT, scope: 'full', fullSha: 'abc123', base: null, changedFiles: [],
+    suitesRun: ['tests'], flakyRetried: [], reportPath: '/r.json', at: 't',
+  };
+  assert.strictEqual('baseline' in composeStamp(args), false);
+  assert.strictEqual('baseline' in composeStamp({ ...args, baseline: null }), false);
+  const baseline = { base: 'main', baseSha: 'f'.repeat(40), baselineFailing: ['tests/a.test.js'], flakyPassed: [] };
+  assert.deepStrictEqual(composeStamp({ ...args, baseline }).baseline, baseline);
 });

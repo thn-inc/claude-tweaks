@@ -26,7 +26,7 @@ class MergeSizeProbeError extends Error {
 }
 
 function defaultGit(args) {
-  return execFileSync('git', args, { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
+  return execFileSync('git', args, { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', windowsHide: true });
 }
 
 // Ceiling-eligible: a SKILL.md at any depth, or any *.md directly under a

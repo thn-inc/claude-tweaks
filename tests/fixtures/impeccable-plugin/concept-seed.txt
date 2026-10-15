@@ -1,0 +1,120 @@
+SURFACE CONCEPT SEED (key: 2327c40b; mode: unscoped; source: api; approved pool: c3b204a1eed6; 306/564 human-approved; rerun with --scope surface --from 2327c40b --candidate-count 7 to reproduce this roll against this catalog revision)
+DEALT INDICES: 5, 6, 3 (index 5 leads)
+  After ordering the task's grounded structural candidates by resonance,
+  deal candidates 5, 6, 3 of your own grounded list to the
+  table; index 5 leads, and the deal never points at a challenger.
+  The deal is the roll, not a suggestion: the dice decide which structures
+  reach the user, so the ranking rut stays broken while the user still gets a
+  real choice, and the full ranked list stays yours. In an attended run,
+  present the three dealt structures as full cards of equal salience, the
+  lead carrying kicker THE ROLL, with steer and re-roll, and let the user
+  lock one in; the world is already settled, so this choice is composition.
+  Visualize every dealt card: with image generation available and a
+  comp-led default (.impeccable/config.json buildPath; the page toggle
+  handles the exception), declare a comp per card and generate after
+  serving, lead first; otherwise author each card's wireframe field (see
+  serve-question --schema) and the page draws the schematic. Carry the
+  recorded default in the payload as buildPath with toggle: true. Locking a card
+  approves its comp: a surface round that put three visualized structures on
+  the table replaces the three-option comp round in visualize.md. Re-roll
+  yourself only when every dealt structure fails audience identification or
+  product clarity on named factual grounds.
+  The assignment exists to refuse the model's ranking rut, never to outrank
+  the user or the brief. Never expose assignment metadata in user-facing labels.
+CHALLENGERS:
+  1. a collider event display, particle tracks curving out of one frozen collision through onion rings of detector and into stacked calorimeter wedges
+     SOURCE ID: scientific-notation-particle-detector-event-display
+     CREATIVE SPARK: The event lands and the cross-section blooms: yellow tracks curl through the inner rings, two stiff blue lines punch straight to the muon chambers, and red energy bars stack in the calorimeter wedges like a sudden bar chart of violence.
+     SYSTEM GRAMMAR:
+       - Palette/material: near-black vacuum ground, detector rings in muted steel blue, tracks in signal yellow and cyan by particle type, red calorimeter bars for deposited energy
+       - Type/composition: spare technical grotesk labels pinned to tracks and wedges, momentum figures in tabular digits; the concentric ring section is the compositional law
+       - Topology/navigation: space is concentric, beamline at center; you move outward through detector layers and along individual tracks, one event held at a time
+       - Controls/state: select a track to isolate it and dim the rest; competing reconstruction hypotheses overlay as ghost tracks, confidence written as line weight
+       - Responsive/motion: the ring section stays whole on phones while wedges and figures move to drawers; rotation is inertial 3D
+     WEB LEVERAGE: WebGL renders thousands of curved tracks in one 3D scene, with drag rotation, zoom into detector layers, and picked tracks reporting momentum
+     QUALITY BAR: board https://impeccable.style/worlds/cards/scientific-notation-particle-detector-event-display.webp · hero https://impeccable.style/worlds/cards/scientific-notation-particle-detector-event-display-hero.webp
+  2. a live scene rendered as typewriter characters, where density of glyphs stands in for light and an at-sign can be a face if it moves correctly
+     SOURCE ID: medium-native-ascii-live-scene-render
+     CREATIVE SPARK: A rotating skull made entirely of dollar signs and periods; you squint and it is sculpture, you focus and it is text, and it is both at every distance.
+     SYSTEM GRAMMAR:
+       - Palette/material: single-ink phosphor, green or amber on black; tone is glyph density from period to at-sign, and the densest glyph is the highlight
+       - Type/composition: one strict monospace grid as the entire composition, the luminance ramp serving as the typographic scale, captions living inside the same grid
+       - Topology/navigation: the world is a fixed character grid; you move the camera, and the alphabet re-renders the view.
+       - Controls/state: the luminance ramp is the palette; swapping ramps changes mood while geometry stays put.
+       - Responsive/motion: cell count adapts to viewport while glyphs stay monospace-true
+     WEB LEVERAGE: Canvas or camera frames sample down to a live glyph grid, so video, 3D, and pointer input all become selectable text.
+     QUALITY BAR: board https://impeccable.style/worlds/cards/medium-native-ascii-live-scene-render.webp · hero https://impeccable.style/worlds/cards/medium-native-ascii-live-scene-render-hero.webp
+  3. a state kiosk display of everyday printed goods, matchbox labels and juice cartons and tram tickets sharing one restricted ink set, each carrying a geometric mark from a central design office
+     SOURCE ID: vernacular-ephemera-socialist-kiosk-print
+     CREATIVE SPARK: a matchbox, a juice carton and a tram ticket, all printed in the same three inks by the same office, each with a small abstract mark that took somebody a month and nobody was allowed to sign.
+     SYSTEM GRAMMAR:
+       - Palette/material: three permitted inks on gray recycled board, colors slightly off-register, paper stock varying between print runs
+       - Type/composition: a geometric grotesque locked to a small grid, one abstract office mark per product, and no photograph anywhere
+       - Topology/navigation: goods sit in a kiosk grid, so navigation is scanning the grid rather than descending a hierarchy
+       - Controls/state: controls are product cells, the active one takes the third permitted ink, and out-of-stock cells print as an empty rule box
+       - Responsive/motion: the kiosk grid reflows in whole cells only, and motion is a slight registration shift as a cell activates
+     WEB LEVERAGE: a whole-cell responsive grid, css registration-shift animation on state, and stock state rendered as an empty rule box
+     QUALITY BAR: board https://impeccable.style/worlds/cards/vernacular-ephemera-socialist-kiosk-print.webp · hero https://impeccable.style/worlds/cards/vernacular-ephemera-socialist-kiosk-print-hero.webp
+  4. a small-press zine cover pulled on a duplicator in two spot inks, the layers deliberately misregistered so a third color appears where they overlap, paper showing through the halftone as visible open dots
+     SOURCE ID: posters-covers-sleeves-risograph-zine-cover
+     CREATIVE SPARK: Pink over blue, printed a hair out of line on purpose, and where they cross there is a third color the machine cannot actually make.
+     SYSTEM GRAMMAR:
+       - Palette/material: fluorescent pink and medium blue on newsprint-weight stock, overlapping into a muddy third color, ink sitting visibly on the surface
+       - Type/composition: display type set in one ink and imagery in the other, offset by a few millimeters so the overlap zone becomes its own shape
+       - Topology/navigation: two layers move semi-independently, so navigation shifts one layer against the other to change what the overlap says
+       - Controls/state: controls are layer offsets, the active one slides its ink out of register, and aligned states collapse the third color entirely
+       - Responsive/motion: halftone dots hold their size while the image scales, and motion is one drum layer sliding against the other
+     WEB LEVERAGE: css blend modes producing the overlap color, layer offset bound to interactive state, and a fixed-size halftone pattern
+     QUALITY BAR: board https://impeccable.style/worlds/cards/posters-covers-sleeves-risograph-zine-cover.webp · hero https://impeccable.style/worlds/cards/posters-covers-sleeves-risograph-zine-cover-hero.webp
+  5. a technical deep dive down a volcanic island wall, where one small diver leaves the turquoise surface, crosses a cold blue thermocline, and enters a mesophotic garden of black coral, glass sponges, and falling marine snow
+     SOURCE ID: rivers-tides-ocean-depths-mesophotic-deep-dive
+     CREATIVE SPARK: At forty meters the last warm red drains from the diver's gloves; a lamp clicks on, revealing black-coral branches and white particles falling past a wall with no visible floor.
+     SYSTEM GRAMMAR:
+       - Palette/material: abyssal ink blue deepening by dive stage as the ground, chalk-white marine snow as particle texture, one thermocline cyan band marking the active depth
+       - Type/composition: monospaced dive-computer digits for depth and gas beside quiet grotesk notes, one vertical depth axis ruling every line of copy
+       - Topology/navigation: Descend through surface, thermocline, reef ledge, mesophotic wall, turnaround depth, ascent stops, and the vertical route home.
+       - Controls/state: Descend, hover, illuminate, mark, turn, and ascend with daylight, cooling, dark, gas-limited, decompression, and surfaced states.
+       - Responsive/motion: Pair the vertical dive profile with selected close views; stop drift and bubbles under
+     WEB LEVERAGE: A synchronized depth-and-time scrub can change light, color, sound, species, and ascent obligations together, while any observation remains pinned to its exact depth and dive phase.
+     QUALITY BAR: board https://impeccable.style/worlds/cards/rivers-tides-ocean-depths-mesophotic-deep-dive.webp · hero https://impeccable.style/worlds/cards/rivers-tides-ocean-depths-mesophotic-deep-dive-hero.webp
+  6. a monumental earthen tower built from visible coils, where compression, drying, and hand pressure leave a slow ascending record
+     SOURCE ID: clay-ceramics-fracture-coiled-earth-tower
+     CREATIVE SPARK: Broad clay ropes circle upward above the maker's head, each thumb-smoothed seam catching a different band of late light.
+     SYSTEM GRAMMAR:
+       - Palette/material: raw terracotta and umber coil bands as the ground, slip-white seams as dividers, one damp dark clay ring marking the course in progress
+       - Type/composition: broad low-contrast slab caps like stamped brick marks, text banded in horizontal courses, each line's measure matching its coil
+       - Topology/navigation: Rise through courses while local joins, wall thickness, and overall silhouette remain connected.
+       - Controls/state: Add, compress, brace, dry, and inspect with plastic, bearing, cracking, leather-hard, and fired states.
+       - Responsive/motion: Convert the tower into an ordered vertical section and show construction growth only on request.
+     WEB LEVERAGE: Incremental geometry can connect each course to time, maker action, and structural consequence without large assets.
+     QUALITY BAR: board https://impeccable.style/worlds/cards/clay-ceramics-fracture-coiled-earth-tower.webp · hero https://impeccable.style/worlds/cards/clay-ceramics-fracture-coiled-earth-tower-hero.webp
+A challenger wins only when its fused result beats the grounded list on
+  audience identification and product clarity. It may change task topology or
+  interaction, but never the committed visual identity.
+When you can view images, open the QUALITY BAR board and hero for any
+challenger you weigh seriously and for the world you build. They exist as a
+craft bar, the finish level and commitment the build is expected to reach,
+never as a mockup to copy; your surface serves this product, not that render.
+PRODUCT.md and DESIGN.md constrain every surface candidate's identity
+vocabulary; they do not cancel task-level composition. The seed never
+authorizes a new palette, type system, material world, or unfamiliar control
+behavior.
+The CREATIVE SPARK is a complete visual system, not a theme or decorative
+reference. Translate every supplied system rule into the product: palette and
+material, type and composition, topology, controls and states, and adaptation.
+Keep the source's visible character, scale, rhythm, and interaction instead of
+reducing vivid grammar to generic nouns. Keep a literal carrier only when it
+becomes functional.
+Ambitious motion, spatial media, or interaction is welcome when it strengthens
+the product without weakening semantics, performance, or fallback behavior.
+TELEMETRY: after the user's choice resolves, rerun this script once with
+  --kind <assigned|pick|challenger|canon> --from 2327c40b --scope surface,
+  adding --chosen <challenger-id> when a dealt challenger won and keeping
+  --register <safer|bolder> when the resolved round came from a steered hand.
+  One ping per resolved attended round. The ping is anonymous, the card kind
+  plus the catalog id when one won; your grounded candidates' names never
+  leave the machine, and the ping is skipped automatically when DO_NOT_TRACK
+  or IMPECCABLE_NO_TELEMETRY is set.
+A user- or brief-pinned decision beats the roll, always.
+DEALT INDICES (restated for truncated readers): 5, 6, 3; index
+5 leads. Present all three dealt structures; seed key 2327c40b.

@@ -20,6 +20,7 @@ const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 function defaultGh(args) {
   return execFileSync('gh', args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
+    windowsHide: true,
   });
 }
 
