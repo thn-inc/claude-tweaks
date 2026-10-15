@@ -5,18 +5,15 @@
 const fs = require('fs');
 const path = require('path');
 const deps = require('../deps');
-const ctxLib = require('./context');
 const policy = require('../policy');
 const wtDetect = require('./worktree-detect');
-const runIntegrity = require('./run-integrity');
+const sessionResidue = require('./session-residue');
 const { reconcile } = require('../reconcile');
 const { DEFAULT_TTL_MS } = require('../reconcile/cache');
 const portsEnsure = require('../ports/ensure');
 const { BLOCK_SIZE: PORTS_BLOCK_SIZE } = require('../ports/registry');
 const { INTERACTION_STYLE_DIRECTIVE } = require('./interaction-style');
 const { resolvePluginVersion } = require('../plugin-version');
-
-const MAX_REPORTED = 3;
 
 // #1738: the one banner-assembly shape both advisory scans below build by
 // hand today — a header sentence, the per-run "- name — detail" lines, and a
@@ -106,43 +103,19 @@ async function run(ctx) {
     if (buildLine) parts.push(buildLine);
   } catch { /* best-effort */ }
   try {
-    // Only the newest MAX_REPORTED entries are ever shown — pull from the
-    // lazy iterator and stop early instead of materializing (and reading
-    // run-state.json for) every non-clean run dir under pipelines/, most of
-    // which would just be sliced off and discarded.
-    const stale = [];
-    for (const entry of ctxLib.iterRunDirsWithState(ctx.cwd)) {
-      stale.push(entry);
-      if (stale.length >= MAX_REPORTED) break;
-    }
-    if (stale.length) {
-      // Hoisted once and reused below — this expression was previously
-      // computed twice (once per stale entry inside the .map, once here),
-      // and each copy could only drift from the other.
-      const pluginRoot = pluginRootEnv || '${CLAUDE_PLUGIN_ROOT}';
-      // This stale-runs block running BEFORE the reaper block is load-bearing
-      // ordering: the reaper removes merged worktrees, which breaks branch
-      // derivation for the integrity check.
-      const lines = stale.map(({ dir, state }) => {
-        // #410: read-only — the URL run-state.json already recorded, never a
-        // fresh gh call from this hot path. Absent for local-merge runs and
-        // any pr-first run whose run-start push/create degraded.
-        const prSuffix = state && state.pr && state.pr.url ? ` — PR ${state.pr.url}` : '';
-        const base = `- ${path.basename(dir)} (status: ${(state && state.status) || 'unknown'})${prSuffix}`;
-        try {
-          const verdict = runIntegrity.checkRunIntegrity(dir, { cache });
-          if (verdict.state === 'shipped-unclosed') {
-            // Evidence names what was checked so the reader can judge the claim.
-            const how = verdict.evidence.merged === 'cherry' ? 'squash/rebase-equivalent' : 'merged';
-            return (
-              `${base} — work appears shipped (branch ${verdict.evidence.branch} ${how} into the integration branch, ` +
-              'no wrap-up recorded): close out with /claude-tweaks:wrap-up, or bookkeeping-only: ' +
-              `node "${pluginRoot}/bin/hooks.js" close-run --run "${dir}"`
-            );
-          }
-        } catch { /* integrity check is advisory — never break the scan */ }
-        return base;
-      });
+    // #2736: detection lives in session-residue.js, shared with `hooks.js
+    // check-session-residue` (wrap-up's Review Console resurfacing check) so
+    // the two can never drift on what counts as residue or what resolution
+    // command a row points at. This block only renders SessionStart's own
+    // banner from the returned lines.
+    //
+    // This stale-runs block running BEFORE the reaper block is load-bearing
+    // ordering: the reaper removes merged worktrees, which breaks branch
+    // derivation for the integrity check session-residue.js runs internally.
+    const pluginRoot = pluginRootEnv || '${CLAUDE_PLUGIN_ROOT}';
+    const staleEntries = sessionResidue.collectStaleRuns(ctx.cwd, { cache, pluginRoot });
+    if (staleEntries.length) {
+      const lines = staleEntries.map((e) => e.line);
       // #803: the banner previously had no designated consumer — a session could
       // receive it and never triage or relay it. This trailing sentence is that
       // consumer: an explicit, model-facing instruction (same pattern as the
@@ -164,51 +137,11 @@ async function run(ctx) {
     // naming convention `step-6-auto.md` already uses) can finish cleanly and
     // STILL carry human-facing work — un-actioned proposals under `staged/`
     // (a `--dry-run` preview, or a staged-but-never-approved tidy firing).
-    // `_shared/pipeline-run-dir.md`'s run-dir layout section names exactly
-    // one terminal status value: "run-state.json (hook-maintained
-    // status/worktree assignment; terminal = status `clean`)" — that is the
-    // ONLY cleanly-finished value used anywhere in this codebase (verified:
-    // no other terminal status string, e.g. "complete", is ever written to
-    // run-state.json), so this checks for it by name rather than "anything
-    // other than interrupted", which would silently also match a future or
-    // unrecognized status value.
-    //
-    // This is a SEPARATE scan from the stale-runs block above, not a branch
-    // inside it: the opposite status signal matters here — clean AND
-    // non-empty `staged/` — where the stale-runs block above wants
-    // interrupted/still-live runs. #1738 gave the shared iterator an opt-in
-    // `{ status: 'clean' }` filter for exactly this shape, so this scan now
-    // shares that iterator's anchor, ordering, archive-twin skip, and
-    // `archiving`-claim skip instead of hand-rolling a second directory walk
-    // (the gap the iterator's default exclude-clean behavior used to force).
-    //
-    // Only a `*-tidy-standalone*` run dir — or, since sweep's shared run dir
-    // (#1494), a `*-sweep-standalone*` one, whose Step 1 runs tidy inside it
-    // and stages the same residue shape — is `tidy --approve`-resolvable
-    // (`approve-mode.md`'s own glob match) — narrowed from the earlier
-    // `endsWith('-standalone')` match, which also matched every OTHER
-    // standalone-auto skill's run dir (`-init-standalone`, `-capture-standalone`,
-    // etc.), none of which `tidy --approve` can ever resolve or apply.
-    //
-    // Capped at MAX_REPORTED via an early-break for-loop, mirroring the
-    // stale-runs block three lines up (this file's own precedent, whose
-    // own comment a few lines above prescribes exactly this lazy pattern).
-    // The break is on `approvable.length` (entries that passed BOTH the name
-    // test and the non-empty `staged/` read), not on iteration count — it
-    // counts approvable entries, not candidates.
-    const approvable = [];
-    for (const { dir } of ctxLib.iterRunDirsWithState(ctx.cwd, { status: 'clean' })) {
-      if (!/-(tidy|sweep)-standalone/.test(path.basename(dir))) continue;
-      let staged;
-      try { staged = fs.readdirSync(path.join(dir, 'staged')); } catch { continue; }
-      if (!staged.length) continue;
-      approvable.push(dir);
-      if (approvable.length >= MAX_REPORTED) break;
-    }
-    if (approvable.length) {
-      const lines = approvable.map(
-        (dir) => `- ${path.basename(dir)} — staged proposal(s) awaiting approval: /claude-tweaks:tidy --approve "${dir}"`,
-      );
+    // #2736: detection also moved to session-residue.js — see this file's
+    // stale-runs block above for the shared-module rationale.
+    const approvableEntries = sessionResidue.collectApprovableStandalone(ctx.cwd);
+    if (approvableEntries.length) {
+      const lines = approvableEntries.map((e) => e.line);
       // #1493/#803: the same designated-consumer relay directive the
       // stale-runs banner above already carries — without it this banner
       // reproduces #803's original defect (detected, never assigned a

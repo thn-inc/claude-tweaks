@@ -122,7 +122,7 @@ Proposes a starter `.claude-tweaks/verify-scope.json` from the detected workspac
 
 ### Step 7: Browser Integration
 
-Detect `agent-browser`; surface the install command if missing. Never block init, never auto-install, never prompt for backend choice. Read `bootstrap/step-07-browser-integration.md` for the full procedure.
+Detect `playwright-cli`; surface the install command if missing. Never block init, never auto-install, never prompt for backend choice. Read `bootstrap/step-07-browser-integration.md` for the full procedure.
 
 ### Step 8: Statusline & Dependencies
 
@@ -398,7 +398,7 @@ Read `next-actions.md` in this skill's directory for the signal-resolution table
 | Skipping CLAUDE.md generation | /claude-tweaks:review can't find verification commands |
 | Running init in a non-git directory without warning | /claude-tweaks:review and /claude-tweaks:wrap-up need git — surface the degradation |
 | Installing browser tools without asking | Optional — surface the install command, never run `npm install` |
-| Prompting for a browser backend choice | Only one backend exists (`agent-browser`) |
+| Prompting for a browser backend choice | Only one backend exists (`playwright-cli`) |
 | Generating generic skills (e.g., `auth.md`, `api-routes.md`) | Feature names, not conventions — skills encode rules, anti-patterns, or "why this way" insights observed in the codebase. No WebSockets, no realtime skill; no tests, testing is a backlog item, not a SKILL.md file. |
 | Generating generic skills not grounded in the codebase | Generic advice adds noise, not value |
 | Rewriting CLAUDE.md in Update Mode | Update Mode patches — existing config embeds hard-won lessons |

@@ -1,0 +1,30 @@
+## Staged: Capture — github-pr-scan item 10's PR fetch exceeds the GraphQL node limit
+
+Finding: [capture] the unsettled-run check's third fetch fails outright on this repo.
+Proposed: file a backlog record (bug) with the spec-shaped body below via /claude-tweaks:capture.
+
+## Current State
+
+`plugin/skills/_shared/github-pr-scan.md:218` (origin/main), item 10 (Unsettled run), fetches
+`gh pr list --state all --json number,url,closingIssuesReferences,comments,commits --limit 200`.
+GitHub rejects it: "By the time this query traverses to the authors connection, it is requesting
+up to 1,000,000 possible nodes which exceeds the maximum limit of 500,000." The cost scales at
+~10,000 nodes per PR (limit 60 → 600,000), so any `--limit` above 50 fails. The documented
+procedure therefore cannot run as written, and a scan agent following it gets no PR list — every
+claimed issue would read as "no PR found".
+
+## Deliverables
+
+- Rewrite item 10's third fetch to stay under the node cap — e.g. split by state
+  (`open`/`merged`/`closed`, `--limit 45` each) or drop `comments`/`commits` from the bulk list and
+  fetch progress per candidate only.
+- Match on `refs #N` bodies too, or document that a draft PR with only `refs #N` (as #2822 → #2805)
+  is invisible to `closingIssuesReferences` and reads as "no PR found".
+
+## Acceptance Criteria
+
+- Item 10's fetch completes without a GraphQL error on a repo with 200+ PRs.
+- A conformance test pins the fetch shape (no `--state all` bulk list carrying both
+  `comments` and `commits` above the node budget).
+
+Evidence: tidy run 2026-09-30T172538-tidy-standalone (reproduced at --limit 200 and --limit 60).

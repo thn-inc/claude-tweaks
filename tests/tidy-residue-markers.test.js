@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { readText } = require('./helpers/read-skill');
 
 // #1493: tidy residue markers + `--approve`. This file pins the `.gitignore`
 // carve-out that makes a `*-tidy-standalone*` run's own audit files
@@ -19,9 +20,9 @@ const { execFileSync } = require('child_process');
 // `updatedAt`, and the staleness clock reads that same `updatedAt`).
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 const readFlat = (...p) => read(...p).replace(/\s+/g, ' ');
-const GITIGNORE = fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8');
+const GITIGNORE = readText(path.join(ROOT, '.gitignore'));
 const LINES = GITIGNORE.split('\n');
 
 // Rule-shape pin, not a behavioral git-ignore check (that's already covered

@@ -128,6 +128,26 @@ These challenge the project's DESIGN.md, not the diff — the wrapper never edit
 
 > Findings are advisory — they inform the verdict but were not auto-applied. To action them inline, route through Step 3 Routing's resolution flow with category `Security Hardening`. Each row is a "flag for human review" signal, not a formal proof — confirm the underlying risk before treating a finding as settled (`criteria-security-hardening.md`'s "What NOT to flag").
 
+### Agent Trust Scope (from Step 6.65, code-health's `focus=agent-trust-scope`)
+
+{Include when Step 6.65's pre-check found `.claude/settings.json` or `.claude-tweaks/policy.yml` in scope and at least one candidate survived judgment. Omit when the pre-check skipped (neither config file in the diff scope), when the result was `notApplicable: true` (no `.claude-tweaks/policy.yml`), when zero candidates came back (note in the summary footer instead: "Agent Trust Scope pass ran clean."), or when candidates were found but none survived judgment (note in the summary footer instead: "Agent Trust Scope pass ran — no actionable findings.").}
+
+| File | Dimension | Severity | Finding |
+|------|-----------|----------|---------|
+| {file} | {registry-access / network-egress / credential-scope} | {low/medium/high} | {message, per `criteria-agent-trust-scope.md`'s calibration} |
+
+> Findings are advisory — they inform the verdict but were not auto-applied. To action them inline, route through Step 3 Routing's resolution flow with category `Agent Trust Scope`. This audits the project's own committed `.claude/settings.json` permission posture only — never a claim about an agent's actual real-world reach (`criteria-agent-trust-scope.md`'s "What NOT to flag").
+
+### App Store Readiness (from Step 6.66, code-health's `focus=app-store-readiness`)
+
+{Include when Step 6.66's pre-check found mobile-app files in scope and at least one candidate survived judgment. Omit when the pre-check skipped (no mobile-app files in the diff scope), when the result was `notApplicable: true` (no mobile-app signal), or when candidates were found but none survived judgment (note the latter in the summary footer instead: "App Store Readiness pass ran — no actionable findings.").}
+
+| File | Kind | Severity | Finding |
+|------|------|----------|---------|
+| {file}:{line} | {missing-apple-signin-parity / external-payment-no-iap / missing-account-deletion / incomplete-demo-login / unverified-ipad-layout / unlabeled-paid-screenshot / dead-support-privacy-link / coming-soon-placeholder / missing-ugc-report-path / broken-restore-purchases} | {low/medium/high} | {message, per `criteria-app-store-readiness.md`'s calibration} |
+
+> Findings are advisory — they inform the verdict but were not auto-applied. To action them inline, route through Step 3 Routing's resolution flow with category `App Store Readiness`. Each row is a static-text signal for Apple App Store review risk, not a verified rejection — confirm against the actual code path before treating a finding as settled (`criteria-app-store-readiness.md`'s "What NOT to flag").
+
 ### Code Simplification
 - {summary of simplifier changes, or "No simplifications needed"}
 

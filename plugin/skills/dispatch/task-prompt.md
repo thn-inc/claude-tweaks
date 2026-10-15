@@ -86,9 +86,14 @@ intermediate commit message, write "refs #N" -- never "closes #N" or "fixes #N".
 
 Foreground execution (required): run `npm test` and every other long-running command in the
 foreground of this turn, output redirected to a file if it's long -- never with
-`run_in_background`. Never end this turn waiting on a background test run, fix-round, or child
-agent's completion notification; a dispatched agent that yields this way is never re-woken and
-the run stalls silently (#1965).
+`run_in_background`. Never end this turn waiting on a background test run or fix-round you
+started this way -- there is no notification mechanism behind either, so it is never re-woken
+and the run stalls silently (#1965). That same stall risk covers ending this dispatched session's
+own top-level turn with nothing else pending except a child agent's completion notification to
+resume it. It does not cover an in-turn `Agent`-tool dispatch (a lens-dispatch fan-out, a
+reproduction pair) whose completion notification the harness is expected to deliver back into
+this same ongoing turn sequence while other work remains in flight -- that notification is the
+primary resume signal this pattern relies on, not the stall this clause warns against.
 
 {context-pack}
 
@@ -174,6 +179,11 @@ also what `sequential-execution.md`'s Heartbeat section (#2427) points a "still 
 for a long-running call like this one — a passive read of this group's run directory, never a
 reason to relax the Foreground execution clause above or have this call check in mid-turn.
 
+The Foreground execution clause's in-turn `Agent`-tool carve-out (#2533) rests on
+`_shared/dispatch-waiting.md`'s existing "primary resume signal" convention — read there, not
+restated here, for why a dispatched wave's own completion notifications are the normal way this
+turn sequence resumes, distinct from the backgrounded-with-nothing-pending stall #1965 names.
+
 ## Second call — review,polish,wrap-up (gated on the first call)
 
 **Only dispatch this call if the first call's status line was DONE or DONE_WITH_CONCERNS AND its OUTCOME was `build-test-ok`.** A `NEEDS_CONTEXT`/`BLOCKED` status, an `OUTCOME` of `build-test-failed`/`build-test-blocked`, or no parseable report at all means this second call is never dispatched — the first call's own agent settles its own failure (its template above instructs it to), and the dispatching session takes the terminal path in `two-call-gate.md` section 5 (fail-loud reporting plus the `/claude-tweaks:wrap-up {target} cleanup-only` teardown call). An `OUTCOME` of `already-shipped` (#2502) is a **third, distinct** case, neither success nor failure: this second call is never dispatched here either, but the reason is that the first call already finished the record (staged a Close proposal, closed any draft PR, released the claim) — there is nothing left to review, polish, or wrap up. Take `two-call-gate.md` §7's terminal path for it, never section 5's — §7 tears the worktree down the same way section 5 does, but never invokes Settle's failure classification, retry counting, or failure comment, and the dispatching session's own report surfaces the group as a no-op, not `pending-review`.
@@ -197,9 +207,14 @@ the prior call did or found.
 
 Foreground execution (required): run `npm test` and every other long-running command in the
 foreground of this turn, output redirected to a file if it's long -- never with
-`run_in_background`. Never end this turn waiting on a background test run, fix-round, or child
-agent's completion notification; a dispatched agent that yields this way is never re-woken and
-the run stalls silently (#1965).
+`run_in_background`. Never end this turn waiting on a background test run or fix-round you
+started this way -- there is no notification mechanism behind either, so it is never re-woken
+and the run stalls silently (#1965). That same stall risk covers ending this dispatched session's
+own top-level turn with nothing else pending except a child agent's completion notification to
+resume it. It does not cover an in-turn `Agent`-tool dispatch (a lens-dispatch fan-out, a
+reproduction pair) whose completion notification the harness is expected to deliver back into
+this same ongoing turn sequence while other work remains in flight -- that notification is the
+primary resume signal this pattern relies on, not the stall this clause warns against.
 
 {context-pack}
 

@@ -503,6 +503,35 @@ function isTracked(root, targetPath) {
   return !untracked.failure && !untracked.stdout;
 }
 
+// #2816: a `work/` directory left behind by a materialize hard-gate stop
+// (the header never landed, so nothing was ever written under it) has
+// nothing for `git mv` to move — git itself never tracks an empty
+// directory, so `isTracked` above always reads false for one and offers no
+// signal to distinguish "empty, nothing to move" from "non-empty but
+// untracked" (#953's genuinely refusal-worthy case). Checked in the cheaper
+// order: a non-empty `fs.readdirSync` already answers "not this case"
+// without needing a git call at all; only a truly empty directory goes on
+// to confirm via `git ls-files` that nothing is staged at this path either
+// (belt-and-suspenders — an empty directory can't hold a tracked blob, but
+// this keeps the check anchored to a real git read rather than a
+// filesystem-only assumption). When `dir` is that empty, untracked case,
+// removes it (best-effort) and returns true so the caller treats it as
+// absent; otherwise leaves it alone and returns false — including for a
+// missing or unreadable directory (never throws).
+function removeIfEmptyUntrackedDir(root, dir) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return false;
+  }
+  if (entries.length !== 0) return false;
+  const tracked = runGit(['ls-files', dir], root);
+  if (tracked.failure || tracked.stdout) return false;
+  try { fs.rmdirSync(dir); } catch { /* best-effort — already gone, or non-empty for an unexpected reason */ }
+  return true;
+}
+
 // #1892: a whole-dir `git mv` onto an already-existing, non-empty
 // destination is not idempotent (the same ENOTEMPTY class #1713/#1714 fixed
 // one level up, for the plain-fs-rename loops) — a `work/` archive twin can
@@ -724,9 +753,33 @@ function isClosedSlugStuck(root, dir, state, now = Date.now(), resolveIssueState
   });
 }
 
+// #1103's own claim-survives-a-failure protection: a git/commit
+// subprocess failure (real timing, real locks, a real pre-commit hook)
+// can be transient, so its "archiving" claim deliberately survives the
+// refusal — a concurrent, unlocked `reconcile` scan racing this same run
+// dir moments later still sees a fresh claim and backs off, until
+// context.js's own TTL eventually expires it. archiveRunDir's #2816
+// `refuseAfterMarker` cleanup must not defeat that: these reason strings
+// keep today's survive-on-failure behavior unconditionally (see the
+// `#1103 follow-up` comment inside archiveRunDir, and its own pinning test).
+const GIT_TIMING_REFUSAL_REASONS = new Set([
+  'git-mv-failed', 'git-mv-failed-partial-revert',
+  'commit-failed', 'commit-failed-partial-revert',
+  'work-twin-resolve-failed', 'work-twin-resolve-failed-partial-revert',
+]);
+
 function archiveRunDir(root, runDir) {
   const runId = path.basename(runDir);
   const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  // #2816 follow-up: captured before mkdirSync below so `refuseAfterMarker`
+  // can tell "this call created archiveDir" from "archiveDir already held
+  // real content before this call ever started" (e.g. a prior partial
+  // archive attempt's twin — exactly the shape `work-twin-conflict` guards
+  // against). Only the former is safe to blanket-`rmSync` on refusal; a
+  // pre-existing archiveDir's content did not come from THIS call's
+  // `movedEntries`, so an empty `movedEntries` says nothing about whether
+  // archiveDir itself is empty.
+  const archiveDirPreexisted = fs.existsSync(archiveDir);
   try {
     fs.mkdirSync(archiveDir, { recursive: true });
   } catch {
@@ -750,6 +803,38 @@ function archiveRunDir(root, runDir) {
   // guess at the run dir's shape, which is the exact fixed-list drift this
   // function's own enumeration swap (above) exists to eliminate.
   const movedEntries = [];
+
+  // #2816: every refusal below this point runs after the `archiving`
+  // marker (writeRunState above) already created `archiveDir` on disk — a
+  // structural/content refusal (audit-untracked, tracked-entry, a
+  // work-twin content conflict, a readdir/ls-files failure, close-failed)
+  // that staged no real move would otherwise leave that half-written
+  // archive twin behind forever, with no TTL-expiry mechanism ever
+  // reclaiming it (unlike GIT_TIMING_REFUSAL_REASONS above, this class is
+  // deterministic — a concurrent attempt would hit the identical refusal
+  // regardless of whether the twin survives, so there is no race left to
+  // protect). Wrap every such return: when nothing has landed in
+  // `movedEntries` yet by the time this fires, AND this call is the one
+  // that created `archiveDir` in the first place (`!archiveDirPreexisted`),
+  // remove the twin and leave the filesystem exactly as this call found it.
+  // Once `movedEntries` is non-empty, some content genuinely lives at
+  // `archiveDir` now — a later refusal must not delete that, even though a
+  // fully-reverted one may have left mkdir'd (empty) spec subdirectories
+  // behind, which is cosmetic, not a stray archive twin. And when
+  // `archiveDirPreexisted` is true — a prior partial-archive attempt (or a
+  // genuine, pre-existing archive twin, exactly `work-twin-conflict`'s own
+  // case) already put real content at `archiveDir` before this call ever
+  // ran — an empty `movedEntries` this call built says nothing about
+  // whether `archiveDir` itself is empty; blanket-deleting it would destroy
+  // content this call never created and cannot safely diagnose as
+  // disposable. That case is left exactly as every refusal left it
+  // pre-#2816: refused, `archiveDir` untouched.
+  function refuseAfterMarker(reason, extra) {
+    if (!archiveDirPreexisted && movedEntries.length === 0 && !GIT_TIMING_REFUSAL_REASONS.has(reason)) {
+      try { fs.rmSync(archiveDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+    return refusal(reason, extra);
+  }
 
   const specDirs = listSpecDirs(runDir);
 
@@ -783,13 +868,19 @@ function archiveRunDir(root, runDir) {
   // pre-existing path; the same-path case falls through to the ordinary
   // `workMoves` `git mv`, which git itself refuses ("can not move directory
   // into itself") — the pre-existing, correct behavior for that case.
+  //
+  // #2816: an empty, untracked `work/` (a materialize hard-gate stop's
+  // mkdir with nothing ever written under it) has nothing to `git mv` —
+  // `removeIfEmptyUntrackedDir` removes it on disk so it is never queued
+  // into `workMoves`/`twinPlan`. A non-empty untracked `work/` (#953) falls
+  // through unchanged to the twin/workMoves classification below.
   const topWork = path.join(runDir, 'work');
-  if (fs.existsSync(topWork)) {
+  if (fs.existsSync(topWork) && !removeIfEmptyUntrackedDir(root, topWork)) {
     const topWorkDest = path.join(archiveDir, 'work');
     if (path.resolve(topWork) !== path.resolve(topWorkDest) && fs.existsSync(topWorkDest)) {
       const twin = compareWorkTwin(root, topWork, topWorkDest);
       if (!twin.identical) {
-        return refusal('work-twin-conflict', {
+        return refuseAfterMarker('work-twin-conflict', {
           conflict: { src: topWork, dest: topWorkDest, differing: twin.differing },
         });
       }
@@ -849,7 +940,7 @@ function archiveRunDir(root, runDir) {
   // unpulled — exactly what happened in practice, #1494's follow-up), or
   // recognize the content never made it into any commit and needs re-filing.
   if (untrackedAuditFiles.length) {
-    return refusal('audit-untracked', {
+    return refuseAfterMarker('audit-untracked', {
       untrackedAuditFiles,
       hint: `(${untrackedAuditFiles.join(', ')} exist here but are not tracked by this checkout's git index). `
         + 'A pr-first standalone run\'s decisions.md/report.md/staged only become tracked once their worktree '
@@ -861,18 +952,22 @@ function archiveRunDir(root, runDir) {
   for (const specName of specDirs) {
     const specWork = path.join(runDir, specName, 'work');
     if (!fs.existsSync(specWork)) continue;
+    // #2816: same empty-untracked-directory treatment as topWork above,
+    // for the multi-spec-parent shape of the identical materialize
+    // hard-gate-stop leftover.
+    if (removeIfEmptyUntrackedDir(root, specWork)) continue;
     const specArchiveDir = path.join(archiveDir, specName);
     try {
       fs.mkdirSync(specArchiveDir, { recursive: true });
     } catch {
-      return refusal('mkdir-failed');
+      return refuseAfterMarker('mkdir-failed');
     }
     const specWorkDest = path.join(specArchiveDir, 'work');
     // #1323: same same-path guard as topWork above.
     if (path.resolve(specWork) !== path.resolve(specWorkDest) && fs.existsSync(specWorkDest)) {
       const twin = compareWorkTwin(root, specWork, specWorkDest);
       if (!twin.identical) {
-        return refusal('work-twin-conflict', {
+        return refuseAfterMarker('work-twin-conflict', {
           conflict: { src: specWork, dest: specWorkDest, differing: twin.differing },
         });
       }
@@ -893,7 +988,7 @@ function archiveRunDir(root, runDir) {
       stagedOps.push(...result.resolved);
       if (!result.ok) {
         const fullyReverted = revertStagedOps(root, stagedOps);
-        return refusal(fullyReverted ? result.reason : 'work-twin-resolve-failed-partial-revert', {
+        return refuseAfterMarker(fullyReverted ? result.reason : 'work-twin-resolve-failed-partial-revert', {
           lastError: result.lastError,
           hint: result.lastError || null,
         });
@@ -918,7 +1013,7 @@ function archiveRunDir(root, runDir) {
       if (mv.failure) {
         const fullyReverted = revertStagedOps(root, stagedOps);
         const reason = fullyReverted ? 'git-mv-failed' : 'git-mv-failed-partial-revert';
-        return refusal(reason, { lastError: mv.stderr, hint: mv.stderr || null });
+        return refuseAfterMarker(reason, { lastError: mv.stderr, hint: mv.stderr || null });
       }
       stagedOps.push({ kind: 'mv', src, dest });
       movedEntries.push(path.relative(runDir, src));
@@ -944,7 +1039,7 @@ function archiveRunDir(root, runDir) {
       // callers/logs rather than collapsing both into the same reason
       // string.
       const fullyReverted = revertStagedOps(root, stagedOps);
-      return refusal(fullyReverted ? 'commit-failed' : 'commit-failed-partial-revert');
+      return refuseAfterMarker(fullyReverted ? 'commit-failed' : 'commit-failed-partial-revert');
     }
   }
 
@@ -959,14 +1054,14 @@ function archiveRunDir(root, runDir) {
   // tidy-standalone run or any other — still refuses exactly as before.
   if (fs.existsSync(runDir)) {
     const lsFiles = runGit(['ls-files', runDir], root);
-    if (lsFiles.failure) return refusal('ls-files-failed');
+    if (lsFiles.failure) return refuseAfterMarker('ls-files-failed');
     const trackedOutsideWork = (lsFiles.stdout || '')
       .split('\n')
       .filter(Boolean)
       .map((p) => path.relative(runDir, path.join(root, p)))
       .filter((rel) => rel && !rel.startsWith('work' + path.sep) && rel !== 'work');
     if (trackedOutsideWork.length > 0) {
-      return refusal('tracked-entry');
+      return refuseAfterMarker('tracked-entry');
     }
 
     // TOCTOU: runDir could be deleted between the fs.existsSync(runDir) guard
@@ -978,7 +1073,7 @@ function archiveRunDir(root, runDir) {
     try {
       entries = fs.readdirSync(runDir);
     } catch {
-      return refusal('readdir-failed');
+      return refuseAfterMarker('readdir-failed');
     }
     // spec-{N}/ dirs are excluded here — their archive twins may already
     // exist (created by the workMoves batch above), so a whole-dir rename
@@ -994,7 +1089,7 @@ function archiveRunDir(root, runDir) {
       } catch (err) {
         const fullyReverted = revertPlainMoves(movedThisPass);
         const reason = fullyReverted ? 'move-failed' : 'move-failed-partial-revert';
-        return refusal(reason, {
+        return refuseAfterMarker(reason, {
           lastError: err && err.message,
           hint: reason === 'move-failed' ? ((err && err.message) || null) : null,
         });
@@ -1020,7 +1115,7 @@ function archiveRunDir(root, runDir) {
     try {
       specEntries = fs.readdirSync(specDir);
     } catch {
-      return refusal('readdir-failed');
+      return refuseAfterMarker('readdir-failed');
     }
     const specRemaining = specEntries.filter((n) => n !== 'work');
     if (specRemaining.length) {
@@ -1031,7 +1126,7 @@ function archiveRunDir(root, runDir) {
       try {
         fs.mkdirSync(specArchiveDir, { recursive: true });
       } catch (err) {
-        return refusal('move-failed', { lastError: err && err.message, hint: (err && err.message) || null });
+        return refuseAfterMarker('move-failed', { lastError: err && err.message, hint: (err && err.message) || null });
       }
     }
     const specMovedThisPass = [];
@@ -1044,7 +1139,7 @@ function archiveRunDir(root, runDir) {
       } catch (err) {
         const fullyReverted = revertPlainMoves(specMovedThisPass);
         const reason = fullyReverted ? 'move-failed' : 'move-failed-partial-revert';
-        return refusal(reason, {
+        return refuseAfterMarker(reason, {
           lastError: err && err.message,
           hint: reason === 'move-failed' ? ((err && err.message) || null) : null,
         });
@@ -1063,7 +1158,7 @@ function archiveRunDir(root, runDir) {
   // (archived) location, not the original runDir — writeRunState reads and
   // preserves whatever state already moved there.
   const result = writeRunState(archiveDir, { status: 'clean', worktree: null });
-  if (!result) return refusal('close-failed');
+  if (!result) return refuseAfterMarker('close-failed');
 
   // Late-write guard (#990 — reproduced live during #893's own wrap-up even
   // with #902's dynamic enumeration already in place): the top-level

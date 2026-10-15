@@ -61,6 +61,11 @@ Both forms resolve through the same `sessionTmpPath` and degrade identically; pi
 reads better at the call site, and prefer the CLI form once a file is within a few hundred bytes
 of the ceiling (`wc -c` before committing).
 
+On win32 the CLI prints forward-slash paths (`C:/Users/…`) even though `sessionTmpPath` itself
+returns native ones. Snippets interpolate these values into `node -e` string literals, where a
+backslash path's `\U`/`\t` become escape sequences (#3040). Node, Git Bash, and the Windows file
+APIs all accept the forward-slash form.
+
 `{filename}` is the skill's own existing purpose-suffixed basename, unchanged from its current
 literal `/tmp/{filename}` form — e.g. `specify-parent-body.md`, `dispatch-groups.json`,
 `backlog-overview-open.json`. Only the directory a call site writes to changes; the filename each

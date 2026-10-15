@@ -87,6 +87,8 @@ function verificationSurface(changedPaths) {
 
 function needsBackstop(record) {
   if (!record || record.state !== 'CLOSED') return false;
+  // A not-planned or duplicate closure has nothing to accept — it is not a gap at all.
+  if (record.stateReason === 'NOT_PLANNED' || record.stateReason === 'DUPLICATE') return false;
   // A decomposed sub-issue's acceptance lives on its parent issue, not on itself.
   if (record.hasParent === true) return false;
   return dispositionState(record.labels) === 'none';

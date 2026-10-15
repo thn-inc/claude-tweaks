@@ -15,7 +15,7 @@ action is fully determined by the ID alone).
 
 No tool available to this plugin can create, list, or configure a cloud environment object
 directly (`RemoteTrigger` is scoped to `/v1/code/triggers` only) — this is always a human-browser,
-web-UI action. `agent-browser` (this plugin's default `/browse` backend) has no authenticated
+web-UI action. `playwright-cli` (this plugin's default `/browse` backend) has no authenticated
 claude.ai session, so every procedure below drives `/claude-tweaks:browse backend=chrome`
 specifically — this repo's existing documented exception for human-invoked, non-Routine browser
 automation. Every procedure below is interactive-only: if claude-in-chrome is unavailable (no

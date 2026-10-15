@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { composeBody, validateShaped, splitSections } = require('../../../plugin/bin/lib/compose-record/compose');
+const { shapeGate, PLACEHOLDER_PATTERNS } = require('../../../plugin/bin/lib/issues/materialize-format');
 
 const SHAPED = [
   '## Current State',
@@ -101,4 +102,72 @@ test('splitSections: line-anchored ## headings only — a mid-line "## " is not 
   const sections = splitSections('## Current State\n\ntext with ## not a heading inline\n\n## Deliverables\n\nmore');
   assert.equal(Object.keys(sections).length, 2);
   assert.match(sections['Current State'], /## not a heading inline/);
+});
+
+test('validateShaped characterization: exact gaps, in order, for a multi-gap body', () => {
+  const body = '## Deliverables\n\nTBD\n\n## Release Note\n\n   \n\n## Gotchas\n\nTODO and <!-- ambiguity: x -->';
+  assert.deepEqual(validateShaped(body), {
+    ok: false,
+    gaps: [
+      'missing section: ## Current State',
+      'missing section: ## Acceptance Criteria',
+      'empty section: ## Release Note',
+      'unresolved placeholder marker: TBD',
+      'unresolved placeholder marker: TODO',
+      'unresolved placeholder marker: <!-- ambiguity:',
+    ],
+  });
+});
+
+test('validateShaped characterization: empty body names all four sections missing', () => {
+  assert.deepEqual(validateShaped(''), {
+    ok: false,
+    gaps: [
+      'missing section: ## Current State',
+      'missing section: ## Deliverables',
+      'missing section: ## Acceptance Criteria',
+      'missing section: ## Release Note',
+    ],
+  });
+});
+
+test('validateShaped agrees with shapeGate on a ### Release Note subheading (one checker, #2827)', () => {
+  const body = SHAPED.replace('## Release Note', '### Release Note');
+  assert.equal(validateShaped(body).ok, shapeGate(body).ok);
+});
+
+test('validateShaped: a marker embedded in a longer word passes, as the gate\'s word-bounded regex does (#2827 intended change)', () => {
+  const body = SHAPED.replace('- [ ] Do the thing.', '- [ ] Close the TODOS list and the TBDs.');
+  assert.deepEqual(validateShaped(body), { ok: true, gaps: [] });
+  assert.equal(shapeGate(body).ok, true);
+});
+
+test('validateShaped: one gap per distinct placeholder marker, fixture built from PLACEHOLDER_PATTERNS', () => {
+  const [a, b] = PLACEHOLDER_PATTERNS.map((p) => p.marker);
+  const body = SHAPED.replace('- [ ] Do the thing.', `- [ ] first ${a} then ${b} here`);
+  assert.deepEqual(validateShaped(body).gaps, [
+    `unresolved placeholder marker: ${a}`,
+    `unresolved placeholder marker: ${b}`,
+  ]);
+  assert.deepEqual(shapeGate(body), { ok: false, missing: ['unresolved-placeholder'] });
+});
+
+test('PLACEHOLDER_PATTERNS union equals the gate\'s existing combined regex', () => {
+  assert.equal(
+    PLACEHOLDER_PATTERNS.map((p) => p.re.source).join('|'),
+    '\\bTBD\\b|\\bTODO\\b|<!--\\s*ambiguity:',
+  );
+});
+
+test('compose.js declares no section or placeholder list of its own (#2827)', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../../../plugin/bin/lib/compose-record/compose.js'), 'utf8');
+  assert.doesNotMatch(src, /REQUIRED_SECTIONS\s*=/);
+  assert.doesNotMatch(src, /PLACEHOLDER_MARKERS\s*=/);
+  assert.doesNotMatch(src, /ORIGINAL_REQUEST_RE\s*=/);
+});
+
+test('compose.js still exports REQUIRED_SECTIONS / PLACEHOLDER_MARKERS with their historical values', () => {
+  const m = require('../../../plugin/bin/lib/compose-record/compose');
+  assert.deepEqual(m.REQUIRED_SECTIONS, ['Current State', 'Deliverables', 'Acceptance Criteria', 'Release Note']);
+  assert.deepEqual(m.PLACEHOLDER_MARKERS, ['TBD', 'TODO', '<!-- ambiguity:']);
 });

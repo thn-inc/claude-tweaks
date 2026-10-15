@@ -33,6 +33,8 @@ test('parses repeatable --cmd plus --json, --log-dir, and --count-stamp', () => 
     changedFiles: false,
     run: null,
     cwd: null,
+    baseline: null,
+    baselineCmds: [],
   });
 });
 
@@ -191,4 +193,102 @@ test('#1928: --run is parsed as a value flag and defaults to null', () => {
 test('#1928: --run is a usage error with --stamp-status or --changed-files', () => {
   assert.throws(() => parseArgs(['--stamp-status', '--run', '/tmp/run-x']), UsageError);
   assert.throws(() => parseArgs(['--changed-files', '--run', '/tmp/run-x']), UsageError);
+});
+
+test('#2779: --cmd-env attaches KEY=VALUE to the named check only, repeatable, in either argv order', () => {
+  const got = parseArgs([
+    '--cmd-env', 'foo=MY_VAR=1',
+    '--cmd', 'foo=node check.js',
+    '--cmd', 'bar=node other.js',
+    '--cmd-env', 'foo=OTHER=two',
+  ]);
+  assert.deepStrictEqual(got.cmds, [
+    { name: 'foo', command: 'node check.js', env: { MY_VAR: '1', OTHER: 'two' } },
+    { name: 'bar', command: 'node other.js' },
+  ]);
+});
+
+test('#2779: a --cmd-env VALUE keeps later = signs and may be empty', () => {
+  const got = parseArgs(['--cmd', 'foo=x', '--cmd-env', 'foo=OPTS=a=b=c', '--cmd-env', 'foo=EMPTY=']);
+  assert.deepStrictEqual(got.cmds[0].env, { OPTS: 'a=b=c', EMPTY: '' });
+});
+
+test('#2779: a --cmd-env naming a check no --cmd declares is a UsageError naming the check and the declared set', () => {
+  assert.throws(
+    () => parseArgs(['--cmd', 'foo=x', '--cmd', 'bar=y', '--cmd-env', 'baz=MY_VAR=1']),
+    (err) => err instanceof UsageError
+      && /--cmd-env "baz" names no declared --cmd \(declared: foo, bar\)/.test(err.message),
+  );
+});
+
+test('#2779: malformed --cmd-env values are UsageErrors', () => {
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-env', 'foo']), UsageError);
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-env', '=MY_VAR=1']), UsageError);
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-env', 'foo=MY_VAR']), UsageError);
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-env', 'foo==1']), UsageError);
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-env', 'foo=MY VAR=1']), UsageError);
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-env']), UsageError);
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-env', 'foo=A=1', '--cmd-env', 'foo=A=2']), UsageError);
+});
+
+test('#2779: --cmd-env is a usage error in the read-only modes, which declare no check', () => {
+  assert.throws(() => parseArgs(['--stamp-status', '--cmd-env', 'foo=A=1']), UsageError);
+  assert.throws(() => parseArgs(['--changed-files', '--cmd-env', 'foo=A=1']), UsageError);
+});
+
+test('#2779: a variable named __proto__ stays plain data', () => {
+  const got = parseArgs(['--cmd', 'foo=x', '--cmd-env', 'foo=__proto__=1']);
+  assert.ok(Object.prototype.hasOwnProperty.call(got.cmds[0].env, '__proto__'));
+  assert.strictEqual(Object.getPrototypeOf(got.cmds[0].env), Object.prototype);
+});
+
+test('#2779: without --cmd-env no check carries an env key (unchanged parse shape)', () => {
+  const got = parseArgs(['--cmd', 'foo=x', '--cmd', 'bar=y']);
+  assert.deepStrictEqual(got.cmds, [{ name: 'foo', command: 'x' }, { name: 'bar', command: 'y' }]);
+  for (const c of got.cmds) assert.ok(!('env' in c));
+});
+
+test('#2779: USAGE names --cmd-env', () => {
+  assert.ok(USAGE.includes('--cmd-env <name>=<KEY=VALUE>'));
+});
+
+test('--baseline with --baseline-cmd parses (#3043)', () => {
+  const got = parseArgs(['--cmd', 'tests=npm test', '--baseline', 'origin/main', '--baseline-cmd', 'tests=node --test {file}']);
+  assert.strictEqual(got.baseline, 'origin/main');
+  assert.deepStrictEqual(got.baselineCmds, [{ name: 'tests', template: 'node --test {file}' }]);
+});
+
+test('an empty --baseline (an unset shell variable) is a usage error, never a silent no-adjudication (#3043)', () => {
+  assert.throws(() => parseArgs(['--cmd', 'tests=npm test', '--baseline', '', '--baseline-cmd', 'tests=node --test {file}']), /--baseline needs a ref, got an empty value/);
+});
+
+test('--baseline without --baseline-cmd is a usage error (#3043)', () => {
+  assert.throws(() => parseArgs(['--cmd', 'tests=npm test', '--baseline', 'origin/main']), /--baseline requires at least one --baseline-cmd/);
+});
+
+test('--baseline-cmd without --baseline is a usage error (#3043)', () => {
+  assert.throws(() => parseArgs(['--cmd', 'tests=npm test', '--baseline-cmd', 'tests=node --test {file}']), /--baseline-cmd requires --baseline/);
+});
+
+test('--baseline-cmd naming no --cmd is a usage error (#3043)', () => {
+  assert.throws(() => parseArgs(['--cmd', 'tests=npm test', '--baseline', 'x', '--baseline-cmd', 'web=node --test {file}']), /--baseline-cmd "web" names no declared --cmd/);
+});
+
+test('--baseline-cmd template without {file} is a usage error (#3043)', () => {
+  assert.throws(() => parseArgs(['--cmd', 'tests=npm test', '--baseline', 'x', '--baseline-cmd', 'tests=npm test']), /must contain \{file\}/);
+});
+
+test('duplicate --baseline-cmd name is a usage error (#3043)', () => {
+  assert.throws(() => parseArgs(['--cmd', 'tests=npm test', '--baseline', 'x', '--baseline-cmd', 'tests=a {file}', '--baseline-cmd', 'tests=b {file}']), /duplicate --baseline-cmd name: tests/);
+});
+
+test('--baseline and --baseline-cmd are rejected with --stamp-status and --changed-files, by the mode-conflict message (#3043)', () => {
+  const conflict = /apply to a check run — not to --stamp-status or --changed-files/;
+  assert.throws(() => parseArgs(['--stamp-status', '--baseline', 'x']), conflict);
+  assert.throws(() => parseArgs(['--changed-files', '--baseline', 'x']), conflict);
+  assert.throws(() => parseArgs(['--stamp-status', '--baseline-cmd', 'tests=node --test {file}']), conflict);
+});
+
+test('USAGE names --baseline and --baseline-cmd (#3043)', () => {
+  for (const flag of ['--baseline', '--baseline-cmd']) assert.ok(USAGE.includes(flag), flag);
 });

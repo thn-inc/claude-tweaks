@@ -18,6 +18,7 @@ const { parseManifestYaml } = require('../flow/manifest');
 const { parseDependencies } = require('../issues/record');
 const { runWithConcurrency } = require('../reconcile/gh-pool');
 const { parseRepo, repoSlug } = require('../repo-resolve');
+const { readRunStateWithParent } = require('../hooks/context');
 
 const PROBE_NAMES = ['residue', 'state', 'blastRadius', 'pr', 'recordLabels', 'claim', 'ledger', 'unblocked'];
 const BIN = path.join(__dirname, '..', '..');
@@ -53,7 +54,7 @@ const WORK_BACKEND_RE = /^work-backend:\s*(\S+)\s*$/m;
 // spray the CLI's own stderr, and its diagnostic still survives on
 // `err.stderr` for any consumer module that classifies a failure by message.
 function execSync(bin, args, { cwd } = {}) {
-  return execFileSync(bin, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  return execFileSync(bin, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 }
 
 function defaultGit(args, opts) {
@@ -72,7 +73,7 @@ function defaultGhSync(args, opts) {
 // resolves every key the pack needs.
 function defaultResolvePolicy(keys, cwd) {
   const out = {};
-  const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
   try {
     const { result } = resolvePolicyConfig({ git, readFile, keys });
@@ -217,19 +218,16 @@ function hasPrNumber(state) {
 
 // run-state.json, with the parent fallback a per-spec subdirectory needs: a
 // `spec-*/` run dir carries its own status but not the run's worktree or PR —
-// those live one level up, on the parent run's state (#1930 review C1).
+// those live one level up, on the parent run's state (#1930 review C1). The
+// rule itself is hooks/context.js's readRunStateWithParent (#2858), read
+// here through `deps`; `source` is 'parent' only when a field actually came
+// from there.
 function resolveState(deps, runDir) {
-  const own = readJson(deps, path.join(runDir, 'run-state.json'));
-  const complete = own && typeof own.worktree === 'string' && hasPrNumber(own);
-  if (!/^spec-/.test(path.basename(runDir)) || complete) {
-    return { state: own, source: own ? 'run-state.json' : 'unavailable' };
-  }
-  const parent = readJson(deps, path.join(path.dirname(runDir), 'run-state.json'));
-  if (!parent) return { state: own, source: own ? 'run-state.json' : 'unavailable' };
-  const merged = { ...(own || {}) };
-  if (typeof merged.worktree !== 'string' && typeof parent.worktree === 'string') merged.worktree = parent.worktree;
-  if (!hasPrNumber(merged) && hasPrNumber(parent)) merged.pr = parent.pr;
-  return { state: merged, source: 'parent' };
+  const { state, filled } = readRunStateWithParent(runDir, {
+    read: (dir) => readJson(deps, path.join(dir, 'run-state.json')),
+  });
+  if (filled.length) return { state, source: 'parent' };
+  return { state, source: state ? 'run-state.json' : 'unavailable' };
 }
 
 // `_shared/integration-branch.md`'s canonical ladder, minus the two ranks
@@ -387,7 +385,18 @@ function ledgerProbe(inputs, deps) {
   // present does the record-number boundary disambiguate a leftover
   // stranger ledger from an earlier, uncleaned run (#1930 review M5's
   // original false-positive fix) from this run's own.
-  const files = candidates.length <= 1 ? candidates : candidates.filter((f) => inputs.records.some((n) => namesRecord(f, n)));
+  let files = candidates.length <= 1 ? candidates : candidates.filter((f) => inputs.records.some((n) => namesRecord(f, n)));
+  // When 2+ candidates exist and NONE names any of this run's records at a
+  // boundary — the common case, since a real topic-slug ledger (the #2563
+  // AC1 shape) has no record-number convention for `namesRecord` to match —
+  // the filter above can't disambiguate at all. Reporting zero here would
+  // silently hide every one of this run's own open items behind an unrelated
+  // stray ledger (e.g. a fully-resolved file left over from an earlier,
+  // already-merged run). Fail toward over-counting instead: include every
+  // candidate, so a human reviewing `files` sees exactly what was counted
+  // and can correct it, rather than the gate silently passing on a false
+  // "nothing open."
+  if (candidates.length > 1 && files.length === 0) files = candidates;
   const totals = {
     open: 0, total: 0, byPhase: {}, files: files.map((f) => path.posix.join('docs', 'plans', f)),
     unrecognized: 0, unrecognizedValues: [],
