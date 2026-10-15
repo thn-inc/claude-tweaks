@@ -108,7 +108,7 @@ function errMessage(err) {
 }
 
 const realDeps = {
-  gh: (args) => execFileSync('gh', args, { encoding: 'utf8' }),
+  gh: (args) => execFileSync('gh', args, { encoding: 'utf8', windowsHide: true }),
   ghAvailable,
   remoteUrl,
   readFile: (f) => fs.readFileSync(f, 'utf8'),

@@ -10,8 +10,10 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
+// CRLF-normalized: a core.autocrlf checkout holds the doc CRLF in the working
+// tree (LF in the blob), and every fence regex below is `\n`-anchored.
 const DOC = fs.readFileSync(
-  path.join(ROOT, 'plugin', 'skills', 'test', 'verification.md'), 'utf8');
+  path.join(ROOT, 'plugin', 'skills', 'test', 'verification.md'), 'utf8').replace(/\r\n/g, '\n');
 const { parseArgs, UsageError } = require(
   path.join(ROOT, 'plugin', 'bin', 'lib', 'verify', 'args.js'));
 
@@ -58,6 +60,21 @@ function snippetArgv(snippet) {
   const tokens = afterScript.match(/(?:"[^"]*"|\S)+/g) || [];
   return tokens.map((t) => t.replace(/"/g, '').replace(/\$\([^)]*\)/g, '/dummy'));
 }
+
+// The Baseline adjudication section's invocation is an indented block, not a
+// fence — the fenced canonical invocation must stay the only fenced --cmd run.
+function extractBaselineSnippet() {
+  const hits = DOC.split('\n').filter((l) => /^ {4}node ".*bin\/verify\.js".*--baseline /.test(l));
+  assert.strictEqual(hits.length, 1, `expected exactly one indented bin/verify.js --baseline invocation, found ${hits.length}`);
+  return hits[0].trim();
+}
+
+test('the Baseline adjudication snippet parses clean through the real arg parser (#3043)', () => {
+  const parsed = parseArgs(snippetArgv(extractBaselineSnippet()));
+  assert.strictEqual(parsed.baseline, 'origin/main');
+  assert.deepStrictEqual(parsed.baselineCmds.map((b) => b.name), ['tests']);
+  assert.ok(parsed.cmds.some((c) => c.name === 'tests'));
+});
 
 test('the embedded snippet parses clean through the real arg parser (AC8)', () => {
   const argv = snippetArgv(extractSnippet());

@@ -12,7 +12,7 @@ const { execFileSync } = require('node:child_process');
 function defaultRunner(cwd) {
   return (args) => {
     try {
-      return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+      return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
     } catch {
       return null;
     }

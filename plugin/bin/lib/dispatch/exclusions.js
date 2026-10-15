@@ -9,6 +9,30 @@
 
 const fs = require('fs');
 
+const NOT_AN_ARRAY = 'not a JSON array';
+
+// #3104: the same read as readExclusions, but it reports *why* there are no
+// entries instead of collapsing absent and unreadable into []. dispatch #N must
+// not call a record "absent from this firing's queue" when the file that would
+// say otherwise could not be read. Silent: the caller renders the error itself.
+function readExclusionsStatus(path) {
+  let raw;
+  try {
+    raw = fs.readFileSync(path, 'utf8');
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return { status: 'absent', entries: [], error: null };
+    return { status: 'unreadable', entries: [], error: err.code || err.message };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    return { status: 'unreadable', entries: [], error: err.message };
+  }
+  if (!Array.isArray(parsed)) return { status: 'unreadable', entries: [], error: NOT_AN_ARRAY };
+  return { status: 'ok', entries: parsed, error: null };
+}
+
 // path -> entries, or [] on absent/unreadable (malformed JSON, not an array,
 // permission error) -- a read failure here must never throw and block a
 // dispatch firing; an empty exclusion set is always a safe degrade. A
@@ -19,21 +43,17 @@ const fs = require('fs');
 // queue-pull-script.md's truncate step, re-enabling the infinite-reselect
 // bug firing-exclusion.md exists to prevent, so it degrades loud (stderr),
 // never loud enough to throw and block the firing itself.
+// #3104: readExclusionsStatus is the variant that reports absent vs unreadable.
 function readExclusions(path) {
-  try {
-    const raw = fs.readFileSync(path, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
+  const r = readExclusionsStatus(path);
+  if (r.status === 'unreadable') {
+    if (r.error === NOT_AN_ARRAY) {
       console.error(`readExclusions: ${path} did not contain a JSON array -- treating as empty`);
-      return [];
+    } else {
+      console.error(`readExclusions: ${path} unreadable (${r.error}) -- treating as empty`);
     }
-    return parsed;
-  } catch (err) {
-    if (err && err.code !== 'ENOENT') {
-      console.error(`readExclusions: ${path} unreadable (${err.code || err.message}) -- treating as empty`);
-    }
-    return [];
   }
+  return r.entries;
 }
 
 // Appends one {reason, records, detail} entry, creating the file (as
@@ -68,5 +88,5 @@ function groupIsExcluded(group, entries, reasons) {
 }
 
 module.exports = {
-  readExclusions, appendExclusion, excludedNumbers, groupIsExcluded,
+  readExclusions, readExclusionsStatus, appendExclusion, excludedNumbers, groupIsExcluded,
 };
