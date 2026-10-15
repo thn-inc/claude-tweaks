@@ -32,6 +32,9 @@ test('lens 3f carries a vacuity-evidence diagnostic requiring observed execution
   assert.match(line, /docstring/);
   assert.match(line, /throwaway copy/);
   assert.match(line, /never in the shared tree/);
+  assert.match(line, /`git worktree remove`/);
+  assert.match(line, /never mutate the shared tree as a substitute/);
+  assert.match(line, /errored or crashed/);
 });
 
 test('the vacuity bullet sits directly after the Discrimination diagnostic', () => {
@@ -66,7 +69,9 @@ test('the Direct-verification override excludes lens 3f vacuity findings from ev
 test('step3-routing lists the lens 3f no-execution-evidence source among unconfirmed sources', () => {
   const start = routing.indexOf('**`unconfirmed` findings can originate from several sources**');
   assert.ok(start !== -1, 'unconfirmed-sources list must exist');
-  const list = routing.slice(start, routing.indexOf('**Effort-tier surfacing.**', start));
+  const end = routing.indexOf('**Effort-tier surfacing.**', start);
+  assert.ok(end !== -1, 'end-of-list anchor must exist');
+  const list = routing.slice(start, end);
   assert.match(list, /^- Vacuity claim without execution evidence \(lens 3f/m);
 });
 
@@ -81,6 +86,7 @@ test('step3-routing states test-removal fixes route STAGED at every ceiling, ove
   assert.match(para, /prose-exempt bump/);
   assert.match(para, /KEPT-PROMPT/);
   assert.match(para, /test-removal override — staged/);
+  assert.match(para, /counts as a removal unless the two match one-to-one as the same case/);
   const prose = auto.indexOf('Also resolve `review-auto-apply-prose-exempt`');
   assert.ok(prose !== -1 && prose < auto.indexOf(para), 'the override follows the prose-exempt paragraph');
 });
@@ -96,5 +102,5 @@ test('the auto-mode contract row for /review Step 3 Routing names the test-remov
   const row = contract.split('\n').find((l) => l.startsWith('| Code review findings (`/review` Step 3 Routing)'));
   assert.ok(row, 'contract row must exist');
   assert.match(row, /removes test cases or assertions/);
-  assert.match(row, /removes test cases or assertions → `STAGED` at every ceiling/);
+  assert.match(row, /removes test cases or assertions → `STAGED` at every ceiling, `KEPT-PROMPT` when critical/);
 });
