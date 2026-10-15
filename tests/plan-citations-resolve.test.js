@@ -95,3 +95,32 @@ test('/tidy keeps a plan a repo file still cites, naming the citing file, at sca
   assert.ok(keepRow, 'routing table must map a cited-plan Keep');
   assert.match(keepRow, /Auto \(no-op, always surfaced\)/);
 });
+
+const WRAP_UP = path.join(ROOT, 'plugin', 'skills', 'wrap-up');
+
+function readWrapUp(file) {
+  return fs.readFileSync(path.join(WRAP_UP, file), 'utf8').replace(/\r\n/g, '\n');
+}
+
+test('/wrap-up prune-after-wrapup keeps a plan a repo file still cites, naming the citing file, instead of deleting it (#3109)', () => {
+  const cleanup = readWrapUp('cleanup-procedures.md');
+  const policy = cleanup.slice(
+    cleanup.indexOf("**Item 1's plan-retention policy"),
+    cleanup.indexOf("**Item 5's two framings"),
+  );
+  assert.match(
+    policy,
+    /before deleting, run the same tracked-files citation check `skills\/tidy\/plan-citation-check\.md` already runs/,
+    'prune-after-wrapup must route every plan delete through the same citation check tidy uses, cited rather than restated',
+  );
+  assert.match(
+    policy,
+    /keep the plan — never delete it — and stage a `staged\/plan-citation-\{n\}\.md` proposal for the Wrap-Up Review Console naming every citing file/,
+    'a cited plan must be kept and staged for the Review Console, naming the citing file',
+  );
+  assert.match(
+    policy,
+    /the check itself errors \(any exit other than 0 or 1[^)]*\): keep the plan/,
+    'a citation-check error must never fall through to a delete',
+  );
+});
