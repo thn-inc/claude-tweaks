@@ -111,7 +111,7 @@ test('simplification fragment carries test-oracle constraint', () => {
 
 test('/simplify dispatch Constraints line carries the test-oracle clause', () => {
   const skill = readSkill('simplify');
-  const step2Start = skill.indexOf('## Step 2:');
+  const step2Start = skill.search(/^## Step 2:/m);
   assert.ok(step2Start !== -1, 'Step 2 exists');
   const fencedBlockStart = skill.indexOf('```', step2Start);
   assert.ok(fencedBlockStart !== -1, 'Fenced block exists in Step 2');
