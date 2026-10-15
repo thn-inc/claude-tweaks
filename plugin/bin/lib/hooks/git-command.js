@@ -444,18 +444,20 @@ function gitTargets(command, cwd) {
 }
 
 // Best-effort detection of non-git, non-Edit/Write direct file-write shapes in
-// a Bash command. Every shape here is one hooks.json can ALSO gate structurally
-// via an if-matcher (`Bash(cp *)`, `Bash(sed *)`, ...) — that pairing is the
-// whole design constraint. A branch here without a matcher there is dead code,
-// because the hook process never spawns; that asymmetry is exactly what let
-// `sed -i` bypass the gate silently for months (#70). The test in
-// tests/hooks-gate-coverage.test.js now asserts the two lists agree.
+// a Bash command. Every shape here is a word in GUARDED_PROGRAM_WORDS.write (below),
+// from which bash-prefilter.js derives PRE_TOOL_USE_WORDS — so a shape added there
+// is covered by construction. The pairing is the design constraint: a branch
+// here whose command word the prefilter skips is dead code, because bin/hooks.js
+// exits before the full handler loads; that asymmetry is exactly what let
+// `sed -i` bypass the gate silently for months (#70). The differential corpus in
+// tests/hooks-bash-prefilter.test.js pins the pairing against this parser (#3092).
 //
 // Still NOT covered, and deliberately (see the coverage block in
-// skills/_shared/policy-schema.md for the measured rationale):
-//   - bare shell redirection (`>`, `>>`) — no command word for an if-matcher to
-//     recognize, so catching it means firing the hook on EVERY Bash call.
-//     Measured at 42 ms idle / 68 ms under three-way contention per call.
+// skills/_shared/policy-schema-coverage.md for the measured rationale):
+//   - bare shell redirection (`>`, `>>`) — no command word for the prefilter to
+//     key on, so catching it means running the full handler on EVERY Bash call.
+//     The measured marginal cost (full path minus skip path) is in
+//     skills/_shared/policy-schema-coverage.md.
 //   - `python -c`, `sh -c`, `awk` program strings — the write target lives
 //     inside an opaque program and is not statically knowable at any cost.
 //
@@ -515,11 +517,32 @@ function hasInPlaceFlag(flags) {
 // The Bash write shapes this function recognizes. Load-bearing, not
 // descriptive: the guard below drops any segment whose command word is absent
 // here, so adding a branch without adding its name makes that branch dead
-// code. pre-tool-use.js's GATE_COVERAGE re-exports this list, and
+// code. pre-tool-use.js's GATE_COVERAGE re-exports this list, GUARDED_PROGRAM_WORDS.write
+// (below) carries it into bash-prefilter.js's PRE_TOOL_USE_WORDS, and
 // tests/hooks-gate-coverage.test.js pins it to the prose in
-// skills/_shared/policy-schema.md — so widening this array is what forces the
+// skills/_shared/policy-schema-coverage.md — so widening this array is what forces the
 // documentation to be updated (#138).
 const WRITE_SHAPES = Object.freeze(['cp', 'mv', 'tee', 'sed', 'perl', 'install', 'ln', 'truncate', 'dd']);
+
+// Every program word a guard parser in this module keys on, by parser family —
+// bash-prefilter.js derives BOTH of its word sets from this, so a parser keyed on
+// a new word is reached by adding it here, never by editing a second list (#3092).
+//   git:   findGitLead's lead (`git`, or a path ending `/git`, which the prefilter
+//          reaches by basename) and the `env` wrapper it walks past —
+//          gitTargets, resolvedGitSegments, and teardownTargets (pre-tool-use.js).
+//          `env` is superset hygiene, kept for parity with the retired
+//          `Bash(env -*)` predicate: every env-wrapped command these parsers
+//          resolve also carries `git`, so no test can witness it alone.
+//   mkdir: mkdirTargets' command word
+//   write: fileWriteTargets' shapes
+// tests/hooks-bash-prefilter.test.js's differential corpus runs the real parsers
+// and fails when a targeted command's word is missing here — for the commands it
+// lists, so a parser keyed on a new word also needs a corpus line there.
+const GUARDED_PROGRAM_WORDS = Object.freeze({
+  git: Object.freeze(['git', 'env']),
+  mkdir: Object.freeze(['mkdir']),
+  write: WRITE_SHAPES,
+});
 
 // Per-shape value-consuming flags. Wrong entries here shift which token is read
 // as a positional, so each is taken from the command's own documented options
@@ -683,7 +706,7 @@ function fileWriteTargets(command, cwd) {
 
 // mkdir target parser — deliberately separate from WRITE_SHAPES/fileWriteTargets
 // (#692): WRITE_SHAPES feeds the worktree-always Bash-write gate's coverage,
-// which tests/hooks-gate-coverage.test.js pins to skills/_shared/policy-schema.md's
+// which tests/hooks-gate-coverage.test.js pins to skills/_shared/policy-schema-coverage.md's
 // prose; folding mkdir in there would widen that unrelated gate as a side effect.
 // The pipeline-shadow guard (pre-tool-use.js) is this function's only consumer.
 // mkdir takes no flag that both consumes a value AND could plausibly be confused
@@ -704,5 +727,5 @@ function mkdirTargets(command, cwd) {
 }
 
 module.exports = {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, WRITE_SHAPES,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS,
 };

@@ -423,7 +423,7 @@ function listTrackedFiles(rootDir) {
     raw = execFileSync(
       'git',
       ['-C', rootDir, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000, maxBuffer: 10 * 1024 * 1024 },
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000, maxBuffer: 10 * 1024 * 1024, windowsHide: true },
     );
   } catch (err) {
     const stderr = err && err.stderr ? String(err.stderr).trim() : '';
