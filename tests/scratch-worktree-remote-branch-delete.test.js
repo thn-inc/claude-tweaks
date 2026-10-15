@@ -147,3 +147,9 @@ test('cleanup-procedures-execution.md Section C no longer claims the ancestry ch
   assert.match(section, /gh pr view \{number\} --repo \{owner\}\/\{repo\} --json mergeCommit/);
   assert.match(section, /git diff HEAD \{merge-commit\}/);
 });
+
+test('scratch-worktree.md §6 states why its ancestry check does not need Section C\'s squash-merge correction', () => {
+  const step6 = SCRATCH.slice(SCRATCH.indexOf('## 6. Tearing down'), SCRATCH.indexOf('## 7. Shell constraint'));
+  assert.match(step6, /Cross-caller `pr-first` check/);
+  assert.match(step6, /cleanup-procedures-execution\.md`'s Section C/);
+});
