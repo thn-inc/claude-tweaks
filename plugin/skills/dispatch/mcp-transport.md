@@ -53,19 +53,17 @@ Feeding a truncated labels array into `parseRecordFacets` (`bin/lib/issues/recor
 `bot:in-progress` label is dropped by the truncation looks falsely eligible to a headless firing,
 risking a double-claim of a record another session already owns.
 
-**Required workaround** — promoted the same way #2523's native blocked-by workaround (above) was
-promoted in this file: before trusting any MCP-sourced `list_issues` result's labels for an
+**Required workaround** — promoted the same way #2523's native blocked-by workaround (below) was
+promoted in this file: before parsing facets from an MCP-sourced `list_issues` result for an
 eligibility or exclusion decision, cross-check each surviving candidate's labels individually via
-`mcp__github__issue_read` (`get` method's `labels` field, or the `get_labels` method) before parsing
-facets from it — never trust the bulk `list_issues` labels array alone when `fields` was passed.
-Whether omitting `fields` entirely from the `list_issues` call avoids the truncation (the bulk,
-unprojected response may return full labels) is **unverified** — plausible, but not confirmed
-against a live sandbox — so it is not yet the recommended default; the per-candidate cross-check
-above is the standing required mitigation until a live run confirms the omission fix is safe.
+`mcp__github__issue_read` (`get` method's `labels` field, or the `get_labels` method) — never trust
+the bulk `list_issues` labels array alone when `fields` was passed.
 
-Re-open this section once a live run confirms whether omitting `fields` from `list_issues` avoids
-the truncation — at that point, promote fields-omission to the default and update
-`queue-pull-script.md`'s MCP-path note accordingly.
+Omitting `fields` entirely (the unprojected response may return full labels) is plausible but
+**unverified** against a live sandbox, so the per-candidate cross-check stays the required
+mitigation. Re-open this section once a live run confirms whether omission avoids the truncation —
+at that point, promote fields-omission to the default and update `queue-pull-script.md`'s MCP-path
+note accordingly.
 
 ## Step 2 — cross-PR overlap report (#1579)
 
