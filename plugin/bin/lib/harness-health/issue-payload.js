@@ -84,7 +84,15 @@ function buildPremiseCheck(finding, targetPath) {
 // template-conformance/best-practice categories; every other finding (a
 // skill drift finding, a new-skill candidate) carries no templateSource and
 // this parameter is simply unused for it.
-function toIssuePayload(finding, verifiedAsOf, pluginVersion) {
+// options.premiseSelfCheck (#2633, optional): (command) -> boolean, injected
+// by bin/harness-health.js's cmdValidateFindings with health-core/
+// premise-self-check.js's real shell runner. Called once, only when
+// buildPremiseCheck composed a command; false drops the Premise-check: line
+// (the command doesn't read "unresolved" right now, so it would auto-close
+// the record at its first materialize). Absent, the line is kept exactly as
+// composed — this module never spawns a shell itself, so its own unit tests
+// stay shell-free.
+function toIssuePayload(finding, verifiedAsOf, pluginVersion, options = {}) {
   const isNewSkill = finding.kind === 'new-skill';
   const assetLabel = ASSET_TYPE_LABELS[finding.assetType] || finding.assetType;
   const categoryLabel = CATEGORY_LABELS[finding.category] || finding.category;
@@ -126,7 +134,10 @@ function toIssuePayload(finding, verifiedAsOf, pluginVersion) {
   // no section to bundle by, so finding.relatedSections is always absent there.
   const relatedBlocks = buildRelatedBlocks(finding.relatedSections);
 
-  const premiseCheck = buildPremiseCheck(finding, finding.path);
+  let premiseCheck = buildPremiseCheck(finding, finding.path);
+  if (premiseCheck && options.premiseSelfCheck && !options.premiseSelfCheck(premiseCheck)) {
+    premiseCheck = undefined;
+  }
 
   const body = specShapedBody({
     header: kindLine,

@@ -10,13 +10,14 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const SKILL_PATH = path.join(REPO_ROOT, 'plugin', 'skills', 'intake', 'SKILL.md');
 const DUMP_PATH = path.join(REPO_ROOT, 'tests', 'fixtures', 'intake-sample-dump.md');
 const EXPECTED_PATH = path.join(REPO_ROOT, 'tests', 'fixtures', 'intake-sample-dump.expected.md');
 
-const read = (p) => fs.readFileSync(p, 'utf8');
+const read = (p) => readText(p);
 const SKILL = read(SKILL_PATH);
 
 const VERDICT_ORDER = ['drop', 'shipped', 'absorb:#N', 'upstream', 'upstream:<owner/name>', 'remember', 'file', 'nudge', 'not-here'];

@@ -27,7 +27,7 @@
 const { execFileSync } = require('child_process');
 
 function defaultRunner(args) {
-  return execFileSync('gh', args, { encoding: 'utf8' });
+  return execFileSync('gh', args, { encoding: 'utf8', windowsHide: true });
 }
 
 // Shared skeleton both probes below follow: call the runner with a fixed args

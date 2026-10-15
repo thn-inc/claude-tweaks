@@ -7,8 +7,16 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
+const fs = require('node:fs');
+const path = require('node:path');
+
 const { buildWorklist } = require('../../../plugin/bin/lib/wrap-up/engine-plan');
-const { renderTrace, renderConsoleSections, strictCheck, FORBIDDEN_VOCABULARY } = require('../../../plugin/bin/lib/wrap-up/engine-render');
+const {
+  renderTrace, renderConsoleSections, strictCheck, FORBIDDEN_VOCABULARY,
+  PROCEDURE_HEADS, resolveProcedureHeadPath,
+} = require('../../../plugin/bin/lib/wrap-up/engine-render');
+
+const PLUGIN_ROOT = path.join(__dirname, '..', '..', '..', 'plugin');
 
 const FACTS = {
   isRepo: true, changedFiles: ['src/a.js', 'src/b.js'], renamedDeleted: ['old.md'],
@@ -535,4 +543,28 @@ test('renderConsoleSectionsMulti with a single spec matches renderConsoleSection
     .join('\n');
 
   assert.strictEqual(multi.markdown, expectedMulti);
+});
+
+// --- #2546: procedure-head registry ---
+
+test('resolveProcedureHeadPath resolves every registered name to a real file under the plugin root', () => {
+  for (const [name, relPath] of Object.entries(PROCEDURE_HEADS)) {
+    assert.strictEqual(resolveProcedureHeadPath(name), relPath, `registry mismatch for ${name}`);
+    assert.ok(
+      fs.existsSync(path.join(PLUGIN_ROOT, relPath)),
+      `${name} -> ${relPath} does not exist under the plugin root`,
+    );
+  }
+});
+
+test('resolveProcedureHeadPath returns null for an unregistered name', () => {
+  assert.strictEqual(resolveProcedureHeadPath('not-a-real-one'), null);
+  assert.strictEqual(resolveProcedureHeadPath(''), null);
+});
+
+test('PROCEDURE_HEADS names exactly the four files split by #2546, no more, no fewer', () => {
+  assert.deepStrictEqual(
+    Object.keys(PROCEDURE_HEADS).sort(),
+    ['cleanup-procedures-execution', 'curation-engine', 'pr-first-merge', 'review-console'].sort(),
+  );
 });

@@ -254,7 +254,7 @@ test('multi-spec pre-flight and dispatch cite bin/preflight-records.js (#723)', 
   assert.match(read('plugin/skills/dispatch/SKILL.md'), /bin\/preflight-records\.js/);
 });
 
-test('claim-targets.md mandates a decisions.md log line on successful claim, and names the missing mechanical backstop (#2492)', () => {
+test('claim-targets.md mandates a decisions.md log line on successful claim, and documents the mechanical backstop that now enforces it (#2492, #2526)', () => {
   const content = read('plugin/skills/flow/claim-targets.md');
   const claimSection = content.split('## Claim every named target')[1];
   assert.ok(claimSection, 'claim section heading must exist');
@@ -263,11 +263,14 @@ test('claim-targets.md mandates a decisions.md log line on successful claim, and
   assert.match(claimSection, /Log the claim \(mandatory, #2492\)/);
   assert.match(claimSection, /bin\/log-decision\.js.*--run "\$PIPELINE_RUN_DIR" --status AUTO/s);
   assert.match(claimSection, /--step "Step 2\.8"/);
-  // The known-gap note: no mechanical backstop exists yet, unlike the
-  // sibling worktree/PR bookkeeping stamps checkBookkeepingStampsGate already
-  // enforces — this must stay an honest "not yet enforced" note, not a claim
-  // that the gap is closed.
-  assert.match(claimSection, /Known gap: this step has no mechanical backstop today/);
+  // The mechanical backstop note: checkBookkeepingStampsGate now enforces
+  // this stamp (closed by #2526, shortly after #2492 documented the gap) —
+  // this must assert the gap is CLOSED, not merely that it is discussed.
+  assert.match(claimSection, /Mechanical backstop.*#2526/s);
+  assert.doesNotMatch(claimSection, /this step has no mechanical backstop today/);
   assert.match(claimSection, /checkBookkeepingStampsGate/);
+  assert.match(claimSection, /hasLoggedClaim/);
   assert.match(claimSection, /claims\/issue-\{n\}\.json/);
+  assert.match(claimSection, /2026-09-14/);
+  assert.match(claimSection, /#2329/);
 });

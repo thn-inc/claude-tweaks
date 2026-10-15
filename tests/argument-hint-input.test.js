@@ -29,7 +29,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { listSkillDirs } = require('../plugin/bin/lib/skill-audit/skill-catalog');
-const { extractArgumentHint } = require('../plugin/bin/lib/skill-audit/argument-hint');
+const { extractArgumentHint, inputSectionBody } = require('../plugin/bin/lib/skill-audit/argument-hint');
 
 const ROOT = path.join(__dirname, '..');
 const SKILLS_DIR = path.join(ROOT, 'plugin', 'skills');
@@ -103,19 +103,6 @@ function isPlaceholderKey(key) {
   if (/^<[^>]*>(\.\.\.)?$/.test(key)) return true;
   if (key.startsWith('#')) return true;
   return false;
-}
-
-// Returns the text between the `## Input` heading and the next `## `
-// heading (or end of file). No `\Z`/lookahead-to-end trick -- JS regex has
-// neither, so this scans heading start indices directly instead.
-function inputSectionBody(content) {
-  const headings = [...content.matchAll(/^## .*$/gm)];
-  const start = headings.find((m) => m[0] === '## Input');
-  if (!start) return null;
-  const startIdx = start.index + start[0].length;
-  const next = headings.find((m) => m.index > start.index);
-  const endIdx = next ? next.index : content.length;
-  return content.slice(startIdx, endIdx);
 }
 
 test('every skill declaring argument-hint has an ## Input section', () => {

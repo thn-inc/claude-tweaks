@@ -26,6 +26,7 @@
 | docs/plans/*.md | Per-run pipeline ledgers (spec/record scoping, resolve-gate state) | *(no auto-detect — generated per pipeline run by `/claude-tweaks:ledger`)* |
 | docs/superpowers/plans/*.md, docs/superpowers/specs/*.md | Execution plans and design docs produced and consumed by the pipeline (`/superpowers:writing-plans`, `/superpowers:brainstorming`) | *(no auto-detect — generated per run; consumed artifacts are deleted at wrap-up)* |
 | docs/skill-authoring.md | Skill-file authoring conventions — structure, frontmatter, interaction patterns, CSC | `plugin/skills/**/*.md` |
+| docs/reference/*.md | Standalone reference docs backing a skill/doc checklist (e.g. `claude-quality-levers.md`, cited by docs/skill-authoring.md's Model-version prompting notes checklist) | *(no auto-detect — hand-curated reference, revisited when the checklist it backs is run)* |
 | docs/releasing.md | Release procedure | `plugin/bin/release-*.js`, `plugin/bin/lib/release/**`, `plugin/bin/lib/release-preflight/**`, `plugin/bin/lib/release-local/**`, `plugin/skills/release/**` |
 | docs/demo-evidence/*.md | Per-record demo verification evidence produced by `/claude-tweaks:demo` | *(no auto-detect — generated per record by `/claude-tweaks:demo`)* |
 | docs/reports/*.md | Period-scoped "what shipped" activity reports produced by `/claude-tweaks:activity` — its default archive path; the directory does not exist until the first run creates it, so a missing `docs/reports/` is not a registry break | *(no auto-detect — generated on demand by `/claude-tweaks:activity`)* |

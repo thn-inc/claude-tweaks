@@ -4,6 +4,9 @@ files:
   - plugin/skills/tidy/step-6-interactive.md
   - plugin/skills/tidy/SKILL.md
   - plugin/skills/tidy/scan-procedures.md
+  - plugin/skills/tidy/collection-routing.md
+  - plugin/skills/tidy/release-note-repair.md
+  - plugin/bin/release-note-repair.js
   - plugin/bin/lib/reconcile/release-merged.js
   - plugin/bin/lib/reconcile/archive-branches.js
   - plugin/bin/lib/reconcile/prune-remote.js
@@ -25,8 +28,9 @@ files:
 - **Expect:** No approval prompt for any of this — these are reconcile's background-convergence writes, outside the skill-side auto-mode contract; tidy only reports the results. A preflight or budget skip is a check-set-wide `unknown`, not a clean pass — a report reading "nothing to converge" after one must not be trusted as "reconcile ran and found nothing" without also checking `decisions.md`/`events.jsonl` for the skip reason.
 
 ### 2. Findings route by the table, not judgment
-- **Action:** Each scan finding routes per `step-6-auto.md`'s tier table (default `moderate`): reversible git-tracked cleanups auto-apply, outward-facing GitHub writes stage, no-op findings surface with their command.
-- **Expect:** The section a finding lands in is a stated function of its routing outcome (bucket mapping) — executed/converged → Applied; staged-executable → Approve; command-carrying no-ops → Yours; Keep/clean scans → Clean (counted, never itemized). Nothing renders information-only.
+- **Action:** Each scan finding routes per `step-6-auto.md`'s tier table (default `moderate`): reversible git-tracked cleanups and the additive Release Note repair (`[release-note]`, snapshot first) auto-apply, every other outward-facing GitHub write stages, no-op findings surface with their command.
+- **Expect:** The section a finding lands in is a stated function of its routing outcome (bucket mapping) — executed/converged → Applied; staged-executable → Approve; command-carrying no-ops → Yours; Keep/clean scans → Clean (counted, never itemized). Nothing renders information-only. A plan that a tracked repo file still cites is never deleted, even when its spec shipped: `git grep` of its basename (excluding `docs/superpowers/plans/` and `.claude-tweaks/`) finds the citation, and the plan lands in Yours. Its row names the plan and every citing file, with a `git grep -nF -- '{basename}'` command, so the maintainer can annotate or remove the citation and let the next sweep delete it (#3101).
+- **Red flags:** a plan with a code or ADR citation listed under Applied as `deleted`; a cited plan counted silently in Clean with no citing file named; a plan deleted after the citation grep exited with anything other than 0 or 1 (a grep that could not run keeps the plan as cited-unverified, in the same Yours row with the error in place of the citing files).
 
 ### 3. The report renders before any question
 - **Action:** The hard gate requires the rendered report in the same response, above any `AskUserQuestion`.
@@ -34,7 +38,7 @@ files:
 
 ### 4. Next Actions close the loop
 - **Action:** The plain-markdown `## Next Actions` block derives from the report: an "Approve ({N})" line first (bolded, recommended) when Approve is non-empty, then Yours *groups* — one line per group in report order, carrying the group's batch line, the first line of its paste block, or its ref-less line (total handoff capped at four lines) — then the help dashboard — no closing question.
-- **Expect:** A finding class that keeps staging run after run reads as a missing routing rule (the principle stated once in `step-6-auto.md`'s preamble) — the Approve bucket should trend empty as routing rows (or reconcile checks) absorb recurring classes; the durable exception is outward-facing GitHub writes, forbidden at every tier by the auto-mode contract.
+- **Expect:** A finding class that keeps staging run after run reads as a missing routing rule (the principle stated once in `step-6-auto.md`'s preamble) — the Approve bucket should trend empty as routing rows (or reconcile checks) absorb recurring classes; the durable exception is outward-facing GitHub writes, forbidden at every tier by the auto-mode contract bar its one named carve-out (the Fill Release Note row).
 
 ### 5. A wide sweep condenses instead of flooding the chat
 - **Action:** A full sweep whose report would exceed 40 lines (a dozen-plus Yours records across several groups is enough — every single-ref record costs a row plus a paste line) writes the whole report to `{run-dir}/report.md` and sends a ~20-line condensed report: Approve in full, Yours as group heads with counts (plus batch lines), Applied and Clean collapsed to counts, and a `Full report:` footer.
@@ -43,6 +47,8 @@ files:
 ## Origin
 - Created during build of #695 (tidy standalone-auto report shape)
 - Updated during build of #2252 (Reconcile under squash): Step 1 now names the second merged-in-substance proof — squash provenance via the PR's own merge commit — beside cherry-equivalence for both branch checks; `plugin/bin/lib/reconcile/squash-provenance.js` added to `files:`
+- Updated during build of #2828 (tidy Release-Note repair): Steps 2 and 4 name the Fill Release Note carve-out; `plugin/skills/tidy/release-note-repair.md` and `plugin/bin/release-note-repair.js` added to `files:`
+- Updated during build of #3101 (tidy keeps a cited plan): Step 2 names the cited-plan Keep, routed to Yours with its citing files; `plugin/skills/tidy/collection-routing.md` added to `files:`
 
 ## Example render
 

@@ -6,13 +6,13 @@
 // every pattern against the frozen pre-change excerpt below.
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const specTemplate = fs.readFileSync(path.join(ROOT, 'plugin/skills/specify/spec-template.md'), 'utf8');
-const shapingMode = fs.readFileSync(path.join(ROOT, 'plugin/skills/specify/shaping-mode.md'), 'utf8');
+const specTemplate = readText(path.join(ROOT, 'plugin/skills/specify/spec-template.md'));
+const shapingMode = readText(path.join(ROOT, 'plugin/skills/specify/shaping-mode.md'));
 
 // The exact snippet the paragraph pins (copied from the edit's replacement text).
 const SNIPPET = 'grep -rln "{basename}" plugin/bin plugin/hooks scripts tools 2>/dev/null';

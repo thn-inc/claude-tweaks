@@ -43,7 +43,7 @@ docs-health/declined.json        # same shape/consequence as harness-health's ab
 ## Mechanism
 
 `bin/lib/health-core/durable-state.js`'s `createDurableState(skillName, { includeRemembered, includeDeclined } = {})`
-returns `{ readState(root), writeState(root, mutatorFn) }`:
+returns `{ readState(root), writeState(root, mutatorFn), writeStateLocal(root, mutatorFn), pushState(root) }`:
 
 - **`readState`** — `git fetch origin health-state`, then `git show origin/health-state:<path>`
   per file. Degrades to `{}`/`[]` defaults if the branch or a file doesn't exist yet — never
@@ -67,6 +67,17 @@ returns `{ readState(root), writeState(root, mutatorFn) }`:
   cursor/run-history update) then exhausts its retries, the un-dequeued entry survives in
   `retry-queue.json` and the next firing's drain re-files it, creating a real duplicate issue
   rather than a safely-redone no-op.
+- **`writeStateLocal`/`pushState`** (#2545) — a local-only/explicit-push split for a caller that
+  must not push `health-state` as a side effect of its own call (a fan-out judge calling once per
+  analysed item, e.g. `harness-health.js validate-findings`). `writeStateLocal` commits the
+  mutation onto this namespace's own `refs/heads/health-state-local-{namespace}` branch — never
+  `origin` — with no retry loop (there is no remote race to retry against). `pushState` ships
+  everything a namespace has accumulated on that local ref to `origin/health-state` in exactly one
+  push, re-anchored onto `origin`'s current tip at push time so a sibling namespace's write that
+  landed while this one was accumulating locally is preserved. Currently used by
+  `harness-health.js`'s `validate-findings`/`push-cursor` pair only — `writeState`'s existing
+  callers (`cmdMark` and the other three health skills) are unaffected and keep pushing on every
+  call.
 - `includeRemembered` (default `false`) gates whether `remembered.json` is ever read or written
   at all for this skill — a property decided once, at `createDurableState` call time, not
   inferred per-write from whether the in-memory state object happens to carry a `remembered`

@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { execFileSync } = require('child_process');
+const { readText } = require('./helpers/read-skill');
 
 // #414: Sweep backstop — unarmed ready PRs, unsettled runs, tidy housekeeping
 // auto-merge grant. Prose-as-implementation, same convention as the other
@@ -14,7 +15,7 @@ const { execFileSync } = require('child_process');
 // be copy-paste executable).
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 const SCAN = read('plugin', 'skills', '_shared', 'github-pr-scan.md');
 const STEP6 = read('plugin', 'skills', 'tidy', 'step-6-auto.md');
 const TIDY_SKILL = read('plugin', 'skills', 'tidy', 'SKILL.md');

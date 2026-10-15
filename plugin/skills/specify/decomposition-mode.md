@@ -113,42 +113,7 @@ For each major section/feature in the design doc, classify coverage against the 
 
 **For each item with overlap:**
 
-### Auto mode (policy lookup)
-
-When a pipeline run directory exists, resolve `overlap` — `OVERLAP=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values --run "$PIPELINE_RUN_DIR" overlap)`. Apply per policy:
-
-| Policy | Action | Log entry |
-|---|---|---|
-| `companion` (default) | Add a new sub-issue to the Step 2 work-unit set, noting its dependency on the overlapping record — the record itself is created with the rest of the batch in Step 3, and its `Blocked by #N` link is wired in Step 4's linking pass; no separate write here. Reversible — the sub-issue is its own record. | `AUTO {time} — Step 1: overlap "{section}" ↔ record {ref} resolved as companion sub-issue, Blocked by {ref}.` |
-| `skip` | Auto-skip — don't create a sub-issue for this section. Note in summary. | `AUTO {time} — Step 1: overlap "{section}" ↔ record {ref} resolved as skip — already covered.` |
-| `extend` | Stage as `staged/specify-overlap-{ref}.md` containing the proposed additions to the record's body. NEVER auto-modify an existing record's body — that's not reversible enough. | `STAGED {time} — Step 1: overlap "{section}" ↔ record {ref} requires extending an open record. Stage path: staged/specify-overlap-{ref}.md.` |
-| `replace` | Stage as `staged/specify-overlap-{ref}.md`. Replacement is destructive; the user must approve at the Review Console. | `STAGED {time} — Step 1: overlap "{section}" ↔ record {ref} proposed as replacement. Stage path: staged/specify-overlap-{ref}.md.` |
-
-`{ref}` is `#{N}` under `work-backend: github-issues`, the bare record id under `local-files`.
-
-### Interactive mode (batch per-overlap decisions)
-
-Collect ALL overlaps first, then present as one batch table. Per CLAUDE.md, never present per-item prompts when 2+ items can batch — that scales badly when a design doc overlaps with multiple open records.
-
-```
-Overlap analysis — {M} overlap(s) found:
-
-| # | Section | Existing record | Coverage | Recommended | Override? |
-|---|---------|-----------------|----------|-------------|-----------|
-| 1 | "{section A}" | {ref}: "{title}" | Already exists | Skip | (1) skip / (2) extend / (3) companion / (4) replace |
-| 2 | "{section B}" | {ref}: "{title}" | Partial overlap | Companion (Recommended) | (1) skip / (2) extend / (3) companion / (4) replace |
-| ...|
-```
-
-The table renders as markdown, as above. Immediately below it, call `AskUserQuestion` with:
-
-- `question`: `"How do you want to handle these overlaps?"`, `header`: `"Overlaps"`, `multiSelect`: `false`
-- Option 1 — `label`: `"Apply all recommended (Recommended)"`, `description`: `"Apply all recommended"`
-- Option 2 — `label`: `"Override specific items"`, `description`: `"Tell me which #s to change and to what"`
-
-**Hard gate.** Check the response you are about to send: does it already contain the overlap analysis table above as literal rendered markdown, with a row for every overlap? If not, render it now, in this response, before the tool call — "Apply all recommended" with no table above it leaves the user approving an unnamed set of spec-overlap resolutions.
-
-The recommendation column pre-fills based on coverage type: `Already exists` → Skip; `Partial overlap` → Companion. The user can pick "Apply all recommended" to accept all in one decision, or "Override specific items" and follow up with which #s to change in ordinary free-text conversation. Policy-driven equivalent in auto mode (above).
+Read `overlap-resolution.md` in this skill's directory and resolve every overlap per its Auto mode (policy lookup) or Interactive mode (batch per-overlap decisions) section — whichever this run's mode selects. Skip the read when every item is a **Gap**.
 
 For **Gap** items, proceed directly to Step 2 (decompose into work units).
 
@@ -169,7 +134,9 @@ Defaults below apply under `--granularity standard` (the default when the flag i
 
 ### Decomposition Heuristics
 
-**Check first — rewrite-signal against an existing subsystem.** Resolve `project-maturity` — `MATURITY=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values project-maturity)`. The resolver's schema default is `greenfield`, and a value outside the four-item enum also resolves to `greenfield`; at `greenfield`/`pre-launch`, skip this check entirely. When `early-production` or `established`, scan the design doc's Deliverables/Overview for rewrite-shaped language ("replace," "rewrite," "rebuild," "migrate off," "delete and rebuild") naming a target that appears to already exist in the codebase (per Step 1's file/git-log reads) — not something this same design doc introduces fresh. Step 1's Landscape scan does not itself compute an outside-reference count, so before deciding, run one targeted grep for the named target's identifier across the codebase (excluding its own file) to confirm at least one reference from outside the file itself. When matched, decompose along a strangler-fig boundary instead of the standard five below:
+**Check first — rewrite-signal against an existing subsystem.** Resolve `project-maturity` — `MATURITY=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values project-maturity)`. The resolver's schema default is `greenfield`, and a value outside the four-item enum also resolves to `greenfield`; at `greenfield`/`pre-launch`, skip this check entirely. When `early-production` or `established`, scan the design doc's Deliverables/Overview for rewrite-shaped language ("replace," "rewrite," "rebuild," "migrate off," "delete and rebuild") naming a target that appears to already exist in the codebase (per Step 1's file/git-log reads) — not something this same design doc introduces fresh. Step 1's Landscape scan does not itself compute an outside-reference count, so before deciding, run one targeted grep for the named target's identifier across the codebase (excluding its own file) to confirm at least one reference from outside the file itself.
+
+**Blast-radius qualifier (#2703).** A confirmed match doesn't automatically mandate the shape below — its rationale (old path stays working until the new one is verified) assumes a live consumer, which doesn't hold for dev/CI-only tooling. Fall through to the standard five heuristics instead, skipping the mandate, only when the doc's `Surface:` is `infra`/`backend` **and** its stated scope names no runtime consumer beyond this project's own dev/CI tooling (never an external-facing service or user-facing artifact). Narrowing, not weakening: an unclear/ambiguous doc still falls to the mandate below — never guess toward skipping. Otherwise, decompose along a strangler-fig boundary instead of the standard five:
 
 | Maturity | Decomposition shape |
 |---|---|
@@ -297,8 +264,24 @@ Place these recommendations in the Step 9 summary under a `### Diagram suggestio
 
 ---
 
-Continue at Step 3 in `decomposition-mode-closeout.md` (this skill's directory) — record creation
-and linking, the multi-persona red-team dispatch, record self-review, deletion of consumed
-artifacts, and the Step 9 summary/commit. Delegating this range to a subagent instead of
-continuing in this same thread? Use `mechanical-handoff.md`'s canonical dispatch prompt (this
-skill's directory) rather than hand-authoring one.
+## Delegate-or-continue decision (#2700)
+
+Steps 1, 2, 2.6, 2.5, and 2.5d above have resolved. **Decide now, before opening anything else,**
+whether the mechanical range (Step 3 onward) continues in this thread or delegates to a subagent —
+placed here, before either branch's own files, so a delegating caller never reads (then discards)
+the continuing-caller's files first.
+
+**Delegating?** Your complete interface is `mechanical-handoff.md`'s Required-inputs table (this
+skill's directory) plus `collapse-decision.md` (already read for Step 2.6) — compose the dispatch
+prompt from those two alone. Do **not** open `decomposition-mode-closeout.md`, `record-creation.md`,
+`record-creation-subissues.md`, `record-creation-linking.md`, `red-team.md`, or `spec-template.md`
+yourself — the delegated subagent reads them independently, so reading them here spends context
+on prose it will never execute (#2700).
+The Required-inputs table already covers every input Steps 3-9 consume
+(work units ← Step 2, collapse ← Step 2.6, dependency graph ← Steps 1-2, design pre-step answers
+← Step 2.5, diagram suggestions ← Step 2.5d, design doc, run context) — nothing here is missing.
+
+**Continuing in this same thread?** This branch is unaffected by the above. Continue at Step 3 in `decomposition-mode-closeout.md`
+(this skill's directory) — record creation and linking, the
+multi-persona red-team dispatch, record self-review, deletion of consumed artifacts, and the
+Step 9 summary/commit.
