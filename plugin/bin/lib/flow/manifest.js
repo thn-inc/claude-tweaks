@@ -241,6 +241,19 @@ function composeFixesBlock(specs, deferredClosures) {
 // do not add a second pattern for the same decision.
 const DEFERRED_CLOSURE_RE = /^-\s+AUTO\s+\S+\s+—.*\bdeferred-closure:\s+spec #(\d+)\s+closing keyword withheld\s+\(([^)]*)\)/;
 
+// Scans decisions.md text for a deferred-closure entry matching recordId
+// (string compare, same as every caller below) and returns its reason, or
+// undefined when none matches. Shared by the per-spec (bundle) and
+// top-level (single-record) readers so the one regex/match rule never
+// drifts between them.
+function findDeferredClosureReason(text, recordId) {
+  for (const line of text.split('\n')) {
+    const match = DEFERRED_CLOSURE_RE.exec(line);
+    if (match && String(match[1]) === String(recordId)) return match[2];
+  }
+  return undefined;
+}
+
 // runDir (the multi-spec parent) + specs (manifest.multispec.specs) ->
 // Map of spec id (string) -> reason, read from each spec's own
 // `spec-{id}/decisions.md` (`flow/multispec-run-dir-layout.md`'s per-spec
@@ -259,14 +272,29 @@ function readDeferredClosures(runDir, specs) {
     } catch {
       continue;
     }
-    for (const line of text.split('\n')) {
-      const match = DEFERRED_CLOSURE_RE.exec(line);
-      if (match && String(match[1]) === String(spec.id)) {
-        result.set(String(spec.id), match[2]);
-      }
-    }
+    const reason = findDeferredClosureReason(text, spec.id);
+    if (reason !== undefined) result.set(String(spec.id), reason);
   }
   return result;
+}
+
+// runDir (a single-record run's own directory, never a multi-spec parent) +
+// recordId -> the deferred-closure reason string, or undefined when none is
+// logged. Counterpart to readDeferredClosures for a run with no bundle
+// `manifest.yml` to rewrite against (#3136): a single-record run logs its
+// own deferred-closure entry (same shape, same `bin/log-decision.js` writer)
+// to the run's own top-level `decisions.md` instead of a `spec-{id}/`
+// subdirectory, since there is no sibling spec to namespace against. A
+// missing or unreadable `decisions.md` is treated as "no entry" — the same
+// fail-open posture `readDeferredClosures` already uses.
+function readSingleRecordDeferredClosure(runDir, recordId) {
+  let text;
+  try {
+    text = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+  } catch {
+    return undefined;
+  }
+  return findDeferredClosureReason(text, recordId);
 }
 
 module.exports = {
@@ -279,4 +307,5 @@ module.exports = {
   transitionSpec,
   composeFixesBlock,
   readDeferredClosures,
+  readSingleRecordDeferredClosure,
 };
