@@ -58,12 +58,10 @@ function stripComments(src) {
 
 // Extracts the text governed by a `require.main === module` guard: either a
 // balanced `{ ... }` block, or (the dominant single-line form in this repo)
-// the bare statement up to its terminating semicolon. A file may contain
-// more than one such guard (hooks.js's #3074 prefilter fast-path guard at
-// the top of the file, ahead of its real entry point) -- the LAST guard in
-// the file is always the one that actually drives the file's exit behavior
-// when run directly, since a guard meant only to short-circuit before the
-// real entry point necessarily appears before it, never after.
+// the bare statement up to its terminating semicolon. A file may hold more
+// than one guard (hooks.js's #3074 prefilter guard precedes its real entry
+// point); the LAST one is the entry point, since a guard that short-circuits
+// before the entry point must appear before it.
 function extractGuard(src) {
   const re = /if\s*\(\s*require\.main\s*===\s*module\s*\)\s*/g;
   const m = [...src.matchAll(re)].at(-1);
