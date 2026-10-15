@@ -231,10 +231,7 @@ async function main() {
       process.exitCode = 2;
       return;
     }
-    // A scratch worktree left behind by an uncatchable kill (Windows
-    // TerminateProcess, or any signal before a handler existed) is named
-    // here, not swept — a sibling session's own live scratch looks
-    // identical to `git worktree list` (#3064).
+    // Named, never swept — see findStaleBaselineWorktrees (#3064).
     for (const dir of findStaleBaselineWorktrees(bgit.listWorktrees)) {
       process.stderr.write(`verify.js: a stale baseline scratch worktree is registered at ${dir} from an earlier interrupted run — remove it manually: git worktree remove --force ${dir}\n`);
     }

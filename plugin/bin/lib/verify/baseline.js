@@ -82,12 +82,9 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
     // absolute paths — read-only, so the caller can name a stale one without
     // ever sweeping it itself (#3064).
     listWorktrees: () => {
-      let out;
-      try { out = git(['worktree', 'list', '--porcelain']); } catch { return []; }
-      return out.split('\n\n').map((block) => {
-        const m = /^worktree (.+)$/m.exec(block);
-        return m ? m[1] : null;
-      }).filter(Boolean);
+      try {
+        return [...git(['worktree', 'list', '--porcelain']).matchAll(/^worktree (.+)$/gm)].map((m) => m[1]);
+      } catch { return []; }
     },
   };
 }
@@ -281,7 +278,7 @@ async function adjudicate({
   const atBase = work.map((w) => git.fileExistsAt(baseSha, repoRel(w.file)));
   const unchanged = work.map((w, k) => atBase[k] && git.sameAtBase(baseSha, repoRel(w.file)));
   let scratch = null;
-  let signalHandlers = null;
+  let signalHandlers = [];
   const run = (w, kind, dir) => runOne({
     name: `${w.check}-${kind}-${slug(w.file)}`, command: w.command, logDir, spawnImpl, now, cwd: dir, env: envOf(w.check),
   });
@@ -296,12 +293,8 @@ async function adjudicate({
       // trace (#3064). Deregistered in `finally` either way, so a clean
       // completion never leaks a listener into the next adjudicate() call
       // in the same process.
-      signalHandlers = {};
-      for (const [sig, code] of Object.entries(SIGNAL_EXIT_CODES)) {
-        const handler = () => { git.removeWorktree(scratch); process.exit(code); };
-        signalHandlers[sig] = handler;
-        process.on(sig, handler);
-      }
+      signalHandlers = Object.entries(SIGNAL_EXIT_CODES).map(([sig, code]) => [sig, () => { git.removeWorktree(scratch); process.exit(code); }]);
+      for (const [sig, handler] of signalHandlers) process.on(sig, handler);
     }
     const baseDir = scratch && (sub ? path.join(scratch, ...sub.split('/')) : scratch);
     const baseRuns = await pool(work, concurrency, (w, k) => (atBase[k] ? run(w, 'baseline', baseDir) : null));
@@ -424,9 +417,7 @@ async function adjudicate({
       attributable,
     };
   } finally {
-    if (signalHandlers) {
-      for (const [sig, handler] of Object.entries(signalHandlers)) process.removeListener(sig, handler);
-    }
+    for (const [sig, handler] of signalHandlers) process.removeListener(sig, handler);
     if (scratch) git.removeWorktree(scratch);
   }
 }
