@@ -225,7 +225,7 @@ function buildShapingState({ numbers, labelsByNumber, claimContentByNumber, link
   for (const n of numbers || []) {
     const ready = normalizeLabelNames((labelsByNumber && labelsByNumber[n]) || []).includes('ready');
     const content = claimContentByNumber ? claimContentByNumber[n] : null;
-    const liveClaim = classifyClaimBlob(content === undefined ? null : content, now).state === 'live';
+    const liveClaim = classifyClaimBlob(content, now).state === 'live';
     let claimRunId = null;
     if (liveClaim) {
       try { claimRunId = JSON.parse(content).runId || null; } catch { claimRunId = null; }
