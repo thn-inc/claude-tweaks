@@ -59,3 +59,32 @@ test('step3-routing lists the lens 3f no-execution-evidence source among unconfi
   const list = routing.slice(start, routing.indexOf('**Effort-tier surfacing.**', start));
   assert.match(list, /^- Vacuity claim without execution evidence \(lens 3f/m);
 });
+
+const contract = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'auto-mode-contract.md'), 'utf8');
+
+test('step3-routing states test-removal fixes route STAGED at every ceiling, over the prose-exempt bump', () => {
+  const auto = sectionOf(routing, '## Auto mode (severity-based routing)');
+  const para = auto.split('\n').find((l) => l.startsWith('**Test-removal fixes never auto-apply.**'));
+  assert.ok(para, 'Auto mode must carry a **Test-removal fixes never auto-apply.** paragraph');
+  for (const ceiling of ['`none`', '`low`', '`medium`']) assert.ok(para.includes(ceiling), `must name ceiling ${ceiling}`);
+  assert.match(para, /STAGED/);
+  assert.match(para, /prose-exempt bump/);
+  assert.match(para, /KEPT-PROMPT/);
+  assert.match(para, /test-removal override — staged/);
+  const prose = auto.indexOf('Also resolve `review-auto-apply-prose-exempt`');
+  assert.ok(prose !== -1 && prose < auto.indexOf(para), 'the override follows the prose-exempt paragraph');
+});
+
+test('the ceiling-keyed table is followed by a pointer to the test-removal override', () => {
+  const auto = sectionOf(routing, '## Auto mode (severity-based routing)');
+  const after = auto.slice(auto.indexOf('| **Low** |'));
+  const nextPara = after.split('\n\n')[1];
+  assert.match(nextPara, /test-removal override/);
+});
+
+test('the auto-mode contract row for /review Step 3 Routing names the test-removal override', () => {
+  const row = contract.split('\n').find((l) => l.startsWith('| Code review findings (`/review` Step 3 Routing)'));
+  assert.ok(row, 'contract row must exist');
+  assert.match(row, /removes test cases or assertions/);
+  assert.match(row, /STAGED/);
+});
