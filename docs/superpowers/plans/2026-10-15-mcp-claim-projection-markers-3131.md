@@ -21,6 +21,8 @@
 
 ## Root cause evidence for Deliverable 2 (gathered at plan time, 2026-10-15)
 
+> **Correction (whole-branch review, 8ffe6465f):** the "composed from sanitized reads" conclusion below is refuted. The escaped bodies hold exactly one `&lt;` and one `&gt;`, both in the marker, with raw quotes elsewhere. #1350's escaped mirror also carries a fresh `claimPayload` runId. The escaping therefore happens on the MCP write leg, and its cause is not yet identified. The shipped prose says so, and the reproduction is staged as a follow-up record.
+
 For every comment whose first line is an HTML marker, `performed_via_github_app.slug` was read. The scan covered 40 PRs carrying `run-comment` markers since 2026-09-20, plus #1350, via `gh api repos/thn-inc/claude-tweaks/issues/{n}/comments`:
 
 | Writer | Raw `<!--` | Escaped `&lt;!--` |
