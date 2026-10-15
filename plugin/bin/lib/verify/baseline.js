@@ -365,9 +365,15 @@ async function adjudicate({
     // more in isolation before finalizing that verdict; when the retry's own
     // failing set is covered by base (or the retry passes cleanly), the
     // extra failure did not reproduce, so report it flaky instead.
+    // Each HEAD verdict is computed once here and reused below — both to
+    // decide `needsRetry` and to classify `work` — rather than re-running the
+    // same check twice per file.
+    const headLoadFail = work.map((w, k) => failsToLoadAtBase(k));
+    const headRanClean = headRuns.map((r, k) => ranCleanly(r, k));
+    const headBaselineIso = headRuns.map((r, k) => baselineInIsolation(r, k));
     const needsRetry = work.map((w, k) => (
       Boolean(headRuns[k]) && typeof headRuns[k].exitCode === 'number' && headRuns[k].exitCode !== 0
-      && !failsToLoadAtBase(k) && !ranCleanly(headRuns[k], k) && !baselineInIsolation(headRuns[k], k)
+      && !headLoadFail[k] && !headRanClean[k] && !headBaselineIso[k]
     ));
     const retryRuns = await pool(work, concurrency, (w, k) => (needsRetry[k] ? run(w, 'isolated-retry', cwd) : null));
     const baselineFailing = [];
@@ -378,10 +384,9 @@ async function adjudicate({
     const failingByCheck = {};
     work.forEach((w, k) => {
       (failingByCheck[w.check] = failingByCheck[w.check] || []).push(w.file);
-      if (failsToLoadAtBase(k)) { baselineFailing.push(w.file); return; }
-      if (ranCleanly(headRuns[k], k)) { flakyPassed.push(w.file); flakyLogs[w.file] = headRuns[k].logPath; return; }
-      const iso = baselineInIsolation(headRuns[k], k);
-      if (iso) { baselineFailing.push(w.file); baselineIsolated[w.file] = iso; return; }
+      if (headLoadFail[k]) { baselineFailing.push(w.file); return; }
+      if (headRanClean[k]) { flakyPassed.push(w.file); flakyLogs[w.file] = headRuns[k].logPath; return; }
+      if (headBaselineIso[k]) { baselineFailing.push(w.file); baselineIsolated[w.file] = headBaselineIso[k]; return; }
       if (needsRetry[k] && (ranCleanly(retryRuns[k], k) || baselineInIsolation(retryRuns[k], k))) {
         flakyPassed.push(w.file); flakyLogs[w.file] = retryRuns[k].logPath; return;
       }
