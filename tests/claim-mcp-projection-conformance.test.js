@@ -47,26 +47,27 @@ test('issue-claims.md states the MCP read-back-and-retry obligation in the bot:i
   assert.match(section, /flow\/claim-targets\.md/);
 });
 
-test('settle-and-merge.md claim-contest self-report names selection-time bot:in-progress presence from the queue snapshot', () => {
+test('settle-and-merge.md claim-contest self-report compares selection time with the holder claim time', () => {
   const para = paragraphStarting(SETTLE, '**Selection-time projection line (contested-claim shape, #3131).**');
-  assert.match(para, /queue pull/);
-  assert.match(para, /snapshot/);
-  assert.match(para, /`Selection labels:` line/);
   assert.match(para, /task-prompt\.md` item 8/);
-  assert.match(para, /Selection-time projection: #\{target\} \{carried\|did not carry\}/);
+  assert.match(para, /Selection-time projection: #\{target\} selected at \{Selected at\} without `bot:in-progress`; holder claimed \{claimedAt\}/);
+  assert.match(para, /before: projection gap\|after: race/);
+  assert.match(para, /dedup hit/);
   const enrich = SETTLE.indexOf('**Open-linked-PR enrichment for the contested-claim shape (#2402).**');
   assert.ok(enrich !== -1 && enrich < SETTLE.indexOf(para), 'the projection line paragraph follows the #2402 enrichment paragraph');
 });
 
-test('task-prompt.md context pack threads the selection-time label snapshot into the Task call (#3131)', () => {
+test('task-prompt.md context pack threads the selection time into the Task call (#3131)', () => {
   const prompt = read('plugin/skills/dispatch/task-prompt.md');
   const start = prompt.indexOf('## Context pack');
   const end = prompt.indexOf('Substitute this whole block', start);
   assert.ok(start !== -1 && end !== -1, 'context pack anchors must exist');
   const pack = prompt.slice(start, end);
-  assert.match(pack, /^8\. \*\*Selection labels\*\* \(#3131\)/m);
-  assert.match(pack, /Selection labels: #\{n\} bot:in-progress=\{yes\|no\}/);
-  assert.match(pack, /\$DISPATCH_GROUPS/);
+  assert.match(pack, /^8\. \*\*Selected at\*\* \(#3131\)/m);
+  assert.match(pack, /`Selected at: \{ISO\}`/);
+  assert.match(pack, /dispatch-groups\.json/);
+  assert.match(pack, /sessionTmpPath/);
+  assert.match(prompt, /resolved seven of these facts/);
 });
 
 const TRANSPORT = read('plugin/skills/_shared/github-write-transport.md');
@@ -83,8 +84,13 @@ test('github-write-transport.md comment row and MCP marker subsection carry the 
   assert.match(sub, /&lt;!--/);
   assert.match(sub, /never from text read back through an MCP tool/);
   assert.match(sub, /performed_via_github_app/);
-  assert.match(sub, /begins `&lt;!--`/);
+  assert.match(sub, /begin(s|ning) `&lt;!--`/);
   assert.match(sub, /--status SKIP/);
+  assert.match(sub, /post the same locally composed body once more/);
+  assert.match(sub, /not yet identified/);
+  assert.match(sub, /No-run-dir/);
+  assert.doesNotMatch(sub, /composed from sanitized reads/);
+  assert.doesNotMatch(sub, /byte for byte/);
 });
 
 test('pr-run-comments.md post-or-update has an MCP read-back for the run-comment marker', () => {

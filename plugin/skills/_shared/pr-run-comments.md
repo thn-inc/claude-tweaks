@@ -64,7 +64,8 @@ prefix of another once `-->` closes the tag.
 
 **One comment per kind per run** (one per kind **per spec** per run, under multi-spec — see
 above). A re-run (a re-triggered review, a resumed wrap-up) edits the
-existing marker comment in place — it never appends a duplicate. A stale `verdict`/`brief` sitting
+existing marker comment in place — it never appends a duplicate on the `gh` transport (the MCP
+transport has no comment edit and appends; see **MCP transport** below). A stale `verdict`/`brief` sitting
 above a fresh one would misinform a reader skimming the PR, so this is the one place in the
 plugin's PR-comment surface that edits rather than always-appends.
 
@@ -104,12 +105,12 @@ plugin's PR-comment surface that edits rather than always-appends.
    gh pr comment {pr-number} --repo {host}/{owner}/{repo} --body-file /tmp/{kind}-comment-{n}.md
    ```
 
-**MCP transport (no `gh`, #3131).** The find step above is `gh`-only: MCP reads return sanitized
-bodies, so a find-by-marker through `issue_read` cannot be trusted and there is no MCP comment-edit
-mapping — post a new comment with `add_issue_comment` on the PR's number instead of updating. Compose
+**MCP transport (no `gh`, #3131).** The find and update steps above are `gh`-only, and there is no
+MCP comment-edit mapping — post a new comment with `add_issue_comment` on the PR's number instead
+of updating. Compose
 the body per `_shared/github-write-transport.md`'s **Marker comments on the MCP path**, then
-read back the posted comment: when the read-back body begins `&lt;!--`, write that section's
-`SKIP` trace line so the escaped verdict is visible in the run log.
+read back the posted comment: when the read-back body begins `&lt;!--`, re-post once and trace a
+still-escaped result with that section's `SKIP` line, so an escaped verdict is visible in the run log.
 
 **On failure of either the find or the write** (network, auth, or a rate limit classified per `_shared/github-rate-limit.md`): log to `decisions.md`
 as a retryable failure per the gate section above and fall back to the issue-only post for that

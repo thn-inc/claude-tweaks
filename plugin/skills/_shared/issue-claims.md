@@ -319,7 +319,6 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
   host:require('os').hostname(),now:Date.now()}).commentBody)" "$ISSUE" "$RUN_ID" > /tmp/claim-${ISSUE}.md
 ```
 
-On the MCP path, post that generated body exactly as the module printed it, per `_shared/github-write-transport.md`'s **Marker comments on the MCP path** (#3131: the 2026-10-12 #1350 mirror was stored escaped).
 <!-- when: transport=gh -->
 ```bash
 gh issue comment "$ISSUE" --body-file /tmp/claim-${ISSUE}.md
@@ -327,7 +326,9 @@ gh issue comment "$ISSUE" --body-file /tmp/claim-${ISSUE}.md
 <!-- /when -->
 <!-- when: transport=mcp -->
 `add_issue_comment` with the issue number and `body` = the contents of
-`/tmp/claim-${ISSUE}.md` (`_shared/github-write-transport.md`'s Comment row).
+`/tmp/claim-${ISSUE}.md` (`_shared/github-write-transport.md`'s Comment row), exactly as the module
+printed it, then read it back per that file's **Marker comments on the MCP path** (#3131: the
+2026-10-12 #1350 mirror was stored escaped).
 <!-- /when -->
 
 Marker shapes (emitted by `claimPayload` / `releasePayload` — the same JSON shape the blob
