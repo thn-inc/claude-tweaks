@@ -162,8 +162,13 @@ test('writeClaimBlob: content that is not even a string (the caller forgot to se
 
 test('listClaimNames: happy path extracts names from the {name,sha} entries listClaimEntries returns', () => {
   const ghApi = (args) => {
-    assert.equal(args[0], 'repos/acme/w/git/trees/claims-registry');
-    assert.deepEqual(args.slice(1, 3), ['-f', 'recursive=1']);
+    // `recursive=1` is a literal query-string segment on the path, never a
+    // `-f` field -- `gh api` switches its default method to POST the
+    // instant any `-f`/`-F` is present, and this endpoint has no POST
+    // route (confirmed live: a `-f recursive=1` call 404s; the identical
+    // request with the param folded into the path succeeds).
+    assert.equal(args[0], 'repos/acme/w/git/trees/claims-registry?recursive=1');
+    assert.ok(!args.includes('-f'), 'must never pass recursive=1 as a -f field -- it flips gh api to POST');
     return {
       stdout: JSON.stringify({
         truncated: false,
@@ -305,8 +310,8 @@ test('listClaimEntries: returns name + sha per entry from the same single Git Tr
   };
   const r = listClaimEntries(ghApi, 'acme/w');
   assert.deepEqual(r, { entries: [{ name: 'issue-7.json', sha: 'sha7' }, { name: 'issue-9.json', sha: 'sha9' }], failure: null });
-  assert.match(seenArgs[0], /repos\/acme\/w\/git\/trees\/claims-registry/);
-  assert.ok(seenArgs.includes('recursive=1'));
+  assert.match(seenArgs[0], /repos\/acme\/w\/git\/trees\/claims-registry\?recursive=1/);
+  assert.ok(!seenArgs.includes('-f'), 'must never pass recursive=1 as a -f field -- it flips gh api to POST');
   assert.match(seenArgs.join(' '), /-q .*name.*sha/);
 });
 
@@ -336,6 +341,18 @@ test('listClaimEntries: a truncated tree response surfaces as its own failure, n
   });
   const r = listClaimEntries(ghApi, 'acme/w');
   assert.deepEqual(r, { entries: [], failure: 'truncated' });
+});
+
+test('listClaimEntries: never passes recursive=1 as a -f/-F field (#3098 regression -- gh api switches GET to POST the instant any -f/-F is present, and git/trees has no POST route; confirmed live: a -f recursive=1 call 404s, the identical request with recursive=1 folded into the path succeeds)', () => {
+  const { listClaimEntries } = require('../../../plugin/bin/lib/issues/claim-store');
+  let seenArgs = null;
+  const ghApi = (args) => {
+    seenArgs = args;
+    return { stdout: JSON.stringify({ truncated: false, entries: [] }), failure: null, status: null };
+  };
+  listClaimEntries(ghApi, 'acme/w');
+  assert.ok(!seenArgs.includes('-f') && !seenArgs.includes('-F'), `recursive=1 must be a literal query-string segment on the path, never a -f/-F field: ${JSON.stringify(seenArgs)}`);
+  assert.match(seenArgs[0], /\?recursive=1\b/);
 });
 
 test('classifyGhApiError: secondary rate limit is distinct from network-failure', () => {

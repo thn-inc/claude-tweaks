@@ -173,9 +173,21 @@ function defaultGhApi(args) {
 // `startswith("claims/")` filter below is just excluding any OTHER top-level
 // blob the branch happens to carry (there are none today, but nothing
 // guarantees that stays true), not flattening real subdirectories.
+// `recursive=1` is a literal query-string segment on the path, never a
+// `-f`/`-F` field — `gh api` switches its default method to POST the
+// instant any `-f`/`-F` is present (`gh help api`), and this endpoint has no
+// POST route, so that shape 404s silently on every real call (confirmed
+// live against this repo's own claims-registry tree: `-f recursive=1` with
+// no explicit method 404s; the identical request with `recursive=1` folded
+// into the path succeeds). `defaultGhApi`'s 404 branch maps to `{failure:
+// null, status: 404}` (a legitimate "not found" elsewhere in this module —
+// see `classifyGhApiError`'s header comment), so a POST-switched call here
+// would come back as `{entries: [], failure: null}`: a silent, complete-
+// looking empty list — a worse failure mode than the 1000-entry cap this
+// function exists to remove.
 function listClaimEntries(ghApi, repoSlug) {
   const r = ghApi([
-    `repos/${repoSlug}/git/trees/${CLAIMS_BRANCH}`, '-f', 'recursive=1',
+    `repos/${repoSlug}/git/trees/${CLAIMS_BRANCH}?recursive=1`,
     '-q', '{truncated: .truncated, entries: [.tree[] | select(.type == "blob" and (.path | startswith("claims/"))) | {name: (.path | split("/") | last), sha: .sha}]}',
   ]);
   if (r.failure) return { entries: [], failure: r.failure };
