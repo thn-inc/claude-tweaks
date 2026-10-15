@@ -574,7 +574,7 @@ After Phase 1u (inventory) and Phase 1u.5 (contract drift) complete, evaluate th
    **Verified & Consistent**
 
    Environment & dependencies:
-   - Superpowers: present · Code simplifier: available · agent-browser: installed (v{X.Y.Z})
+   - Superpowers: present · Code simplifier: available · playwright-cli: installed (v{X.Y.Z})
    - Git repo: yes · Node: v{X} · Statusline: wired · Workflow dirs: present
 
    Template conformance: every plugin-authored CLAUDE.md section matches the installed template — none missing, none drifted.

@@ -402,6 +402,34 @@ test('toIssuePayload composes Premise-check: alongside an existing verifiedAsOf 
   assert.strictEqual(extractPremiseCheck(payload.body), "! grep -qF -- 'new' '/repo/CLAUDE.md'");
 });
 
+// ── Filing-time self-check (#2633) ──────────────────────────────────────────
+
+test('toIssuePayload drops the Premise-check: line when the injected self-check reads it as not unresolved', () => {
+  const p = toIssuePayload(patchFinding({ path: '/tmp/x.md' }), undefined, undefined, { premiseSelfCheck: () => false });
+  assert.ok(!p.body.includes('Premise-check:'), `expected no Premise-check: line, got:\n${p.body}`);
+});
+
+test('toIssuePayload keeps a byte-identical Premise-check: line when the injected self-check passes', () => {
+  const finding = patchFinding({ path: '/tmp/x.md' });
+  const p = toIssuePayload(finding, undefined, undefined, { premiseSelfCheck: () => true });
+  assert.strictEqual(extractPremiseCheck(p.body), buildPremiseCheck(finding, '/tmp/x.md'));
+});
+
+test('toIssuePayload passes exactly the composed command to the self-check, once', () => {
+  const seen = [];
+  const finding = patchFinding({ path: '/tmp/x.md' });
+  toIssuePayload(finding, undefined, undefined, { premiseSelfCheck: (c) => { seen.push(c); return true; } });
+  assert.deepStrictEqual(seen, [buildPremiseCheck(finding, '/tmp/x.md')]);
+});
+
+test('toIssuePayload never invokes the self-check when no command composes (no path, or new-skill)', () => {
+  let calls = 0;
+  const spy = () => { calls += 1; return true; };
+  toIssuePayload(patchFinding(), undefined, undefined, { premiseSelfCheck: spy });
+  toIssuePayload(newSkillFinding({ path: '/tmp/x.md' }), undefined, undefined, { premiseSelfCheck: spy });
+  assert.strictEqual(calls, 0);
+});
+
 // ── template snapshot (#1840) ───────────────────────────────────────────────
 
 test('toIssuePayload: Template: line + snapshot sentence present for a template-conformance finding with templateSource + pluginVersion', () => {

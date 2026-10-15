@@ -25,6 +25,10 @@ finding -> validate-findings -> file GitHub issue (by:harness-health, ready)
 
 Not for: code-quality findings (`/claude-tweaks:code-health`'s job — including cases where a rule's `paths:` glob is still correct but the code doesn't comply with it). Not a replacement for `/claude-tweaks:wrap-up`'s Skills curation row or `/claude-tweaks:init`'s Update Mode — both consume the same shared procedure this skill does (wrap-up also against `claude-md`, via its CLAUDE.md & rules row's `assetType: claude-md`), on their own scope models (a finished spec's diff; a whole-codebase reconnaissance) rather than this skill's churn/staleness rotation. Memory (`~/.claude/projects/{slug}/memory/`) is not auto-audited — reachable only via an explicit `--kind memory --memory-dir <path>` invocation, never through the automatic rotation a scheduled Routine uses, since memory lives outside the repo with no git churn signal and is not expected to be reachable from a Routine's execution environment.
 
+### Relationship to Claude Code's built-in `claude doctor` / `/doctor`
+
+Investigated directly (#2794) rather than assumed: `claude doctor` (CLI, v2.1.287) was run against this checkout and its full output inspected. It checks **installation and environment health** — native vs. npm-leftover install method, auto-updater status/channel, `rg` availability, managed-settings/organization-policy source, and Remote Control connectivity — plus (per its own `-h` text) a broader in-session `/doctor` checkup that "can also fix issues," scoped to the same installation-health domain. None of that overlaps with this skill's Workflow (above): every check this skill runs — the dimension-check analysis (`_shared/harness-health-analysis.md`: template conformance, staleness, best-practice fit, cross-skill overlap, rule-expiry), the policy-schema validation (Step 1's Policy schema check), the CLAUDE.md override-bypass scan (Step 1's Override-bypass check), and the composed-bytes-per-step report — all judge the *content* of this project's own authored `.claude/skills/*.md`, `.claude/rules/*.md`, and CLAUDE.md against the codebase, template, and practice. `claude doctor` never reads any of those files and has no concept of skill/rule/CLAUDE.md drift; this skill never touches the Claude Code binary's install state, auto-updater, or org policy. The two are both named "doctor"/"health" but audit disjoint layers — installation plumbing versus authored prompt content — so this skill does not call or defer to `claude doctor` for any portion of its own checks, and none of `claude doctor`'s checks are redundant with this skill's. Re-run this comparison if a future Claude Code version's release notes claim `/doctor` gained project-content/prompt-drift checking — nothing observed at v2.1.287 does.
+
 ## Input
 
 `$ARGUMENTS` may contain:
@@ -85,6 +89,14 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/harness-health-override-scan.js" --root .
 
 This parses every `route(s) to \`/X\`, never \`/Y\`` clause out of CLAUDE.md (`bin/lib/harness-health/override-bypass.js`'s `parseDeclaredOverrides` — the one prose shape this repo's own override already uses; a differently-worded override is silently not recognized, never misread) and checks the `skill_invoked` event ledger (`bin/lib/hooks/skill-invocation.js`) across every pipeline run directory under `.claude-tweaks/pipelines/` (active and archived) for a case where `/Y` was invoked at least once and `/X` was never invoked anywhere in that evidence — the exact shape of the incident #809 describes. An empty `bypasses` array is the expected, common case, not a gap in coverage. For each entry in `bypasses`, file one work-record issue (origin `by:harness-health`, `risk:low` + `size:low` — a detection finding, not a code fix) titled `"CLAUDE.md override bypassed: {forbidden} invoked without {substitute}"`, body naming the declared override's exact clause, the `forbiddenCount`, and the `evidence` run directories/timestamps, and recommending the human either strengthen the override's phrasing, add enforcement for this specific override, or accept that the declared substitute was never actually needed here. Dedup against open `by:harness-health` issues the same way the Policy schema check above does (reuse Step 5's fetch when reached this firing; the same standalone `gh issue list` fetch otherwise); skip filing entirely under `--dry-run`, printing what would be filed instead.
 
+**AGENTS.md shadow check (#2798, same shape as the Policy schema check above — separate, runs every firing).** By default Claude Code reads `AGENTS.md` only when no `CLAUDE.md` exists in the working directory or above it (https://code.claude.com/docs/en/memory), so a project root carrying both files has `CLAUDE.md` winning silently — `AGENTS.md` could be stale, or intentionally maintained for a different tool, either way with no signal to the maintainer about which one actually governs the session. Call:
+
+```bash
+node -e "const fs=require('fs'),p=require('path'),r=process.argv[1];const real=(f)=>{try{return fs.realpathSync(p.join(r,f))}catch{return null}};const c=real('CLAUDE.md'),a=real('AGENTS.md');let imp=false;try{imp=/^\s*@AGENTS\.md\b/m.test(fs.readFileSync(c,'utf8'))}catch{}console.log(JSON.stringify({claudeMd:!!c,agentsMd:!!a,sameFile:!!c&&c===a,claudeImportsAgents:imp}))" "${ROOT:-$PWD}"
+```
+
+This is a deterministic presence check, not the judged dimension analysis — if `claudeMd` and `agentsMd` aren't both `true`, or `sameFile` or `claudeImportsAgents` is `true` (a symlink, or a `CLAUDE.md` that pulls `AGENTS.md` in with an `@AGENTS.md` line, both mean `AGENTS.md` is read), do nothing further for this check this firing (a project with only `CLAUDE.md`, the common case, triggers no finding). Otherwise, file one work-record issue (origin `by:harness-health`, `risk:low` + `size:low` — a detection finding, not a code fix) titled `"Both CLAUDE.md and AGENTS.md present — AGENTS.md is not loaded by default"`, body stating the actual precedence plainly (by default Claude Code reads `CLAUDE.md` when present and skips `AGENTS.md`; the Project instructions setting `claude-md-and-agents-md`, or an `@AGENTS.md` import in `CLAUDE.md`, loads both — https://code.claude.com/docs/en/memory) and pointing at both files, with a tone that's informational, not an error — intentionally maintaining both for some other tool's benefit, with `CLAUDE.md` correctly taking precedence, is not itself a problem; this check surfaces the *ambiguity risk* only. Skip filing when any `by:harness-health` issue, open or closed, already carries this exact title (reuse Step 5's `--state all` fetch when reached this firing; the same standalone `gh issue list --state all` fetch otherwise): the condition is constant, so a closed issue records the maintainer's "keep both" decision rather than inviting a refile every firing. Skip filing entirely under `--dry-run`, printing what would be filed instead.
+
 **Composed-bytes-per-step check (#1909, reporting only — no issue filed, runs every firing).** Surfaces `context-cost.js`'s own composed-bytes-per-step measurement (#1990) rather than re-deriving it; the hard gate on that measurement already lives in `tests/bin-lib/skill-audit/context-cost.test.js`'s `overComposedCeiling` suite, so this check never files a finding — a breach there is a test failure, not a harness-health discovery. Call:
 
 ```bash
@@ -92,6 +104,14 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/context-cost-report.js" --plugin-root "${CLAUDE_
 ```
 
 Include the per-step `bytes.max` values (one line per `step`, sorted descending) in Step 8's SUMMARIZE report — this is the standing answer to "how many bytes does each pipeline step load" that a session or a maintainer can otherwise only get by running the CLI by hand. An `error` row (an unparsed compose call, a missing/unreadable source) is reported the same way, naming the file:line rather than a byte count.
+
+**Harness cost-efficiency check (#2741, reporting only — same shape as the Composed-bytes-per-step check above, no issue filed, runs every firing).** A HarnessTax-style study found harness/tool-roster choice alone can move inference cost up to 5x with no comparable success-rate change; `context-cost.js`'s check above already measures a skill's prose payload, but says nothing about its declared *tool* roster or how deep it reaches into `_shared/*.md`. Call:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/harness-cost-report.js" --plugin-root "${CLAUDE_PLUGIN_ROOT}"
+```
+
+This reports every shipped skill's `allowed-tools:` declaration against a fixed four-tool baseline (Read/Write/Edit/Bash, the cited study's own Pareto-frontier reference point) — `toolCount: null` means the skill declares no `allowed-tools:` line at all and implicitly gets the full default roster, which `unscopedCount` tallies corpus-wide rather than flagging each one individually (the corpus norm, not the exception, so a per-skill flag there would be noise). `flagged` lists only skills with a *declared* tool count over 2x the baseline — never an unscoped skill, since there's nothing to ratio. Include in Step 8's SUMMARIZE report: the `unscopedCount`/`totalSkills` line, and any `flagged` entries by name and tool count. This is reporting only, the same posture as the composed-bytes check above — it never files an issue; a human or `/review` decides whether a specific flagged skill's roster is deliberate or worth narrowing.
 
 Read the `why` field on whichever target(s) came back:
 - If both `target`/`targets` are empty and `gapScanDue` is `false`: nothing is due this firing. Report this to the user and stop.
@@ -166,6 +186,14 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/harness-health.js" validate-findings "${FINDINGS
 
 `TARGET_ID`/`TARGET_KIND` are `target.id`/`target.kind` from Step 1 (omit both if Step 1 returned `target: null` and only the gap scan ran — pass both together or neither, since cursor recording needs the namespaced `kind:id` key). `GAP_SCAN_RAN` is passed whenever Step 4 actually ran this firing. `FINDINGS_FILE` is the target-scoped, session-scoped path from Step 3 (Step 1's Findings-file naming section) — `harness-health-findings.json` for a single-target run; `harness-health-findings-{target.id}.json` per target, or `harness-health-findings-gapscan.json`, for a multi-target run — run this whole command once per target for a `--budget > 1` firing, per Step 1's multi-target instructions, never once for a shared file covering multiple targets. `MIN_CONFIDENCE` is only ever set from an explicit human `--min-confidence` request; a Routine's default headless firing omits it (see Routine Configuration below). The command validates each finding, fingerprints via `assetType + target + section + normalizedDescription`, dedups against open `by:harness-health` issues and the local cache, drops any finding below `--min-confidence` into the durable `remembered` cache instead of filing it, records the audit cursor for `${TARGET_KIND}:${TARGET_ID}` (and the gap-scan cursor when `--gap-scan` was passed) unless `--dry-run`, and emits gh-ready payloads on stdout.
 
+**Publish the cursor.** Since #2545, `validate-findings` records the audit/gap-scan cursor on a local-only branch — it never pushes `health-state` itself (the Skills-curation-row concurrency problem that changed this applies here too: this step's own cursor write must not silently depend on a push nobody then makes). Once every target's Step 6 call this firing has completed, publish the accumulated state in exactly one call — never once per target, the same "once per firing" rule Step 5's issue-gather already follows for a `--budget > 1` run:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/harness-health.js" push-cursor --root "${ROOT:-$PWD}"
+```
+
+Skip this call on a `--dry-run` firing — Step 6 recorded nothing locally to publish.
+
 **Step 7 — FILE.**
 
 **Subject check before filing.** Apply the "Subject check (health sweeps)" section of `skills/_shared/learning-routing.md` — a finding about a claude-tweaks skill is a D5 learning routed to `/claude-tweaks:feedback`, not a project issue.
@@ -174,7 +202,7 @@ Read `filing.md` in this skill's directory and apply it. It owns the whole filin
 
 **Step 8 — SUMMARIZE.**
 
-Report: which target(s) were audited (or that only the gap scan ran), how many findings were emitted, how many filed vs skipped by dedup. List any new issue URLs. Always include the throttle line per `_shared/health-filing-digest.md`'s SUMMARIZE step: `filed: N, digested: M, cap: {CAP}, materiality: K` — report it even when `M` and `K` are both `0`, so the throttle is visible rather than inferred. Always include the composed-bytes-per-step line from the check above: `bytes/step (max): {step}={bytes} B, ...` sorted descending by bytes.
+Report: which target(s) were audited (or that only the gap scan ran), how many findings were emitted, how many filed vs skipped by dedup. List any new issue URLs. Always include the throttle line per `_shared/health-filing-digest.md`'s SUMMARIZE step: `filed: N, digested: M, cap: {CAP}, materiality: K` — report it even when `M` and `K` are both `0`, so the throttle is visible rather than inferred. Always include the composed-bytes-per-step line from the check above: `bytes/step (max): {step}={bytes} B, ...` sorted descending by bytes. Always include the harness cost-efficiency line from that check above: `tool scope: {unscopedCount}/{totalSkills} skills unscoped, flagged: {name}={toolCount} tools, ...` (omit the `flagged:` clause entirely when empty).
 
 ## Routine Configuration
 
@@ -184,13 +212,23 @@ Report: which target(s) were audited (or that only the gap scan ran), how many f
 /claude-tweaks:routine create harness-health
 ```
 
-**Headless run flow:** SELECT(`next-target`) → JUDGE → validate-findings → file. A firing with nothing due (`target: null`, `gapScanDue: false`) is a cheap no-op.
+**Headless run flow:** SELECT(`next-target`) → JUDGE → validate-findings → push-cursor → file. A firing with nothing due (`target: null`, `gapScanDue: false`) is a cheap no-op.
 
 Report-only, matching `/code-health` — every finding files as a `by:harness-health`-labelled, born-`ready` GitHub issue, with no `Edit` call anywhere in its documented workflow. Rotation cursors and the filing retry queue live on the durable `health-state` branch (`_shared/health-state.md`), surviving container recycling across scheduled firings — a skipped or failed firing does not lose progress.
 
 **Confidence floor on headless firings.** This skill's own `validate-findings --min-confidence <low|med|high>` now mirrors `/code-health`'s `--min-risk` flag — a finding below the floor is held in the durable `remembered` cache instead of filed. `docs-health` closed the same gap the same way in the same pass; `journey-health` also closed it, but with a different mechanism (drops a below-floor finding for that run rather than holding it durably — see `_shared/health-routine-notes.md`). The routine template's default prompt omits `--min-confidence`, so a scheduled firing still files every surviving finding regardless of confidence by default, matching this skill's pre-existing behavior — pass `--min-confidence med` (or `low`) in a customized Routine prompt to intentionally quiet a noisy headless firing down to `/code-health`'s own default posture.
 
 > **Billing note:** Routines run inside the subscription; verify automation-credit specifics against the live account. (Canonical text in `_shared/health-routine-notes.md` — shared with `/code-health`, `/docs-health`, and `/journey-health`.)
+
+## Dream Pass (cross-session failure mining)
+
+A separate, standalone-only pass (#2691): mines this account's own session transcripts for
+tool-call failures repeating across two or more DISTINCT sessions — the two-session evidence
+bar, enforced in code (`bin/lib/dream/scan.js`'s `filterByEvidenceBar`), not just prose — and
+stages propose-only writeups with quoted evidence under a `*-dream-standalone*` run directory.
+Read-only/propose-only: it never edits CLAUDE.md or a skill file, and nothing it stages is
+auto-applied. Full CLI invocation, scope, and review flow: `dream-pass.md` in this skill's
+directory.
 
 ## Next Actions
 

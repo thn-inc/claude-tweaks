@@ -5,11 +5,11 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
-const CHALLENGE = fs.readFileSync(path.join(REPO_ROOT, 'plugin/skills/challenge/SKILL.md'), 'utf8');
+const CHALLENGE = readText(path.join(REPO_ROOT, 'plugin/skills/challenge/SKILL.md'));
 
 const step1Idx = CHALLENGE.indexOf('### Step 1: Gather');
 const step2Idx = CHALLENGE.indexOf('### Step 2: Judge');

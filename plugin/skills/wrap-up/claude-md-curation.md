@@ -56,4 +56,4 @@ Read `_shared/harness-health-analysis.md` and apply it with `assetType: claude-m
 
 → Collect each needed update as: `[claude.md] {section} — {what to add/change}` or `[rule] {path scope} — {convention}`
 
-Each collected item becomes one payload finding: `kind` is the harness-health finding kind (`patch`), `targetPath` is `CLAUDE.md` or the rule file, `summary` is the `— {…}` half written as a reader would say it, `stagePath` is the `staged/` file holding the full proposal, and `action` is `staged`.
+Each collected item becomes one payload finding: `kind` is the harness-health finding kind (`patch`), `targetPath` is `CLAUDE.md` or the rule file, `summary` is the `— {…}` half written as a reader would say it, `stagePath` is the `staged/` file holding the full proposal — named `staged/wrap-up-claude-md-{n}.md` — and `action` is `staged`.
