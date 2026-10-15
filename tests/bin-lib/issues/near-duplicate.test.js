@@ -313,3 +313,17 @@ test('buildShapingState degrades a missing claim map and a null linked-PR respon
   const state = buildShapingState({ numbers: [5], labelsByNumber: { 5: ['ready'] }, claimContentByNumber: undefined, linkedPRRepoData: null, now: NOW });
   assert.deepStrictEqual(state[5], { ready: true, liveClaim: false, claimRunId: null, openLinkedPR: null });
 });
+
+test('buildShapingState never reads a stale claim as live when the clock is not a finite number', () => {
+  for (const now of [NaN, undefined, null]) {
+    const state = buildShapingState({ numbers: [6], labelsByNumber: { 6: ['ready'] }, claimContentByNumber: { 6: staleBlob }, linkedPRRepoData: null, now });
+    assert.strictEqual(state[6].liveClaim, false, String(now));
+  }
+});
+
+test('malformed shapes degrade to no refusal instead of throwing', () => {
+  assert.strictEqual(shapingRefusal({ number: 5, signals: ['title-similarity'] }, { 5: LIVE }), null);
+  assert.deepStrictEqual(buildShapingState({ numbers: { a: 1 }, labelsByNumber: {}, claimContentByNumber: {}, linkedPRRepoData: null, now: NOW }), {});
+  const state = buildShapingState({ numbers: [5], labelsByNumber: { 5: { labels: ['ready'] } }, claimContentByNumber: {}, linkedPRRepoData: null, now: NOW });
+  assert.strictEqual(state[5].ready, false);
+});

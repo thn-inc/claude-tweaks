@@ -121,7 +121,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const [hits, snapshot] = [JSON.parse(fs.readFileSync(process.argv[1], 'utf8')), JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))];
 const labelsByNumber = Object.fromEntries(snapshot.map((r) => [r.number, r.labels]));
-const numbers = hits.filter((h) => h.signals.includes('title-similarity') && normalizeLabelNames(labelsByNumber[h.number] || []).includes('ready')).map((h) => h.number);
+const numbers = hits.filter((h) => Number.isInteger(h.number) && h.signals.includes('title-similarity') && normalizeLabelNames(labelsByNumber[h.number] || []).includes('ready')).map((h) => h.number);
 const claimContentByNumber = {};
 let linkedPRRepoData = null;
 if (numbers.length) {
@@ -133,7 +133,9 @@ if (numbers.length) {
     if (!r.failure && r.via === 'git') tip = r.sha;
     claimContentByNumber[n] = r.failure || r.absent ? null : r.content;
   }
-  try { linkedPRRepoData = JSON.parse(execFileSync('gh', ['api', 'graphql', '-f', 'query=' + buildLinkedPRQuery(numbers), '-F', 'owner={owner}', '-F', 'repo={repo}'], { encoding: 'utf8' })).data.repository; } catch {}
+  let out = null;
+  try { out = execFileSync('gh', ['api', 'graphql', '-f', 'query=' + buildLinkedPRQuery(numbers), '-F', 'owner={owner}', '-F', 'repo={repo}'], { encoding: 'utf8' }); } catch (e) { out = e.stdout || null; }
+  try { linkedPRRepoData = JSON.parse(out).data.repository; } catch {}
 }
 const state = buildShapingState({ numbers, labelsByNumber, claimContentByNumber, linkedPRRepoData, now: Date.now() });
 const hit = shapingRefusal(hits, state);
@@ -144,7 +146,8 @@ console.log(JSON.stringify(hit ? { refuse: true, hit, evidence: state[hit.number
 Only a title-similar `ready` candidate can refuse, so the call reads claims and linked PRs for those
 alone (one `git fetch` in total, chained through the first read's tip) and skips both reads when
 there are none. A failed claim read (the git read falls back to the contents API) or a failed
-linked-PR query leaves that candidate "not in flight" — never a refusal. With no `gh` (MCP
+linked-PR query leaves that candidate "not in flight" — never a refusal (a GraphQL error on one
+issue still keeps the partial `data` for the others). With no `gh` (MCP
 transport), run the call unchanged: the git claim read still works wherever `git fetch` can read
 the remote, and the GraphQL call falls into its `catch` — the per-item PR-read degrade
 `_shared/github-write-transport.md` documents, since PR reads have no MCP equivalent. The screen

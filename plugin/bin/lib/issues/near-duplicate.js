@@ -202,7 +202,7 @@ function findNearDuplicates(subject, records, opts = {}) {
 // anchor overlap alone never refuse — they are build-collision signals,
 // which /flow and /dispatch already handle. bot:in-progress is not read.
 function shapingRefusal(hits, stateByNumber) {
-  for (const hit of hits || []) {
+  for (const hit of Array.isArray(hits) ? hits : []) {
     if (!hit || !Array.isArray(hit.signals) || !hit.signals.includes('title-similarity')) continue;
     const state = stateByNumber && stateByNumber[hit.number];
     if (!state || state.ready !== true) continue;
@@ -219,13 +219,18 @@ function shapingRefusal(hits, stateByNumber) {
 // degrades to "not in flight" — the finder is a screen, so a read failure
 // must never cause a refusal.
 function buildShapingState({ numbers, labelsByNumber, claimContentByNumber, linkedPRRepoData, now }) {
-  const { excludedByOpenPR } = partitionByOpenLinkedPR((numbers || []).map((number) => ({ number })), linkedPRRepoData || null);
+  const list = Array.isArray(numbers) ? numbers : [];
+  const { excludedByOpenPR } = partitionByOpenLinkedPR(list.map((number) => ({ number })), linkedPRRepoData || null);
   const prByNumber = new Map(excludedByOpenPR.map((e) => [e.number, e.pr]));
+  // A non-finite `now` makes isStale answer false for every claim, which
+  // would read an expired claim as live — so liveness needs a real clock.
+  const clockOk = Number.isFinite(now);
   const state = {};
-  for (const n of numbers || []) {
-    const ready = normalizeLabelNames((labelsByNumber && labelsByNumber[n]) || []).includes('ready');
+  for (const n of list) {
+    const labels = labelsByNumber && labelsByNumber[n];
+    const ready = normalizeLabelNames(Array.isArray(labels) ? labels : []).includes('ready');
     const content = claimContentByNumber ? claimContentByNumber[n] : null;
-    const liveClaim = classifyClaimBlob(content, now).state === 'live';
+    const liveClaim = clockOk && classifyClaimBlob(content, now).state === 'live';
     let claimRunId = null;
     if (liveClaim) {
       try { claimRunId = JSON.parse(content).runId || null; } catch { claimRunId = null; }
