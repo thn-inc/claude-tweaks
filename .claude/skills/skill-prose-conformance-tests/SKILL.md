@@ -116,6 +116,16 @@ narrower copy stops seeing offenders the real parser would reject. This is the c
 Decision Framework's first row: there the prose restates a structure in code and is pinned against
 it; here the *test* was doing the restating, and the fix is an import, not a pin.
 
+**Import the recognizer the test reads with, never the value it checks.** The rule above covers
+the tools a sweep uses to find things in the corpus. It does not cover the expected value an
+assertion compares against. `plugin/skills/_shared/criteria-simplification.md`'s Constraints draw
+that line for every simplify pass: a test's literal expected value is an independent oracle, and
+replacing it with the production constant it checks leaves an assertion that holds for any value
+of that constant. The same suite shows both halves. It imports `CANDIDATE_RE` to find marker-shaped
+lines, and it pins `KEYS.length` to a literal `6`, which is what lets an added or dropped key go
+red. Import the scanner. Keep the expected count, list, or threshold a literal; a test-local
+constant is fine.
+
 ### An allowlist entry owes a stale-check of its own
 
 A sweep with an exemption list has a failure mode the non-empty-haystack rule above does not
