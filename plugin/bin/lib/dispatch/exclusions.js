@@ -67,13 +67,12 @@ function readExclusions(path) {
 // with [entry], clobbering every earlier pass's entries for this firing.
 // Absent is the normal first-pull case and still creates the file as today.
 function appendExclusion(path, entry) {
-  const status = readExclusionsStatus(path);
-  if (status.status === 'unreadable') {
-    throw new Error(`appendExclusion: ${path} is unreadable (${status.error}) -- refusing to rewrite from an empty array`);
+  const r = readExclusionsStatus(path);
+  if (r.status === 'unreadable') {
+    throw new Error(`appendExclusion: ${path} is unreadable (${r.error}) -- refusing to rewrite from an empty array`);
   }
-  const entries = status.entries;
-  entries.push(entry);
-  fs.writeFileSync(path, JSON.stringify(entries));
+  r.entries.push(entry);
+  fs.writeFileSync(path, JSON.stringify(r.entries));
 }
 
 // entries whose reason is in `reasons`, flattened to the set of every
