@@ -6,7 +6,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const RECORD_CREATION = fs.readFileSync(
@@ -68,8 +70,6 @@ test('the Ceremony tally step writes to docs/specify-decomposition-log.md on a 2
 // as-is (docs/skill-authoring.md's "Executable snippets in skill prose" — the doc is the
 // only source of the executed text). Extraction anchors on each step's bold label plus the
 // next ```bash fence; a moved label fails loudly as "extraction pattern is out of sync".
-const os = require('os');
-const { spawnSync } = require('child_process');
 
 const PLUGIN_ROOT = path.join(REPO_ROOT, 'plugin');
 const SESSION_ID = 'ceremony-tally-test-session';
@@ -115,7 +115,7 @@ function makeProject({ policy, workBackend = 'github-issues' } = {}) {
   const logPath = path.join(cwd, 'docs', 'specify-decomposition-log.md');
   const readLog = () => fs.readFileSync(logPath, 'utf8');
   const cleanup = () => fs.rmSync(root, { recursive: true, force: true });
-  return { cwd, init, accumulate, tally, logPath, readLog, cleanup };
+  return { cwd, init, accumulate, tally, readLog, cleanup };
 }
 
 const HEADER_LINE = '# Specify Decomposition Event Log';

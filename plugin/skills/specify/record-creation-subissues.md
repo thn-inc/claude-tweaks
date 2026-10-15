@@ -221,8 +221,8 @@ record (e.g. #1350) is waiting to observe: 2 or more sub-issues in this batch ca
 later, unrelated session can confirm the event occurred without needing this session's own
 transcript.
 
-The step is opt-in per project: the fence first resolves `specify-decomposition-log` (`_shared/policy-schema.md`)
-— `SPECIFY_DECOMP_LOG=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values specify-decomposition-log)`:
+The step is opt-in per project via `specify-decomposition-log` (`_shared/policy-schema.md`),
+which the fence below resolves first:
 - `specify-decomposition-log: false` (the default) — skip the step entirely: no tally, no file,
   not even a log line. A project that has not opted in sees no behavior change at all.
 - `specify-decomposition-log: true` — run the tally below. A ref renders `#{N}` under
