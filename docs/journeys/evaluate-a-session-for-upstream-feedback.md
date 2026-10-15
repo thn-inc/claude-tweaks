@@ -43,7 +43,7 @@ files:
 - **URL:** `/claude-tweaks:feedback` in an environment with no local transcript
 - **Action:** Invoke bare where no transcript file resolves — or where the judge dispatch terminally fails (format retry spent, or a hard model error such as a usage limit); either way the evaluation runs in the main thread instead of a dispatched judge, never silently dropped.
 - **Should feel:** The same flow, visibly labeled — not a silent downgrade.
-- **Should understand:** Every block's header carries `(self-assessment)`; the label is the whole mitigation, because the human confirmation in Step 3 still gates every filing identically.
+- **Should understand:** Every block's header carries `(self-assessment)`; the label is the whole mitigation, because the human confirmation in Step 3 still gates every filing identically. When a transcript did resolve but the judge dispatch terminally failed, the self-assessment run still stamps a watermark (marked `mode: "self-assessment"`), so the next bare `/claude-tweaks:feedback` scopes past what this run covered instead of re-evaluating from the start; only the no-transcript case writes no watermark.
 - **Red flags:** Self-assessed output rendered without the tag; a degraded run filing anything without the Step 3 confirmation.
 
 ## Origin
@@ -56,3 +56,4 @@ files:
 - Updated during build of #849 — the watermark's offset clause now also carries fingerprints declined at a prior run's Step 7, read from `bin/lib/declined-learning/store.js`.
 - Updated during build of #1033 — the offset clause now carries human-legible `subject` text via a live `listDeclined` call, replacing #849's opaque-fingerprint `dismissedFingerprints`, and Step 3 now documents the separate exact-hash Prior-decline annotation (feedback/SKILL.md Step 4) that renders on a drafted item's own confirmation.
 - Related specs: #679
+- Updated during build of #2730 — Step 4 now documents that a self-assessment run reached via a terminal judge-dispatch failure (transcript resolved) writes a `mode: "self-assessment"` watermark, so a later bare run scopes past it.

@@ -54,6 +54,14 @@ Read them before writing a fourth.
   filtering (`--only ,`) is a usage error (exit 2) on both CLIs that accept the flag — it asks for
   zero probes, and gathering every probe instead would silently answer a different question than
   the one asked.
+- **`--print <probe>`** (`wrap-up-pack.js` only, #2544/#2546) is `--only` narrowed to one probe with
+  a different stdout: just that probe's `{ok, value | error}` envelope, so a prose step reads one
+  field without dumping the whole pack and extracting it by hand
+  (`plugin/skills/wrap-up/summary-template.md`'s `--print state` is the shipped call site). It
+  still writes the pack file, and that file now holds only the one probe — so a `--print` run
+  replaces an existing full pack with a one-probe subset, exactly as `--only` does. Call it only
+  when the pack file is absent, or accept that later readers fall back per the absent-field rule
+  below. An unknown probe name, or combining it with `--only`, is a usage error (exit 2).
 - **A pack proposes; it never decides.** Any field an engine or a forge will later own — a version,
   a merge state, a PR number — is labelled a *proposal* in the consumer's prose, is re-read from
   that engine after the engine acts, and the reconciliation is written **once**, at the consumer,
@@ -75,14 +83,14 @@ proposed field, answer three questions against the code, at plan-authoring time:
    - **Multi-spec per-spec dirs.** A `{parent-run-id}/spec-{N}/` dir carries its own `status`, but
      the run's shared `worktree` and `pr` stamps live on the **parent** run dir, because run-dir
      enumeration is top-level only (`context.js` `iterRunDirsWithState`).
-   - **Reading the stamps.** Read per-spec first, then fill missing stamps field by field from the
-     parent. Gate that fallback on a run-id-shaped parent, the same rule `perSpecPathspec` uses.
-     `pr-bookkeeping/precondition.js` is the one reader that does all of it: `worktree`, `pr` and
-     `prExempt`, plus the parent's PR-early degrade line in `decisions.md`. Do not model a new
-     reader on the other two, which are partial: `wrap-up/pack.js` `resolveState` fills per field
-     but gates only on the `spec-` basename, and `wrap-up/engine-verify.js` `resolvePrNumber`
-     swaps to the parent's whole `run-state.json` only when the per-spec file is missing, with no
-     gate and no per-field fill.
+   - **Reading the stamps.** Call `hooks/context.js`'s `readRunStateWithParent(runDir)` (#2858). It
+     reads per-spec first, then fills a missing `worktree`, `pr` or `prExempt` field by field from
+     the parent, behind the `spec-` basename gate. Pass `requireRunIdParent: true` to also require
+     a run-id-shaped parent, the same rule `perSpecPathspec` uses. `wrap-up/pack.js`
+     `resolveState`, `wrap-up/engine-verify.js` `resolvePrNumber` and
+     `pr-bookkeeping/precondition.js` all read through it, so do not hand-roll another copy. The
+     parent's PR-early degrade line in `decisions.md` is not part of the helper:
+     `precondition.js` reads it itself from the returned `parentRunDir`.
    - **Why it matters.** #2664's first trace got this wrong by following the writers alone.
 2. **Does the consumer mandate a freshness step first?** `mergeSize` was dropped from the wrap-up
    pack because its consumer must measure *after its own fetch* — a pre-gathered value is stale by
@@ -117,7 +125,7 @@ against one before the review does.
 
 - A single read a single sentence needs — one `node -e` or one `git` call is not a pack.
 - Anything that mutates. A pack is read-only; a writer belongs with the sanctioned writers
-  (`log-decision.js`, `stage-item.js`, `set-config.js`).
+  (`log-decision.js`, `stage-item.js`, `set-config.js`, `set-verify-expectations.js`).
 
 ## Origin
 

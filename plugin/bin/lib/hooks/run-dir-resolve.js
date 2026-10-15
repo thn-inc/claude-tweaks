@@ -170,7 +170,23 @@ function resolve(opts = {}) {
   }
 
   // Step 2: newest matching directory under the main checkout.
-  if (opts.specSlug) {
+  //
+  // #2838: skipped entirely for a mint-only `--create` call (one naming
+  // `--spec-slug` with no `--standalone`) — the plain mkdir-only mint shape
+  // `/claude-tweaks:dispatch` Step 4, `flow/claim-targets.md`'s
+  // direct-invocation mint, and `flow/steps-and-gates.md` case 5's creation
+  // path all use, every one of them reaching this call specifically because
+  // no existing run directory should be adopted (case 5's own cases 1-4
+  // already ruled that out upstream). Without this guard, Step 2 adopted
+  // whatever same-slug directory happened to exist — including one a live
+  // sibling session had minted seconds earlier — defeating the caller's own
+  // "create fresh" intent and handing two sessions the same run dir and
+  // worktree. A `--standalone` call (release/wrap-up/sweep/specify's
+  // standalone-auto mints) is unaffected — the `-standalone` suffix already
+  // names a distinct directory shape, and those callers are not in scope
+  // here. A read-only resolution call (no `--create` at all) is also
+  // unaffected — it keeps today's adopt-newest-matching behavior exactly.
+  if (opts.specSlug && !(opts.create && !opts.standalone)) {
     const match = newestMatch(pipelinesRoot, opts.specSlug);
     // #208: same invariant as Step 1 — never reuse a live directory whose run-id already has
     // an archived counterpart (a resurrected copy). Fall through to create/fail below instead.

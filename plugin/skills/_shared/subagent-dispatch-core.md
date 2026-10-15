@@ -63,6 +63,28 @@ documents. The rule above is about what a dispatched agent may instruct *itself*
 dispatches) to do; it never restricts the dispatcher's own read of the notifications its
 children's completions already send.
 
+**Bounded polling for a long external wait.** Neither pattern above fits a genuinely long
+*external* process with no completion-notification channel at all — a live CI run, a cloud
+deploy — that a dispatched agent must verify finished, not just kick off. Backgrounding it and
+ending the turn to wait for a notification is the same violation as above (nothing ever re-wakes
+a dispatched agent), and the agent cannot simply block for however long the process takes
+either. The compliant shape is a **bounded check-interval loop run with real foreground tool
+calls**: repeated `Bash` calls (or a `Monitor` watch over a polling script) that check the
+external condition on a fixed interval — e.g. `sleep 20 && gh run view {id} --json
+status,conclusion` — never a backgrounded watcher left to report back on its own. Cap the loop to
+a fixed iteration count rather than leaving it open-ended; `release/execute.md`'s re-render poll
+already uses 20-second intervals for up to 15 attempts (5 minutes) and is a reasonable default to
+copy rather than re-derive. When the bound is exhausted without the condition resolving, that is
+a **re-arm**, not a failure: run the same bounded loop again as an explicit new attempt and say
+so, rather than silently extending the original wait or escalating to backgrounding instead.
+
+Log every iteration: name what's being waited on, the iteration number against the bound, and
+the current status, in one line — e.g. "Polling CI run {id}: attempt 4/15, status=in_progress".
+This is the detail that matters most in practice: without it, "an agent doing bounded polling
+with real tool calls" and "an agent stuck in a silent loop" are indistinguishable from outside
+the transcript, and a coordinating session watching the dispatched work has no signal to check
+before interrupting with a false-alarm check-in (#2784).
+
 ## Model Selection
 
 Match the profile to the work. A **work profile** names the kind of work; this table — the single canonical resolution — says what runs it:

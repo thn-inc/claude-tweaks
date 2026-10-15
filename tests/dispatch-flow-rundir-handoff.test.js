@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
 // #296's second Task() call must resume the FIRST call's run directory rather than
 // starting a disconnected fresh one — otherwise build/test's decisions.md and staged
 // proposals are orphaned from the eventual Review Console. This was reviewed as fixed
@@ -16,7 +16,7 @@ const path = require('path');
 // time.
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const TASK_PROMPT = read('plugin', 'skills', 'dispatch', 'task-prompt.md');
 const FLOW_SKILL = read('plugin', 'skills', 'flow', 'SKILL.md');

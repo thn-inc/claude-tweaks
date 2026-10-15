@@ -6,15 +6,15 @@
 // an implementer subagent follows; there is no separate mechanical engine to unit-test here.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 // Normalize CRLF to LF: the git-tracked content is LF-only, but a Windows
 // checkout with core.autocrlf=true rewrites working-tree line endings to
 // CRLF, which breaks a literal multi-line string match (though not a `.`/`s`
 // regex, which already treats `\r` as ordinary whitespace via `\s`).
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8').replace(/\r\n/g, '\n');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const MICRO_PLAN = read('plugin', 'skills', 'build', 'micro-plan.md');
 const BUILD_SKILL = read('plugin', 'skills', 'build', 'SKILL.md');

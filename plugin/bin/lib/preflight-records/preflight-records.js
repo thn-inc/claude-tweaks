@@ -21,7 +21,7 @@ const { fetchNativeDependencies: sharedFetchNativeDependencies } = require('../i
 const { repoSlug } = require('../repo-resolve');
 
 function defaultRunner(args) {
-  return execFileSync('gh', args, { encoding: 'utf8' });
+  return execFileSync('gh', args, { encoding: 'utf8', windowsHide: true });
 }
 
 // A runner may throw a non-Error (string, object, undefined) — never let a

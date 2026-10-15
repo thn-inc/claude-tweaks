@@ -55,9 +55,16 @@ variants before this lens ever sees them (the identical precedent #2350 establis
 `'lenient'`) — **judge this lens's aggregate `contract-violation` volume as the genuine count**,
 not a mix of three unrelated populations. One population `friction-events.js` cannot filter:
 mid-turn/non-final narration graded as if it were the dispatch's terminal reply
-(claude-code#27755's unreliable firing) — that population's own fix is #2041's scope, not this
-lens's; until it lands, treat a surprisingly high genuine count as a prompt to sample a few
-entries' `firstLine` before concluding the run was actually non-compliant that often.
+(claude-code#27755's unreliable firing) — that population's own fix is #2041's/#2714's scope, not
+this lens's. #2041 suppresses a narration turn immediately reacting to an async signal (a launch
+ack or a sibling's task-notification); #2714 extends that to a nested dispatcher's own interim
+progress-update reply composed *after* intervening tool calls, via the dispatching agent's own
+`INTERIM_STATUS: {note}` trailing marker (`_shared/subagent-output-contract.md`'s Implementer
+Status Protocol) — a dispatch following that convention produces zero `contract-violation` events
+for its interim turns. Until every dispatch site in a run reliably uses the marker, treat a
+surprisingly high genuine count as a prompt to sample a few entries' `firstLine` before concluding
+the run was actually non-compliant that often — an unmarked interim reply from a nested dispatcher
+still shows up here as a false positive.
 
 **`zero-tool-use-verdict` (#2345).** A dispatched agent's verdict/findings/pass-fail reply whose
 transcript carries zero tool-use blocks anywhere — it read nothing, so its content is a failed
@@ -87,6 +94,24 @@ returns `[]` — nothing is manufactured. A formal `/claude-tweaks:build`/`/clau
 unaffected: its own `PIPELINE_RUN_DIR` is set (or `record-worktree` stamps ownership) before either
 trigger fires, so `stampAdHocRunDir` sees an already-owned run and never mints a second, competing
 one.
+
+**Main-checkout denial coverage (#2351, confirmed still current by #2543).** The fallback above
+fires only on an `EnterWorktree` call or `ctx.cwd` resolving to a worktree distinct from the main
+repo root — deliberately excluding the main checkout itself, since firing on every ordinary
+main-checkout `PostToolUse` call would be pure noise. A session doing `/claude-tweaks:wrap-up`
+cleanup entirely in the main checkout (no worktree at all) still needs its `wd-deny`/`gate-denial`
+events to land somewhere, so a second, narrower mechanism covers exactly that case:
+`bin/lib/hooks/context.js`'s `stampAdHocRunDirForDenial`, called from `pre-tool-use.js`'s own
+denial sites (`checkWorktreeRequired`, `checkTeardownGate`, `checkPipelineShadowGuard`) immediately
+before an `appendEvent` call whose target run dir would otherwise be null. It keys the stamp's
+`worktree` field on whatever `ctx.cwd` resolves to in `git worktree list` — main checkout
+included, unlike the fallback above — which is safe specifically because the trigger is an actual
+denial, never ordinary activity: it cannot fire on a benign `git status` or read. `friction-events.js`
+finds it back the identical way, via `findRunsByWorktreePath`, so a later run dir created in the
+same session (this wrap-up run itself, or an earlier interrupted one) still surfaces it. Together,
+these two mechanisms mean an empty array from this lens's input command is not a false all-clear
+for a session that ran entirely in the main checkout and never entered a worktree — a genuine
+denial there is logged too, confirmed end-to-end by `tests/friction-main-checkout-denial-coverage.test.js`.
 
 **Lifecycle: surviving the orphan-mint sweep (#1117).** An ad-hoc dir never gets a `config.yml` in
 practice either (`/flow`'s Manifesto is what writes one; `bin/set-config.js`'s `setConfigLever`
@@ -179,10 +204,10 @@ Auto-mode routing is shared across every mode — see the auto-routing table in 
 
 ### Prior-decline annotation
 
-Before rendering the table, compute each insight's fingerprint —
-`bin/lib/health-core/fingerprint.js`'s `createFingerprint('reflect', ['description']).fingerprint({ description })`,
-where `description` is the insight's own one-line text — and look it up via
-`bin/lib/declined-learning/store.js`'s `lookupDecline(fingerprint)`. A match means a human
+Before rendering the table, compute each insight's fingerprint and look it up in one command —
+`printf '%s' '{"description":"..."}' | node "${CLAUDE_PLUGIN_ROOT}/bin/declined-learning.js" lookup --source reflect`
+(#2544), where `description` is the insight's own one-line text; it prints
+`{fingerprint, decline}` (`decline` is `null` when none was recorded). A non-null `decline` means a human
 already declined an equivalent insight before; render it with a prior-decline annotation
 appended to its `Insight` cell, never silently suppressed:
 
@@ -229,7 +254,32 @@ Collect all insights from the five lenses and the tradeoff review into a single 
 | 4 | {description} | {terminal/systemic/—} | Capture — needs brainstorming |
 ```
 
-The table renders as markdown, as above. Immediately below it, call `AskUserQuestion` with:
+The table renders as markdown, as above.
+
+**Under `--source wrap-up` (#2547) — stage instead of asking.** `/claude-tweaks:wrap-up` passes
+`--source wrap-up` on every run, standalone included (`reflect/SKILL.md`'s dispatch-rule
+paragraph) — its own Review Console (`wrap-up/review-console.md`) already re-presents this exact
+table as a terminal decision, so asking here too decides nothing a second stop doesn't decide
+again. When this signal is present — the same signal `reflect/SKILL.md` already uses to gate Next
+Actions and Step 2's dispatch; this branch is `--source wrap-up` only, never `--source review` —
+skip the `AskUserQuestion` call below entirely. Still render the table above (the Hard gate below
+still applies) and still classify every insight through the Routing guide exactly as this section
+already does, but write the composed table — each insight's resolved recommendation, not yet
+applied — to `{run-dir}/staged/wrap-up-reflect-insights.md` (overwrite if a prior reflect pass in
+this same run already wrote one) instead of asking. Do not apply any "Implement now" insight, do
+not file any Defer/Capture record, and do not record a Don't-capture decline yet — leave every
+non-D4/D5 outcome unapplied. `wrap-up/review-console.md`'s own Pending-review rendering (Hard
+requirement: every file in `staged/` renders) picks up this file, and its own terminal Approve all
+/ Override decision is what actually applies each row, exactly as the `AskUserQuestion` answer
+would have applied it here. D4 (Memory) and D5 (Upstream) rows are listed in the staged file for
+visibility only — nothing about this branch changes how those two destinations are gated; they
+still go through the console's own separate `M#`/`U#` rows regardless of what this row's Approve
+all resolves (`review-console-interactive.md`'s "a different table's approval never satisfies this
+gate" rule, unchanged by this fix). Return control to the parent once the staged file is written —
+no `AskUserQuestion`, no Next Actions (the parent already omits that block under this signal).
+
+Otherwise — standalone, or `--source review` — immediately below the table, call
+`AskUserQuestion` with:
 
 - `question`: `"How do you want to handle these insights?"`, `header`: `"Insights"`, `multiSelect`: `false`
 - Option 1 — `label`: `"Apply all (Recommended)"`, `description`: `"Apply all recommendations"`
@@ -268,8 +318,8 @@ that genuinely serves two audiences is two insights, stated separately.
 - **Implement now** — the strong default. If an insight leads to a concrete change (update CLAUDE.md, update a skill, add a rule), make the change. A D4 memory outcome is staged via wrap-up's Memory curation row instead of applied inline — **but only when this run will actually reach wrap-up.** Standalone `/claude-tweaks:reflect`'s Next Actions (`reflect/SKILL.md:183`) only *offer* `/claude-tweaks:wrap-up`, they never require it, so a run that ends here leaves a `staged/` file no Review Console will ever open — a lesson with no consumer. When this is a standalone run and the user does not continue to `/claude-tweaks:wrap-up`, present the D4 proposal inline instead, for the same per-item approval, then write it directly per the contract's "Memory write procedure (D4)" on approval — the same resolution `_shared/ledger-format.md`'s Resolve Gate section applies to a standalone ledger item ("no Review Console will ever read a staged file, so create the record directly instead"). Never leave a D4 proposal staged with no consumer.
 - **Defer** (new work record, `parked`) — the insight leads to a known improvement but it's bigger and not relevant to the current work. Gated by `_shared/deferral-gate.md`: run its fix-now criteria first, and name the `Defer-reason:` in the batch table's Recommended column (e.g. `Defer — genuinely-larger`), chosen per that file's vocabulary — same mapping review Step 3 uses (`review/step3-routing.md`). Compose the body via `specShapedBody` (the insight → Current State, the known improvement → Deliverables, the observable outcome → Acceptance Criteria; `header: 'Trigger: {condition}'`; `filedBy: 'reflect'`; `provenance: { origin: 'reflect {mode} from #{n}', deferReason }`; footer `_Filed by \`reflect\` via specShapedBody._`), then create it directly via the unified record contract (`_shared/work-record.md`) — `gh issue create` (`work-backend: github-issues`) or `local-store.js`'s `writeRecord` (`work-backend: local-files`) — with `recordPayload({ …, type: 'task', risk, size, parked: true })` (a deferred insight is maintenance/follow-up work by construction, so `type` is always `task` here — `recordPayload` requires a resolvable `type` on every call, never an optional one, so this was never actually omittable; what was missing was applying it to the issue). **Type expression branch (#2562).** `recordPayload`'s returned `type` is metadata only — nothing stamps it onto the issue by itself, the same gap `capture/SKILL.md`'s own "Type expression branch" closes for its create path. Under `work-backend: github-issues`, read the project's `work-types` config key once before filing and branch, exactly as that file does: `work-types: native` — append `--type task` to the `gh issue create` call above; `work-types: labels` — bootstrap and add the `type:task` label instead (the pair lives in `record.js`'s `TYPE_LABELS`). Under `work-backend: local-files`, `writeRecord(filePath, {title, body, facets})` takes a `facets` object, not `recordPayload`'s flat `{title, body, labels, type}` return — include `type: 'task'` in the `facets` object passed to `writeRecord` explicitly (`local-store.js`'s frontmatter writer persists whatever `facets.type` it's given; it does not read `recordPayload`'s own return shape). An insight naming an open choice takes the `openQuestion` variant (`needs:definition` — a label with no `recordPayload` parameter, appended at the create call — no scoring, and no `type` stamping either, since an open question is not yet resolvable work). An insight with no valid reason cannot be recommended Defer. Before this recommendation is rendered, apply `_shared/materiality-floor.md`'s floor test to the insight: when it fails to clear the materiality floor (and its `Defer-reason:` is not `tangential`), the batch table's Recommended column shows "Digest — below floor" instead of "Defer — {reason}", and the digest entry is written only when the human approves that row (or an auto path applies it) — never before this recommendation reaches a human, per the contract's recommend-only-path rule. This mode's own insight-routing summary states the digest comment URL and the count routed this run, per `_shared/materiality-floor.md`'s "Digest URL and count surfacing" section.
 - **Capture** — the insight is complex or uncertain and needs brainstorming/exploration before it can be acted on. Routes to `/claude-tweaks:capture`, which files it as a fresh backlog work record — the recommendation names its reason the same way (`Capture — tangential`), invoked with the shaped body and `--defer-reason={value} --source reflect` (capture's Shaped-body branch — `capture/SKILL.md`). An insight with no valid reason cannot be recommended Capture. A Capture recommendation's `Defer-reason:` is usually `tangential`, which `_shared/materiality-floor.md`'s override always clears — a Capture-routed insight with reason `tangential` renders "Capture — tangential" as above, never a "Digest" recommendation. A Capture-routed insight carrying a different `Defer-reason:` (the rarer case) is still subject to the same materiality-floor test as the Defer bullet above, and may render "Digest — below floor" instead.
-- **Don't capture** — only for insights that are genuinely not actionable (one-off observations, context-specific facts, things already documented elsewhere). Must state why. Record the decline via `bin/lib/declined-learning/store.js`'s `recordDecline(fingerprint, { reason, source: 'reflect', subject: description })` — `fingerprint` from the Prior-decline annotation step above, `reason` the stated why, `subject` (#1033) the insight's own one-line `description` text (the same text the fingerprint was computed from), so a later run's subject-scan step above has something to compare against for an insight that re-surfaces reworded rather than byte-identical. `source: 'reflect'` names this skill regardless of whether it ran standalone or from `/claude-tweaks:wrap-up` (#1399) — every reader below filters on this same literal. A decline write failure degrades open — log a one-line note and continue; never block the batch resolution over it.
+- **Don't capture** — only for insights that are genuinely not actionable (one-off observations, context-specific facts, things already documented elsewhere). Must state why. Record the decline via `printf '%s' '{"description":"...","reason":"..."}' | node "${CLAUDE_PLUGIN_ROOT}/bin/declined-learning.js" record-decline --source reflect` (#2544) — it computes the same fingerprint as the Prior-decline annotation step above, `reason` the stated why, and stores `subject` (#1033) as the insight's own one-line `description` text (the same text the fingerprint was computed from), so a later run's subject-scan step above has something to compare against for an insight that re-surfaces reworded rather than byte-identical. `source: 'reflect'` names this skill regardless of whether it ran standalone or from `/claude-tweaks:wrap-up` (#1399) — every reader below filters on this same literal. A decline write failure degrades open — log a one-line note and continue; never block the batch resolution over it.
 
-If any insight is "Implement now", handle it after the user approves the batch table, before returning control to the parent or presenting Next Actions — **except a D4 outcome**, whose write is gated separately as described above; do not write a memory file at this point.
+**Standalone / `--source review` path only** (the "otherwise" branch above): if any insight is "Implement now", handle it after the user approves the batch table, before returning control to the parent or presenting Next Actions — **except a D4 outcome**, whose write is gated separately as described above; do not write a memory file at this point. **Under `--source wrap-up`**, none of this section's outcomes (Implement now, Defer, Capture, Don't capture) are applied here at all — they are written to the staged file above and applied later by the Review Console's own Approve all / Override decision, per the `--source wrap-up` branch described there.
 
-> **Always present the batch table in interactive mode**, even when every insight routes to "Implement now." Interactive mode means *ask the user* — the confirmation is the contract, not a formality. Skipping it (because the routing looks uniform or obvious) would be contract drift: auto-apply behavior belongs in auto mode, governed by the `Reflect insight routing` row of `_shared/auto-mode-contract.md`'s silences table.
+> **Always present the batch table**, even when every insight routes to "Implement now" — under `--source wrap-up` this means staging it (the branch above), under every other path it means asking. Skipping presentation entirely (because the routing looks uniform or obvious) would be contract drift: auto-apply behavior belongs in auto mode, governed by the `Reflect insight routing` row of `_shared/auto-mode-contract.md`'s silences table.

@@ -22,7 +22,9 @@ const SKILLS = path.join(ROOT, 'plugin', 'skills');
 const read = (...p) => fs.readFileSync(path.join(SKILLS, ...p), 'utf8');
 
 const REVIEW_STEPS = read('review', 'code-mode-steps.md');
-const SPEC_TEMPLATE = read('specify', 'spec-template.md');
+// Empirical Premise-Check Deliverables moved to empirical-premise-check-deliverables.md
+// (#2841's split) — concatenate so pins against moved text still resolve.
+const SPEC_TEMPLATE = read('specify', 'spec-template.md') + '\n' + read('specify', 'empirical-premise-check-deliverables.md');
 
 // Pre-#362 Step 1 (Spec Compliance Check) — no Risk-Marker Verification sub-check, no BLOCKED
 // row for an unresolved marker. Frozen bytes, not a live read — see header comment.

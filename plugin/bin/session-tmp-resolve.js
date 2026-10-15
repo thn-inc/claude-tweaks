@@ -33,5 +33,10 @@ for (const arg of args) {
   const varName = arg.slice(0, eq);
   const filename = arg.slice(eq + 1);
   const resolved = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
-  console.log(`${varName}=${JSON.stringify(resolved)}`);
+  // Print-only: on win32 emit forward slashes (`C:/Users/…`). The value is interpolated by skill
+  // snippets into JS string literals inside `node -e "…"`, where `C:\Users\…` would be read as
+  // escape sequences (`\U`, `\t`). Node, Git Bash and the Windows fs APIs all accept `/`; the
+  // library's return value stays native. Posix output is unchanged.
+  const printed = process.platform === 'win32' ? resolved.split(path.sep).join('/') : resolved;
+  console.log(`${varName}=${JSON.stringify(printed)}`);
 }

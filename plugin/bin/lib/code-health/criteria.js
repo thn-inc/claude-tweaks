@@ -138,10 +138,12 @@ const CRITERIA = [
   // (skills/code-health/focus-mode.md), never selected via criteriaForArea.
   { id: 'experiment-cleanup', appliesTo: ['frontend', 'backend'], confidenceFloor: 'medium', fragment: 'criteria-experiment-cleanup.md' },
   // Domain: security-hardening → pre-launch AI-app failure patterns (client
-  // secrets, missing per-user ownership checks, unguarded AI endpoints).
-  // Area-gated to the surfaces the three checks actually touch (frontend for
-  // client-bundle secrets; backend/cli/infra for routes/handlers); pinned
-  // directly by code-health's focus=security-hardening
+  // secrets, missing per-user ownership checks, unguarded AI endpoints),
+  // extended by sibling records with JWT validation (#2657), secrets-
+  // manager/rotation (#2666), and privacy-policy accuracy (#2663) checks.
+  // Area-gated to the surfaces these checks actually touch (frontend for
+  // client-bundle secrets; backend/cli/infra for routes/handlers/config);
+  // pinned directly by code-health's focus=security-hardening
   // (skills/code-health/focus-mode.md), never selected via criteriaForArea.
   { id: 'security-hardening', appliesTo: ['frontend', 'backend', 'cli', 'infra'], confidenceFloor: 'high', fragment: 'criteria-security-hardening.md' },
   // Domain: prelaunch → the pre-launch checklist for a website (sitemap,
@@ -150,6 +152,27 @@ const CRITERIA = [
   // the only surface a site's pages and assets live in; pinned directly by
   // code-health's focus=prelaunch (skills/code-health/focus-mode.md).
   { id: 'prelaunch', appliesTo: ['frontend'], confidenceFloor: 'medium', fragment: 'criteria-prelaunch.md' },
+  // Domain: agent-trust-scope → an unattended autonomous agent's own
+  // standing reach (registry access, network egress, credential scope), as
+  // configured by `.claude/settings.json` permission posture combined with
+  // `.claude-tweaks/policy.yml` autonomy level — distinct from the `risk:*`
+  // label's per-change blast-radius scoring (#2749). Area-gated to infra,
+  // the surface a project's own agent/dispatch configuration lives in;
+  // pinned directly by code-health's focus=agent-trust-scope
+  // (skills/code-health/focus-mode.md), never selected via criteriaForArea.
+  { id: 'agent-trust-scope', appliesTo: ['infra'], confidenceFloor: 'medium', fragment: 'criteria-agent-trust-scope.md' },
+  // Domain: app-store-readiness → the Apple App Store submission readiness
+  // checklist for AI-built mobile apps (Stripe-instead-of-IAP, missing
+  // Apple sign-in parity, no account deletion, incomplete demo login,
+  // unverified iPad layout, unlabeled paid screenshots, dead support/
+  // privacy links, "coming soon" placeholders, UGC with no report path,
+  // broken restore-purchases). Area-gated to frontend, the surface a
+  // mobile app's client code lives in; pinned directly by code-health's
+  // focus=app-store-readiness (skills/code-health/focus-mode.md), never
+  // selected via criteriaForArea. Distinct scope from #2622 (pre-scale),
+  // #2624 (security-hardening), and #2625 (GDPR/backup-retention) — see
+  // criteria-app-store-readiness.md's Scope boundary section.
+  { id: 'app-store-readiness', appliesTo: ['frontend'], confidenceFloor: 'medium', fragment: 'criteria-app-store-readiness.md' },
 ];
 
 // Build a lookup map once on load for O(1) getCriterion.

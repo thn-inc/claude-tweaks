@@ -62,20 +62,101 @@ function resolveTarget({ runDir, cwd = process.cwd(), mainRoot }) {
   return { ok: true, dir: real };
 }
 
-// { runDir, id, sourcePath, content } -> { file }. Overwrites; staged
-// proposals are documents, not an append log.
-function writeStagedItem({ runDir, id, sourcePath, content }) {
+// An allocate-mode id is `{kind}-{n}` (`build-deviation-1`) — the caller is
+// requesting a slot, not addressing a fixed one, and `{n}` may already be
+// stale by the time this write lands. This is deliberately NOT inferred from
+// the id's own shape: `premise-satisfied-{issueNumber}` and
+// `sibling-premise-disproof-{issueNumber}` (materialize.js) also end in
+// digits, but there `{n}` is a stable identity key (the issue number) whose
+// re-stage on a materialize re-run is an intentional idempotent overwrite,
+// not a counter collision — treating it as allocatable would silently
+// rename a legitimate update into a bogus duplicate under the next issue
+// number. Only a caller that opts in with `allocate: true` gets collision
+// protection; every other id keeps the original plain-overwrite contract.
+function parseNumberedKind(id) {
+  const m = /^(.*)-(\d+)$/.exec(id);
+  return m ? { kind: m[1], n: parseInt(m[2], 10) } : null;
+}
+
+// Scan an existing staged/ dir for files already claiming `{kind}-{digits}`
+// (with or without an extension) and return their numeric suffixes.
+function listExistingNumbers(stagedDir, kind) {
+  let entries;
+  try { entries = fs.readdirSync(stagedDir); } catch { return []; }
+  const escaped = kind.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`^${escaped}-(\\d+)(?:\\.|$)`);
+  const nums = [];
+  for (const entry of entries) {
+    const m = re.exec(entry);
+    if (m) nums.push(parseInt(m[1], 10));
+  }
+  return nums;
+}
+
+// { runDir, id, sourcePath, content, allocate? } -> { file, id, renamed?, requestedId? }.
+//
+// #2770: the filename counter that picks `n` in `{kind}-{n}` used to live in
+// each caller's own per-invocation state, not in the run directory's actual
+// contents — two independent writers in the same run could each compute the
+// same `{kind}-{n}` and the second would silently clobber the first's staged
+// proposal. Default behavior (`allocate` unset/false) is unchanged: plain
+// overwrite, same as before this fix — every existing caller (materialize.js,
+// leftover/ledger-record slug staging, …) keeps its exact prior contract.
+// `allocate: true` opts a numbered-kind id into collision-safe allocation: it
+// tries the caller's requested slot first via an exclusive (O_EXCL) create —
+// the common, uncontended case costs nothing extra — and only on a real
+// collision reallocates against this run dir's own existing `{kind}-*`
+// contents, retrying through any further race with a concurrent writer.
+// Never a blind clobber in this mode; the returned `id`/`renamed` says what
+// actually landed.
+function writeStagedItem({
+  runDir, id, sourcePath, content, allocate = false,
+}) {
   const stagedDir = path.join(runDir, 'staged');
   fs.mkdirSync(stagedDir, { recursive: true });
   const ext = path.extname(sourcePath || '');
-  const file = path.join(stagedDir, `${id}${ext}`);
-  fs.writeFileSync(file, content);
-  return { file };
+
+  if (!allocate) {
+    const file = path.join(stagedDir, `${id}${ext}`);
+    fs.writeFileSync(file, content);
+    return { file, id };
+  }
+
+  const numbered = parseNumberedKind(id);
+  if (!numbered) {
+    throw new Error(`writeStagedItem: allocate:true requires a "{kind}-{n}" id, got ${JSON.stringify(id)}`);
+  }
+
+  let file = path.join(stagedDir, `${id}${ext}`);
+  try {
+    fs.writeFileSync(file, content, { flag: 'wx' });
+    return { file, id };
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw err;
+  }
+
+  const existing = listExistingNumbers(stagedDir, numbered.kind);
+  let n = Math.max(numbered.n, ...existing) + 1;
+  for (;;) {
+    const candidateId = `${numbered.kind}-${n}`;
+    file = path.join(stagedDir, `${candidateId}${ext}`);
+    try {
+      fs.writeFileSync(file, content, { flag: 'wx' });
+      return {
+        file, id: candidateId, renamed: true, requestedId: id,
+      };
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      n += 1;
+    }
+  }
 }
 
 // { runDir, id, content } -> { file }. Writes the machine-readable sidecar
 // (#2612) alongside a staged item's own `.md`/`.patch` file — same
-// mkdir-then-write, same overwrite semantics as writeStagedItem, always at
+// mkdir-then-write, plain-overwrite semantics (the caller passes the `id`
+// `writeStagedItem` actually resolved to, not necessarily the one it
+// requested, so the two files stay paired under whatever id won), always at
 // `staged/{id}.json` regardless of the sibling file's own extension so
 // render-tidy-report.js's glob (`staged/*.json`) finds it unambiguously.
 function writeStagedSidecar({ runDir, id, content }) {
@@ -86,4 +167,6 @@ function writeStagedSidecar({ runDir, id, content }) {
   return { file };
 }
 
-module.exports = { resolveTarget, sanitizeId, writeStagedItem, writeStagedSidecar };
+module.exports = {
+  resolveTarget, sanitizeId, writeStagedItem, writeStagedSidecar, parseNumberedKind, listExistingNumbers,
+};
