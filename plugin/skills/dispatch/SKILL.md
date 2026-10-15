@@ -80,14 +80,15 @@ Before any `gh`/MCP command, run the Detection Ladder from `_shared/forge-detect
 GitHub remote exists, `gh` CLI installed, `gh` authenticated + repo reachable). Check 1 (GitHub
 remote exists) and check 3 (authenticated + reachable, evaluated against whichever transport
 check 2 selects) stay hard gates — there is no meaningful degraded mode for a skill whose entire
-purpose is writing GitHub state. Check 2 (`gh` CLI installed) no longer gates on its own: `gh`
-present → proceed exactly as always; `gh` absent → proceed via the GitHub MCP path documented in
-`mcp-transport.md` in this skill's directory (and, for Settle and the Auto-merge gate, in
-`settle-and-merge.md`) — verified end-to-end against a live cloud Routine run (was
-`docs/superpowers/plans/2026-08-02-dispatch-mcp-bridge.md`, deleted `d83f0720`). Report the specific failing check and
-stop for any real failure (headless self-report above still applies for bare drain, incl. its `next` alias).
+purpose is writing GitHub state. Check 2 (`gh` CLI installed) no longer gates on its own, nor does
+a `gh`-present check 3 failure matching the GraphQL-blocked signature (`GitHub GraphQL is not
+available`) — both route to the GitHub MCP path documented in `mcp-transport.md` in this skill's
+directory (and, for Settle and the Auto-merge gate, in `settle-and-merge.md`), verified
+end-to-end against a live cloud Routine run; any other check 3 failure hard-stops. Report
+the specific failing check and stop for any real failure (headless self-report above still
+applies for bare drain, incl. `next`).
 
-**MCP transport details.** When `gh` is absent, read `mcp-transport.md` in this skill's directory
+**MCP transport details.** On either MCP route, read `mcp-transport.md` in this skill's directory
 before any GitHub call: it carries check 3's own MCP equivalent (a bounded `list_issues` probe, since
 check 3 stays a hard gate on either transport) and the MCP form of every `gh` call site in this
 file. It also records why check 2 no longer gates on its own, including the reverted first attempt
