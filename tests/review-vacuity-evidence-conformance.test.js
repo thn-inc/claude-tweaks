@@ -30,6 +30,8 @@ test('lens 3f carries a vacuity-evidence diagnostic requiring observed execution
   assert.match(line, /observed/);
   assert.match(line, /mutat/);
   assert.match(line, /docstring/);
+  assert.match(line, /throwaway copy/);
+  assert.match(line, /never in the shared tree/);
 });
 
 test('the vacuity bullet sits directly after the Discrimination diagnostic', () => {
@@ -49,8 +51,16 @@ test('the Reproduction dispatch section downgrades an unevidenced lens 3f vacuit
   assert.match(bullet, /`unconfirmed`/);
   assert.match(bullet, /reproduction agreement overridden, no execution evidence/);
   assert.match(bullet, /Direct-verification override does not lift/);
+  assert.match(bullet, /re-confirmed by executed run: \{command\} → \{observed output\}\. Confirmed\./);
   const onlyOne = lines.findIndex((l) => /^> - Findings present in only one agent's output/.test(l));
   assert.ok(onlyOne !== -1 && onlyOne < idx, 'the downgrade bullet must follow the reproduction bullets');
+});
+
+test('the Direct-verification override excludes lens 3f vacuity findings from every unconfirmed source', () => {
+  const para = lensDispatch.split('\n').find((l) => l.startsWith('> **Direct-verification override.**'));
+  assert.ok(para, 'Direct-verification override paragraph must exist');
+  assert.match(para, /A lens 3f vacuity finding is the exception, however it became `unconfirmed`/);
+  assert.match(para, /reading source never re-confirms it/);
 });
 
 test('step3-routing lists the lens 3f no-execution-evidence source among unconfirmed sources', () => {
@@ -86,5 +96,5 @@ test('the auto-mode contract row for /review Step 3 Routing names the test-remov
   const row = contract.split('\n').find((l) => l.startsWith('| Code review findings (`/review` Step 3 Routing)'));
   assert.ok(row, 'contract row must exist');
   assert.match(row, /removes test cases or assertions/);
-  assert.match(row, /STAGED/);
+  assert.match(row, /removes test cases or assertions → `STAGED` at every ceiling/);
 });
