@@ -1777,5 +1777,5 @@ Cost on this build: one extra `gh issue create` + `gh issue close` round trip, c
 rather than by design.
 
 **Removal condition:** retire this entry and its `docs/donts.md` rule once
-`/claude-tweaks:capture` itself searches open PRs for title/topic overlap before filing (tracked
-as a staged backlog proposal from this same record's wrap-up — `reflect-2.md`).
+`/claude-tweaks:capture` itself searches open PRs for title/topic overlap before filing — tracked
+as #3191, filed from this same record's wrap-up.
