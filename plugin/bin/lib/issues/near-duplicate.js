@@ -91,11 +91,12 @@ const ANY_HEADING_RE = /^#{1,6}[ \t]/;
 // nothing about two records describing the same work. Three shapes:
 // a flag (`--run-dir`, `-x`, optionally followed by a value placeholder),
 // a skill invocation (`/plugin:skill`, optionally with arguments), and a
-// label name (`family:value` whose family has no `.` or `/`, so a
-// `file.js:42` location stays an anchor; or a bare stage label).
+// label name (`family:value` whose family has no `.` or `/` and whose value
+// has no `/` or `\`, so a `file.js:42` location or a `c:\path` stays an
+// anchor; or a bare stage label).
 const FLAG_ANCHOR_RE = /^--?[A-Za-z][\w-]*(?:[ =].*)?$/;
 const SKILL_ANCHOR_RE = /^\/[\w-]+:[\w-]+(?:\s.*)?$/;
-const LABEL_ANCHOR_RE = /^[a-z][a-z0-9-]*:[^\s/]+$/;
+const LABEL_ANCHOR_RE = /^[a-z][a-z0-9-]*:[^\s/\\]+$/;
 const STAGE_LABELS = new Set(['ready', 'parked']);
 
 function isGenericAnchor(value) {
