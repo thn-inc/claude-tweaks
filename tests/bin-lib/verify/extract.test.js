@@ -5,7 +5,8 @@ const path = require('path');
 
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
-  MAX_REGION_LINES, GENERIC_TAIL_LINES, stripAnsi, extractFailingFiles,
+  MAX_REGION_LINES, GENERIC_TAIL_LINES, stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, specEntryCount,
+  failingTestsByFile, cancelledCount, testTree,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'extract.js'));
 
 const TAP_FIXTURE = [
@@ -282,6 +283,22 @@ test('extractFailingFiles: a Windows-native node --test frame (drive letter + ba
   assert.deepStrictEqual(extractFailingFiles(text, 'tap', { cwd: 'C:\\repo' }), ['tests/a.test.js']);
 });
 
+// #3043: the same failing file also appears in the TAP `location: '...'` line,
+// YAML-quoted with a doubled backslash per separator — it must fold into the
+// stack frame's entry, not list the file a second time as `C://repo//...`.
+test('extractFailingFiles: a YAML-quoted Windows TAP location line (doubled backslashes) dedupes with the stack frame (#3043)', () => {
+  const text = [
+    'not ok 1 - a fails',
+    '  ---',
+    "  location: 'C:\\\\repo\\\\tests\\\\a.test.js:1:21'",
+    '  stack: |-',
+    '    TestContext.<anonymous> (C:\\repo\\tests\\a.test.js:12:5)',
+    '  ...',
+    '# tests 1', '# pass 0', '# fail 1',
+  ].join('\n');
+  assert.deepStrictEqual(extractFailingFiles(text, 'tap', { cwd: 'C:\\repo' }), ['tests/a.test.js']);
+});
+
 test('extractFailingFiles: generic family and a log with nothing parseable yield [] — no parse, no retry (AC1)', () => {
   assert.deepStrictEqual(extractFailingFiles(GENERIC_FIXTURE, 'generic'), []);
   assert.deepStrictEqual(extractFailingFiles('not ok 1 - fails with no frame\n# fail 1', 'tap'), []);
@@ -289,4 +306,303 @@ test('extractFailingFiles: generic family and a log with nothing parseable yield
 
 test('stripAnsi removes ESC-anchored colour sequences and nothing else', () => {
   assert.strictEqual(stripAnsi('\x1b[31mred\x1b[0m [1m not a code'), 'red [1m not a code');
+});
+
+const SPEC_LOG = [
+  '✔ passes (1.2ms)',
+  '✖ breaks (3.0ms)',
+  'ℹ tests 4',
+  'ℹ suites 0',
+  'ℹ pass 2',
+  'ℹ fail 2',
+  'ℹ cancelled 0',
+  '',
+  '✖ failing tests:',
+  '',
+  'test at tests\\a.test.js:229:1',
+  '✖ breaks (3.0ms)',
+  '  AssertionError [ERR_ASSERTION]: nope',
+  '      at TestContext.<anonymous> (C:\\repo\\plugin\\lib\\x.js:12:3)',
+  '',
+  'test at tests/sub/b.test.js:5:1',
+  '✖ also breaks (1.0ms)',
+  '',
+  'test at tests\\a.test.js:300:1',
+  '✖ second failure in a (1.0ms)',
+].join('\n');
+
+test('spec reporter: sniffed as its own family (#3043)', () => {
+  assert.strictEqual(sniffFamily(SPEC_LOG), 'spec');
+});
+
+test('spec reporter: a stray `not ok` line a test printed to stdout still sniffs spec, not tap (#3043)', () => {
+  assert.strictEqual(sniffFamily(`not ok 1 - printed by a test\n${SPEC_LOG}`), 'spec');
+});
+
+test('spec reporter: failing files come from the failing-tests section, forward-slash, deduped, log order — never a stack-frame source file (#3043)', () => {
+  assert.deepStrictEqual(extractFailingFiles(SPEC_LOG, 'spec', { cwd: 'C:\\repo' }), ['tests/a.test.js', 'tests/sub/b.test.js']);
+});
+
+test('spec reporter: CRLF-terminated lines still extract (#3043)', () => {
+  const crlf = SPEC_LOG.replace(/\n/g, '\r\n');
+  assert.deepStrictEqual(extractFailingFiles(crlf, 'spec', { cwd: 'C:\\repo' }), ['tests/a.test.js', 'tests/sub/b.test.js']);
+});
+
+test('spec reporter: an absolute test-at path under cwd is relativized (#3043)', () => {
+  const abs = SPEC_LOG.replace('test at tests\\a.test.js:229:1', 'test at C:\\repo\\tests\\c.test.js:1:1');
+  assert.deepStrictEqual(extractFailingFiles(abs, 'spec', { cwd: 'C:\\repo' })[0], 'tests/c.test.js');
+});
+
+test('spec reporter: counts parse from the ℹ summary lines (#3043)', () => {
+  assert.deepStrictEqual(parseCounts(SPEC_LOG, 'spec'), { tests: 4, pass: 2, fail: 2 });
+});
+
+test('spec reporter: missing ℹ fail line means counts null, never a guess (#3043)', () => {
+  assert.strictEqual(parseCounts(SPEC_LOG.replace('ℹ fail 2\n', ''), 'spec'), null);
+});
+
+test('spec reporter: failing region starts at the failing-tests section (#3043)', () => {
+  const region = extractFailingRegion(SPEC_LOG, 'spec');
+  assert.ok(region.startsWith('✖ failing tests:'));
+  assert.ok(region.includes('test at tests/sub/b.test.js:5:1'));
+});
+
+test('spec reporter: with no failing-tests section the region falls through to the generic tail (#3043)', () => {
+  const lines = Array.from({ length: GENERIC_TAIL_LINES + 5 }, (_, i) => `line ${i}`).concat(['ℹ tests 1', 'ℹ fail 1']);
+  const region = extractFailingRegion(lines.join('\n'), 'spec');
+  assert.strictEqual(region.split('\n').length, GENERIC_TAIL_LINES);
+  assert.ok(region.endsWith('ℹ fail 1'));
+  assert.ok(!region.includes('line 0'));
+});
+
+test('spec reporter: a passing spec log (no failing section) extracts no files (#3043)', () => {
+  const passing = ['✔ ok (1ms)', 'ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0'].join('\n');
+  assert.strictEqual(sniffFamily(passing), 'spec');
+  assert.deepStrictEqual(extractFailingFiles(passing, 'spec'), []);
+});
+
+test('countUnmatchedFailures: a spec test-at entry that names no test file is counted, never silently dropped (#3043)', () => {
+  const log = ['ℹ tests 3', 'ℹ pass 1', 'ℹ fail 2', '', '✖ failing tests:', '',
+    'test at tests/a.test.js:1:1', '✖ x (1ms)', '', 'test at tests/helper.js:2:1', '✖ y (1ms)'].join('\n');
+  assert.strictEqual(countUnmatchedFailures(log, 'spec'), 1);
+  assert.deepStrictEqual(extractFailingFiles(log, 'spec'), ['tests/a.test.js']);
+});
+
+test('countUnmatchedFailures: 0 when every spec entry is a test file, and 0 for the summary and generic families (#3043)', () => {
+  assert.strictEqual(countUnmatchedFailures(SPEC_LOG, 'spec', { cwd: 'C:\\repo' }), 0);
+  assert.strictEqual(countUnmatchedFailures(PYTEST_FIXTURE, 'summary'), 0);
+  assert.strictEqual(countUnmatchedFailures(GENERIC_FIXTURE, 'generic'), 0);
+});
+
+// node --test's real TAP shape (Node 20 and 24 alike): a failing subtest is an
+// indented `not ok` block, and its suite's own `not ok` follows at column 0.
+const NESTED_TAP = [
+  '# Subtest: grp',
+  '    # Subtest: inner',
+  '    not ok 1 - inner',
+  '      ---',
+  "      location: '/repo/tests/nested.test.js:2:25'",
+  '      stack: |-',
+  '        TestContext.<anonymous> (/repo/tests/nested.test.js:2:51)',
+  '      ...',
+  '    # Subtest: fine',
+  '    ok 2 - fine',
+  '    1..2',
+  'not ok 1 - grp',
+  '  ---',
+  "  type: 'suite'",
+  "  location: '/repo/tests/nested.test.js:2:1'",
+  '  ...',
+  '# tests 2', '# pass 1', '# fail 1',
+].join('\n');
+
+test('countUnmatchedFailures: a TAP `not ok` block, at any indentation, whose frames name no test file is counted (#3043)', () => {
+  assert.strictEqual(countUnmatchedFailures('not ok 1 - x\n  at tests/helper.js:2:1', 'tap'), 1);
+  assert.strictEqual(countUnmatchedFailures(NESTED_TAP, 'tap', { cwd: '/repo' }), 0);
+  const frameless = NESTED_TAP.replace("      location: '/repo/tests/nested.test.js:2:25'\n", '')
+    .replace('        TestContext.<anonymous> (/repo/tests/nested.test.js:2:51)\n', '');
+  assert.strictEqual(countUnmatchedFailures(frameless, 'tap', { cwd: '/repo' }), 1, 'the indented block is unaccounted for even though its suite names the file');
+  assert.deepStrictEqual(extractFailingFiles(NESTED_TAP, 'tap', { cwd: '/repo' }), ['tests/nested.test.js']);
+});
+
+test('specEntryCount: every failing-section entry, a test file or not (#3043)', () => {
+  assert.strictEqual(specEntryCount(SPEC_LOG), 3);
+  assert.strictEqual(specEntryCount(['ℹ fail 2', '✖ failing tests:', 'test at tests/helper.js:2:1', '✖ y (1ms)'].join('\n')), 1);
+});
+
+const FILE_LEVEL_LOG = ['ℹ tests 3', 'ℹ pass 0', 'ℹ fail 3', '', '✖ failing tests:', '',
+  'test at tests\\a.test.js:1:1', '✖ tests\\a.test.js (1231.6738ms)', "  'test failed'", '',
+  'test at tests/b.test.js:1:1', '✖ tests/b.test.js (3ms)', "  'test failed'", '',
+  'test at tests/b.test.js:9:1', '✖ a real failing test (1ms)', '',
+  'test at C:\\repo\\tests\\c.test.js:1:1', '✖ C:\\repo\\tests\\c.test.js (2ms)'].join('\n');
+
+test('fileLevelFailures: a file whose only entry is the file itself is file-level; one that also has a per-test entry is not (#3043)', () => {
+  const set = fileLevelFailures(FILE_LEVEL_LOG, 'spec', { cwd: 'C:\\repo' });
+  assert.deepStrictEqual([...set].sort(), ['tests/a.test.js', 'tests/c.test.js']);
+});
+
+test('fileLevelFailures: CRLF logs behave the same; a per-test entry is never file-level (#3043)', () => {
+  const crlf = FILE_LEVEL_LOG.replace(/\n/g, '\r\n');
+  assert.deepStrictEqual([...fileLevelFailures(crlf, 'spec', { cwd: 'C:\\repo' })].sort(), ['tests/a.test.js', 'tests/c.test.js']);
+  assert.strictEqual(fileLevelFailures(SPEC_LOG, 'spec', { cwd: 'C:\\repo' }).size, 0);
+});
+
+test('fileLevelFailures: a per-test TAP failure is not file-level, and the summary/generic families return an empty set (#3043)', () => {
+  assert.strictEqual(fileLevelFailures('not ok 1 - x\n  at tests/a.test.js:2:1', 'tap').size, 0);
+  assert.strictEqual(fileLevelFailures(FILE_LEVEL_LOG, 'generic').size, 0);
+  assert.strictEqual(fileLevelFailures(PYTEST_FIXTURE, 'summary').size, 0);
+});
+
+// The real node --test TAP shape of a test file that fails to load: the
+// block's name is the path, YAML-escaped (`\\` per separator) on Windows.
+const TAP_FILE_LEVEL = ['not ok 1 - tests\\\\broken.test.js', '  ---',
+  "  location: 'C:\\\\repo\\\\tests\\\\broken.test.js:1:1'", "  error: 'test failed'", '  ...',
+  '# tests 1', '# pass 0', '# fail 1'].join('\n');
+
+test('fileLevelFailures: a TAP block named by its own file is file-level (#3043)', () => {
+  assert.deepStrictEqual([...fileLevelFailures(TAP_FILE_LEVEL, 'tap', { cwd: 'C:\\repo' })], ['tests/broken.test.js']);
+});
+
+test('failingTestsByFile: spec names per file as a multiset, duration stripped, file-level names normalized to the path (#3043)', () => {
+  const got = failingTestsByFile(FILE_LEVEL_LOG, 'spec', { cwd: 'C:\\repo' });
+  assert.deepStrictEqual([...got], [
+    ['tests/a.test.js', ['tests/a.test.js']],
+    ['tests/b.test.js', ['tests/b.test.js', 'a real failing test']],
+    ['tests/c.test.js', ['tests/c.test.js']],
+  ]);
+  assert.deepStrictEqual(failingTestsByFile(SPEC_LOG, 'spec', { cwd: 'C:\\repo' }).get('tests/a.test.js'), ['breaks', 'second failure in a']);
+});
+
+test('failingTestsByFile: an entry whose name line does not parse is null, never a guessed name (#3043)', () => {
+  const log = ['ℹ fail 1', '✖ failing tests:', 'test at tests/a.test.js:1:1', 'garbled'].join('\n');
+  assert.deepStrictEqual(failingTestsByFile(log, 'spec').get('tests/a.test.js'), [null]);
+});
+
+test('failingTestsByFile: TAP names come from every `not ok` block at any indentation; a SKIP/TODO block names nothing (#3043)', () => {
+  assert.deepStrictEqual([...failingTestsByFile(NESTED_TAP, 'tap', { cwd: '/repo' })], [['tests/nested.test.js', ['inner', 'grp']]]);
+  const todo = 'not ok 1 - known # TODO fix later\n  at tests/a.test.js:2:1\nnot ok 2 - real\n  at tests/a.test.js:5:1\n# fail 1';
+  assert.deepStrictEqual(failingTestsByFile(todo, 'tap').get('tests/a.test.js'), ['real']);
+  assert.deepStrictEqual([...failingTestsByFile(TAP_FILE_LEVEL, 'tap', { cwd: 'C:\\repo' })], [['tests/broken.test.js', ['tests/broken.test.js']]]);
+});
+
+test('failingTestsByFile: summary and generic families return an empty Map (#3043)', () => {
+  assert.strictEqual(failingTestsByFile(PYTEST_FIXTURE, 'summary').size, 0);
+  assert.strictEqual(failingTestsByFile(GENERIC_FIXTURE, 'generic').size, 0);
+});
+
+// Two tests sharing the leaf name `works` (different describes), one timed out, one file-level.
+const LOCATED_SPEC = ['ℹ tests 4', 'ℹ pass 0', 'ℹ fail 4', 'ℹ cancelled 0', '', '✖ failing tests:', '',
+  'test at tests/a.test.js:3:3', '✖ works (1ms)', '  AssertionError', '',
+  'test at tests/a.test.js:9:3', '✖ works (1ms)', '  AssertionError', '',
+  'test at tests/a.test.js:12:1', '✖ slow (100ms)', "  'test timed out after 100ms'", '',
+  'test at tests/b.test.js:1:1', '✖ tests/b.test.js (5ms)', "  'test failed'", ''].join('\n');
+
+test('failingTestsByFile: located keys carry the failing site — file-level ones too, so a load failure and a hook failure differ (#3043)', () => {
+  assert.deepStrictEqual(failingTestsByFile(LOCATED_SPEC, 'spec', { cwd: '/r', located: true }).get('tests/a.test.js'), ['works@3:3', 'works@9:3', 'slow@12:1']);
+  assert.deepStrictEqual(failingTestsByFile(LOCATED_SPEC, 'spec', { cwd: '/r', located: true }).get('tests/b.test.js'), ['tests/b.test.js@1:1']);
+  const tap = "not ok 1 - works\n  ---\n  location: '/r/tests/a.test.js:9:3'\n  ...\nnot ok 2 - bare\n  at tests/a.test.js:4:1\n# fail 2";
+  assert.deepStrictEqual(failingTestsByFile(tap, 'tap', { cwd: '/r', located: true }).get('tests/a.test.js'), ['works@9:3', null]);
+});
+
+test('failingTestsByFile: conclusiveOnly drops entries that timed out or were cancelled (#3043)', () => {
+  assert.deepStrictEqual(failingTestsByFile(LOCATED_SPEC, 'spec', { cwd: '/r', conclusiveOnly: true }).get('tests/a.test.js'), ['works', 'works']);
+  const tap = "not ok 1 - slow\n  ---\n  failureType: 'testTimeoutFailure'\n  at tests/a.test.js:4:1\n  ...\nnot ok 2 - real\n  at tests/a.test.js:5:1\n# fail 2";
+  assert.deepStrictEqual(failingTestsByFile(tap, 'tap', { conclusiveOnly: true }).get('tests/a.test.js'), ['real']);
+});
+
+test('specEntryCount still counts back-to-back test at lines (#3043)', () => {
+  assert.strictEqual(specEntryCount(['✖ failing tests:', 'test at tests/a.test.js:1:1', 'test at tests/b.test.js:2:1', '✖ x (1ms)'].join('\n')), 2);
+});
+
+test('cancelledCount reads ℹ cancelled / # cancelled, null when absent (#3043)', () => {
+  assert.strictEqual(cancelledCount(LOCATED_SPEC, 'spec'), 0);
+  assert.strictEqual(cancelledCount('ℹ tests 2\nℹ cancelled 1', 'spec'), 1);
+  assert.strictEqual(cancelledCount('# tests 2\n# cancelled 3', 'tap'), 3);
+  assert.strictEqual(cancelledCount('ℹ tests 2', 'spec'), null);
+});
+
+test('testTree counts every test point by name and the ones that passed — skips and the failing section excluded (#3043)', () => {
+  const spec = ['▶ grp', '  ✔ works (1ms)', '  ✖ works (2ms)', '▶ grp', '✔ quick (1ms)', '﹣ later (0.1ms) # SKIP', 'ℹ tests 4', '✖ failing tests:', 'test at tests/a.test.js:3:3', '✖ works (2ms)'].join('\n');
+  const t = testTree(spec, 'spec');
+  assert.strictEqual(t.all.get('works'), 2);
+  assert.strictEqual(t.passed.get('works'), 1);
+  assert.strictEqual(t.passed.get('quick'), 1);
+  assert.strictEqual(t.all.get('later'), 1);
+  assert.strictEqual(t.passed.get('later'), undefined);
+  const tap = testTree('ok 1 - a\nnot ok 2 - b\n    ok 1 - c # SKIP\nok 3 - d # TODO', 'tap');
+  assert.deepStrictEqual([...tap.passed], [['a', 1]]);
+  assert.strictEqual(tap.all.get('c'), 1);
+});
+
+test('testTree qualifies failing points by suite path — spec `▶` nesting and tap `# Subtest:` nesting (#3043)', () => {
+  const spec = testTree(['▶ X', '  ✖ works (1ms)', '✖ X (2ms)', '▶ Y', '  ✔ works (1ms)', '✔ Y (2ms)', 'ℹ tests 2'].join('\n'), 'spec');
+  assert.deepStrictEqual(spec.failed, ['["X","works"]'], 'X only inherits its child failure — it has no failing-section entry of its own');
+  assert.strictEqual(spec.paths.get('["Y","works"]'), 1);
+  assert.strictEqual(spec.all.get('works'), 2);
+  assert.strictEqual(spec.wellFormed, true);
+  const tap = testTree(['# Subtest: X', '    # Subtest: works', '    not ok 1 - works', '    1..1', 'not ok 1 - X', '# Subtest: Y', 'ok 2 - Y'].join('\n'), 'tap');
+  assert.deepStrictEqual(tap.failed, ['["X","works"]', '["X"]']);
+  assert.deepStrictEqual([...tap.passed], [['Y', 1]]);
+  assert.strictEqual(tap.wellFormed, true);
+  // A name containing the old ` > ` separator cannot fake a nesting level.
+  assert.notStrictEqual(testTree('▶ a > b\n  ✖ c (1ms)\n✖ a > b (1ms)', 'spec').failed[0], testTree('▶ a\n  ▶ b\n    ✖ c (1ms)\n  ✖ b (1ms)\n✖ a (1ms)', 'spec').failed[0]);
+});
+
+test('testTree reads suite names byte-for-byte and marks unclosed or mismatched nesting malformed (#3043)', () => {
+  // ` setup` (leading space) opens and closes under the same name — later siblings are top-level again.
+  const spaced = testTree(['▶  setup', '  ✖ a (1ms)', '✖  setup (2ms)', '✖ works (1ms)'].join('\n'), 'spec');
+  assert.strictEqual(spaced.wellFormed, true);
+  assert.deepStrictEqual(spaced.failed, ['[" setup","a"]', '["works"]']);
+  // A suite name with a newline prints across lines: its closer never parses, so the tree is no evidence.
+  assert.strictEqual(testTree(['▶ multi', 'line', '  ✖ a (1ms)', '✖ multi', 'line (2ms)', '✖ works (1ms)'].join('\n'), 'spec').wellFormed, false);
+  // A point at the open suite's indent that is not its closer.
+  assert.strictEqual(testTree(['▶ X', '✖ works (1ms)'].join('\n'), 'spec').wellFormed, false);
+  const tapSpaced = testTree(['# Subtest:  setup', '    # Subtest: a', '    not ok 1 - a', 'not ok 1 -  setup', 'not ok 2 - works'].join('\n'), 'tap');
+  assert.strictEqual(tapSpaced.wellFormed, true);
+  assert.deepStrictEqual(tapSpaced.failed, ['[" setup","a"]', '[" setup"]', '["works"]']);
+});
+
+test('testTree reads a name that itself contains ` (Nms)` whole, never its prefix (#3043)', () => {
+  const t = testTree('✔ foo (1ms) bar (0.34ms)', 'spec');
+  assert.strictEqual(t.passed.get('foo (1ms) bar'), 1);
+  assert.strictEqual(t.passed.get('foo'), undefined);
+});
+
+test('testTree keeps a parent only when it failed in its own right — spec listing, tap failureType (#3043)', () => {
+  // spec: P is listed in the failing section (its own error); S only inherits from its child.
+  const spec = testTree(['▶ P', '  ✖ child (1ms)', '✖ P (2ms)', '▶ S', '  ✖ inner (1ms)', '✖ S (2ms)', 'ℹ tests 3', '', '✖ failing tests:', '',
+    'test at tests/a.test.js:5:3', '✖ child (1ms)', '', 'test at tests/a.test.js:4:1', '✖ P (2ms)', '', 'test at tests/a.test.js:9:3', '✖ inner (1ms)'].join('\n'), 'spec');
+  assert.deepStrictEqual(spec.failed, ['["P","child"]', '["P"]', '["S","inner"]']);
+  // tap: P's block says subtestsFailed (inherited); S's says hookFailed (its own).
+  const tap = testTree(['# Subtest: P', '    # Subtest: child', '    not ok 1 - child', '    1..1', 'not ok 1 - P', '  ---', "  failureType: 'subtestsFailed'", '  ...',
+    '# Subtest: S', '    # Subtest: inner', '    ok 1 - inner', '    1..1', 'not ok 2 - S', '  ---', "  failureType: 'hookFailed'", '  ...'].join('\n'), 'tap');
+  assert.deepStrictEqual(tap.failed, ['["P","child"]', '["S"]']);
+});
+
+test('testTree: a failing leaf keeps its own listing — it never vouches for a same-named parent elsewhere (#3043)', () => {
+  // A > P is a failing leaf (listed once); B > P is a suite failing only through its child c.
+  const lines = ['▶ A', '  ✖ P (1ms)', '✖ A (2ms)', '▶ B', '  ▶ P', '    ✖ c (1ms)', '  ✖ P (2ms)', '✖ B (3ms)', 'ℹ tests 2', '', '✖ failing tests:', '',
+    'test at tests/a.test.js:2:3', '✖ P (1ms)', '', 'test at tests/a.test.js:6:5', '✖ c (1ms)'];
+  const t = testTree(lines.join('\n'), 'spec');
+  assert.deepStrictEqual(t.failed, ['["A","P"]', '["B","P","c"]']);
+  assert.strictEqual(t.wellFormed, true);
+  // Two same-named parents with one spare listing: which one failed in its own right is unknowable.
+  const ambiguous = ['▶ P', '  ✖ x (1ms)', '✖ P (2ms)', '▶ Q', '  ▶ P', '    ✖ y (1ms)', '  ✖ P (2ms)', '✖ Q (3ms)', '', '✖ failing tests:', '',
+    'test at tests/a.test.js:2:3', '✖ x (1ms)', '', 'test at tests/a.test.js:6:5', '✖ y (1ms)', '', 'test at tests/a.test.js:5:3', '✖ P (2ms)'];
+  assert.strictEqual(testTree(ambiguous.join('\n'), 'spec').wellFormed, false);
+});
+
+test('testTree and tapBlocks read a TAP YAML block as data — `failureType:` or `not ok` lines inside expected/actual text are not points (#3043)', () => {
+  const tap = ['# Subtest: K', 'not ok 1 - K', '  ---', "  failureType: 'testCodeFailure'", '  ...',
+    '# Subtest: L', 'not ok 2 - L', '  ---', "  failureType: 'testCodeFailure'", '  expected: |-', '    summary', "    failureType: 'subtestsFailed'", '    not ok 1 - Foo', "  location: '/r/tests/a.test.js:9:1'", '  ...', '# fail 2'].join('\n');
+  const t = testTree(tap, 'tap');
+  assert.deepStrictEqual(t.failed, ['["K"]', '["L"]']);
+  assert.strictEqual(t.all.get('Foo'), undefined);
+  assert.deepStrictEqual(failingTestsByFile(tap, 'tap', { cwd: '/r' }).get('tests/a.test.js'), ['L']);
+});
+
+test('testTree treats any ` # …` suffix as neither passed nor failed — t.skip(reason) included (#3043)', () => {
+  const t = testTree(['﹣ works (0.1ms) # windows only', '✔ works (1ms)'].join('\n'), 'spec');
+  assert.strictEqual(t.all.get('works'), 2, 'the skipped twin still counts, so the name is not unique');
+  assert.strictEqual(t.passed.get('works'), 1);
 });

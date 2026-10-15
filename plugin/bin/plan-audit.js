@@ -22,7 +22,7 @@ const {
 function resolveRepoRoot(explicit, cwd) {
   if (explicit) return path.resolve(explicit);
   try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).trim();
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', windowsHide: true }).trim();
   } catch {
     return cwd;
   }

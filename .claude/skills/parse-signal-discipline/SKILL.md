@@ -1,6 +1,6 @@
 ---
 name: parse-signal-discipline
-description: Use when writing or reviewing a mechanized deterministic check that parses loose, real-world prose (a plan, a record body, a free-form config value) rather than a formal grammar — the check's "I could not parse this" case must be a distinguishable signal, never silently identical to "this input legitimately does not apply." Keywords - parse failure, could-not-parse, deterministic check, prose heuristic, silent null, false negative, mechanized check, plan-audit.
+description: Use when writing or reviewing a mechanized deterministic check that parses loose, real-world prose (a plan, a record body, a free-form config value) rather than a formal grammar — the check's "I could not parse this" case must be a distinguishable signal, never silently identical to "this input legitimately does not apply." Also covers a shell-out check whose tool exits non-zero for both "no match" and "could not run", and a probe in skill prose the agent runs. Keywords - parse failure, could-not-parse, deterministic check, prose heuristic, silent null, false negative, mechanized check, plan-audit, exit code, git grep, skill-prose probe, fail closed.
 ---
 
 # Parse-Signal Discipline — Distinguish "Couldn't Parse" From "Doesn't Apply"
@@ -131,6 +131,36 @@ When mechanizing a prose heuristic into a deterministic check:
    Review caught it, and `c610df577` anchored the pattern at both ends, including the suffix the
    writer always appends. Anchor both ends against what the writer emits, and pin a truncated copy
    and a tail-carrying copy of an accepted input with their own assertions.
+7. **A parsed list that feeds a pass verdict owes an independent count to reconcile against.** An
+   extractor that returns N items cannot say it missed one more, so an undercount reads exactly
+   like a complete list. That is the same silent false negative as a merged `null`, one level up.
+   `plugin/bin/lib/verify/baseline.js`'s `adjudicate` (#3043) may turn a failing test run into a
+   pass only when its extracted failing files account for the whole failure, so it checks them
+   against counts the log states separately. For spec output, the `test at` entries
+   (`specEntryCount`) must equal the summary's `ℹ fail N`. In spec and TAP output, every failing
+   entry or `not ok` block must name a test file (`countUnmatchedFailures` returns 0). An output
+   family with no such cross-check is refused outright ("has no failure-accounting guard"). Each
+   mismatch returns `{eligible: false, reason}` naming both numbers, never a verdict over the
+   files it did find. When no independent count exists for an input, the list cannot gate a pass.
+8. **A shell-out check owes a branch on the exit code when the tool's "no result" and "could not
+   run" both print nothing.** `grep` exits 1 for no match and 2 for an error; `git grep` exits 1
+   for no match and 128 when it cannot run. Reading empty output as "no match" collapses the two.
+   /tidy's plan citation check (#3101, `plugin/skills/tidy/scan-procedures.md`'s "Citation check
+   before any plan Delete") first did exactly that on an irreversible Delete path: a `git grep`
+   that could not run read as "uncited". Review caught it, and `c753dc11b` made exit 1 the only
+   "no citation" result, with any other non-zero exit keeping the plan as cited-unverified.
+   Branch on the exit code, not the output, and on a destructive path make the failure arm fail
+   closed.
+9. **A probe that skill prose tells the agent to run owes the same split, and two things break it
+   that a code check never meets.** Each Bash tool call starts a fresh shell, so a variable an
+   earlier call set is unset in the probe's call: the probe reads an empty path and reports the
+   benign "absent". Resolve every path inside the snippet itself. And the probe can fail outright
+   (non-zero exit, no output, output that does not parse), so the prose needs an explicit branch
+   for that case, routed to the could-not-tell report and never left to fall through to the benign
+   one. `plugin/skills/dispatch/exclusions-unreadable-report.md` (#3104) slipped on both, one
+   review round each: its probe first read `$DISPATCH_EXCLUSIONS` from an earlier call
+   (`aab721418` made it resolve the session-tmp path itself), and then it had no branch for a
+   failed probe (`39129d212` added one that reports "exclusion reason unknown").
 
 ## When to use
 
@@ -139,6 +169,8 @@ When mechanizing a prose heuristic into a deterministic check:
   on.
 - Reviewing an existing parser of this kind and checking whether its "nothing found" return path
   actually merges two different situations.
+- Writing a check that shells out to a tool, or a probe in skill prose the agent runs, where an
+  empty result could mean either "nothing found" or "the check did not run" (fix-shape items 8-9).
 
 ## When not to use
 
