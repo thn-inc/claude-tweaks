@@ -242,16 +242,17 @@ function composeFixesBlock(specs, deferredClosures) {
 const DEFERRED_CLOSURE_RE = /^-\s+AUTO\s+\S+\s+—.*\bdeferred-closure:\s+spec #(\d+)\s+closing keyword withheld\s+\(([^)]*)\)/;
 
 // Scans decisions.md text for a deferred-closure entry matching recordId
-// (string compare, same as every caller below) and returns its reason, or
-// undefined when none matches. Shared by the per-spec (bundle) and
-// top-level (single-record) readers so the one regex/match rule never
-// drifts between them.
+// (string compare, same as every caller below) and returns the reason of the
+// last matching entry, or undefined when none matches. Shared by the
+// per-spec (bundle) and top-level (single-record) readers so the one
+// regex/match rule never drifts between them.
 function findDeferredClosureReason(text, recordId) {
+  let reason;
   for (const line of text.split('\n')) {
     const match = DEFERRED_CLOSURE_RE.exec(line);
-    if (match && String(match[1]) === String(recordId)) return match[2];
+    if (match && String(match[1]) === String(recordId)) reason = match[2];
   }
-  return undefined;
+  return reason;
 }
 
 // runDir (the multi-spec parent) + specs (manifest.multispec.specs) ->
