@@ -4,10 +4,10 @@ Referenced by `skills/dispatch/SKILL.md` Step 2. Run this verbatim — it produc
 
 - `reason: 'blocked'` (`detail: {blockedBy: [ids]}`) — every otherwise-`auto:build`-eligible candidate this run's own blocked-by checks (body-text and, under `work-links: native`, the native `blockedBy` connection) dropped from the pool, via `record.js`'s `partitionByOpenBodyBlockers` for the body-text case and `bin/resolve-blockers.js`'s `openBlockerIds` field for the `work-links: native` case — SKILL.md Step 2's Blocked-exclusion report reads these entries so a shrinking pool is never silent.
 - `reason: 'oversized'` (`detail: {size, threshold}`, #1228) — every file-overlap group `grouping.js`'s `partitionGroupsBySizeGuard` found over the size guard. These groups stay IN `dispatch-groups.json` (`#N`/`#N,#M,...` still resolve them normally — a human present, explicitly naming one, is itself the required surfacing); only bare drain's auto-selection (SKILL.md Step 3, reusing the `next`-alias ranking script) excludes an oversized group from its own candidate pool, since nobody is present there to see a table row or answer a prompt. SKILL.md Step 3's Oversized-exclusion report surfaces these entries too, so every form's exclusion (or non-exclusion) is never silent. Before the size guard runs, `grouping.js`'s `bundleFastLaneSingletons` (#1910) merges up to `dispatch-fastlane-bundle-cap` (default 3, `policy.yml`) non-overlapping `ceremony:fast-lane` singleton groups — same `auto:merge` state, same `priority:*` band, oldest-first — into one multi-spec group each, so the pool `dispatch-groups.json` carries already reflects any bundling; it also writes `dispatch-fastlane-bundles.json` (`{records: number[]}[]`), naming exactly the groups this pass created, so the Reporting section can call out a fast-lane bundle distinctly from an ordinary file-overlap group.
-- `reason: 'open-pr'` (`detail: {pr}`, #1224) — every candidate already covered by an open, unmerged PR that will close it (GitHub's own `closedByPullRequestsReferences` connection, a closing keyword in the PR body), via `record.js`'s `partitionByOpenLinkedPR`. Unlike the blocked-by pass above, this one runs unconditionally, independent of `work-links`, and unlike the cross-PR overlap report below it DOES remove excluded candidates from `dispatch-groups.json` before any selection form reads it — a record with an in-flight PR is not a warning, it is not re-dispatch-eligible at all.
+- `reason: 'not-spec-shaped'` (`detail: {missing: [...]}`, #2829) — every candidate, right after grouping/bundling completes, whose cached body fails `/flow`'s Materialization hard gate (`shapeGate`, `bin/lib/issues/materialize-format.js`). This one DOES remove excluded candidates from `dispatch-groups.json`, running ahead of the `open-pr`/`target-missing`/`shipped` passes below so an excluded candidate costs none of their `gh` probes and gets no stray Close proposal from them — no bypass: unlike `oversized`, where a human naming a record directly is itself an accepted size-risk signal, a spec-shape failure is not a risk anyone can accept, since `/flow`'s own Materialization gate would stop the named record anyway, after a claim and a spent retry attempt.
+- `reason: 'open-pr'` (`detail: {pr}`, #1224) — every remaining candidate already covered by an open, unmerged PR that will close it (GitHub's own `closedByPullRequestsReferences` connection, a closing keyword in the PR body), via `record.js`'s `partitionByOpenLinkedPR`. Unlike the blocked-by pass above, this one runs unconditionally, independent of `work-links`, and unlike the cross-PR overlap report below it DOES remove excluded candidates from `dispatch-groups.json` before any selection form reads it — a record with an in-flight PR is not a warning, it is not re-dispatch-eligible at all.
 - `reason: 'target-missing'` (`detail: {path}`, #1983) — every remaining candidate whose `namedTarget` (`bin/lib/issues/named-target.js` — today, `by:docs-health` records only) names a file no longer present at the integration tip — a docs-health-filed ledger correction whose target a since-merged tidy sweep already deleted. This one DOES remove excluded candidates from `dispatch-groups.json` too, the same as the open-PR pass: such a record's own Acceptance Criteria is unsatisfiable, so re-dispatching it only burns a build attempt against the retry ceiling for nothing. Also stages one Close proposal in this firing's own run directory (`tidy`'s Close (GitHub) shape) so the next `tidy --approve` closes the record — nothing is written to GitHub by dispatch itself. SKILL.md Step 3's Blocked-exclusion report reads this reason too, under the same non-silent convention.
 - `reason: 'shipped'` (`detail: {pr, signals}`, #1984) — every remaining candidate a merged PR's `strong`-tier mention already ships (see the False-positive posture note in `SKILL.md`). Also stages one Close proposal, exactly like the `target-missing` pass above.
-- `reason: 'not-spec-shaped'` (`detail: {missing: [...]}`, #2829) — every remaining candidate whose cached body fails `/flow`'s Materialization hard gate (`shapeGate`, `bin/lib/issues/materialize-format.js`). This one DOES remove excluded candidates from `dispatch-groups.json`, the same as the `open-pr`/`target-missing`/`shipped` passes above — no bypass: unlike `oversized`, where a human naming a record directly is itself an accepted size-risk signal, a spec-shape failure is not a risk anyone can accept, since `/flow`'s own Materialization gate would stop the named record anyway, after a claim and a spent retry attempt.
 
 A sixth reason, `firing`, is never written by this script — it is appended incrementally by `SKILL.md`'s Loop between successive re-runs of this script within one firing (`firing-exclusion.md`), which is exactly why this script's own truncation step preserves it rather than dropping it.
 
@@ -274,6 +274,47 @@ NODE_EVAL_EOF
 
 fi
 
+# #2829: not-spec-shaped exclusion. Runs unconditionally, right after
+# grouping/bundling completes (both the cache-hit and cache-miss branches
+# above leave $DISPATCH_GROUPS populated by this point) and before every
+# gh-backed probe below -- a candidate whose cached body fails /flow's
+# Materialization hard gate (shapeGate) would otherwise be claimed and
+# handed to /flow, where it fails mid-build: the failure counts against
+# dispatch-retry-ceiling, and a correctness-classified failure makes Settle
+# revoke auto:merge (#2786's evidence). No gh/network call -- shapeGate is
+# pure, run here against the body already fetched into $DISPATCH_GROUPS.
+# Placed ahead of the #1224 open-PR pass below and the #1984 shipped-
+# candidate classification further below so an excluded candidate costs
+# neither pass's gh calls (the open-PR pass's batched GraphQL call, the
+# shipped pass's up-to-5 live `gh pr view` calls) and never gets a staged
+# Close proposal from the shipped pass. Like the open-pr/target-missing/
+# shipped passes below (and unlike oversized), this removes the excluded
+# candidate from $DISPATCH_GROUPS unconditionally, with no #N/#N,#M,...
+# bypass -- the exclusion is computed once here, before any selection form
+# reads $DISPATCH_GROUPS.
+if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" > "${DISPATCH_GROUPS}.tmp" 2>"$DISPATCH_SHAPE_GATE_ERR" <<NODE_EVAL_EOF
+  const { shapeGate } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/materialize-format.js');
+  const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
+  const groups = require(process.argv[1]);
+  const finalGroups = groups
+    .map((g) => g.filter((c) => {
+      const result = shapeGate(c.body);
+      if (!result.ok) {
+        appendExclusion(process.argv[2], { reason: 'not-spec-shaped', records: [c.number], detail: { missing: result.missing } });
+        return false;
+      }
+      return true;
+    }))
+    .filter((g) => g.length > 0);
+  console.log(JSON.stringify(finalGroups));
+NODE_EVAL_EOF
+then
+  mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
+else
+  echo "Warning: not-spec-shaped pass skipped — $(cat "$DISPATCH_SHAPE_GATE_ERR")" >&2
+  rm -f "${DISPATCH_GROUPS}.tmp"
+fi
+
 # #1224: open-linked-PR exclusion. Runs unconditionally (both the cache-hit
 # and cache-miss branches above leave $DISPATCH_GROUPS populated) and
 # independent of $WORK_LINKS -- unlike the native blocked-by check gated
@@ -283,10 +324,11 @@ fi
 # (built from auto:build issues' own updatedAt/state) never observes, so
 # skipping this on a cache hit would silently reintroduce the bug this
 # record exists to fix. One batched aliased GraphQL call across every
-# candidate still in $DISPATCH_GROUPS (post blocked-by/native/oversized
-# filtering -- there is no point checking a candidate already excluded for
-# another reason), via bin/resolve-linked-prs.js (record.js's
-# buildLinkedPRQuery + bin/lib/issues/linked-prs.js's fetchLinkedPRs).
+# candidate still in $DISPATCH_GROUPS (post blocked-by/native/oversized/
+# not-spec-shaped filtering -- there is no point checking a candidate
+# already excluded for another reason), via bin/resolve-linked-prs.js
+# (record.js's buildLinkedPRQuery + bin/lib/issues/linked-prs.js's
+# fetchLinkedPRs).
 DISPATCH_GROUP_NUMS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" <<NODE_EVAL_EOF
   const groups = require(process.argv[1]);
   console.log(groups.flat().map((i) => i.number).join(','))
@@ -515,41 +557,6 @@ if [ -n "$DISPATCH_FIRING_RUN_DIR" ]; then
 NODE_EVAL_EOF
     node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$DISPATCH_FIRING_RUN_DIR" --id "shipped-close-$NUM" --file "$FILE" >/dev/null 2>&1 || true
   done
-fi
-
-# #2829: not-spec-shaped exclusion. Runs unconditionally, right after the
-# #1984 shipped-candidate classification above and before the (read-only)
-# cross-PR overlap report below -- a candidate whose cached body fails
-# /flow's Materialization hard gate (shapeGate) would otherwise be claimed
-# and handed to /flow, where it fails mid-build: the failure counts against
-# dispatch-retry-ceiling, and a correctness-classified failure makes Settle
-# revoke auto:merge (#2786's evidence). No gh/network call -- shapeGate is
-# pure, run here against the body already fetched into $DISPATCH_GROUPS.
-# Like the open-pr/target-missing/shipped passes above (and unlike
-# oversized), this removes the excluded candidate from $DISPATCH_GROUPS
-# unconditionally, with no #N/#N,#M,... bypass -- the exclusion is computed
-# once here, before any selection form reads $DISPATCH_GROUPS.
-if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" > "${DISPATCH_GROUPS}.tmp" 2>"$DISPATCH_SHAPE_GATE_ERR" <<NODE_EVAL_EOF
-  const { shapeGate } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/materialize-format.js');
-  const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
-  const groups = require(process.argv[1]);
-  const finalGroups = groups
-    .map((g) => g.filter((c) => {
-      const result = shapeGate(c.body);
-      if (!result.ok) {
-        appendExclusion(process.argv[2], { reason: 'not-spec-shaped', records: [c.number], detail: { missing: result.missing } });
-        return false;
-      }
-      return true;
-    }))
-    .filter((g) => g.length > 0);
-  console.log(JSON.stringify(finalGroups));
-NODE_EVAL_EOF
-then
-  mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
-else
-  echo "Warning: not-spec-shaped pass skipped — $(cat "$DISPATCH_SHAPE_GATE_ERR")" >&2
-  rm -f "${DISPATCH_GROUPS}.tmp"
 fi
 
 # #1579: cross-PR root-cause overlap report. Runs unconditionally (both the

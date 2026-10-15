@@ -155,3 +155,29 @@ test('queue-pull-script.md\'s not-spec-shaped pass excludes an empty-body candid
   );
   assert.deepStrictEqual(finalGroups, [], 'the group left with no surviving members is dropped');
 });
+
+// #3086: the not-spec-shaped pass must run ahead of the gh-backed open-PR (#1224) and
+// shipped-candidate (#1984) passes -- a candidate it excludes must never cost those passes'
+// `gh` probes, and must never collect a staged Close proposal from the shipped pass. Pinned
+// structurally (indexOf ordering in the live file), not by re-running the whole script, since
+// the point is the *position* of this pass relative to its siblings, not its own behavior
+// (already covered above).
+test('queue-pull-script.md\'s not-spec-shaped pass is positioned ahead of the open-PR and shipped-candidate passes (#3086)', () => {
+  const notSpecShapedIdx = QUEUE_PULL_SCRIPT.indexOf(START_ANCHOR);
+  assert.notStrictEqual(notSpecShapedIdx, -1, 'not-spec-shaped pass anchor not found');
+
+  const openPrIdx = QUEUE_PULL_SCRIPT.indexOf('# #1224: open-linked-PR exclusion.');
+  assert.notStrictEqual(openPrIdx, -1, 'open-PR pass anchor not found');
+
+  const shippedIdx = QUEUE_PULL_SCRIPT.indexOf('# #1984: shipped-candidate classification.');
+  assert.notStrictEqual(shippedIdx, -1, 'shipped-candidate pass anchor not found');
+
+  assert.ok(
+    notSpecShapedIdx < openPrIdx,
+    'not-spec-shaped pass must appear before the open-PR exclusion pass',
+  );
+  assert.ok(
+    notSpecShapedIdx < shippedIdx,
+    'not-spec-shaped pass must appear before the shipped-candidate classification pass',
+  );
+});
