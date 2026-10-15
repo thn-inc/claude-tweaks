@@ -1756,3 +1756,26 @@ re-run.
 
 **Removal condition:** retire this entry and its `docs/donts.md` rule once a mechanical check (a
 lint for unbounded quantifiers over externally-sized input, or a shared bounded-match helper such
+
+## IL-163 — A capture filed mid-review almost duplicated an already-open PR
+
+During record #3119's review (2026-10-15), a tangential finding discovered while re-verifying
+tests (`bin/verify.js`'s baseline adjudication mishandling a space-containing checkout path) was
+filed as a fresh backlog record via `/claude-tweaks:capture`. The very next review step (Step 2's
+Cherry-Pick Provenance Check, an unconditional `gh pr list --state open`) happened to print a PR
+title that matched: the just-filed record duplicated already-open #3155, which already had a fix
+in flight at PR #3172. The duplicate was closed immediately, but only because an unrelated check
+ran right afterward — nothing in `/claude-tweaks:capture`'s own filing procedure would have caught
+it on its own.
+
+`/claude-tweaks:capture`'s Backend Selection step runs a "Recent-commit overlap check"
+(`_shared/health-recent-commit-check.md`) immediately after `gh issue create` succeeds, screening
+the new record against recently-merged commits only — there is no equivalent search against open
+PRs, before or after filing.
+
+Cost on this build: one extra `gh issue create` + `gh issue close` round trip, caught by luck
+rather than by design.
+
+**Removal condition:** retire this entry and its `docs/donts.md` rule once
+`/claude-tweaks:capture` itself searches open PRs for title/topic overlap before filing (tracked
+as a staged backlog proposal from this same record's wrap-up — `reflect-2.md`).
