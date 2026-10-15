@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { adjudicate, realGit } = require('../../../plugin/bin/lib/verify/baseline');
+const { adjudicate, realGit, findStaleBaselineWorktrees } = require('../../../plugin/bin/lib/verify/baseline');
 
 function logFile(text) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-test-'));
@@ -656,4 +656,104 @@ test('realGit.sameAtBase: true for a working-tree file whose blob matches the co
   fs.writeFileSync(path.join(repo, 'tests', 'a.test.js'), 'two\n');
   assert.strictEqual(rg.sameAtBase(sha, 'tests/a.test.js'), false);
   assert.strictEqual(rg.sameAtBase(sha, 'tests/missing.test.js'), false);
+});
+
+test('adjudicate() registers SIGHUP/SIGINT/SIGTERM handlers only while the scratch worktree exists, and deregisters them on a clean completion (#3064)', async () => {
+  const { p, dir } = logFile(SPEC(['tests/a.test.js']));
+  const { git } = fakes({ outcomes: { 'baseline:tests/a.test.js': 1 } });
+  const before = { SIGHUP: process.listenerCount('SIGHUP'), SIGINT: process.listenerCount('SIGINT'), SIGTERM: process.listenerCount('SIGTERM') };
+  const seenDuring = {};
+  const runOne = async ({ name, command, cwd }) => {
+    if (name.includes('-baseline-')) {
+      seenDuring.SIGHUP = process.listenerCount('SIGHUP');
+      seenDuring.SIGINT = process.listenerCount('SIGINT');
+      seenDuring.SIGTERM = process.listenerCount('SIGTERM');
+    }
+    const logPath = path.join(dir, `${name}.log`);
+    fs.writeFileSync(logPath, SPEC(['tests/a.test.js']));
+    return { name, command, exitCode: 1, durationMs: 1, logPath };
+  };
+  await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.deepStrictEqual(seenDuring, { SIGHUP: before.SIGHUP + 1, SIGINT: before.SIGINT + 1, SIGTERM: before.SIGTERM + 1 }, 'one handler per signal is registered while the scratch worktree exists');
+  assert.strictEqual(process.listenerCount('SIGHUP'), before.SIGHUP, 'deregistered after a clean completion');
+  assert.strictEqual(process.listenerCount('SIGINT'), before.SIGINT);
+  assert.strictEqual(process.listenerCount('SIGTERM'), before.SIGTERM);
+});
+
+test('adjudicate() registers no signal handlers when no failing file exists at base (nothing to clean up) (#3064)', async () => {
+  const { p, dir } = logFile(SPEC(['tests/new.test.js']));
+  const { git, runOne } = fakes({ outcomes: { 'isolated:tests/new.test.js': 0 }, existsAtBase: () => false });
+  const before = process.listenerCount('SIGINT');
+  await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.strictEqual(process.listenerCount('SIGINT'), before);
+});
+
+test('a SIGINT while the scratch worktree exists removes it and exits with the signal\'s conventional code (130), deregistering even on that path (#3064)', async () => {
+  const { p, dir } = logFile(SPEC(['tests/a.test.js']));
+  const { git, calls } = fakes({ outcomes: { 'baseline:tests/a.test.js': 1 } });
+  class FakeExit extends Error { constructor(code) { super(`fake exit ${code}`); this.code = code; } }
+  const originalExit = process.exit;
+  process.exit = (code) => { throw new FakeExit(code); };
+  const sigintBefore = process.listenerCount('SIGINT');
+  // Invoke the just-registered handler directly (never `process.emit`, which
+  // would also fire every other SIGINT listener already registered on this
+  // shared test-runner process) — the handler registered by this adjudicate()
+  // call is the one appended at index `sigintBefore`.
+  const runOne = async ({ name }) => {
+    if (name.includes('-baseline-')) process.listeners('SIGINT')[sigintBefore]();
+    return { name, command: '', exitCode: 1, durationMs: 1, logPath: p };
+  };
+  try {
+    await assert.rejects(
+      adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git }),
+      (err) => err instanceof FakeExit && err.code === 130,
+    );
+  } finally {
+    process.exit = originalExit;
+  }
+  // The handler itself calls removeWorktree before throwing (simulating
+  // process.exit) — real code never reaches the `finally` below once
+  // process.exit actually terminates the process, but this test's stubbed
+  // exit (a thrown error, so the test harness itself survives) lets the
+  // `finally` still run afterward and call it again; that double call is the
+  // real removeWorktree's own idempotent, best-effort shape, not a defect.
+  assert.ok(calls.removed.includes('/scratch'), 'the signal handler itself removes the scratch worktree');
+  assert.strictEqual(process.listenerCount('SIGINT'), sigintBefore, 'deregistered even on the signal-interrupted path (async function finally still runs during promise unwind)');
+});
+
+test('findStaleBaselineWorktrees filters `git worktree list` down to ct-verify-base-* scratch worktrees, never sweeping them (#3064)', () => {
+  const listWorktrees = () => [
+    '/repo',
+    '/tmp/ct-verify-base-ab12cd/wt',
+    '/Users/x/.worktrees/some-feature-branch',
+    '/tmp/ct-verify-base-ef34gh/wt',
+  ];
+  assert.deepStrictEqual(findStaleBaselineWorktrees(listWorktrees), ['/tmp/ct-verify-base-ab12cd/wt', '/tmp/ct-verify-base-ef34gh/wt']);
+});
+
+test('realGit.listWorktrees reads real `git worktree list` output, and findStaleBaselineWorktrees names only the stale scratch one (#3064)', () => {
+  // realpathSync: on macOS, os.tmpdir() is a symlink (/var -> /private/var)
+  // that `git worktree list` reports already resolved — an unresolved
+  // mkdtemp path would spuriously mismatch (same note as cli.test.js's own
+  // tmpDir() helper).
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-')));
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: repo });
+  const normalWt = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-normal-wt-')));
+  fs.rmdirSync(normalWt);
+  execFileSync('git', ['worktree', 'add', '--detach', normalWt, 'HEAD'], { cwd: repo });
+  const staleParent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')));
+  const staleWt = path.join(staleParent, 'wt');
+  execFileSync('git', ['worktree', 'add', '--detach', staleWt, 'HEAD'], { cwd: repo });
+  const rg = realGit(repo);
+  const all = rg.listWorktrees();
+  assert.strictEqual(all.length, 3, 'the main worktree plus both added ones');
+  assert.ok(all.includes(normalWt));
+  assert.ok(all.includes(staleWt));
+  assert.deepStrictEqual(findStaleBaselineWorktrees(() => all), [staleWt]);
+});
+
+test('realGit.listWorktrees returns an empty list rather than throwing outside a git repository (#3064)', () => {
+  const notARepo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-not-a-repo-'));
+  assert.deepStrictEqual(realGit(notARepo).listWorktrees(), []);
 });
