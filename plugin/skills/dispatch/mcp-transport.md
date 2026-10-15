@@ -38,6 +38,35 @@ mistake, since every call site was bridged and verified before this line changed
 
 The queue pull uses the confirmed "list issues by label" mapping; the per-dependency open-state check (the `gh issue view "$DEP" --json state` loop) uses the confirmed "get single issue by number" mapping, checking the returned state field for `OPEN`. Both replace their `gh`-CLI equivalent one-for-one — no change to the surrounding `node -e` eligibility/dependency logic, which only consumes the fetched JSON shape, not how it was fetched.
 
+## Step 2 — `list_issues` `fields` parameter silently truncates labels (#3137)
+
+**Confirmed live** (`gh`-absent firing, 2026-10-14): calling `list_issues` with an explicit `fields`
+array that included `"labels"` returned a **silently truncated** labels array for every one of 11
+candidates checked — e.g. issue #2807 actually carries `ready, risk:low, size:medium, type:task,
+auto:build, bot:in-progress, priority:low` (7 labels, confirmed via `mcp__github__issue_read`'s
+`get_labels` method), but the same issue came back from `list_issues` with only
+`["ready","risk:low","size:medium","type:task"]` — missing `auto:build`, `bot:in-progress`, and
+`priority:low` entirely, with no error or truncation flag.
+
+Feeding a truncated labels array into `parseRecordFacets` (`bin/lib/issues/record.js`) can misjudge
+`grants.build` / `bot.inProgress` / `bot.blocked` / `bot.parked` / `grants.merge` — a record whose
+`bot:in-progress` label is dropped by the truncation looks falsely eligible to a headless firing,
+risking a double-claim of a record another session already owns.
+
+**Required workaround** — promoted the same way #2523's native blocked-by workaround (above) was
+promoted in this file: before trusting any MCP-sourced `list_issues` result's labels for an
+eligibility or exclusion decision, cross-check each surviving candidate's labels individually via
+`mcp__github__issue_read` (`get` method's `labels` field, or the `get_labels` method) before parsing
+facets from it — never trust the bulk `list_issues` labels array alone when `fields` was passed.
+Whether omitting `fields` entirely from the `list_issues` call avoids the truncation (the bulk,
+unprojected response may return full labels) is **unverified** — plausible, but not confirmed
+against a live sandbox — so it is not yet the recommended default; the per-candidate cross-check
+above is the standing required mitigation until a live run confirms the omission fix is safe.
+
+Re-open this section once a live run confirms whether omitting `fields` from `list_issues` avoids
+the truncation — at that point, promote fields-omission to the default and update
+`queue-pull-script.md`'s MCP-path note accordingly.
+
 ## Step 2 — cross-PR overlap report (#1579)
 
 There is no confirmed MCP mapping for `gh pr list --json number,files,closingIssuesReferences` (a repo-wide open-PR listing with per-PR changed-file lists) yet. On the MCP transport, `queue-pull-script.md`'s cross-PR overlap fetch is skipped entirely and `dispatch-crosspr-overlap.json` is written as `[]` — the same fail-open posture as a `gh pr list` failure on the `gh` transport (SKILL.md Step 3's report renders nothing when its input is empty). This is a documented gap, not a silent one: the report is informational only (never a gate, per that section's AC2 fallback), so its absence on this transport costs a missed warning, not a missed exclusion.
