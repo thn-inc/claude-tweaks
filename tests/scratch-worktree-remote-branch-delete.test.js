@@ -148,6 +148,15 @@ test('cleanup-procedures-execution.md Section C no longer claims the ancestry ch
   assert.match(section, /git diff HEAD \{merge-commit\}/);
 });
 
+test('cleanup-procedures-execution.md Section C uses a merge-tree containment proof for pr-first, not a plain diff, and stops when the PR has no merge commit yet', () => {
+  const sectionC = CLEANUP_PROCEDURES_EXECUTION.indexOf('## C. Git Worktree');
+  const sectionD = CLEANUP_PROCEDURES_EXECUTION.indexOf('## D. Ephemeral dev server');
+  const section = CLEANUP_PROCEDURES_EXECUTION.slice(sectionC, sectionD);
+  assert.match(section, /git merge-tree --write-tree \{merge-commit\} HEAD/);
+  assert.match(section, /No\s*\n?\s*`mergeCommit`/);
+  assert.doesNotMatch(section, /\*\*Empty\*\* authorizes `discard_changes: true`/, 'the old empty-diff authorization wording must be gone, not left alongside the new merge-tree check');
+});
+
 test('scratch-worktree.md §6 states why its ancestry check does not need Section C\'s squash-merge correction', () => {
   const step6 = SCRATCH.slice(SCRATCH.indexOf('## 6. Tearing down'), SCRATCH.indexOf('## 7. Shell constraint'));
   assert.match(step6, /Cross-caller `pr-first` check/);
@@ -160,4 +169,6 @@ test('cleanup-procedures-execution.md Section C has an own-worktree remote-branc
   const section = CLEANUP_PROCEDURES_EXECUTION.slice(sectionC, sectionD);
   assert.match(section, /Own-worktree remote-branch delete \(#3088\)/);
   assert.match(section, /pr\.branch/);
+  assert.match(section, /--remote-ref-only/);
+  assert.match(section, /Only when step 4 actually proceeded past its/);
 });

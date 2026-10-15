@@ -354,3 +354,25 @@ test('AC16 (#3088): own-worktree teardown — no worktree recorded, local branch
   assert.strictEqual(calls.length, 1);
   assert.deepStrictEqual(calls[0], ['repos/acme/widgets/git/refs/heads/feat-branch']);
 });
+
+test('AC17 (#3088): --remote-ref-only skips archival but still performs the remote-ref delete, leaving the run directory in place', () => {
+  const { root, wt, runDir } = fixtureRepo();
+  execFileSync('git', ['worktree', 'remove', '--force', wt], { cwd: root });
+  execFileSync('git', ['branch', '-D', 'feat-branch'], { cwd: root });
+  writeRunState(runDir, {
+    status: 'active',
+    worktree: null,
+    sessionId: 'me',
+    pr: { number: 42, url: 'https://github.com/acme/widgets/pull/42', branch: 'feat-branch' },
+  });
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', remoteRefOnly: true,
+    deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  assert.match(result.lines.join('\n'), /archive: skipped — --remote-ref-only/);
+  assert.match(result.lines.join('\n'), /remote ref: deleted refs\/heads\/feat-branch/);
+  assert.strictEqual(calls.length, 1);
+  assert.ok(fs.existsSync(path.join(runDir, 'decisions.md')), 'run directory must NOT be archived away under --remote-ref-only');
+});

@@ -217,12 +217,20 @@ function teardownRun(runDir, opts = {}) {
   }
 
   // Step 2 (archive) — reuse archive-merged.js's git-mv-and-commit sequence verbatim rather than
-  // a second, divergent archival path.
-  const archived = archiveRunDir(root, runDir);
-  if (archived.ok) {
-    lines.push(`archive: moved to archive/${path.basename(runDir)}/`);
+  // a second, divergent archival path. #3088: skipped entirely under --remote-ref-only — that
+  // mode is for Section C step 5.5's own-worktree remote-ref cleanup, which runs BEFORE
+  // cleanup-procedures.md's item 8 (archival, always last) — archiving here would move the run
+  // directory out from under the later cleanup items (ephemeral dev server teardown, issue claim
+  // release) that still need $RUN_DIR to resolve.
+  if (opts.remoteRefOnly) {
+    lines.push('archive: skipped — --remote-ref-only (archival handled separately by Section B)');
   } else {
-    lines.push(`archive: skipped — ${archived.reason}`);
+    const archived = archiveRunDir(root, runDir);
+    if (archived.ok) {
+      lines.push(`archive: moved to archive/${path.basename(runDir)}/`);
+    } else {
+      lines.push(`archive: skipped — ${archived.reason}`);
+    }
   }
 
   // Step 3 (worktree removal) — never forced; a locked worktree means either a live session

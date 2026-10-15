@@ -195,19 +195,35 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    Under `integration-model: pr-first` (the GitHub default), every merge goes through
    `_shared/pr-first-merge.md` Step 3's `gh pr merge --squash`, so the ancestry check above can
    never pass here: a squash commit's parents never include this worktree branch's `HEAD`, by
-   construction, regardless of how clean the merge was. The primary proof for this shape is
-   instead a clean worktree plus an empty diff against the squash commit itself: read the PR's
-   merge commit — `gh pr view {number} --repo {owner}/{repo} --json mergeCommit -q
-   .mergeCommit.oid`, `{number}` from this run's `run-state.json` `pr.number` field — then run
-   `git diff HEAD {merge-commit}`. **Empty** authorizes `discard_changes: true` the same way
-   **Exit 0** does above (stated reason: "git diff HEAD {merge-commit} is empty — nothing to
-   lose"). **Non-empty** — stop and surface the diff, same as the ancestry check's non-zero
-   branch; never override. `[IL-45]`'s content-diff fallback (`git diff <branch>
-   <default-branch>` empty) still applies for a branch discarded without ever merging (no
-   `run-state.json` `pr` field at all) — that remains the path for "never merged," never the
-   normal `pr-first` case. Neither proof subsumes the other: the ancestry check only holds for
-   `--no-ff`/fast-forward, and the content-diff check is what `pr-first`'s squash shape actually
-   needs.
+   construction, regardless of how clean the merge was. The primary proof for this shape is a
+   content-containment check against the squash commit, not a plain diff — a plain
+   `git diff HEAD {merge-commit}` false-positives whenever any other PR landed on the integration
+   branch between this branch's fork point and its own merge (a squash commit's tree is the
+   integration branch's tree *at merge time* plus this PR's changes, not the tree at fork time),
+   which is common under concurrent sessions.
+
+   Read the PR's merge commit — `gh pr view {number} --repo {owner}/{repo} --json mergeCommit -q
+   .mergeCommit.oid`, `{number}` from this run's `run-state.json` `pr.number` field. **No
+   `mergeCommit` (empty/null output — the PR isn't merged yet, e.g. `armed`/`pending-review`)** —
+   stop here; do not proceed to `discard_changes: true` or step 4's removal at all. A PR that
+   hasn't merged has nothing to prove containment against.
+
+   With a merge commit in hand, run `git merge-tree --write-tree {merge-commit} HEAD` and compare
+   its output to `git rev-parse {merge-commit}^{tree}`. **Equal** (and `git status --porcelain`
+   also empty, confirming no uncommitted work) authorizes `discard_changes: true` the same way
+   **Exit 0** does above (stated reason: "git merge-tree --write-tree {merge-commit} HEAD matches
+   {merge-commit}'s own tree — HEAD's content is fully contained, nothing to lose"). **Different,
+   or `git merge-tree` exits non-zero (a real conflict — containment can't be confirmed)** — stop
+   and surface via `git diff HEAD {merge-commit}`, same as the ancestry check's non-zero branch;
+   never override. When `gh` is unavailable (a `gh`-absent MCP sandbox) there is no `pr-first`
+   proof to run at all — stop and surface that gap explicitly, the same posture
+   `pr-first-merge-post-merge.md` Step 5 already takes for its own `gh`-absent case.
+
+   `[IL-45]`'s content-diff fallback (`git diff <branch> <default-branch>` empty) still applies
+   for a branch discarded without ever merging (no `run-state.json` `pr` field at all) — that
+   remains the path for "never merged," never the normal `pr-first` case. Neither proof subsumes
+   the other: the ancestry check only holds for `--no-ff`/fast-forward, and the merge-tree
+   containment check is what `pr-first`'s squash shape actually needs.
 
    For a worktree this session does **not** occupy, use `teardown-run` (below) instead of a raw
    `git worktree remove` — it already checks `git worktree list --porcelain` for you and skips
@@ -228,24 +244,31 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    the session is standing in **while it is still live** — that removal path is `ExitWorktree`
    only, per step 4 above and `[IL-58]`; `teardown-run`'s own worktree-removal step is for a
    worktree this session does not occupy. Once step 4 has already removed it, step 5.5 below
-   calls `teardown-run` anyway, for a different reason.
-5.5. **Own-worktree remote-branch delete (#3088).** `ExitWorktree(remove)` in step 4 above
-   deletes the local branch along with the worktree — nothing in steps 1-4 deletes the remote
-   ref. Run the same command step 5 uses, now that nothing live remains for it to conflict with:
+   calls a narrower form of `teardown-run` anyway, for a different reason.
+5.5. **Own-worktree remote-branch delete (#3088).** Only when step 4 actually proceeded past its
+   proof above and removed the worktree via `ExitWorktree` — never when step 4's proof stopped
+   (no `mergeCommit`, a non-empty/differing containment check, or a non-zero ancestry check), and
+   never when this spec's branch-finish outcome never reached `merged` at all. `ExitWorktree(remove)`
+   in step 4 deletes the local branch along with the worktree — nothing in steps 1-4 deletes the
+   remote ref. Run `teardown-run` again, narrowed to just that one step, now that nothing live
+   remains for the rest of it to conflict with — but archival stays Section B's job alone (item 8
+   always runs last, per `cleanup-procedures.md`'s Ordering rule, since Sections D/E and Section
+   B's own archival all still need `$RUN_DIR` to resolve after this point):
 
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" teardown-run --run "$RUN_DIR" --merged
+   node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" teardown-run --run "$RUN_DIR" --merged --remote-ref-only
    ```
 
-   Its archival and state-close steps are idempotent no-ops here (step 3.6 and Section B's own
-   archival already ran), its worktree-removal step reports "no worktree recorded" (already
-   gone), and its local-branch-delete step reports a harmless failure (already gone) — the step
-   that actually matters is its remote-ref delete, which resolves the branch name from
-   `run-state.json`'s `pr.branch` field even though the local branch no longer exists
-   (`teardown-run.js`'s branch resolution, #3088). This narrows, not contradicts, step 5's own
-   carve-out above: that carve-out is about never routing *worktree removal* through
+   `--remote-ref-only` skips archival (Step 2) only — the run directory stays exactly where it
+   was, for Sections D, E, and B's own archival (item 8) to still find. Its state-close step is a
+   harmless idempotent re-run (step 3.6 already closed it), its worktree-removal step reports "no
+   worktree recorded" (already gone), and its local-branch-delete step reports a harmless failure
+   (already gone) — the step that actually matters is its remote-ref delete, which resolves the
+   branch name from `run-state.json`'s `pr.branch` field even though the local branch no longer
+   exists (`teardown-run.js`'s branch resolution, #3088). This narrows, not contradicts, step 5's
+   own carve-out above: that carve-out is about never routing *worktree removal* through
    `teardown-run` while the worktree is still live — calling it afterward, purely for this
-   leftover remote-ref cleanup, is the documented path.
+   leftover remote-ref cleanup, with archival suppressed, is the documented path.
 
 If no worktree exists for this spec, skip this section silently.
 
