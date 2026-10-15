@@ -126,10 +126,9 @@ CACHE_HIT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_
 NODE_EVAL_EOF
 )
 CACHE_HIT_RC=$?
-# #3110: appendExclusion now throws on a corrupt/unreadable dispatch-exclusions.json
-# instead of silently treating it as [] -- a non-zero exit here means this pass's
-# exclusion entries may be only partially written. Stop the firing rather than
-# falling through to the cache-miss recompute below with a partial exclusion list.
+# #3110: a non-zero exit here (e.g. appendExclusion refusing a corrupt
+# dispatch-exclusions.json) means this pass's exclusions may be partially
+# written -- stop rather than fall through to the recompute below.
 if [ "$CACHE_HIT_RC" -ne 0 ]; then
   echo "dispatch: queue-pull stopped -- cache-hit exclusion pass failed (exit $CACHE_HIT_RC); see error above." >&2
   exit 1
@@ -237,10 +236,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE" "$DISPAT
   }
 NODE_EVAL_EOF
 GROUPING_RC=$?
-# #3110: same reasoning as the cache-hit check above -- a thrown appendExclusion
-# here means $DISPATCH_GROUPS and/or $DISPATCH_EXCLUSIONS may already be
-# partially/inconsistently written. Stop the firing rather than letting later
-# passes build on a partial exclusion list.
+# #3110: same stop as the cache-hit check above -- later passes must not
+# build on a partially written $DISPATCH_GROUPS/$DISPATCH_EXCLUSIONS.
 if [ "$GROUPING_RC" -ne 0 ]; then
   echo "dispatch: queue-pull stopped -- group-building exclusion pass failed (exit $GROUPING_RC); see error above." >&2
   exit 1
@@ -519,10 +516,8 @@ NODE_EVAL_EOF
 then
   mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
 else
-  # #3110: stop rather than silently leaving $DISPATCH_GROUPS at its prior
-  # value (which the old bare `&&` form did on any failure, including a
-  # thrown appendExclusion) -- a corrupt exclusions file here means this
-  # pass's shipped-candidate exclusions may be only partially written.
+  # #3110: stop -- this pass's shipped-candidate exclusions may be only
+  # partially written (e.g. appendExclusion refusing a corrupt file).
   echo "dispatch: queue-pull stopped -- shipped-candidate exclusion pass failed; see error above." >&2
   rm -f "${DISPATCH_GROUPS}.tmp"
   exit 1
