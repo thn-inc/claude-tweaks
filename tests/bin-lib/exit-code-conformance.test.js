@@ -58,10 +58,17 @@ function stripComments(src) {
 
 // Extracts the text governed by a `require.main === module` guard: either a
 // balanced `{ ... }` block, or (the dominant single-line form in this repo)
-// the bare statement up to its terminating semicolon.
+// the bare statement up to its terminating semicolon. A file may contain
+// more than one such guard (hooks.js's #3074 prefilter fast-path guard at
+// the top of the file, ahead of its real entry point) -- the LAST guard in
+// the file is always the one that actually drives the file's exit behavior
+// when run directly, since a guard meant only to short-circuit before the
+// real entry point necessarily appears before it, never after.
 function extractGuard(src) {
-  const m = src.match(/if\s*\(\s*require\.main\s*===\s*module\s*\)\s*/);
-  if (!m) return null;
+  const re = /if\s*\(\s*require\.main\s*===\s*module\s*\)\s*/g;
+  const matches = [...src.matchAll(re)];
+  if (matches.length === 0) return null;
+  const m = matches[matches.length - 1];
   let i = m.index + m[0].length;
   if (src[i] === '{') {
     let depth = 0;
@@ -136,6 +143,22 @@ test('the allowlist names exactly the two reviewed exceptions, and each still ac
       `${rel} is allowlisted but no longer calls process.exit() directly -- remove it from the allowlist`,
     );
   }
+});
+
+test('extractGuard selects the entry-point (last) require.main guard in hooks.js, not the prefilter (first) one', () => {
+  const content = stripComments(fs.readFileSync(path.join(ROOT, 'plugin', 'bin', 'hooks.js'), 'utf8'));
+  const guard = extractGuard(content);
+  assert.ok(guard !== null, 'hooks.js should still have a detectable require.main guard');
+  // The prefilter guard (line 28) only ever calls the early-exit skip path;
+  // the real entry-point guard (line 1570) is the one that drives main(...).
+  assert.ok(
+    /main\s*\(/.test(guard),
+    `extractGuard should select the entry-point guard (the one invoking main(...)), not the prefilter guard -- got: ${guard.slice(0, 120)}`,
+  );
+  assert.ok(
+    findDirectProcessExit(guard).length > 0,
+    'the shipped entry-point guard still calls process.exit() directly -- this assertion documents the pre-fix-staleness baseline',
+  );
 });
 
 // #2053: a narrower, unconditional rule -- no file under
