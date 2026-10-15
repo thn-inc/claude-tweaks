@@ -318,6 +318,8 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
   runId:process.argv[2],sessionId:process.env.CLAUDE_CODE_SESSION_ID||'',
   host:require('os').hostname(),now:Date.now()}).commentBody)" "$ISSUE" "$RUN_ID" > /tmp/claim-${ISSUE}.md
 ```
+
+On the MCP path, post that generated body exactly as the module printed it, per `_shared/github-write-transport.md`'s **Marker comments on the MCP path** (#3131: the 2026-10-12 #1350 mirror was stored escaped).
 <!-- when: transport=gh -->
 ```bash
 gh issue comment "$ISSUE" --body-file /tmp/claim-${ISSUE}.md

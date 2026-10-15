@@ -22,10 +22,30 @@ probe, not an environment classification — it holds regardless of *why* `gh` i
 | List open issues by label | `gh issue list --label {label} --state open --json ...` | `list_issues` (filtered by label, state) — never `search_issues` for a find-by-marker/dedup lookup (see below) |
 | Create an issue | `gh issue create --title ... --body ...` | `issue_write` (create mode) |
 | Edit labels / body | `gh issue edit {n} --add-label/--remove-label/--body-file` | `issue_write` (update mode) |
-| Comment | `gh issue comment {n} --body-file` | `add_issue_comment` |
+| Comment | `gh issue comment {n} --body-file` | `add_issue_comment` — a body that starts with a `<!-- … -->` marker follows **Marker comments on the MCP path** below |
 | Close | `gh issue close {n} --reason ...` | `issue_write` (update mode, state change) |
 | Get a single issue by number | `gh issue view {n} --json state,...` | `issue_read` (get mode) |
 | List an issue's comments | `gh api repos/{owner}/{repo}/issues/{n}/comments?per_page=100` | `issue_read` (get_comments mode) |
+
+### Marker comments on the MCP path
+
+**Compose a marker comment's body from the local source — the skill's literal template or a CLI's
+stdout (`claims.js`'s `claimPayload`, a `bin/` composer) — never from text read back through an MCP tool.**
+The MCP server's read path HTML-escapes (`_shared/pr-early-run-lifecycle.md`'s Root cause
+section), so a body copied from an MCP read carries `&lt;!-- … --&gt;`, and `add_issue_comment`
+stores whatever it is given byte for byte. An escaped marker renders as visible text and no
+find-by-marker lookup ever matches it. Evidence (#3131): across the run-comment PRs since
+2026-09-20 and #1350, `performed_via_github_app` shows the `gh` CLI wrote 53 raw markers and 0
+escaped ones, while the `claude` app wrote 9 raw and 5 escaped, interleaved in time — the write
+tool does not escape; the escaped bodies were composed from sanitized reads. Before posting, check
+the composed body's first line: one that begins `&lt;!--` was built from a sanitized read —
+recompose it from the local source.
+
+**Read back after posting.** Read the new comment through `issue_read` (`get_comments`). A raw
+stored marker comes back stripped by the same sanitizer (that is expected — never flag it); a body
+that comes back starting with `&lt;!--` was stored escaped. On that signature only — the read-back
+body begins `&lt;!--` — trace it:
+`node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --step "Marker comment read-back (degraded)" --text "condition: comment {id} on #{n} stored with an escaped marker → fallback: left as posted; invisible to find-by-marker until re-posted from the local source" --reversibility n/a`.
 
 ### Full-replace hazard
 

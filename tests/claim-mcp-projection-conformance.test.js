@@ -68,3 +68,41 @@ test('task-prompt.md context pack threads the selection-time label snapshot into
   assert.match(pack, /Selection labels: #\{n\} bot:in-progress=\{yes\|no\}/);
   assert.match(pack, /\$DISPATCH_GROUPS/);
 });
+
+const TRANSPORT = read('plugin/skills/_shared/github-write-transport.md');
+const RUN_COMMENTS = read('plugin/skills/_shared/pr-run-comments.md');
+
+test('github-write-transport.md comment row and MCP marker subsection carry the composition rule, evidence and read-back', () => {
+  const row = TRANSPORT.split('\n').find((l) => l.startsWith('| Comment |'));
+  assert.ok(row, 'Comment CRUD row must exist');
+  assert.match(row, /Marker comments on the MCP path/);
+  const start = TRANSPORT.indexOf('### Marker comments on the MCP path');
+  const end = TRANSPORT.indexOf('### Full-replace hazard');
+  assert.ok(start !== -1 && end !== -1 && start < end, 'subsection sits before Full-replace hazard');
+  const sub = TRANSPORT.slice(start, end);
+  assert.match(sub, /&lt;!--/);
+  assert.match(sub, /never from text read back through an MCP tool/);
+  assert.match(sub, /performed_via_github_app/);
+  assert.match(sub, /begins `&lt;!--`/);
+  assert.match(sub, /--status SKIP/);
+});
+
+test('pr-run-comments.md post-or-update has an MCP read-back for the run-comment marker', () => {
+  const para = paragraphStarting(RUN_COMMENTS, '**MCP transport (no `gh`, #3131).**');
+  assert.match(para, /add_issue_comment/);
+  assert.match(para, /Marker comments on the MCP path/);
+  assert.match(para, /read back/i);
+  assert.match(para, /begins `&lt;!--`/);
+  const create = RUN_COMMENTS.indexOf('3. **Not found → create**');
+  const failure = RUN_COMMENTS.indexOf('**On failure of either the find or the write**');
+  const here = RUN_COMMENTS.indexOf(para);
+  assert.ok(create < here && here < failure, 'the MCP paragraph sits between step 3 and the failure paragraph');
+});
+
+test('issue-claims.md mirror section points MCP posts at the marker composition rule', () => {
+  const start = ISSUE_CLAIMS.indexOf('## The mirror');
+  const end = ISSUE_CLAIMS.indexOf('\n## ', start + 1);
+  assert.ok(start !== -1 && end !== -1, 'mirror section anchors must exist');
+  const section = ISSUE_CLAIMS.slice(start, end);
+  assert.match(section, /Marker comments on the MCP path/);
+});
