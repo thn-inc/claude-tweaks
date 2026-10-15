@@ -90,6 +90,33 @@ test('shaping-mode.md decides refusal with shapingRefusal, not bot:in-progress (
   assert.match(section, /\*\*Why:\*\* near-duplicate finder found `title-similarity` against #\{candidate\}.*\{evidence\}/s);
 });
 
+test('the shaping-mode.md refusal fence runs and refuses nothing when no hit is title-similar and ready (#3141)', () => {
+  const { execFileSync } = require('node:child_process');
+  const os = require('node:os');
+  const open = 'node -e "\n';
+  const close = '" "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"\n';
+  const start = SHAPING_MODE.indexOf(open);
+  const end = SHAPING_MODE.indexOf(close, start);
+  assert.ok(start !== -1 && end !== -1, 'refusal fence anchors must exist');
+  const code = SHAPING_MODE.slice(start + open.length, end).split('${CLAUDE_PLUGIN_ROOT}').join(path.join(ROOT, 'plugin'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'near-dup-fence-'));
+  const hits = path.join(dir, 'hits.json');
+  const snapshot = path.join(dir, 'snapshot.json');
+  // Neither hit qualifies (#2552 has no title-similarity, #9 is not ready),
+  // so the fence makes no claim or GraphQL read — this runs offline.
+  fs.writeFileSync(hits, JSON.stringify([
+    { number: 2552, title: "Don't duplicate", signals: ['body-anchor-overlap'] },
+    { number: 9, title: "It's similar", signals: ['title-similarity'] },
+  ]));
+  fs.writeFileSync(snapshot, JSON.stringify([
+    { number: 2552, labels: ['ready', 'bot:in-progress'] },
+    { number: 9, labels: [{ name: 'parked' }] },
+  ]));
+  const out = execFileSync(process.execPath, ['-e', code, hits, snapshot], { encoding: 'utf8' });
+  assert.deepStrictEqual(JSON.parse(out.trim()), { refuse: false });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('next-mode-shape.md describes the same refusal condition (#3141)', () => {
   const start = NEXT_MODE_SHAPE.indexOf('Near-duplicate candidate check also runs headlessly');
   assert.ok(start !== -1);

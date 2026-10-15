@@ -133,9 +133,12 @@ if (numbers.length) {
     if (!r.failure && r.via === 'git') tip = r.sha;
     claimContentByNumber[n] = r.failure || r.absent ? null : r.content;
   }
-  let out = null;
-  try { out = execFileSync('gh', ['api', 'graphql', '-f', 'query=' + buildLinkedPRQuery(numbers), '-F', 'owner={owner}', '-F', 'repo={repo}'], { encoding: 'utf8' }); } catch (e) { out = e.stdout || null; }
-  try { linkedPRRepoData = JSON.parse(out).data.repository; } catch {}
+  const [owner, repo] = (slug || '').split('/');
+  if (owner && repo) {
+    let out = null;
+    try { out = execFileSync('gh', ['api', 'graphql', '-f', 'query=' + buildLinkedPRQuery(numbers), '-f', 'owner=' + owner, '-f', 'repo=' + repo], { encoding: 'utf8' }); } catch (e) { out = e.stdout || null; }
+    try { linkedPRRepoData = JSON.parse(out).data.repository; } catch {}
+  }
 }
 const state = buildShapingState({ numbers, labelsByNumber, claimContentByNumber, linkedPRRepoData, now: Date.now() });
 const hit = shapingRefusal(hits, state);
