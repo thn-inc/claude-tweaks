@@ -75,17 +75,29 @@ dependencies:
     installed-probe:
       type: plugin-cache-glob
       glob: "~/.claude/plugins/cache/*/impeccable/*/.claude-plugin/plugin.json"
-    pinned: "4.0.2"
+    pinned: "4.5.0"
+    # Second pin, read only by the drift tool and the tests, never by runtime
+    # gating: the engine module's resolve() accepts any install carrying the
+    # 4.2.2+ launcher and a cached engine binary, regardless of exact
+    # version — see impeccable-plugin.md's "Last verified version, not an
+    # exact pin". This records the engine VERSION of the SAME install
+    # `pinned` above was recorded from (read via resolve()'s engine-probe
+    # handshake), so the two numbers never drift to describe two different
+    # installs. Not consumed by checkVersion/checkAssertions — the engine
+    # module has no probe surface this tool's generic machinery can drive;
+    # the pin-parity test in tests/impeccable-plugin-contract.test.js is this
+    # value's only reader.
+    pinned-engine: "0.1.11"
     upstream:
       repo: "pbakaus/impeccable"
       tag-prefix: "skill-v"
     contract-paths:
       - "skills/impeccable/SKILL.md"
-      - "skills/impeccable/scripts/context-signals.mjs"
+      - "skills/impeccable/scripts/impeccable"
       - "skills/impeccable/reference/new-work.md"
+      - "skills/impeccable/reference/doctor.md"
       - "agents/impeccable-finish-reviewer.md"
       - "skills/impeccable/reference/document.md"
-      - "skills/impeccable/scripts/concept-seed.mjs"
     assertions:
       - file: "plugin/skills/design-wrapper/command-map.md"
         claims: "the plugin exposes a polish command"
@@ -95,31 +107,31 @@ dependencies:
         claims: "the plugin exposes a shape command taking a topic"
         upstream-path: "skills/impeccable/SKILL.md"
         must-match: "shape [feature]"
-      - file: "plugin/skills/design-wrapper/modes/live.md"
-        claims: "live mode boots a server and enters a poll loop via scripts/live.mjs"
-        upstream-path: "skills/impeccable/scripts/live.mjs"
-        must-match: "enter the live variant poll loop"
       - file: "plugin/skills/design-wrapper/impeccable-plugin.md"
-        claims: "context-signals.mjs exports gatherSignals(cwd), defaulting to process.cwd()"
-        upstream-path: "skills/impeccable/scripts/context-signals.mjs"
-        must-match: "export async function gatherSignals(cwd = process.cwd())"
+        claims: "an install older than 4.2.2 is missing the launcher script at skills/impeccable/scripts/impeccable[.cmd]"
+        upstream-path: "skills/impeccable/scripts/impeccable"
+        must-match: "#!/bin/sh"
       - file: "plugin/skills/design-wrapper/impeccable-plugin.md"
-        claims: "the context-signals CLI entrypoint reads no argv — it passes process.cwd() and nothing else"
-        upstream-path: "skills/impeccable/scripts/context-signals.mjs"
-        must-match: "const signals = await gatherSignals(process.cwd());"
-      - file: "plugin/skills/design-wrapper/impeccable-plugin.md"
-        claims: "scan.targets filters on scannability, not frontend-ness — bare .js and .ts are in SCANNABLE_EXT, which is why Layer 3 cannot be retired"
-        upstream-path: "skills/impeccable/scripts/context-signals.mjs"
-        must-match: "'.jsx', '.tsx', '.js', '.ts', '.vue', '.svelte', '.astro',"
+        claims: "the launcher's own engine-probe/verb dispatch is the real compatibility boundary, not an exact plugin version"
+        upstream-path: "skills/impeccable/scripts/impeccable"
+        must-match: "engine-probe"
+      - file: "plugin/bin/lib/impeccable-engine/index.js"
+        claims: "every launcher call (the probe and each verb) carries IMPECCABLE_LAUNCHER_PROBE=1, so a probe reached recursively never triggers a download"
+        upstream-path: "skills/impeccable/scripts/impeccable"
+        must-match: "Inside another launcher's probe: no download, fail fast and quiet."
+      - file: "plugin/skills/design-wrapper/modes/doctor.md"
+        claims: "the engine's doctor verb is invoked with --json only"
+        upstream-path: "skills/impeccable/reference/doctor.md"
+        must-match: "doctor --json"
       # The direction contract. _shared/design-contract.md hard-codes the five block
       # labels and nothing else about upstream's contract, so a rename upstream must
       # surface as drift here — otherwise the parse quietly stops matching and /demo
       # renders an empty brief, which is indistinguishable from a record that simply
       # never had a contract.
       - file: "plugin/skills/_shared/design-contract.md"
-        claims: "the direction contract lives in the built artifact's opening comment, not in a repo file at a fixed path"
+        claims: "the direction contract lives under a ## Direction contract heading in the relevant surface brief, not in a repo file at a fixed path"
         upstream-path: "skills/impeccable/reference/new-work.md"
-        must-match: "as a contract in the artifact's opening comment"
+        must-match: "## Direction contract"
       - file: "plugin/skills/_shared/design-contract.md"
         claims: "the contract's five block labels are exactly THESIS, OWN-WORLD, STORY, FIRST VIEWPORT, FORM"
         upstream-path: "agents/impeccable-finish-reviewer.md"
@@ -138,7 +150,7 @@ dependencies:
         must-match: "Re-roll eliminates every direction already shown"
       - file: "plugin/skills/design-wrapper/modes/explore.md"
         claims: "the direction-scope invocation exists"
-        upstream-path: "skills/impeccable/scripts/concept-seed.mjs"
+        upstream-path: "skills/impeccable/reference/new-work.md"
         must-match: "--scope direction"
       - file: "plugin/skills/design-wrapper/modes/explore.md"
         claims: "after two consecutive rerolls, upstream asks what quality is missing"
@@ -150,8 +162,16 @@ dependencies:
         must-match: "It is the user's door, never yours"
       - file: "plugin/skills/design-wrapper/modes/explore.md"
         claims: "the surface-scope invocation exists"
-        upstream-path: "skills/impeccable/scripts/concept-seed.mjs"
+        upstream-path: "skills/impeccable/reference/new-work.md"
         must-match: "--scope surface"
+      - file: "plugin/skills/design-wrapper/modes/review.md"
+        claims: "the finish-reviewer's first return line is one of exactly four disposition words"
+        upstream-path: "agents/impeccable-finish-reviewer.md"
+        must-match: "These four words are the whole vocabulary; never invent another."
+      - file: "plugin/skills/design-wrapper/modes/review.md"
+        claims: "a disposition: fix/rebuild/ship reply carries exactly five named sections: persistence, fidelity, ceiling, material_fixes, keep"
+        upstream-path: "agents/impeccable-finish-reviewer.md"
+        must-match: "exactly five sections: `persistence`"
     fixtures: []
 
   # superpowers: the repo's heaviest dependency — eight consumed skills, and

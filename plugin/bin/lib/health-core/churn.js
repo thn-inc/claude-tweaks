@@ -52,7 +52,7 @@ function domainChurn(root, relPaths, sinceMs) {
     const out = execFileSync(
       'git',
       ['-C', root, 'log', '--oneline', `--since=${since}`, '--', ...relPaths],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30000 },
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30000, windowsHide: true },
     );
     count = out.split('\n').filter(Boolean).length;
   } catch {

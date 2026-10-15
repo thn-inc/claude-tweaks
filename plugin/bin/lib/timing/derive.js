@@ -195,7 +195,10 @@ function derivePhases({ events, manifest = null, runState = null, now = new Date
       }
     }
     if (best) {
-      best.row.verify.push({ mode: v.mode ?? null, suitesRun: Array.isArray(v.suitesRun) ? v.suitesRun : [], durationMs: v.durationMs ?? null, pass: v.pass ?? null, at: v.ts });
+      // `pass` stays the run's raw outcome; `baselineAdjudicated` (#3043) says
+      // whether a raw failure was adjudicated against a base ('pass' means
+      // the runner exited 0 with environment-baseline failures still red).
+      best.row.verify.push({ mode: v.mode ?? null, suitesRun: Array.isArray(v.suitesRun) ? v.suitesRun : [], durationMs: v.durationMs ?? null, pass: v.pass ?? null, baselineAdjudicated: v.baselineAdjudicated ?? null, at: v.ts });
     }
   }
 

@@ -3,6 +3,8 @@
 // Family is sniffed from output CONTENT, never from the check's name. Counts
 // fail toward absence: anything ambiguous returns null — a wrong count would
 // poison #881's future drop-detection.
+// Families: tap, summary (jest/pytest/vitest), spec (node --test's default
+// reporter, #3043), generic.
 // `extractFailingFiles` (#1925) names the failing TEST files the same way,
 // ANSI-stripped, for the runner's flaky retry; `[]` when nothing parses.
 'use strict';
@@ -21,8 +23,18 @@ const SUMMARY_MARKERS = [
   /^\s*Test Files\s+\d+ (?:passed|failed)/m,
 ];
 const KNOWN_SUMMARY_CATEGORIES = ['failed', 'passed', 'skipped', 'pending', 'todo'];
+// node --test's `spec` reporter — the default since Node 20 (#3043). Its
+// summary is `ℹ tests N` / `ℹ pass N` / `ℹ fail N`, and every failure is
+// listed after `✖ failing tests:` as `test at <path>:<line>:<col>` followed by
+// the failing test's name and diagnostics. Without this family the runner
+// sniffed this repo's own `npm test` output as `generic` and named no file.
+const SPEC_MARKERS = [/^ℹ tests \d+/m, /^✖ failing tests:/m];
+const SPEC_TEST_AT_RE = /^test at (.+):(\d+:\d+)\s*$/;
 
+// Spec first: its markers are unambiguous, while a stray `not ok` line a test
+// printed to stdout would otherwise sniff a spec log as tap.
 function sniffFamily(text) {
+  if (SPEC_MARKERS.some((re) => re.test(text))) return 'spec';
   if (TAP_MARKERS.some((re) => re.test(text))) return 'tap';
   if (SUMMARY_MARKERS.some((re) => re.test(text))) return 'summary';
   return 'generic';
@@ -69,6 +81,10 @@ function extractFailingRegion(text, family) {
     });
     return cap([...keep].sort((a, b) => a - b).map((i) => lines[i]));
   }
+  if (family === 'spec') {
+    const start = lines.findIndex((line) => /^✖ failing tests:/.test(line));
+    if (start !== -1) return cap(lines.slice(start).map((line) => line.replace(/\r$/, '')));
+  }
   return cap(lines.slice(-GENERIC_TAIL_LINES));
 }
 
@@ -107,6 +123,13 @@ function parseCounts(text, family) {
     }
     if (failed === null || passed === null) return null;
     return { tests: total === null ? passed + failed : total, pass: passed, fail: failed };
+  }
+  if (family === 'spec') {
+    const tests = num(text.match(/^ℹ tests (\d+)/m));
+    const pass = num(text.match(/^ℹ pass (\d+)/m));
+    const fail = num(text.match(/^ℹ fail (\d+)/m));
+    if (tests === null || pass === null || fail === null) return null;
+    return { tests, pass, fail };
   }
   return null;
 }
@@ -171,10 +194,291 @@ const TAP_FRAME_RE = new RegExp(`(?:\\(|\\s|')(${WIN_PATH}):\\d+:\\d+\\)?`, 'g')
 // (`FAIL path`), pytest (`FAILED path::name`).
 const SUMMARY_FAIL_RE = new RegExp(`^\\s*(?:FAIL|❯|FAILED)\\s+(${PATH})(?=\\s|::|$)`);
 
+// A run of backslashes is ONE separator: node's TAP `location: '...'` line is
+// YAML-quoted, so on Windows it carries `\\` per separator — read as two, the
+// path never matched the cwd prefix and the same file listed twice. The fold
+// also turns a UNC path outside cwd (`\\srv\share\x.test.js`) into
+// `/srv/share/x.test.js` — never under cwd, so it never matches a file at
+// base and fails closed (attributable).
 function relativize(file, cwd) {
-  const normalizedFile = file.replace(/\\/g, '/');
-  const prefix = `${cwd.replace(/\\/g, '/').replace(/\/+$/, '')}/`;
+  const normalizedFile = file.replace(/\\+/g, '/');
+  const prefix = `${cwd.replace(/\\+/g, '/').replace(/\/+$/, '')}/`;
   return normalizedFile.startsWith(prefix) ? normalizedFile.slice(prefix.length) : normalizedFile;
+}
+
+// A path extractFailingFiles would keep: a test file, never a node: internal.
+function isRetryableFile(rel) { return TEST_FILE_RE.test(rel) && !rel.startsWith('node:'); }
+
+// Every `test at <path>:L:C` entry ({file: raw path, loc: 'L:C', next: the
+// line right after it, body: the diagnostic lines after that}, in log order)
+// inside the spec reporter's `✖ failing tests:` section.
+function specEntries(lines) {
+  const entries = [];
+  let inSection = false;
+  let current = null;
+  let wantNext = false;
+  for (const raw of lines) {
+    const line = raw.replace(/\r$/, '');
+    const m = inSection ? line.match(SPEC_TEST_AT_RE) : null;
+    if (wantNext) {
+      current.next = line;
+      wantNext = false;
+      if (!m) continue;
+    }
+    if (/^✖ failing tests:/.test(line)) { inSection = true; continue; }
+    if (!inSection) continue;
+    if (m) { current = { file: m[1], loc: m[2], next: '', body: [] }; entries.push(current); wantNext = true; continue; }
+    if (current) current.body.push(line);
+  }
+  return entries;
+}
+
+// A spec entry is file-level when node reports the FILE itself as the failing
+// test (`✖ <path> (Nms)` right under `test at <path>:1:1`) — the shape a test
+// file that fails to load takes, as opposed to a failing test inside it.
+const SPEC_FAIL_NAME_RE = /^✖ (.+) \(\d[\d.]*ms\)\s*$/;
+
+// A TAP name carries an optional `# SKIP` / `# TODO` directive after it. A
+// block with a directive is not a failure (TAP's `# fail` excludes it), so it
+// contributes no name — a todo name at base must never cover a real failure
+// at HEAD.
+const TAP_NAME_RE = /^\s*not ok\b(?:\s+\d+)?(?:\s+-)?\s*(.*?)(\s+#\s*(?:SKIP|TODO)\b.*)?\s*$/i;
+
+const INCONCLUSIVE_RE = /test timed out after|testTimeoutFailure|cancelledBy|was cancelled|did not finish before/i;
+const TAP_LOCATION_RE = /location:\s*'.*:(\d+:\d+)'/;
+
+// The failing test names per relativized test file, in log order, as a
+// multiset (a name may repeat): Map<file, (string|null)[]>. spec: the
+// `✖ <name> (…)` line after each `test at` entry, minus its duration (null
+// when that line does not parse). tap: each `not ok N - <name>` block's name,
+// under every test file its frames name — a `# SKIP`/`# TODO` block is
+// skipped. A file-level entry's name is the path itself, so it is normalized
+// the same way the file is. Entries naming no test file are skipped
+// (countUnmatchedFailures counts them); every other family returns an empty
+// Map. `located`: each name — file-level ones included — becomes
+// `<name>@<line>:<col>` (the failing site; null when the entry carries none),
+// so a load failure (`1:1`) and a file-scoped hook failure stay distinct.
+// `conclusiveOnly`: an entry whose diagnostics say it timed out or was
+// cancelled is dropped — it did not finish, which proves nothing about
+// whether it fails.
+function failingTestsByFile(text, family, { cwd = process.cwd(), located = false, conclusiveOnly = false } = {}) {
+  const byFile = new Map();
+  const add = (rel, name, loc, body) => {
+    if (conclusiveOnly && body.some((l) => INCONCLUSIVE_RE.test(l))) return;
+    let named = name !== null && relativize(name, cwd) === rel ? rel : name;
+    if (located && named !== null) named = loc ? `${named}@${loc}` : null;
+    if (!byFile.has(rel)) byFile.set(rel, []);
+    byFile.get(rel).push(named);
+  };
+  const lines = stripAnsi(text).split('\n');
+  if (family === 'spec') {
+    for (const { file, loc, next, body } of specEntries(lines)) {
+      const rel = relativize(file, cwd);
+      if (!isRetryableFile(rel)) continue;
+      const m = next.match(SPEC_FAIL_NAME_RE);
+      add(rel, m ? m[1] : null, loc, body);
+    }
+  }
+  if (family === 'tap') {
+    for (const block of tapBlocks(lines)) {
+      const [, name, directive] = block.line.replace(/\r$/, '').match(TAP_NAME_RE);
+      if (directive) continue;
+      const locLine = block.body.map((l) => l.match(TAP_LOCATION_RE)).find(Boolean);
+      tapBlockFiles(block, cwd).forEach((rel) => add(rel, name, locLine ? locLine[1] : null, block.body));
+    }
+  }
+  return byFile;
+}
+
+// The `ℹ cancelled N` (spec) / `# cancelled N` (tap) count, or null when the
+// log carries none — a cancelled test did not finish, so a log with any is no
+// evidence of what fails.
+function cancelledCount(text, family) {
+  const re = { spec: /^ℹ cancelled (\d+)/m, tap: /^# cancelled (\d+)/m }[family];
+  const m = re && stripAnsi(text).match(re);
+  return m ? Number(m[1]) : null;
+}
+
+// Every test point a single-file log reports. `all`/`passed` count leaf names
+// (pass, fail or skip — suites included / only the ones that ran and passed,
+// no SKIP/TODO directive), `paths` counts suite paths; `failed` lists each
+// failing point by its suite path (a JSON array of names, so no name can
+// fake a nesting boundary; a multiset in log order — suites and parent tests
+// included), so two tests sharing a leaf name in different suites stay
+// distinct. spec reads the tree above `✖ failing tests:` (that section
+// repeats failures), nesting from `▶ name` openers and their same-indent
+// closers; tap reads every `ok`/`not ok` line at any indentation, nesting
+// from `# Subtest: name` lines. Names are read byte-for-byte on both sides,
+// never trimmed. `wellFormed` is false when the nesting does not close
+// cleanly — a point at a suite's indent that is not its closer, a point
+// shallower than an open suite, or a suite still open at the end (a name
+// containing a newline prints across lines) — and such a tree is no
+// evidence of anything. A parent (a suite, or a test with subtests) appears in
+// `failed` only when it failed in its own right — spec: it has its own
+// `✖ failing tests:` entry (a hook failure); tap: its block's failureType is
+// not 'subtestsFailed' — never for a failure it only inherits from a child,
+// which the child's own entry already carries. Any ` # …` suffix (SKIP, TODO,
+// a `t.skip('reason')` message) marks a point that neither passed nor
+// failed. Other families: empty and well-formed.
+const SPEC_TREE_RE = /^( *)([✔✖﹣]) (.+) \(\d[\d.]*ms\)( # .*)?$/;
+const SPEC_OPEN_RE = /^( *)▶ (.*)$/;
+const TAP_POINT_RE = /^( *)(not ok|ok)(?= |$)(?: \d+)?(?: - )?(.*?)( # (?:SKIP|TODO)\b.*)?$/i;
+const TAP_OPEN_RE = /^( *)# Subtest: (.*)$/;
+function testTree(text, family) {
+  const all = new Map();
+  const passed = new Map();
+  const paths = new Map();
+  const failures = [];
+  let wellFormed = true;
+  const bump = (map, name) => map.set(name, (map.get(name) || 0) + 1);
+  const open = [];
+  let lastPoint = null;
+  let yaml = null;
+  const point = (indent, name, ok, fail) => {
+    const top = open[open.length - 1];
+    let parent = false;
+    if (top && indent < top.indent) wellFormed = false;
+    if (top && indent === top.indent) {
+      if (top.name === name) { open.pop(); parent = top.hasChildren; } else wellFormed = false;
+    }
+    if (open.length) open[open.length - 1].hasChildren = true;
+    const qualified = JSON.stringify([...open.map((o) => o.name), name]);
+    bump(all, name);
+    bump(paths, qualified);
+    if (ok) bump(passed, name);
+    lastPoint = { indent, failure: fail ? { qualified, name, parent, inherited: false } : null };
+    if (fail) failures.push(lastPoint.failure);
+  };
+  if (family !== 'spec' && family !== 'tap') return { all, passed, paths, failed: [], wellFormed };
+  const listed = new Map();
+  let inFailingSection = false;
+  let afterTestAt = false;
+  for (const raw of stripAnsi(text).split('\n')) {
+    const line = raw.replace(/\r$/, '');
+    if (family === 'spec') {
+      if (inFailingSection) {
+        if (afterTestAt) { const n = line.match(SPEC_FAIL_NAME_RE); if (n) bump(listed, n[1]); }
+        afterTestAt = SPEC_TEST_AT_RE.test(line);
+        continue;
+      }
+      if (/^✖ failing tests:/.test(line)) { inFailingSection = true; continue; }
+      const o = line.match(SPEC_OPEN_RE);
+      if (o) { open.push({ indent: o[1].length, name: o[2] }); continue; }
+      const m = line.match(SPEC_TREE_RE);
+      if (m) point(m[1].length, m[3], m[2] === '✔' && !m[4], m[2] === '✖' && !m[4]);
+    } else {
+      // A point's YAML diagnostics block (`---` … `...`, two spaces deeper
+      // than the point) is data, never test points — an assertion's
+      // expected/actual text can hold `not ok …` or `failureType:` lines.
+      // Only the block's own top-level `failureType` key is read: a parent
+      // whose failure is only its subtests' says 'subtestsFailed'.
+      if (yaml) {
+        if (line === `${yaml.pad}...`) yaml = null;
+        else if (yaml.failure && yaml.failure.parent && line === `${yaml.pad}failureType: 'subtestsFailed'`) yaml.failure.inherited = true;
+        continue;
+      }
+      if (lastPoint && line === `${' '.repeat(lastPoint.indent + 2)}---`) {
+        yaml = { pad: ' '.repeat(lastPoint.indent + 2), failure: lastPoint.failure };
+        continue;
+      }
+      const o = line.match(TAP_OPEN_RE);
+      if (o) { open.push({ indent: o[1].length, name: o[2] }); continue; }
+      const m = line.match(TAP_POINT_RE);
+      if (m) point(m[1].length, m[3], m[2].toLowerCase() === 'ok' && !m[4], m[2].toLowerCase() === 'not ok' && !m[4]);
+    }
+  }
+  if (open.length > 0) wellFormed = false;
+  if (family === 'spec') {
+    // A spec parent failed in its own right only when the failing section
+    // lists it. Failing leaves take their own listings first; what is left
+    // under a name vouches for that name's parents — none left: all
+    // inherited; one per parent: all their own; anything else is ambiguous,
+    // and the tree is no evidence.
+    const take = (name) => { if (listed.get(name)) listed.set(name, listed.get(name) - 1); };
+    failures.filter((f) => !f.parent).forEach((f) => take(f.name));
+    const parentsByName = new Map();
+    failures.filter((f) => f.parent).forEach((f) => parentsByName.set(f.name, [...(parentsByName.get(f.name) || []), f]));
+    parentsByName.forEach((parents, name) => {
+      const left = listed.get(name) || 0;
+      if (left === 0) parents.forEach((f) => { f.inherited = true; });
+      else if (left !== parents.length) wellFormed = false;
+    });
+  }
+  const failed = failures.filter((f) => !f.inherited).map((f) => f.qualified);
+  return { all, passed, paths, failed, wellFormed };
+}
+
+// Relativized forward-slash test paths whose failing entries are ALL
+// file-level (the name is the path itself). A file with any per-test entry
+// is absent. Families other than spec and tap return an empty Set.
+function fileLevelFailures(text, family, { cwd = process.cwd() } = {}) {
+  const fileLevel = new Set();
+  failingTestsByFile(text, family, { cwd }).forEach((names, rel) => {
+    if (names.every((n) => n === rel)) fileLevel.add(rel);
+  });
+  return fileLevel;
+}
+
+// Every `test at` entry in a spec log's failing section, matched or not — the
+// adjudicator's check that the list accounts for `ℹ fail N`.
+function specEntryCount(text) { return specEntries(stripAnsi(text).split('\n')).length; }
+
+// Every TAP `not ok` block, at any indentation (a failing subtest nests under
+// its suite), in log order: {line: the `not ok` line, body: the lines after
+// it up to the next test point or `# ` line at any indentation}.
+function tapBlocks(lines) {
+  const blocks = [];
+  let current = null;
+  let pointPad = null;
+  let yamlPad = null;
+  for (const raw of lines) {
+    const line = raw.replace(/\r$/, '');
+    // A point's YAML block (`---` … `...`, two spaces deeper) is its body,
+    // never a new point — an assertion's expected/actual text can hold
+    // `not ok …` lines.
+    if (yamlPad !== null) {
+      if (current) current.body.push(raw);
+      if (line === `${yamlPad}...`) yamlPad = null;
+      continue;
+    }
+    if (pointPad !== null && line === `${pointPad}  ---`) {
+      yamlPad = `${pointPad}  `;
+      if (current) current.body.push(raw);
+      continue;
+    }
+    const notOk = line.match(/^(\s*)not ok\b/);
+    if (notOk) { current = { line: raw, body: [] }; blocks.push(current); pointPad = notOk[1]; continue; }
+    const ok = line.match(/^(\s*)ok \d/);
+    if (ok) { current = null; pointPad = ok[1]; continue; }
+    if (/^\s*# /.test(line)) { current = null; pointPad = null; continue; }
+    if (current) current.body.push(raw);
+  }
+  return blocks;
+}
+
+// The relativized test files one TAP block's frames name, deduped.
+function tapBlockFiles(block, cwd) {
+  const files = [];
+  for (const line of block.body) {
+    for (const m of line.matchAll(TAP_FRAME_RE)) {
+      const rel = relativize(m[1], cwd);
+      if (isRetryableFile(rel) && !files.includes(rel)) files.push(rel);
+    }
+  }
+  return files;
+}
+
+// How many failing entries extractFailingFiles silently drops: a spec entry
+// whose path is no test file (or a node: internal), or a TAP `not ok` block
+// whose frames name no test file. The baseline adjudicator refuses to
+// classify when this is non-zero — an undercounted file list must never read
+// as a clean pass. Every other family returns 0.
+function countUnmatchedFailures(text, family, { cwd = process.cwd() } = {}) {
+  const lines = stripAnsi(text).split('\n');
+  if (family === 'tap') return tapBlocks(lines).filter((b) => tapBlockFiles(b, cwd).length === 0).length;
+  if (family !== 'spec') return 0;
+  return specEntries(lines)
+    .filter(({ file }) => !isRetryableFile(relativize(file, cwd))).length;
 }
 
 // Deduped, log-order, repo-relative test files named by the failing part of
@@ -186,16 +490,10 @@ function extractFailingFiles(text, family, { cwd = process.cwd() } = {}) {
   const found = [];
   const push = (file) => {
     const rel = relativize(file, cwd);
-    if (TEST_FILE_RE.test(rel) && !rel.startsWith('node:') && !found.includes(rel)) found.push(rel);
+    if (isRetryableFile(rel) && !found.includes(rel)) found.push(rel);
   };
   if (family === 'tap') {
-    let inFailure = false;
-    for (const line of lines) {
-      if (/^not ok\b/.test(line)) { inFailure = true; continue; }
-      if (/^(ok \d|# )/.test(line)) { inFailure = false; continue; }
-      if (!inFailure) continue;
-      for (const m of line.matchAll(TAP_FRAME_RE)) push(m[1]);
-    }
+    tapBlocks(lines).forEach((b) => tapBlockFiles(b, cwd).forEach(push));
     return found;
   }
   if (family === 'summary') {
@@ -205,11 +503,13 @@ function extractFailingFiles(text, family, { cwd = process.cwd() } = {}) {
     }
     return found;
   }
+  if (family === 'spec') specEntries(lines).forEach(({ file }) => push(file));
   return found;
 }
 
 module.exports = {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
-  stripAnsi, extractFailingFiles, TEST_FILE_RE,
+  stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, failingTestsByFile, specEntryCount,
+  cancelledCount, testTree, TEST_FILE_RE,
   MAX_REGION_LINES, GENERIC_TAIL_LINES, MAX_LINE_CHARS,
 };

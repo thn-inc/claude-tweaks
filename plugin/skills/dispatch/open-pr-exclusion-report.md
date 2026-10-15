@@ -17,5 +17,8 @@ omit when empty. This exclusion is computed once, unconditionally, inside `queue
 own run — by the time any selection form (bare, `next`, `#N`, `#N,#M,...`) reads
 `dispatch-groups.json`, an excluded candidate is already absent from it. `#N`/`#N,#M,...`'s own
 re-verification against Step 2's live queue catches the absence, then reads this same
-`dispatch-exclusions.json`, filtered to `reason: 'open-pr'`, to report the specific reason
-(`SKILL.md`'s `#N` / `#N,#M,...` bullets, refs #1973) instead of a generic not-found.
+`dispatch-exclusions.json` to report the specific reason — `open-pr` or any other removing
+exclusion (`SKILL.md`'s `#N` / `#N,#M,...` bullets, refs #1973, #3084) — instead of a generic
+not-found. A named record excluded here renders as:
+
+`#{N} already has an open PR (#{pr}) — not re-dispatch-eligible until that PR merges or closes`

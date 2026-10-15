@@ -34,7 +34,7 @@ files:
 
 ### 4. Close, then tear down — the sanctioned exit
 - **Action:** Run `node ".../bin/hooks.js" close-run --run "<dir>"` (wrap-up's Section C step 3.6 does this for you), then retry the teardown.
-- **Expect:** The removal now passes. If the run's ledger never recorded a wrap-up invocation, close-run still closes but prints an informational warning (expected for hand-typed wrap-ups) and appends `close-without-wrapup` as the run's final event — the audit trail of how the run ended.
+- **Expect:** The removal now passes. If the run's ledger never recorded a wrap-up invocation, close-run still closes but prints an informational warning (expected for hand-typed wrap-ups) and appends `close-without-wrapup` as the run's final event — the audit trail of how the run ended. Exception (#2553): a run whose `run-state.json` already reads `status: clean` at this close (e.g. a second `close-run` reached while wrap-up is mid-archival) does not get this event — it is already closed, and re-emitting it would be a false terminal-state signal, not a new finding.
 
 ### 5. A second, independent deny — a raw `git worktree remove` on your own cwd
 - **Action:** From inside a worktree, run a raw Bash `git worktree remove <that-worktree-path>` (never `ExitWorktree`) whose target is the session's own cwd, or a directory containing it — including via a `cd <elsewhere> && git worktree remove <own-cwd>` compound.
