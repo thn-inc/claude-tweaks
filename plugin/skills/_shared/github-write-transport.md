@@ -44,9 +44,13 @@ serialization or the server) is not yet identified and needs a `gh`-absent repro
 **Read back after posting, and repair once.** Read the new comment through `issue_read`
 (`get_comments`). A body that comes back beginning `&lt;!--` was stored escaped (a raw marker never
 reads back in that form). On that signature only, post the same locally composed body once more
-and read back again; when the re-post is still escaped, trace it:
+and read back again; when the re-post is still escaped, trace it (`/{skill}` is the posting
+skill's own section, e.g. `/review`):
 `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/{skill}" --status SKIP --step "Marker comment read-back (degraded)" --text "condition: comment {id} on #{n} stored with an escaped marker after one re-post → fallback: left as posted; invisible to find-by-marker" --reversibility n/a`.
-A standalone poster with no `$PIPELINE_RUN_DIR` uses `_shared/auto-decision-log.md`'s No-run-dir
+When the re-post reads back clean, log `AUTO` naming the escaped original's comment id as an
+orphan to delete by hand — MCP has no comment delete. A read-back call that fails outright counts
+as not escaped: proceed without re-posting and log the failed read as a `SKIP` degrade line. A
+standalone poster with no `$PIPELINE_RUN_DIR` uses `_shared/auto-decision-log.md`'s No-run-dir
 carrier instead.
 
 ### Full-replace hazard

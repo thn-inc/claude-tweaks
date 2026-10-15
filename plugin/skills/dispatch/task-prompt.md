@@ -53,7 +53,8 @@ that needs no resolution, only inclusion:
    via `sessionTmpPath` as `next-ranking.md` does). That pull already dropped every
    `bot:in-progress` record, so each selected record lacked the label at that moment. A Task call
    cannot see the dispatcher's files' timing; Settle's contested-claim self-report compares this
-   against the holder's `claimedAt` to tell a missing projection from a claim race.
+   against the holder's `claimedAt` to tell a missing projection from a claim race. An unreadable
+   file → `Selected at: unknown`; never block the dispatch on it.
 
 Substitute this whole block, filled in with this firing's actual resolved values, as
 `{context-pack}` immediately after each call's opening `Task scope:` paragraph below. This is

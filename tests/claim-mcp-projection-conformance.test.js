@@ -56,8 +56,9 @@ test('settle-and-merge.md claim-contest self-report compares selection time with
   const para = paragraphStarting(SETTLE, '**Selection-time projection line (contested-claim shape, #3131).**');
   assert.match(para, /task-prompt\.md` item 8/);
   assert.match(para, /Selection-time projection: #\{target\} selected at \{Selected at\} without `bot:in-progress`; holder claimed \{claimedAt\}/);
-  assert.match(para, /before: projection gap\|after: race/);
-  assert.match(para, /dedup hit/);
+  assert.match(para, /projection gap if earlier, else race/);
+  assert.match(para, /holder claim unreadable/);
+  assert.match(para, /Dedup hit: once-per-build comment only/);
   const enrich = SETTLE.indexOf('**Open-linked-PR enrichment for the contested-claim shape (#2402).**');
   assert.ok(enrich !== -1 && enrich < SETTLE.indexOf(para), 'the projection line paragraph follows the #2402 enrichment paragraph');
 });
@@ -71,6 +72,7 @@ test('task-prompt.md context pack threads the selection time into the Task call 
   assert.match(pack, /^8\. \*\*Selected at\*\* \(#3131\)/m);
   assert.match(pack, /`Selected at: \{ISO\}`/);
   assert.match(pack, /dispatch-groups\.json/);
+  assert.match(pack, /`Selected at: unknown`/);
   assert.match(pack, /sessionTmpPath/);
   assert.match(prompt, /resolved seven of these facts/);
 });
@@ -94,6 +96,8 @@ test('github-write-transport.md comment row and MCP marker subsection carry the 
   assert.match(sub, /post the same locally composed body once more/);
   assert.match(sub, /not yet identified/);
   assert.match(sub, /No-run-dir/);
+  assert.match(sub, /A read-back call that fails outright counts\s+as not escaped/);
+  assert.match(sub, /orphan to delete by hand/);
   assert.doesNotMatch(sub, /composed from sanitized reads/);
   assert.doesNotMatch(sub, /byte for byte/);
 });

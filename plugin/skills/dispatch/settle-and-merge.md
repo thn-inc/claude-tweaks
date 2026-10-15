@@ -69,7 +69,7 @@ this transport; see #2402.` A null `openPR`, a non-zero exit, or the MCP transpo
 to the card's own text unchanged — this is enrichment only, never a gate, and a lookup failure here
 never blocks or fails the self-report itself.
 
-**Selection-time projection line (contested-claim shape, #3131).** Append ``Selection-time projection: #{target} selected at {Selected at} without `bot:in-progress`; holder claimed {claimedAt} — {before: projection gap|after: race}.`` (`task-prompt.md` item 8), to the re-file comment too on a dedup hit. Never gates the self-report.
+**Selection-time projection line (contested-claim shape, #3131).** Append ``Selection-time projection: #{target} selected at {Selected at} without `bot:in-progress`; holder claimed {claimedAt} — {projection gap if earlier, else race}.`` (`task-prompt.md` item 8; no `claimedAt` → `holder claim unreadable`, no suffix). Dedup hit: once-per-build comment only. Never gates.
 
 **Headless ride-along special case (#1780).** When the failure this call is settling is instead
 `_shared/worktree-setup.md`'s Post-creation catch-up "Headless ride-along check" — reached during
