@@ -98,28 +98,57 @@ more, render a three-column table in the shaping output before proceeding —
 line if the record doesn't already carry one). A candidate surfaced here is worth a human's
 attention even when shaping proceeds normally.
 
-Then check each candidate's own current state. When any candidate is **both** `ready` **and**
-either carries `bot:in-progress` or has an open linked PR (the same `closedByPullRequestsReferences`
-connection dispatch's own open-PR exclusion reads — `record.js`'s `buildLinkedPRQuery` /
-`partitionByOpenLinkedPR`), **stop shaping this record here** — do not compose, stamp, or write
-`ready` for it. Instead, add the `needs:decision` label (bootstrap per
-`_shared/label-bootstrap.md` if this repo has never stamped it before) and post
+Then decide refusal with `shapingRefusal` (`bin/lib/issues/near-duplicate.js`, #3141). It refuses
+only on a hit whose signals include `title-similarity` and whose candidate is `ready` **and** in
+flight: a live claim (`classifyClaimBlob` reads its `claims/issue-{n}.json` blob as `live`) or an
+open linked PR (the same `closedByPullRequestsReferences` connection dispatch's open-PR exclusion
+reads — `record.js`'s `buildLinkedPRQuery` / `partitionByOpenLinkedPR`). File and anchor overlap
+alone never refuse, and `bot:in-progress` is not evidence: it is a projection that outlives the
+build. Build the state and decide in one call, with `{hits}` the finder's output and `{snapshot}`
+the candidates' snapshot entries:
+
+```bash
+node -e "
+const { shapingRefusal, buildShapingState } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
+const { readClaimBlobGit } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims-git-cas.js');
+const { buildLinkedPRQuery } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+const { execFileSync } = require('child_process');
+const [hits, snapshot] = [JSON.parse(process.argv[1]), JSON.parse(process.argv[2])];
+const numbers = hits.map((h) => h.number);
+const labelsByNumber = Object.fromEntries(snapshot.map((r) => [r.number, r.labels]));
+const claimContentByNumber = {};
+for (const n of numbers) { const r = readClaimBlobGit({ issueNumber: n }); claimContentByNumber[n] = r.failure || r.absent ? null : r.content; }
+let linkedPRRepoData = null;
+try { linkedPRRepoData = JSON.parse(execFileSync('gh', ['api', 'graphql', '-f', 'query=' + buildLinkedPRQuery(numbers), '-F', 'owner={owner}', '-F', 'repo={repo}'], { encoding: 'utf8' })).data.repository; } catch {}
+const state = buildShapingState({ numbers, labelsByNumber, claimContentByNumber, linkedPRRepoData, now: Date.now() });
+const hit = shapingRefusal(hits, state);
+console.log(JSON.stringify(hit ? { refuse: true, hit, evidence: state[hit.number] } : { refuse: false }));
+" '{hits}' '{snapshot}'
+```
+
+A failed claim read or linked-PR query leaves that candidate "not in flight" — never a refusal.
+Under the MCP transport (no `gh`), read the claim blob and run the linked-PR query through
+`_shared/github-write-transport.md`'s read path instead, and pass the results to
+`buildShapingState` the same way. When `refuse: true` comes back, **stop shaping this record here**
+— do not compose, stamp, or write `ready` for it. Instead, add the `needs:decision` label
+(bootstrap per `_shared/label-bootstrap.md` if this repo has never stamped it before) and post
 `_shared/work-record.md`'s canonical decision-comment, `{unit}` = `specify`:
 
 ```
 <!-- needs-decision: specify -->
 ## Decision needed
 **Proposed:** Absorb into #{candidate} — close this record as a duplicate rather than shaping it
-**Why:** near-duplicate finder found {signals} against #{candidate}, which is `ready` with an
-in-flight build (open PR / `bot:in-progress`)
+**Why:** near-duplicate finder found `title-similarity` against #{candidate} (signals: {signals}),
+which is `ready` with an in-flight build: {evidence} — "live claim by run {claimRunId}" or "open PR
+#{openLinkedPR}"
 **Command:** `gh issue close {n} --comment "Absorbed into #{candidate}"`
 ```
 
 Report this record's Actions Performed row as `refused — proposed Absorb into #{candidate}`
 rather than `shaped` — the same per-record failure-isolation posture a write/read-back failure
 already uses on a batch (below): the rest of the batch keeps shaping. This is the one automatic
-refusal the finder's signal authorizes on its own; every other candidate (no `ready` +
-in-flight-build match) is surfaced via the table and `**Related:**` append only, mirroring the
+refusal the finder's signal authorizes on its own; every other candidate (no title-similar, `ready`,
+in-flight match per `shapingRefusal`) is surfaced via the table and `**Related:**` append only, mirroring the
 refusal grounds an earlier sweep applied by hand for the same reason (#1944).
 
 ### Dependency-narration check

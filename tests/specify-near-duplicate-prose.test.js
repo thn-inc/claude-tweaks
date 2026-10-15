@@ -75,3 +75,25 @@ test('the cited module actually exports findNearDuplicates', () => {
   const mod = require('../plugin/bin/lib/issues/near-duplicate');
   assert.strictEqual(typeof mod.findNearDuplicates, 'function');
 });
+
+test('shaping-mode.md decides refusal with shapingRefusal, not bot:in-progress (#3141)', () => {
+  const start = SHAPING_MODE.indexOf('Near-duplicate candidate check (#1944)');
+  const end = SHAPING_MODE.indexOf('### Dependency-narration check', start);
+  assert.ok(start !== -1 && end !== -1, 'Near-duplicate section anchors must exist');
+  const section = SHAPING_MODE.slice(start, end);
+  assert.match(section, /shapingRefusal/);
+  assert.match(section, /buildShapingState/);
+  assert.match(section, /title-similarity/);
+  assert.match(section, /classifyClaimBlob/);
+  assert.doesNotMatch(section, /carries `bot:in-progress` or has an open linked PR/);
+  assert.doesNotMatch(section, /in-flight build \(open PR \/ `bot:in-progress`\)/);
+  assert.match(section, /\*\*Why:\*\* near-duplicate finder found `title-similarity` against #\{candidate\}.*\{evidence\}/s);
+});
+
+test('next-mode-shape.md describes the same refusal condition (#3141)', () => {
+  const start = NEXT_MODE_SHAPE.indexOf('Near-duplicate candidate check also runs headlessly');
+  assert.ok(start !== -1);
+  const section = NEXT_MODE_SHAPE.slice(start, start + 900);
+  assert.match(section, /shapingRefusal/);
+  assert.match(section, /title-similar/);
+});
