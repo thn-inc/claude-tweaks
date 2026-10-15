@@ -19,6 +19,14 @@ function paragraphStarting(md, boldLead) {
   return md.slice(start + 1, end === -1 ? md.length : end);
 }
 
+// The section from a `## Heading` line up to (not including) the next `## ` heading.
+function sectionStarting(md, heading) {
+  const start = md.indexOf(heading);
+  const end = md.indexOf('\n## ', start + 1);
+  assert.ok(start !== -1 && end !== -1, `section anchors must exist: ${heading}`);
+  return md.slice(start, end);
+}
+
 const CLAIM_TARGETS = read('plugin/skills/flow/claim-targets.md');
 const ISSUE_CLAIMS = read('plugin/skills/_shared/issue-claims.md');
 const SETTLE = read('plugin/skills/dispatch/settle-and-merge.md');
@@ -38,10 +46,7 @@ test('claim-targets.md MCP branch reads back bot:in-progress, retries once via m
 });
 
 test('issue-claims.md states the MCP read-back-and-retry obligation in the bot:in-progress label section', () => {
-  const start = ISSUE_CLAIMS.indexOf('## The bot:in-progress label');
-  const end = ISSUE_CLAIMS.indexOf('\n## ', start + 1);
-  assert.ok(start !== -1 && end !== -1, 'label section anchors must exist');
-  const section = ISSUE_CLAIMS.slice(start, end);
+  const section = sectionStarting(ISSUE_CLAIMS, '## The bot:in-progress label');
   assert.match(section, /read the labels back/i);
   assert.match(section, /retry the add once/i);
   assert.match(section, /flow\/claim-targets\.md/);
@@ -106,9 +111,6 @@ test('pr-run-comments.md post-or-update has an MCP read-back for the run-comment
 });
 
 test('issue-claims.md mirror section points MCP posts at the marker composition rule', () => {
-  const start = ISSUE_CLAIMS.indexOf('## The mirror');
-  const end = ISSUE_CLAIMS.indexOf('\n## ', start + 1);
-  assert.ok(start !== -1 && end !== -1, 'mirror section anchors must exist');
-  const section = ISSUE_CLAIMS.slice(start, end);
+  const section = sectionStarting(ISSUE_CLAIMS, '## The mirror');
   assert.match(section, /Marker comments on the MCP path/);
 });
