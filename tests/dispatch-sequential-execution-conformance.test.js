@@ -30,3 +30,19 @@ test('the lease token is documented where port-services is (#1927 AC4)', () => {
   assert.match(read('docs/hooks.md'), /CLAUDE_TWEAKS_LEASE/);
   assert.ok(Buffer.byteLength(read('plugin/skills/_shared/policy-schema.md'), 'utf8') <= CEILING_BYTES);
 });
+
+// EnterWorktree(name:) takes no base ref: under baseRef fresh it branches from
+// origin/<default-branch> (main, not develop), under head from the previous
+// group's branch -- the dispatching session must base each group's worktree on
+// the integration branch explicitly and enter it by path.
+test('Step 5 creates each group worktree on origin/{integration-branch} and enters it by path, never EnterWorktree(name:)', () => {
+  const skill = read('plugin/skills/dispatch/SKILL.md');
+  const step5 = skill.slice(skill.indexOf('### Step 5:'), skill.indexOf('### Step 6:'));
+  assert.match(step5, /never `EnterWorktree\(name:\)`/);
+  assert.match(step5, /Creating the group's worktree/);
+  assert.doesNotMatch(step5, /exactly as a normal `\/claude-tweaks:flow` invocation would/);
+  const t = read('plugin/skills/dispatch/sequential-execution.md');
+  const section = t.slice(t.indexOf("## Creating the group's worktree"), t.indexOf('## The loop'));
+  assert.match(section, /git worktree add \.claude\/worktrees\/\{name\} -b worktree-\{name\} origin\/\{integration-branch\}/);
+  assert.match(section, /EnterWorktree\(path: "\.claude\/worktrees\/\{name\}"\)/);
+});
