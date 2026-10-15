@@ -57,7 +57,7 @@ function countAtPreChangeOrSkip(t, relPath, literal) {
 }
 
 test('observation-plan.md declares Full verification with Parent/Pending/Then, inside the Schema fence', (t) => {
-  const schemaFence = observationPlan.match(/## Schema\n\n```markdown([\s\S]*?)```/);
+  const schemaFence = observationPlan.match(/## Schema\r?\n\r?\n```markdown([\s\S]*?)```/);
   assert.ok(schemaFence, 'Schema fenced block not found');
   assert.match(schemaFence[1], /- Full verification:/);
   assert.match(schemaFence[1], /- Parent: #P/);

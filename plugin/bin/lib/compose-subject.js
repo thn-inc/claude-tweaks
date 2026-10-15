@@ -203,7 +203,7 @@ function aggregateType(records) {
 const realDeps = {
   ghAvailable,
   remoteUrl,
-  runner: (args) => execFileSync('gh', args, { encoding: 'utf8', timeout: GH_TIMEOUT_MS }),
+  runner: (args) => execFileSync('gh', args, { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true }),
   fetchIssueType: fetchIssueTypeGraphQL,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),

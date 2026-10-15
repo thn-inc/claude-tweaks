@@ -64,7 +64,7 @@ Verify that `/claude-tweaks:test` has passed before proceeding to analytical rev
 
 ### In `/claude-tweaks:flow` pipeline:
 
-Check for `TEST_PASSED=true` in pipeline context. If present, add one belt-and-braces read of the runner's own artifact (#1921) — `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status` (one plain command; prints `{present, sha, head, dirty, scope, fullSha, match, verifiedHead, reportPath, legacy}`, exit 0 always). `verifiedHead: true` (a clean HEAD covered by a full pass, or by a passing scoped run anchored on a still-valid `fullSha` — `match` alone would re-trigger a scoped run forever, #1923) → proceed to Step 2. `verifiedHead: false` with `TEST_PASSED=true` is reported, never silently accepted: "TEST_PASSED set but the runner stamp does not verify HEAD ({stamp-sha}, {scope} vs {head}) — re-running `/claude-tweaks:test`", then re-trigger `/claude-tweaks:test` once and re-check.
+Check for `TEST_PASSED=true` in pipeline context. If present, add one belt-and-braces read of the runner's own artifact (#1921) — `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status` (one plain command; prints `{present, sha, head, dirty, scope, fullSha, match, verifiedHead, baselineAdjudicated, reportPath, legacy}`, exit 0 always). `verifiedHead: true` (a clean HEAD covered by a full pass — a baseline-adjudicated one included, `test/verification.md`'s Baseline adjudication — or by a passing scoped run anchored on a still-valid `fullSha` — `match` alone would re-trigger a scoped run forever, #1923) → proceed to Step 2. `verifiedHead: false` with `TEST_PASSED=true` is reported, never silently accepted: "TEST_PASSED set but the runner stamp does not verify HEAD ({stamp-sha}, {scope} vs {head}) — re-running `/claude-tweaks:test`", then re-trigger `/claude-tweaks:test` once and re-check.
 
 ### Standalone (outside `/claude-tweaks:flow`):
 
@@ -300,7 +300,7 @@ Invocation:
 
 ## Step 6.5: Design Quality Pass (Impeccable)
 
-Invoke `/claude-tweaks:design-wrapper review <spec>` to run Impeccable's `critique` + `audit` commands on the changed UI files — and, when the built artifact carries a direction contract, to dispatch Impeccable's own `impeccable-finish-reviewer` agent against it (the wrapper's Step 3.7; its findings arrive in the same `findings` list under `source: "finish-review"`). Findings are advisory in Phase 1 — they inform the verdict and surface in the review summary, but are not auto-applied.
+Invoke `/claude-tweaks:design-wrapper review <spec>` to run Impeccable's `critique` + `audit` commands on the changed UI files — and, when the relevant surface brief carries a direction contract, to dispatch Impeccable's own `impeccable-finish-reviewer` agent against it (the wrapper's Step 3.7; its findings arrive in the same `findings` list under `source: "finish-review"`). Findings are advisory in Phase 1 — they inform the verdict and surface in the review summary, but are not auto-applied.
 
 **Invocation:**
 

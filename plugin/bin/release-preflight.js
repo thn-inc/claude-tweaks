@@ -59,7 +59,7 @@ function parseArgs(argv) {
 // rather than a boolean so the pack can be handed the answer instead of
 // spawning the identical rev-parse a second time.
 function insideGitCheckout(cwd) {
-  try { return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null; } catch { return null; }
+  try { return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim() || null; } catch { return null; }
 }
 
 async function run(argv, deps = {}) {
