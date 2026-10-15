@@ -58,9 +58,10 @@ test('no file outside docs/superpowers/plans/ cites a deleted plan without its d
 });
 
 const TIDY = path.join(ROOT, 'plugin', 'skills', 'tidy');
+const WRAP_UP = path.join(ROOT, 'plugin', 'skills', 'wrap-up');
 
-function read(file) {
-  return fs.readFileSync(path.join(TIDY, file), 'utf8').replace(/\r\n/g, '\n');
+function read(file, dir = TIDY) {
+  return fs.readFileSync(path.join(dir, file), 'utf8').replace(/\r\n/g, '\n');
 }
 
 function rowStartingWith(text, prefix) {
@@ -96,14 +97,8 @@ test('/tidy keeps a plan a repo file still cites, naming the citing file, at sca
   assert.match(keepRow, /Auto \(no-op, always surfaced\)/);
 });
 
-const WRAP_UP = path.join(ROOT, 'plugin', 'skills', 'wrap-up');
-
-function readWrapUp(file) {
-  return fs.readFileSync(path.join(WRAP_UP, file), 'utf8').replace(/\r\n/g, '\n');
-}
-
 test('/wrap-up prune-after-wrapup keeps a plan a repo file still cites, naming the citing file, instead of deleting it (#3109)', () => {
-  const cleanup = readWrapUp('cleanup-procedures.md');
+  const cleanup = read('cleanup-procedures.md', WRAP_UP);
   const policy = cleanup.slice(
     cleanup.indexOf("**Item 1's plan-retention policy"),
     cleanup.indexOf("**Item 5's two framings"),
