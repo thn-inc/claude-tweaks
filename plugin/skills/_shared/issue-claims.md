@@ -225,9 +225,13 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
   with `swept:`, validated before any `gh` call. The resulting tombstone's own `runId` is still the
   sweep run (never a fake owner) — `sweptFrom` is the separate field naming the original holder,
   and both the CLI's JSON envelope and its `decisions.md` line carry it.
-- **List all claims:** list the `claims/` directory on `CLAIMS_BRANCH`.
+- **List all claims:** list the `claims/` directory on `CLAIMS_BRANCH`, uncapped (#3098 —
+  the Contents API this used to call directly caps at 1000 entries, silently).
 <!-- when: transport=gh -->
-  - **gh CLI:** `gh api "repos/{owner}/{repo}/contents/claims?ref=${CLAIMS_BRANCH}" -q '.[].name'`
+  - **gh CLI:** `node "${CLAUDE_PLUGIN_ROOT}/bin/list-claims.js"` (wraps `claim-store.js`'s
+    `listClaimEntries`, a Git Trees API read with no 1000-entry cap; exits 3 on a `truncated`
+    tree response rather than returning a silently partial list — never sample or re-derive
+    this listing by hand)
 <!-- /when -->
 <!-- when: transport=mcp -->
   - **MCP:** the equivalent read-tree/list-directory tool call against `claims/` on
