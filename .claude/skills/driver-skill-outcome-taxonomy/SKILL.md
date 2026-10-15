@@ -88,6 +88,7 @@ means there:
 | Booking the value the skill gated on | Book the value the engine returned |
 | A per-record failure in the last loop with no summary slot | A `bookkeeping: {k} of {n} failed` line whenever k > 0 |
 | A gate/precondition failure that exits before any mutating step, with no `decisions.md` entry | `HELD` is a real outcome too — log it with the gate's stated reason, the same as `failed`/`PARTIAL`/`released` (`plugin/skills/_shared/local-merge-auto-finish.md`'s composer-failure fix: a `compose-subject.js` shaping-defect exit used to leave the run silent — a bare, unlogged process exit — not a logged `HELD`) |
+| Treating a write call's success return as proof the change landed, when the transport reports no per-item failure (MCP `issue_write` has no `labelFailures`, so a silent no-op label add looks like success) | Read the world back after the write, retry once through the same write, then trace a still-missing result as `SKIP (degraded)` — never `STAGED`, which needs a `staged/` artifact (`_shared/auto-decision-log.md`'s Degrade-trace rule). `plugin/skills/flow/claim-targets.md`'s "Read back the `bot:in-progress` add" is the instance (#3131: #1350 was re-selected because its label never landed) |
 
 ## When not to use
 
