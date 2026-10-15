@@ -201,6 +201,40 @@ only after the whole batch, before Step 4 or any later consumer reads the queue 
 node -e "require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js').invalidateSnapshot(process.env.CLAUDE_CODE_SESSION_ID)"
 ```
 
+**Ceremony tally.** Once every sub-issue in this batch has been accumulated into
+`$SPECIFY_DECOMP_MANIFEST` (Accumulate this unit, above) and the snapshot above has been
+invalidated, check whether this batch itself qualifies as the live event a standing watch-item
+record (e.g. #1350) is waiting to observe: 2 or more sub-issues in this batch carrying
+`ceremony:standard`. When it does, append one durable, git-tracked record of that fact to
+`docs/specify-decomposition-log.md` — a plain append-only markdown log, not a run-scoped
+`decisions.md` (that file is cleaned up with its pipeline run; this one is permanent) — so a
+later, unrelated session can confirm the event occurred without needing this session's own
+transcript:
+
+```bash
+node -e "
+  const fs = require('fs');
+  const manifestPath = process.argv[1];
+  const logPath = 'docs/specify-decomposition-log.md';
+  const list = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : [];
+  const standard = list.filter((e) => e.ceremony === 'standard');
+  if (standard.length < 2) process.exit(0);
+  const header = '# Specify Decomposition Event Log\n\nAppend-only, git-tracked record of every \`/claude-tweaks:specify\` decomposition run that produced 2 or more \`ceremony:standard\` sub-issues — the durable event a watch-item backlog record (e.g. #1350) can check for instead of needing the observing session\\'s own transcript.\n';
+  const existing = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : header;
+  const entry = '\n### ' + new Date().toISOString() + '\n\n'
+    + '- Sub-issues in this batch: ' + list.length + '\n'
+    + '- \`ceremony:standard\` sub-issues (' + standard.length + '): '
+    + standard.map((e) => '#' + e.num).join(', ') + '\n'
+    + '- Transcript pointer (this session): ' + (process.env.CLAUDE_CODE_SESSION_ID || '(none)') + '\n';
+  fs.writeFileSync(logPath, existing + entry);
+  console.error('Ceremony tally: ' + standard.length + ' ceremony:standard sub-issues — appended to ' + logPath);
+" "$SPECIFY_DECOMP_MANIFEST"
+```
+
+Below the 2+ threshold (the common case — most decompositions produce 0 or 1 `ceremony:standard`
+sub-issues), this is a silent no-op: no log entry, no error. The written entry is picked up by
+Step 9's existing `git add specs/ docs/` commit — no separate commit needed here.
+
 ### Rules
 
 - **Absorb decisions from the design doc** — each sub-issue must be self-contained. The design doc will be deleted (Step 7), so all rationale, decisions, and technical context relevant to that sub-issue lives in its own body.
