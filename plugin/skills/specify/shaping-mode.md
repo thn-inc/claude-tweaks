@@ -104,16 +104,19 @@ flight: a live claim (`classifyClaimBlob` reads its `claims/issue-{n}.json` blob
 open linked PR (the same `closedByPullRequestsReferences` connection dispatch's open-PR exclusion
 reads — `record.js`'s `buildLinkedPRQuery` / `partitionByOpenLinkedPR`). File and anchor overlap
 alone never refuse, and `bot:in-progress` is not evidence: it is a projection that outlives the
-build. Build the state and decide in one call, with `{hits}` the finder's output and `{snapshot}`
-the candidates' snapshot entries:
+build. Build the state and decide in one call: write the finder's output to `$NEAR_DUP_HITS` and
+the candidates' snapshot entries to `$NEAR_DUP_SNAPSHOT` as JSON files first (never as inline
+shell arguments — a candidate title with an apostrophe would break the quoting):
 
 ```bash
+eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" NEAR_DUP_HITS=specify-near-dup-hits.json NEAR_DUP_SNAPSHOT=specify-near-dup-snapshot.json)"
 node -e "
 const { shapingRefusal, buildShapingState } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
 const { readClaimBlobGit } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims-git-cas.js');
 const { buildLinkedPRQuery } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
 const { execFileSync } = require('child_process');
-const [hits, snapshot] = [JSON.parse(process.argv[1]), JSON.parse(process.argv[2])];
+const fs = require('fs');
+const [hits, snapshot] = [JSON.parse(fs.readFileSync(process.argv[1], 'utf8')), JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))];
 const numbers = hits.map((h) => h.number);
 const labelsByNumber = Object.fromEntries(snapshot.map((r) => [r.number, r.labels]));
 const claimContentByNumber = {};
@@ -123,7 +126,7 @@ try { linkedPRRepoData = JSON.parse(execFileSync('gh', ['api', 'graphql', '-f', 
 const state = buildShapingState({ numbers, labelsByNumber, claimContentByNumber, linkedPRRepoData, now: Date.now() });
 const hit = shapingRefusal(hits, state);
 console.log(JSON.stringify(hit ? { refuse: true, hit, evidence: state[hit.number] } : { refuse: false }));
-" '{hits}' '{snapshot}'
+" "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"
 ```
 
 A failed claim read or linked-PR query leaves that candidate "not in flight" — never a refusal.
