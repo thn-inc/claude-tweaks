@@ -376,6 +376,11 @@ is atomic regardless of whether the label add/remove succeeds.
   section. Read current labels first (`issue_read`, `get_labels`), merge via
   `mergeLabelNames` (`bin/lib/issues/label-write.js`, `add: ['bot:in-progress']`), and write
   that full array — never `labels: ['bot:in-progress']` alone.
+  Then read the labels back: the MCP path has no `labelFailures` output, so a silent no-op
+  add would otherwise leave the hold invisible to `/dispatch`'s label pre-filter. Absent (or a
+  failed read) → retry the add once through the same merge, read back again, and trace a second
+  absence with a `SKIP` degrade line — never abort the claim. `flow/claim-targets.md`'s "Read
+  back the `bot:in-progress` add" paragraph carries the exact procedure and log line (#3131).
 - **Removed** alongside claim release — every release removes it, regardless of outcome
   (`wrap-up/cleanup-procedures-execution.md` Section E, its duplicate in `flow/multispec-review-console.md`,
   and — for a single-spec issue-mode run the user chooses not to merge — the same Section E
