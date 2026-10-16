@@ -15,7 +15,7 @@ const { spawn } = require('child_process');
 
 const { parseArgs, UsageError, USAGE } = require('./lib/verify/args');
 const { runChecks, runOne } = require('./lib/verify/run');
-const { adjudicate, realGit } = require('./lib/verify/baseline');
+const { adjudicate, realGit, findStaleBaselineWorktrees } = require('./lib/verify/baseline');
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine, extractFailingFiles, stripAnsi, unattributedFailureCount,
 } = require('./lib/verify/extract');
@@ -236,6 +236,10 @@ async function main() {
       process.stderr.write(`--baseline: ${parsed.baseline} does not resolve to a commit\n${USAGE}\n`);
       process.exitCode = 2;
       return;
+    }
+    // Named, never swept — see findStaleBaselineWorktrees (#3064).
+    for (const dir of findStaleBaselineWorktrees(bgit.listWorktrees)) {
+      process.stderr.write(`verify.js: a stale baseline scratch worktree is registered at ${dir} from an earlier interrupted run — remove it manually: git worktree remove --force ${dir}\n`);
     }
   }
   const jsonPath = parsed.json || path.join(logDir, 'report.json');
