@@ -14,10 +14,17 @@ const ROOT = path.join(__dirname, '..');
 const settings = JSON.parse(fs.readFileSync(path.join(ROOT, '.claude', 'settings.json'), 'utf8'));
 const autonomy = (fs.readFileSync(path.join(ROOT, '.claude-tweaks', 'policy.yml'), 'utf8').match(/^autonomy:\s*["']?([a-z-]+)["']?\s*$/m) || [])[1];
 
-test('the committed deny list closes registry-access and credential-scope', () => {
-  const kinds = scanAgentTrustScope(ROOT).candidates.map((c) => c.kind);
+function kindsOf(dir) {
+  return scanAgentTrustScope(dir).candidates.map((c) => c.kind);
+}
+
+function assertRegistryAndCredentialClosed(kinds) {
   assert.ok(!kinds.includes('registry-access'), `registry-access still reported: ${kinds}`);
   assert.ok(!kinds.includes('credential-scope'), `credential-scope still reported: ${kinds}`);
+}
+
+test('the committed deny list closes registry-access and credential-scope', () => {
+  assertRegistryAndCredentialClosed(kindsOf(ROOT));
 });
 
 test('the committed deny list closes registry-access and credential-scope independent of this repo\'s own autonomy setting', (t) => {
@@ -27,9 +34,7 @@ test('the committed deny list closes registry-access and credential-scope indepe
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'autonomy: unattended\n');
   fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
   fs.copyFileSync(path.join(ROOT, '.claude', 'settings.json'), path.join(dir, '.claude', 'settings.json'));
-  const kinds = scanAgentTrustScope(dir).candidates.map((c) => c.kind);
-  assert.ok(!kinds.includes('registry-access'), `registry-access still reported: ${kinds}`);
-  assert.ok(!kinds.includes('credential-scope'), `credential-scope still reported: ${kinds}`);
+  assertRegistryAndCredentialClosed(kindsOf(dir));
 });
 
 test('network-egress stays reported while autonomy is elevated (accepted risk, ADR 0022)', (t) => {
@@ -37,8 +42,7 @@ test('network-egress stays reported while autonomy is elevated (accepted risk, A
     t.skip('autonomy is not elevated — the generator reports nothing');
     return;
   }
-  const kinds = scanAgentTrustScope(ROOT).candidates.map((c) => c.kind);
-  assert.ok(kinds.includes('network-egress'), 'network-egress silenced — a deny rule now hides an accepted risk ADR 0022 says stays visible');
+  assert.ok(kindsOf(ROOT).includes('network-egress'), 'network-egress silenced — a deny rule now hides an accepted risk ADR 0022 says stays visible');
 });
 
 test('ADR 0022 records the network-egress accepted risk and the uses that need it', () => {
