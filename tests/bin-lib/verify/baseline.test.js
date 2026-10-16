@@ -28,17 +28,24 @@ const FILE_LEVEL = (f) => ['ℹ tests 1', 'ℹ pass 0', 'ℹ fail 1', 'ℹ cance
 const PASS_LOG = ['✔ x (1ms)', 'ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0', 'ℹ cancelled 0'].join('\n');
 
 function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, throwOn = null, logs = {}, repoRoot = '/repo' }) {
-  const calls = { runs: [], added: [], removed: [] };
+  const calls = { runs: [], added: [], removed: [], batchBaseInfo: [] };
   const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-fake-runs-'));
   const git = {
     repoRoot: () => repoRoot,
-    fileExistsAt: (sha, f) => existsAtBase(f),
-    sameAtBase: (sha, f) => sameAtBase(f),
+    // One call per adjudicate() run, however many files — #3070's AC: a
+    // per-file git.fileExistsAt/sameAtBase pair would make calls.batchBaseInfo
+    // grow with the failing-file count; this single-entry mock would catch it.
+    batchBaseInfo: (sha, files, root) => {
+      calls.batchBaseInfo.push({ sha, files, root });
+      const m = new Map();
+      files.forEach((f) => { const exists = existsAtBase(f); m.set(f, { exists, same: exists && sameAtBase(f) }); });
+      return m;
+    },
     addWorktree: (sha) => { calls.added.push(sha); return '/scratch'; },
     removeWorktree: (dir) => { calls.removed.push(dir); },
   };
   const runOne = async ({ name, command, cwd }) => {
-    const kind = name.includes('-baseline-') ? 'baseline' : 'isolated';
+    const kind = name.includes('-baseline-') ? 'baseline' : (name.includes('-isolated-retry-') ? 'isolated-retry' : 'isolated');
     const file = command.replace('node --test ', '');
     calls.runs.push({ kind, file, cwd });
     if (throwOn && throwOn === `${kind}:${file}`) throw new Error('boom');
@@ -449,11 +456,13 @@ const NAMED = ({ fails = [], passes = [], skips = [], fail = fails.length, cance
 ].join('\n');
 
 // The full run fails tests/r.test.js on base's `x` plus a load-induced `slow`.
-const isolationCase = (isolatedLog, { isolatedCode = 1, baseLog = NAMED({ fails: [['x']], passes: ['slow'] }), head = NAMED({ fails: [['x'], ['slow']] }), sameAtBase } = {}) => {
+const isolationCase = (isolatedLog, {
+  isolatedCode = 1, baseLog = NAMED({ fails: [['x']], passes: ['slow'] }), head = NAMED({ fails: [['x'], ['slow']] }), sameAtBase, retryLog, retryCode,
+} = {}) => {
   const { p, dir } = logFile(head);
   const { git, runOne, calls } = fakes({
-    outcomes: { [`baseline:${R}`]: 1, [`isolated:${R}`]: isolatedCode },
-    logs: { [`baseline:${R}`]: baseLog, [`isolated:${R}`]: isolatedLog },
+    outcomes: { [`baseline:${R}`]: 1, [`isolated:${R}`]: isolatedCode, ...(retryCode !== undefined ? { [`isolated-retry:${R}`]: retryCode } : {}) },
+    logs: { [`baseline:${R}`]: baseLog, [`isolated:${R}`]: isolatedLog, ...(retryLog !== undefined ? { [`isolated-retry:${R}`]: retryLog } : {}) },
     sameAtBase,
   });
   return adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git })
@@ -469,10 +478,37 @@ test('a file failing beyond its base tests in the full run, but only base tests 
   assert.match(r.baselineIsolated[R].log, /tests-isolated-tests\+r\.test\.js\.log$/);
 });
 
-test('an isolated run failing a test base does not fail stays attributable (#3043)', async () => {
-  const r = await isolationCase(NAMED({ fails: [['x'], ['slow']] }));
+test('an isolated run failing a test base does not fail stays attributable when the retry reproduces it too (#3111 AC2)', async () => {
+  const r = await isolationCase(NAMED({ fails: [['x'], ['slow']] }), {
+    retryLog: NAMED({ fails: [['x'], ['slow']] }), retryCode: 1,
+  });
   assert.deepStrictEqual(r.attributable, [R]);
   assert.deepStrictEqual(r.baselineIsolated, {});
+  assert.deepStrictEqual(r.flakyPassed, []);
+});
+
+test('an isolated run failing a base-covered test plus an extra test is reported baseline-flaky when the retry does not reproduce the extra failure (#3111 AC1)', async () => {
+  const r = await isolationCase(NAMED({ fails: [['x'], ['slow']] }), {
+    retryLog: NAMED({ fails: [['x']], passes: ['slow'] }), retryCode: 1,
+  });
+  assert.deepStrictEqual(r.attributable, []);
+  assert.deepStrictEqual(r.flakyPassed, [R]);
+  assert.match(r.flakyLogs[R], /tests-isolated-retry-tests\+r\.test\.js\.log$/);
+  assert.strictEqual(r.verdict, 'pass');
+});
+
+test('an isolated run that already covers base on the first try never triggers a retry (#3111)', async () => {
+  const r = await isolationCase(NAMED({ fails: [['x']], passes: ['slow'] }));
+  assert.deepStrictEqual(r.baselineFailing, [R]);
+  assert.deepStrictEqual(r.calls.runs.filter((c) => c.kind === 'isolated-retry'), []);
+});
+
+test('an isolated run that passes cleanly on the first try never triggers a retry (#3043, #3111)', async () => {
+  const { p, dir } = logFile(SPEC([R]));
+  const { git, runOne, calls } = fakes({ outcomes: { [`baseline:${R}`]: 0, [`isolated:${R}`]: 0 } });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.deepStrictEqual(r.flakyPassed, [R]);
+  assert.deepStrictEqual(calls.runs.filter((c) => c.kind === 'isolated-retry'), []);
 });
 
 test('absence is not a pass: an isolated run cut short (the extra test never ran) or skipping it stays attributable (#3043)', async () => {
@@ -678,18 +714,46 @@ test('realGit.addWorktree removes its temp parent when `git worktree add` fails 
   assert.strictEqual(fs.existsSync(removed[0]), false);
 });
 
-test('realGit.sameAtBase: true for a working-tree file whose blob matches the commit, false once edited or absent (#3043)', () => {
+test('realGit.batchBaseInfo: existence and sameness for several files in one pass, root passed in rather than re-resolved (#3070)', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-'));
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
   git('init', '-q');
   fs.mkdirSync(path.join(repo, 'tests'));
   fs.writeFileSync(path.join(repo, 'tests', 'a.test.js'), 'one\n');
+  fs.writeFileSync(path.join(repo, 'tests', 'b.test.js'), 'unchanged\n');
   git('add', '.');
   git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'base');
   const sha = git('rev-parse', 'HEAD');
   const rg = realGit(path.join(repo, 'tests'));
-  assert.strictEqual(rg.sameAtBase(sha, 'tests/a.test.js'), true, 'repo-root-relative path, from a subdirectory cwd');
-  fs.writeFileSync(path.join(repo, 'tests', 'a.test.js'), 'two\n');
-  assert.strictEqual(rg.sameAtBase(sha, 'tests/a.test.js'), false);
-  assert.strictEqual(rg.sameAtBase(sha, 'tests/missing.test.js'), false);
+  fs.writeFileSync(path.join(repo, 'tests', 'a.test.js'), 'two\n'); // edited since base
+  const info = rg.batchBaseInfo(sha, ['tests/a.test.js', 'tests/b.test.js', 'tests/new.test.js'], repo);
+  assert.deepStrictEqual(info.get('tests/a.test.js'), { exists: true, same: false }, 'edited since base');
+  assert.deepStrictEqual(info.get('tests/b.test.js'), { exists: true, same: true }, 'unchanged since base, repo-root-relative path from a subdirectory cwd');
+  assert.deepStrictEqual(info.get('tests/new.test.js'), { exists: false, same: false }, 'never existed at base');
+});
+
+test('realGit.batchBaseInfo: a file present at base but missing from the working tree is same:false, never a thrown batch error (#3070)', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-'));
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  git('init', '-q');
+  fs.writeFileSync(path.join(repo, 'a.test.js'), 'one\n');
+  git('add', '.');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'base');
+  const sha = git('rev-parse', 'HEAD');
+  fs.rmSync(path.join(repo, 'a.test.js'));
+  const rg = realGit(repo);
+  const info = rg.batchBaseInfo(sha, ['a.test.js'], repo);
+  assert.deepStrictEqual(info.get('a.test.js'), { exists: true, same: false });
+});
+
+test('a per-file git.fileExistsAt/sameAtBase pair would make calls grow with N; the batched seam stays at one call for any failing-file count (#3070)', async () => {
+  const files = ['tests/a.test.js', 'tests/b.test.js', 'tests/c.test.js', 'tests/d.test.js', 'tests/e.test.js'];
+  const { p, dir } = logFile(SPEC(files));
+  const outcomes = {};
+  files.forEach((f) => { outcomes[`baseline:${f}`] = 1; });
+  const { git, runOne, calls } = fakes({ outcomes });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'origin/main', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.strictEqual(r.verdict, 'pass');
+  assert.strictEqual(calls.batchBaseInfo.length, 1, 'exactly one batched call regardless of how many failing files');
+  assert.deepStrictEqual(calls.batchBaseInfo[0].files, files, 'every failing file resolved in that one call');
 });

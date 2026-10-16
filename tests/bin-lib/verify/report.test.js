@@ -204,3 +204,15 @@ test('composeReport omits baselineAdjudicated when none is passed and carries it
   assert.deepStrictEqual(report.baselineAdjudicated, adjudicated);
   assert.strictEqual(report.pass, false);
 });
+
+test('composeReport omits preExistingAdjudicated when none is passed and carries it verbatim when given; pass stays raw (#3129)', () => {
+  const failing = { ...PASSING, exitCode: 1 };
+  const git = { sha: 'abc', dirty: false };
+  const plain = composeReport({ checks: [failing], startedAt: 't', durationMs: 1, git });
+  assert.strictEqual('preExistingAdjudicated' in plain, false);
+  assert.strictEqual('preExistingAdjudicated' in composeReport({ checks: [failing], startedAt: 't', durationMs: 1, git, preExistingAdjudicated: null }), false);
+  const adjudicated = { declared: ['tests/known-shallow.test.js'], matched: ['tests/known-shallow.test.js'] };
+  const report = composeReport({ checks: [failing], startedAt: 't', durationMs: 1, git, preExistingAdjudicated: adjudicated });
+  assert.deepStrictEqual(report.preExistingAdjudicated, adjudicated);
+  assert.strictEqual(report.pass, false);
+});

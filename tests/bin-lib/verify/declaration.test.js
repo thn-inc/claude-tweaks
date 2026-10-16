@@ -149,6 +149,25 @@ test('a non-string rules[i].suites entry names its type, not "unknown suite" (#1
   assert.ok(!r.errors.join('\n').includes('unknown suite'), 'a wrong-typed entry must not also fire the unknown-suite message');
 });
 
+test('preExisting defaults to [] and parses to the declared array verbatim (#3129)', () => {
+  const dflt = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ checks: { tests: 'npm test' }, rules: [] }) }));
+  assert.deepStrictEqual(dflt.decl.preExisting, []);
+  const declared = readDeclaration('/d.json', fakeFs({
+    '/d.json': JSON.stringify({ checks: { tests: 'npm test' }, rules: [], preExisting: ['tests/known-shallow.test.js', 'tests/flaky-pid/**'] }),
+  }));
+  assert.strictEqual(declared.ok, true, JSON.stringify(declared.errors));
+  assert.deepStrictEqual(declared.decl.preExisting, ['tests/known-shallow.test.js', 'tests/flaky-pid/**']);
+});
+
+test('preExisting must be an array of strings — a non-array or a non-string entry is an error naming the field (#3129)', () => {
+  const notArray = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ checks: { tests: 'x' }, rules: [], preExisting: 'tests/a.test.js' }) }));
+  assert.strictEqual(notArray.ok, false);
+  assert.match(notArray.errors.join('\n'), /preExisting: must be an array of path or glob strings/);
+  const badEntry = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ checks: { tests: 'x' }, rules: [], preExisting: ['tests/a.test.js', 7] }) }));
+  assert.strictEqual(badEntry.ok, false);
+  assert.match(badEntry.errors.join('\n'), /preExisting: must be an array of path or glob strings/);
+});
+
 test('a declaration with no checks.tests is valid — bookkeeping-only rules, zero suites (#1924)', () => {
   const r = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ checks: { lint: 'eslint .' }, rules: [{ match: 'docs/plans/*-ledger.md', suites: [], static: false }, { match: 'src/**', suites: '*', static: true }] }) }));
   assert.strictEqual(r.ok, true, JSON.stringify(r.errors));
