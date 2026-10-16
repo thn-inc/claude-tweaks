@@ -41,6 +41,11 @@ test('a record with no Key Files gets a wave of its own', () => {
   assert.deepEqual(planParallelWaves({ records, numbers: [1, 2, 3] }).waves, [[1, 3], [2]]);
 });
 
+test('a record with a bare-directory Key Files entry gets a wave of its own', () => {
+  const records = { 1: rec([], ['tests/']), 2: rec([], ['tests/']), 3: rec([], ['c.js']) };
+  assert.deepEqual(planParallelWaves({ records, numbers: [1, 2, 3] }).waves, [[3], [1], [2]]);
+});
+
 test('a blocker outside the run does not delay a record', () => {
   const records = { 1: rec([99], ['a.js']), 2: rec([], ['b.js']) };
   assert.deepEqual(planParallelWaves({ records, numbers: [1, 2] }).waves, [[1, 2]]);
