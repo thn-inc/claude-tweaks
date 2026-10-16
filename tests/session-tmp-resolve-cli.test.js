@@ -45,15 +45,14 @@ test('win32: prints forward-slash paths only — no backslash to be read as an e
 
 test('formatPrintedPath: win32 branch prints a backslash-free, forward-slash path (runs on every OS, not just win32)', () => {
   const nativeWindowsPath = 'C:\\Users\\me\\AppData\\Local\\Temp\\ct-session-sess-fwd\\foo.json';
-  const printed = formatPrintedPath(nativeWindowsPath, { platform: 'win32', sep: '\\' });
-  assert.ok(!printed.includes('\\'), `expected no backslash in ${printed}`);
-  assert.equal(printed, 'C:/Users/me/AppData/Local/Temp/ct-session-sess-fwd/foo.json');
+  const result = formatPrintedPath(nativeWindowsPath, { platform: 'win32', sep: '\\' });
+  assert.ok(!result.includes('\\'), `expected no backslash in ${result}`);
+  assert.equal(result, 'C:/Users/me/AppData/Local/Temp/ct-session-sess-fwd/foo.json');
 });
 
 test('formatPrintedPath: posix branch returns the input unchanged, byte for byte', () => {
   const nativePosixPath = '/tmp/ct-session-sess-posix/foo.json';
-  const printed = formatPrintedPath(nativePosixPath, { platform: 'linux', sep: '/' });
-  assert.equal(printed, nativePosixPath);
+  assert.equal(formatPrintedPath(nativePosixPath, { platform: 'linux', sep: '/' }), nativePosixPath);
 });
 
 test('formatPrintedPath: defaults platform/sep to the real process.platform/path.sep', () => {
