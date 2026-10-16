@@ -141,6 +141,7 @@ files:
   - A stale `ct-verify-base-*` worktree silently removed by a later run instead of only named — sweeping it risks deleting a sibling session's own live scratch.
   - `report.json`'s `pass` rewritten to `true`.
   - An `ATTRIBUTABLE:` line naming a temp-dir path (`/private/var/folders/…/verify-cli-test-…/tests/env.test.js`) or any path that does not exist in the checkout.
+  - An `ATTRIBUTABLE:` line for a file whose base run fails the same tests, only because a failing TAP point's `error:` text quotes a spawned child's timeout. Only that point's own top-level YAML keys (`failureType:`) say whether it timed out (#3153).
 
 ### 12. Bound a hung check with --cmd-timeout
 
