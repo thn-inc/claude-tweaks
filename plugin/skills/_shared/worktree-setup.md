@@ -40,6 +40,15 @@ leave this one before creating a new worktree."), so any call site that skips th
 invokes it anyway from inside an existing worktree fails every time it runs under a
 `worktree-always` project (`docs/incident-log.md`).
 
+**Forge-API-only invocations need no worktree.** When every write an invocation makes is a
+forge-API call (`gh issue`/`gh pr`/`gh api`, or their MCP equivalents), lands on a path the
+`worktree-always` gate exempts (`_shared/policy-schema-coverage.md`'s gate-coverage block — the run
+dir among them), or lands outside the repository (a session temp file), skip this whole decision:
+no `EnterWorktree`, no catch-up merge, nothing to tear down — the gate guards repository files and
+none are touched. The carve-out ends at the first working-tree write (a local record file, a design
+doc, a commit): run this section at that point, the way `/claude-tweaks:tidy` provisions Step 7.5's
+scratch worktree only for Step 7's mutations. Each qualifying skill states its own exceptions.
+
 **Already isolated:** do not call `EnterWorktree(name=...)` — it will refuse. First run a
 clean-tree precondition check: `git status --porcelain`. Non-empty (dirty) → do not adopt; fall
 through to **Not isolated** below, but via `ExitWorktree(action: "keep")` first (leave the dirty
@@ -107,6 +116,9 @@ clean fast-forward — a force push, or a push the gate cannot prove is one — 
 still needs a worktree.
 
 ## Post-creation catch-up
+
+An invocation Adopt-or-create's forge-API-only carve-out covers never reaches this section — it
+creates no worktree, so there is no catch-up merge to run or later discard.
 
 For the rest of this session's lifetime inside the new worktree, the harness's Bash-shape guard
 stays in effect (see the "## 7. Shell constraint" pointer above) — default to one plain command
