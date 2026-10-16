@@ -34,6 +34,12 @@ A suite, or a test with subtests, shows `✖` whenever a child fails. Count that
 
 The lines between a point's `---` and `...`, indented two spaces deeper than the point, belong to that point. An assertion's expected or actual text can contain `not ok …` or `failureType:` lines. Skip the block when reading test points, and read only the one top-level key you need from it.
 
+Inside the block, only the point's own top-level `location:` and `stack:` keys name its file (`tapBlocks`' `frames`); lines outside the block still can. Every other key is message text. A meta-test that spawns its own `node --test` run and fails with the child's output carries that child's whole TAP document — `not ok` lines, `location:` keys and temp-dir stack frames — inside its `error: |-` value, and those paths are the child's, never this run's (#3153). Take the key indent from the first non-blank line after `---`, not from the `---` line: Node puts keys at the `---` indent, but a tape-style producer indents them deeper. Diagnostics follow the same scoping: `conclusiveOnly` tests `INCONCLUSIVE_RE` only against the block's own top-level key lines (`keys`), so a quoted child timeout cannot make its parent inconclusive. A spec entry has no such boundary between its own `failureType:` and quoted child output, so the spec path still reads the whole entry body.
+
+### A path the log names is untrusted input
+
+A log can name any path: a quoted child's temp dir, another checkout, `tests/../../x` verbatim. `adjudicate` reads each log against the checkout it ran in — the HEAD log against the real checkout, the base log against the scratch worktree — through `at(dir)`, which passes `git.inCheckout` to the extractors as their `exists` predicate. A path absent from that checkout never names a failing file. A failure whose entries name only such paths refuses with `absent-from-checkout: …`, kept distinct from `unclassified failure(s)` (an entry naming no test file at all). `realGit().inCheckout` rejects an absolute path, a drive-letter path, and a `..` segment anywhere in the path. `relativize()` never produces an embedded `..`, but the guard answers to what the log says, not to what the producer emits (#3153, `626ec972b`).
+
 ### Reconcile the failing list against an independent count
 
 An extracted list of failures cannot report that it missed one. `adjudicate` refuses to classify the full run unless:
@@ -59,6 +65,7 @@ An uncaught error from async work that outlived its test is reported as a separa
 |---|---|
 | A family other than spec or tap | No failure-accounting guard. Refuse to classify |
 | Spec entries ≠ `ℹ fail N` + `ℹ cancelled N`, or a failing entry naming no test file | An undercount. Refuse |
+| A failing entry or TAP block naming only paths absent from the checkout its log ran in | Not a file of this run. Refuse with `absent-from-checkout` |
 | A non-zero cancelled count in the full run | Not a refusal by itself. Each cancelled test is held to the per-file evidence: it fails at base, or shows its own pass in isolation |
 | In an isolated single-file run (the per-file base run or the isolated HEAD rerun): a non-zero cancelled count or a runner-level `ℹ Error:`. In the base run, also a failure whose diagnostic says it timed out or was cancelled (`INCONCLUSIVE_RE`) | Did not finish, or failed outside any test. That run is no evidence: it cannot make the file baseline or flaky. The file is `attributable` unless only the base run failed this way and the isolated HEAD run is clean (flaky); a base run never rescues an isolated HEAD run that did not finish |
 | Nesting that does not close | No evidence |
@@ -87,6 +94,8 @@ node --test --test-reporter=tap tests/bin-lib/verify/extract.test.js   # capture
 | Trimming test names | A whitespace-only or trailing-space suite name stays on the nesting stack and misnests everything after it |
 | Counting every `✖` parent as failing | An inherited failure at base then covers a real new failure at HEAD in that parent |
 | Scanning every TAP line for `not ok` or `failureType:` | An assertion's expected text inside a YAML block invents test points or flips a parent's own failure to inherited |
+| Reading a file path from any line of a TAP block's YAML | An `error:` value can quote a spawned child's whole TAP document, so its temp-dir paths come back as phantom `ATTRIBUTABLE:` files (#3153) |
+| Rejecting only a leading `..` when checking that a log-named path is inside the checkout | The log can name `tests/../../x` verbatim. `relativize()` never makes one, but the input is the log, not the producer (#3153) |
 | Treating an extracted failing-file list as complete | A failure whose entry names no file drops out, and the rest classify as a pass over a failure nothing checked |
 | Reading a test's absence from a re-run as a pass | A child killed mid-file, a skip, or a filter produces the same absence |
 | Applying an accounting check to spec output only when a new consumer reuses it | #3066's first TAP branch returned before checking that the summary counts parsed, so a truncated TAP log read as fully accounted. Carry every check over for spec and TAP alike, and test each family's truncated-log case |
