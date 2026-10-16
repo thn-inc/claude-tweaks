@@ -449,6 +449,18 @@ test('by-number resolvers: a positive-integer string passes the guard and reache
   }
 });
 
+// A missing cwd and a missing gh binary both surface as ENOENT; a stale or
+// mistyped checkout path must not be reported as "gh is not installed".
+test('by-number resolvers: a non-existent repoRoot -> invalid-arguments, not gh-absent (#3029)', () => {
+  const wrapper = installGhWrapper({ number: 42, state: 'MERGED' });
+  try {
+    assert.equal(resolvePrStateByNumber('/definitely/not/here', 42), 'invalid-arguments');
+    assert.equal(resolveIssueStateByNumber('/definitely/not/here', 42), 'invalid-arguments');
+  } finally {
+    wrapper.restore();
+  }
+});
+
 test('resolvePrStatesBulk: unresolvable repo slug classifies network-failure (fail closed, no spawn)', () => {
   let spawned = 0;
   const r = resolvePrStatesBulk('/tmp/definitely-not-a-repo-xyz', ['a'], { runner: () => { spawned += 1; return '{}'; } });

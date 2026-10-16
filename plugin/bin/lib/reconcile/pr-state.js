@@ -19,6 +19,7 @@
 // and degraded 200-with-errors responses (classification fails closed on any
 // incomplete response by construction).
 'use strict';
+const fs = require('fs');
 const { execFileSync, execFile } = require('child_process');
 const { promisify } = require('util');
 const { classifyGhApiError } = require('../issues/claim-store');
@@ -127,6 +128,23 @@ function byNumberArgsValid(repoRoot, number) {
     && POSITIVE_INTEGER_RE.test(String(number));
 }
 
+// A string repoRoot that names no directory passes the guard above, and
+// execFileSync then fails with ENOENT — the same code a missing gh binary
+// produces — so classifyExecError alone would report it as 'gh-absent'.
+// Checked only after a gh-absent classification, so a successful call pays
+// no extra filesystem probe.
+function classifyByNumberError(repoRoot) {
+  return (e) => {
+    const failure = classifyExecError(e);
+    if (failure !== 'gh-absent') return failure;
+    try {
+      return fs.statSync(repoRoot).isDirectory() ? failure : 'invalid-arguments';
+    } catch {
+      return 'invalid-arguments';
+    }
+  };
+}
+
 // #1962: archive-merged.js's main sweep derives a branch name to query by
 // (`resolvePrState` above needs one), but a run dir whose worktree is
 // confirmably gone AND whose branch has since been deleted has no branch
@@ -144,7 +162,8 @@ function byNumberArgsValid(repoRoot, number) {
 // repoRoot is the checkout whose `origin` gives gh its host and repo. Returns
 // that object, null for a falsy number, or one of the strings 'gh-absent' /
 // 'network-failure' (transport) / 'invalid-arguments' (#3029: a non-string
-// repoRoot or a number that is not a positive integer, no gh call made).
+// repoRoot or a number that is not a positive integer, no gh call made; or a
+// repoRoot that names no directory).
 function resolvePrStateByNumber(repoRoot, number) {
   if (!number) return null;
   if (!byNumberArgsValid(repoRoot, number)) return 'invalid-arguments';
@@ -157,7 +176,7 @@ function resolvePrStateByNumber(repoRoot, number) {
       );
       return JSON.parse(stdout);
     },
-    classifyExecError,
+    classifyByNumberError(repoRoot),
     { retryOnTimeout: true },
   );
 }
@@ -171,7 +190,8 @@ function resolvePrStateByNumber(repoRoot, number) {
 // resolvePrStateByNumber's own null convention; a transport failure returns
 // 'gh-absent'/'network-failure' like every other resolver in this module,
 // via the same classifyExecError/runClassified pair, and 'invalid-arguments'
-// for a misordered/malformed call (#3029 — same guard as resolvePrStateByNumber).
+// for a misordered/malformed call or a repoRoot that names no directory
+// (#3029 — same guard as resolvePrStateByNumber).
 function resolveIssueStateByNumber(repoRoot, number) {
   if (!number) return null;
   if (!byNumberArgsValid(repoRoot, number)) return 'invalid-arguments';
@@ -184,7 +204,7 @@ function resolveIssueStateByNumber(repoRoot, number) {
       );
       return JSON.parse(stdout);
     },
-    classifyExecError,
+    classifyByNumberError(repoRoot),
     { retryOnTimeout: true },
   );
 }
