@@ -91,6 +91,14 @@
         ]
       }
     ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" post-tool-use-failure" }
+        ]
+      }
+    ],
     "SubagentStop": [
       {
         "hooks": [

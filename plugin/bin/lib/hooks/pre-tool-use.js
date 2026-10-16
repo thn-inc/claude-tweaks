@@ -566,11 +566,7 @@ function checkTeardownGate(ctx, teardownWarnings = []) {
         // unlike the assigned-run deny below (wd-deny), which was already
         // logged. Same ownedRun/stampAdHocRunDirForDenial rigor as that
         // sibling deny in this same function, for consistency within it.
-        const ownCwdOwnedRun = ctx.ownedRun || {};
-        const ownCwdTrustedDir = (ownCwdOwnedRun.dir && ownCwdOwnedRun.attribution !== 'fallback') ? ownCwdOwnedRun.dir : null;
-        const ownCwdStamped = ownCwdTrustedDir ? null : ctxLib.stampAdHocRunDirForDenial({ ...ctx, ownedRun: {} });
-        const ownCwdDenialRunDir = ownCwdTrustedDir || ownCwdStamped || ownCwdOwnedRun.dir;
-        const ownCwdAttribution = ownCwdStamped ? undefined : ownCwdOwnedRun.attribution;
+        const { dir: ownCwdDenialRunDir, attribution: ownCwdAttribution } = ctxLib.resolveDenialRunDir(ctx);
         const ownCwdTestTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
         ctxLib.appendEvent(
           ownCwdDenialRunDir, 'wd-guard-refusal', { path: target, reason: 'own-cwd-removal', ...ownCwdTestTag }, ownCwdAttribution,
@@ -591,7 +587,10 @@ function checkTeardownGate(ctx, teardownWarnings = []) {
     // Target and recorded assignment are the same path once matched, so
     // statting the target side covers both.
     if (!exists) continue;
-    const hit = ctxLib.findRunByWorktreePath(ctx.cwd, target);
+    // #2783: an `-adhoc-standalone` dir never makes a worktree "assigned" — it
+    // holds only friction events, nothing this gate protects, and must stay
+    // non-terminal so friction-events.js can still read it after the removal.
+    const hit = ctxLib.findRunByWorktreePath(ctx.cwd, target, { skipAdHoc: true });
     if (!hit || !hit.state) continue;
     const status = hit.state.status;
     if (status !== 'active' && status !== 'interrupted') continue;
@@ -624,28 +623,9 @@ function checkTeardownGate(ctx, teardownWarnings = []) {
     // #2351: logged to THIS session's own run dir (never hit.runDir — that's
     // the unrelated TARGET run being torn down, bound to a different
     // worktree entirely; the friction being recorded belongs to the session
-    // hitting this gate, not the run it's trying to tear down). A plain
-    // `ownedRun.dir` is NOT trusted here when it carries `attribution:
-    // 'fallback'` — resolveRun's newest-non-terminal guess, with no run dir
-    // of this session's own to resolve, would otherwise frequently guess
-    // exactly `hit.runDir` itself (the only run dir under this main
-    // checkout at the moment a teardown gets denied is often the very one
-    // being torn down), silently reproducing the same misattribution this
-    // fix exists to close. Prefer a genuine ad-hoc stamp in that case; fall
-    // back to the guess only if minting one fails outright (best-effort —
-    // never lose the event entirely over this).
-    const ownedRun = ctx.ownedRun || {};
-    const trustedOwnedDir = (ownedRun.dir && ownedRun.attribution !== 'fallback') ? ownedRun.dir : null;
-    // stampAdHocRunDirForDenial's own early-return guard short-circuits on
-    // ANY truthy ctx.ownedRun.dir, fallback-attributed or not — pass it a
-    // ctx with ownedRun stripped whenever the real one isn't trusted, so it
-    // actually proceeds to mint instead of handing back the same guess.
-    const stamped = trustedOwnedDir ? null : ctxLib.stampAdHocRunDirForDenial({ ...ctx, ownedRun: {} });
-    const denialRunDir = trustedOwnedDir || stamped || ownedRun.dir;
-    // A freshly minted stamp is this session's own, genuine ownership — never
-    // 'fallback' (that would mislabel a real mint as an unreliable guess);
-    // otherwise carry through whatever ownedRun.attribution already was.
-    const denialAttribution = stamped ? undefined : ownedRun.attribution;
+    // hitting this gate, not the run it's trying to tear down).
+    // resolveDenialRunDir (context.js) never trusts a 'fallback' guess — see #2351/#2783.
+    const { dir: denialRunDir, attribution: denialAttribution } = ctxLib.resolveDenialRunDir(ctx);
     ctxLib.appendEvent(denialRunDir, 'wd-deny', { path: target, assignedRun: path.basename(hit.runDir) }, denialAttribution);
     return denyResult(
       `claude-tweaks teardown gate: worktree ${target} is still assigned to non-terminal pipeline run ` +
@@ -728,11 +708,10 @@ function checkPipelineShadowGuard(ctx) {
     // ownedRun-first, stamp-a-new-one-if-absent posture; this guard fires
     // unconditionally, before any pipeline run necessarily exists for THIS
     // session, same as that one).
-    const ownedRun = ctx.ownedRun || {};
-    const denialRunDir = ownedRun.dir || ctxLib.stampAdHocRunDirForDenial(ctx);
+    const { dir: denialRunDir, attribution: denialAttribution } = ctxLib.resolveDenialRunDir(ctx);
     const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
     ctxLib.appendEvent(
-      denialRunDir, 'wd-guard-refusal', { tool: toolName, path: candidate, reason: 'shadow-run-dir', ...testTag }, ownedRun.attribution,
+      denialRunDir, 'wd-guard-refusal', { tool: toolName, path: candidate, reason: 'shadow-run-dir', ...testTag }, denialAttribution,
     );
     return denyResult(
       `claude-tweaks: refusing to create ${shadow.runDirCandidate} — a NEW pipeline run directory inside a ` +
@@ -1003,8 +982,7 @@ function checkWorktreeRequired(ctx, precomputedGitTargets, indeterminateTargets 
     // the periodic per-hook-call check that deliberately excludes it) so this
     // event has somewhere to land instead of appendEvent's null-runDir no-op
     // silently dropping it.
-    const ownedRun = ctx.ownedRun || {};
-    const denialRunDir = ownedRun.dir || ctxLib.stampAdHocRunDirForDenial(ctx);
+    const { dir: denialRunDir, attribution: denialAttribution } = ctxLib.resolveDenialRunDir(ctx);
     // #1337: the test suite exercises this exact deny path against synthetic
     // repos (tests/hooks-dispatcher.test.js's runHook sets CT_HOOKS_TEST_MODE
     // for every pre-tool-use invocation it spawns), and those denials landed
@@ -1016,7 +994,7 @@ function checkWorktreeRequired(ctx, precomputedGitTargets, indeterminateTargets 
     // only its downstream aggregation (friction-events.js's readEvents)
     // should exclude it.
     const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
-    ctxLib.appendEvent(denialRunDir, 'gate-denial', { tool: toolName, path: targetPath, ...testTag }, ownedRun.attribution);
+    ctxLib.appendEvent(denialRunDir, 'gate-denial', { tool: toolName, path: targetPath, ...testTag }, denialAttribution);
 
     const retryGuidance = action === 'push'
       ? `If you're trying to delete a branch whose worktree is already gone, there is nothing to ` +
@@ -1476,9 +1454,19 @@ function isForeignSessionCall(ctx) {
 // belongs to a live sibling that hasn't stamped ownership yet than to the caller
 // itself. Deliberately NOT folded into isForeignSessionCall — the PR-stamp branch
 // keeps its existing, already-effective guard unchanged (see checkBookkeepingStampsGate).
+//
+// #2783 (final fix wave 2, G1): an ad-hoc `{ts}-adhoc-standalone` twin is a
+// friction placeholder minted for nearly every session now, never "a distinct
+// recorded run" — in every /flow run today ctx.ownedRun IS this session's own
+// ad-hoc twin (minted at EnterWorktree) while ctx.runDir is the formal run
+// (ad-hoc dirs are skipped by the session-agnostic fallback scan since the
+// first fix wave), so `owned !== ctx.runDir` on essentially every covered
+// call. Without this exclusion the IL-131 record-worktree deny would be
+// downgraded to a warn on nearly every /flow run.
 function hasDistinctOwnedRun(ctx) {
   const owned = ctx.ownedRun && typeof ctx.ownedRun.dir === 'string' ? ctx.ownedRun.dir : '';
-  return Boolean(owned && ctx.runDir && owned !== ctx.runDir);
+  if (!owned || ctxLib.isAdHocRunDir(owned)) return false;
+  return Boolean(ctx.runDir && owned !== ctx.runDir);
 }
 
 // Path exemptions for the bookkeeping-stamps gate, reusing the very helpers

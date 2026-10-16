@@ -113,6 +113,27 @@ test('reapMerged: a merged-PR worktree is removed and logs a worktree-reaped eve
   assert.equal(reapedEvent.prNumber, 42);
 });
 
+// #2783: EnterWorktree mints an `-adhoc-standalone` twin AFTER /flow's formal
+// run, so it sorts newer — the reap trail (timing/derive.js reads it) must
+// still land in the formal run, never the friction-only ad-hoc dir.
+test('#2783 reapMerged: the worktree-reaped event lands in the formal run, not its newer ad-hoc twin', () => {
+  const { root, wtPath, runDir } = buildReapableFixture();
+  const adhoc = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000100-adhoc-standalone');
+  fs.mkdirSync(adhoc, { recursive: true });
+  writeRunState(adhoc, { worktree: wtPath, status: 'active', sessionId: 'sess-2783-reap' });
+  const wrapper = installGhWrapper([{ number: 43, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
+  try {
+    reapMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  const read = (dir) => {
+    try { return fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; }
+  };
+  assert.ok(read(runDir).some((e) => e.type === 'worktree-reaped'), `formal run events: ${JSON.stringify(read(runDir))}`);
+  assert.equal(read(adhoc).some((e) => e.type === 'worktree-reaped'), false);
+});
+
 test('reapMerged: a closed-unmerged PR is skipped (never reaped) and logs worktree-reap-skipped, not worktree-reaped', () => {
   const { root, wtPath, runDir } = buildReapableFixture();
   const wrapper = installGhWrapper([{ number: 7, state: 'CLOSED', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z' }]);

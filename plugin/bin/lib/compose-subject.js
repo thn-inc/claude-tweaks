@@ -14,7 +14,7 @@
 // bin/lib/release/subject.js's composeSubject() output. Skill prose reaches
 // the composer only through this CLI — the pure module has no shell surface.
 //
-// Usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--shell] [--help]
+// Usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--scope <scope>] [--shell] [--help]
 // Numbers may be comma-joined and/or space-separated; the subject record is
 // the lowest number, and the body carries one `Fixes #n` line per number.
 // Output: JSON {"title","body"} by default; `--shell` prints two POSIX sh
@@ -52,7 +52,7 @@ const {
 } = require('./repo-resolve');
 const { GH_TIMEOUT_MS } = require('./shared-primitives');
 
-const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--shell] [--help]\n';
+const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--scope <scope>] [--shell] [--help]\n';
 // Decision (#2319): kept at the single-call convention, not widened. Each
 // `gh issue view` call below fetches exactly one record — unlike
 // fetch-sub-issues.js's 30000ms bound, which covers a single batched
@@ -76,15 +76,15 @@ function errMessage(err) {
 }
 
 function parseArgs(argv) {
-  const opts = { numbers: [], repo: null, tag: null, shell: false, help: false };
+  const opts = { numbers: [], repo: null, tag: null, scope: null, shell: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { opts.help = true; return opts; }
     if (a === '--shell') { opts.shell = true; continue; }
-    if (a === '--repo' || a === '--tag') {
+    if (a === '--repo' || a === '--tag' || a === '--scope') {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith('--')) return { error: `missing value for ${a}` };
-      if (a === '--repo') opts.repo = v; else opts.tag = v;
+      if (a === '--repo') opts.repo = v; else if (a === '--tag') opts.tag = v; else opts.scope = v;
       i++;
       continue;
     }
@@ -203,7 +203,12 @@ function aggregateType(records) {
 const realDeps = {
   ghAvailable,
   remoteUrl,
-  runner: (args) => execFileSync('gh', args, { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true }),
+  // stderr piped, not inherited (#3028): execFileSync's default echoes the
+  // child's stderr to ours, so the handled #2561 `Unknown JSON field:
+  // "issueType"` rejection printed gh's full field list ahead of a successful
+  // compose and read as a failure. err.stderr (isUnknownIssueTypeField) and
+  // err.message (the fatal paths) still carry the text.
+  runner: (args) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true }),
   fetchIssueType: fetchIssueTypeGraphQL,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
@@ -285,6 +290,7 @@ function run(argv, deps = realDeps) {
       type: aggregateType(records),
       title: subjectRecord.title,
       number: subjectRecord.number,
+      scope: opts.scope,
       breaking: breakingRecords.length > 0,
       summary: firstSentence(extractSection(subjectRecord.body, 'Overview') || extractSection(subjectRecord.body, 'Current State')),
       migrationNote,

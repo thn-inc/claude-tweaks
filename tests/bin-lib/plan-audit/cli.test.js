@@ -438,3 +438,185 @@ test('--count-tasks never runs Checks A/B/C — a plan naming a missing path sti
     fs.rmSync(repo, { recursive: true, force: true });
   }
 });
+
+// ── #3099 — --spec and Check E in the envelope ──────────────────────────────
+const CLI_E_SPEC = [
+  '## Acceptance Criteria',
+  '',
+  '1. The report renders.',
+  '2. Each recipient gets one row. A recipient with several instances counts once; the total equals the recipient count.',
+  '',
+].join('\n');
+
+function cliEPlan(extraLines = []) {
+  return [
+    ...extraLines,
+    '### Task 1: Do a thing',
+    '**Files:**',
+    '- Modify: `plugin/bin/existing.js`',
+    '',
+    '- [ ] **Step 1: Write the failing test**',
+    '',
+    "test('AC1.1 AC2.1 AC2.2: rows render', () => {});",
+  ].join('\n');
+}
+
+function makeERepo() {
+  const repo = makeTmpRepo();
+  fs.mkdirSync(path.join(repo, 'plugin', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'plugin', 'bin', 'existing.js'), '// existing\n');
+  return repo;
+}
+
+function runCliArgs(args) {
+  try {
+    const stdout = execFileSync('node', [CLI, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return { exitCode: 0, stdout, stderr: '' };
+  } catch (err) {
+    return { exitCode: err.status, stdout: err.stdout || '', stderr: err.stderr || '' };
+  }
+}
+
+test('AC1.1 + AC5.2 (#3099): --spec reports the dropped clause AC2.3 with its text, and the audit still exits 0', () => {
+  const repo = makeERepo();
+  try {
+    const plan = writePlan(repo, cliEPlan());
+    const spec = path.join(repo, 'spec.md');
+    fs.writeFileSync(spec, CLI_E_SPEC);
+    const { exitCode, stdout } = runCliArgs([plan, '--repo-root', repo, '--spec', spec]);
+    assert.strictEqual(exitCode, 0);
+    const report = JSON.parse(stdout.split('\n')[0]);
+    assert.strictEqual(report.checkE.ok, true);
+    assert.deepStrictEqual(report.checkE.uncovered, [{ id: 'AC2.3', clause: 'the total equals the recipient count.' }]);
+    assert.strictEqual(stdout.split('\n')[1], 'plan-audit: Check E: 1 uncovered AC clause(s).');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('AC2.1 (#3099): with a Waived AC2.3 line the CLI reports AC2.3 under waived, not uncovered', () => {
+  const repo = makeERepo();
+  try {
+    const plan = writePlan(repo, cliEPlan(['Waived AC2.3: counted by the existing totals test', '']));
+    const spec = path.join(repo, 'spec.md');
+    fs.writeFileSync(spec, CLI_E_SPEC);
+    const report = JSON.parse(runCliArgs([plan, '--repo-root', repo, '--spec', spec]).stdout.split('\n')[0]);
+    assert.deepStrictEqual(report.checkE.waived, [{ id: 'AC2.3', reason: 'counted by the existing totals test' }]);
+    assert.deepStrictEqual(report.checkE.uncovered, []);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('AC3.1 (#3099): a spec with no ## Acceptance Criteria section yields a non-empty checkE.unparsed and names it in the summary', () => {
+  const repo = makeERepo();
+  try {
+    const plan = writePlan(repo, cliEPlan());
+    const spec = path.join(repo, 'spec.md');
+    fs.writeFileSync(spec, '# 1: X\n\n## Deliverables\n\n- Do it.\n');
+    const { exitCode, stdout } = runCliArgs([plan, '--repo-root', repo, '--spec', spec]);
+    assert.strictEqual(exitCode, 0);
+    const report = JSON.parse(stdout.split('\n')[0]);
+    assert.strictEqual(report.checkE.unparsed.length, 1);
+    assert.deepStrictEqual(report.checkE.uncovered, []);
+    assert.match(stdout.split('\n')[1], /Check E: 1 unparsed AC item\(s\)/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('AC4.1 (#3099): without --spec the envelope carries checkE {ok: true, skipped: no-spec}; every other key, the summary, and the exit code match a --spec run', () => {
+  const repo = makeERepo();
+  try {
+    const plan = writePlan(repo, cliEPlan());
+    const spec = path.join(repo, 'spec.md');
+    fs.writeFileSync(spec, '## Acceptance Criteria\n\n1. The report renders.\n');
+    const without = runCliArgs([plan, '--repo-root', repo]);
+    const withSpec = runCliArgs([plan, '--repo-root', repo, '--spec', spec]);
+    const a = JSON.parse(without.stdout.split('\n')[0]);
+    const b = JSON.parse(withSpec.stdout.split('\n')[0]);
+    assert.deepStrictEqual(a.checkE, { ok: true, skipped: 'no-spec' });
+    assert.deepStrictEqual(b.checkE.uncovered, []);
+    const { checkE: dropA, ...restA } = a;
+    const { checkE: dropB, ...restB } = b;
+    assert.deepStrictEqual(restA, restB);
+    assert.deepStrictEqual(Object.keys(restA), ['checkA', 'checkB', 'checkC', 'checkD', 'headroom', 'premiseRefs']);
+    assert.strictEqual(without.exitCode, 0);
+    assert.strictEqual(withSpec.exitCode, 0);
+    assert.strictEqual(without.stdout.split('\n')[1], 'plan-audit: clean — no findings.');
+    assert.strictEqual(withSpec.stdout.split('\n')[1], 'plan-audit: clean — no findings.');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('AC5.1 (#3099): uncovered clauses never fail the audit — a failing Check A still decides the exit code alone', () => {
+  const repo = makeERepo();
+  try {
+    const plan = writePlan(repo, cliEPlan().replace('plugin/bin/existing.js', 'does/not/exist.js'));
+    const spec = path.join(repo, 'spec.md');
+    fs.writeFileSync(spec, CLI_E_SPEC);
+    const { exitCode, stdout } = runCliArgs([plan, '--repo-root', repo, '--spec', spec]);
+    const report = JSON.parse(stdout.split('\n')[0]);
+    assert.strictEqual(report.checkE.ok, true);
+    assert.strictEqual(report.checkA.ok, false);
+    assert.strictEqual(exitCode, 1);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#3099: an unreadable --spec exits 2 naming the file, never a silent skipped envelope', () => {
+  const repo = makeERepo();
+  try {
+    const plan = writePlan(repo, cliEPlan());
+    const r = runCliArgs([plan, '--repo-root', repo, '--spec', path.join(repo, 'nope.md')]);
+    assert.strictEqual(r.exitCode, 2);
+    assert.match(r.stderr, /cannot read spec file/);
+    assert.strictEqual(r.stdout, '');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#3099: --spec with no value, or beside --bytes or --count-tasks, is a usage error (exit 2)', () => {
+  const repo = makeERepo();
+  try {
+    const plan = writePlan(repo, cliEPlan());
+    const spec = path.join(repo, 'spec.md');
+    fs.writeFileSync(spec, CLI_E_SPEC);
+    for (const args of [[plan, '--spec'], [plan, '--spec', spec, '--bytes'], [plan, '--count-tasks', '--spec', spec]]) {
+      const r = runCliArgs(args);
+      assert.strictEqual(r.exitCode, 2, `expected exit 2 for ${args.slice(1).join(' ')}`);
+      assert.match(r.stderr, /usage: plan-audit\.js .*--spec <spec-file>/);
+    }
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// ── #3099 Task 7 — Check B excludes the audited plan file itself ───────────
+test('#3099: Check B never reports the audited plan file itself as unplanned, but a real unplanned file still is', () => {
+  const repo = makeTmpRepo();
+  fs.writeFileSync(path.join(repo, 'a.js'), '// zebrakeyword\n');
+  try {
+    const plan = writePlan(repo, [
+      'Scope keywords: zebrakeyword',
+      '### Task 1: Do a thing',
+      '**Files:**',
+      '- Modify: `a.js`',
+    ].join('\n'));
+    const first = runCli(plan, repo);
+    const reportFirst = JSON.parse(first.stdout.split('\n')[0]);
+    assert.deepStrictEqual(reportFirst.checkB.unplanned, []);
+    assert.strictEqual(first.exitCode, 0);
+
+    fs.writeFileSync(path.join(repo, 'stray.js'), '// zebrakeyword\n');
+    const second = runCli(plan, repo);
+    const reportSecond = JSON.parse(second.stdout.split('\n')[0]);
+    assert.deepStrictEqual(reportSecond.checkB.unplanned, ['stray.js']);
+    assert.notStrictEqual(second.exitCode, 0);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});

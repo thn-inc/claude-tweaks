@@ -77,6 +77,24 @@ test('a skipped check carries {skipped} in place of an exit code and does not af
   assert.strictEqual(report.pass, true);
 });
 
+test('a timed-out check carries {timedOut:true} and flips pass, same as any other null-exit failure (#3063 AC1)', () => {
+  const report = composeReport({
+    checks: [{
+      name: 'tests', command: 'hang', exitCode: null, timedOut: true, durationMs: 20, logPath: '/tmp/l/tests.log',
+    }],
+    startedAt: 'x', durationMs: 1, git: { sha: null, dirty: null },
+  });
+  assert.strictEqual(report.pass, false);
+  assert.strictEqual(report.checks.tests.timedOut, true);
+});
+
+test('a check that did not time out carries no timedOut key (unchanged entry shape)', () => {
+  const report = composeReport({
+    checks: [PASSING], startedAt: 'x', durationMs: 1, git: { sha: null, dirty: null },
+  });
+  assert.ok(!('timedOut' in report.checks.tests));
+});
+
 test('gitInfo returns nulls when git is unavailable (AC3 outside-a-repo)', () => {
   const throwing = () => { throw new Error('not a repo'); };
   assert.deepStrictEqual(gitInfo(throwing), { sha: null, dirty: null });

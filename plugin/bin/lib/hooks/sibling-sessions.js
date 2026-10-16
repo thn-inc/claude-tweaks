@@ -85,11 +85,15 @@ function defaultRun(cwd) {
 // reused here rather than re-derived. `record-worktree` stamps
 // `{ worktree: <path>, sessionId: <CLAUDE_CODE_SESSION_ID> }` onto the run it
 // is called for; a worktree recorded under the calling session's own id is
-// that session's own claimed record, never a sibling to warn about.
+// that session's own claimed record, never a sibling to warn about. An
+// `-adhoc-standalone` dir also records a sessionId + worktree, but it is a
+// friction placeholder minted on every EnterWorktree — a dispatched subagent's
+// included, which shares the parent's session id — never a record claim (#2783).
 function ownedWorktreePaths(cwd, sessionId, listRunDirsWithState) {
   const owned = new Set();
   if (!sessionId) return owned;
-  for (const { state } of listRunDirsWithState(cwd)) {
+  for (const { dir, state } of listRunDirsWithState(cwd)) {
+    if (ctxLib.isAdHocRunDir(dir)) continue;
     if (state && state.sessionId === sessionId && typeof state.worktree === 'string' && state.worktree) {
       owned.add(normalizePath(state.worktree));
     }
