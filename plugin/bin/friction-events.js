@@ -16,8 +16,14 @@
 // findRunsByWorktreePath) — typically zero or one such ad-hoc dir, but
 // never assumed to be at most one (a session can be interrupted more than
 // once before ever reaching wrap-up).
+// It also unions every non-terminal ad-hoc dir owned by the current session id
+// whose worktree was removed (findAdHocRunsBySessionId skips a live one)
+// (--session, default CLAUDE_CODE_SESSION_ID — a Bash-invoked CLI sees it,
+// unlike a hook process): the ordinary ad-hoc order is ExitWorktree(remove)
+// before wrap-up, after which the worktree-path match finds nothing (#2783).
+// Each dir is read once even when both lookups return it.
 //
-// Usage: friction-events.js --run <run-dir> [--worktree <path>] [--help]
+// Usage: friction-events.js --run <run-dir> [--worktree <path>] [--session <id>] [--help]
 // `--worktree` defaults to process.cwd() — the caller (reflect, running
 // inside the worktree it's evaluating) does not usually need to pass it
 // explicitly.
@@ -46,15 +52,16 @@ const { FRICTION_EVENT_TYPES } = require('./lib/friction-lens-vocab');
 
 const FRICTION_TYPES = new Set(FRICTION_EVENT_TYPES);
 
-const USAGE = 'usage: friction-events.js --run <run-dir> [--worktree <path>] [--help]\n';
+const USAGE = 'usage: friction-events.js --run <run-dir> [--worktree <path>] [--session <id>] [--help]\n';
 
 function parseArgs(argv) {
-  const opts = { run: null, worktree: null, help: false };
+  const opts = { run: null, worktree: null, session: null, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') opts.help = true;
     else if (a === '--run') opts.run = argv[++i];
     else if (a === '--worktree') opts.worktree = argv[++i];
+    else if (a === '--session') opts.session = argv[++i];
     else return { error: `unknown argument: ${a}` };
   }
   return opts;
@@ -126,6 +133,8 @@ const realDeps = {
   cwd: () => process.cwd(),
   readEvents,
   findRunsByWorktreePath: ctxLib.findRunsByWorktreePath,
+  sessionId: () => process.env.CLAUDE_CODE_SESSION_ID || null,
+  findAdHocRunsBySessionId: ctxLib.findAdHocRunsBySessionId,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -142,8 +151,15 @@ function run(argv, deps = realDeps) {
 
   const worktreePath = opts.worktree ? path.resolve(opts.worktree) : deps.cwd();
   const events = deps.readEvents(runDir, 'primary');
+  const seen = new Set();
   const siblings = deps.findRunsByWorktreePath(worktreePath, worktreePath, runDir) || [];
-  for (const { runDir: siblingDir } of siblings) {
+  // #2783: after ExitWorktree(remove) the worktree path above matches nothing;
+  // the owning session id still finds the ad-hoc dir.
+  const sessionId = opts.session || deps.sessionId();
+  const bySession = sessionId ? (deps.findAdHocRunsBySessionId(deps.cwd(), sessionId, runDir) || []) : [];
+  for (const { runDir: siblingDir } of [...siblings, ...bySession]) {
+    if (seen.has(siblingDir)) continue;
+    seen.add(siblingDir);
     events.push(...deps.readEvents(siblingDir, 'adhoc'));
   }
   const friction = events.filter((e) => FRICTION_TYPES.has(e.type));

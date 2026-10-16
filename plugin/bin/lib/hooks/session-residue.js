@@ -40,12 +40,16 @@ function sameDir(a, b) {
 // Unfinished pipeline runs (interrupted or still-active) under
 // .claude-tweaks/pipelines/, newest first, capped at MAX_REPORTED. `exclude`
 // drops one dir (a caller's own in-flight run) from the result so a
-// wrap-up console never reports its own run as "residue".
+// wrap-up console never reports its own run as "residue". `-adhoc-standalone`
+// dirs are skipped (#2783): they hold only friction events, nothing to resume
+// or close, and EnterWorktree mints one per session — newest first, they
+// would fill MAX_REPORTED ahead of a genuinely interrupted run.
 function collectStaleRuns(cwd, { cache, exclude, pluginRoot } = {}) {
   const root = pluginRoot || '${CLAUDE_PLUGIN_ROOT}';
   const stale = [];
   for (const entry of ctxLib.iterRunDirsWithState(cwd)) {
     if (sameDir(entry.dir, exclude)) continue;
+    if (ctxLib.isAdHocRunDir(entry.dir)) continue;
     stale.push(entry);
     if (stale.length >= MAX_REPORTED) break;
   }

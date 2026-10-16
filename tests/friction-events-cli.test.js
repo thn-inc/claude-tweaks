@@ -11,13 +11,15 @@ const assert = require('node:assert/strict');
 const { run } = require('../plugin/bin/friction-events');
 
 function fakeDeps(overrides = {}) {
-  const calls = { findRunsByWorktreePath: [], stdout: [], stderr: [] };
+  const calls = { findRunsByWorktreePath: [], findAdHocRunsBySessionId: [], stdout: [], stderr: [] };
   return {
     calls,
     isDirectory: () => true,
     cwd: () => '/wt/current',
     readEvents: (runDir, source) => (runDir === '/run/primary' ? [{ type: 'gate-denial', ts: 't1', _tag: 'primary-fixture' }] : []),
     findRunsByWorktreePath: (cwd, target, excludeDir) => { calls.findRunsByWorktreePath.push({ cwd, target, excludeDir }); return []; },
+    sessionId: () => null,
+    findAdHocRunsBySessionId: (cwd, sessionId, excludeDir) => { calls.findAdHocRunsBySessionId.push({ cwd, sessionId, excludeDir }); return []; },
     stdout: (s) => calls.stdout.push(s),
     stderr: (s) => calls.stderr.push(s),
     ...overrides,
@@ -279,4 +281,47 @@ test('#2016: a run dir whose events.jsonl holds only commit rows prints []', () 
   const code = run(['--run', dir], deps);
   assert.equal(code, 0);
   assert.deepEqual(JSON.parse(deps.calls.stdout[0]), []);
+});
+
+// --- #2783: union ad-hoc dirs owned by the current session -----------------
+
+test('--session unions this session\'s ad-hoc dirs even when the worktree path no longer matches (#2783)', () => {
+  const deps = fakeDeps({
+    readEvents: (runDir, source) => (runDir === '/run/adhoc-1' ? [{ type: 'wd-guard-refusal', reason: 'harness-worktree-isolation', _source: source, _runDir: runDir }] : []),
+    findAdHocRunsBySessionId: () => [{ runDir: '/run/adhoc-1', state: { sessionId: 'S1' } }],
+  });
+  assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1'], deps), 0);
+  const out = JSON.parse(deps.calls.stdout.join(''));
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0]._source, 'adhoc');
+  assert.strictEqual(out[0].type, 'wd-guard-refusal');
+});
+
+test('session id defaults to deps.sessionId() (CLAUDE_CODE_SESSION_ID) and excludes the primary run', () => {
+  const deps = fakeDeps({ sessionId: () => 'S-env' });
+  run(['--run', '/run/primary'], deps);
+  assert.deepStrictEqual(deps.calls.findAdHocRunsBySessionId.map((c) => c.sessionId), ['S-env']);
+  assert.strictEqual(deps.calls.findAdHocRunsBySessionId[0].excludeDir, '/run/primary');
+});
+
+test('no session id at all: the session lookup is not attempted', () => {
+  const deps = fakeDeps();
+  run(['--run', '/run/primary'], deps);
+  assert.deepStrictEqual(deps.calls.findAdHocRunsBySessionId, []);
+});
+
+test('an ad-hoc dir found by BOTH the worktree and the session lookup is read once', () => {
+  let reads = 0;
+  const deps = fakeDeps({
+    readEvents: (runDir, source) => {
+      if (runDir !== '/run/adhoc-1') return [];
+      reads += 1;
+      return [{ type: 'gate-denial', _source: source, _runDir: runDir }];
+    },
+    findRunsByWorktreePath: () => [{ runDir: '/run/adhoc-1' }],
+    findAdHocRunsBySessionId: () => [{ runDir: '/run/adhoc-1' }],
+  });
+  run(['--run', '/run/primary', '--session', 'S1'], deps);
+  assert.strictEqual(reads, 1);
+  assert.strictEqual(JSON.parse(deps.calls.stdout.join('')).length, 1);
 });

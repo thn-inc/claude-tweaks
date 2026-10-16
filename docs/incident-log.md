@@ -592,6 +592,8 @@ The generalizable rule is about which operations may act on a guess. A read that
 
 One thing deliberately not done: ownership is only stamped by `record-worktree`, so a run that never provisions a worktree stays unowned and its events still resolve via the guess. Claiming such a run for whichever session touches it first was considered and rejected — the first hook event is usually but not reliably the owner's, and a wrong claim would be the same latch with an extra step. Unowned runs are written to, and tagged `attribution: "fallback"` so a contaminated log stays filterable after the fact.
 
+**Recurrence (record #2783, 2026-10-16).** The guess came back as an ownership test rather than a status write. `stampAdHocRunDir` skipped minting whenever `ctx.ownedRun` held a dir. That included `resolveRun`'s `fallback` guess, which is routinely a sibling session's run. So a manually entered worktree never got its own `-adhoc-standalone` dir, and its guard denials were logged into the sibling's run. `/wrap-up`'s Friction lens then reported the session clean. The fix (PR #3255) has the mint gate and every pre-tool-use denial path count only a trusted owned run (`isTrustedOwnedRun`, `resolveDenialRunDir`). The rule's question generalizes past status writes: a guess should not decide where a write lands, or whether a write happens at all.
+
 ## IL-97 — A migration moved every reader of a key and left the writer behind, so the producer kept feeding a file nobody reads
 
 v6.48.0 made `.claude-tweaks/policy.yml` the only config home. Five executable greps and roughly twenty prose sites moved from CLAUDE.md to `policy.yml`, each in a task whose own review passed. `/claude-tweaks:init`'s bootstrap Step 17b — which *writes* `work-links`, having probed the org's GitHub Issue capabilities — was never touched. It kept writing the probe result "beside the flag" in CLAUDE.md.
@@ -1779,3 +1781,34 @@ rather than by design.
 **Removal condition:** retire this entry and its `docs/donts.md` rule once
 `/claude-tweaks:capture` itself searches open PRs for title/topic overlap before filing — tracked
 as #3191, filed from this same record's wrap-up.
+
+## IL-164 — Making one run-dir kind ubiquitous broke every consumer that assumed it was rare
+
+Record #2783 (2026-10-16) fixed ad-hoc friction logging: `stampAdHocRunDir` had treated
+`resolveRun`'s `fallback` guess as ownership, so a manually entered worktree never got its
+`{ts}-adhoc-standalone` run dir. The fix (PR #3255) was correct, and it changed one thing nobody
+had scoped: an ad-hoc dir went from rare (minted only when no run resolved at all) to minted on
+nearly every session's first `EnterWorktree`, every `/flow` run included.
+
+Every consumer of `context.js`'s run-dir scans that read "a non-terminal dir under
+`.claude-tweaks/pipelines/`" as "a pipeline run" then misbehaved. `checkTeardownGate` denied the
+session's own `ExitWorktree(remove)`. `collectStaleRuns` let ad-hoc dirs crowd real runs out of the
+stale-run banner. `resolveRun`'s fallback arms, `close-run`'s implicit `--run` and
+`reap-merged.js`'s reap trail could all land on an ad-hoc dir. `hasDistinctOwnedRun` downgraded the
+`[IL-131]` record-worktree deny to a warn. None of these consumers had a kind discriminator: the
+`-adhoc-standalone` name suffix was the only one, and nothing checked it, because ad-hoc dirs had
+been rare enough not to matter.
+
+Every per-task review passed. The whole-branch review caught the teardown-gate denial as a
+Critical. Cost: two further fix waves (the second for `hasDistinctOwnedRun`, which the first
+wave's sweep had missed), plus a scoped re-review — all in PR #3255. Each consumer now skips ad-hoc
+dirs via `isAdHocRunDir`.
+
+This is `[IL-75]`'s shape, with one difference. There, widening a value's range activated
+invariants recorded in greppable comments and cache keys. Here, raising how often a kind occurs
+activated an invariant recorded nowhere. Grepping for the invariant finds nothing, so the move is
+to enumerate the scan's callers.
+
+**Removal condition:** retire this entry's `docs/donts.md` rule once the run-dir scans filter on an
+explicit run kind recorded in `run-state.json` by default, rather than on a name suffix each caller
+must remember to check.

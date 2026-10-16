@@ -340,3 +340,30 @@ test('--baseline and --baseline-cmd are rejected with --stamp-status and --chang
 test('USAGE names --baseline and --baseline-cmd (#3043)', () => {
   for (const flag of ['--baseline', '--baseline-cmd']) assert.ok(USAGE.includes(flag), flag);
 });
+
+// #2806 review: splitting parseArgs per mode must not change which UsageError
+// wins when argv carries more than one error — the CLI prints that message,
+// so the pre-split precedence is part of its behavior. Exact messages pinned.
+const throwsExactly = (argv, message) => assert.throws(
+  () => parseArgs(argv), (e) => e instanceof UsageError && e.message === message, argv.join(' '));
+
+test('#2806: --stamp-status with --changed-files reports a more specific conflict before "separate modes"', () => {
+  throwsExactly(['--stamp-status', '--changed-files', '--cmd', 'foo=x'], '--stamp-status takes no --cmd');
+  throwsExactly(['--stamp-status', '--changed-files', '--scope', 's.json'], '--changed-files takes no --scope');
+  throwsExactly(['--stamp-status', '--changed-files', '--git-dir', '/g'], '--changed-files takes no --git-dir');
+  throwsExactly(['--stamp-status', '--changed-files', '--baseline', 'b'],
+    '--baseline/--baseline-cmd apply to a check run — not to --stamp-status or --changed-files');
+  throwsExactly(['--stamp-status', '--changed-files'], '--changed-files and --stamp-status are separate modes');
+});
+
+test('#2806: a duplicate --cmd-env/--cmd-timeout value wins over a read-only mode\'s "takes no --cmd"', () => {
+  throwsExactly(['--stamp-status', '--cmd', 'foo=bar', '--cmd-env', 'foo=KEY=v1', '--cmd-env', 'foo=KEY=v2'],
+    'duplicate --cmd-env variable for foo: KEY');
+  throwsExactly(['--changed-files', '--cmd', 'foo=bar', '--cmd-timeout', 'foo=1', '--cmd-timeout', 'foo=2'],
+    'duplicate --cmd-timeout for foo');
+});
+
+test('#2806: in a check run, a duplicate --cmd-timeout wins over an undeclared --cmd-timeout', () => {
+  throwsExactly(['--cmd', 'foo=x', '--cmd-timeout', 'foo=100', '--cmd-timeout', 'foo=200', '--cmd-timeout', 'baz=300'],
+    'duplicate --cmd-timeout for foo');
+});

@@ -105,6 +105,18 @@ one file now rest on inference, and the throwaway-hook recipe above settles both
 capture session: run it the next time `subagent-stop.js` is opened, with one scenario per branch
 (a real dispatched subagent, and a dispatcher ending its turn on an async wait).
 
+**A harness-authored text field captures one wording on one tool (#2783).**
+`plugin/bin/lib/hooks/post-tool-use-failure.js` rests on the same recipe. A headless `claude -p -w`
+probe with scratch hooks showed that Claude Code's own worktree-isolation refusal of a Bash call
+fires `PreToolUse` before and `PostToolUseFailure` after, with `error` holding the full refusal
+text; the module's header comment records the result and its measurement date. When the captured
+value is prose rather than a structured field, two limits follow. The match pattern
+(`HARNESS_ISOLATION_REFUSAL_RE`) fits only that one wording, so a harness rewording stops the
+logging with no error. And the wording differs by tool: the Write/Edit refusal reads "Edit the
+worktree copy…", not "Refusing to run it", and whether it fires `PostToolUseFailure` at all is
+still unmeasured. Capture one scenario per tool the pattern is meant to match, and keep the
+measurement date beside the pattern.
+
 ## A fixture is a claim, not ground truth
 
 The same gap one level over: a fixture's literal values are an assertion about the real shape,
