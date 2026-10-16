@@ -5,6 +5,24 @@
   "permissions": {
     "allow": [
       "Read(node_modules/**)"
+    ],
+    "deny": [
+      "Bash(npm publish *)",
+      "Bash(npm login *)",
+      "Bash(npm adduser *)",
+      "Bash(npm config set registry *)",
+      "Bash(yarn publish *)",
+      "Bash(pnpm publish *)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/id_rsa*)",
+      "Read(**/*.pem)",
+      "Read(**/.netrc)",
+      "Read(~/.netrc)",
+      "Read(**/.aws/**)",
+      "Read(~/.aws/**)",
+      "Read(**/.ssh/**)",
+      "Read(~/.ssh/**)"
     ]
   },
   "enabledPlugins": {
