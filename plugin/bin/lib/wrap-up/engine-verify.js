@@ -27,7 +27,7 @@ const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve');
 const { fetchNativeParent } = require('../issues/native-dependencies');
 const { fetchLinkedPRs } = require('../issues/linked-prs');
-const { readRunStateWithParent } = require('../hooks/context');
+const { readRunStateWithParent, readRunState } = require('../hooks/context');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
@@ -345,9 +345,17 @@ registerCheck('worktree-removed', ({ runDir, expectations, deps, cwd }) => {
   // #3023: `git worktree prune` drops the registration but can leave the
   // directory behind, so an unlisted worktree is not proof of removal. The
   // exact path comes from run-state.json's `worktree` stamp (a multi-spec
-  // spec-{N}/ dir inherits the parent's), never guessed from the slug.
-  const { state } = readRunStateWithParent(runDir);
-  const recorded = state && typeof state.worktree === 'string' && state.worktree ? state.worktree : null;
+  // spec-{N}/ dir inherits the parent's), never guessed from the slug. A
+  // closed run has `worktree: null`, so fall back to `worktreeAtClose` --
+  // own first, then the parent's (readRunStateWithParent fills only
+  // `worktree` from the parent).
+  const { state, parentRunDir } = readRunStateWithParent(runDir);
+  const usable = (v) => (typeof v === 'string' && v ? v : null);
+  let recorded = state ? usable(state.worktree) || usable(state.worktreeAtClose) : null;
+  if (!recorded && parentRunDir) {
+    const parent = readRunState(parentRunDir);
+    recorded = parent && typeof parent === 'object' ? usable(parent.worktreeAtClose) : null;
+  }
   if (recorded && fs.existsSync(recorded)) {
     return { result: 'fail', detail: `worktree unlisted but directory still present: ${recorded}` };
   }
