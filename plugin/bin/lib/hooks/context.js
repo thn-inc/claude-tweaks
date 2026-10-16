@@ -596,6 +596,14 @@ function writeRunState(runDir, patch) {
   }
 }
 
+// #2783/#2813: resolveRun's 'fallback' arm is a GUESS — the newest unowned,
+// worktree-compatible run, routinely a sibling session's *-standalone dir in a
+// busy checkout. It is never this session's own run, so no write path that
+// stamps or logs friction may treat it as owned.
+function isTrustedOwnedRun(ownedRun) {
+  return !!(ownedRun && ownedRun.dir && ownedRun.attribution !== 'fallback');
+}
+
 // Ad-hoc run-dir stamping for a PreToolUse gate denial with no owned run dir
 // yet (#2351). post-tool-use.js's own stampAdHocRunDir (the #500/#1333
 // mechanism) fires only on an EnterWorktree call or a session's cwd resolving
@@ -618,7 +626,7 @@ function writeRunState(runDir, patch) {
 // included, rather than excluding it — the narrower trigger above is what
 // makes that safe.
 function stampAdHocRunDirForDenial(ctx) {
-  if (ctx.ownedRun && ctx.ownedRun.dir) return ctx.ownedRun.dir;
+  if (isTrustedOwnedRun(ctx.ownedRun)) return ctx.ownedRun.dir;
   const sessionId = ctx.input && ctx.input.session_id;
   if (typeof sessionId !== 'string' || !sessionId) return null;
   const cwd = ctx.cwd;
@@ -644,6 +652,19 @@ function stampAdHocRunDirForDenial(ctx) {
     if (!written) { rollbackMint(result.path); return null; }
     return result.path;
   } catch { return null; }
+}
+
+// The one resolver every pre-tool-use denial site uses (#2783): trusted owned
+// run first; else mint a session-owned ad-hoc dir; only when minting is
+// impossible (cwd not a listed worktree, no session id) fall back to the guess,
+// keeping its 'fallback' attribution so appendEvent stamps it as a guess.
+// A fresh mint carries no attribution — it is this session's own run.
+function resolveDenialRunDir(ctx) {
+  const ownedRun = (ctx && ctx.ownedRun) || {};
+  if (isTrustedOwnedRun(ownedRun)) return { dir: ownedRun.dir, attribution: ownedRun.attribution };
+  const stamped = stampAdHocRunDirForDenial(ctx);
+  if (stamped) return { dir: stamped, attribution: undefined };
+  return { dir: ownedRun.dir || null, attribution: ownedRun.attribution };
 }
 
 // #1737: the raw read-and-parse both events.jsonl consumers in this codebase
@@ -707,5 +728,5 @@ function appendEvent(runDir, type, data, attribution) {
 module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
   readRunState, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, RUN_ID_RE, findNonCanonicalRunDirs,
-  rollbackMint, isStaleClaim, stampAdHocRunDirForDenial,
+  rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, isTrustedOwnedRun, resolveDenialRunDir,
 };
