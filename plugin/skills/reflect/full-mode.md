@@ -109,10 +109,22 @@ finds that ad-hoc run dir back by its recorded `worktree` field (`bin/lib/hooks/
 `findRunsByWorktreePath` — the plural sibling of the teardown gate's `findRunByWorktreePath`, since
 a session can leave behind more than one such stamp before it finally reaches wrap-up) and merges
 its events into the output alongside this run's own. A genuinely frictionless ad-hoc session still
-returns `[]` — nothing is manufactured. A formal `/claude-tweaks:build`/`/claude-tweaks:flow` run is
-unaffected: its own `PIPELINE_RUN_DIR` is set (or `record-worktree` stamps ownership) before either
-trigger fires, so `stampAdHocRunDir` sees an already-owned run and never mints a second, competing
-one.
+returns `[]` — nothing is manufactured. "Owns no run dir" excludes `resolveRun`'s `fallback` guess —
+the newest unowned run, routinely a sibling session's — which every friction write path treats as
+not owned (#2783; before that fix the guess silently suppressed the mint and absorbed the session's
+events). A formal `/claude-tweaks:build`/`/claude-tweaks:flow` run is unaffected: once
+`record-worktree` stamps its own run dir for this session, `resolveRun` prefers that dir over any
+ad-hoc dir of the same session regardless of name order. The harness's own worktree-isolation Bash
+guard ("This session is isolated in the worktree … Refusing to run it") is captured too: it reaches
+no `PreToolUse`/`PostToolUse` consumer, so `bin/lib/hooks/post-tool-use-failure.js` reads Claude
+Code's `PostToolUseFailure` event and logs `wd-guard-refusal` (`reason: harness-worktree-isolation`)
+when the error carries that refusal text. Because the ordinary ad-hoc order is `ExitWorktree remove`
+before wrap-up — after which the recorded worktree path matches nothing — `friction-events.js` also
+unions every ad-hoc dir owned by the current session id (`--session`, default
+`CLAUDE_CODE_SESSION_ID`). **Known limitation:** a session whose id changes between the friction and
+the wrap-up (a resumed or account-switched session that receives a new id) finds the earlier dir
+only by worktree path, i.e. only when wrap-up runs inside that same still-live worktree; otherwise
+those events stay in the earlier session's ad-hoc dir, unread.
 
 **Main-checkout denial coverage (#2351, confirmed still current by #2543).** The fallback above
 fires only on an `EnterWorktree` call or `ctx.cwd` resolving to a worktree distinct from the main
