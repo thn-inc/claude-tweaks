@@ -226,6 +226,89 @@ test('#2350: readEvents drops a lenient-variant contract-violation event but kee
   assert.equal(events[0].firstLine, 'The call site is compatible.');
 });
 
+// --- pre-claim window exclusion (#2989) -------------------------------------
+//
+// A run directory can be mkdir-only minted well before the pipeline that
+// owns it ever claims it. These tests reproduce that window — a canonical
+// `{ISO-timestamp}-{slug}` run-id directory name plus a decisions.md whose
+// first entry logs the real claim time — and assert readEvents excludes any
+// events.jsonl line timestamped earlier than that claim.
+
+test('#2989: readEvents excludes an event timestamped before the run dir\'s first decisions.md entry', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { readEvents } = require('../plugin/bin/friction-events');
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  // Minted at 12:00:00Z; claimed (decisions.md's first entry) at 12:02:00Z.
+  const dir = path.join(parent, '2026-01-01T120000-record-999');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(
+    path.join(dir, 'events.jsonl'),
+    [
+      '{"type":"ask-user-question","ts":"2026-01-01T12:01:00.000Z"}',
+      '{"type":"ask-user-question","ts":"2026-01-01T12:03:00.000Z"}',
+    ].join('\n') + '\n',
+  );
+  fs.writeFileSync(
+    path.join(dir, 'decisions.md'),
+    '## /flow\n- AUTO 12:02:00 — Step 2.8: claimed #999. Reversibility: high.\n',
+  );
+  const events = readEvents(dir, 'primary');
+  assert.equal(events.length, 1, 'only the post-claim event should survive');
+  assert.equal(events[0].ts, '2026-01-01T12:03:00.000Z');
+});
+
+test('#2989: readEvents applies no pre-claim filtering when the run dir has no decisions.md yet', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { readEvents } = require('../plugin/bin/friction-events');
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  const dir = path.join(parent, '2026-01-01T120000-record-999');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"type":"ask-user-question","ts":"2026-01-01T12:00:30.000Z"}\n');
+  const events = readEvents(dir, 'primary');
+  assert.equal(events.length, 1, 'no decisions.md yet — fail open, no exclusion');
+});
+
+test('#2989: readEvents applies no pre-claim filtering on a non-canonical directory name', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { readEvents } = require('../plugin/bin/friction-events');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-noncanonical-'));
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"type":"ask-user-question","ts":"2026-01-01T12:00:30.000Z"}\n');
+  const events = readEvents(dir, 'primary');
+  assert.equal(events.length, 1, 'no run-id-shaped name — mint time can\'t be established, so no exclusion');
+});
+
+test('#2989: readEvents handles a mint/claim pair that straddles a UTC midnight rollover', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { readEvents } = require('../plugin/bin/friction-events');
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  // Minted at 23:59:00Z on 2026-01-01; decisions.md's first entry logs only
+  // HH:MM:SS (00:00:30), which is actually the next calendar day.
+  const dir = path.join(parent, '2026-01-01T235900-record-999');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(
+    path.join(dir, 'events.jsonl'),
+    [
+      '{"type":"ask-user-question","ts":"2026-01-01T23:59:30.000Z"}',
+      '{"type":"ask-user-question","ts":"2026-01-02T00:01:00.000Z"}',
+    ].join('\n') + '\n',
+  );
+  fs.writeFileSync(
+    path.join(dir, 'decisions.md'),
+    '## /flow\n- AUTO 00:00:30 — Step 2.8: claimed #999. Reversibility: high.\n',
+  );
+  const events = readEvents(dir, 'primary');
+  assert.equal(events.length, 1, 'the pre-claim event (23:59:30) must be excluded even across the midnight rollover');
+  assert.equal(events[0].ts, '2026-01-02T00:01:00.000Z');
+});
+
 // --- friction-lens vocabulary filter (#2016) --------------------------------
 //
 // readEvents itself stays general-purpose (the #1337/#1402 filters above are
