@@ -23,7 +23,7 @@
  {
   "tag": "claim",
   "record": 3101,
-  "title": "Repoint the citations #3097 left dangling and m…",
+  "title": "Repoint the citations 3097 left dangling and m…",
   "action": "Release stale claim (issue closed)",
   "command": "node release-claim.js 3101 --sweep --reason \"swept: issue closed\""
  },
@@ -37,7 +37,7 @@
  {
   "tag": "claim",
   "record": 3103,
-  "title": "Name all five removing exclusions in the #3084 …",
+  "title": "Name all five removing exclusions in the 3084 …",
   "action": "Release stale claim (issue closed)",
   "command": "node release-claim.js 3103 --sweep --reason \"swept: issue closed\""
  },
