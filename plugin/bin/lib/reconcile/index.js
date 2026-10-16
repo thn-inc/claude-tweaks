@@ -21,6 +21,7 @@ const { archiveBranches } = require('./archive-branches');
 const { pruneRemote } = require('./prune-remote');
 const { consoleExecuteDetect } = require('./console-execute');
 const { sharedFetch, sharedFetchAsync } = require('./shared-fetch');
+const { repairOriginHead } = require('./origin-head');
 const { createIssueListCache } = require('./issue-list-cache');
 const {
   readCache, writeCache, isFresh, SHARED_HEALTH_TTL_MS,
@@ -107,7 +108,29 @@ async function reconcile(opts = {}) {
   // its own `origin/${integration}` ref or issues `git fetch origin
   // {integration}` on the assumption that `integration` is bare — normalize
   // once here so the whole module keeps that contract.
-  const integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache));
+  let integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache));
+  // #3132: a fresh clone can lack refs/remotes/origin/HEAD even with a
+  // working `origin` — repair it once here (reconcile already does network
+  // work) and re-resolve, rather than adding a network call to the shared
+  // offline resolver. Recorded on the result only when attempted, so a
+  // checkout with no `origin` keeps today's exact no-remote result.
+  if (!integration) {
+    const repair = repairOriginHead(root);
+    if (repair) {
+      // Re-resolve after EVERY attempt, not only 'repaired' — a concurrent
+      // session may have written origin/HEAD while this one's set-head lost
+      // the ref lock (failed), or already repaired it before this pass
+      // skipped under recent-failure (skipped). The caller's resolver cache
+      // may already hold this root's null either way.
+      if (opts.cache && opts.cache.integrationBranch) opts.cache.integrationBranch.delete(root);
+      integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache));
+      if (integration) {
+        result.originHeadRepair = { ...repair, branch: integration };
+      } else {
+        result.originHeadRepair = repair.outcome === 'repaired' ? { outcome: 'unresolved' } : repair;
+      }
+    }
+  }
   if (!integration) {
     result.skipped.push({ check: 'all', reason: 'no-remote' });
     return result;

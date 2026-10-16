@@ -105,7 +105,24 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
         warn(`verify.js: could not remove the baseline scratch worktree ${dir} — remove it manually: git worktree remove --force ${dir}\n`);
       }
     },
+    // Every worktree `git` currently has registered against this repo, as
+    // absolute paths — read-only, so the caller can name a stale one without
+    // ever sweeping it itself (#3064).
+    listWorktrees: () => {
+      try {
+        return [...git(['worktree', 'list', '--porcelain']).matchAll(/^worktree (.+)$/gm)].map((m) => m[1]);
+      } catch { return []; }
+    },
   };
+}
+
+// A stale `ct-verify-base-*` scratch worktree left behind by an uncatchable
+// kill (Windows TerminateProcess; or, pre-#3064, any POSIX signal) is named
+// by the caller, never swept here — a sibling session's own live scratch
+// worktree looks identical to `git worktree list`, so removing it
+// automatically risks deleting work that is still in flight.
+function findStaleBaselineWorktrees(listWorktrees) {
+  return listWorktrees().filter((dir) => path.basename(path.dirname(dir)).startsWith('ct-verify-base-'));
 }
 
 // The same `/` → `+` log-name slug flaky.js's retryLogName uses, so two
@@ -222,9 +239,14 @@ function tryRealpath(dir) {
   try { return fs.realpathSync(dir); } catch { return dir; }
 }
 
+// Conventional process exit codes for an unhandled signal (128 + signal
+// number) — what every shell and CI runner already expects a killed process
+// to report (#3064).
+const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
+
 async function adjudicate({
   checks, baselineCmds, base, baseSha, cwd = null, logDir, runOne, spawnImpl, now = Date.now,
-  envOf = () => null, git, concurrency = 4, env = process.env,
+  envOf = () => null, timeoutOf = () => null, git, concurrency = 4, env = process.env,
 }) {
   const header = { base, baseSha };
   const ineligible = (reason) => ({ ...header, eligible: false, reason });
@@ -298,17 +320,37 @@ async function adjudicate({
   // sameness-at-base, instead of up to four per-file git spawns (#3070) — the
   // repo root above is passed straight through rather than resolved again.
   const baseInfo = git.batchBaseInfo(baseSha, work.map((w) => repoRel(w.file)), root);
-  process.stderr.write(`DEBUG baseInfo ${JSON.stringify([...baseInfo.entries()])} root=${root} sub=${sub}\n`);
   const atBase = work.map((w) => baseInfo.get(repoRel(w.file)).exists);
   const unchanged = work.map((w) => baseInfo.get(repoRel(w.file)).same);
   let scratch = null;
+  let signalHandlers = [];
+  // #3063: a single-file run bounds at the same timeout as the check's own
+  // full-suite --cmd-timeout (a generous bound — one file should finish
+  // well inside the budget the whole suite gets) when the caller declared
+  // one; absent a declared timeout this stays null, unchanged from before.
   const run = (w, kind, dir) => runOne({
-    name: `${w.check}-${kind}-${slug(w.file)}`, command: w.command, logDir, spawnImpl, now, cwd: dir, env: envOf(w.check),
+    name: `${w.check}-${kind}-${slug(w.file)}`, command: w.command, logDir, spawnImpl, now, cwd: dir,
+    env: envOf(w.check), timeout: timeoutOf(w.check),
   });
   const headResolvesDeps = Boolean(env.NODE_PATH) || hasNodeModulesUpward(headDir);
   try {
-    // Realpath'd like headDir (#3167): addWorktree may return a symlinked path.
-    if (atBase.some(Boolean)) scratch = tryRealpath(git.addWorktree(baseSha));
+    if (atBase.some(Boolean)) {
+      // While the scratch worktree exists, a Ctrl-C or kill removes it
+      // before exiting with the signal's conventional code (128 + signal
+      // number) — otherwise the process ends before the `finally` below
+      // ever runs, leaving the worktree and its checkout behind with no
+      // trace (#3064). Registered before addWorktree, not after: git
+      // registers the worktree before its synchronous call returns, and a
+      // signal landing in that gap would otherwise take the default action.
+      // With a listener installed, Node defers the signal until the sync call
+      // returns, so `scratch` is already set when the handler runs.
+      // Deregistered in `finally` either way, so a clean completion never
+      // leaks a listener into the next adjudicate() call in the same process.
+      signalHandlers = Object.entries(SIGNAL_EXIT_CODES).map(([sig, code]) => [sig, () => { if (scratch) git.removeWorktree(scratch); process.exit(code); }]);
+      for (const [sig, handler] of signalHandlers) process.on(sig, handler);
+      // Realpath'd like headDir (#3167): addWorktree may return a symlinked path.
+      scratch = tryRealpath(git.addWorktree(baseSha));
+    }
     const baseDir = scratch && (sub ? path.join(scratch, ...sub.split('/')) : scratch);
     const baseRuns = await pool(work, concurrency, (w, k) => (atBase[k] ? run(w, 'baseline', baseDir) : null));
     // A numeric non-zero exit alone proves nothing (a typo'd template, a scratch
@@ -425,8 +467,16 @@ async function adjudicate({
     const baselineIsolated = {};
     const attributable = [];
     const failingByCheck = {};
+    // #3063 AC2: a per-file base/isolated run that times out is no evidence
+    // either way — `exitCode: null` already routes it to `attributable`
+    // below via every classifier's own numeric-exitCode guard; this just
+    // remembers which attributable files got there because of a timeout,
+    // so the caller can name it on stdout instead of a bare file list.
+    const timedOut = [];
     work.forEach((w, k) => {
       (failingByCheck[w.check] = failingByCheck[w.check] || []).push(w.file);
+      if ((baseRuns[k] && baseRuns[k].timedOut) || (headRuns[k] && headRuns[k].timedOut)
+        || (retryRuns[k] && retryRuns[k].timedOut)) timedOut.push(w.file);
       if (headLoadFail[k]) { baselineFailing.push(w.file); return; }
       if (headRanClean[k]) { flakyPassed.push(w.file); flakyLogs[w.file] = headRuns[k].logPath; return; }
       if (headBaselineIso[k]) { baselineFailing.push(w.file); baselineIsolated[w.file] = headBaselineIso[k]; return; }
@@ -446,10 +496,12 @@ async function adjudicate({
       flakyLogs,
       baselineIsolated,
       attributable,
+      timedOut,
     };
   } finally {
+    for (const [sig, handler] of signalHandlers) process.removeListener(sig, handler);
     if (scratch) git.removeWorktree(scratch);
   }
 }
 
-module.exports = { adjudicate, realGit };
+module.exports = { adjudicate, realGit, findStaleBaselineWorktrees };
