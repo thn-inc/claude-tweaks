@@ -1,0 +1,7 @@
+# Open Items — Fast-lane pr-first merges never release their claim or archive their run (console-never-rendered)
+
+| # | Phase | Item | Status | Resolution |
+|---|-------|------|--------|------------|
+| 1 | build | Skip-reason fidelity when the by-number PR-state probe itself fails (gh-absent/network-failure): `release-merged.js`'s Phase 3 skip reporting falls back to the original join reason (e.g. `no-branch`) rather than the probe-failure reason, so an operator reading `skipped` output can't distinguish "no branch could be derived at all" from "a branch/PR-number was found but the probe transiently failed." No functional harm (the claim stays live and is retried in full on the next pass) — observability polish only. | deferred | — |
+| 2 | build | The by-number PR-state resolution block in `release-merged.js` (~line 410-436) is structurally a near-duplicate of the Phase 1.5 block immediately above it (same `runWithConcurrency`/`Map`/loop shape) — dictated by the plan's brief; noted for awareness if a third such fallback is ever added. | deferred | — |
+| 3 | build | By-number fallback's archive exception in `archive-merged.js` duplicates `decideArchiveCore`'s `hasStagedPending === false` logic inline rather than calling it directly — ruled acceptable (mirrors the file's pre-existing architecture, where the CLOSED/MERGED reason split there was already independent of `decideArchiveCore` before this task), consistent with "surgical changes only." | observation | Ruling: not a new DRY violation introduced by this diff; no fix needed. |
