@@ -177,6 +177,19 @@ When mechanizing a prose heuristic into a deterministic check:
    caller, guard the input at your call site rather than flipping the shared helper's default.
    Pin each invalid input with its own assertion: `NaN`, `undefined` and `null` all slip past
    a `>=` comparison.
+11. **A check that passes when its input is absent turns silent once an earlier transition clears
+   that input.** It cannot tell "this run never had one" from "a step before me erased it".
+   `plugin/bin/lib/wrap-up/engine-verify.js`'s `worktree-removed` (#3023) fails when the run's
+   recorded worktree path still exists on disk, because `git worktree list` dropping the entry
+   proves only that the registration went, not the directory. Its first version read that path
+   from `run-state.json`'s `worktree`, which `closeRunState` nulls, and every sanctioned removal
+   path closes the run first, so in the real flow the disk check never fired. Every test passed
+   because each fixture hand-wrote a run state with `worktree` still set, a state `closeRunState`
+   never writes. Whole-branch review caught it by running the real `closeRunState` and then
+   `runVerify`. `a7790fbed` made the close keep the prior path as `worktreeAtClose` and added a
+   test that builds the state through the real `closeRunState`. When a terminal transition clears
+   a field your check reads, keep a copy at that transition, and produce the check's input in at
+   least one test by calling the real writer, never by hand-writing its JSON.
 
 ## When to use
 
