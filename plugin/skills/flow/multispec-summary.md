@@ -21,10 +21,10 @@ After all specs complete (or one fails), present a consolidated summary:
 ### Try it
 
 #### Spec {N}: {title}
-{one `#### Spec {N}` group per spec, in run order. That spec's Try it block (`_shared/try-it.md`) — the body of its session-scoped `try-it-{N}.md`, verbatim, minus its own heading line; when the file cannot be used, compose it per `_shared/try-it.md`'s Rules. A spec that did not complete reads `Not delivered — {outcome}` instead}
+{one `#### Spec {N}` group per spec, in run order. That spec's Try it block (`_shared/try-it.md`) — the body of its session-scoped `try-it-{N}.md`, verbatim, minus its own heading line and up to any appended `### Try it — end to end` section, which renders below instead; when the file cannot be used, compose it per `_shared/try-it.md`'s Rules. A spec that did not complete reads `Not delivered — {outcome}` instead}
 
 ### Try it — end to end
-{the contract's end-to-end variant, composed now across every completed spec, minus its own heading line. When fewer than two specs completed: `Only spec {N} completed — its Try it above is the end-to-end path.`}
+{the contract's end-to-end variant, composed now across every completed spec, minus its own heading line. When fewer than two specs completed: `Only spec {N} completed — its Try it above is the end-to-end path.` Then, for each spec whose file carries a parent gate's appended `### Try it — end to end` section (`wrap-up/verification-brief-parent-gate.md` — the parent's whole sub-issue set, a different scope from this bundle), that section's body under `#### Parent #{P}`}
 
 ### Timing
 

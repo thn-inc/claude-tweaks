@@ -33,7 +33,7 @@ Observation plan` / `### Try it`):
   evidence, which is worse than no section at all. This is the same omission rule that already
   applied under the pre-schema brief format (what was then called "See it yourself"), restated
   here for the Observation plan schema.
-- **Try it** — compose the block from recall per `_shared/try-it.md` (its Sources and Rules; the Entry point from the Observation plan just composed).
+- **Try it** — compose the block from recall per `_shared/try-it.md` (its Sources and Rules; the Entry point from the Observation plan just composed). When the omission rule above dropped that plan, take the Entry point from what recall says shipped; when recall cannot name one there either, omit the Try it block by the same rule — an invented entry point is the same unconfident guess — and say so in one plain line where the block would render.
 
 This path has no fetch step — there is no comment or record body to read from. A fresh `/claude-tweaks:demo`
 session with no memory of any unrecorded work naturally finds nothing here; that's expected, not
@@ -203,7 +203,8 @@ has no PR and skips it.
    closing PR from the issue side — `gh issue view {n} --json closedByPullRequestsReferences`, the
    native field `tidy/issue-claims-backstops.md`'s parked-restoration backstop already reads. It
    lists only PRs whose body carries a closing keyword; empty → nothing to read. More than one →
-   use the one step 2 reports `"state": "MERGED"`.
+   use the one step 2 reports `"state": "MERGED"`; several merged → the last in the list; none
+   merged → nothing to read, since no unmerged PR delivered the record.
 2. **Read its comments by marker** — `_shared/pr-run-comments.md`'s Find step (its `{host}/{owner}/{repo}`
    resolution, `gh pr view {pr-number} --repo {host}/{owner}/{repo} --json state,comments`, first-line
    `startswith` marker test — the same PR read `bin/lib/wrap-up/engine-verify.js`'s
@@ -214,9 +215,11 @@ has no PR and skips it.
    - **Brief** (pointer case only) — the `<!-- run-comment: brief -->` comment that also carries
      `### Confirmed`, `engine-verify.js`'s own test.
 
-   Drop the marker line and use the rest verbatim. Two comments of one kind → take the last: the
-   MCP transport cannot edit, so its newer post is the current one (`_shared/pr-run-comments.md`'s
-   **MCP transport**).
+   Two comments of one kind → take the one whose second line reads `Supersedes {url}` naming the
+   other: the MCP transport cannot edit, so its newer post is the current one
+   (`_shared/pr-run-comments.md`'s **MCP transport**). With no such line, the pair is the Find
+   step's race case — take the **first**, as that step does. Drop the marker line, and a
+   `Supersedes …` line after it, and use the rest verbatim.
 3. **Fail open, visibly.** No PR, or no matching comment, returns nothing and the caller's own
    fallback runs. A `gh` failure in step 1 or 2 does the same and also states so in one plain line
    above the verdict, naming which lookup failed — never a silent omission.

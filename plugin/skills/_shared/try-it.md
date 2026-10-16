@@ -70,16 +70,12 @@ own design summary for the path that joins them.
 
 ## Where it appears
 
-A summary of `wrap-up/verification-brief.md`'s Routing and **Posting it alone** — that file
-decides where the block lands; this table only reports it.
-
-| Surface | When | Placement |
-|---|---|---|
-| Verification Brief | a record with no resolvable parent clears the oversight floor — or a parent-linked sub-issue whose parent-gate `gh` call failed open to Steps 1-4 (`verification-brief-parent-gate.md`), which then embeds it in its own brief | its `### Try it` section, after `### What shipped` |
-| `try-it` PR run comment (`_shared/pr-run-comments.md`) | the run has a PR and no brief on it carries the block — a below-floor record, or any parent-linked sub-issue | the whole comment body |
-| Parent Verification Brief | a decomposition parent's gate opens | the end-to-end variant, as its `### Try it — end to end` section |
-| Pipeline Summary | every successful `/claude-tweaks:flow` run | `### Try it` per spec, plus the end-to-end variant for a bundle |
-| `/claude-tweaks:demo` | every item it walks | rendered first in its Step 2 |
+`wrap-up/verification-brief.md`'s Routing and **Posting it alone** decide where the block lands —
+in the record's Verification Brief, or alone as a `try-it` PR run comment
+(`_shared/pr-run-comments.md`) — and `verification-brief-parent-gate.md` decides where the
+end-to-end variant lands. Stated there once, not restated here. Every successful
+`/claude-tweaks:flow` run's Pipeline Summary renders the block (`flow/summary-template.md`,
+`flow/multispec-summary.md`), and `/claude-tweaks:demo` renders it first (its Step 2).
 
 The oversight floor (`bin/lib/issues/oversight-floor.js`) never gates the block — it gates only the
 `demo:pending` label and the sign-off ceremony.

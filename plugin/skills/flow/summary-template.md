@@ -28,7 +28,7 @@ On successful completion of all steps (`wrap-up` in the step list):
 
 ### Try it
 
-{spec {number}'s Try it block (`_shared/try-it.md`) — the body of the session-scoped `try-it-{number}.md`, verbatim, minus its own heading line}
+{spec {number}'s Try it block (`_shared/try-it.md`) — the body of the session-scoped `try-it-{number}.md`, verbatim, minus its own heading line. When this run opened the record's parent gate, the file also carries the parent's appended `### Try it — end to end` section (`wrap-up/verification-brief-parent-gate.md`): it renders after this block as its own section, heading kept}
 
 ### Timing
 

@@ -50,8 +50,8 @@ eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" TRY_IT=try-it-{N
 ```
 
 Write the composed block to `"$TRY_IT"`. Shell variables do not survive between calls, so any
-later step that uses `$TRY_IT` — the posting fence below, and the parent gate's append in
-`verification-brief-parent-gate.md` — re-runs that resolve line first. Where it lands is the branch's decision: a record with no
+later step that uses `$TRY_IT` — the posting fence below, the parent gate's append in
+`verification-brief-parent-gate.md`, and Step 4's template read — re-runs that resolve line first. Where it lands is the branch's decision: a record with no
 resolvable parent that clears the floor embeds it in its brief (Step 4's template); every other
 record posts it alone, below.
 
@@ -286,7 +286,7 @@ checklist; a human returning days later needs to remember *why*, not just *what 
 ### What shipped
 {one-paragraph summary from the record body + diff}
 
-{the Try it block composed in **Try it block** above — read the file at the path `$TRY_IT` names and insert its content verbatim, its own `### Try it` heading included}
+{the Try it block composed in **Try it block** above — re-run the **Try it block** resolve line, read the file at the path `$TRY_IT` names, and insert its content verbatim, its own `### Try it` heading included}
 
 ### Confirmed
 {app-route/rendered-page, walk completed:}

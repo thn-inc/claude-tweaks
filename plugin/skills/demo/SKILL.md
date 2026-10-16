@@ -103,7 +103,8 @@ parent brief, whose walkthrough lives in its `### Try it — end to end` section
 `wrap-up/verification-brief.md`'s Parent-Gate Procedure, or a session-recall entry whose recall
 yielded no confident path list (Step 1's omission rule) — skips Prepare/Validate/Show entirely and
 goes straight to the Verdict question below: the human judges from the Try it block rendered
-first and the brief's own `### Confirmed` content.
+first (or, when recall could not name an entry point, the one line saying it was omitted —
+`entry-paths.md`'s session-recall Try it bullet) and the brief's own `### Confirmed` content.
 
 ### The design contract this was built against
 

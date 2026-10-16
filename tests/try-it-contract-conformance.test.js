@@ -63,7 +63,12 @@ function firstFence(doc) {
 // The text from one marker up to (not including) a later one, or to the end
 // of the doc when no end marker is given.
 function between(doc, start, end) {
-  return doc.slice(doc.indexOf(start), end === undefined ? undefined : doc.indexOf(end));
+  const from = doc.indexOf(start);
+  assert.ok(from >= 0, `missing start marker ${start}`);
+  if (end === undefined) return doc.slice(from);
+  const to = doc.indexOf(end, from);
+  assert.ok(to >= 0, `missing end marker ${end} after ${start}`);
+  return doc.slice(from, to);
 }
 
 test('single-spec Pipeline Summary carries a mandatory Try it section before Timing', () => {
@@ -74,6 +79,7 @@ test('single-spec Pipeline Summary carries a mandatory Try it section before Tim
   assert.ok(tryIt < fence.indexOf('### Timing'), 'Try it renders before Timing');
   assert.ok(doc.includes('_shared/try-it.md'), 'cites the contract');
   assert.match(doc, /try-it-\{number\}\.md/);
+  assert.match(fence, /appended `### Try it — end to end` section[^}]*own section/, 'a parent gate\'s appended variant has its own slot');
   assert.match(doc, /never gates this section/);
   assert.match(doc, /never omit the section/);
   assert.doesNotMatch(doc, FIELD_LINE);
@@ -83,10 +89,11 @@ test('multi-spec summary carries one Try it per spec plus the end-to-end section
   const doc = read('flow/multispec-summary.md');
   const fence = firstFence(doc);
   const perSpec = fence.indexOf('### Try it\n');
-  const e2e = fence.indexOf('### Try it — end to end');
+  const e2e = fence.indexOf('\n### Try it — end to end\n');
   assert.ok(perSpec >= 0 && e2e > perSpec, 'per-spec Try it, then end to end');
   assert.ok(e2e < fence.indexOf('### Timing'), 'both render before Timing');
   assert.match(fence, /#### Spec \{N\}: \{title\}/);
+  assert.match(fence.slice(e2e), /#### Parent #\{P\}/, 'a parent gate\'s appended variant renders in the end-to-end section');
   assert.ok(doc.includes('_shared/try-it.md'), 'cites the contract');
   assert.doesNotMatch(doc, FIELD_LINE);
 });
@@ -203,8 +210,12 @@ test('demo Step 2 renders Try it before the design contract and before Prepare',
 
 test('demo entry paths compose a Try it block on both composer branches', () => {
   const doc = read('demo/entry-paths.md');
-  const hits = doc.split('_shared/try-it.md').length - 1;
-  assert.ok(hits >= 2, `expected session-recall and reconstruction to cite the contract, found ${hits}`);
+  const recall = between(doc, '## No arguments: session-recall', '## `#N` given: single-record lookup');
+  const recallTryIt = paragraphAt(recall, '- **Try it**').text;
+  assert.ok(recallTryIt.includes('_shared/try-it.md'), 'session-recall composes the block per the contract');
+  assert.match(recallTryIt, /omit the Try it block by the same rule/, 'no invented entry point when recall has none');
+  const recon = between(doc, '**Found**', '**Not found**');
+  assert.ok(between(recon, '- **Try it**').includes('_shared/try-it.md'), 'reconstruction composes the block per the contract');
   assert.doesNotMatch(doc, FIELD_LINE);
 });
 
@@ -217,6 +228,8 @@ test('demo #N lookup reads the walkthrough back from the PR before composing one
   assert.ok(lookup.includes('<!-- run-comment: brief -->'), 'names the brief marker');
   assert.match(lookup, /closedByPullRequestsReferences/, 'reuses the issue-side closing-PR field');
   assert.match(lookup, /`_shared\/pr-run-comments\.md`'s Find step/, 'reuses the find-by-marker read');
+  assert.match(lookup, /race case — take the \*\*first\*\*/, 'agrees with the Find step on an unexplained duplicate');
+  assert.match(lookup, /a\s+`Supersedes …` line after it/, 'drops the MCP supersede line with the marker');
   const recon = between(lookup, '**Found**', '**Not found**');
   const tryIt = between(recon, '- **Try it**');
   const prRead = tryIt.indexOf('PR run-comment');
