@@ -274,7 +274,9 @@ function resolveCreatedWorktreePath(ctx) {
 // dir at all). A session that genuinely owns one (`PIPELINE_RUN_DIR`, or an
 // earlier `record-worktree` stamp) is left alone. When a formal skill later
 // stamps its own run dir for this session, resolveRun's session arm prefers
-// it over this ad-hoc dir regardless of name order (#2783 — /flow mints its
+// it over this ad-hoc dir once that formal run is bound to the caller's own
+// worktree (classifyOwnership 'mine') — an older formal run whose binding is
+// merely unprovable never displaces the ad-hoc dir (#2783 — /flow mints its
 // dir before EnterWorktree, so the ad-hoc dir sorts newer). The ad-hoc dir is
 // left behind; the Friction Lens's read side (friction-events.js) finds it
 // again by `worktree` path or by owning session id.

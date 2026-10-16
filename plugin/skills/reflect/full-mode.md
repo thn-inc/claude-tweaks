@@ -115,7 +115,9 @@ the newest unowned run, routinely a sibling session's — which every friction w
 not owned (#2783; before that fix the guess silently suppressed the mint and absorbed the session's
 events). A formal `/claude-tweaks:build`/`/claude-tweaks:flow` run is unaffected: once
 `record-worktree` stamps its own run dir for this session, `resolveRun` prefers that dir over any
-ad-hoc dir of the same session regardless of name order. The harness's own worktree-isolation Bash
+ad-hoc dir of the same session only once that formal run is bound to the caller's own worktree
+(`classifyOwnership` `'mine'`) — an older formal run whose binding is merely unprovable never
+displaces the ad-hoc dir. The harness's own worktree-isolation Bash
 guard ("This session is isolated in the worktree … Refusing to run it") is captured too: it reaches
 no `PreToolUse`/`PostToolUse` consumer, so `bin/lib/hooks/post-tool-use-failure.js` reads Claude
 Code's `PostToolUseFailure` event and logs `wd-guard-refusal` (`reason: harness-worktree-isolation`)
