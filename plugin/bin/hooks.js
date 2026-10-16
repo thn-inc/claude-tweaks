@@ -48,7 +48,7 @@ const { closeRunState } = require('./lib/hooks/close-run-state');
 const { teardownRun } = require('./lib/hooks/teardown-run');
 const { deriveBranch, repoRootOf } = require('./lib/hooks/run-integrity');
 
-const EVENTS = ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', 'post-tool-use', 'subagent-stop'];
+const EVENTS = ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', 'post-tool-use', 'post-tool-use-failure', 'subagent-stop'];
 
 // The write-only, janitorial half of reconcile/index.js's ALL_CHECKS — run
 // by the `reconcile-background` subcommand below, off session-start.js's hot
@@ -70,6 +70,7 @@ const EVENT_MODULES = {
   'pre-compact': () => require('./lib/hooks/pre-compact'),
   'pre-tool-use': () => require('./lib/hooks/pre-tool-use'),
   'post-tool-use': () => require('./lib/hooks/post-tool-use'),
+  'post-tool-use-failure': () => require('./lib/hooks/post-tool-use-failure'),
   'subagent-stop': () => require('./lib/hooks/subagent-stop'),
 };
 
@@ -319,11 +320,14 @@ function resolveImplicitRunUnambiguous(cwd, env, callerIdentity) {
       }
     } catch { /* fall through */ }
   }
-  const boundHit = ctxLib.findRunByWorktreePath(cwd, cwd);
+  // #2783: `-adhoc-standalone` dirs are excluded from steps 2-4. One holds only
+  // friction events, never pipeline state these verbs act on, and EnterWorktree
+  // mints it after /flow's formal run, so it would win step 2's match.
+  const boundHit = ctxLib.findRunByWorktreePath(cwd, cwd, { skipAdHoc: true });
   if (boundHit && boundHit.state && boundHit.state.status !== 'clean') {
     return { runDir: boundHit.runDir, candidates: null };
   }
-  const all = ctxLib.listRunDirsWithState(cwd); // already newest-first, terminal runs excluded
+  const all = ctxLib.listRunDirsWithState(cwd).filter(({ dir }) => !ctxLib.isAdHocRunDir(dir)); // newest-first, terminal runs excluded
   if (all.length === 0) return { runDir: null, candidates: null };
   const annotated = all.map(({ dir, state }) => ({
     dir,
