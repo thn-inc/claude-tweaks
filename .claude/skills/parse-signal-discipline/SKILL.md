@@ -138,6 +138,13 @@ When mechanizing a prose heuristic into a deterministic check:
    quoting it counted as a pass and overrode a later `needs-human`. It now reads only
    `parseEntry` entries under the verdict steps, anchors the pass at both ends, and reads any
    other pass-shaped action as `unparsed`.
+   A fuzzy text match is the same leak with no anchor at all. `plugin/bin/lib/plan-audit/checks.js`'s
+   Check E (#3099) reads an acceptance-criterion clause as `covered` when the plan quotes its text.
+   Its first version was a bare substring `includes()`, so the one-word clause "Last." read as
+   covered by a test step about "the blast radius". Whole-branch review caught it, and `d9351cbee`
+   added `quoteMatchesWholeWord`: a clause under three words is never matched by its text, and a
+   longer one must match on a word boundary at both ends. Give a text-match recogniser a minimum
+   length and a boundary at each end, and pin a short input hidden inside a longer word.
 7. **A parsed list that feeds a pass verdict owes an independent count to reconcile against.** An
    extractor that returns N items cannot say it missed one more, so an undercount reads exactly
    like a complete list. That is the same silent false negative as a merged `null`, one level up.
