@@ -1295,3 +1295,136 @@ test('#2065: `git stash apply` and `git stash drop` from a linked worktree stay 
   assert.deepStrictEqual(pre.run({ input: bashInput('git stash apply', wt), runDir: null, runState: null, cwd: wt }), {});
   assert.deepStrictEqual(pre.run({ input: bashInput('git stash drop', wt), runDir: null, runState: null, cwd: wt }), {});
 });
+
+// #3225: checkDispatchConfigGate — a dispatched run (record-worktree
+// --dispatch) bound to a REAL linked worktree denies git writes there until
+// /claude-tweaks:flow Step 3 writes {runDir}/config.yml. Every fixture hands
+// the gate its run via ctx.ownedRun ONLY (runDir null or an unrelated
+// sibling): #3225's premise probe measured the session-agnostic ctx.runDir
+// resolving an unrelated sibling run from inside a bound worktree.
+const DISPATCH_SID = 'sess-3225';
+const DISPATCH_CAUSE = /`\/claude-tweaks:flow` Step 3 \(Manifesto\) has not written config\.yml/;
+function dispatchedRun(wt, { marked = true, config = false, status = 'active', sessionId = DISPATCH_SID, rawState } = {}) {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-10-16T190603-record-3225');
+  fs.mkdirSync(run, { recursive: true });
+  const state = { status, worktree: wt, sessionId, ...(marked ? { dispatched: true } : {}) };
+  fs.writeFileSync(path.join(run, 'run-state.json'), rawState !== undefined ? rawState : JSON.stringify(state));
+  if (config) fs.writeFileSync(path.join(run, 'config.yml'), 'mode: auto\n');
+  return run;
+}
+const dispatchInput = (cwd, command = 'git commit -m "Materialize #3225 spec"') => ({ ...bashInput(command, cwd), session_id: DISPATCH_SID });
+const dispatchCtx = (run, cwd, input, extra = {}) => ({
+  input, runDir: null, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd, ...extra,
+});
+const isDeny = (out) => Boolean(out && out.json && out.json.hookSpecificOutput
+  && out.json.hookSpecificOutput.permissionDecision === 'deny');
+
+test('#3225 dispatch config gate: dispatched run, no config.yml, git write in the bound worktree -> deny naming cause and remedy', () => {
+  const { wt } = mainAndWorktree();
+  const run = dispatchedRun(wt);
+  for (const command of ['git commit -m "Materialize #3225 spec"', 'git commit --amend --no-edit', `git -C "${wt}" push origin HEAD`]) {
+    const out = pre.run(dispatchCtx(run, wt, dispatchInput(wt, command)));
+    assert.ok(isDeny(out), `expected a deny for: ${command}`);
+    const reason = out.json.hookSpecificOutput.permissionDecisionReason;
+    assert.match(reason, DISPATCH_CAUSE);
+    assert.match(reason, /Skill tool/);
+    assert.match(reason, /retry this same command unchanged/);
+    assert.ok(reason.includes(path.join(run, 'config.yml')), 'reason names the missing config.yml path');
+  }
+});
+
+test('#3225 dispatch config gate: config.yml exists -> allow', () => {
+  const { wt } = mainAndWorktree();
+  const run = dispatchedRun(wt, { config: true });
+  assert.deepStrictEqual(pre.run(dispatchCtx(run, wt, dispatchInput(wt))), {});
+});
+
+test('#3225 dispatch config gate: run-state.json has no dispatched marker -> allow (standalone /build record-mode run)', () => {
+  const { wt } = mainAndWorktree();
+  const run = dispatchedRun(wt, { marked: false });
+  assert.deepStrictEqual(pre.run(dispatchCtx(run, wt, dispatchInput(wt))), {});
+});
+
+test('#3225 dispatch config gate: clean run -> allow', () => {
+  const { wt } = mainAndWorktree();
+  const run = dispatchedRun(wt, { status: 'clean' });
+  assert.deepStrictEqual(pre.run(dispatchCtx(run, wt, dispatchInput(wt))), {});
+});
+
+test('#3225 dispatch config gate: caller outside any linked worktree (main checkout) -> allow', () => {
+  const { main, wt } = mainAndWorktree();
+  const run = dispatchedRun(wt);
+  assert.deepStrictEqual(pre.run(dispatchCtx(run, main, dispatchInput(main))), {});
+});
+
+test('#3225 dispatch config gate: unreadable or malformed run-state.json -> fail open (no deny, no throw)', () => {
+  const { wt } = mainAndWorktree();
+  const malformed = dispatchedRun(wt, { rawState: '{"dispatched": true, not json' });
+  assert.deepStrictEqual(pre.run(dispatchCtx(malformed, wt, dispatchInput(wt))), {});
+  const unreadable = dispatchedRun(wt);
+  fs.rmSync(path.join(unreadable, 'run-state.json'));
+  fs.mkdirSync(path.join(unreadable, 'run-state.json')); // a directory: readFileSync throws EISDIR
+  assert.deepStrictEqual(pre.run(dispatchCtx(unreadable, wt, dispatchInput(wt))), {});
+});
+
+test('#3225 dispatch config gate: keys on ctx.ownedRun, not ctx.runDir — an unrelated sibling run in ctx.runDir does not disarm it', () => {
+  const { wt } = mainAndWorktree();
+  const run = dispatchedRun(wt);
+  const sibling = path.join(tmpProject(), '.claude-tweaks', 'pipelines', '2026-10-16T191151-record-3028');
+  fs.mkdirSync(sibling, { recursive: true });
+  fs.writeFileSync(path.join(sibling, 'decisions.md'), '');
+  const out = pre.run(dispatchCtx(run, wt, dispatchInput(wt), { runDir: sibling, runState: null }));
+  assert.ok(isDeny(out));
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, DISPATCH_CAUSE);
+});
+
+test('#3225 dispatch config gate: git write targeting an unrelated repo from inside the bound worktree -> allow', () => {
+  const { wt } = mainAndWorktree();
+  const other = gitRepoWithCommit();
+  const run = dispatchedRun(wt);
+  const out = pre.run(dispatchCtx(run, wt, dispatchInput(wt, `git -C "${other}" commit --allow-empty -m x`)));
+  assert.ok(!isDeny(out), 'a foreign-repo target is not this run\'s work');
+});
+
+test('#3225 dispatch config gate: caller in a different linked worktree than the binding -> allow (classifyOwnership foreign)', () => {
+  const { main, wt } = mainAndWorktree();
+  const otherWt = linkedWorktreeOf(main);
+  const run = dispatchedRun(wt);
+  assert.deepStrictEqual(pre.run(dispatchCtx(run, otherWt, dispatchInput(otherWt))), {});
+});
+
+test('#3225 dispatch config gate: non-write Bash (git status) and file tools are out of scope -> allow', () => {
+  const { wt } = mainAndWorktree();
+  const run = dispatchedRun(wt);
+  assert.deepStrictEqual(pre.run(dispatchCtx(run, wt, dispatchInput(wt, 'git status'))), {});
+  const edit = { tool_name: 'Edit', tool_input: { file_path: path.join(wt, 'x.js'), old_string: 'a', new_string: 'b' }, cwd: wt, session_id: DISPATCH_SID };
+  assert.ok(!isDeny(pre.run(dispatchCtx(run, wt, edit))));
+});
+
+test('#3225 ordering fixture: documented order (Step 3 writes config.yml, then Step 4 materialize commit) is never denied', () => {
+  const { wt } = mainAndWorktree();
+  const run = dispatchedRun(wt);
+  fs.writeFileSync(path.join(run, 'config.yml'), 'mode: auto\n'); // Step 3 Manifesto
+  const rel = path.join('.claude-tweaks', 'pipelines', '2026-10-16T190603-record-3225', 'work', '3225-spec.md');
+  fs.mkdirSync(path.dirname(path.join(wt, rel)), { recursive: true });
+  fs.writeFileSync(path.join(wt, rel), '---\nrecord: 3225\n---\nbody\n');
+  execFileSync('git', ['-C', wt, 'add', '-f', rel]);
+  const out = pre.run(dispatchCtx(run, wt, dispatchInput(wt))); // Step 4 materialize commit
+  assert.deepStrictEqual(out, {});
+  execFileSync('git', ['-C', wt, 'commit', '-q', '-m', 'Materialize #3225 spec']);
+});
+
+test('#3225 ordering fixture: out-of-order first call (#3064/#3066 shape — commit before config.yml) is denied, then the same command passes once Step 3 writes config.yml', () => {
+  const { wt } = mainAndWorktree();
+  const run = dispatchedRun(wt);
+  const input = dispatchInput(wt);
+  const denied = pre.run(dispatchCtx(run, wt, input));
+  assert.ok(isDeny(denied));
+  const reason = denied.json.hookSpecificOutput.permissionDecisionReason;
+  assert.match(reason, DISPATCH_CAUSE);
+  assert.match(reason, /Step 3/);
+  assert.match(reason, /retry this same command unchanged/);
+  fs.writeFileSync(path.join(run, 'config.yml'), 'mode: auto\n'); // the remedy
+  assert.deepStrictEqual(pre.run(dispatchCtx(run, wt, input)), {}, 'the identical, unchanged command now passes');
+});

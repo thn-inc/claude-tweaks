@@ -1933,6 +1933,69 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
 // run()'s header comment below — forwarded verbatim to
 // checkBookkeepingStampsGate as its own `deps` parameter. No other gate in
 // this pass currently takes an override.
+// #3225: dispatch config gate (block tier). /claude-tweaks:dispatch Step 5
+// binds the group's minted run dir to its worktree BEFORE call 1 with
+// `hooks.js record-worktree --run <dir> <wt> --dispatch`
+// (dispatch/sibling-session-check.md), stamping a permanent `dispatched: true`.
+// Until /claude-tweaks:flow Step 3's Manifesto writes {runDir}/config.yml,
+// every Bash git write (the same commandGitTargets classification
+// checkBookkeepingStampsGate uses: commit incl. --amend, push, mv, rm,
+// update-ref, apply — not merge/rebase) in that bound worktree is denied, so a
+// first call that bypassed /flow is stopped at its first commit instead of
+// after a full build. The #2837 post-hoc first-call artifact check
+// (dispatch/two-call-gate.md) stays the backstop for a call that hand-writes
+// config.yml.
+//
+// Resolution is ctx.ownedRun (resolveRun: session id AND recorded worktree
+// binding, #1098/#1099) plus classifyOwnership === 'mine' — NEVER ctx.runDir.
+// #3225's premise probe measured ctx.runDir (the session-agnostic newest
+// non-terminal run) resolving an unrelated sibling run from inside a bound
+// worktree, from both the dispatching session and its Task subagent.
+//
+// A deny needs positive evidence on every axis; anything unprovable is a
+// no-op (never-break-a-session): no owned run, an unreadable or malformed
+// run-state.json, no `dispatched: true` marker (every non-dispatched run,
+// including a standalone /build record-mode run that legitimately has no
+// config.yml), a `clean` run, a caller outside a linked worktree or an
+// indeterminate git answer, a binding that is not provably the caller's own
+// worktree, or no git-write target inside that worktree.
+function dispatchConfigDenyReason(configPath) {
+  return 'claude-tweaks: git write blocked — `/claude-tweaks:flow` Step 3 (Manifesto) has not written config.yml '
+    + `for this dispatched run (${configPath} is missing). This worktree is bound to a /claude-tweaks:dispatch run `
+    + '(run-state.json `dispatched: true`), so its first call must run /claude-tweaks:flow, whose Step 3 writes '
+    + 'config.yml before Step 4\'s materialize commit. Remedy: invoke /claude-tweaks:flow via the Skill tool and let '
+    + 'its Step 3 write config.yml (never hand-write config.yml or edit run-state.json), then retry this same command '
+    + 'unchanged — nothing about the commit itself needs to change.';
+}
+
+function checkDispatchConfigGate(ctx, commandGitTargets) {
+  const toolName = ctx.input && ctx.input.tool_name;
+  if (toolName !== 'Bash' || !Array.isArray(commandGitTargets) || commandGitTargets.length === 0) return {};
+  const owned = ctx.ownedRun || {};
+  if (typeof owned.dir !== 'string' || !owned.dir) return {};
+  const state = ctxLib.readRunState(owned.dir);
+  if (!state || typeof state !== 'object' || state.dispatched !== true) return {};
+  if (state.status === 'clean') return {};
+  const cwd = typeof ctx.cwd === 'string' ? ctx.cwd : '';
+  if (!cwd || !path.isAbsolute(cwd)) return {};
+  const { repoRoot: wtRoot, isLinkedWorktree, indeterminate } = wtDetect.repoInfo(cwd);
+  if (indeterminate || !wtRoot || !isLinkedWorktree) return {};
+  const sessionId = ctx.input && typeof ctx.input.session_id === 'string' ? ctx.input.session_id : null;
+  if (ctxLib.classifyOwnership({ sessionId, cwd }, state) !== 'mine') return {};
+  const bound = safeReal(wtRoot);
+  if (!bound) return {};
+  const hitsBound = commandGitTargets.some((t) => {
+    const top = t && t.dir ? toplevel(t.dir) : null;
+    return Boolean(top) && safeReal(top) === bound;
+  });
+  if (!hitsBound) return {};
+  const configPath = path.join(owned.dir, 'config.yml');
+  if (fs.existsSync(configPath)) return {};
+  const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
+  ctxLib.appendEvent(owned.dir, 'gate-denial', { tool: 'Bash', gate: 'dispatch-config', worktree: bound, ...testTag }, owned.attribution);
+  return denyResult(dispatchConfigDenyReason(configPath));
+}
+
 function runInner(ctx, indeterminateTargets, warnings, deps) {
   const teardown = checkTeardownGate(ctx, warnings);
   if (teardown.json) return teardown;
@@ -1956,6 +2019,11 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
 
   const psGate = checkPowershellOpaqueCommand(ctx);
   if (psGate.json) return psGate;
+
+  // #3225: before the stamps gate — config.yml is Step 3's write, which the
+  // documented order puts ahead of every stamp-bearing commit.
+  const dispatchConfig = checkDispatchConfigGate(ctx, commandGitTargets);
+  if (dispatchConfig.json) return dispatchConfig;
 
   const stamps = checkBookkeepingStampsGate(ctx, commandGitTargets, deps, warnings);
   if (stamps.json) return stamps;
@@ -2138,6 +2206,7 @@ module.exports = {
   teardownTargets,
   toplevel,
   checkBookkeepingStampsGate,
+  checkDispatchConfigGate,
   hasLoggedPrDegrade,
   // Exported for check-pr-bookkeeping.js's phase-boundary precondition check
   // (#2472) to reuse rather than reimplement — the same integration-model
