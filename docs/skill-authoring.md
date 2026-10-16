@@ -242,6 +242,15 @@ https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompti
 | Safeguard false positives | 5.1's safety classifiers produce fewer false positives than earlier launches, but specific phrasings (e.g. "does this compile?" vs. "are there bugs?") and base64 tool output still trigger them more than other phrasings. | A skill instructing an agent to phrase a security/bug-finding request should prefer "are there bugs/vulnerabilities" phrasing over "does this compile/pass" phrasing, and avoid routing base64-encoded tool output through a step that also asks the model to reason about it. |
 | Subagent and vision handling | 5.1 coding agents get lower time-to-completion when the lead agent keeps working while a dispatched subagent runs, rather than blocking on it; vision work benefits from crop/zoom tooling on dense images. | A skill dispatching Task-tool subagents for independent work should not require blocking-wait phrasing when the lead has other independent work to continue; a skill analyzing a screenshot/chart should offer a crop/zoom step rather than a single full-image read when detail matters. |
 
+**Claude Sonnet 5.5** (source: the Sonnet 5.5 migration guide) renames the no-upfront-thinking
+setting from `thinkingdisabled` to `between_tools`. claude-tweaks sets no thinking mode anywhere
+today — agent/routine frontmatter and `bin/resolve-profile.js`'s model profiles (`profiles.js`)
+carry only `model`/`effort`, never a thinking-mode key — so there is nothing to migrate (record
+#3058; build-time repo-wide `git grep -i -E 'thinking_?disabled|between_tools'` over `plugin/`,
+`docs/`, `tests/`, and `evals/` returned zero hits). Any future agent, routine template, or model
+profile that adds a thinking-mode setting while targeting Sonnet 5.5 should use `between_tools`,
+not the retired `thinkingdisabled` name.
+
 **Sample cross-check (2026-09-30, record #2644).** Read `plugin/skills/_shared/subagent-dispatch-core.md`
 (dispatch instructions to subagents), `plugin/skills/flow/SKILL.md` (multi-phase pipeline orchestrator),
 `plugin/skills/build/SKILL.md` (long-running autonomous build), and this file's own Parallel execution
