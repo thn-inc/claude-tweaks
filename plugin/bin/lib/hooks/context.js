@@ -353,6 +353,7 @@ function resolveRun(cwd, env, sessionId, opts = {}) {
     return { dir: null, attribution: null };
   }
   let unowned = null;
+  let ownAdHoc = null;
   for (const { dir, state } of iterRunDirsWithState(resolvedCwd)) {
     const owner = state && typeof state.sessionId === 'string' && state.sessionId ? state.sessionId : null;
     // #1099: session-id equality alone is not sufficient — a sibling agent of
@@ -364,12 +365,19 @@ function resolveRun(cwd, env, sessionId, opts = {}) {
     // preserve today's behavior and still return 'session' attribution, which
     // is what keeps single-session resolution byte-identical (#1099's Deliverables).
     if (owner === me && classifyOwnership({ sessionId: me, cwd: resolvedCwd }, state) !== 'foreign') {
-      return { dir, attribution: 'session' };
+      // #2783: an ad-hoc dir is a placeholder minted when no owned run existed
+      // yet. A formal run (/flow mints its dir BEFORE EnterWorktree, so the
+      // ad-hoc mint sorts newer) that this session later stamps via
+      // record-worktree must win regardless of name order.
+      if (!isAdHocRunDir(dir)) return { dir, attribution: 'session' };
+      if (!ownAdHoc) ownAdHoc = dir;
+      continue;
     }
     // Newest-first, so the first unowned, worktree-compatible run is the one
     // the old code returned unconditionally.
     if (!owner && !unowned && !isSkippableFallbackCandidate(resolvedCwd, me, dir, state, includeWorktreeForeign)) unowned = dir;
   }
+  if (ownAdHoc) return { dir: ownAdHoc, attribution: 'session' };
   return unowned ? { dir: unowned, attribution: 'fallback' } : { dir: null, attribution: null };
 }
 
@@ -604,6 +612,14 @@ function isTrustedOwnedRun(ownedRun) {
   return !!(ownedRun && ownedRun.dir && ownedRun.attribution !== 'fallback');
 }
 
+// `{ts}-adhoc-standalone` — the suffix run-dir-resolve.js mints for
+// `standalone: 'adhoc'` (post-tool-use.js's stampAdHocRunDir and
+// stampAdHocRunDirForDenial). Same test as reconcile/archive-merged.js's
+// isAdHocStandaloneMint's first clause.
+function isAdHocRunDir(dir) {
+  return typeof dir === 'string' && path.basename(dir).endsWith('-adhoc-standalone');
+}
+
 // Ad-hoc run-dir stamping for a PreToolUse gate denial with no owned run dir
 // yet (#2351). post-tool-use.js's own stampAdHocRunDir (the #500/#1333
 // mechanism) fires only on an EnterWorktree call or a session's cwd resolving
@@ -728,5 +744,5 @@ function appendEvent(runDir, type, data, attribution) {
 module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
   readRunState, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, RUN_ID_RE, findNonCanonicalRunDirs,
-  rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, isTrustedOwnedRun, resolveDenialRunDir,
+  rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, isTrustedOwnedRun, isAdHocRunDir, resolveDenialRunDir,
 };
