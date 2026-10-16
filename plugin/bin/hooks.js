@@ -374,7 +374,18 @@ function resolveRunArg(args, cwd, env, resolveOpts) {
   // process.cwd()) — every current caller happens to pass process.cwd() as
   // `cwd`, but the anchoring check below must honor the parameter it's
   // actually given, not assume the two are always the same value.
-  const resolved = candidate ? path.resolve(cwd, candidate) : null;
+  let resolved = candidate ? path.resolve(cwd, candidate) : null;
+  // #3025: a bare run-id basename (no path separator) — dispatch/SKILL.md's
+  // `$RUN_ID`, the SessionStart notice's `close-run --run <dir>` — names a
+  // run dir under the main checkout's .claude-tweaks/pipelines/, not a
+  // cwd-relative path. Resolve it there only when the cwd-relative reading is
+  // not a directory; every anchoring/shape/initialization check below still
+  // runs unchanged against the resolved path.
+  if (resolved && !isDirectory(resolved) && !/[\\/]/.test(candidate)) {
+    const bareRoot = wtDetect.mainCheckoutRoot(cwd);
+    const underPipelines = bareRoot ? path.join(bareRoot, '.claude-tweaks', 'pipelines', candidate) : null;
+    if (underPipelines && isDirectory(underPipelines)) resolved = underPipelines;
+  }
   const isRealDir = resolved ? isDirectory(resolved) : false;
   if (isRealDir) {
     // #790/[IL-127]: a real directory is not enough — it must also resolve

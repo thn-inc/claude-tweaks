@@ -146,7 +146,10 @@ sanctioned-write family, the fourth a single documented exception:
   `bin/lib/hooks/worktree-detect.js` and refuses any value not anchored under the main checkout
   **before any filesystem write**, with exit code 2 (malformed invocation). `bin/hooks.js`'s
   `resolveRunArg` carries the one narrow exception to this rule — see **Worktree-local `--run`
-  fallback (#280)** immediately below.
+  fallback (#280)** immediately below. A bare run id (no path separator) whose cwd-relative
+  reading is not a directory is retried as `<main checkout>/.claude-tweaks/pipelines/<value>`
+  (#3025) — the form `/claude-tweaks:dispatch`'s `$RUN_ID` and the SessionStart notice pass — and
+  the anchoring check above still runs on that resolved path.
 
 ### Initialized-run-dir requirement (#1566) — moved
 
