@@ -46,3 +46,21 @@ touch content that may belong to the live sibling session), log the conflict to 
 skipped group [{issue list}] without dispatching either call.`), and skip this group entirely —
 neither of its two Task calls is dispatched. Proceed to the next group exactly as if this one had
 been skipped at Step 4.
+
+**Bind the run before call 1 (#3225).** When the worktree is fresh — the resume check above did
+not fire — bind this group's minted run to it from this dispatching session before dispatching this group's first Task call:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "$GROUP_RUN_DIR" "{worktree}" --dispatch
+```
+
+`{worktree}` is the group's worktree path — the `EnterWorktree(path:)` target, or the
+`git worktree add` path for a cwd-pinned session (`sequential-execution.md`, #447). One call writes
+the worktree assignment, this session's id, and a permanent `dispatched: true` marker into the
+run's `run-state.json`; from then on `bin/lib/hooks/pre-tool-use.js`'s `checkDispatchConfigGate`
+denies any git write in this worktree until `/claude-tweaks:flow` Step 3's Manifesto has written
+`$GROUP_RUN_DIR/config.yml` — a first call that bypasses `/flow` is stopped at its first commit,
+not after a full build. Expect the `claude-tweaks: worktree recorded for` confirmation line. A
+failed bind never blocks dispatch: log it to this firing's own `decisions.md` and dispatch anyway —
+the run then lacks the early checkpoint, and #2837's first-call artifact check (`two-call-gate.md`)
+still applies.
