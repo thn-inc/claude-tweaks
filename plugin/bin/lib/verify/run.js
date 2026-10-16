@@ -8,22 +8,45 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const STAGE1 = ['types', 'lint'];
 
+// Best-effort: kills the whole process tree rooted at `child`, not just the
+// immediate shell runOne spawned with `{shell: true}` — a hung command is
+// usually a grandchild of that shell (#3063). POSIX kills the negative-pid
+// process group spawnImpl creates via `detached: true` (every descendant
+// inherits that group); Windows has no such group kill, so `taskkill /T`
+// walks the tree itself regardless of `detached`. `kill`/`execImpl` are
+// injectable so a test never spawns or kills a real process; a fake child
+// (no numeric `.pid`) always falls through to the plain `child.kill()` below.
+function killTree(child, { platform = process.platform, kill = process.kill, execImpl = execFileSync } = {}) {
+  if (child && typeof child.pid === 'number') {
+    try {
+      if (platform === 'win32') execImpl('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+      else kill(-child.pid, 'SIGKILL');
+      return;
+    } catch { /* fall through to the plain kill below */ }
+  }
+  try { if (child) child.kill('SIGKILL'); } catch { /* best effort */ }
+}
+
 function runOne({
   name, command, logDir, spawnImpl, now, cwd, env: checkEnv = null, platform = process.platform,
+  timeout: timeoutMs = null,
 }) {
   const logPath = path.join(logDir, `${name}.log`);
   const stream = fs.createWriteStream(logPath);
   const started = now();
   return new Promise((resolve) => {
     let settled = false;
+    let timer = null;
     // stream.end's callback fires after the log data is flushed — resolving
     // earlier lets a caller read a truncated log file.
     const finish = (result) => {
       if (settled) return;
       settled = true;
+      if (timer) clearTimeout(timer);
       stream.end(() => resolve(result));
     };
     // A write-stream failure (missing logDir, disk full, ...), a spawn-time
@@ -57,11 +80,29 @@ function runOne({
       for (const k of Object.keys(inherited)) if (mine.has(k.toUpperCase())) delete inherited[k];
     }
     const env = { ...inherited, ...checkEnv };
+    const opts = { shell: true, env };
+    if (cwd) opts.cwd = cwd;
+    // detached:true makes the spawned shell the leader of its own POSIX
+    // process group, so killTree's negative-pid kill below reaches every
+    // descendant the shell forks — never set on win32, which has no such
+    // group and where `detached` instead opens a new console.
+    if (timeoutMs !== null && platform !== 'win32') opts.detached = true;
     try {
-      child = spawnImpl(command, cwd ? { shell: true, cwd, env } : { shell: true, env });
+      child = spawnImpl(command, opts);
     } catch (err) {
       finishError(err);
       return;
+    }
+    // #3063: a hung check otherwise blocks this run (and --baseline
+    // adjudication) forever. A null exit code is never adjudicated and
+    // never passes (see runChecks/report.js) — `timedOut` just names why.
+    if (timeoutMs !== null) {
+      timer = setTimeout(() => {
+        killTree(child, { platform });
+        finish({
+          name, command, exitCode: null, timedOut: true, durationMs: now() - started, logPath,
+        });
+      }, timeoutMs);
     }
     if (child.stdout) { child.stdout.on('error', finishError); child.stdout.pipe(stream, { end: false }); }
     if (child.stderr) { child.stderr.on('error', finishError); child.stderr.pipe(stream, { end: false }); }
@@ -123,4 +164,4 @@ async function runChecks({
   return results;
 }
 
-module.exports = { runChecks, runOne };
+module.exports = { runChecks, runOne, killTree };
