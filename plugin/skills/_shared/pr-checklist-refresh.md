@@ -103,12 +103,12 @@ above), not necessarily every phase this run actually completed.
    run's branch. It predicts, via `git merge-tree --write-tree`, the post-merge size
    of every branch-touched `skills/_shared/*.md`/`SKILL.md` file — a branch that is green alone
    (`tests/bin-lib/skill-audit/context-cost.test.js` only sees the working tree) can still tip a
-   shared file over the 45 KB ceiling once merged with a concurrent sibling's own additions, a
+   shared file over the 50 KB ceiling once merged with a concurrent sibling's own additions, a
    failure that today only surfaces inside the merge sequence itself. A non-empty `overflow` never
    blocks this merge — this section invents no new pipeline stop
    (`_shared/auto-mode-contract.md`'s strict rule) — it discloses at **warn** tier in the run
    summary (a visible line, not a silent log entry), one per file: `merge-size-probe: {path}
-   predicted at {bytes} B, {over} B over the 45 KB ceiling once merged with {integration-branch}`,
+   predicted at {bytes} B, {over} B over the 50 KB ceiling once merged with {integration-branch}`,
    and logs `AUTO {time} — PR-early run lifecycle: merge-size probe predicted {n} file(s) over
    ceiling post-merge; disclosed in run summary. Reversibility: n/a (prediction only).` This is a
    prediction against freshly-fetched `origin/{integration-branch}` as of probe time, not a
