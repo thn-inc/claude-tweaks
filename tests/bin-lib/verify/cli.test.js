@@ -1421,6 +1421,76 @@ test('flaky retry: hits accumulate across two runs and a file removed from the a
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(countStampPath, 'utf8')).flakyHits, { 'tests/flaky.test.js': 1, 'tests/other.test.js': 2 });
 });
 
+// Sibling fixture to flakyRepo (#3129): a tests check that always fails with
+// a TAP failure naming `failingFile`, and a verify-scope.json declaring
+// `preExisting` instead of `flaky` — no retry template, no retry.js spawned
+// at all; the declared allowlist is checked, never re-run.
+function preExistingRepo({ failingFile = 'tests/known-shallow.test.js', preExisting = ['tests/known-shallow.test.js'], extraDecl = {} } = {}) {
+  const r = tmpGitRepo();
+  const tap = ['not ok 1 - a known pre-existing failure', '  ---', '  stack: |-', `    at TestContext.<anonymous> (${failingFile}:12:5)`, '  ...', '# tests 1', '# pass 0', '# fail 1'].join('\n');
+  fs.writeFileSync(path.join(r.repo, 'fail.js'), `process.stdout.write(${JSON.stringify(tap)} + '\\n'); process.exit(1);\n`);
+  const decl = {
+    checks: { tests: 'node fail.js' },
+    rules: [{ match: 'src/**', suites: ['tests'], static: true }],
+    preExisting,
+    ...extraDecl,
+  };
+  fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'pre-existing fixture');
+  const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  const args = ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', branch, '--cmd', 'tests=node fail.js'];
+  return { ...r, branch, args };
+}
+
+test('preExisting: a failing file fully covered by the declared allowlist is adjudicated as passing, and the stamp carries the marker with no legacy twin (#3129)', async () => {
+  const r = preExistingRepo();
+  const { code, stdout, stderr } = await runCli(r.args, { cwd: r.repo });
+  assert.strictEqual(code, 0, stderr);
+  assert.match(stdout, /Pre-existing: adjudicated — 1 failing file\(s\) covered by the declared preExisting allowlist: tests\/known-shallow\.test\.js/);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.pass, false, 'report.pass stays raw');
+  assert.strictEqual(report.checks.tests.exitCode, 1, 'the check keeps its real exit code');
+  assert.deepStrictEqual(report.preExistingAdjudicated, { declared: ['tests/known-shallow.test.js'], matched: ['tests/known-shallow.test.js'] });
+  const stamp = stampOf(r.gitDir);
+  assert.deepStrictEqual(stamp.preExisting, { declared: ['tests/known-shallow.test.js'], matched: ['tests/known-shallow.test.js'] });
+  assert.strictEqual(stamp.scope, 'full');
+  // H1 parity (#3043's own rule): an adjudicated-but-not-clean pass never
+  // rewrites the legacy bare-SHA twin.
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass')));
+});
+
+test('preExisting: an uncovered failing file is an ordinary failure — no stamp, the report names the reason (#3129)', async () => {
+  const r = preExistingRepo({ failingFile: 'tests/real.test.js', preExisting: ['tests/known-shallow.test.js'] });
+  const { code, stdout } = await runCli(r.args, { cwd: r.repo });
+  assert.strictEqual(code, 1);
+  assert.match(stdout, /Pre-existing: not adjudicated — unlisted: \[tests\/real\.test\.js\]/);
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')));
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.deepStrictEqual(report.preExistingAdjudicated, { declared: ['tests/known-shallow.test.js'], eligible: false, reason: 'unlisted: [tests/real.test.js]' });
+});
+
+test('preExisting: no preExisting declared at all never adjudicates — report omits the field entirely (#3129)', async () => {
+  const r = flakyRepo({ flaky: { files: [] } });
+  const { code } = await runCli(r.args, { cwd: r.repo });
+  assert.strictEqual(code, 1);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual('preExistingAdjudicated' in report, false);
+  assert.doesNotMatch(await fs.promises.readFile(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'), /preExisting/);
+});
+
+test('preExisting: --stamp-status reads the marker — preExistingAdjudicated:true, match:false, verifiedHead:true (#3129)', async () => {
+  const r = preExistingRepo();
+  const run = await runCli(r.args, { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const status = await runCli(['--stamp-status'], { cwd: r.repo });
+  const parsed = JSON.parse(status.stdout);
+  assert.strictEqual(parsed.preExistingAdjudicated, true);
+  assert.strictEqual(parsed.match, false);
+  assert.strictEqual(parsed.verifiedHead, true);
+});
+
 // #1928 AC1: the runner is the mechanical source of the verify event.
 function anchoredRunDir(repo) {
   const dir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-09-06T100000-record-7');

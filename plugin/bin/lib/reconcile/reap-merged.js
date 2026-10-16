@@ -112,11 +112,26 @@ function longPathRemovalTarget(real, platform = process.platform) {
 // (observed against git 2.55: a refusal leaves it registered, a mid-delete
 // failure leaves it unregistered with the directory still on disk).
 // Finishing a deletion git itself already committed to is safe; touching a
-// worktree git refused is not. An unreadable list fails closed.
-function gitCommittedToRemoval(real, root) {
+// worktree git refused is not. An unreadable list fails closed — and so
+// does a single registered entry whose own path cannot be resolved for any
+// reason other than ENOENT (#2935): such an entry can never be silently
+// treated as non-matching (there is no way to prove it isn't the target),
+// so its resolution failure short-circuits the whole function to `false`
+// rather than falling back to an unresolved, possibly-mismatching raw path.
+function gitCommittedToRemoval(real, root, { realpath = fs.realpathSync } = {}) {
   const list = runGit(['worktree', 'list', '--porcelain'], root);
   if (list.failure) return false;
-  const entry = parseWorktreeList(list.stdout).find((wt) => (safeReal(wt.path) || wt.path) === real);
+  let entry;
+  for (const wt of parseWorktreeList(list.stdout)) {
+    let resolved;
+    try {
+      resolved = realpath(wt.path);
+    } catch (err) {
+      if (err && err.code === 'ENOENT') continue; // cannot be the existing target directory
+      return false; // any other resolution failure fails closed
+    }
+    if (resolved === real) { entry = wt; break; }
+  }
   return !entry || entry.prunable;
 }
 

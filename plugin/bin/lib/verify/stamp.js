@@ -32,6 +32,7 @@ const SHA_RE = /^[0-9a-f]{40}$/;
 // rule appendEvent states in bin/lib/hooks/context.js).
 function composeStamp({
   report, scope, fullSha, base, changedFiles, suitesRun, flakyRetried, reportPath, at, baseline = null,
+  preExisting = null,
 }) {
   const stamp = {
     sha: report.sha,
@@ -49,6 +50,10 @@ function composeStamp({
   // baselineFailing, flakyPassed }) — its presence is what --stamp-status keys
   // `baselineAdjudicated` and the strict `match: false` on.
   if (baseline !== null) stamp.baseline = baseline;
+  // #3129: present only on a pre-existing-adjudicated pass ({ declared,
+  // matched }) — the declared verify-scope.json `preExisting` allowlist that
+  // covered this run's entire failing-file set.
+  if (preExisting !== null) stamp.preExisting = preExisting;
   return stamp;
 }
 
@@ -103,6 +108,11 @@ function readStamp(gitDir, fsImpl = fs) {
     // malformed — read as absent, never as a clean full pass (#3043).
     if (parsed.baseline !== undefined
       && (parsed.baseline === null || typeof parsed.baseline !== 'object' || Array.isArray(parsed.baseline))) return null;
+    // A `preExisting` key the runner did not write is malformed the same way
+    // — read as absent, never as a clean full pass (#3129, mirrors #3043's
+    // baseline guard above).
+    if (parsed.preExisting !== undefined
+      && (parsed.preExisting === null || typeof parsed.preExisting !== 'object' || Array.isArray(parsed.preExisting))) return null;
     return parsed;
   }
   let bare;
