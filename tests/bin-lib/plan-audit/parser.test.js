@@ -393,3 +393,79 @@ test('#3099: a CRLF spec yields exactly the LF result', () => {
     extractAcceptanceClauses(INCIDENT_SPEC),
   );
 });
+
+// ── #3099 Check E — plan coverage sources ───────────────────────────────────
+const { extractCoverageSources } = require('../../../plugin/bin/lib/plan-audit/parser');
+
+const COVERAGE_PLAN = [
+  '# Plan',
+  '',
+  '| Clause | Task |',
+  '|---|---|',
+  '| AC1.1 | Task 1 |',
+  '',
+  'Waived AC3.1: verified by hand at review',
+  '',
+  '### Task 1: Thing',
+  '',
+  '- [ ] **Step 1: Write the failing test**',
+  '',
+  'Cites AC2.1 in the test step.',
+  '',
+  '```js',
+  '## not a heading inside a fence',
+  '| not a row inside a fence |',
+  'Waived AC9.9: not a waiver inside a fence',
+  '```',
+  '',
+  'Still Step 1 after the fence: AC2.2.',
+  '',
+  '- [ ] **Step 3: Write minimal implementation**',
+  '',
+  'Mentions AC2.3 outside any test step.',
+  '',
+  '- [ ] **Step 4: Run tests to verify they pass**',
+  '',
+  '## Self-Review',
+  '',
+  '- [ ] **Step 9: Run the test**',
+  '',
+  'AC5.1 outside any task block.',
+].join('\n');
+
+test('#3099: extractCoverageSources reads waiver lines and consumes them', () => {
+  const { waivers, testSteps } = extractCoverageSources(COVERAGE_PLAN);
+  assert.deepStrictEqual(waivers, [{ id: 'AC3.1', reason: 'verified by hand at review' }]);
+  assert.ok(!testSteps.join('\n').includes('Waived AC3.1'));
+});
+
+test('#3099: test steps are the Step sub-steps whose title names a test or verification, inside a Task block', () => {
+  const { testSteps } = extractCoverageSources(COVERAGE_PLAN);
+  assert.strictEqual(testSteps.length, 2);
+  assert.match(testSteps[0], /Cites AC2\.1 in the test step/);
+  assert.match(testSteps[0], /Still Step 1 after the fence: AC2\.2/);
+  assert.ok(!testSteps.join('\n').includes('AC2.3'), 'an implementation step is not a test step');
+  assert.ok(!testSteps.join('\n').includes('AC5.1'), 'a step after the task block ends is not read');
+});
+
+test('#3099: a fenced line is step content, never a heading, table row, or waiver', () => {
+  const { testSteps, mapRows, waivers } = extractCoverageSources(COVERAGE_PLAN);
+  assert.match(testSteps[0], /## not a heading inside a fence/);
+  assert.ok(!waivers.some((w) => w.id === 'AC9.9'));
+  assert.ok(!mapRows.some((r) => r.includes('not a row inside a fence')));
+});
+
+test('#3099: every table row outside a fence is a coverage-map source', () => {
+  assert.deepStrictEqual(extractCoverageSources(COVERAGE_PLAN).mapRows, [
+    '| Clause | Task |',
+    '|---|---|',
+    '| AC1.1 | Task 1 |',
+  ]);
+});
+
+test('#3099: a CRLF plan yields exactly the LF result', () => {
+  assert.deepStrictEqual(
+    extractCoverageSources(COVERAGE_PLAN.replace(/\n/g, '\r\n')),
+    extractCoverageSources(COVERAGE_PLAN),
+  );
+});

@@ -373,9 +373,61 @@ function extractAcceptanceClauses(specText) {
   return { clauses, unparsed };
 }
 
+// ── Check E inputs: where a plan may claim coverage (#3099) ────────────────
+// Three sources, read in one pass; a line inside a ``` or ~~~ fence is
+// content of the step it sits in, never a heading, waiver, or table row:
+// - waivers: a line `Waived AC{item}.{clause}: {reason}` (an optional `- `
+//   bullet before it). A waiver line is consumed, so its own id never also
+//   counts as a citation.
+// - testSteps: the text of every `**Step N: {title}**` sub-step inside a
+//   `### Task N:` block whose title names a test or a verification
+//   (/\btests?\b|\bverif/i), from its heading to the next step heading.
+// - mapRows: every markdown table row (a line starting with `|`) — a
+//   spec-coverage map, when an author writes one. The installed upstream
+//   writing-plans template carries no such table (superpowers 6.4.1), so it
+//   is an accepted source, never an expected one.
+const STEP_HEADING_RE = /^[-*]?[ \t]*(?:\[[ xX]?\][ \t]*)?\*\*Step[ \t]+\d+:([^*\n]*)\*\*/;
+const TEST_STEP_TITLE_RE = /\btests?\b|\bverif/i;
+const WAIVER_RE = /^[ \t]*(?:[-*][ \t]+)?Waived[ \t]+(AC\d+\.\d+)[ \t]*:[ \t]*(\S.*?)[ \t]*$/;
+
+function extractCoverageSources(planText) {
+  const waivers = [];
+  const testSteps = [];
+  const mapRows = [];
+  let inTask = false;
+  let inFence = false;
+  let current = null;
+  for (const line of planText.replace(/\r\n?/g, '\n').split('\n')) {
+    const fence = AC_FENCE_RE.test(line);
+    if (fence) inFence = !inFence;
+    if (fence || inFence) {
+      if (current) current.push(line);
+      continue;
+    }
+    const waiver = line.match(WAIVER_RE);
+    if (waiver) {
+      waivers.push({ id: waiver[1], reason: waiver[2] });
+      continue;
+    }
+    if (/^[ \t]*\|/.test(line)) mapRows.push(line);
+    if (/^###[ \t]+Task[ \t]+\d+:/.test(line)) { inTask = true; current = null; continue; }
+    if (/^#{1,3}[ \t]/.test(line)) { inTask = false; current = null; continue; }
+    if (!inTask) continue;
+    const step = line.match(STEP_HEADING_RE);
+    if (step) {
+      current = TEST_STEP_TITLE_RE.test(step[1]) ? [line] : null;
+      if (current) testSteps.push(current);
+      continue;
+    }
+    if (current) current.push(line);
+  }
+  return { waivers, testSteps: testSteps.map((s) => s.join('\n')), mapRows };
+}
+
 module.exports = {
   extractAcceptanceClauses,
   splitClauses,
+  extractCoverageSources,
   extractFileEntries,
   extractScopeKeywords,
   extractPremiseRefs,
