@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const {
-  verifyCommits, defaultGit, OUTCOMES, DEEPEN_LOCK_FILENAME,
+  verifyCommits, defaultGit, OUTCOMES, DEEPEN_LOCK_FILENAME, TIMEOUT_MARKER_FILENAME,
 } = require('../../../plugin/bin/lib/docs-health/commit-ref');
 const { git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo } = require('./commit-fixtures');
 
@@ -267,7 +267,7 @@ test('a cached deepen-timeout is not retried with a fresh fetch on a second call
     if (args.includes('fetch')) {
       fetchCalls += 1;
       const err = new Error('git fetch --unshallow timed out');
-      err.signal = 'SIGTERM';
+      err.code = 'ETIMEDOUT';
       throw err;
     }
     return defaultGit(args, opts);
@@ -342,7 +342,7 @@ test('the deepen-timeout cache is keyed per repo root -- a cached timeout for on
   const originB = makeOriginRepo();
   const dirB = cloneOf(originB, { depth: 1 });
   const timeoutGit = (args, opts) => {
-    if (args.includes('fetch')) { const err = new Error('timed out'); err.signal = 'SIGTERM'; throw err; }
+    if (args.includes('fetch')) { const err = new Error('timed out'); err.code = 'ETIMEDOUT'; throw err; }
     return defaultGit(args, opts);
   };
   const a1 = verifyCommits({ root: dirA, hashes: [originA.third], integrationBranch: 'main', git: timeoutGit });
@@ -350,4 +350,56 @@ test('the deepen-timeout cache is keyed per repo root -- a cached timeout for on
 
   const b1 = verifyCommits({ root: dirB, hashes: [originB.third], integrationBranch: 'main', git: defaultGit });
   assert.strictEqual(outcomeOf(b1, originB.third), 'reachable', "repo B must still deepen normally -- its own cache entry is independent of repo A's");
+});
+
+test('a timeout marker written by a prior process is honored by a fresh process, with zero real fetch calls (#2988 whole-branch review finding)', async () => {
+  const origin = makeOriginRepo();
+  const dir = cloneOf(origin, { depth: 1 });
+  // Simulate a PRIOR process having already recorded a confirmed timeout --
+  // this is exactly what a real docs-health run under --budget > 1 needs:
+  // the real caller (plugin/bin/docs-health.js's verify-commit command) is
+  // invoked as a fresh process per citation, so only a cross-process marker
+  // (not an in-process cache) can actually help the real workload.
+  const markerPath = path.join(dir, '.git', TIMEOUT_MARKER_FILENAME);
+  fs.writeFileSync(markerPath, JSON.stringify({ at: Date.now(), reason: 'simulated prior timeout' }));
+
+  const counterPath = path.join(tmpDir('counter'), 'fetch-count.txt');
+  fs.writeFileSync(counterPath, '');
+  const commitRefModule = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'docs-health', 'commit-ref.js');
+  const workerScript = `
+    const fs = require('fs');
+    const { verifyCommits, defaultGit } = require(${JSON.stringify(commitRefModule)});
+    const countingGit = (args, opts) => {
+      if (args.includes('fetch')) fs.appendFileSync(${JSON.stringify(counterPath)}, '1\\n');
+      return defaultGit(args, opts);
+    };
+    const r = verifyCommits({
+      root: ${JSON.stringify(dir)}, hashes: [${JSON.stringify(origin.third)}],
+      integrationBranch: 'main', git: countingGit,
+    });
+    process.stdout.write(JSON.stringify(r));
+  `;
+  const child = await new Promise((resolve, reject) => {
+    const p = spawn(process.execPath, ['-e', workerScript]);
+    let stdout = ''; let stderr = '';
+    p.stdout.on('data', (d) => { stdout += d; });
+    p.stderr.on('data', (d) => { stderr += d; });
+    p.on('close', (code) => (code === 0 ? resolve(JSON.parse(stdout)) : reject(new Error(`child exited ${code}: ${stderr}`))));
+    p.on('error', reject);
+  });
+
+  const fetchCount = fs.readFileSync(counterPath, 'utf8').split('\n').filter(Boolean).length;
+  assert.strictEqual(fetchCount, 0, "a fresh process must honor a prior process's timeout marker without attempting its own fetch");
+  assert.strictEqual(outcomeOf(child, origin.third), 'unverifiable');
+  assert.match(child.commits[0].reason, /simulated prior timeout/);
+});
+
+test('an expired timeout marker is ignored -- a stale cached failure does not block a fresh attempt (#2988)', () => {
+  const origin = makeOriginRepo();
+  const dir = cloneOf(origin, { depth: 1 });
+  const markerPath = path.join(dir, '.git', TIMEOUT_MARKER_FILENAME);
+  const past = Date.now() - (31 * 60 * 1000); // 31 minutes ago -- just past the 30-minute TTL
+  fs.writeFileSync(markerPath, JSON.stringify({ at: past, reason: 'stale simulated timeout' }));
+  const r = verifyCommits({ root: dir, hashes: [origin.third], integrationBranch: 'main' });
+  assert.strictEqual(outcomeOf(r, origin.third), 'reachable');
 });

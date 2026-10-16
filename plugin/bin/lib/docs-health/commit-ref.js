@@ -1,4 +1,5 @@
 'use strict';
+const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { acquireLock, releaseLock } = require('../file-lock');
@@ -47,14 +48,6 @@ const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 // single-call bound would cut off on any real repository; still bounded so a
 // black-holed remote ends in unverifiable rather than a hang.
 const DEEPEN_TIMEOUT_MS = 120000;
-
-// Basename of the cross-process lock file-lock.js creates inside the
-// repo's real git directory -- resolved via gitCommonDir below, never
-// assumed to be `{root}/.git/` -- to serialize concurrent --unshallow
-// fetches against the same repo (#2988). Exported so tests construct the
-// exact same path the implementation below uses, rather than duplicating
-// the literal.
-const DEEPEN_LOCK_FILENAME = 'docs-health-verify-commit.lock';
 
 // Probe-style runner: calls here are expected to fail routinely (a missing
 // ref, a non-ancestor), so stderr is captured, not leaked. Throws on a
@@ -160,36 +153,86 @@ function classifyOne(git, root, input, integrationRef) {
   }
 }
 
+// Cross-process coordination for the shallow-clone deepen fetch (#2988):
+// a lock (DEEPEN_LOCK_FILENAME) serializing the fetch itself, and a
+// timeout marker (TIMEOUT_MARKER_FILENAME) remembering a confirmed
+// DEEPEN_TIMEOUT_MS timeout so a later caller -- in this process or any
+// other OS process; under `docs-health --budget > 1` the real caller
+// (plugin/bin/docs-health.js's `verify-commit` command) is invoked as a
+// fresh process per citation, so an in-process-only cache would never
+// fire for the real workload this was built for (whole-branch review
+// finding) -- can skip straight to the cached failure instead of
+// re-paying a fresh 120s attempt. Both files live next to each other,
+// and next to git's own `shallow`/`shallow.lock`, inside the repo's real
+// git-common directory -- resolved via gitCommonDir below, never assumed
+// to be `{root}/.git/` (a linked worktree's `.git` is a *file*, not a
+// directory).
+const DEEPEN_LOCK_FILENAME = 'docs-health-verify-commit.lock';
+const TIMEOUT_MARKER_FILENAME = 'docs-health-verify-commit.timeout';
+// How long a recorded timeout stays trusted before a later caller retries
+// for real -- long enough to help every citation-check call within one
+// docs-health run (minutes, not seconds), short enough that a transient
+// slowdown doesn't wedge every future run against this repo indefinitely.
+const TIMEOUT_MARKER_TTL_MS = 30 * 60 * 1000;
+// Extra margin added on top of DEEPEN_TIMEOUT_MS when a waiter sets its
+// own lock-acquisition wait: without it, a waiter's deadline could land
+// milliseconds before the holder's own 120s fetch attempt finishes,
+// falling through to the unlocked fail-open path and racing the dying
+// fetch -- the same window this lock exists to close (whole-branch
+// review finding).
+const LOCK_WAIT_MARGIN_MS = 15000;
+
 // Resolves the absolute path to this repo's real (git-common) directory
 // -- shared by every linked worktree of the same repo, unlike each
-// worktree's own private per-worktree directory -- so a lock keyed off it
-// serializes correctly whether `root` is a normal repo, a linked worktree
-// (where `.git` is a *file* holding a `gitdir:` pointer, not a directory;
-// `path.join(root, '.git', ...)` would hit ENOTDIR there and silently
-// fail open), or a subdirectory of either (review finding, #2988). This
-// is also where git's own `shallow` file and its own internal locks (e.g.
-// `shallow.lock`) actually live.
+// worktree's own private per-worktree directory -- so the lock and the
+// timeout marker both keyed off it serialize and share state correctly
+// whether `root` is a normal repo, a linked worktree (where `.git` is a
+// *file* holding a `gitdir:` pointer, not a directory; `path.join(root,
+// '.git', ...)` would hit ENOTDIR there and silently fail open), or a
+// subdirectory of either (review finding, #2988). This is also where
+// git's own `shallow` file and its own internal locks (e.g.
+// `shallow.lock`) actually live. `--git-common-dir` alone (no
+// `--path-format` flag, which needs git >= 2.31 and isn't used by any
+// sibling in this plugin -- whole-branch review finding) can return a
+// path relative to `root`; path.resolve against `root` normalizes either
+// shape.
 function gitCommonDir(git, root) {
-  return git(['-C', root, 'rev-parse', '--path-format=absolute', '--git-common-dir']).trim();
+  const out = git(['-C', root, 'rev-parse', '--git-common-dir']).trim();
+  return path.resolve(root, out);
 }
 
-// Keyed by the resolved repo root -- a same-process cache only (#2988): a
-// separate CLI invocation is a fresh process with an empty cache, so this
-// only helps a caller that invokes verifyCommits more than once against
-// the same root within one process (a test harness, or a future batched
-// caller). It is not, and must not be read as, a cross-process memory of
-// a prior timeout.
-const deepenTimeoutCache = new Map();
+// Reads a still-fresh timeout marker's recorded failure reason, or null
+// when absent, expired, or unreadable/malformed -- any of those means
+// "nothing trustworthy cached," never a hard error (a locking/bookkeeping
+// read must never break the underlying classification).
+function readTimeoutMarker(markerPath) {
+  try {
+    const data = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+    if (!data || typeof data.at !== 'number' || typeof data.reason !== 'string') return null;
+    if (Date.now() - data.at > TIMEOUT_MARKER_TTL_MS) return null;
+    return data.reason;
+  } catch {
+    return null;
+  }
+}
 
-// execFileSync kills the child on a timeout using killSignal (SIGTERM by
-// default), and the resulting error carries that signal with no exit
-// code; an ordinary non-zero-exit git failure carries .status instead,
-// with no .signal. This is how a genuine DEEPEN_TIMEOUT_MS timeout is
-// told apart from a transient fetch failure (bad remote, network error),
-// which must NOT poison the cache -- a transient failure should still be
-// retried on the next call.
+// Best-effort write -- a failed write just means the next caller re-pays
+// the attempt instead of short-circuiting, never a thrown error.
+function writeTimeoutMarker(markerPath, reason) {
+  try {
+    fs.writeFileSync(markerPath, JSON.stringify({ at: Date.now(), reason }));
+  } catch { /* best-effort */ }
+}
+
+// execFileSync sets err.code to 'ETIMEDOUT' specifically when its own
+// `timeout` option fires (confirmed: a real timeout kill carries
+// {code:"ETIMEDOUT", signal:"SIGTERM", status:null} -- whole-branch
+// review probe). Checking the exact code, not just signal-presence,
+// keeps an ordinary signal-killed git (an outside SIGTERM, OOM SIGKILL)
+// from being misclassified as a DEEPEN_TIMEOUT_MS timeout and wrongly
+// cached as one.
 function isTimeoutError(err) {
-  return Boolean(err && err.signal);
+  return Boolean(err && err.code === 'ETIMEDOUT');
 }
 
 // Serializes the --unshallow fetch for `root` across every concurrent
@@ -197,38 +240,45 @@ function isTimeoutError(err) {
 // mutex (#2988): under docs-health --budget > 1, concurrent judge agents
 // each run the verify-commit CLI as a separate process against the same
 // shared shallow checkout, so an in-process-only guard would not
-// serialize them.
+// serialize them. A confirmed timeout is remembered the same
+// cross-process way, via TIMEOUT_MARKER_FILENAME.
 //
 // Returns { stillShallow: boolean } on success (the fetch outcome,
 // whichever caller actually performed it, or the already-deepened state
 // found on re-check) or { error: string } on failure.
 function deepenShallowClone(git, root, remote) {
-  const cacheKey = path.resolve(root);
-  const cached = deepenTimeoutCache.get(cacheKey);
-  if (cached) return { error: cached };
-
   // By the time this runs, `root` is already a confirmed git repo --
   // verifyCommits only calls here after its own isShallow(git, root)
   // succeeded -- so gitCommonDir failing here is unexpected. Still, a
   // locking-infrastructure problem must never break the underlying
-  // classification: fall back to the unlocked fail-open posture (same
-  // contract as acquireLock's own wait-timeout return) rather than hard-
-  // erroring the whole deepen attempt over it.
-  let lockPath = null;
+  // classification: fall back to the unlocked, uncached fail-open
+  // posture (same contract as acquireLock's own wait-timeout return)
+  // rather than hard-erroring the whole deepen attempt over it.
+  let commonDir = null;
   try {
-    lockPath = path.join(gitCommonDir(git, root), DEEPEN_LOCK_FILENAME);
+    commonDir = gitCommonDir(git, root);
   } catch {
-    lockPath = null;
+    commonDir = null;
   }
+  const markerPath = commonDir ? path.join(commonDir, TIMEOUT_MARKER_FILENAME) : null;
+
+  if (markerPath) {
+    const cachedReason = readTimeoutMarker(markerPath);
+    if (cachedReason) return { error: cachedReason };
+  }
+
+  const lockPath = commonDir ? path.join(commonDir, DEEPEN_LOCK_FILENAME) : null;
   let held = null;
   if (lockPath) {
     // file-lock's default wait (500ms) is far too short to block a waiting
     // caller through another process's own DEEPEN_TIMEOUT_MS-bounded fetch
-    // -- override it just for this acquisition, restoring whatever the
-    // calling process had (or lacked) immediately after, so this module
-    // never leaves a process-wide env mutation behind.
+    // -- override it (plus LOCK_WAIT_MARGIN_MS, so a waiter's own deadline
+    // can never land moments before the holder's fetch finishes) just for
+    // this acquisition, restoring whatever the calling process had (or
+    // lacked) immediately after, so this module never leaves a
+    // process-wide env mutation behind.
     const prevWait = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
-    process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = String(DEEPEN_TIMEOUT_MS);
+    process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = String(DEEPEN_TIMEOUT_MS + LOCK_WAIT_MARGIN_MS);
     try {
       held = acquireLock(lockPath);
     } finally {
@@ -237,12 +287,17 @@ function deepenShallowClone(git, root, remote) {
     }
   }
   try {
-    // Re-check after acquiring (or failing to acquire) the lock: another
-    // caller -- the lock's prior holder -- may have already deepened this
-    // exact repo while this caller waited. Skipping a redundant fetch
-    // here is what turns the loser's old "fetch fails, report
-    // unverifiable" outcome into a correct classification against the
-    // now-complete history instead.
+    // Re-check both the marker and the shallow state after acquiring (or
+    // failing to acquire) the lock: another caller -- the lock's prior
+    // holder -- may have just written a timeout marker, or already
+    // deepened this exact repo, while this caller waited. Skipping a
+    // redundant fetch here is what turns the loser's old "fetch fails,
+    // report unverifiable" outcome into a correct (or correctly cached)
+    // classification instead.
+    if (markerPath) {
+      const cachedReason = readTimeoutMarker(markerPath);
+      if (cachedReason) return { error: cachedReason };
+    }
     let shallowNow;
     try {
       shallowNow = isShallow(git, root);
@@ -258,7 +313,7 @@ function deepenShallowClone(git, root, remote) {
       });
     } catch (err) {
       const message = errorText(err);
-      if (isTimeoutError(err)) deepenTimeoutCache.set(cacheKey, message);
+      if (isTimeoutError(err) && markerPath) writeTimeoutMarker(markerPath, message);
       return { error: message };
     }
     try {
@@ -352,4 +407,6 @@ function verifyCommits({
   return result;
 }
 
-module.exports = { verifyCommits, defaultGit, OUTCOMES, DEEPEN_TIMEOUT_MS, DEEPEN_LOCK_FILENAME };
+module.exports = {
+  verifyCommits, defaultGit, OUTCOMES, DEEPEN_TIMEOUT_MS, DEEPEN_LOCK_FILENAME, TIMEOUT_MARKER_FILENAME,
+};
