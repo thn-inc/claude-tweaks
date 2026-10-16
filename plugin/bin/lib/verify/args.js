@@ -142,15 +142,37 @@ function tokenize(argv) {
   };
 }
 
-// --cmd-env/--cmd-timeout naming a check no --cmd declared is a UsageError
-// in every mode — a read-only mode forces cmds empty before this would ever
-// resolve a match, so it fires there too. Shared rather than duplicated,
-// since the message/logic is identical in each mode.
-function rejectUndeclaredCmdEnvAndTimeout(raw) {
+// Attaches each --cmd-env/--cmd-timeout onto its --cmd, in every mode and
+// before any mode-specific check: when argv carries several errors, the
+// first one thrown is the one the CLI prints, so this keeps the pre-split
+// order — env duplicate, env undeclared, timeout duplicate, timeout
+// undeclared — rather than letting each mode reorder it (#2806 review).
+function attachCmdEnvAndTimeout(raw) {
   const declared = () => raw.cmds.map((c) => c.name).join(', ') || 'none';
+  // #2779: resolved after tokenizing so --cmd-env may precede its --cmd. A
+  // check carries an `env` key only when a --cmd-env named it — a --cmd-only
+  // invocation parses to exactly the shape it did before the flag existed.
+  // Object.fromEntries defines own properties, so a variable literally named
+  // __proto__ stays data rather than touching the prototype.
+  for (const c of raw.cmds) {
+    const mine = raw.cmdEnvs.filter((e) => e.name === c.name);
+    if (mine.length === 0) continue;
+    const keys = mine.map((e) => e.key);
+    const dup = keys.find((k, i) => keys.indexOf(k) !== i);
+    if (dup !== undefined) throw new UsageError(`duplicate --cmd-env variable for ${c.name}: ${dup}`);
+    c.env = Object.fromEntries(mine.map((e) => [e.key, e.value]));
+  }
   const undeclaredEnv = raw.cmdEnvs.find((e) => !raw.cmds.some((c) => c.name === e.name));
   if (undeclaredEnv) {
     throw new UsageError(`--cmd-env "${undeclaredEnv.name}" names no declared --cmd (declared: ${declared()})`);
+  }
+  // #3063: resolved the same way as --cmd-env above, but scalar per check —
+  // a check carries a `timeout` key only when a --cmd-timeout named it.
+  for (const c of raw.cmds) {
+    const mine = raw.cmdTimeouts.filter((t) => t.name === c.name);
+    if (mine.length === 0) continue;
+    if (mine.length > 1) throw new UsageError(`duplicate --cmd-timeout for ${c.name}`);
+    c.timeout = mine[0].ms;
   }
   const undeclaredTimeout = raw.cmdTimeouts.find((t) => !raw.cmds.some((c) => c.name === t.name));
   if (undeclaredTimeout) {
@@ -180,7 +202,7 @@ const CWD_MODE_CONFLICT = '--cwd applies to a check run — not to --stamp-statu
 // --stamp-status (#1921): a read-only mode needing no --cmd at all. Every
 // run-scoped flag is a usage error here, not a silently ignored one.
 function validateStampStatus(raw) {
-  rejectUndeclaredCmdEnvAndTimeout(raw);
+  attachCmdEnvAndTimeout(raw);
   // #3043: checked first so a read-only mode carrying a baseline flag gets
   // this message, not the generic --cmd one below.
   if (raw.baseline !== null || raw.baselineCmds.length) throw new UsageError(BASELINE_MODE_CONFLICT);
@@ -199,7 +221,7 @@ function validateStampStatus(raw) {
 // --changed-files (#1923): a read-only mode needing no --cmd/--scope, but
 // (unlike --stamp-status) --base/--integration-branch are meaningful here.
 function validateChangedFiles(raw) {
-  rejectUndeclaredCmdEnvAndTimeout(raw);
+  attachCmdEnvAndTimeout(raw);
   if (raw.baseline !== null || raw.baselineCmds.length) throw new UsageError(BASELINE_MODE_CONFLICT);
   if (raw.cmds.length) throw new UsageError('--changed-files takes no --cmd');
   if (raw.scope !== null) throw new UsageError('--changed-files takes no --scope');
@@ -209,33 +231,24 @@ function validateChangedFiles(raw) {
   return toResult(raw);
 }
 
+// --stamp-status and --changed-files together: always an error, but a more
+// specific conflict either mode alone would report still wins over "separate
+// modes" — the pre-split order (#2806 review).
+function rejectBothReadOnlyModes(raw) {
+  attachCmdEnvAndTimeout(raw);
+  if (raw.baseline !== null || raw.baselineCmds.length) throw new UsageError(BASELINE_MODE_CONFLICT);
+  if (raw.cmds.length) throw new UsageError('--stamp-status takes no --cmd');
+  if (raw.scope !== null) throw new UsageError('--changed-files takes no --scope');
+  if (raw.gitDir !== null) throw new UsageError('--changed-files takes no --git-dir');
+  throw new UsageError('--changed-files and --stamp-status are separate modes');
+}
+
 // The default mode: one or more --cmd checks, plus --cmd-env/--cmd-timeout/
 // --baseline/--scope — none of which mean anything in the two read-only
 // modes above, so they're validated only here.
 function validateCheckRun(raw) {
   if (raw.cmds.length === 0) throw new UsageError('at least one --cmd <name>=<command> is required');
-  // #2779: resolved after tokenizing so --cmd-env may precede its --cmd. A
-  // check carries an `env` key only when a --cmd-env named it — a --cmd-only
-  // invocation parses to exactly the shape it did before the flag existed.
-  // Object.fromEntries defines own properties, so a variable literally named
-  // __proto__ stays data rather than touching the prototype.
-  for (const c of raw.cmds) {
-    const mine = raw.cmdEnvs.filter((e) => e.name === c.name);
-    if (mine.length === 0) continue;
-    const keys = mine.map((e) => e.key);
-    const dup = keys.find((k, i) => keys.indexOf(k) !== i);
-    if (dup !== undefined) throw new UsageError(`duplicate --cmd-env variable for ${c.name}: ${dup}`);
-    c.env = Object.fromEntries(mine.map((e) => [e.key, e.value]));
-  }
-  rejectUndeclaredCmdEnvAndTimeout(raw);
-  // #3063: resolved the same way as --cmd-env above, but scalar per check —
-  // a check carries a `timeout` key only when a --cmd-timeout named it.
-  for (const c of raw.cmds) {
-    const mine = raw.cmdTimeouts.filter((t) => t.name === c.name);
-    if (mine.length === 0) continue;
-    if (mine.length > 1) throw new UsageError(`duplicate --cmd-timeout for ${c.name}`);
-    c.timeout = mine[0].ms;
-  }
+  attachCmdEnvAndTimeout(raw);
   if (raw.baseline !== null && raw.baselineCmds.length === 0) throw new UsageError('--baseline requires at least one --baseline-cmd');
   if (raw.baseline === null && raw.baselineCmds.length) throw new UsageError('--baseline-cmd requires --baseline');
   const seenBaselineNames = new Set();
@@ -261,9 +274,7 @@ function validateCheckRun(raw) {
 // that mode's own validator — see the #2806 note above tokenize().
 function parseArgs(argv) {
   const raw = tokenize(argv);
-  if (raw.stampStatus && raw.changedFiles) {
-    throw new UsageError('--changed-files and --stamp-status are separate modes');
-  }
+  if (raw.stampStatus && raw.changedFiles) rejectBothReadOnlyModes(raw);
   if (raw.stampStatus) return validateStampStatus(raw);
   if (raw.changedFiles) return validateChangedFiles(raw);
   return validateCheckRun(raw);
