@@ -17,7 +17,7 @@ const { parseArgs, UsageError, USAGE } = require('./lib/verify/args');
 const { runChecks, runOne } = require('./lib/verify/run');
 const { adjudicate, realGit } = require('./lib/verify/baseline');
 const {
-  sniffFamily, extractFailingRegion, parseCounts, summaryLine, extractFailingFiles, stripAnsi,
+  sniffFamily, extractFailingRegion, parseCounts, summaryLine, extractFailingFiles, stripAnsi, unattributedFailureCount,
 } = require('./lib/verify/extract');
 const { planRetry, runRetries, flakyCaveatLines } = require('./lib/verify/flaky');
 const { gitInfo, gitDir: resolveGitDir, composeReport, writeReportAtomic } = require('./lib/verify/report');
@@ -380,8 +380,12 @@ async function main() {
     let text = '';
     try { text = fs.readFileSync(result.logPath, 'utf8'); } catch { return { ...result, retryDecision: { retry: false, reason: 'unreadable-log' } }; }
     const plain = stripAnsi(text);
-    const failingFiles = extractFailingFiles(plain, sniffFamily(plain));
-    const plan = planRetry({ failingFiles, flaky: decl.flaky, retry: decl.retry, suite: result.name });
+    const family = sniffFamily(plain);
+    const failingFiles = extractFailingFiles(plain, family);
+    const unattributedCount = unattributedFailureCount(plain, family);
+    const plan = planRetry({
+      failingFiles, flaky: decl.flaky, retry: decl.retry, suite: result.name, unattributedCount,
+    });
     const decision = plan.retry ? { retry: true, files: plan.files } : { retry: false, reason: plan.reason };
     if (!plan.retry) return { ...result, retryDecision: decision };
     const retried = await runRetries({

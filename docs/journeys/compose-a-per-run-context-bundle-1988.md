@@ -28,7 +28,6 @@ files:
   - plugin/bin/plan-audit.js
   - docs/donts.md
   - tests/sweep-backstop.test.js
-  - tests/run-dir-timestamp-utc.test.js
   - plugin/skills/build/plan-audit.md
   - docs/incident-log.md
 ---

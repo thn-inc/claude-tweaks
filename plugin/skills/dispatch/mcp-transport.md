@@ -1,8 +1,48 @@
-# Dispatch — GitHub MCP Transport (`gh` absent)
+# Dispatch — GitHub MCP Transport (`gh` absent, or GraphQL-blocked)
 
-Loaded by `/claude-tweaks:dispatch` only when Preflight's Detection Ladder check 2 resolves `gh` as
-absent. Every call site in `SKILL.md` runs its `gh` CLI form unchanged when `gh` is present, so a
-normal run never reads this file.
+Loaded by `/claude-tweaks:dispatch` when Preflight's Detection Ladder routes to the MCP transport —
+either because check 2 resolves `gh` as absent, or because `gh` is present but check 3's
+`gh repo view --json owner,name` probe fails with the GraphQL-unavailable signature (below). Every
+call site in `SKILL.md` runs its `gh` CLI form unchanged when `gh` is present and check 3 passes
+against it, so a normal run never reads this file.
+
+## Preflight — the GraphQL-blocked branch (#2868)
+
+A sandbox can have `gh` installed and authenticated via REST (`gh api user` succeeds) while its
+outbound proxy blocks GitHub's GraphQL API specifically — every GraphQL-backed `gh` subcommand
+(`gh repo view`, `gh issue list`, …) fails with a 403 whose message contains the literal substring
+`GitHub GraphQL is not available`. Before this branch existed, that signature read as an ordinary
+check 3 failure: a `gh`-present firing has no documented route to the MCP transport, so it stopped
+at Preflight with no legal way forward even though the MCP tools are confirmed reachable in the
+same sandbox.
+
+**Detection:** when check 2 finds `gh` present, still run check 3's `gh repo view --json
+owner,name` probe. Match its stderr/error text against the exact substring `GitHub GraphQL is not
+available` — not every non-zero exit. A match routes to the MCP transport for the rest of this
+firing (the same path `gh`-absent takes) and re-evaluates check 3 via this file's own `list_issues`
+probe below. Any check 3 failure that does **not** match this signature (an unauthenticated token,
+a real network/reachability problem, a renamed/moved repo the token can't see, etc.) stays an
+ordinary hard stop on the `gh` transport — this branch only ever adds a route, never removes the
+existing one, so a real auth or reachability failure is caught exactly as before.
+
+**Log the transport choice.** The moment this branch fires, write one `decisions.md` line so a
+later reader can tell this firing took the MCP path deliberately rather than by `gh` simply being
+absent:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$RUN_DIR" --status AUTO \
+  --section "/dispatch" --step "Preflight" \
+  --text "check 3: gh present but GraphQL-blocked (GitHub GraphQL is not available) -- routing to MCP transport" \
+  --reversibility n/a
+```
+
+**Code twin.** `bin/lib/policy-schema.js`'s `detectIntegrationModel` already accepts a
+caller-supplied `opts.mcpReachable` override that short-circuits past its own `gh repo view` probe
+straight to `pr-first` when a remote exists (`forge-detection.md`'s "Code twin" paragraph). A caller
+that has just classified this same GraphQL-blocked signature can pass `mcpReachable: true` into
+that function and get the identical routing — no code change needed there; this branch is prose-side
+detection feeding an already-existing code-side override, not a second independent computation to
+keep in sync.
 
 Live as of Task 10 of **the bridge plan** — `docs/superpowers/plans/2026-08-02-dispatch-mcp-bridge.md`,
 deleted `d83f0720`, and referred to by that short name for the rest of this file — which verified the
@@ -15,8 +55,8 @@ that block, in `_shared/headless-self-report.md`.
 
 ## Preflight — check 3 on the MCP transport
 
-When `gh` is absent, check 3 (authenticated + repo reachable) is
-satisfied via a bounded `list_issues` call (e.g. `list_issues {owner, repo, state: "open", perPage:
+On either MCP-routed entry — `gh` absent, or `gh` present but GraphQL-blocked (above) — check 3
+(authenticated + repo reachable) is satisfied via a bounded `list_issues` call (e.g. `list_issues {owner, repo, state: "open", perPage:
 1}`) — a lightweight, confirmed-working read (per the bridge plan's Task 2 live verification)
 that fails identically to `gh repo view --json owner,name` when auth or
 repo access is broken. This is dispatch-specific documentation: only dispatch treats check 3 as a

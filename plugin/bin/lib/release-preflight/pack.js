@@ -221,9 +221,24 @@ function prepare({ deps, rootArg, runDir }) {
     showAtTipCache.set(p, result);
     return result;
   };
+  // #2791: java/ruby/dotnet's glob targets (`*.gemspec`, `*.csproj` — the
+  // filename varies per repo) need a root listing to resolve, same as
+  // release-local.js's own `listRoot`. This probe reads at `tipRef`, not the
+  // working tree, so the listing is `git ls-tree` at that ref, not `readdir`.
+  // Memoized once — the tree at a given tipRef never changes mid-gather.
+  let rootAtTipCache = null;
+  const listRootAtTip = () => {
+    if (rootAtTipCache) return rootAtTipCache;
+    try {
+      rootAtTipCache = deps.git(['ls-tree', '--name-only', tipRef]).split('\n').filter(Boolean);
+    } catch {
+      rootAtTipCache = [];
+    }
+    return rootAtTipCache;
+  };
   const manifestVersion = () => {
     const config = readConfig(showAtTip);
-    if (config) return versionAtRef(resolveTargets(config), showAtTip);
+    if (config) return versionAtRef(resolveTargets(config, { listRoot: listRootAtTip }), showAtTip);
     const raw = showAtTip(MANIFEST_FILE);
     if (raw === null) return null;
     // F11: a hand-broken manifest is "no version here", not a thrown probe.

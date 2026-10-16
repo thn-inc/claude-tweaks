@@ -1,0 +1,2 @@
+[{"tag":"ledger","record":null,"title":"2026-10-02-record-2740-bundle-ledger.md","action":"Delete orphan ledger (run archived, no open rows)","command":"git rm docs/plans/2026-10-02-record-2740-bundle-ledger.md"},
+{"tag":"ledger","record":3037,"title":"Doc staleness: 2740 bundle ledger, Item 5","action":"Close (GitHub), moot once the ledger is deleted","command":"gh issue close 3037 --reason \"not planned\""}]

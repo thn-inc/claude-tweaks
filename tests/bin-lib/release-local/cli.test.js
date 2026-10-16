@@ -8,6 +8,12 @@ const { run, parseArgs, defaultDeps, writeInsideRoot } = require('../../../plugi
 
 const mkTmpDir = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 
+// #2791: the same real fixture files manifest.test.js's own round-trip tests read,
+// reused here so the CLI-level dry-run assertions exercise byte-identical content
+// to a real project's manifest, not a hand-typed minimal string.
+const FIXTURES = path.join(__dirname, 'fixtures');
+const readFixture = (name) => fs.readFileSync(path.join(FIXTURES, name), 'utf8');
+
 test('writeInsideRoot: refuses a symlinked leaf and a directory whose real location is outside the root; writes a plain file', () => {
   const root = mkTmpDir('release-local-root-');
   const outside = mkTmpDir('release-local-outside-');
@@ -68,6 +74,10 @@ function makeDeps(o = {}) {
     },
     readFile: (p) => (p in state.files ? state.files[p] : null),
     writeFile: (p, text) => { state.writes.push(p); state.files[p] = text; },
+    // #2791: manifest.js's glob targets (ruby *.gemspec, dotnet *.csproj) need a root
+    // listing; a test that doesn't pass rootFiles just gets none, same as production
+    // resolveTargets() called with no listRoot at all.
+    listRoot: () => o.rootFiles || [],
     listPlanFiles: () => o.plans || [],
     runHook: (cmd) => { state.hooks.push(cmd); return o.hookExit === undefined ? 0 : o.hookExit; },
     today: () => '2026-09-12',
@@ -95,11 +105,13 @@ test('exit 2: unknown flag, and a repo with no release-please-config.json (boots
 });
 
 test('exit 2: a config the engine cannot serve is a config error, not a git failure', () => {
-  const java = makeDeps({ files: { 'release-please-config.json': JSON.stringify({ packages: { '.': { 'release-type': 'java' } } }) } });
-  assert.strictEqual(run([], java.deps), 2);
-  assert.match(java.state.err, /release-type java/);
-  assert.match(java.state.err, /usage/);
-  assert.deepStrictEqual(java.state.writes, []);
+  // #2791: java/ruby/dotnet are supported now — an unknown release-type (never in
+  // STACK_TARGETS) is what still hits resolveTargets' own exit-2 path pre-write.
+  const unknown = makeDeps({ files: { 'release-please-config.json': JSON.stringify({ packages: { '.': { 'release-type': 'cobol' } } }) } });
+  assert.strictEqual(run([], unknown.deps), 2);
+  assert.match(unknown.state.err, /unknown release-type cobol/);
+  assert.match(unknown.state.err, /usage/);
+  assert.deepStrictEqual(unknown.state.writes, []);
   const escapes = makeDeps({ files: { 'release-please-config.json': JSON.stringify({ packages: { '.': { 'release-type': 'simple', 'extra-files': ['../x.json'] } } }) } });
   assert.strictEqual(run([], escapes.deps), 2);
   assert.match(escapes.state.err, /extra-files path escapes the repo root: \.\.\/x\.json/);
@@ -125,6 +137,49 @@ test('AC 1: --dry-run reports 1.3.0, three bullets, no hook, and writes nothing'
   assert.match(state.out, /no hook configured/);
   assert.deepStrictEqual(state.writes, []);
   assert.ok(!state.git.some((c) => /^(add|commit|tag -a|push)/.test(c)));
+});
+
+test('#2791 AC3: --dry-run against a java (Gradle) fixture repo reports build.gradle as the planned write', () => {
+  const { deps, state } = makeDeps({
+    files: {
+      'release-please-config.json': JSON.stringify({ packages: { '.': { 'release-type': 'java' } } }),
+      'build.gradle': readFixture('build.gradle'),
+    },
+    rootFiles: ['build.gradle'],
+  });
+  assert.strictEqual(run(['--dry-run'], deps), 0);
+  assert.match(state.out, /manifest: \.release-please-manifest\.json, build\.gradle/);
+  assert.deepStrictEqual(state.writes, []);
+});
+
+test('#2791 AC3: --dry-run against a ruby fixture repo (gemspec glob-resolved via listRoot) reports the gemspec as the planned write', () => {
+  const { deps, state } = makeDeps({
+    files: {
+      'release-please-config.json': JSON.stringify({ packages: { '.': { 'release-type': 'ruby' } } }),
+      'widget.gemspec': readFixture('widget.gemspec'),
+    },
+    // version.rb is absent from this fixture repo — only the gemspec's inline
+    // assignment carries the version; listRoot is what resolves the glob-named
+    // `*.gemspec` row to this repo's actual filename.
+    rootFiles: ['widget.gemspec', 'Gemfile'],
+  });
+  assert.strictEqual(run(['--dry-run'], deps), 0);
+  assert.match(state.out, /manifest: \.release-please-manifest\.json, widget\.gemspec/);
+  assert.deepStrictEqual(state.writes, []);
+});
+
+test('#2791 AC3: --dry-run against a dotnet fixture repo reports both the glob-resolved csproj and the fixed-name AssemblyInfo.cs as planned writes', () => {
+  const { deps, state } = makeDeps({
+    files: {
+      'release-please-config.json': JSON.stringify({ packages: { '.': { 'release-type': 'dotnet' } } }),
+      'widget.csproj': readFixture('widget.csproj'),
+      'AssemblyInfo.cs': readFixture('AssemblyInfo.cs'),
+    },
+    rootFiles: ['widget.csproj'],
+  });
+  assert.strictEqual(run(['--dry-run'], deps), 0);
+  assert.match(state.out, /manifest: \.release-please-manifest\.json, widget\.csproj, AssemblyInfo\.cs/);
+  assert.deepStrictEqual(state.writes, []);
 });
 
 test('AC 2 (fake runner): the live run edits both manifests and the CHANGELOG, commits, tags, pushes branch + tag, exit 0', () => {

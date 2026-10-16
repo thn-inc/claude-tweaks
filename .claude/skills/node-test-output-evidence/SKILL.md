@@ -1,13 +1,13 @@
 ---
 name: node-test-output-evidence
-description: Use when writing or reviewing code that reads `node --test` spec or TAP reporter output as evidence for a verdict, not just as a summary to display. Covers which test a failure belongs to, which failures are a parent's own, counting a log's failures against its summary, YAML diagnostic blocks, and the runner-level diagnostics Node never counts. The shipped consumer is `plugin/bin/lib/verify/`'s baseline adjudicator. Keywords - node --test, spec reporter, TAP, test identity, suite path, failing tests, ℹ fail, failureType, subtestsFailed, YAML block, ℹ Error, baseline adjudication, testTree.
+description: Use when writing or reviewing code that reads `node --test` spec or TAP reporter output as evidence for a verdict, not just as a summary to display. Covers which test a failure belongs to, which failures are a parent's own, counting a log's failures against its summary, YAML diagnostic blocks, and the runner-level diagnostics Node never counts. The shipped consumers are `plugin/bin/lib/verify/`'s baseline adjudicator and its flaky-retry hook. Keywords - node --test, spec reporter, TAP, test identity, suite path, failing tests, ℹ fail, failureType, subtestsFailed, YAML block, ℹ Error, baseline adjudication, flaky retry, unattributed failures, testTree.
 ---
 
 # Reading `node --test` output as evidence
 
 ## Overview
 
-`plugin/bin/verify.js --baseline <ref>` (#3043) turns a failing test run into a pass when every failure also fails at the base commit. That verdict is only as sound as the parser behind it: `testTree`, `failingTestsByFile`, `specEntryCount`, `cancelledCount` and `countUnmatchedFailures` in `plugin/bin/lib/verify/extract.js`, consumed by `plugin/bin/lib/verify/baseline.js`. Each rule below was a fail-open hole in that parser, reproduced by a reviewer with a real Node v24 log before it was closed. A display-only reader can afford a misread. A reader whose output gates a pass cannot.
+`plugin/bin/verify.js --baseline <ref>` (#3043) turns a failing test run into a pass when every failure also fails at the base commit. That verdict is only as sound as the parser behind it: `testTree`, `failingTestsByFile`, `specEntryCount`, `cancelledCount` and `countUnmatchedFailures` in `plugin/bin/lib/verify/extract.js`, consumed by `plugin/bin/lib/verify/baseline.js`. The flaky-retry hook (#3066) trusts the same failing-file list: `plugin/bin/verify.js` re-runs only the named files, so `unattributedFailureCount` must report 0 before `plugin/bin/lib/verify/flaky.js`'s `planRetry` will retry. Each rule below was a fail-open hole in that parser, reproduced by a reviewer with a real Node v24 log before it was closed. A display-only reader can afford a misread. A reader whose output gates a pass cannot.
 
 The general principle — a parse that cannot be trusted must say so — is `parse-signal-discipline`. This skill holds the Node-specific facts that principle needs.
 
@@ -44,6 +44,11 @@ An extracted list of failures cannot report that it missed one. `adjudicate` ref
 
 The listing and `ℹ fail` do not count the same things — a cancelled test, for example one that timed out, is listed but not counted, so the full run's entries must reconcile against `ℹ fail` plus `ℹ cancelled`, not `ℹ fail` alone. A cancelled test does not by itself block adjudication of the full run: it is held to the usual per-file evidence (it fails at base, or shows its own pass in isolation). Only each isolated single-file run — the per-file base run and the isolated HEAD rerun — must itself show `ℹ cancelled`/`# cancelled` at 0 (`accountedFamily`) to count as evidence. A single-file run that times out or cancels proves nothing, so it cannot make the file baseline or flaky. Once the full run is adjudicated there is no "unclassified" outcome: every failing file lands in `baselineFailing`, `flakyPassed`, or `attributable`. If only the base run did not finish, a clean isolated HEAD run still makes the file flaky. If the isolated HEAD run did not finish, the base run cannot rescue the file, because both baseline paths (`failsToLoadAtBase`, `baselineInIsolation`) also read the isolated HEAD log. Without that rescue the file is `attributable` and the verdict is `fail`. In the per-file base run, a failure whose diagnostic says the test timed out or was cancelled (`INCONCLUSIVE_RE`, read through `failingTestsByFile`'s `conclusiveOnly`) means the test did not finish, which proves nothing about whether it fails, so that base log is no evidence.
 
+The flaky-retry hook applies this accounting too, through `unattributedFailureCount` (#3066). A retry re-runs only the named files, so an undercounted list would let a retried pass clear a failure nothing re-ran. A positive count makes `planRetry` refuse with `unattributed-failures: {N}`. Its checks differ from `adjudicate`'s in two ways:
+
+- TAP gets an entry check as well: `tapBlockCount` must equal `# fail` + `# cancelled`, as spec entries must equal `ℹ fail` + `ℹ cancelled`.
+- Any family other than spec or tap returns 0. A `summary` log keeps the retry eligibility it already had, with no accounting guard.
+
 ### Node's runner-level diagnostics are visible only in the log
 
 An uncaught error from async work that outlived its test is reported as a separate file-level failure only when no test in the file failed. Beside a failing test it appears only as an `ℹ Error:` line, or as text containing `generated asynchronous activity after the test ended`. `baseline.js`'s `RUNNER_ERROR_RE` treats a log carrying either as no evidence. A bare `# Error:` line in TAP output is the test's own console output, not Node's.
@@ -65,6 +70,7 @@ An uncaught error from async work that outlived its test is reported as a separa
 - Reproduce a suspected parser hole with a real Node reporter log (spec and TAP) before fixing it, and keep that log's shape in the test. Every hole above was confirmed that way, and a hand-typed log tends to omit the line that caused the hole.
 - The comparison is by test identity, not by failure reason. A test that already fails at base covers any failure of the same test at HEAD. `plugin/skills/test/verification.md`'s "What it cannot see" states this limit, and the hosted CI check stays the authoritative gate.
 - A wholly file-level load failure counts as baseline only when its normalized isolated HEAD log equals the base log (`normalizeLog` strips roots and durations), not merely when it fails at the same `1:1` site.
+- `verify.js --stamp-status` exposes three related but distinct booleans: `match` (an unconditional full clean pass — deliberately `false` whenever `baselineAdjudicated` is `true`, even when `sha === head`), `verifiedHead` (HEAD is actually verified, by either path — this is the field Skip-if-recent and `/review` Step 1.5 read), and `baselineAdjudicated` (this pass relied on baseline adjudication). A reader checking only `match` can misread a legitimate baseline-adjudicated pass as "doesn't match HEAD, re-run" — check `verifiedHead` for pass/fail and `baselineAdjudicated` for which path produced it.
 
 ## Common Operations
 
@@ -83,11 +89,12 @@ node --test --test-reporter=tap tests/bin-lib/verify/extract.test.js   # capture
 | Scanning every TAP line for `not ok` or `failureType:` | An assertion's expected text inside a YAML block invents test points or flips a parent's own failure to inherited |
 | Treating an extracted failing-file list as complete | A failure whose entry names no file drops out, and the rest classify as a pass over a failure nothing checked |
 | Reading a test's absence from a re-run as a pass | A child killed mid-file, a skip, or a filter produces the same absence |
+| Applying an accounting check to spec output only when a new consumer reuses it | #3066's first TAP branch returned before checking that the summary counts parsed, so a truncated TAP log read as fully accounted. Carry every check over for spec and TAP alike, and test each family's truncated-log case |
 
 ## Reference
 
-- Code: `plugin/bin/lib/verify/extract.js` (`testTree`, `failingTestsByFile`, `specEntryCount`, `cancelledCount`, `countUnmatchedFailures`, `fileLevelFailures`), `plugin/bin/lib/verify/baseline.js` (`adjudicate`, `accountedFamily`, `RUNNER_ERROR_RE`, `normalizeLog`)
-- Tests: `tests/bin-lib/verify/extract.test.js`, `tests/bin-lib/verify/baseline.test.js`, `tests/bin-lib/verify/cli.test.js`
-- Contract: `plugin/skills/test/verification.md`'s Baseline adjudication
+- Code: `plugin/bin/lib/verify/extract.js` (`testTree`, `failingTestsByFile`, `specEntryCount`, `cancelledCount`, `countUnmatchedFailures`, `fileLevelFailures`, `unattributedFailureCount`, `tapBlockCount`), `plugin/bin/lib/verify/baseline.js` (`adjudicate`, `accountedFamily`, `RUNNER_ERROR_RE`, `normalizeLog`), `plugin/bin/lib/verify/flaky.js` (`planRetry`)
+- Tests: `tests/bin-lib/verify/extract.test.js`, `tests/bin-lib/verify/baseline.test.js`, `tests/bin-lib/verify/cli.test.js`, `tests/bin-lib/verify/flaky.test.js`
+- Contract: `plugin/skills/test/verification.md`'s Baseline adjudication and Flake handling
 - Related skills: `parse-signal-discipline` (couldn't parse versus doesn't apply; reconciling a list against an independent count), `windows-checkout-test-parity` (the Windows failure baseline this adjudicator exists for)
-- Origin: #3043
+- Origin: #3043; the flaky-retry consumer: #3066

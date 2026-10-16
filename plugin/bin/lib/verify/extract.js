@@ -460,6 +460,11 @@ function tapBlocks(lines) {
   return blocks;
 }
 
+// Every TAP `not ok` block, counted the same way `specEntryCount` counts
+// spec entries — the accounting `unattributedFailureCount` compares against
+// `# fail` + `# cancelled`.
+function tapBlockCount(text) { return tapBlocks(stripAnsi(text).split('\n')).length; }
+
 // The relativized test files one TAP block's frames name, deduped.
 function tapBlockFiles(block, cwd) {
   const files = [];
@@ -483,6 +488,32 @@ function countUnmatchedFailures(text, family, { cwd = process.cwd() } = {}) {
   if (family !== 'spec') return 0;
   return specEntries(lines)
     .filter(({ file }) => !isRetryableFile(relativize(file, cwd))).length;
+}
+
+// Whether a spec/tap log's failing-file list accounts for the whole
+// failure — the same accounting `baseline.js`'s `adjudicate` already
+// applies before trusting a classification, reused here so the flaky-retry
+// hook (#3066) fails closed on the identical gap: a failure
+// `countUnmatchedFailures` could not attribute to any test file, a log
+// whose summary counts don't parse (truncated or unrecognized — spec and
+// tap alike, since TAP's `# fail N` line is exactly as parseable a summary
+// as spec's `ℹ fail`), or a failing-entry count that does not add up to
+// `ℹ fail`/`# fail` + `ℹ cancelled`/`# cancelled` — any of these means the
+// failing-file list used to plan a retry is an undercount, so retrying and
+// passing those named files would wrongly clear the whole check. Returns 0
+// (accounted) or a positive count (unattributed); every family other than
+// spec/tap returns 0 — retry eligibility for those is governed elsewhere
+// and this guard never widens it.
+function unattributedFailureCount(text, family, { cwd = process.cwd() } = {}) {
+  if (family !== 'spec' && family !== 'tap') return 0;
+  const unmatched = countUnmatchedFailures(text, family, { cwd });
+  if (unmatched > 0) return unmatched;
+  const counts = parseCounts(text, family);
+  if (counts === null) return 1;
+  const cancelled = cancelledCount(text, family) || 0;
+  const entries = family === 'spec' ? specEntryCount(text) : tapBlockCount(text);
+  const expected = counts.fail + cancelled;
+  return entries === expected ? 0 : Math.abs(entries - expected);
 }
 
 // Deduped, log-order, repo-relative test files named by the failing part of
@@ -513,7 +544,7 @@ function extractFailingFiles(text, family, { cwd = process.cwd() } = {}) {
 
 module.exports = {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
-  stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, failingTestsByFile, specEntryCount,
+  stripAnsi, extractFailingFiles, countUnmatchedFailures, unattributedFailureCount, fileLevelFailures, failingTestsByFile, specEntryCount,
   cancelledCount, testTree, TEST_FILE_RE,
   MAX_REGION_LINES, GENERIC_TAIL_LINES, MAX_LINE_CHARS,
 };

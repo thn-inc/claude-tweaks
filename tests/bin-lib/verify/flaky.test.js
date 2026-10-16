@@ -6,6 +6,9 @@ const path = require('path');
 const {
   planRetry, applyRetryResults, retryLogName, runRetries, flakyCaveatLines,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'flaky.js'));
+const {
+  sniffFamily, extractFailingFiles, unattributedFailureCount,
+} = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'extract.js'));
 
 const FLAKY = { files: ['tests/a.test.js', 'tests/b.test.js'], maxRetries: 1 };
 const RETRY = { tests: 'node --test {file}' };
@@ -27,6 +30,32 @@ test('planRetry: any unlisted failing file → no retry, and the reason names ev
   assert.strictEqual(plan.retry, false);
   assert.strictEqual(plan.reason, 'unlisted: [tests/real.test.js, tests/other.test.js]');
   assert.deepStrictEqual(plan.unlisted, ['tests/real.test.js', 'tests/other.test.js']);
+});
+
+test('planRetry: an unattributed failure refuses retry even when every named failing file is allowlisted (#3066 AC1)', () => {
+  const log = ['ℹ tests 3', 'ℹ pass 1', 'ℹ fail 2', '', '✖ failing tests:', '',
+    'test at tests/a.test.js:1:1', '✖ x (1ms)', '', 'test at tests/helper.js:2:1', '✖ y (1ms)'].join('\n');
+  const family = sniffFamily(log);
+  const failingFiles = extractFailingFiles(log, family);
+  const unattributedCount = unattributedFailureCount(log, family);
+  assert.deepStrictEqual(failingFiles, ['tests/a.test.js']);
+  assert.strictEqual(unattributedCount, 1);
+  const plan = planRetry({
+    failingFiles, flaky: { files: ['tests/a.test.js'], maxRetries: 1 }, retry: RETRY, suite: 'tests', unattributedCount,
+  });
+  assert.deepStrictEqual(plan, { retry: false, reason: 'unattributed-failures: 1' });
+});
+
+test('planRetry: a spec log whose every failure is an allowlisted file still retries and passes as today (#3066 AC2)', () => {
+  const log = ['ℹ tests 2', 'ℹ pass 0', 'ℹ fail 2', '', '✖ failing tests:', '',
+    'test at tests/a.test.js:1:1', '✖ x (1ms)', '', 'test at tests/b.test.js:2:1', '✖ y (1ms)'].join('\n');
+  const family = sniffFamily(log);
+  const failingFiles = extractFailingFiles(log, family);
+  const unattributedCount = unattributedFailureCount(log, family);
+  assert.strictEqual(unattributedCount, 0);
+  const plan = planRetry({ failingFiles, flaky: FLAKY, retry: RETRY, suite: 'tests', unattributedCount });
+  assert.strictEqual(plan.retry, true);
+  assert.deepStrictEqual(plan.files, ['tests/a.test.js', 'tests/b.test.js']);
 });
 
 test('planRetry: empty failingFiles → no-parse; no template for the suite → no-template; maxRetries 0 → max-retries-0 (AC2)', () => {
