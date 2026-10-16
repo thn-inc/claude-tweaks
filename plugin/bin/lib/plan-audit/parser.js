@@ -242,10 +242,11 @@ function countTasks(text) {
 // abbreviations are masked before splitting so `a; b` inside backticks and
 // "e.g." never cut a clause. Anything the splitter cannot read confidently
 // lands in `unparsed`, never in `clauses` (parse-signal-discipline): a
-// missing or empty section, an item with an odd backtick count or a fence,
-// and — when the section does have list items — any stray prose paragraph
-// beside them, except a one-line italic footer such as
-// `_Filed by review via specShapedBody._`.
+// missing or empty section, an item with an odd backtick count, an unbalanced
+// `(`/`[`, or a fence, and — when the section does have list items — any
+// stray prose paragraph beside them, except a one-line italic footer such as
+// `_Filed by review via specShapedBody._`. A sub-bullet indented deeper than
+// its parent item's marker folds into that item rather than becoming a new one.
 const AC_HEADING_RE = /^##[ \t]+Acceptance Criteria[ \t]*$/i;
 const AC_SECTION_END_RE = /^#{1,2}[ \t]/;
 const AC_FENCE_RE = /^[ \t]*(```|~~~)/;
@@ -295,6 +296,9 @@ function splitClauses(text) {
       if (after && !/[a-z]/.test(after[1])) cuts.push(i + 1);
     }
   }
+  // An opener left unclosed (depth != 0) is the same signal as an odd backtick
+  // count: refuse rather than guess where the clause actually ends.
+  if (depth !== 0) return null;
   const clauses = [];
   let from = 0;
   for (const cut of [...cuts, text.length]) {
@@ -338,8 +342,16 @@ function extractAcceptanceClauses(specText) {
     }
     const itemMatch = line.match(AC_ITEM_RE);
     if (itemMatch) {
-      current = { lines: [itemMatch[1].replace(AC_CHECKBOX_RE, '')], fenced: false };
-      items.push(current);
+      const indent = line.match(/^ */)[0].length;
+      // A list line indented deeper than the open item's own marker is a sub-bullet
+      // of that item, not a sibling — fold it in rather than letting it consume a
+      // new item number and renumber everything after it.
+      if (current && items.includes(current) && indent > current.indent) {
+        current.lines.push(itemMatch[1].replace(AC_CHECKBOX_RE, '').trim());
+      } else {
+        current = { lines: [itemMatch[1].replace(AC_CHECKBOX_RE, '')], fenced: false, indent };
+        items.push(current);
+      }
     } else if (current && (/^\s/.test(line) || !prevBlank)) {
       current.lines.push(line.trim());
     } else {

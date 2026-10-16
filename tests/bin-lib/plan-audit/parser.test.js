@@ -311,6 +311,18 @@ test('#3099: an odd backtick count makes splitClauses refuse (null), never guess
   assert.strictEqual(splitClauses('A `broken span; still here.'), null);
 });
 
+test('#3099: an unbalanced paren or bracket makes splitClauses refuse (null), never guess', () => {
+  assert.strictEqual(splitClauses('This (never closes. Another clause follows.'), null);
+  assert.strictEqual(splitClauses('This [never closes. Another clause follows.'), null);
+});
+
+test('#3099: balanced parens still do not split inside them', () => {
+  assert.deepStrictEqual(
+    splitClauses('Both shapes (one; two) pass. Done.'),
+    ['Both shapes (one; two) pass.', 'Done.'],
+  );
+});
+
 test('#3099: ids follow item position, and a leading [ ] checkbox is stripped from a - bullet', () => {
   const spec = '## Acceptance Criteria\n\n- [ ] First holds.\n- [x] Second holds; third holds.\n';
   assert.deepStrictEqual(extractAcceptanceClauses(spec).clauses, [
@@ -326,6 +338,20 @@ test('#3099: an indented continuation line joins its item', () => {
     'First part continues here.',
     'Second sentence.',
   ]);
+});
+
+test('#3099: a nested sub-bullet under an AC item is a continuation, never a new item (ids stay stable)', () => {
+  const spec = '## Acceptance Criteria\n\n- Parent item.\n  - Nested detail.\n- Third item.\n';
+  const { clauses, unparsed } = extractAcceptanceClauses(spec);
+  assert.deepStrictEqual(unparsed, []);
+  assert.deepStrictEqual(clauses.map((c) => c.id), ['AC1.1', 'AC1.2', 'AC2.1']);
+  assert.deepStrictEqual(clauses.map((c) => c.text), ['Parent item.', 'Nested detail.', 'Third item.']);
+});
+
+test('#3099: a flat list (no nesting) still numbers items AC1..AC3', () => {
+  const spec = '## Acceptance Criteria\n\n- First.\n- Second.\n- Third.\n';
+  const { clauses } = extractAcceptanceClauses(spec);
+  assert.deepStrictEqual(clauses.map((c) => c.id), ['AC1.1', 'AC2.1', 'AC3.1']);
 });
 
 test('AC3.1 (#3099): a spec with no ## Acceptance Criteria section is unparsed, never an empty clause list', () => {
