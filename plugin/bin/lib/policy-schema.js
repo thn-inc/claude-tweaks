@@ -125,6 +125,17 @@ const POLICY_KEYS = [
   // (an env var, not a policy key) takes precedence over this when both are
   // set — see shared-primitives.js's resolution order.
   { key: 'gh-timeout-ms', type: 'integer', min: 1000, max: 60000, default: 5000, summary: "Bounds how long a single `gh` subprocess call may run before it is killed and retried once.", category: 'housekeeping', tier: 'advanced' },
+  // #3051: the `git` subprocess timeout for claims-git-cas.js's compare-and-
+  // swap reads/writes against the claims-registry branch, routed through
+  // bin/lib/shared-primitives.js's GIT_TIMEOUT_MS export — mirrors
+  // gh-timeout-ms's shape exactly, but with its own default and range: a
+  // claims-branch fetch/push is not retried automatically the way a gh call
+  // is, and was observed taking 8.6s on a loaded machine, so the default is
+  // higher (30s) and the ceiling wider (120s) than gh-timeout-ms's.
+  // CLAUDE_TWEAKS_GIT_TIMEOUT_MS (an env var, not a policy key) takes
+  // precedence over this when both are set — see shared-primitives.js's
+  // resolution order.
+  { key: 'git-timeout-ms', type: 'integer', min: 1000, max: 120000, default: 30000, summary: "Bounds how long a single claims-registry `git` subprocess call may run before it is killed and classified as a transport failure.", category: 'housekeeping', tier: 'advanced' },
   { key: 'depth-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt asking whether recently changed code deserves a deeper architectural pass.", category: 'housekeeping', tier: 'advanced' },
   { key: 'creative-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt suggesting creative or UX improvement ideas for what was just built.", category: 'housekeeping', tier: 'advanced' },
   { key: 'scope-keywords-required', type: 'boolean', default: false, summary: "When on, a build refuses to start over files outside its plan unless the plan names its intended scope; otherwise it is only a warning.", category: 'pipeline-behavior', tier: 'advanced' },
