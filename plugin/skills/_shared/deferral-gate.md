@@ -8,6 +8,7 @@ The single home of the rule every exhaust channel applies before anything become
 - `skills/wrap-up/leftover-routing.md` (unfinished spec sections)
 - `skills/visual-review/browser-review.md` (Findings & Ideas Defer routing)
 - `skills/capture/SKILL.md` (Shaped-body branch — `--defer-reason=` validation and the deferral check)
+- `skills/build/SKILL.md` (Common Step 2 — Scope and edit discipline's reported follow-ups)
 - `skills/_shared/ledger-format.md` (the ledger resolve gate's Phase 1 / 2 / 3)
 
 The code twins are `clearsFloor` (`bin/lib/issues/autonomy.js`) and `recordPayload`'s `deferReason` option (`bin/lib/issues/record.js`); `DEFER_REASONS` in `record.js` is the vocabulary's only code home, and `tests/deferral-gate-conformance.test.js` pins this file and that export equal.
@@ -31,6 +32,7 @@ If the item qualifies, fix it, commit it, and record it as fixed. Do this BEFORE
 Never use these to leave an item open, defer it, or file it:
 
 - *"Out of scope of this plan / spec"* — if the file is in this build's diff, it is in scope
+- *"Pre-existing"* — a reported pre-existing defect in a file this build's diff touches goes through the fix-now test above like any other finding; pre-existence alone is never a defer reason. Only `pre-existing-outside-diff` (a file the diff does not touch) defers on pre-existence
 - *"Following plan verbatim"* — when plan code conflicts with `.claude/rules/` or CLAUDE.md don'ts, fix the violation; the plan was written before review-time context
 - *"A future plan (P2/P3/...) might want X"* — speculative; only defer for *known* downstream needs
 - *"Bundle of small items"* — items get classified individually, never as a group; below-floor **deferred** items are the one exception — they batch into the digest by design, per `_shared/materiality-floor.md`, which is a routing decision made after the gate, never a reason to skip a fix
