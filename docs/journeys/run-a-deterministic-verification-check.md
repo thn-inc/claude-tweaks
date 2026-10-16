@@ -139,6 +139,22 @@ files:
   - A stale `ct-verify-base-*` worktree silently removed by a later run instead of only named — sweeping it risks deleting a sibling session's own live scratch.
   - `report.json`'s `pass` rewritten to `true`.
 
+### 12. Bound a hung check with --cmd-timeout
+
+- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --cmd tests="node -e \"setInterval(() => {}, 1000)\"" --cmd-timeout tests=2000`
+- **Action:** Point a check at a command that never exits, with `--cmd-timeout` naming a bound well under what you're willing to wait.
+- **Should feel:** The run ends on its own — no hung terminal, no orphaned process to hunt down and kill by hand.
+- **Should understand:** On expiry the runner kills the whole process tree the shell spawned, not just the immediate shell — a negative-pid `SIGKILL` to the POSIX process group (the check is spawned `detached: true` precisely so this group exists), or `taskkill /pid <pid> /T /F` on win32 — and records the run as `{exitCode: null, timedOut: true}`. A `null` exit code is never adjudicated and never passes, so the table shows `fail` with a `timed out after {n}s` summary in place of a blank one, and the run writes no pass stamp. `--cmd-timeout <name>=<ms>` is repeatable (one per check), and a check with no `--cmd-timeout` behaves exactly as before — unbounded.
+- **Red flags:** The process (or a descendant it forked) still running after the runner exits; a timed-out check's `report.json` entry missing `timedOut: true`; a pass stamp written despite a timeout.
+
+### 13. Watch a hung baseline per-file run stay timed-out, not silently passed
+
+- **URL:** Step 11's invocation, with `--cmd-timeout tests=5000` added, against a file that hangs only at the base commit (not at HEAD)
+- **Action:** Read the `ATTRIBUTABLE:` line for that file.
+- **Should feel:** A hang during baseline adjudication ends the same way a hang in the main run does — bounded, not a wedged pipeline.
+- **Should understand:** Baseline per-file base/isolated runs (Step 11) reuse the check's own `--cmd-timeout` as their bound — there's no separate flag for it. A per-file run that times out is no evidence either way (it proves nothing about whether the file fails at base), so the file stays `attributable`, but the line names why: `ATTRIBUTABLE: {file} (timed out — base/isolated run exceeded its --cmd-timeout bound)` rather than a bare file name that reads identically to an ordinary attributable failure.
+- **Red flags:** A timed-out per-file run read as "passed at base" (it proves nothing — it must stay attributable); an `ATTRIBUTABLE:` line with no timeout note when the underlying run actually timed out.
+
 ## Origin
 - Created during build of #892 (deterministic verification runner + `verification.md` migration) — replaces the retired prose-orchestrated `LOG=`/`tail`/`grep` capture discipline `verification.md` Step 2 used to document directly.
 - Step 6 added after #881 shipped (suite-count regression stamp) — the journey previously only forward-referenced it as "a future consumer of `report.json`'s `counts` field."
@@ -151,4 +167,5 @@ files:
 - Step 11 added, and Step 7's envelope gained `baselineAdjudicated`, after #3043 shipped (`--baseline`/`--baseline-cmd`, `baseline.js`, the `spec` output family in `extract.js`) — a dev checkout with a known non-zero baseline can now produce a verified stamp instead of an unresolvable re-trigger loop.
 - Step 10 extended by #3066 (`extract.js`'s `unattributedFailureCount`, `planRetry`'s `unattributed-failures: {N}` refusal; `verification.md` routes that reason to the whole-suite re-run): a spec/TAP failure the log could not tie to a test file no longer lets a retry of the named, allowlisted files clear the whole check.
 - Step 11 extended after #3064 shipped (`SIGINT`/`SIGTERM`/`SIGHUP` cleanup while the scratch worktree exists; `findStaleBaselineWorktrees`/`realGit.listWorktrees` naming a leftover on the next `--baseline` run) — a Ctrl-C mid-run no longer leaves the worktree and its checkout behind with no trace.
+- Steps 12-13 added after #3063 shipped (`--cmd-timeout <name>=<ms>`, `run.js`'s `killTree`, and baseline per-file runs reusing that bound as their own default) — a hung test file no longer hangs verification, or `--baseline` adjudication, forever.
 - Related specs: #891 (parent — deterministic verification runner family), #881 (suite-count regression detection), #882 (flake adjudication — landed as a standalone `node --test` isolated re-run recipe in `verification.md`'s own "Flake adjudication" section; does not consume `verify.js`'s per-check log files)
