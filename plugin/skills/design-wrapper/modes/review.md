@@ -52,7 +52,8 @@ When Layer 0 did not resolve, or resolved with `critique.latest: null`, omit `pr
 The one point where a built artifact and its work record are both in hand — Impeccable's direction
 contract (and its seed key, the only thing making a non-deterministic build reproducible) is read
 from the relevant surface brief here and recorded onto the record as `Design-seed:`. Read
-`review-seed-capture.md` in this directory and follow it in full: the locate-and-parse procedure
+`modes/review-seed-capture.md` (relative to the skill root, `plugin/skills/design-wrapper/`) and
+follow it in full: the locate-and-parse procedure
 over Step 2's resolved file list, the three outcomes (No contract / Malformed / Contract found), the
 record-resolution and `Design-seed:` write rules, and the never-gate posture. Step 3.7's gate reads this step's parse
 outcome — **Contract found** is the only outcome that reaches it.
@@ -227,12 +228,11 @@ If the selection is empty, skip (c)–(f): no dispatch, and `craft_critics` is *
 (the nudge in Step 4 still applies on its own conditions). Otherwise continue with the selected rows.
 
 **(c) Availability.** For each selected critic, resolve its `SKILL.md` per
-`../../_shared/design-craft.md`'s **Emil skill resolution** — the per-skill-name two-path lookup
-(`{project}/.claude/skills/{name}/SKILL.md`, then `~/.claude/skills/{name}/SKILL.md`; read through
-symlinks). A name resolving at neither path is unavailable: record
-`{provider: "<name>", ran: false, missed: "not installed at either path"}` in `craft_critics`, dispatch
+`../../_shared/design-craft.md`'s **Emil skill resolution** — its per-skill-name lookup order, read
+through symlinks. A name resolving at none of those lookup paths is unavailable: record
+`{provider: "<name>", ran: false, missed: "not installed at any lookup path"}` in `craft_critics`, dispatch
 nothing for it, and log
-`SCANNED {time} — review Step 3.8: critic <name> unavailable (not installed at either path). Reversibility: n/a.`
+`SCANNED {time} — review Step 3.8: critic <name> unavailable (not installed at any lookup path). Reversibility: n/a.`
 Availability is per critic; one missing critic never skips the others. On `surface_track === "terminal"`, skip this lookup for the terminal critic — it resolves at `${CLAUDE_PLUGIN_ROOT}/skills/_shared/terminal-ux.md` directly and is never unavailable (`../critics.md`'s Resolution exception).
 
 **(d) Decisions layer.** Resolve `DESIGN.md` (three-path lookup, as in (b)) and the root sidecar
@@ -517,7 +517,7 @@ entirely when zero (see Output to caller).
   "prior_critique": { "slug": "dashboard", "score": 78, "p0": 1, "p1": 4, "timestamp": "...", "file": ".impeccable/critique/..." },
   "design_contract": { "found": true, "file": "src/routes/+page.svelte", "seed": "a1b2c3d4", "recorded_on": 152 },
   "finish_review": { "ran": true, "parsed": true, "keep": "The masthead's asymmetry — do not centre it while fixing spacing." },
-  "craft_critics": [ { "provider": "emil-design-eng", "ran": true, "parsed": true }, { "provider": "review-animations", "ran": false, "missed": "not installed at either path" } ],
+  "craft_critics": [ { "provider": "emil-design-eng", "ran": true, "parsed": true }, { "provider": "review-animations", "ran": false, "missed": "not installed at any lookup path" } ],
   "decisions_staged": 2
 }
 ```
