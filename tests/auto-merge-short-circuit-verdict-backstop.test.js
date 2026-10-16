@@ -17,6 +17,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { VERDICT_STEPS, verdictText } = require('../plugin/bin/lib/dispatch/merge-verdict');
 const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
+const { resolveAll } = require('../plugin/bin/lib/console/resolve');
 
 const ROOT = path.join(__dirname, '..');
 const collapse = (s) => s.replace(/\s+/g, ' ');
@@ -64,12 +65,33 @@ test('the Verdict backstop re-reads decisions.md through the shared module', () 
   );
 });
 
-test('the refusal line resolves the console to leave-open (carries merge-check AND needs-human)', () => {
-  const m = FLAT.match(/--text "(#\{n\} merge-check verdict not confirmed[^"]*)"/);
+test('the refusal line resolves the console to leave-open (run through resolveAll, not a copy of its matcher)', (t) => {
+  const m = FLAT.match(/--step "([^"]+)" --reversibility n\/a --text "(#\{n\} merge-check verdict not confirmed[^"]*)"/);
   assert.ok(m, 'refusal log line missing');
-  assert.match(m[1], /needs-human/);
-  assert.match(m[1], /merge-check/);
   assert.doesNotMatch(PRE_CHANGE, /merge-check verdict not confirmed/);
+  const text = m[2].replace('{n}', '7').replace('{latest}', 'none').replace('{detail}', '');
+  const consoleDeps = {
+    readFile: (p) => fs.readFileSync(p, 'utf8'),
+    readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
+    gitApplyCheck: () => ({ ok: true }),
+    readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:merge'], pendingSince: null }])),
+    now: () => Date.parse('2026-10-16T12:00:00Z'),
+  };
+  const mergeFor = (decisions) => {
+    const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verdict-refusal-console-'));
+    t.after(() => fs.rmSync(runDir, { recursive: true, force: true }));
+    fs.mkdirSync(path.join(runDir, 'work'));
+    fs.mkdirSync(path.join(runDir, 'staged'));
+    fs.writeFileSync(path.join(runDir, 'work', '7-spec.md'), '---\nrecord: 7\n---\n');
+    fs.writeFileSync(path.join(runDir, 'decisions.md'), decisions);
+    return resolveAll({ runDir, policy: 'console-auto', deps: consoleDeps }).merge;
+  };
+  // Control: the same granted run with no refusal line merges, so leave-open below is the refusal's doing.
+  assert.strictEqual(mergeFor('## /wrap-up\n').resolution, 'merge');
+  const refusal = formatEntry({ status: 'AUTO', now: new Date(), step: m[1], text });
+  const merge = mergeFor(`## /wrap-up\n${refusal}\n`);
+  assert.strictEqual(merge.resolution, 'leave-open');
+  assert.match(merge.reason, /merge-check verdict not confirmed/);
 });
 
 test('pr-first: the backstop precedes the _shared/pr-first-merge.md invocation', () => {
