@@ -82,6 +82,20 @@ value is what the agent acts on. These `{plugin-root}` lines are placeholders to
 composed-bytes scanner, not call sites of their own — the bundles are measured at their skill
 call sites. Compose both before either dispatch anyway: if the compose command is unavailable or exits non-zero, read the named source files directly — which, for the dispatched agent, each template citation's own fallback already says.
 
+**Log each group's resolved first-call model (#3212).** This is a dispatching-session step, not
+part of `{context-pack}`. When resolving the first call's profile
+(`node "{plugin-root}/bin/resolve-profile.js" capable`, the template below), keep the resolved
+`model`; after the first call returns — never before it is dispatched — write one line per group
+to that group's `{minted-run-dir}/decisions.md` through `log-decision.js` (item 4's shape), per
+`_shared/auto-decision-log.md`'s canonical entry schema:
+`AUTO {time} — Dispatch group {group}: first-call model resolved to {model}. Reversibility: n/a (informational).`
+The timing matters: before the first call, the minted directory's `decisions.md` may hold only
+`/flow` Step 2.8's claim-log lines, and any other line makes `/flow` Step 3 treat the directory as
+a recovery (adoption case 3, `bin/lib/flow/preflight.js` via
+`bin/lib/log-decision/claim-log.js`'s `classifyDecisions`) instead of a fresh mint (case 2). A
+`source` of `ceiling` in the resolver's output means the clamp described under the first-call
+template applied.
+
 ## First call — build,test
 
 **No handoff to capture from this call's report.** Dispatch Step 4 already minted this group's run directory before either call — `{minted-run-dir}` below is that same directory, substituted literally, on both calls. There is nothing to parse out of this call's prose report to construct the second call's input; the gate between calls (`two-call-gate.md`) reduces to reading the status line and `OUTCOME`.

@@ -87,4 +87,19 @@ test('FIRST-call section names the model-ceiling clamp beside the template', () 
   assert.match(caveat, /source: 'ceiling'/);
 });
 
+test('Context pack instructs the dispatching session to log the resolved first-call model', () => {
+  const { contextPack } = sections(read());
+  assert.ok(
+    contextPack.includes(
+      '`AUTO {time} — Dispatch group {group}: first-call model resolved to {model}. Reversibility: n/a (informational).`',
+    ),
+    'missing the per-group first-call model log line',
+  );
+  assert.match(contextPack, /_shared\/auto-decision-log\.md/);
+  // Logged only after the first call returns: a pre-dispatch line in the minted dir's
+  // decisions.md would make /flow Step 3 classify it as case 3, not case 2
+  // (bin/lib/flow/preflight.js + bin/lib/log-decision/claim-log.js's classifyDecisions).
+  assert.match(contextPack, /after the first call returns/);
+});
+
 module.exports = { sections, fencedBlock, profileOf };
