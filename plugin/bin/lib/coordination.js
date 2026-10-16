@@ -296,109 +296,91 @@ function reconcileSeverity(fa, fb) {
   return { ...fa, severity, severityContested: true };
 }
 
-function categoriseReproduction(agentAFindings, agentBFindings) {
-  const confirmed = [];
-  const unconfirmed = [];
-  const matchedB = new Set(); // B indices that ended up paired into a confirmed entry
-  const consumedB = new Set(); // B indices already emitted (near-location case) — never pair, never re-emit
-  const normalizedB = agentBFindings.map((rawFb) => normalizeFinding(rawFb));
-  // #2955: A findings with no eligible ±2 partner. They are retried against
-  // the wide band only after every ±2 pairing has claimed its B finding, so a
-  // wide-band pair never takes a B finding another A finding reported on
-  // (nearly) the same line. `coincidence` is the ±2 near-location partner
-  // reserved for the #1980 outcome in case the wide band finds no twin.
-  const deferredA = [];
-
-  for (const rawFa of agentAFindings) {
-    const fa = normalizeFinding(rawFa);
-    // #1980: gather every same-location B candidate not already spoken for,
-    // rather than stopping at the first (location-only) match — location
-    // alone is no longer sufficient to pick a pairing.
-    const candidates = [];
-    normalizedB.forEach((fb, i) => {
-      if (matchedB.has(i) || consumedB.has(i)) return;
-      if (!sameLocation(fa, fb, LINE_TOLERANCE_REPRODUCTION)) return;
-      candidates.push({ index: i, finding: fb, substance: sameSubstance(fa, fb), score: substanceSimilarity(fa, fb) });
-    });
-
-    if (candidates.length === 0) {
-      deferredA.push({ fa, coincidence: null });
-      continue;
-    }
-
-    // A candidate is eligible to pair unless its substance is known to
-    // differ (`false`) — `true` and `null` (unknown) both pair, per
-    // sameSubstance's contract above.
-    const eligible = candidates.filter((candidate) => candidate.substance !== false);
-
-    if (eligible.length > 0) {
-      // Prefer the best-matching candidate (highest known similarity; an
-      // unknown/`null` score never outranks a real one) rather than the
-      // first in array order, so an actual same-substance pair is never
-      // lost to an earlier unrelated same-location neighbour.
-      let best = eligible[0];
-      for (const candidate of eligible.slice(1)) {
-        const bestScore = best.score === null ? -1 : best.score;
-        const candidateScore = candidate.score === null ? -1 : candidate.score;
-        if (candidateScore > bestScore) best = candidate;
-      }
-      confirmed.push(reconcileSeverity(fa, best.finding));
-      matchedB.add(best.index);
-    } else {
-      // Every same-location candidate is substantively different — this is
-      // the coincidence #1980 fixes: do NOT merge. Both sides surface in
-      // unconfirmed, each pointing at the other via `nearLocation`, so a
-      // reviewer sees the coincidence instead of one finding silently
-      // vanishing. #2955: the partner is reserved now, as before, but the
-      // pair is emitted only after the wide band has had its chance to find
-      // A's real twin.
-      const chosen = candidates[0];
-      consumedB.add(chosen.index);
-      deferredA.push({ fa, coincidence: chosen });
-    }
+// #2907: assigns pairs best-first across every A finding, so which A
+// finding a B finding pairs with no longer depends on the order agent A
+// reported them in. Ranked by similarity (an unknown/`null` score ranks below
+// every known one), then by the smaller line delta, then by A index, then by
+// B index, so even a tie resolves the same way on every run.
+function assignBestPairs(pairs, aToB, pairedB) {
+  const rank = (score) => (score === null ? -1 : score);
+  const ordered = [...pairs].sort((x, y) => rank(y.score) - rank(x.score)
+    || x.delta - y.delta || x.aIndex - y.aIndex || x.bIndex - y.bIndex);
+  for (const pair of ordered) {
+    if (aToB.has(pair.aIndex) || pairedB.has(pair.bIndex)) continue;
+    aToB.set(pair.aIndex, pair.bIndex);
+    pairedB.add(pair.bIndex);
   }
+}
 
-  // #2955: the wide band. A deferred A finding pairs with a B finding 3-5
-  // lines away only on known, strong substance agreement; anything else is
-  // not a candidate at all, so it never becomes a #1980 coincidence. Ties
-  // break by the smaller line delta.
-  for (const { fa, coincidence } of deferredA) {
-    let best = null;
-    normalizedB.forEach((fb, i) => {
-      if (matchedB.has(i) || consumedB.has(i)) return;
+function categoriseReproduction(agentAFindings, agentBFindings) {
+  const normalizedA = agentAFindings.map((rawFa) => normalizeFinding(rawFa));
+  const normalizedB = agentBFindings.map((rawFb) => normalizeFinding(rawFb));
+  const ownLine = new Map(); // A index → B index, paired within ±2
+  const wideLine = new Map(); // A index → B index, paired in the wide band
+  const pairedB = new Set();
+
+  // Pass 1 (#1980 + #2907): every ±2 pair whose substance is not known to
+  // differ — `true` and `null` (unknown) both pair, per sameSubstance's
+  // contract above — assigned best-first across all A findings. A
+  // different-substance neighbour is never reserved here: it may still be
+  // another A finding's real twin.
+  const ownLinePairs = [];
+  normalizedA.forEach((fa, aIndex) => {
+    normalizedB.forEach((fb, bIndex) => {
+      if (!sameLocation(fa, fb, LINE_TOLERANCE_REPRODUCTION)) return;
+      if (sameSubstance(fa, fb) === false) return;
+      ownLinePairs.push({ aIndex, bIndex, score: substanceSimilarity(fa, fb), delta: Math.abs(fa.line - fb.line) });
+    });
+  });
+  assignBestPairs(ownLinePairs, ownLine, pairedB);
+
+  // Pass 2 (#2955): the wide band, for A findings with no ±2 twin. A pair
+  // 3-5 lines apart counts only on known, strong substance agreement, and it
+  // runs after pass 1 so it never takes a B finding another A finding
+  // reported on (nearly) the same line.
+  const widePairs = [];
+  normalizedA.forEach((fa, aIndex) => {
+    if (ownLine.has(aIndex)) return;
+    normalizedB.forEach((fb, bIndex) => {
+      if (pairedB.has(bIndex)) return;
       if (!sameLocation(fa, fb, LINE_TOLERANCE_REPRODUCTION_WIDE)) return;
       const score = substanceSimilarity(fa, fb);
       if (score === null || score < SUBSTANCE_SIMILARITY_WIDE_MIN) return;
-      const delta = Math.abs(fa.line - fb.line);
-      if (best === null || score > best.score || (score === best.score && delta < best.delta)) {
-        best = { index: i, finding: fb, score, delta };
-      }
+      widePairs.push({ aIndex, bIndex, score, delta: Math.abs(fa.line - fb.line) });
     });
+  });
+  assignBestPairs(widePairs, wideLine, pairedB);
 
-    if (best !== null) {
-      confirmed.push(reconcileSeverity(fa, best.finding));
-      matchedB.add(best.index);
-      // A found its twin, so the reserved neighbour is not a coincidence
-      // partner: release it to surface as its own plain unconfirmed entry.
-      if (coincidence) consumedB.delete(coincidence.index);
-    } else if (coincidence) {
-      unconfirmed.push({
-        ...fa,
-        source: 'A',
-        nearLocation: { source: 'B', path: coincidence.finding.path, line: coincidence.finding.line },
-      });
-      unconfirmed.push({
-        ...coincidence.finding,
-        source: 'B',
-        nearLocation: { source: 'A', path: fa.path, line: fa.line },
-      });
-    } else {
-      unconfirmed.push({ ...fa, source: 'A' });
-    }
+  const confirmed = [];
+  for (const pairs of [ownLine, wideLine]) {
+    [...pairs.keys()].sort((x, y) => x - y).forEach((aIndex) => {
+      confirmed.push(reconcileSeverity(normalizedA[aIndex], normalizedB[pairs.get(aIndex)]));
+    });
   }
 
-  normalizedB.forEach((fb, i) => {
-    if (matchedB.has(i) || consumedB.has(i)) return;
+  // Pass 3 (#1980): an A finding still unpaired takes its first ±2
+  // neighbour nobody paired as a coincidence — do NOT merge. Both sides
+  // surface in unconfirmed, each pointing at the other via `nearLocation`,
+  // so a reviewer sees the coincidence instead of one finding silently
+  // vanishing.
+  const unconfirmed = [];
+  const consumedB = new Set();
+  normalizedA.forEach((fa, aIndex) => {
+    if (ownLine.has(aIndex) || wideLine.has(aIndex)) return;
+    const neighbour = normalizedB.findIndex((fb, bIndex) => !pairedB.has(bIndex) && !consumedB.has(bIndex)
+      && sameLocation(fa, fb, LINE_TOLERANCE_REPRODUCTION));
+    if (neighbour === -1) {
+      unconfirmed.push({ ...fa, source: 'A' });
+      return;
+    }
+    consumedB.add(neighbour);
+    const fb = normalizedB[neighbour];
+    unconfirmed.push({ ...fa, source: 'A', nearLocation: { source: 'B', path: fb.path, line: fb.line } });
+    unconfirmed.push({ ...fb, source: 'B', nearLocation: { source: 'A', path: fa.path, line: fa.line } });
+  });
+
+  normalizedB.forEach((fb, bIndex) => {
+    if (pairedB.has(bIndex) || consumedB.has(bIndex)) return;
     unconfirmed.push({ ...fb, source: 'B' });
   });
 
