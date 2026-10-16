@@ -51,8 +51,8 @@ test('shaping-mode-readback.md splits interactive render from headless STAGED lo
 test('shaping-mode-readback.md renders an optional Diagram suggestions block after Actions Performed', () => {
   const src = read(READBACK);
   const actionsAt = src.indexOf('### Actions Performed');
-  const blockAt = src.indexOf('### Diagram suggestions', actionsAt);
   assert.ok(actionsAt >= 0, 'Actions Performed section missing');
+  const blockAt = src.indexOf('### Diagram suggestions', actionsAt);
   assert.ok(blockAt > actionsAt, 'Diagram suggestions render block must come after Actions Performed');
   const block = src.slice(blockAt, blockAt + 400);
   assert.match(block, /optional/i, 'the render block must be marked optional (omit when nothing emitted)');

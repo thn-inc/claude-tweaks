@@ -17,14 +17,13 @@ which precede this file in reading order.
 
 Once this record's write call (`shaping-mode-stamping.md`'s Compose-then-write-once) has run —
 landed, been refused by the pre-write shape check, or failed — but before Read-back verification
-below, run `diagram-suggestion.md`'s Gate (this skill's directory) against this record. This
-section does not apply to a record the Near-duplicate candidate check refused instead
-(`shaping-mode.md`'s Absorb refusal, reported `refused — proposed Absorb into #{candidate}`) —
-that record never reaches Compose-then-write-once, so its write call never "has run" in the sense
-this paragraph means; `shaping-mode.md` already routes it straight to its Actions Performed row,
-skipping this section (and Read-back verification) entirely. When the `diagram-suggestions` flag
-is disabled or missing, skip the rest of this section for this record entirely — no scan, no
-block, no log line, and shaping mode's visible output is unchanged from before this step existed.
+below, run `diagram-suggestion.md`'s Gate (this skill's directory) against this record. A record
+the Near-duplicate candidate check refused (`shaping-mode.md`'s Absorb refusal, reported
+`refused — proposed Absorb into #{candidate}`) never reaches Compose-then-write-once, so this
+section does not apply to it — `shaping-mode.md` routes it straight to its Actions Performed row,
+skipping this section and Read-back verification. When the `diagram-suggestions` flag is
+disabled or missing, skip the rest of this section for this record — no scan, no block, no log
+line.
 
 When enabled, run `diagram-suggestion.md`'s Detection against this record's already-composed body
 (the one assembled in `shaping-mode-stamping.md`'s Compose-then-write-once section — no re-fetch

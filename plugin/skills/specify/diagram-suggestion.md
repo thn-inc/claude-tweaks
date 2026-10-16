@@ -60,7 +60,11 @@ choice — evaluate both, every time:
   `Diagram suggestion` for shaping mode) — each caller supplies its own; this file does not fix
   one.
 - A posture with no human present and no run directory logs nothing and renders nothing — there
-  is nothing to do.
+  is nothing to do, **unless the calling mode defines its own fallback channel for this exact
+  posture**: shaping mode's `--chained` entry (`shaping-mode-readback.md`'s Headless entry) has
+  neither a human nor `$PIPELINE_RUN_DIR`, but folds the same STAGED line into its own returned
+  output instead of dropping it — "the calling mode decides placement" above extends to inventing
+  a third channel, not just choosing between render and log.
 
 Decomposition mode's `auto` runs are the case this independence exists for: an `auto`
 decomposition run typically has both a run directory (so it logs) **and** a human reading the

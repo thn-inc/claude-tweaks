@@ -235,7 +235,7 @@ For non-frontend design docs (no frontend signals detected), skip this step enti
 
 **Unlike Step 2.5, this runs for every surface** — architecture, ER, sequence, and state diagrams help backend and infra specs equally.
 
-Read the `diagram-suggestions` flag from CLAUDE.md per `diagram-suggestion.md`'s Gate section (this skill's directory) — the same gate shaping mode's own Diagram suggestion step (`shaping-mode-readback.md`) reads, so it is checked once per file, never restated. When the flag is `disabled` or missing, skip this step silently.
+Read the `diagram-suggestions` flag from CLAUDE.md per `diagram-suggestion.md`'s Gate section (this skill's directory) — the same gate shaping mode's Diagram suggestion step (`shaping-mode-readback.md`) reads. When the flag is `disabled` or missing, skip this step silently.
 
 When `enabled`, run `diagram-suggestion.md`'s Detection against the design doc text plus the decomposed record titles, and render per its Output format — at most two recommendations, the two strongest matches, nothing when no signal matches.
 
