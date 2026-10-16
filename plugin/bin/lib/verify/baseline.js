@@ -57,9 +57,10 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
     },
     // Whether `rel` (a relativized, forward-slash path from a log) names a
     // file inside the checkout at `dir` (#3153). A path that relativize()
-    // left absolute, or one climbing out with `..`, is never inside it.
+    // left absolute, or one with a `..` segment anywhere (a log can name
+    // `tests/../../x` verbatim), is never inside it.
     inCheckout: (dir, rel) => !path.posix.isAbsolute(rel) && !/^[A-Za-z]:/.test(rel)
-      && rel.split('/')[0] !== '..' && fs.existsSync(path.join(dir, ...rel.split('/'))),
+      && !rel.split('/').includes('..') && fs.existsSync(path.join(dir, ...rel.split('/'))),
     addWorktree: (sha) => {
       const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-'));
       const dir = path.join(parent, 'wt');

@@ -760,6 +760,7 @@ test('#3153: realGit().inCheckout is true only for a relative path present under
   assert.strictEqual(g.inCheckout(root, 'tests/gone.test.js'), false);
   assert.strictEqual(g.inCheckout(root, `${root.replace(/\\/g, '/')}/tests/a.test.js`), false, 'an absolute path is never inside');
   assert.strictEqual(g.inCheckout(path.join(root, 'tests'), '../tests/a.test.js'), false, 'a path climbing out is never inside');
+  assert.strictEqual(g.inCheckout(path.join(root, 'tests'), 'x/../../tests/a.test.js'), false, 'an embedded `..` climbing out is never inside');
   assert.strictEqual(g.inCheckout(root, 'C:/repo/tests/a.test.js'), false);
 });
 
