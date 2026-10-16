@@ -47,19 +47,26 @@ to the session-scoped file that `/claude-tweaks:flow`'s Pipeline Summary reads b
 eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" TRY_IT=try-it-{N}.md)"
 ```
 
-Write the composed block to `"$TRY_IT"`. Where it lands is the branch's decision: a record with no
+Write the composed block to `"$TRY_IT"`. Shell variables do not survive between calls, so any
+later step that uses `$TRY_IT` — the posting fence below, and the parent gate's append in
+`verification-brief-parent-gate.md` — re-runs that resolve line first. Where it lands is the branch's decision: a record with no
 resolvable parent that clears the floor embeds it in its brief (Step 4's template); every other
 record posts it alone, below.
 
 **Posting it alone** — a record below the floor (`exceeds: false`), or any parent-linked sub-issue
 (post that one after the Parent-Gate Procedure returns, so an end-to-end variant it appended rides
 along). Under `_shared/pr-run-comments.md`'s gate (`run-state.json` carries a `pr` object), post it
-as the `try-it` kind — `try-it:{N}` inside a multi-spec run, the same spec qualification the
-`verdict` kind uses:
+as the `try-it` kind, marker `<!-- run-comment: try-it -->` in a single-spec run, or, when
+`$MULTISPEC_PARENT_DIR` is set (a multi-spec `/claude-tweaks:flow` run sharing one PR across
+specs), the `try-it:{N}` kind, marker `<!-- run-comment: try-it:{N} -->` — the same spec
+qualification the `verdict` kind uses (`_shared/pr-run-comments.md`'s "Multi-spec verdict
+comments" section):
 
 ```bash
-printf '<!-- run-comment: try-it -->\n\n' | cat - "$TRY_IT" > "$TRY_IT.pr"
-# find-or-create per _shared/pr-run-comments.md's post-or-update procedure, kind=try-it, against {pr-number}
+eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" TRY_IT=try-it-{N}.md)"
+KIND=try-it; [ -n "$MULTISPEC_PARENT_DIR" ] && KIND="try-it:{N}"
+printf '<!-- run-comment: %s -->\n\n' "$KIND" | cat - "$TRY_IT" > "$TRY_IT.pr"
+# find-or-create per _shared/pr-run-comments.md's post-or-update procedure, kind=$KIND, against {pr-number}
 ```
 
 No `pr` object (`local-merge`, or a degraded `pr-first` run): post nothing — the
