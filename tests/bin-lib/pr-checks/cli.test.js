@@ -8,10 +8,16 @@ const { run, parseArgs } = require('../../../plugin/bin/pr-checks');
 
 const HEAD = 'c'.repeat(40);
 
+const created = [];
+test.after(() => {
+  for (const dir of created) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 // Fake-.git anchored fixture, same shape as tests/bin-lib/pr-bookkeeping/cli.test.js:
 // a main checkout's .git is a directory; mainRoot is injected so resolveTarget never spawns git.
 function fixture(runState, { spec = false } = {}) {
   const main = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prchecks-cli-'));
+  created.push(main);
   fs.mkdirSync(path.join(main, '.git'), { recursive: true });
   let runDir = path.join(main, '.claude-tweaks', 'pipelines', '2026-10-16T000001-record-1');
   fs.mkdirSync(runDir, { recursive: true });
