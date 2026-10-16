@@ -22,7 +22,7 @@ files:
 ## Steps
 
 ### 1. The merge site asks the composer for the subject — `bin/compose-subject.js`
-- **URL:** `SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {n} --tag {tag} --shell) || exit 1` then `eval "$SUBJECT_EXPORTS"` (the guarded two-line form every merge fence carries; `{tag}` is `auto-merge`, `auto-finish`, `fast-lane`, or `manifesto-authorized` per site)
+- **URL:** `SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {n} --tag {tag} --shell) || exit 1` then `eval "$SUBJECT_EXPORTS"` (the guarded two-line form every merge fence carries; `{tag}` is `auto-merge`, `auto-finish`, `fast-lane`, `manifesto-authorized`, or `human-approved` per site)
 - **Action:** The agent runs the fence as written. The CLI reads the record(s) with `gh issue view` (Type from the native issue type, else the `type:*` label; `breaking` from the label; the summary from `## Overview`'s first sentence, falling back to `## Current State`; the release note from the subject record's own `## Release Note` section — never aggregated across a bundle), composes the subject and body, and prints two `sh` assignments.
 - **Should feel:** Mechanical and boring — no title is typed by hand, no summary is paraphrased, no release note is written from scratch at merge time (it was already authored at spec time).
 - **Should understand:** The exit status is load-bearing: a record with no resolvable Type, a `breaking` label with no `## Breaking Change` section, or **any** record in the batch with no non-empty `## Release Note` section (unconditional — not gated behind `breaking`), makes the CLI exit 1 and the `|| exit 1` stops the fence before any merge runs. A bare `eval "$(…)"` would have swallowed that and merged with an empty subject.
