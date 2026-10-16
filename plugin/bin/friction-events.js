@@ -17,6 +17,7 @@
 // never assumed to be at most one (a session can be interrupted more than
 // once before ever reaching wrap-up).
 // It also unions every non-terminal ad-hoc dir owned by the current session id
+// whose worktree was removed (findAdHocRunsBySessionId skips a live one)
 // (--session, default CLAUDE_CODE_SESSION_ID — a Bash-invoked CLI sees it,
 // unlike a hook process): the ordinary ad-hoc order is ExitWorktree(remove)
 // before wrap-up, after which the worktree-path match finds nothing (#2783).

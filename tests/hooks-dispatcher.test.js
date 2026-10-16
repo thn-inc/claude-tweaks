@@ -1375,3 +1375,31 @@ test('#1012 unbound-caller variant: a same-session caller with no bound run of i
   const after = [runA, runB, runC, runD].map(readRunState);
   assert.deepStrictEqual(after, before, 'no run-state.json file changes when every candidate is excluded as foreign');
 });
+
+// #2783: an `-adhoc-standalone` dir is never a pipeline run a mutating verb
+// should resolve to implicitly. EnterWorktree mints it AFTER /flow's formal
+// run, so it sorts newer and used to win step 2's cwd-binding match.
+test('#2783: bare close-run inside a /flow worktree closes the formal run, never its newer ad-hoc twin', () => {
+  const main = gitRepo();
+  execFileSync('git', ['-C', main, 'commit', '--allow-empty', '-q', '-m', 'init']);
+  const wt = linkedWorktreeOf(main);
+  const formal = mkBoundRun(main, '2026-10-01T100000-spec-42', { status: 'active', sessionId: 'sess-2783-cr', worktree: wt });
+  const adhoc = mkBoundRun(main, '2026-10-01T100100-adhoc-standalone', { status: 'active', sessionId: 'sess-2783-cr', worktree: wt });
+  const result = runHook(['close-run'], { cwd: wt, env: { CLAUDE_CODE_SESSION_ID: 'sess-2783-cr' } });
+  assert.strictEqual(result.code, 0, result.stdout);
+  assert.strictEqual(readRunState(formal).status, 'clean', result.stdout);
+  assert.strictEqual(readRunState(adhoc).status, 'active');
+});
+
+test('#2783: an ad-hoc dir is never a step-3 candidate — it cannot turn one real run into a multiple-candidates refusal', () => {
+  const main = gitRepo();
+  execFileSync('git', ['-C', main, 'commit', '--allow-empty', '-q', '-m', 'init']);
+  const wt = linkedWorktreeOf(main);
+  const formal = mkBoundRun(main, '2026-10-01T100000-spec-43', { status: 'active', sessionId: 'sess-2783-s3' });
+  const adhoc = mkBoundRun(main, '2026-10-01T100100-adhoc-standalone', { status: 'active', sessionId: 'sess-2783-s3', worktree: wt });
+  const result = runHook(['close-run'], { cwd: main, env: { CLAUDE_CODE_SESSION_ID: 'sess-2783-s3' } });
+  assert.strictEqual(result.code, 0, result.stdout);
+  assert.doesNotMatch(result.stdout, /multiple candidate runs/);
+  assert.strictEqual(readRunState(formal).status, 'clean', result.stdout);
+  assert.strictEqual(readRunState(adhoc).status, 'active');
+});

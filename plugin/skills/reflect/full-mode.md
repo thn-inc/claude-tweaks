@@ -35,7 +35,8 @@ during this run, not the code that got built.
 
 **Input:** run `node "${CLAUDE_PLUGIN_ROOT}/bin/friction-events.js" --run "$PIPELINE_RUN_DIR"`
 rather than reading `events.jsonl` directly — it returns this run's own events UNIONED with any
-other non-terminal run dir recorded against the same worktree (a JSON array on stdout; `[]` when
+other non-terminal run dir recorded against the same worktree, and with any ad-hoc dir of the
+current session id whose worktree was since removed (a JSON array on stdout; `[]` when
 none exist), filtered to: `wd-deny`, `gate-denial` and `bookkeeping-stamp-deny` (logged by
 `bin/lib/hooks/pre-tool-use.js`), `contract-violation` and `zero-tool-use-verdict` (logged by
 `bin/lib/hooks/subagent-stop.js`), and `ask-user-question` (logged by
@@ -47,8 +48,8 @@ SubagentStop hook it depends on fires unreliably for Task dispatches
 **Transcript-grep fallback (#2553).** When `friction-events.js` returns `[]`, that is consistent
 with a genuinely frictionless run, but it is also consistent with a logging gap swallowing real
 denials the hooks never got a chance to write (e.g. a harness-level Bash refusal that happens
-before any `PreToolUse` hook ever runs — see `docs/hooks.md`'s "Not covered here: the harness's
-own compound-Bash refusal" — or any other denial whose own `appendEvent` call failed or was never
+before any `PreToolUse` hook ever runs — see `docs/hooks.md`'s "Observed here, not enforced: the
+harness's own compound-Bash refusal" — or any other denial whose own `appendEvent` call failed or was never
 reached). Before concluding "no friction," resolve this session's own transcript per
 `_shared/transcript-judge.md`'s Transcript resolution section and grep it for the deny-message
 signatures `Refusing to run it` and `requires an isolated worktree` (the literal substrings a
@@ -124,7 +125,9 @@ unions every ad-hoc dir owned by the current session id (`--session`, default
 `CLAUDE_CODE_SESSION_ID`). **Known limitation:** a session whose id changes between the friction and
 the wrap-up (a resumed or account-switched session that receives a new id) finds the earlier dir
 only by worktree path, i.e. only when wrap-up runs inside that same still-live worktree; otherwise
-those events stay in the earlier session's ad-hoc dir, unread.
+those events stay in the earlier session's ad-hoc dir, unread; and since every subagent of a
+session shares its id, a sibling subagent's dir is unioned too once its worktree was removed (one
+whose worktree still exists is skipped).
 
 **Main-checkout denial coverage (#2351, confirmed still current by #2543).** The fallback above
 fires only on an `EnterWorktree` call or `ctx.cwd` resolving to a worktree distinct from the main

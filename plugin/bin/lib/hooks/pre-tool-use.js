@@ -587,7 +587,10 @@ function checkTeardownGate(ctx, teardownWarnings = []) {
     // Target and recorded assignment are the same path once matched, so
     // statting the target side covers both.
     if (!exists) continue;
-    const hit = ctxLib.findRunByWorktreePath(ctx.cwd, target);
+    // #2783: an `-adhoc-standalone` dir never makes a worktree "assigned" — it
+    // holds only friction events, nothing this gate protects, and must stay
+    // non-terminal so friction-events.js can still read it after the removal.
+    const hit = ctxLib.findRunByWorktreePath(ctx.cwd, target, { skipAdHoc: true });
     if (!hit || !hit.state) continue;
     const status = hit.state.status;
     if (status !== 'active' && status !== 'interrupted') continue;

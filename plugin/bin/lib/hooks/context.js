@@ -307,8 +307,13 @@ function isForeignWorktreeCandidate(cwd, sessionId, state) {
 // is set — the opt-out close-run's own fallback resolution passes (see the
 // resolveRun doc comment below), so the mint check still applies regardless
 // of the caller's own session id, but the worktree-binding axis does not.
+// An `-adhoc-standalone` dir is never guessed into either (#2783): it holds one
+// session's friction events only, reachable by that session through the
+// 'session' arm. As a guess it became ctx.runDir — E1 then denied a commit
+// from the main checkout against the ad-hoc dir's worktree.
 function isSkippableFallbackCandidate(cwd, sessionId, dir, state, includeWorktreeForeign) {
   if (isUnadoptedMint(dir, state)) return true;
+  if (isAdHocRunDir(dir)) return true;
   if (includeWorktreeForeign) return false;
   return isForeignWorktreeCandidate(cwd, sessionId, state);
 }
@@ -364,13 +369,20 @@ function resolveRun(cwd, env, sessionId, opts = {}) {
     // 'indeterminate' (unprovable — a deleted binding, an unresolved cwd) both
     // preserve today's behavior and still return 'session' attribution, which
     // is what keeps single-session resolution byte-identical (#1099's Deliverables).
-    if (owner === me && classifyOwnership({ sessionId: me, cwd: resolvedCwd }, state) !== 'foreign') {
+    const verdict = owner === me ? classifyOwnership({ sessionId: me, cwd: resolvedCwd }, state) : null;
+    if (owner === me && verdict !== 'foreign') {
       // #2783: an ad-hoc dir is a placeholder minted when no owned run existed
-      // yet. A formal run (/flow mints its dir BEFORE EnterWorktree, so the
-      // ad-hoc mint sorts newer) that this session later stamps via
-      // record-worktree must win regardless of name order.
-      if (!isAdHocRunDir(dir)) return { dir, attribution: 'session' };
-      if (!ownAdHoc) ownAdHoc = dir;
+      // yet. The first session match that is NOT ad-hoc returns at once (the
+      // pre-#2783 behavior). Once an ad-hoc dir matched first, only an older
+      // formal run proven 'mine' still wins — /flow mints its dir BEFORE
+      // EnterWorktree, so the ad-hoc mint sorts newer, and record-worktree binds
+      // the formal run to the caller's cwd. An 'indeterminate' older run (its
+      // worktree since removed) must not displace the ad-hoc dir.
+      if (isAdHocRunDir(dir)) {
+        if (!ownAdHoc) ownAdHoc = dir;
+        continue;
+      }
+      if (!ownAdHoc || verdict === 'mine') return { dir, attribution: 'session' };
       continue;
     }
     // Newest-first, so the first unowned, worktree-compatible run is the one
@@ -457,11 +469,16 @@ function worktreeMatches(state, target, targetPath) {
 // exist (recorded assignments are already absolute; the caller resolves a
 // relative teardown target against the Bash call's cwd BEFORE calling this).
 // First match wins (newest-first, same ordering as resolveRun's scan).
-function findRunByWorktreePath(cwd, targetPath) {
+// `opts.skipAdHoc` (#2783): skip `-adhoc-standalone` dirs. One holds only
+// friction events, never pipeline state, yet EnterWorktree mints it AFTER
+// /flow's formal run, so it sorts newer and would otherwise win the match.
+// Callers asking "which pipeline run is this worktree assigned to?" opt in.
+function findRunByWorktreePath(cwd, targetPath, opts = {}) {
   if (typeof targetPath !== 'string' || !targetPath) return null;
   let target = targetPath;
   try { target = fs.realpathSync(targetPath); } catch { /* keep as-resolved */ }
   for (const { dir, state } of iterRunDirsWithState(cwd)) {
+    if (opts.skipAdHoc && isAdHocRunDir(dir)) continue;
     if (worktreeMatches(state, target, targetPath)) return { runDir: dir, state };
   }
   return null;
@@ -512,6 +529,10 @@ function findRunsByWorktreePath(cwd, targetPath, excludeDir) {
 // non-terminal (reconcile sweeps it only after ADHOC_SUPERSEDED_TTL_MS) and
 // still carries the owning session id. Ad-hoc dirs only: a formal run of the
 // same session is a different run's record, not this session's ad-hoc friction.
+// Removed worktrees only: CLAUDE_CODE_SESSION_ID is shared by every subagent of
+// a session, so an id match proves nothing about ownership (docs/hooks.md's
+// Ownership section). A dir whose recorded worktree still exists is skipped —
+// the worktree-path lookup already covers a live one matching the target.
 function findAdHocRunsBySessionId(cwd, sessionId, excludeDir) {
   if (typeof sessionId !== 'string' || !sessionId) return [];
   let excl = excludeDir ? path.resolve(excludeDir) : null;
@@ -520,6 +541,7 @@ function findAdHocRunsBySessionId(cwd, sessionId, excludeDir) {
   for (const { dir, state } of iterRunDirsWithState(cwd)) {
     if (!isAdHocRunDir(dir)) continue;
     if (!state || state.sessionId !== sessionId) continue;
+    if (typeof state.worktree === 'string' && path.isAbsolute(state.worktree) && fs.existsSync(state.worktree)) continue;
     if (excl) {
       let d = dir;
       try { d = fs.realpathSync(dir); } catch { /* keep as-listed */ }

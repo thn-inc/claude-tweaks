@@ -78,3 +78,12 @@ test('findAdHocRunsBySessionId: only this session\'s -adhoc-standalone dirs, nev
   assert.deepStrictEqual(ctxLib.findAdHocRunsBySessionId(main, 'S1', mine), []);
   assert.deepStrictEqual(ctxLib.findAdHocRunsBySessionId(main, ''), []);
 });
+
+test('#2783 F3: the session lookup skips an ad-hoc dir whose worktree is still live — session-id equality is not ownership', () => {
+  const main = gitRepo();
+  const liveSibling = harnessWorktreeOf(main);
+  seed(main, '2026-10-02T000000-adhoc-standalone', { status: 'active', sessionId: 'S1', worktree: liveSibling });
+  const removed = seed(main, '2026-10-03T000000-adhoc-standalone', { status: 'active', sessionId: 'S1', worktree: path.join(main, '.claude', 'worktrees', 'gone-wt') });
+  const hits = ctxLib.findAdHocRunsBySessionId(main, 'S1');
+  assert.deepStrictEqual(hits.map((h) => fs.realpathSync(h.runDir)), [fs.realpathSync(removed)]);
+});

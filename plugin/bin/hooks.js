@@ -316,11 +316,14 @@ function resolveImplicitRunUnambiguous(cwd, env, callerIdentity) {
       }
     } catch { /* fall through */ }
   }
-  const boundHit = ctxLib.findRunByWorktreePath(cwd, cwd);
+  // #2783: `-adhoc-standalone` dirs are excluded from steps 2-4. One holds only
+  // friction events, never pipeline state these verbs act on, and EnterWorktree
+  // mints it after /flow's formal run, so it would win step 2's match.
+  const boundHit = ctxLib.findRunByWorktreePath(cwd, cwd, { skipAdHoc: true });
   if (boundHit && boundHit.state && boundHit.state.status !== 'clean') {
     return { runDir: boundHit.runDir, candidates: null };
   }
-  const all = ctxLib.listRunDirsWithState(cwd); // already newest-first, terminal runs excluded
+  const all = ctxLib.listRunDirsWithState(cwd).filter(({ dir }) => !ctxLib.isAdHocRunDir(dir)); // newest-first, terminal runs excluded
   if (all.length === 0) return { runDir: null, candidates: null };
   const annotated = all.map(({ dir, state }) => ({
     dir,

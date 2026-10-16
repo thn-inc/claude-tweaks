@@ -16,6 +16,7 @@ const ctxLib = require('../plugin/bin/lib/hooks/context');
 const { gitRepo, harnessWorktreeOf } = require('./helpers/git-fixtures');
 
 const FRICTION_EVENTS = path.join(__dirname, '..', 'plugin', 'bin', 'friction-events.js');
+const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
 test('#2783 repro: the harness refusal from an ad-hoc EnterWorktree session survives ExitWorktree remove', () => {
   const main = gitRepo();
@@ -46,6 +47,11 @@ test('#2783 repro: the harness refusal from an ad-hoc EnterWorktree session surv
     ownedRun: afterEnter,
   });
 
+  // AC1's literal step: ExitWorktree(remove) goes through the real teardown
+  // gate first — the session's own ad-hoc dir must not make it deny.
+  const exitPayload = JSON.stringify({ tool_name: 'ExitWorktree', tool_input: { action: 'remove' }, session_id: S, cwd: wt, hook_event_name: 'PreToolUse' });
+  const gate = execFileSync('node', [HOOKS, 'pre-tool-use'], { input: exitPayload, cwd: wt, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '' } });
+  assert.strictEqual(gate.trim(), '', `ExitWorktree(remove) must be allowed, got: ${gate}`);
   execFileSync('git', ['-C', main, 'worktree', 'remove', '--force', wt]);
 
   const wrapUpRunDir = path.join(pipelines, '2026-10-03T000000-wrap-up-standalone');

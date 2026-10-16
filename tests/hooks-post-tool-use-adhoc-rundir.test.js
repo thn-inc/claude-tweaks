@@ -281,3 +281,17 @@ test('#2783: with only an ad-hoc dir owned, resolveRun still returns it with ses
   assert.strictEqual(fs.realpathSync(r.dir), fs.realpathSync(adhoc));
   assert.strictEqual(r.attribution, 'session');
 });
+
+test('#2783 F4: a stale formal run of this session (its worktree since removed) never beats the ad-hoc dir bound to the caller\'s own worktree', () => {
+  const main = gitRepo();
+  const w1 = harnessWorktreeOf(main);
+  const w2 = harnessWorktreeOf(main);
+  seedRun(main, '2026-10-01T000000-spec-1', { status: 'active', sessionId: 'sess-2783-d', worktree: w1 });
+  const a2 = seedRun(main, '2026-10-02T000000-adhoc-standalone', { status: 'active', sessionId: 'sess-2783-d', worktree: w2 });
+  const before = ctxLib.resolveRun(w2, {}, 'sess-2783-d');
+  assert.strictEqual(fs.realpathSync(before.dir), fs.realpathSync(a2), 'precondition: R1 is foreign while W1 lives');
+  cp.execFileSync('git', ['-C', main, 'worktree', 'remove', '--force', w1]);
+  const after = ctxLib.resolveRun(w2, {}, 'sess-2783-d');
+  assert.strictEqual(fs.realpathSync(after.dir), fs.realpathSync(a2), 'an indeterminate older formal run must not displace the ad-hoc dir');
+  assert.strictEqual(after.attribution, 'session');
+});

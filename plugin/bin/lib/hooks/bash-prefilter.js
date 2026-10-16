@@ -107,15 +107,32 @@ function shouldRunFull(event, input) {
   return covered.some((word) => present.has(word));
 }
 
+// #2783: post-tool-use-failure fires on EVERY failed Bash call, yet its handler
+// only acts on the harness worktree-isolation refusal, whose text always carries
+// this phrase (post-tool-use-failure.js's HARNESS_ISOLATION_REFUSAL_RE). Matched
+// on the raw payload OR the parsed `error`, so a JSON-escaped spelling still runs.
+// Unparseable input skips: the handler does nothing with it either.
+const REFUSAL_SIGNATURE = 'Refusing to run it';
+function failureCarriesRefusal(raw, input) {
+  if (raw.includes(REFUSAL_SIGNATURE)) return true;
+  return Boolean(input && typeof input.error === 'string' && input.error.includes(REFUSAL_SIGNATURE));
+}
+
 // Reads stdin once — the caller must hand `raw` on to the full handler, since
 // stdin cannot be read a second time. Returns null (and reads nothing) for
 // every event this filter does not govern.
 function earlyGate(event, readRaw = () => fs.readFileSync(0, 'utf8')) {
-  if (!wordsFor(event)) return null;
+  const isFailure = event === 'post-tool-use-failure';
+  if (!wordsFor(event) && !isFailure) return null;
   let raw = '';
   try { raw = readRaw(); } catch { raw = ''; }
   let input = null;
   try { input = JSON.parse(raw); } catch { input = null; }
+  if (isFailure) {
+    let carries = true;
+    try { carries = failureCarriesRefusal(raw, input); } catch { carries = true; }
+    return { raw, skip: !carries };
+  }
   // stdin is already drained, so `raw` must survive even if the decision throws.
   let skip = false;
   try { skip = !shouldRunFull(event, input); } catch { skip = false; }
