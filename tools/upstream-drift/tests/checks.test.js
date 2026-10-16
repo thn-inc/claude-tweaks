@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { checkVersion, checkAssertions, replayFixtures, checkContentPins, isContentPinned } = require('../checks');
+const { checkVersion, checkAssertions, replayFixtures, checkContentPins, isContentPinned, splitGlobPattern } = require('../checks');
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'upstream-drift-checks-'));
@@ -138,6 +138,29 @@ for (const [label, toGlob] of [
     const result = checkVersion(entry);
     assert.strictEqual(result.status, 'ok', `an installed candidate behind an absolute glob must not read as absent: ${result.detail}`);
     assert.deepStrictEqual(result.installed, ['3.5.0']);
+  });
+}
+
+// The two tests above only exercise the posix absolute-path branch, even on
+// a Windows CI runner: on posix, forward slashes are already the only
+// separator, so "the platform-native separator" and "forward slashes
+// throughout" produce byte-identical input, and #3040's drive-root fix
+// (tools/upstream-drift/checks.js's splitGlobPattern) never runs its
+// win32-only branch under ubuntu-only CI. `splitGlobPattern` takes an
+// injectable path flavor precisely so its win32 drive-root handling can be
+// pinned here without a real Windows process — `path.win32` is
+// OS-independent by construction, so these assertions hold identically on
+// Linux, macOS and Windows.
+for (const [label, glob, expectedBaseDir] of [
+  ['a backslash-separated drive-root glob', 'C:\\slotA\\impeccable\\3.5.0\\.claude-plugin\\plugin.json', 'C:\\'],
+  ['a forward-slash drive-root glob', 'C:/slotA/impeccable/3.5.0/.claude-plugin/plugin.json', 'C:/'],
+]) {
+  test(`splitGlobPattern: resolves ${label} under path.win32`, () => {
+    const result = splitGlobPattern(glob, path.win32);
+    assert.deepStrictEqual(result, {
+      baseDir: expectedBaseDir,
+      segments: ['slotA', 'impeccable', '3.5.0', '.claude-plugin', 'plugin.json'],
+    });
   });
 }
 

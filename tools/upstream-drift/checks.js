@@ -80,18 +80,35 @@ function expandGlobSegments(baseDir, segments, failures) {
   return rest.length === 0 ? [candidate] : expandGlobSegments(candidate, rest, failures);
 }
 
+// Splits an absolute-or-relative glob pattern into its root (`baseDir`) and
+// the path segments under it. Segments are what follows the root — splitting
+// the whole pattern would make a win32 drive (`C:`) its own segment, re-joined
+// under the root it is already part of; and win32 accepts both separators, so
+// split on either there. Posix keeps `/` alone — a backslash is a legal
+// filename character.
+//
+// `pathFlavor` is an injectable path module (`path.win32` / `path.posix`),
+// defaulting to the platform-native `path` so production behavior is exactly
+// what it was before this seam existed. Node's `path.win32`/`path.posix`
+// namespaces are OS-independent by construction, so passing `path.win32`
+// here exercises the drive-root branch under test on any host OS, including
+// Linux CI — this is the ONLY way that branch is reachable without an actual
+// Windows process, since the default `path` module's behavior always follows
+// the host platform.
+function splitGlobPattern(pattern, pathFlavor = path) {
+  const baseDir = pathFlavor.isAbsolute(pattern) ? pathFlavor.parse(pattern).root : '.';
+  const rest = baseDir === '.' ? pattern : pattern.slice(baseDir.length);
+  const segments = rest.split(pathFlavor.sep === '\\' ? /[\\/]+/ : '/').filter(Boolean);
+  return { baseDir, segments };
+}
+
 // Returns {paths, failures} — paths that matched the glob, and directories
 // along the way that existed but could not be read (see expandGlobSegments).
 function expandGlob(globPattern) {
   const pattern = globPattern.startsWith('~') ? path.join(os.homedir(), globPattern.slice(1)) : globPattern;
-  const baseDir = path.isAbsolute(pattern) ? path.parse(pattern).root : '.';
-  // Segments are what follows the root. Splitting the whole pattern would make
-  // a win32 drive (`C:`) its own segment, re-joined under the root it is
-  // already part of; and win32 accepts both separators, so split on either
-  // there. Posix keeps `/` alone — a backslash is a legal filename character.
-  const rest = baseDir === '.' ? pattern : pattern.slice(baseDir.length);
+  const { baseDir, segments } = splitGlobPattern(pattern);
   const failures = [];
-  const paths = expandGlobSegments(baseDir, rest.split(path.sep === '\\' ? /[\\/]+/ : '/').filter(Boolean), failures);
+  const paths = expandGlobSegments(baseDir, segments, failures);
   return { paths, failures };
 }
 
@@ -468,4 +485,4 @@ function checkContentPins(entry, options = {}) {
   return { check: 'content-pins', name, commit: pin.commit || null, status, results };
 }
 
-module.exports = { checkVersion, checkAssertions, replayFixtures, checkContentPins, isContentPinned };
+module.exports = { checkVersion, checkAssertions, replayFixtures, checkContentPins, isContentPinned, splitGlobPattern };
