@@ -256,3 +256,18 @@ test('/flow closing reports carry the release-status line verbatim (#678)', () =
   assert.match(summary, /not yet in a release — bump pending/, 'the human form is quoted verbatim');
   assert.match(comments, /`release-status`/, 'pr-run-comments.md lists the release-status comment kind');
 });
+
+test('#3028: human-approved is registered in Step 3, named at close-out step 5, and excluded from the auto-merge metric', () => {
+  const step3 = MERGE.split('## Step 3: Attempt auto-merge')[1];
+  assert.ok(step3, 'Step 3 must exist');
+  assert.match(step3, /`human-approved`/, 'Step 3 registers the human-approved tag');
+  assert.match(step3, /--scope \{scope\}/, 'Step 3 tells callers to append --scope when the convention requires it');
+  const closeOut = read('plugin', 'skills', 'dispatch', 'close-out.md');
+  const step5 = closeOut.split('5. **On confirmation — merge.**')[1].split('\n6. ')[0];
+  assert.match(step5, /`\{tag\}` = `human-approved`/, 'close-out step 5 names its tag');
+  const scan = read('plugin', 'skills', '_shared', 'github-pr-scan.md');
+  const item3 = scan.split('3. **Auto-merged this week**')[1].split('```bash')[0];
+  assert.match(item3, /`\[human-approved\]`[\s\S]*excluded/, 'triage-queue item 3 documents the exclusion');
+  const jq = scan.split('3. **Auto-merged this week**')[1].split('```bash')[1].split('```')[0];
+  assert.doesNotMatch(jq, /human-approved/, 'the metric jq filter is unchanged — human-approved is not counted');
+});

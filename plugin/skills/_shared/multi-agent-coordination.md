@@ -46,7 +46,7 @@ Cut false positives in single-agent review by dispatching two identical agents a
 Two findings match when **all three** hold:
 
 1. **Exact path match** — `src/auth.ts` matches `src/auth.ts`, not `src/auth/index.ts`.
-2. **Line within ±2** — same finding, slight line-number disagreement is acceptable.
+2. **Line within ±2, or within ±5 on strong text agreement** — same finding, slight line-number disagreement is acceptable. A pair 3-5 lines apart (two agents anchoring one finding on different lines of one multi-line statement) matches only when both findings carry text and their substance similarity is at least 0.6, stricter than the check inside ±2. A pair with missing text never matches in the wider band.
 3. **Matching severity bucket** — `critical` + `high` collapse to one bucket; `medium` + `low` + `info` collapse to another. Cross-bucket mismatches do not reproduce.
 
 ### Auto-resolution
@@ -102,7 +102,7 @@ Resolve cross-lens disagreement deterministically. When two reviewer lenses (sec
 The dispatcher scans findings across lenses. If two findings from different lenses share:
 
 - **Exact path** match, and
-- **Line within ±5** (looser tolerance than reproduction — "same region of code"), and
+- **Line within ±5** (looser than reproduction's ±2, and with no substance gate — "same region of code"), and
 - **Contradicting verdicts** (e.g., one says "issue", one says "no issue", or differing severities across bucket boundaries),
 
 then debate is dispatched on that pair.

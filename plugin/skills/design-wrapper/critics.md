@@ -25,7 +25,7 @@ Exactly three signals feed the Trigger column, plus the `Design-intent:` record 
 
 ## Resolution
 
-Every critic name in the table resolves through `skills/_shared/design-craft.md`'s **Emil skill resolution** lookup, per skill name — `review-animations` is an Emil skill from the same upstream set and resolves exactly the same way as `emil-design-eng`. A name resolving at neither path is absent — handled per that file's **Degradation posture** (never a gate, never a stop); how the Step 3.8 dispatch records an absent critic is defined by `modes/review.md` (#598), not here. The one exception is the `terminal` row: `_shared/terminal-ux.md` is plugin-authored and resolves at `${CLAUDE_PLUGIN_ROOT}/skills/_shared/terminal-ux.md` — no two-path lookup, never absent.
+Every critic name in the table resolves through `skills/_shared/design-craft.md`'s **Emil skill resolution** lookup, per skill name — `review-animations` is an Emil skill from the same upstream set and resolves exactly the same way as `emil-design-eng`. A name resolving at none of that lookup's paths is absent — handled per that file's **Degradation posture** (never a gate, never a stop); how the Step 3.8 dispatch records an absent critic is defined by `modes/review.md` (#598), not here. The one exception is the `terminal` row: `_shared/terminal-ux.md` is plugin-authored and resolves at `${CLAUDE_PLUGIN_ROOT}/skills/_shared/terminal-ux.md` — no multi-path lookup, never absent.
 
 ## Native row — unblocking condition
 

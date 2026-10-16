@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 // bin/hooks.js — single dispatcher for all claude-tweaks hook registrations.
-// Cardinal invariant: never break a session. Every path — including a
-// PreToolUse deny — exits 0; no module ever sets a non-zero `exit`. A deny
-// is communicated entirely via `hookSpecificOutput.permissionDecision:
-// 'deny'` in the stdout JSON (see pre-tool-use.js's own header comment for
-// why: exit 2 is a cruder, stderr-only mechanism that would silently drop
-// the custom permissionDecisionReason). This corrects an earlier version of
-// this comment ("the only deliberate non-zero exit is the pre-tool-use
-// deny") that never actually matched pre-tool-use.js's real behavior.
+// Cardinal invariant, scoped to harness-dispatched hook events: never break a
+// session. Every such path — including a PreToolUse deny — exits 0; no hook
+// module ever sets a non-zero `exit`. A deny is communicated entirely via
+// `hookSpecificOutput.permissionDecision: 'deny'` in the stdout JSON (see
+// pre-tool-use.js's own header comment for why: exit 2 is a cruder,
+// stderr-only mechanism that would silently drop the custom
+// permissionDecisionReason). This corrects an earlier version of this
+// comment ("the only deliberate non-zero exit is the pre-tool-use deny")
+// that never actually matched pre-tool-use.js's real behavior. The directly
+// invoked CLI verbs below (record-worktree, resolve-run-dir, close-run, …)
+// are a separate contract and may exit non-zero on malformed or rejected
+// input.
 'use strict';
 // #3074: Bash prefilter fast path. hooks.json registers ONE unconditional
 // Bash handler per tool-use event, so every Bash call spawns this process —
@@ -378,13 +382,25 @@ function resolveRunArg(args, cwd, env, resolveOpts) {
   // process.cwd()) — every current caller happens to pass process.cwd() as
   // `cwd`, but the anchoring check below must honor the parameter it's
   // actually given, not assume the two are always the same value.
-  const resolved = candidate ? path.resolve(cwd, candidate) : null;
+  let resolved = candidate ? path.resolve(cwd, candidate) : null;
+  // Resolved once up front and reused below — a pure, cwd-keyed lookup, so
+  // computing it a second time for the same `cwd` would just repeat it.
+  const mainRoot = wtDetect.mainCheckoutRoot(cwd);
+  // #3025: a bare run-id basename (no path separator) — dispatch/SKILL.md's
+  // `$RUN_ID`, or a `<dir>` copied from the SessionStart notice's run list —
+  // names a run dir under the main checkout's .claude-tweaks/pipelines/, not
+  // a cwd-relative path. Resolve it there only when the cwd-relative reading
+  // is not a directory; every anchoring/shape/initialization check below
+  // still runs unchanged against the resolved path.
+  if (resolved && !isDirectory(resolved) && !/[\\/]/.test(candidate)) {
+    const underPipelines = mainRoot ? path.join(mainRoot, '.claude-tweaks', 'pipelines', candidate) : null;
+    if (underPipelines && isDirectory(underPipelines)) resolved = underPipelines;
+  }
   const isRealDir = resolved ? isDirectory(resolved) : false;
   if (isRealDir) {
     // #790/[IL-127]: a real directory is not enough — it must also resolve
     // under the main checkout, never a worktree-relative shadow copy. Mirrors
     // run-dir-resolve.js's identical adoption-time check for PIPELINE_RUN_DIR.
-    const mainRoot = wtDetect.mainCheckoutRoot(cwd);
     if (!mainRoot) {
       // Distinct from the anchoring-rejection case below: mainCheckoutRoot()
       // returning null means no git repo could be determined at all (not a
@@ -943,6 +959,7 @@ async function main(argv) {
     reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
     if (invalidRunArg) {
       process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — run not closed\n`);
+      return 1;
     } else if (candidates) {
       process.stdout.write(`${renderCandidateRefusal('close-run', candidates)}\nRun not closed.\n`);
     } else if (runDir) {

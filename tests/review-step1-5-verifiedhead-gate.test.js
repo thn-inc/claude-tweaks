@@ -49,6 +49,7 @@ test("Step 1.5 states why match alone is insufficient (would re-trigger a scoped
 });
 
 test("Step 1.5's own Gate table rows key on verifiedHead for both the pipeline proceed and re-trigger outcomes", () => {
-  assert.match(CODE_MODE_STEPS, /`TEST_PASSED=true` \(pipeline\) \+ runner stamp `verifiedHead: true` \| Proceed to Step 2/, 'Gate table proceed row keys on verifiedHead: true');
+  // #3013 qualified the proceed row with the PR-check gate; it still keys on verifiedHead: true.
+  assert.match(CODE_MODE_STEPS, /`TEST_PASSED=true` \(pipeline\) \+ runner stamp `verifiedHead: true` \+ `pr-checks\.js` not `red` \| Proceed to Step 2/, 'Gate table proceed row keys on verifiedHead: true');
   assert.match(CODE_MODE_STEPS, /`TEST_PASSED=true` \(pipeline\) \+ runner stamp `verifiedHead: false` \| Report it/, 'Gate table re-trigger row keys on verifiedHead: false');
 });

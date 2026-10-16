@@ -183,7 +183,7 @@ test('every registry row whose own judge file documents a literal staged/{prefix
   // Pin the exact set of rows this scan is expected to find a literal convention in today —
   // a loose `checked >= 3` floor would still pass if a row's naming line regressed out of the
   // scan (exactly the kind of drift #2773 fixed), as long as 3 others still matched.
-  assert.deepStrictEqual(checkedIds.sort(), ['claude-md', 'decision-records', 'memory', 'skills', 'upstream'], 'the set of registry rows documenting a literal staged/{prefix}-{n} convention changed — update this list deliberately, don\'t let it silently narrow');
+  assert.deepStrictEqual(checkedIds.sort(), ['claude-md', 'decision-records', 'journeys', 'memory', 'skills', 'upstream'], 'the set of registry rows documenting a literal staged/{prefix}-{n} convention changed — update this list deliberately, don\'t let it silently narrow');
 });
 
 test('a staged item named on a REFUSED line in decisions.md resolves to refused, never its section stance (#1932 I2)', () => {
