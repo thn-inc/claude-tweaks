@@ -263,6 +263,152 @@ test('releaseMerged: Phase 1.5 resolves prState via the pool and reaches a merge
   }
 });
 
+// #3249: the exact shape the record names — the worktree this claim's
+// run-state.json pointed at has already been torn down (the normal
+// post-merge-teardown timing, not an edge case), AND the branch name
+// itself has been deleted (pr-first-merge-post-merge.md Step 5), so
+// neither the live-worktree join nor fallbackBranch's branchExists check
+// can recover a branch to query `gh pr list --head` with. Before this
+// fix, this candidate's joinFailure stayed 'no-branch' forever, prState
+// stayed null forever, and decideRelease only ever consulted issue-state
+// evidence — which may lag the merge. run-state.json's pr.number (stamped
+// once at PR-early-lifecycle time, never cleared) is what the by-number
+// fallback resolves instead.
+test('releaseMerged: releases a live claim via the by-number fallback when the worktree AND its branch are both gone (#3249)', async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-')));
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
+  execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
+
+  // No worktree is ever created for this run — simulates one already
+  // reaped by the time this reconcile pass runs. No branch of this name
+  // exists in this checkout either, so fallbackBranch's branchExists check
+  // also fails — the only surviving evidence is run-state.json's pr.number.
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-gone-3249');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', 'already-reaped'),
+    pr: { number: 3249001, branch: 'already-deleted-branch' },
+  }));
+
+  const liveContent = JSON.stringify({
+    runId: 'run-gone-3249', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h',
+  });
+  const ghApi = (args) => {
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-61.json', sha: 'live-sha' }] }), failure: null, status: null };
+    }
+    if (args[0].includes('/contents/claims/issue-61.json')) {
+      return { stdout: JSON.stringify({ content: liveContent, sha: 'live-sha' }), failure: null, status: null };
+    }
+    if (args.some((a) => a.includes('/labels/'))) {
+      return { stdout: '', failure: null, status: null }; // removeInProgressLabel/removeGrantLabels, best-effort
+    }
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+
+  // A `gh` wrapper on PATH answers `gh pr view 3249001 ...` with a merged PR
+  // — `gh pr list --head {branch}` must never be called (no branch resolved).
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-ghwrap-'));
+  const wrapperPath = path.join(wrapperDir, 'gh');
+  fs.writeFileSync(
+    wrapperPath,
+    '#!/bin/sh\n'
+    + 'case "$*" in\n'
+    + '  *"pr view 3249001"*) cat <<\'EOF\'\n'
+    + '{"number":3249001,"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","mergeCommit":{"oid":"deadbeef"}}\n'
+    + 'EOF\n'
+    + '    ;;\n'
+    + '  *"pr list"*) echo "pr list must never be called when no branch resolved" >&2; exit 1 ;;\n'
+    // writeTombstone's conditional-update PUT shells to this same `gh`
+    // wrapper (raw ghRunner, not the injectable ghApi fake above) — unrelated
+    // to this test's by-number assertion, so it just needs to succeed
+    // (empty stdout is fine; writeClaimBlob only checks r.failure === null).
+    + '  *"api --method PUT"*) exit 0 ;;\n'
+    + '  *) exit 1 ;;\n'
+    + 'esac\n',
+  );
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+
+  try {
+    const result = await releaseMerged({ cwd: root, ghApi });
+    assert.equal(result.released.length, 1, `expected the by-number fallback to release the claim, got ${JSON.stringify(result)}`);
+    assert.equal(result.released[0].issueNumber, 61);
+    assert.equal(result.released[0].prNumber, 3249001);
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});
+
+// Companion: the by-number fallback must never fire (and never call `gh pr
+// view`) for a candidate whose branch actually resolved via the ordinary
+// live-worktree join — it is strictly a last resort.
+test('releaseMerged: does not invoke the by-number fallback when the live-worktree join already resolved a branch', async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-unused-')));
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
+  execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
+
+  const wtPath = path.join(root, '.worktrees', 'wt-run-live-branch');
+  execFileSync('git', ['worktree', 'add', '-q', '-b', 'live-branch', wtPath], { cwd: root });
+
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-live-branch');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active', worktree: wtPath, pr: { number: 999999, branch: 'live-branch' },
+  }));
+
+  const liveContent = JSON.stringify({
+    runId: 'run-live-branch', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h',
+  });
+  const ghApi = (args) => {
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-62.json', sha: 'live-sha' }] }), failure: null, status: null };
+    }
+    if (args[0].includes('/contents/claims/issue-62.json')) {
+      return { stdout: JSON.stringify({ content: liveContent, sha: 'live-sha' }), failure: null, status: null };
+    }
+    if (args.some((a) => a.includes('/labels/'))) {
+      return { stdout: '', failure: null, status: null };
+    }
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-unused-ghwrap-'));
+  const wrapperPath = path.join(wrapperDir, 'gh');
+  fs.writeFileSync(
+    wrapperPath,
+    '#!/bin/sh\n'
+    + 'case "$*" in\n'
+    + '  *"pr list --head live-branch"*) cat <<\'EOF\'\n'
+    + '[{"number":77,"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"}]\n'
+    + 'EOF\n'
+    + '    ;;\n'
+    + '  *"pr view 999999"*) echo "by-number must never be called when the branch already resolved" >&2; exit 1 ;;\n'
+    // writeTombstone's conditional-update PUT shells to this same `gh`
+    // wrapper (raw ghRunner, not the injectable ghApi fake above) — unrelated
+    // to this test's by-number assertion, so it just needs to succeed
+    // (empty stdout is fine; writeClaimBlob only checks r.failure === null).
+    + '  *"api --method PUT"*) exit 0 ;;\n'
+    + '  *) exit 1 ;;\n'
+    + 'esac\n',
+  );
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+
+  try {
+    const result = await releaseMerged({ cwd: root, ghApi });
+    assert.equal(result.released.length, 1);
+    assert.equal(result.released[0].prNumber, 77, 'must use the branch-resolved PR, never the by-number one');
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});
+
 // #1378: a convergent (merged:) release used to leave auto:build/auto:merge live
 // on the now-closed issue — release-merged.js called only removeInProgressLabel.
 // This pins the fix end-to-end: every GRANT_LABELS entry (never a hardcoded
