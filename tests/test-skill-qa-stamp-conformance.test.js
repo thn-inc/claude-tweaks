@@ -14,8 +14,11 @@ const REPORTING = fs.readFileSync(path.join(ROOT, 'plugin/skills/test/qa-reporti
 
 // Pre-change `affected` bullet clause (SKILL.md:121 before #3003).
 const PRE_AFFECTED = "(`{ref}` via `_shared/integration-branch.md`; the stamp's `fullSha` wins whenever it is still an ancestor of HEAD, pipeline or not; `--integration-branch` is the fallback";
-// Pre-change pipeline bullets' story-run wording (SKILL.md:70 before #3003).
-const PRE_PIPELINE = 'one or more matches → run only those; zero matches → apply';
+// Pre-change pipeline bullets' story-run wording — the FULL bullet 2 text as
+// it read before #3003 added the stamp (git show 3bc6a522d:plugin/skills/test/SKILL.md:70),
+// not a weak 60-char fragment (Minor 6): a frozen control this strong still
+// fails every pattern below, which is what proves each pattern can go red.
+const PRE_PIPELINE = "- `VERIFICATION_PASSED=true` + stories exist → skip verification, then **select stories by `source_files` ∩ the changed-file set** (`node \"${CLAUDE_PLUGIN_ROOT}/bin/verify.js\" --changed-files --integration-branch {ref}` — exit 1 means no base resolved: never treat it as an empty set, fall back to the full story set; exact repo-relative path match; a story with no `source_files` field is always included): one or more matches → run only those; zero matches → apply `design-wrapper/frontend-detection.md`'s Layer 3 sniff to the changed-file set, read once, regardless of the record's materialized `surface:` (#2745 — a `surface: web` header does not by itself mean this diff touched a UI file; a loader/route/config-only change on a web-surface record must not skip the sniff) — any UI trigger file → run the full story set (this is also what still covers #808's original concern: a brand-new UI feature whose stories don't carry `source_files` yet always touches at least one Layer-3-recognized file, so it still runs full); none → report `QA: skipped — no affected stories ({n} stories considered, {m} changed files)`, set `TEST_PASSED=true`, and log `AUTO {time} — QA scoped: 0/{n} stories affected by {m} changed file(s); skipped — no UI trigger file in diff. Reversibility: high.`. Every selection logs `AUTO {time} — QA scoped: {k}/{n} stories affected by {m} changed file(s). Reversibility: high.` The Design CLI gate (Step 1.5) still runs on a skip.";
 // Pre-change Phase 5 report-files tail (qa-reporting.md before #3003).
 const PRE_PHASE5 = '**`{RUN_DIR}/report.md`** — human-readable (same format as the report below).\n\n26. Present the aggregated results:';
 
@@ -35,7 +38,16 @@ test('pipeline story selection consults the QA pass stamp before dispatching sto
 });
 
 test('pipeline story runs route through qa-procedures.md, so Phase 5 always writes report.json', () => {
-  pinned(SKILL, PRE_PIPELINE, /run those stories through `qa-procedures\.md` \(Phases 1-5\.5\)/, 'pipeline bullets must route through qa-procedures.md');
+  pinned(SKILL, PRE_PIPELINE, /goes through `qa-procedures\.md` \(Phases 1-5\.5\), the only path that writes `\{RUN_DIR\}\/report\.json`/, 'pipeline bullets must route through qa-procedures.md');
+});
+
+test('the stamp-then-qa-procedures routing covers every story-run path, not just the scoped-match branch (Important 1)', () => {
+  pinned(
+    SKILL,
+    PRE_PIPELINE,
+    /the scoped match set, the Layer-3 full set, or the exit-1 full-set fallback — first passes this check, then goes through `qa-procedures\.md` \(Phases 1-5\.5\)/,
+    'the QA pass stamp paragraph must state routing once for every story-run path this bullet selects, including the Layer-3 full set and the exit-1 fallback',
+  );
 });
 
 test('the QA-skip path still passes the #3013 PR-check gate before TEST_PASSED', () => {
