@@ -19,10 +19,13 @@
 // call that can throw is wrapped so a failure never escapes uncaught.
 'use strict';
 
+const path = require('path');
 const claimStore = require('../issues/claim-store');
 const { classifyClaimBlob, claimPayload, releasePayload } = require('../issues/claims');
 const { ensureLabelPayload } = require('../issues/labels');
 const { runClassified, isTimeoutError } = require('../shared-primitives');
+const { appendEntry, formatEntry } = require('../log-decision/append');
+const { CLAIM_LOG_SECTION, CLAIM_LOG_STEP, claimLogText } = require('../log-decision/claim-log');
 const { tombstoneInFlightPr } = claimStore;
 
 const BOT_IN_PROGRESS = 'bot:in-progress';
@@ -33,7 +36,8 @@ const BOT_IN_PROGRESS_DESC = 'Bot state: an agent currently holds the claim on t
 const BOT_IN_PROGRESS_COLOR = '6A737D';
 const ABORT_REASON = 'never-started: file-overlap group partial claim';
 
-const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--help]\n'
+const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--run <run-dir>] [--help]\n'
+  + '  --run <run-dir>: writes the Step 2.8 claim-log line to that run dir\'s decisions.md for every claimed target\n'
   + '  exit 0 = all claimed (or, with --keep-going, partial)\n'
   + '  exit 2 = malformed invocation or missing dependency\n'
   + '  exit 3 = contested, or a pr-opened tombstone whose linked PR is still open\n'
@@ -55,7 +59,7 @@ function parseJsonOrNull(text) {
 
 function parseArgs(argv) {
   const opts = {
-    runId: null, targetsRaw: null, keepGoing: false, help: false,
+    runId: null, targetsRaw: null, keepGoing: false, help: false, runDir: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -64,6 +68,7 @@ function parseArgs(argv) {
     else if (a === '--run-id') opts.runId = next();
     else if (a === '--targets') opts.targetsRaw = next();
     else if (a === '--keep-going') opts.keepGoing = true;
+    else if (a === '--run') opts.runDir = next();
     else return { error: `unknown argument: ${a}` };
   }
   return opts;
@@ -81,6 +86,26 @@ function parseTargets(raw) {
     targets.push(Number(p));
   }
   return targets.length ? targets : null;
+}
+
+// Default `deps.appendClaimLog` implementation — writes the exact Step 2.8
+// claim-log line (`flow/claim-targets.md`'s "Log the claim", #2492) for one
+// claimed target, via the same appendEntry/formatEntry machinery
+// log-decision.js itself uses. No new line format: `claimLogText` is the
+// single source for the --text shape, `CLAIM_LOG_SECTION`/`CLAIM_LOG_STEP`
+// for the section/step, both from log-decision/claim-log.js (#2775).
+function defaultAppendClaimLog({ runDir, issue, transport }) {
+  appendEntry({
+    runDir,
+    section: CLAIM_LOG_SECTION,
+    entry: formatEntry({
+      status: 'AUTO',
+      now: Date.now(),
+      step: CLAIM_LOG_STEP,
+      text: claimLogText(issue, transport),
+      reversibility: 'high',
+    }),
+  });
 }
 
 function repoSlugOf(gh) {
@@ -206,6 +231,14 @@ function run(argv, deps) {
   if (!opts.runId || opts.runId.trim() === '') { deps.stderr(USAGE); return 2; }
   const targets = parseTargets(opts.targetsRaw);
   if (!targets) { deps.stderr(USAGE); return 2; }
+
+  // The claim identity and the log location must be the same run — a `--run`
+  // pointed at a different run dir would log a claim under the wrong run's
+  // decisions.md (#2775).
+  if (opts.runDir !== null && path.basename(opts.runDir) !== opts.runId) {
+    deps.stderr(`claim-targets: --run basename (${path.basename(opts.runDir)}) must equal --run-id (${opts.runId})\n`);
+    return 2;
+  }
 
   // #3065: a `gh` timeout resolving the repo slug is retried once (same
   // shape as reconcile's release-merged.js/preflight.js/pr-state.js), then
@@ -507,12 +540,33 @@ function run(argv, deps) {
     }
   }
 
+  // #2775: a successful claim must leave the Step 2.8 claim-log line itself
+  // rather than relying on the dispatched agent to hand-type it afterward
+  // (flow/claim-targets.md's "Log the claim" — the gap 33/48 dispatch-minted
+  // runs since #2861 hit). Best-effort, same posture as labelFailures above:
+  // a write failure here never un-claims the target and never changes the
+  // exit code. Only attempted — and only added to the envelope — when the
+  // caller passed `--run`, so the envelope stays byte-identical for every
+  // existing caller/test that never does.
+  const claimLogFailures = [];
+  if (opts.runDir !== null) {
+    for (const issue of claimedThisRun) {
+      try {
+        deps.appendClaimLog({ runDir: opts.runDir, issue, transport: transportByIssue[issue] });
+      } catch (e) {
+        claimLogFailures.push({ issue, error: errText(e) });
+        deps.stderr(`claim-targets: claim-log write failed for #${issue} (claim stands) — ${errText(e)}\n`);
+      }
+    }
+  }
+
   deps.stdout(JSON.stringify({
     claimed: claimedThisRun, alreadyOwned, skipped, labelFailures, transportByIssue,
+    ...(opts.runDir !== null ? { claimLogFailures } : {}),
   }));
   return 0;
 }
 
 module.exports = {
-  run, parseArgs, parseTargets, USAGE, BOT_IN_PROGRESS, ABORT_REASON,
+  run, parseArgs, parseTargets, USAGE, BOT_IN_PROGRESS, ABORT_REASON, defaultAppendClaimLog,
 };
