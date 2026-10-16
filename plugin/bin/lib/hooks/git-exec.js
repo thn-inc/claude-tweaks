@@ -103,17 +103,22 @@ function buildFailure(err) {
   const stderr = typeof err.stderr === 'string' ? err.stderr.trim() : '';
   // #3023: additive, like #1341's stderr — a removal that fails with no stderr
   // text still has an exit status (and sometimes stdout) a caller can report.
-  const exitCode = typeof err.status === 'number' ? err.status : null;
+  // execFileSync puts the exit status on `err.status`; execFile (the async
+  // twin) puts it on `err.code`, which is a string for a spawn error instead.
+  const exitCode = typeof err.status === 'number' ? err.status
+    : (typeof err.code === 'number' ? err.code : null);
   const failureStdout = typeof err.stdout === 'string' ? err.stdout.trim() : '';
   return { stdout: null, failure: classify(err), stderr, exitCode, failureStdout };
 }
 
 // Runs `git -C <cwd> <args>`.
 //
-// Returns { stdout, failure, stderr }:
+// Returns { stdout, failure, stderr } (plus exitCode/failureStdout on failure):
 //   - success -> { stdout: '<trimmed stdout>', failure: null, stderr: null }
 //   - failure -> { stdout: null, failure: one of FAILURE.*, stderr: '<trimmed
-//     stderr text, or '' when git produced none>' }
+//     stderr text, or '' when git produced none>', exitCode: <git's exit
+//     status as a number, or null when git never exited (timeout, spawn)>,
+//     failureStdout: '<trimmed stdout git wrote before failing, or ''>' }
 //
 // `stderr` is additive (#1341) — every existing call site destructures only
 // `{ stdout }`/`{ failure }`/both, so a new third field changes nothing for

@@ -92,13 +92,15 @@ function branchOfWorktree(root, worktreePath) {
 // — test seam for the gh call only; every git call goes through the real runGit (fixture repos
 // are real git repos, matching this codebase's existing convention for reconcile/archive tests).
 // #3023: a failed git call's best available cause — stderr when git wrote any,
-// else its exit status (plus stdout when present), so "no error text" only
-// appears when nothing at all is known.
+// else its exit status (plus stdout when present), else the failure category
+// (e.g. timeout, spawn), so "no error text" only appears when nothing at all
+// is known.
 function describeGitFailure(r) {
   if (r && r.stderr) return r.stderr;
   if (r && typeof r.exitCode === 'number') {
     return `exit ${r.exitCode}${r.failureStdout ? `; stdout: ${r.failureStdout}` : ''}`;
   }
+  if (r && typeof r.failure === 'string' && r.failure) return r.failure;
   return 'no error text';
 }
 

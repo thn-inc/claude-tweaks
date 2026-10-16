@@ -271,6 +271,7 @@ test('AC10 (#2747, #3023): a prunable worktree whose directory survives the prun
   assert.match(out, /branch: deleted feat-branch/);
   assert.match(out, /remote ref: deleted refs\/heads\/feat-branch/);
   assert.doesNotMatch(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.strictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
 });
 
 test('#3023: a worktree whose directory is already gone is reported removed directly, never as still present', () => {
@@ -294,6 +295,7 @@ test('#3023: describeGitFailure keeps stderr, else falls back to exit status and
   assert.strictEqual(describeGitFailure({ stderr: 'fatal: boom', exitCode: 128, failureStdout: '' }), 'fatal: boom');
   assert.strictEqual(describeGitFailure({ stderr: '', exitCode: 1, failureStdout: '' }), 'exit 1');
   assert.strictEqual(describeGitFailure({ stderr: '', exitCode: 1, failureStdout: 'partial' }), 'exit 1; stdout: partial');
+  assert.strictEqual(describeGitFailure({ stderr: '', exitCode: null, failureStdout: '', failure: 'timeout' }), 'timeout');
   assert.strictEqual(describeGitFailure({ stderr: '', exitCode: null, failureStdout: '' }), 'no error text');
   assert.strictEqual(describeGitFailure({ stderr: null }), 'no error text');
 });

@@ -136,3 +136,19 @@ test('#3023: no local tag at all declines to trust the remote ref and reads HEAD
   assert.strictEqual(r.ran, true);
   assert.deepStrictEqual(r.findings, [], JSON.stringify(r.findings));
 });
+
+// #3023 final review F7: the remote ref contains the newest tag but its
+// CHANGELOG.md is unreadable, while local HEAD is ahead of (not behind) it —
+// the probe must fall back to reading HEAD, not decline.
+test('#3023: an unreadable remote CHANGELOG with HEAD not behind the remote falls back to HEAD', () => {
+  const root = fixture({ remoteChangelog: null });
+  git(root, 'reset', '-q', '--hard', 'refs/remotes/origin/main');
+  fs.writeFileSync(path.join(root, 'CHANGELOG.md'), '# Changelog\n\n## v1.0.0 — first\n');
+  git(root, 'add', 'CHANGELOG.md');
+  git(root, 'commit', '-q', '-m', 'c3: local commit ahead of origin/main restores CHANGELOG');
+  assert.strictEqual(git(root, 'rev-list', '--count', 'HEAD..refs/remotes/origin/main'), '0', 'fixture precondition: HEAD is not behind');
+  const r = probeRelease({ scope: SCOPE, run: runner(root), integrationBranch: 'main' });
+  assert.strictEqual(r.ran, true, JSON.stringify(r));
+  assert.ok(r.findings.some((f) => f.evidence.includes('v1.1.0') && f.evidence.includes('HEAD')), JSON.stringify(r.findings));
+  assert.ok(!r.findings.some((f) => f.evidence.includes('origin/main')), JSON.stringify(r.findings));
+});
