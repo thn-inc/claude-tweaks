@@ -21,7 +21,7 @@ After all specs complete (or one fails), present a consolidated summary:
 ### Try it
 
 #### Spec {N}: {title}
-{that spec's Try it block (`_shared/try-it.md`) — the body of its session-scoped `try-it-{N}.md`, verbatim, minus its own heading line; composed now per that contract when the file is missing. A spec that did not complete reads `Not delivered — {outcome}` instead}
+{one `#### Spec {N}` group per spec, in run order. That spec's Try it block (`_shared/try-it.md`) — the body of its session-scoped `try-it-{N}.md`, verbatim, minus its own heading line; when the file cannot be used, compose it per `_shared/try-it.md`'s Rules. A spec that did not complete reads `Not delivered — {outcome}` instead}
 
 ### Try it — end to end
 {the contract's end-to-end variant, composed now across every completed spec, minus its own heading line. When fewer than two specs completed: `Only spec {N} completed — its Try it above is the end-to-end path.`}

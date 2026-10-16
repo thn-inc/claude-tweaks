@@ -6,7 +6,8 @@ file and renders the block verbatim; none restates its fields. Consumers:
 `wrap-up/verification-brief.md` (composes it for every record), `wrap-up/verification-brief-parent-gate.md`
 (the end-to-end variant for a decomposition parent), `flow/summary-template.md` and
 `flow/multispec-summary.md` (render it in the Pipeline Summary), `demo/SKILL.md` and
-`demo/entry-paths.md` (render it first; compose it when a brief carries none).
+`demo/entry-paths.md` (render it first, read back from the brief or the PR's `try-it` run comment;
+compose it only when neither carries one).
 
 Distinct from `_shared/observation-plan.md`: the observation plan is the agent's procedure — the
 Prepare/Validate/Inspect commands `/claude-tweaks:demo` executes. This block is what a person reads
@@ -49,6 +50,10 @@ Compose from evidence the run already produced — never invent behavior nobody 
    this plugin's own repo the runnable unit is a skill invocation (e.g. `/claude-tweaks:flow #N`) —
    name it.
 
+The end-to-end variant draws on the same evidence across every assembled spec or sub-issue — each
+one's Acceptance Criteria and passed QA stories — plus, for a decomposition parent, the parent's
+own design summary for the path that joins them.
+
 ## Rules
 
 - Never empty, never placeholder text (`TBD`, an unfilled `{...}`, "see the PR"). Only
@@ -65,9 +70,12 @@ Compose from evidence the run already produced — never invent behavior nobody 
 
 ## Where it appears
 
+A summary of `wrap-up/verification-brief.md`'s Routing and **Posting it alone** — that file
+decides where the block lands; this table only reports it.
+
 | Surface | When | Placement |
 |---|---|---|
-| Verification Brief | a record with no resolvable parent clears the oversight floor | its `### Try it` section, after `### What shipped` |
+| Verification Brief | a record with no resolvable parent clears the oversight floor — or a parent-linked sub-issue whose parent-gate `gh` call failed open to Steps 1-4 (`verification-brief-parent-gate.md`), which then embeds it in its own brief | its `### Try it` section, after `### What shipped` |
 | `try-it` PR run comment (`_shared/pr-run-comments.md`) | the run has a PR and no brief on it carries the block — a below-floor record, or any parent-linked sub-issue | the whole comment body |
 | Parent Verification Brief | a decomposition parent's gate opens | the end-to-end variant, as its `### Try it — end to end` section |
 | Pipeline Summary | every successful `/claude-tweaks:flow` run | `### Try it` per spec, plus the end-to-end variant for a bundle |

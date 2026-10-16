@@ -261,7 +261,9 @@ regardless.
   reaches the Pipeline Summary. Parent-side entry (`/claude-tweaks:tidy`): stop here — no delivering
   run exists to carry it.
 - **`exceeds: true`** — proceed to **Compose the parent brief** below, exactly as `due` alone
-  used to trigger before this gate existed.
+  used to trigger before this gate existed. On a sub-issue-side entry, append the same end-to-end
+  variant that brief carries to `"$TRY_IT"` too, as on `exceeds: false` — one rule for both
+  outcomes, so the run that opens the parent gate shows the end-to-end path in its Pipeline Summary.
 
 ## Compose the parent brief
 
