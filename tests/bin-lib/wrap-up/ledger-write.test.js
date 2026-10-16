@@ -4,6 +4,7 @@
 // resolution, and flipLedgerRow's in-place Status/Resolution cell rewrite.
 const test = require('node:test');
 const assert = require('node:assert');
+const path = require('node:path');
 
 const {
   TERMINAL_STATUSES, resolveLedgerPath, parseLedgerTable, flipLedgerRow,
@@ -21,9 +22,9 @@ const SAMPLE = [
 ].join('\n');
 
 test('resolveLedgerPath prefers {run-dir}/ledger.md when it exists', () => {
-  const deps = { existsSync: (p) => p === '/run/ledger.md' };
+  const deps = { existsSync: (p) => p === path.join('/run', 'ledger.md') };
   const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', deps });
-  assert.deepStrictEqual(r, { ok: true, path: '/run/ledger.md' });
+  assert.deepStrictEqual(r, { ok: true, path: path.join('/run', 'ledger.md') });
 });
 
 test('resolveLedgerPath falls back to a single docs/plans/*-ledger.md candidate', () => {
@@ -54,7 +55,7 @@ test('resolveLedgerPath reports ambiguous with every candidate when 2+ exist, ne
 });
 
 test('resolveLedgerPath honors an explicit ledger path inside the worktree', () => {
-  const deps = { existsSync: (p) => p === '/wt/docs/plans/x-ledger.md', realpathSync: (p) => p };
+  const deps = { existsSync: (p) => p === '/wt/docs/plans/x-ledger.md', realpathSync: (p) => path.resolve(p) };
   const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', explicit: '/wt/docs/plans/x-ledger.md', deps });
   assert.deepStrictEqual(r, { ok: true, path: '/wt/docs/plans/x-ledger.md' });
 });
