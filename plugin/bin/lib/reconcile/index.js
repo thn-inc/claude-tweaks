@@ -124,10 +124,10 @@ async function reconcile(opts = {}) {
       // may already hold this root's null either way.
       if (opts.cache && opts.cache.integrationBranch) opts.cache.integrationBranch.delete(root);
       integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache));
-      if (repair.outcome === 'repaired') {
-        result.originHeadRepair = integration ? { outcome: 'repaired', branch: integration } : { outcome: 'unresolved' };
+      if (integration) {
+        result.originHeadRepair = { ...repair, branch: integration };
       } else {
-        result.originHeadRepair = integration ? { ...repair, branch: integration } : repair;
+        result.originHeadRepair = repair.outcome === 'repaired' ? { outcome: 'unresolved' } : repair;
       }
     }
   }
