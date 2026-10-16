@@ -11,7 +11,7 @@ const {
   commandWords, shouldRunFull, earlyGate,
 } = require('../plugin/bin/lib/hooks/bash-prefilter');
 const {
-  WRITE_SHAPES, GUARDED_PROGRAM_WORDS, gitTargets, fileWriteTargets, mkdirTargets,
+  WRITE_SHAPES, GUARDED_PROGRAM_WORDS, gitTargets, fileWriteTargets, mkdirTargets, powershellOpaqueCommand,
 } = require('../plugin/bin/lib/hooks/git-command');
 const { teardownTargets } = require('../plugin/bin/lib/hooks/pre-tool-use');
 
@@ -31,11 +31,13 @@ const DIFFERENTIAL_CORPUS = [
   'git commit -m x', 'git push', 'git rm f.txt', 'env git commit -m x', 'env -i git push',
   '/usr/bin/git commit -m x', 'git worktree remove ../w',
   'G=git; $G commit -m x', 'C=cp; $C a.txt b.txt', 'X=mk; ${X}dir d',
+  'powershell -EncodedCommand QQBCAEMA', 'pwsh -Command "echo hi"',
 ];
 const teardown = (command) => teardownTargets({ input: { tool_name: 'Bash', tool_input: { command } }, cwd: CWD });
+const powershell = (command) => (powershellOpaqueCommand(command, CWD) ? [{ action: 'powershell-opaque' }] : []);
 // post-tool-use.js runs only the git-family parsers (gitTargets + teardownTargets' Bash branch).
 const PARSERS_BY_EVENT = {
-  'pre-tool-use': [(c) => gitTargets(c, CWD), (c) => fileWriteTargets(c, CWD), (c) => mkdirTargets(c, CWD), teardown],
+  'pre-tool-use': [(c) => gitTargets(c, CWD), (c) => fileWriteTargets(c, CWD), (c) => mkdirTargets(c, CWD), teardown, powershell],
   'post-tool-use': [(c) => gitTargets(c, CWD), teardown],
 };
 const targeted = (event, command) => PARSERS_BY_EVENT[event].some((parse) => parse(command).length > 0);
