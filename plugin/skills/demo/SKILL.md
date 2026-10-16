@@ -77,6 +77,13 @@ runs — read only the matching branch in `entry-paths.md` in this skill's direc
 
 ## Step 2: Per-item walkthrough
 
+**Try it first (#2821).** Before anything else in this step — before the design-contract section
+and before any Prepare/Validate output — render the brief's `### Try it` block (`_shared/try-it.md`;
+a parent brief's `### Try it — end to end`), so `/claude-tweaks:demo #N` opens on the same
+walkthrough the Pipeline Summary and the PR showed. A brief carrying none (posted before this
+shipped) — compose one now per that contract from the record's Acceptance Criteria and Step 1's
+entry point, and never render it empty.
+
 Render this record's full Verification Brief (The ask / What shipped / Confirmed / Observation
 plan — evidence the human can judge, not a checklist to complete). Label-backed entries were
 fetched per `verification-brief.md`'s digest template in Step 1's `#N` lookup; closing-commit
@@ -88,7 +95,7 @@ show-first, and ask for the verdict. A brief with no `### Observation plan` sect
 what it carries instead: one carrying a retired `### See it yourself` or `### Verify it yourself
 (manual)` heading — a label-backed brief posted before this schema shipped — walks the
 Compatibility branch below. One carrying neither the section nor a retired heading — a Parent-Gate
-parent brief, whose walkthrough lives inline in `### Confirmed` per
+parent brief, whose walkthrough lives in its `### Try it — end to end` section per
 `wrap-up/verification-brief.md`'s Parent-Gate Procedure, or a session-recall entry whose recall
 yielded no confident path list (Step 1's omission rule) — skips Prepare/Validate/Show entirely and
 goes straight to the Verdict question below: the human judges from the brief's own `### Confirmed`
@@ -109,7 +116,7 @@ This section never becomes a reason to block.
 
 Applies whenever this record's brief carries a `### Observation plan` section — every **sub-issue**
 brief composed or posted after this schema shipped. Two populations legitimately carry no such
-section at all even now: a Parent-Gate parent brief (walkthrough lives inline in `### Confirmed`
+section at all even now: a Parent-Gate parent brief (walkthrough lives in its `### Try it — end to end` section
 instead) and a session-recall entry whose recall yielded no confident path list (Step 1's omission
 rule) — both skip this whole subsection and go straight to the Verdict question below, per the
 routing above. Only a brief carrying a retired `### See it yourself` / `### Verify it yourself

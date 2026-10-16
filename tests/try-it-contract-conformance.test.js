@@ -137,3 +137,23 @@ test('pr-run-comments.md registers the try-it kind, spec-qualified under multi-s
   assert.match(doc, /^\| `try-it` \| `\/claude-tweaks:wrap-up`[^\n]*`<!-- run-comment: try-it -->`[^\n]*`<!-- run-comment: try-it:\{spec\} -->`[^\n]*\|$/m);
   assert.match(doc, /^\| `\/claude-tweaks:wrap-up` \(`verification-brief\.md`'s Try it block\) \| `try-it` \|/m);
 });
+
+test('demo Step 2 renders Try it before the design contract and before Prepare', () => {
+  const doc = read('demo/SKILL.md');
+  const step2 = doc.slice(doc.indexOf('## Step 2: Per-item walkthrough'), doc.indexOf('### Verdict'));
+  const tryIt = step2.indexOf('Try it');
+  assert.ok(tryIt >= 0, 'Step 2 must name Try it');
+  assert.ok(tryIt < step2.indexOf('### The design contract'), 'before the design-contract section');
+  assert.ok(tryIt < step2.indexOf('**Prepare**'), 'before Prepare');
+  assert.ok(doc.includes('_shared/try-it.md'));
+  assert.match(step2, /never render it empty/);
+  assert.doesNotMatch(doc, /walkthrough lives inline in `### Confirmed`/);
+  assert.doesNotMatch(doc, FIELD_LINE);
+});
+
+test('demo entry paths compose a Try it block on both composer branches', () => {
+  const doc = read('demo/entry-paths.md');
+  const hits = doc.split('_shared/try-it.md').length - 1;
+  assert.ok(hits >= 2, `expected session-recall and reconstruction to cite the contract, found ${hits}`);
+  assert.doesNotMatch(doc, FIELD_LINE);
+});

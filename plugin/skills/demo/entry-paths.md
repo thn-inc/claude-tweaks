@@ -10,7 +10,7 @@ verification work done in this session, check whether it already correlates to a
 anywhere in this conversation. Work with no correlating `#N` is a session-recall candidate —
 compose its Verification Brief content now, directly from recall, into the same shape
 `verification-brief.md` renders (`### The ask` / `### What shipped` / `### Confirmed` / `###
-Observation plan`):
+Observation plan` / `### Try it`):
 
 - **The ask** — what was actually requested in this conversation, for this unit of work.
 - **What shipped** — what was actually implemented, from recall.
@@ -33,6 +33,7 @@ Observation plan`):
   evidence, which is worse than no section at all. This is the same omission rule that already
   applied under the pre-schema brief format (what was then called "See it yourself"), restated
   here for the Observation plan schema.
+- **Try it** — compose the block from recall per `_shared/try-it.md` (its Sources and Rules; the Entry point from the Observation plan just composed).
 
 This path has no fetch step — there is no comment or record body to read from. A fresh `/claude-tweaks:demo`
 session with no memory of any unrecorded work naturally finds nothing here; that's expected, not
@@ -151,6 +152,7 @@ same shape as the no-arguments path, sourced like this:
   "recall can't produce a path list" omission case does not arise. **Parent-linked records:** also
   run the Full verification pointer sub-procedure below, and append its block to the composed plan
   when it resolves one.
+- **Try it** — compose the block per `_shared/try-it.md` from the record's Acceptance Criteria and the Observation plan's Entry point; a reconstruction asserts nothing past what the commit shows.
 
 Go to Step 2 with it.
 
