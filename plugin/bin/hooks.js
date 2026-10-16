@@ -950,6 +950,7 @@ async function main(argv) {
     reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
     if (invalidRunArg) {
       process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — run not closed\n`);
+      return 1;
     } else if (candidates) {
       process.stdout.write(`${renderCandidateRefusal('close-run', candidates)}\nRun not closed.\n`);
     } else if (runDir) {

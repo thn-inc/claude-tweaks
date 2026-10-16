@@ -398,7 +398,9 @@ test('record-pr, spec-status, close-run, teardown-run, check-resume-freshness, c
     const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
     fs.mkdirSync(run, { recursive: true }); // bare mkdir only — no markers at all
     const result = runHook([verb, '--run', run, ...rest], { cwd: project });
-    assert.strictEqual(result.code, 0, `${verb}: unexpected exit code`);
+    // close-run exits non-zero on a rejected --run so a scripted caller
+    // (dispatch's drain termination) can tell "not closed" from closed.
+    assert.strictEqual(result.code, verb === 'close-run' ? 1 : 0, `${verb}: unexpected exit code`);
     assert.match(result.stdout, /--run path rejected/, `${verb}: expected a rejected---run diagnostic, got: ${result.stdout}`);
   }
 });
@@ -409,7 +411,7 @@ test('close-run with a non-existent --run path fails loudly instead of falling b
   runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
   const bogus = path.join(project, 'does-not-exist');
   const result = runHook(['close-run', '--run', bogus], { cwd: project });
-  assert.strictEqual(result.code, 0);
+  assert.strictEqual(result.code, 1);
   assert.match(result.stdout, /--run path rejected/);
   const state = readRunState(run);
   assert.strictEqual(state.status, 'active', 'an invalid --run must not touch a different run dir at all');
@@ -447,6 +449,13 @@ test('close-run --run basename: a same-named cwd-relative directory wins over th
   assert.strictEqual(readRunState(run).status, 'active', 'the pipelines/ run must not be touched when a cwd-relative dir exists');
 });
 
+test('close-run --run with a bare basename naming no run dir is still rejected, non-zero', () => {
+  const project = tmpProject();
+  const result = runHook(['close-run', '--run', '2026-07-02T090000-spec-9'], { cwd: project });
+  assert.strictEqual(result.code, 1);
+  assert.match(result.stdout, /--run path rejected: 2026-07-02T090000-spec-9 — run not closed/);
+});
+
 test('close-run --run with no following value fails loudly instead of falling back to the newest non-terminal run', () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
@@ -458,7 +467,7 @@ test('close-run --run with no following value fails loudly instead of falling ba
   assert.strictEqual(readRunState(run).status, 'active');
 
   const result = runHook(['close-run', '--run'], { cwd: project });
-  assert.strictEqual(result.code, 0);
+  assert.strictEqual(result.code, 1);
   assert.match(result.stdout, /claude-tweaks: --run path rejected: \(missing value\) — run not closed/);
   assert.strictEqual(readRunState(run).status, 'active',
     '--run with a missing value must not fall back to closing the newest non-terminal run');
