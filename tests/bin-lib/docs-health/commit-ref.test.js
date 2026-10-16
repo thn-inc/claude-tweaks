@@ -11,6 +11,54 @@ const { git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo } = require('./c
 
 const outcomeOf = (result, input) => result.commits.find((c) => c.input === input).outcome;
 
+// Shared by the cross-process locking tests below (#2988): each spawns a
+// real OS process (the real caller, plugin/bin/docs-health.js's
+// verify-commit command, is invoked as a fresh process per citation, so
+// only cross-process behavior exercises what those tests are checking).
+const commitRefModule = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'docs-health', 'commit-ref.js');
+
+// Runs `script` in a fresh child process, resolving with the parsed JSON
+// verifyCommits result it writes to stdout.
+function runChildScript(script) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(process.execPath, ['-e', script]);
+    let stdout = ''; let stderr = '';
+    p.stdout.on('data', (d) => { stdout += d; });
+    p.stderr.on('data', (d) => { stderr += d; });
+    p.on('close', (code) => (code === 0
+      ? resolve(JSON.parse(stdout))
+      : reject(new Error(`child exited ${code}: ${stderr}`))));
+    p.on('error', reject);
+  });
+}
+
+// Builds the worker script shared by the two racing-fetch tests below:
+// counts real `git fetch --unshallow` invocations via `countingGit` and
+// sleeps 300ms right before issuing one, widening the real fetch's own
+// duration so two children spawned back-to-back reliably overlap instead
+// of depending on OS scheduling luck. The sleep happens in this wrapper,
+// never inside git itself, so it never interacts with execFileSync's own
+// DEEPEN_TIMEOUT_MS bound.
+function raceWorkerScript(root, hash, counterPath) {
+  return `
+    const fs = require('fs');
+    const { verifyCommits, defaultGit } = require(${JSON.stringify(commitRefModule)});
+    function sleepSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
+    const countingGit = (args, opts) => {
+      if (args.includes('fetch')) {
+        fs.appendFileSync(${JSON.stringify(counterPath)}, '1\\n');
+        sleepSync(300);
+      }
+      return defaultGit(args, opts);
+    };
+    const r = verifyCommits({
+      root: ${JSON.stringify(root)}, hashes: [${JSON.stringify(hash)}],
+      integrationBranch: 'main', git: countingGit,
+    });
+    process.stdout.write(JSON.stringify(r));
+  `;
+}
+
 test('OUTCOMES lists exactly the six outcome strings', () => {
   assert.deepStrictEqual([...OUTCOMES], [
     'reachable', 'exists-unreachable', 'not-found', 'unverifiable', 'ambiguous', 'invalid',
@@ -150,46 +198,11 @@ test('two real child processes racing verifyCommits against the same shallow clo
   const dir = cloneOf(origin, { depth: 1 });
   const counterPath = path.join(tmpDir('counter'), 'fetch-count.txt');
   fs.writeFileSync(counterPath, '');
-  const commitRefModule = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'docs-health', 'commit-ref.js');
 
-  // Each child sleeps synchronously right before the real fetch it's
-  // about to issue -- widening the real git fetch's own duration so two
-  // children spawned back-to-back reliably overlap instead of depending
-  // on OS scheduling luck. The sleep happens in THIS wrapper, never
-  // inside git itself, so it never interacts with execFileSync's own
-  // DEEPEN_TIMEOUT_MS bound.
-  const raceWorkerScript = (hash) => `
-    const fs = require('fs');
-    const { verifyCommits, defaultGit } = require(${JSON.stringify(commitRefModule)});
-    function sleepSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
-    const countingGit = (args, opts) => {
-      if (args.includes('fetch')) {
-        fs.appendFileSync(${JSON.stringify(counterPath)}, '1\\n');
-        sleepSync(300);
-      }
-      return defaultGit(args, opts);
-    };
-    const r = verifyCommits({
-      root: ${JSON.stringify(dir)}, hashes: [${JSON.stringify(hash)}],
-      integrationBranch: 'main', git: countingGit,
-    });
-    process.stdout.write(JSON.stringify(r));
-  `;
-
-  function runChild(hash) {
-    return new Promise((resolve, reject) => {
-      const p = spawn(process.execPath, ['-e', raceWorkerScript(hash)]);
-      let stdout = ''; let stderr = '';
-      p.stdout.on('data', (d) => { stdout += d; });
-      p.stderr.on('data', (d) => { stderr += d; });
-      p.on('close', (code) => (code === 0
-        ? resolve(JSON.parse(stdout))
-        : reject(new Error(`child exited ${code}: ${stderr}`))));
-      p.on('error', reject);
-    });
-  }
-
-  const [resultA, resultB] = await Promise.all([runChild(origin.root), runChild(origin.sideOnly)]);
+  const [resultA, resultB] = await Promise.all([
+    runChildScript(raceWorkerScript(dir, origin.root, counterPath)),
+    runChildScript(raceWorkerScript(dir, origin.sideOnly, counterPath)),
+  ]);
 
   const fetchCount = fs.readFileSync(counterPath, 'utf8').split('\n').filter(Boolean).length;
   assert.strictEqual(fetchCount, 1, 'exactly one real git fetch --unshallow must be issued across both racing processes');
@@ -216,40 +229,11 @@ test('two real child processes racing verifyCommits against a shallow LINKED WOR
 
   const counterPath = path.join(tmpDir('counter'), 'fetch-count.txt');
   fs.writeFileSync(counterPath, '');
-  const commitRefModule = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'docs-health', 'commit-ref.js');
 
-  const raceWorkerScript = (hash) => `
-    const fs = require('fs');
-    const { verifyCommits, defaultGit } = require(${JSON.stringify(commitRefModule)});
-    function sleepSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
-    const countingGit = (args, opts) => {
-      if (args.includes('fetch')) {
-        fs.appendFileSync(${JSON.stringify(counterPath)}, '1\\n');
-        sleepSync(300);
-      }
-      return defaultGit(args, opts);
-    };
-    const r = verifyCommits({
-      root: ${JSON.stringify(worktreeDir)}, hashes: [${JSON.stringify(hash)}],
-      integrationBranch: 'main', git: countingGit,
-    });
-    process.stdout.write(JSON.stringify(r));
-  `;
-
-  function runChild(hash) {
-    return new Promise((resolve, reject) => {
-      const p = spawn(process.execPath, ['-e', raceWorkerScript(hash)]);
-      let stdout = ''; let stderr = '';
-      p.stdout.on('data', (d) => { stdout += d; });
-      p.stderr.on('data', (d) => { stderr += d; });
-      p.on('close', (code) => (code === 0
-        ? resolve(JSON.parse(stdout))
-        : reject(new Error(`child exited ${code}: ${stderr}`))));
-      p.on('error', reject);
-    });
-  }
-
-  const [resultA, resultB] = await Promise.all([runChild(origin.root), runChild(origin.sideOnly)]);
+  const [resultA, resultB] = await Promise.all([
+    runChildScript(raceWorkerScript(worktreeDir, origin.root, counterPath)),
+    runChildScript(raceWorkerScript(worktreeDir, origin.sideOnly, counterPath)),
+  ]);
 
   const fetchCount = fs.readFileSync(counterPath, 'utf8').split('\n').filter(Boolean).length;
   assert.strictEqual(fetchCount, 1, 'exactly one real git fetch --unshallow must be issued across both racing processes against the linked worktree');
@@ -365,8 +349,7 @@ test('a timeout marker written by a prior process is honored by a fresh process,
 
   const counterPath = path.join(tmpDir('counter'), 'fetch-count.txt');
   fs.writeFileSync(counterPath, '');
-  const commitRefModule = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'docs-health', 'commit-ref.js');
-  const workerScript = `
+  const child = await runChildScript(`
     const fs = require('fs');
     const { verifyCommits, defaultGit } = require(${JSON.stringify(commitRefModule)});
     const countingGit = (args, opts) => {
@@ -378,15 +361,7 @@ test('a timeout marker written by a prior process is honored by a fresh process,
       integrationBranch: 'main', git: countingGit,
     });
     process.stdout.write(JSON.stringify(r));
-  `;
-  const child = await new Promise((resolve, reject) => {
-    const p = spawn(process.execPath, ['-e', workerScript]);
-    let stdout = ''; let stderr = '';
-    p.stdout.on('data', (d) => { stdout += d; });
-    p.stderr.on('data', (d) => { stderr += d; });
-    p.on('close', (code) => (code === 0 ? resolve(JSON.parse(stdout)) : reject(new Error(`child exited ${code}: ${stderr}`))));
-    p.on('error', reject);
-  });
+  `);
 
   const fetchCount = fs.readFileSync(counterPath, 'utf8').split('\n').filter(Boolean).length;
   assert.strictEqual(fetchCount, 0, "a fresh process must honor a prior process's timeout marker without attempting its own fetch");
