@@ -396,6 +396,64 @@ test('resolveIssueStateByNumber: malformed gh output -> network-failure, no thro
   }
 });
 
+// #3029: a misordered/object-shaped/non-numeric call is a programming error,
+// not a transport failure — it must read 'invalid-arguments', never
+// 'network-failure', and never throw (archive-merged.js's sweep and
+// github-pr-scan.md's forEach both rely on these resolvers never throwing).
+function installArgvSpy(json) {
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghwrap-guard-'));
+  const wrapperPath = path.join(wrapperDir, 'gh');
+  const argvLog = path.join(wrapperDir, 'argv.log');
+  fs.writeFileSync(wrapperPath, `#!/bin/sh\necho "$@" >> "${argvLog}"\ncat <<'EOF'\n${JSON.stringify(json)}\nEOF\n`);
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  return { called: () => fs.existsSync(argvLog), restore: () => { process.env.PATH = originalPath; } };
+}
+
+test('by-number resolvers: misordered/object-shaped calls -> invalid-arguments, no gh call, no throw (#3029)', () => {
+  const spy = installArgvSpy({ number: 42, state: 'OPEN' });
+  try {
+    assert.equal(resolvePrStateByNumber(4242, { cwd: '/tmp', repo: 'o/r' }), 'invalid-arguments');
+    assert.equal(resolveIssueStateByNumber(4343, { cwd: '/tmp' }), 'invalid-arguments');
+    assert.equal(spy.called(), false);
+  } finally {
+    spy.restore();
+  }
+});
+
+test('by-number resolvers: non-numeric, negative, and fractional numbers -> invalid-arguments, no gh call (#3029)', () => {
+  const spy = installArgvSpy({ number: 42, state: 'OPEN' });
+  try {
+    for (const bad of ['abc', -5, 3.5, '042', '4 2', {}]) {
+      assert.equal(resolvePrStateByNumber('/tmp', bad), 'invalid-arguments', `pr: ${JSON.stringify(bad)}`);
+      assert.equal(resolveIssueStateByNumber('/tmp', bad), 'invalid-arguments', `issue: ${JSON.stringify(bad)}`);
+    }
+    assert.equal(spy.called(), false);
+  } finally {
+    spy.restore();
+  }
+});
+
+test('by-number resolvers: falsy number still short-circuits to null before the guard (#3029)', () => {
+  for (const fn of [resolvePrStateByNumber, resolveIssueStateByNumber]) {
+    assert.equal(fn('/tmp', 0), null);
+    assert.equal(fn('/tmp', undefined), null);
+    assert.equal(fn(4242, null), null);
+  }
+});
+
+test('by-number resolvers: a positive-integer string passes the guard and reaches gh (#3029)', () => {
+  const spy = installArgvSpy({ number: 42, state: 'MERGED' });
+  try {
+    assert.equal(resolvePrStateByNumber('/tmp', '42').state, 'MERGED');
+    assert.equal(resolveIssueStateByNumber('/tmp', '42').state, 'MERGED');
+    assert.equal(spy.called(), true);
+  } finally {
+    spy.restore();
+  }
+});
+
 test('resolvePrStatesBulk: unresolvable repo slug classifies network-failure (fail closed, no spawn)', () => {
   let spawned = 0;
   const r = resolvePrStatesBulk('/tmp/definitely-not-a-repo-xyz', ['a'], { runner: () => { spawned += 1; return '{}'; } });
