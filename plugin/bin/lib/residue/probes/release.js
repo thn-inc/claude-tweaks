@@ -73,19 +73,13 @@ function probeRelease({ scope, run } = {}) {
 
   // Read remote tags to union with local tags. If remote read fails, fall back to local only.
   let reason = null;
-  let remoteTagsOutput = run(['git', 'ls-remote', '--tags', 'origin', 'v*']);
+  const remoteTagsOutput = run(['git', 'ls-remote', '--tags', 'origin', 'v*']);
   let remoteTags = [];
   if (remoteTagsOutput !== null) {
+    // Format: {sha}\trefs/tags/v{version} or {sha}\trefs/tags/v{version}^{}
     remoteTags = remoteTagsOutput.split('\n').map((line) => line.trim()).filter(Boolean)
-      .map((line) => {
-        // Format: {sha}\trefs/tags/v{version} or {sha}\trefs/tags/v{version}^{}
-        const parts = line.split('\t');
-        if (parts[1]) {
-          return parts[1].replace(/^refs\/tags\//, '').replace(/\^{}$/, '').replace(/^v/, '');
-        }
-        return '';
-      })
-      .filter((v) => v && /^\d+\.\d+\.\d+$/.test(v));
+      .map((line) => line.split('\t')[1]).filter(Boolean)
+      .map((ref) => ref.replace(/^refs\/tags\//, '').replace(/\^{}$/, '').replace(/^v/, ''));
   } else {
     reason = 'remote tag list unavailable (git ls-remote failed) — checked local tags only';
   }
