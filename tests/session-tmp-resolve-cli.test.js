@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const os = require('node:os');
 const path = require('node:path');
+const { formatPrintedPath } = require('../plugin/bin/session-tmp-resolve.js');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'session-tmp-resolve.js');
 
@@ -40,6 +41,26 @@ test('win32: prints forward-slash paths only — no backslash to be read as an e
   assert.match(value, /^[A-Za-z]:\/.*\/ct-session-sess-fwd\/foo\.json$/);
   // Same file, whichever separator spelling: the forward-slash form is a valid fs path.
   assert.equal(path.normalize(value), path.join(os.tmpdir(), 'ct-session-sess-fwd', 'foo.json'));
+});
+
+test('formatPrintedPath: win32 branch prints a backslash-free, forward-slash path (runs on every OS, not just win32)', () => {
+  const nativeWindowsPath = 'C:\\Users\\me\\AppData\\Local\\Temp\\ct-session-sess-fwd\\foo.json';
+  const printed = formatPrintedPath(nativeWindowsPath, { platform: 'win32', sep: '\\' });
+  assert.ok(!printed.includes('\\'), `expected no backslash in ${printed}`);
+  assert.equal(printed, 'C:/Users/me/AppData/Local/Temp/ct-session-sess-fwd/foo.json');
+});
+
+test('formatPrintedPath: posix branch returns the input unchanged, byte for byte', () => {
+  const nativePosixPath = '/tmp/ct-session-sess-posix/foo.json';
+  const printed = formatPrintedPath(nativePosixPath, { platform: 'linux', sep: '/' });
+  assert.equal(printed, nativePosixPath);
+});
+
+test('formatPrintedPath: defaults platform/sep to the real process.platform/path.sep', () => {
+  const printed = formatPrintedPath('/tmp/ct-session-sess-default/foo.json');
+  assert.equal(printed, process.platform === 'win32'
+    ? '/tmp/ct-session-sess-default/foo.json'.split(path.sep).join('/')
+    : '/tmp/ct-session-sess-default/foo.json');
 });
 
 test('posix: output is the unchanged native path, byte for byte', { skip: process.platform === 'win32' }, () => {
