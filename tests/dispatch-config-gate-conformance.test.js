@@ -38,5 +38,7 @@ test('#3225: docs/hooks.md documents checkDispatchConfigGate — trigger, resolu
 });
 
 test('#3225: the deny reason in pre-tool-use.js carries the documented cause literal', () => {
-  assert.match(read('plugin/bin/lib/hooks/pre-tool-use.js'), CAUSE);
+  const src = read('plugin/bin/lib/hooks/pre-tool-use.js');
+  assert.match(src, CAUSE);
+  assert.match(src, /does not count toward any re-stamp\/retry budget/);
 });

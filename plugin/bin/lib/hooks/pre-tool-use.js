@@ -1926,13 +1926,6 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   return {};
 }
 
-// `warnings` collects every allow-but-warn note raised anywhere in this pass
-// (checkTeardownGate's foreign-owned teardown, checkBookkeepingStampsGate's
-// foreign-owned run); run() attaches them all to whatever outcome is reached.
-// `deps` is run()'s own pass-through of its test-only override bag — see
-// run()'s header comment below — forwarded verbatim to
-// checkBookkeepingStampsGate as its own `deps` parameter. No other gate in
-// this pass currently takes an override.
 // #3225: dispatch config gate (block tier). /claude-tweaks:dispatch Step 5
 // binds the group's minted run dir to its worktree BEFORE call 1 with
 // `hooks.js record-worktree --run <dir> <wt> --dispatch`
@@ -1963,8 +1956,10 @@ function dispatchConfigDenyReason(configPath) {
   return 'claude-tweaks: git write blocked — `/claude-tweaks:flow` Step 3 (Manifesto) has not written config.yml '
     + `for this dispatched run (${configPath} is missing). This worktree is bound to a /claude-tweaks:dispatch run `
     + '(run-state.json `dispatched: true`), so its first call must run /claude-tweaks:flow, whose Step 3 writes '
-    + 'config.yml before Step 4\'s materialize commit. Remedy: invoke /claude-tweaks:flow via the Skill tool and let '
-    + 'its Step 3 write config.yml (never hand-write config.yml or edit run-state.json), then retry this same command '
+    + 'config.yml before Step 4\'s materialize commit. Remedy: if you are already running /claude-tweaks:flow, run '
+    + 'its Step 3 (Manifesto) now so it writes config.yml; otherwise invoke /claude-tweaks:flow via the Skill tool. '
+    + 'Never hand-write config.yml or edit run-state.json. A record-worktree re-stamp does not clear this deny, and '
+    + 'this deny does not count toward any re-stamp/retry budget. Once config.yml exists, retry this same command '
     + 'unchanged — nothing about the commit itself needs to change.';
 }
 
@@ -1976,6 +1971,8 @@ function checkDispatchConfigGate(ctx, commandGitTargets) {
   const state = ctxLib.readRunState(owned.dir);
   if (!state || typeof state !== 'object' || state.dispatched !== true) return {};
   if (state.status === 'clean') return {};
+  const configPath = path.join(owned.dir, 'config.yml');
+  if (fs.existsSync(configPath)) return {};
   const cwd = typeof ctx.cwd === 'string' ? ctx.cwd : '';
   if (!cwd || !path.isAbsolute(cwd)) return {};
   const { repoRoot: wtRoot, isLinkedWorktree, indeterminate } = wtDetect.repoInfo(cwd);
@@ -1989,13 +1986,18 @@ function checkDispatchConfigGate(ctx, commandGitTargets) {
     return Boolean(top) && safeReal(top) === bound;
   });
   if (!hitsBound) return {};
-  const configPath = path.join(owned.dir, 'config.yml');
-  if (fs.existsSync(configPath)) return {};
   const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
   ctxLib.appendEvent(owned.dir, 'gate-denial', { tool: 'Bash', gate: 'dispatch-config', worktree: bound, ...testTag }, owned.attribution);
   return denyResult(dispatchConfigDenyReason(configPath));
 }
 
+// `warnings` collects every allow-but-warn note raised anywhere in this pass
+// (checkTeardownGate's foreign-owned teardown, checkBookkeepingStampsGate's
+// foreign-owned run); run() attaches them all to whatever outcome is reached.
+// `deps` is run()'s own pass-through of its test-only override bag — see
+// run()'s header comment below — forwarded verbatim to
+// checkBookkeepingStampsGate as its own `deps` parameter. No other gate in
+// this pass currently takes an override.
 function runInner(ctx, indeterminateTargets, warnings, deps) {
   const teardown = checkTeardownGate(ctx, warnings);
   if (teardown.json) return teardown;

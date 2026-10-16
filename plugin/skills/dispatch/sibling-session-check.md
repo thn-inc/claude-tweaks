@@ -55,10 +55,14 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "$GROUP_RUN_DIR"
 ```
 
 `{worktree}` is the group's worktree path — the `EnterWorktree(path:)` target, or the
-`git worktree add` path for a cwd-pinned session (`sequential-execution.md`, #447). One call writes
+`git worktree add` path for a cwd-pinned session (`sequential-execution.md`, #447). For a cwd-pinned
+session the bind still runs, but the gate stays inert: its Task calls reach the worktree only through
+a `cd {worktree} &&` prefix, so the hook sees the pinned cwd rather than the worktree, and #2837's
+check is the only guard there. One call writes
 the worktree assignment, this session's id, and a permanent `dispatched: true` marker into the
 run's `run-state.json`; from then on `bin/lib/hooks/pre-tool-use.js`'s `checkDispatchConfigGate`
-denies any git write in this worktree until `/claude-tweaks:flow` Step 3's Manifesto has written
+denies git commits and pushes (and the other git writes it classifies: `mv`, `rm`, `update-ref`, `apply`)
+in this worktree until `/claude-tweaks:flow` Step 3's Manifesto has written
 `$GROUP_RUN_DIR/config.yml` — a first call that bypasses `/claude-tweaks:flow` is stopped at its
 first commit, not after a full build. Expect the `claude-tweaks: worktree recorded for` confirmation line. A
 failed bind never blocks dispatch: log it to this firing's own `decisions.md` and dispatch anyway —

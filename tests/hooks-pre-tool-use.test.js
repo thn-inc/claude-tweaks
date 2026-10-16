@@ -1330,6 +1330,9 @@ test('#3225 dispatch config gate: dispatched run, no config.yml, git write in th
     assert.match(reason, DISPATCH_CAUSE);
     assert.match(reason, /Skill tool/);
     assert.match(reason, /retry this same command unchanged/);
+    assert.match(reason, /does not clear this deny/);
+    assert.match(reason, /does not count toward any re-stamp\/retry budget/);
+    assert.match(reason, /already running \/claude-tweaks:flow, run its Step 3/);
     assert.ok(reason.includes(path.join(run, 'config.yml')), 'reason names the missing config.yml path');
   }
 });
@@ -1356,6 +1359,10 @@ test('#3225 dispatch config gate: caller outside any linked worktree (main check
   const { main, wt } = mainAndWorktree();
   const run = dispatchedRun(wt);
   assert.deepStrictEqual(pre.run(dispatchCtx(run, main, dispatchInput(main))), {});
+
+  const boundToMain = dispatchedRun(main);
+  assert.deepStrictEqual(pre.run(dispatchCtx(boundToMain, main, dispatchInput(main))), {},
+    'a run bound to the main checkout itself is outside any linked worktree -> no-op');
 });
 
 test('#3225 dispatch config gate: unreadable or malformed run-state.json -> fail open (no deny, no throw)', () => {
