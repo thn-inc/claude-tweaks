@@ -732,3 +732,85 @@ test('testTree treats any ` # …` suffix as neither passed nor failed — t.ski
   assert.strictEqual(t.all.get('works'), 2, 'the skipped twin still counts, so the name is not unique');
   assert.strictEqual(t.passed.get('works'), 1);
 });
+
+// #3153: a meta-test that spawns its own `node --test` run and fails with the
+// child's stdout as its assertion message. node quotes that whole child TAP
+// document inside the outer point's `error: |-` YAML value — its `not ok`,
+// `location:` and stack lines name the child's temp-dir fixture, never a
+// file of this run. Shape recorded from a real node 22 run.
+const NESTED_CHILD_TAP = [
+  'TAP version 13',
+  '# Subtest: meta: a spawned fixture run must pass',
+  'not ok 1 - meta: a spawned fixture run must pass',
+  '  ---',
+  '  duration_ms: 149.780209',
+  "  type: 'test'",
+  "  location: '/repo/tests/meta.test.js:9:1'",
+  "  failureType: 'testCodeFailure'",
+  '  error: |-',
+  '    TAP version 13',
+  '    # Subtest: env',
+  '    not ok 1 - env',
+  '      ---',
+  '      duration_ms: 0.391208',
+  "      type: 'test'",
+  "      location: '/private/var/folders/3_/x/T/verify-cli-test-vUXbeY/tests/env.test.js:1:40'",
+  "      failureType: 'testCodeFailure'",
+  "      error: 'nope'",
+  "      code: 'ERR_TEST_FAILURE'",
+  '      stack: |-',
+  '        TestContext.<anonymous> (/private/var/folders/3_/x/T/verify-cli-test-vUXbeY/tests/env.test.js:1:66)',
+  '        Test.runInAsyncScope (node:async_hooks:214:14)',
+  '      ...',
+  '    1..1',
+  '    # tests 1',
+  '    # pass 0',
+  '    # fail 1',
+  '    ',
+  '    1 !== 0',
+  '    ',
+  "  code: 'ERR_ASSERTION'",
+  "  name: 'AssertionError'",
+  '  expected: 0',
+  '  actual: 1',
+  "  operator: 'strictEqual'",
+  '  stack: |-',
+  '    TestContext.<anonymous> (/repo/tests/meta.test.js:17:10)',
+  '    Test.runInAsyncScope (node:async_hooks:214:14)',
+  '  ...',
+  '1..1',
+  '# tests 1',
+  '# suites 0',
+  '# pass 0',
+  '# fail 1',
+  '# cancelled 0',
+].join('\n');
+
+test('#3153: a child TAP document quoted inside a failing point\'s error text names no failing file — only the point\'s own location/stack do', () => {
+  assert.deepStrictEqual(extractFailingFiles(NESTED_CHILD_TAP, 'tap', { cwd: '/repo' }), ['tests/meta.test.js']);
+  assert.deepStrictEqual([...failingTestsByFile(NESTED_CHILD_TAP, 'tap', { cwd: '/repo', located: true })],
+    [['tests/meta.test.js', ['meta: a spawned fixture run must pass@9:1']]]);
+  assert.strictEqual(countUnmatchedFailures(NESTED_CHILD_TAP, 'tap', { cwd: '/repo' }), 0);
+  assert.strictEqual(unattributedFailureCount(NESTED_CHILD_TAP, 'tap', { cwd: '/repo' }), 0);
+});
+
+test('#3153: a nested subtest\'s own YAML location is still read — only quoted message text is skipped', () => {
+  assert.deepStrictEqual(extractFailingFiles(NESTED_TAP, 'tap', { cwd: '/repo' }), ['tests/nested.test.js']);
+  assert.deepStrictEqual([...failingTestsByFile(NESTED_TAP, 'tap', { cwd: '/repo', located: true })],
+    [['tests/nested.test.js', ['inner@2:25', 'grp@2:1']]]);
+});
+
+test('#3153: an `exists` predicate drops a path absent from the checkout; a failure naming only such a path is unmatched, never a file', () => {
+  const tap = ['not ok 1 - real', "  location: '/repo/tests/a.test.js:1:1'", '  at /tmp/elsewhere/tests/ghost.test.js:2:1',
+    'not ok 2 - phantom only', '  at tests/ghost.test.js:3:1', '# tests 2', '# pass 0', '# fail 2'].join('\n');
+  const exists = (rel) => rel === 'tests/a.test.js';
+  assert.deepStrictEqual(extractFailingFiles(tap, 'tap', { cwd: '/repo', exists }), ['tests/a.test.js']);
+  assert.strictEqual(countUnmatchedFailures(tap, 'tap', { cwd: '/repo', exists }), 1);
+  assert.deepStrictEqual([...failingTestsByFile(tap, 'tap', { cwd: '/repo', exists }).keys()], ['tests/a.test.js']);
+  const spec = ['ℹ tests 2', 'ℹ pass 0', 'ℹ fail 2', '', '✖ failing tests:', '',
+    'test at /repo/tests/a.test.js:1:1', '✖ x (1ms)', '', 'test at /repo/tests/gone.test.js:1:1', '✖ y (1ms)'].join('\n');
+  assert.deepStrictEqual(extractFailingFiles(spec, 'spec', { cwd: '/repo', exists }), ['tests/a.test.js']);
+  assert.strictEqual(countUnmatchedFailures(spec, 'spec', { cwd: '/repo', exists }), 1);
+  // No predicate: the pre-#3153 behavior, unchanged.
+  assert.deepStrictEqual(extractFailingFiles(tap, 'tap', { cwd: '/repo' }), ['tests/a.test.js', '/tmp/elsewhere/tests/ghost.test.js', 'tests/ghost.test.js']);
+});
