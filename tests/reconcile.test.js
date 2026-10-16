@@ -966,7 +966,25 @@ test('reconcile: origin configured but unreachable degrades to no-remote with a 
 
   assert.deepStrictEqual(r.skipped, [{ check: 'all', reason: 'no-remote' }]);
   assert.strictEqual(r.originHeadRepair.outcome, 'failed');
-  assert.strictEqual(typeof r.originHeadRepair.reason, 'string');
+  // git's own first stderr line, not just git-exec's coarse `git-error` class.
+  assert.match(r.originHeadRepair.reason, /^fatal: /);
+});
+
+test('repairOriginHead: a thrown failure is remembered the same as a classified one (#3132)', () => {
+  const { repairOriginHead } = require('../plugin/bin/lib/reconcile/origin-head');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-oh-throw-'));
+  let setHeadCalls = 0;
+  const runGit = (args) => {
+    if (args[1] === 'get-url') return { stdout: 'https://example.invalid/r.git', failure: null, stderr: null };
+    setHeadCalls += 1;
+    throw new Error('simulated throw');
+  };
+
+  const first = repairOriginHead(root, { runGit, now: 1000 });
+  assert.deepStrictEqual(first, { outcome: 'failed', reason: 'simulated throw' });
+  const second = repairOriginHead(root, { runGit, now: 2000 });
+  assert.deepStrictEqual(second, { outcome: 'skipped', reason: 'recent-failure' });
+  assert.strictEqual(setHeadCalls, 1, 'a thrown set-head must not be retried within the TTL');
 });
 
 test('reconcile: an unreachable origin remembers the failure and skips retrying on the next pass (#3132)', async () => {

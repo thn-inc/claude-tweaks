@@ -17,12 +17,15 @@ const { readCache, writeCache, isFresh, DEFAULT_TTL_MS } = require('./cache');
 
 // -> null                                            no `origin` remote; nothing attempted
 // -> { outcome: 'repaired' }                         set-head wrote refs/remotes/origin/HEAD
-// -> { outcome: 'failed', reason: string }           set-head failed; reason is git-exec's FAILURE class
+// -> { outcome: 'failed', reason: string }           set-head failed; reason is git's first stderr line, else git-exec's FAILURE class
 // -> { outcome: 'skipped', reason: 'recent-failure' } a prior set-head failed within DEFAULT_TTL_MS; not retried this pass
 function repairOriginHead(root, opts = {}) {
   const runGit = opts.runGit || defaultRunGit;
   const timeoutMs = opts.timeoutMs != null ? opts.timeoutMs : FETCH_TIMEOUT_MS;
   const now = opts.now != null ? opts.now : Date.now();
+  // writeCache is best-effort and never throws, so this is safe on every
+  // failure path, the catch below included.
+  const rememberFailure = () => writeCache(root, { ...readCache(root), lastOriginHeadRepairFailedAt: now });
   try {
     const remote = runGit(['remote', 'get-url', 'origin'], root);
     if (remote.failure) return null;
@@ -36,11 +39,15 @@ function repairOriginHead(root, opts = {}) {
     }
     const set = runGit(['remote', 'set-head', 'origin', '--auto'], root, { timeoutMs });
     if (set.failure) {
-      writeCache(root, { ...readCache(root), lastOriginHeadRepairFailedAt: now });
-      return { outcome: 'failed', reason: String(set.failure) };
+      rememberFailure();
+      // git's own message (auth reject, unreachable host) is what an operator
+      // in a sandbox needs; the FAILURE class alone is just `git-error`.
+      const stderrLine = set.stderr ? set.stderr.split('\n')[0].trim() : '';
+      return { outcome: 'failed', reason: stderrLine || String(set.failure) };
     }
     return { outcome: 'repaired' };
   } catch (e) {
+    rememberFailure();
     return { outcome: 'failed', reason: (e && e.message) || 'threw' };
   }
 }
