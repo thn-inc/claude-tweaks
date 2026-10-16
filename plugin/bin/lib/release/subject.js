@@ -81,7 +81,8 @@ function composeSubject({ type, title, number, scope, breaking = false, summary,
   const scoped = cleanScope ? `${prefixBase}(${cleanScope})` : prefixBase;
   const prefix = breaking ? `${scoped}!` : scoped;
   const suffix = ` (#${number})`;
-  if (prefix.length + 2 + 1 + ELLIPSIS.length + suffix.length > SUBJECT_BUDGET) {
+  const MIN_TITLE_LENGTH = 1;
+  if (prefix.length + ': '.length + MIN_TITLE_LENGTH + ELLIPSIS.length + suffix.length > SUBJECT_BUDGET) {
     throw usage(`scope ${JSON.stringify(cleanScope)} is too long — "${prefix}: " leaves no room for the title within the ${SUBJECT_BUDGET}-char subject for #${number}`);
   }
   const head = truncateHead(`${prefix}: ${cleanTitle}`, prefix, suffix.length);
