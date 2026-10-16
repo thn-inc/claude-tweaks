@@ -8,6 +8,7 @@ files:
   - plugin/skills/_shared/pr-first-merge.md
   - plugin/skills/_shared/local-merge-auto-finish.md
   - plugin/skills/dispatch/settle-and-merge.md
+  - plugin/skills/dispatch/close-out.md
   - plugin/skills/specify/shaping-mode-stamping.md
   - plugin/skills/specify/spec-template.md
 ---
@@ -17,7 +18,7 @@ files:
 **Persona:** A claude-tweaks maintainer whose `/claude-tweaks:flow` run has just cleared its last gate and is about to merge — either watching the terminal Review Console click through, or reading `git log` on `main` the next morning to see what landed — and who wants every merge commit to carry a subject the release engines (release-please, the local engine) can parse without a human rewriting it.
 **Goal:** The merge lands on the integration branch as one commit whose subject is `feat|fix|chore[(scope)][!]: {record title} (#N)`, whose body carries a `Release-Note: {line}` paragraph, the `Fixes #N` closing keywords, and (when the record is `breaking`) a trailing `BREAKING CHANGE:` footer — composed by the plugin at merge time, identically on the pr-first and local-merge paths.
 **Entry point:** Any merge site in the plugin: `_shared/pr-first-merge.md` Step 3 (`gh pr merge --squash`), or one of the four `git merge --no-ff` fences (`_shared/local-merge-auto-finish.md`, `wrap-up/auto-merge-short-circuit.md`, `dispatch/settle-and-merge.md`, `flow/worktree-merge.md`).
-**Success state:** `git log -1 --format=%s` on the integration branch prints `feat: {title} (#N)` (or `fix:`/`chore:`, with `!` when breaking), the body contains a `Release-Note: {line}` paragraph (from the record's own `## Release Note` spec section — required on every record since #2580) and ends with `Fixes #N` (and `BREAKING CHANGE: {note}` last when breaking), the record auto-closes, and `/claude-tweaks:help`'s auto-merged-this-week metric still counts the merge because the `[{tag}]` paragraph rides in the body.
+**Success state:** `git log -1 --format=%s` on the integration branch prints `feat: {title} (#N)` (or `fix:`/`chore:`, with `!` when breaking), the body contains a `Release-Note: {line}` paragraph (from the record's own `## Release Note` spec section — required on every record since #2580) and ends with `Fixes #N` (and `BREAKING CHANGE: {note}` last when breaking), the record auto-closes, and `/claude-tweaks:help`'s auto-merged-this-week metric still counts an automated merge because the `[{tag}]` paragraph rides in the body (a `[human-approved]` close-out merge is deliberately left out of that count).
 
 ## Steps
 
@@ -25,8 +26,8 @@ files:
 - **URL:** `SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {n} --tag {tag} --shell) || exit 1` then `eval "$SUBJECT_EXPORTS"` (the guarded two-line form every merge fence carries; `{tag}` is `auto-merge`, `auto-finish`, `fast-lane`, `manifesto-authorized`, or `human-approved` per site)
 - **Action:** The agent runs the fence as written. The CLI reads the record(s) with `gh issue view` (Type from the native issue type, else the `type:*` label; `breaking` from the label; the summary from `## Overview`'s first sentence, falling back to `## Current State`; the release note from the subject record's own `## Release Note` section — never aggregated across a bundle), composes the subject and body, and prints two `sh` assignments.
 - **Should feel:** Mechanical and boring — no title is typed by hand, no summary is paraphrased, no release note is written from scratch at merge time (it was already authored at spec time).
-- **Should understand:** The exit status is load-bearing: a record with no resolvable Type, a `breaking` label with no `## Breaking Change` section, or **any** record in the batch with no non-empty `## Release Note` section (unconditional — not gated behind `breaking`), makes the CLI exit 1 and the `|| exit 1` stops the fence before any merge runs. A bare `eval "$(…)"` would have swallowed that and merged with an empty subject.
-- **Red flags:** A merge attempted after the composer printed an error; a merge commit with an empty subject or a body missing its `Fixes #N` line or its `Release-Note:` paragraph.
+- **Should understand:** The exit status is load-bearing: a record with no resolvable Type, a `breaking` label with no `## Breaking Change` section, or **any** record in the batch with no non-empty `## Release Note` section (unconditional — not gated behind `breaking`), makes the CLI exit 1 and the `|| exit 1` stops the fence before any merge runs. A bare `eval "$(…)"` would have swallowed that and merged with an empty subject. A project whose convention needs `type(scope):` appends `--scope {token}`; a scope that is not one `[A-Za-z0-9._/-]+` token, or too long to leave room for the title, also exits 1. On a host that rejects `--json issueType`, the composer's silent retry prints nothing — gh's stderr is captured, so the only output is the two assignments.
+- **Red flags:** A merge attempted after the composer printed an error; gh error text printed ahead of a composed subject on a successful run; a merge commit with an empty subject or a body missing its `Fixes #N` line or its `Release-Note:` paragraph.
 
 ### 2. The merge lands with the composed message — `gh pr merge --squash` or `git merge --no-ff`
 - **URL:** `gh pr merge {pr} --squash -t "$SUBJECT_TITLE" -b "$SUBJECT_BODY"` (pr-first) or `git merge --no-ff {branch} -m "$SUBJECT_TITLE\n\n$SUBJECT_BODY"` (local-merge)
@@ -54,3 +55,4 @@ files:
 - Steps 1-4 built in this session
 - Related specs: #2252 (Reconcile under squash — squash commits change the branch-pruning proof), #2254 (the local release engine reads this grammar), #2256 (the `/claude-tweaks:release` skill)
 - Updated during build of #2580 (Release notes: authoring contract — unit 1 of the per-record public release-notes design) to reflect the new required `Release-Note:` paragraph and its unconditional exit-1 gate
+- Updated during build of #3028 (compose-subject stderr, `--scope`, `human-approved` tag): optional `(scope)` in the grammar, the `human-approved` tag for `dispatch/close-out.md`'s confirmed merge (excluded from the auto-merged-this-week metric), and the silent `issueType` retry
