@@ -101,6 +101,7 @@ files:
 - **Action:** Read the `Baseline:` line, the table's Status cell, any `ATTRIBUTABLE:` / `CAVEAT: baseline-flaky:` lines, `report.json`'s `baselineAdjudicated`, the process exit code, and `--stamp-status`'s `verifiedHead`/`baselineAdjudicated`.
 - **Should feel:** The runner, not the agent, does the by-file comparison against base that used to be hand-run. A branch that adds no failure gets a verified stamp, so `/claude-tweaks:test` and `/claude-tweaks:review` Step 1.5 stop re-running a ~16-minute suite that can never exit 0 here. A branch that does add a failure is named, with no reading of the log required.
 - **Should understand:** Adjudication runs only when a check fails.
+  - **Which file a failure names.** A TAP failure names its file only through its own top-level `location:`/`stack:` keys. A meta-test that spawns its own `node --test` run and quotes that child's output in its assertion message carries the child's whole TAP document inside its `error:` value, temp-dir paths and all. Those paths are the child's, never this run's (#3153). Every path is also read against the checkout its log came from, so a path absent from that checkout never names a failing file.
   - **The comparison.** Each failing test file that exists at base runs once at the base commit, in a scratch detached worktree that is removed afterwards, and once in isolation at HEAD. A file absent at base runs neither way and is attributable outright. A test file that fails to load at both counts only when the two logs match once roots and durations are removed, so the error has to be the same one.
   - **Load failures need more than a matching log.** The file must also be unchanged since base and fail at the same sites at base and in the full run (a load failure at `1:1` never covers a file-scoped hook failure). HEAD must also resolve no dependencies: no `node_modules` at its directory or any ancestor, and no `NODE_PATH`, inherited or from the check's own `--cmd-env`. The scratch worktree carries no untracked dependencies, so on a checkout with dependencies installed a load failure is always attributable.
   - **baseline:** the isolated HEAD run fails only tests the base run fails, compared by suite path (`X > works`). Each path occurs once in its tree, names are read byte-for-byte, and a malformed tree is no evidence. A new failing test beside an old environment failure, a test moved between suites, or a loop-generated sibling is therefore not covered. A base log with a timed-out or cancelled test is no evidence either.
@@ -123,6 +124,7 @@ files:
     - a check with no numeric exit (signal-killed)
     - an unreadable check log
     - a spec failing entry naming no test file
+    - a failing entry or TAP block naming only paths absent from this checkout (`absent-from-checkout: …`)
     - a working directory that does not resolve under the repository root as git spells it
     - an adjudicator error (for example, the scratch worktree could not be created)
   - An unresolvable ref exits 2 before anything runs.
@@ -135,6 +137,7 @@ files:
   - A flaky verdict with no CAVEAT line.
   - A scratch worktree left behind with no stderr line naming it and the `git worktree remove --force` command.
   - `report.json`'s `pass` rewritten to `true`.
+  - An `ATTRIBUTABLE:` line naming a temp-dir path (`/private/var/folders/…/verify-cli-test-…/tests/env.test.js`) or any path that does not exist in the checkout.
 
 ## Origin
 - Created during build of #892 (deterministic verification runner + `verification.md` migration) — replaces the retired prose-orchestrated `LOG=`/`tail`/`grep` capture discipline `verification.md` Step 2 used to document directly.
@@ -147,4 +150,5 @@ files:
 - Step 6 extended after #1837 shipped (vitest's `Tests` summary line recognized by `extract.js`; ANSI stripped from an in-memory copy before every parser, with `NO_COLOR`/`FORCE_COLOR` set on the spawned check's own environment; a `tests` check whose counts still don't parse now surfaces its own `countsUnparsed`/`CAVEAT: tests counts unparsed …` trace instead of silently skipping the count-stamp comparison) — previously the count-stamp caveat was only demonstrated for a strict count drop, never for a parse failure.
 - Step 11 added, and Step 7's envelope gained `baselineAdjudicated`, after #3043 shipped (`--baseline`/`--baseline-cmd`, `baseline.js`, the `spec` output family in `extract.js`) — a dev checkout with a known non-zero baseline can now produce a verified stamp instead of an unresolvable re-trigger loop.
 - Step 10 extended by #3066 (`extract.js`'s `unattributedFailureCount`, `planRetry`'s `unattributed-failures: {N}` refusal; `verification.md` routes that reason to the whole-suite re-run): a spec/TAP failure the log could not tie to a test file no longer lets a retry of the named, allowlisted files clear the whole check.
+- Step 11 extended by #3153 (`extract.js`'s `tapBlocks` reads a TAP failure's file only from its own `location:`/`stack:` keys; `baseline.js` reads every log against its own checkout via `git.inCheckout`, with an `absent-from-checkout` refusal): a meta-test quoting its spawned child's TAP no longer produces phantom temp-dir `ATTRIBUTABLE:` entries.
 - Related specs: #891 (parent — deterministic verification runner family), #881 (suite-count regression detection), #882 (flake adjudication — landed as a standalone `node --test` isolated re-run recipe in `verification.md`'s own "Flake adjudication" section; does not consume `verify.js`'s per-check log files)
