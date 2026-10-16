@@ -444,6 +444,64 @@ test('bookkeeping-stamps gate: worktree stamped, resolveIntegrationModel stubbed
   assert.ok(readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'record-pr'));
 });
 
+// #2920: the gitignored-target exemption, mirroring the sibling
+// worktree-required gate's own #1395 exemption one-for-one — a write to a
+// gitignored scratch path (e.g. a draft PR body composed before the PR
+// exists) cannot land on the branch this gate's PR stamp protects, so it is
+// not this gate's business, same posture as isPipelineBookkeeping/isPolicyFile
+// just above it in isStampsGateExemptTarget.
+test('bookkeeping-stamps gate (#2920): worktree stamped, pr-first stubbed, no PR recorded, a Write to a GITIGNORED path -> allow, with a gate-exempt-gitignored breadcrumb', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  fs.writeFileSync(path.join(wt, '.gitignore'), 'scratch/\n');
+  fs.mkdirSync(path.join(wt, 'scratch'), { recursive: true });
+  const target = path.join(wt, 'scratch', 'pr-body.md');
+  const { run } = mkRunDir(projectDir(), wt, undefined);
+  const out = pre.run(
+    { input: editInput(target), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  assert.deepStrictEqual(out, {}, 'a Write to a gitignored path must not be denied — it cannot affect the branch the PR stamp protects');
+  const events = readEvents(run);
+  assert.strictEqual(events.length, 1, 'expected exactly one breadcrumb event');
+  assert.strictEqual(events[0].type, 'gate-exempt-gitignored');
+  assert.strictEqual(events[0].tool, 'Edit');
+  assert.strictEqual(events[0].path, target);
+});
+
+test('bookkeeping-stamps gate (#2920): same state, a Write to a TRACKED/not-ignored path is still denied with the existing "no PR is recorded" message', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  fs.writeFileSync(path.join(wt, '.gitignore'), 'scratch/\n');
+  const { run } = mkRunDir(projectDir(), wt, undefined);
+  const out = pre.run(
+    { input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  assert.ok(out.json, 'a tracked/not-ignored target must still be denied — the new exemption must not widen past gitignored paths');
+  const spec = out.json.hookSpecificOutput;
+  assert.strictEqual(spec.permissionDecision, 'deny');
+  assert.match(spec.permissionDecisionReason, /record-pr|PR-early/);
+  assert.ok(readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'record-pr'));
+});
+
+test('bookkeeping-stamps gate (#2920): a RELATIVE target path matching a gitignore pattern is still denied — absolute-path-only guard applies to the new check too', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  fs.writeFileSync(path.join(wt, '.gitignore'), 'scratch/\n');
+  fs.mkdirSync(path.join(wt, 'scratch'), { recursive: true });
+  const { run } = mkRunDir(projectDir(), wt, undefined);
+  const out = pre.run(
+    { input: editInput(path.join('scratch', 'pr-body.md')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  assert.ok(out.json, 'a relative target must not be exempted — isUntrackedOrIgnored (like isPolicyFile/isPipelineBookkeeping) requires an absolute path');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+});
+
 test('bookkeeping-stamps gate (#989): worktree stamped, pr-first stubbed, a push establishing a not-yet-tracked branch, Step 1\'s no-match line already logged -> allow (pr-early-run-lifecycle.md Step 2 itself, not yet deniable)', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);

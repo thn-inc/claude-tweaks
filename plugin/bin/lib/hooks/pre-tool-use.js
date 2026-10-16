@@ -1493,6 +1493,10 @@ function hasDistinctOwnedRun(ctx) {
 //      contract.)
 //   2. .claude-tweaks/policy.yml is the file a session edits to CONFIGURE
 //      gating; keeping it writable here matches spec #537's own carve-out.
+//   3. A gitignored scratch target (#2920) cannot land on the branch this
+//      gate's stamps protect, so it is not this gate's business either — the
+//      draft PR body itself is the motivating case: it must be writable
+//      before the PR this gate otherwise demands exists.
 // The target's OWN repo root is resolved per-target rather than assumed to be
 // the worktree: run dirs are anchored to the MAIN checkout
 // (_shared/pipeline-run-dir.md's Anchoring section), so decisions.md normally
@@ -1500,14 +1504,36 @@ function hasDistinctOwnedRun(ctx) {
 // (no target, indeterminate git, non-repo path) is simply not exempt and
 // falls through — the same fail-closed posture isPipelineBookkeeping keeps.
 function isStampsGateExemptTarget(ctx) {
-  const targetPath = fileToolTargetPath(
-    ctx.input && ctx.input.tool_name,
-    ctx.input && ctx.input.tool_input,
-  );
+  const toolName = ctx.input && ctx.input.tool_name;
+  const targetPath = fileToolTargetPath(toolName, ctx.input && ctx.input.tool_input);
   if (!targetPath) return false;
   const { repoRoot, indeterminate } = wtDetect.repoInfo(targetPath);
   if (indeterminate || !repoRoot) return false;
-  return isPipelineBookkeeping(repoRoot, targetPath) || isPolicyFile(repoRoot, targetPath);
+  if (isPipelineBookkeeping(repoRoot, targetPath) || isPolicyFile(repoRoot, targetPath)) return true;
+  // The third exemption (#2920): a target that isUntrackedOrIgnored (#1395,
+  // above) proves gitignored in its own repo cannot land on the branch this
+  // gate's PR stamp protects (no `git add -f` without an explicit commit,
+  // still covered by this gate's own git-write branch) -- mirrors the
+  // sibling worktree-required gate's identical exemption (~line 965) one-for
+  // -one, including its allow breadcrumb's event type and data shape, so a
+  // gitignored scratch write (the draft PR body itself, composed before the
+  // PR exists) is never blocked by the very gate that demands the PR.
+  // `targetPath` here always comes from `fileToolTargetPath`, which already
+  // gates on `GATE_COVERAGE.tools`, so this stays file-tool-only with no
+  // extra scoping needed. Logged against `ctx.runDir`, NOT `ctx.ownedRun` --
+  // unlike the worktree-required gate (which can fire before any run dir is
+  // bound to this checkout at all), this gate already requires `ctx.runDir`
+  // to be resolved before it ever reaches this function (the `if
+  // (!ctx.runDir) return {};` guard above in checkBookkeepingStampsGate), so
+  // the same "#1431 audit" reasoning this gate's own stamp-denial breadcrumbs
+  // already follow applies here too: this is about the run bound to THIS
+  // checkout, not about which run the calling session happens to own.
+  if (isUntrackedOrIgnored(repoRoot, targetPath)) {
+    const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
+    ctxLib.appendEvent(ctx.runDir, 'gate-exempt-gitignored', { tool: toolName, path: targetPath, ...testTag });
+    return true;
+  }
+  return false;
 }
 
 // Shared outcome for both stamp checks in checkBookkeepingStampsGate below —
