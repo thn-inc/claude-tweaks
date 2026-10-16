@@ -541,6 +541,69 @@ test('archiveRunDir: single-spec run with no work/ (mint or pre-materialize) sti
   assert.equal(fs.existsSync(runDir), false);
 });
 
+// #3198: a second archival pass against a run dir recreated at the same
+// path (the exact race this record's Current State documents — a
+// concurrent reconcile archives the run, then a stale caller holding the
+// pre-archive path recreates it) must never destroy the first pass's real
+// archived content. A refusing collision (any non-append-only entry, e.g.
+// run-state.json) refuses before anything is written — including the
+// "archiving" marker, which would otherwise flip the real archive's
+// terminal status and let the NEXT pass overwrite it.
+function seedRecreatedRun(root, runId) {
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  const realDecisions = '# decisions\n- AUTO 00:00:01 — step one. Reversibility: n/a.\n- AUTO 00:00:02 — step two. Reversibility: n/a.\n';
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), realDecisions);
+  fs.writeFileSync(path.join(runDir, 'events.jsonl'), '{"type":"start"}\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  const first = archiveRunDir(root, runDir);
+  assert.equal(first.ok, true, JSON.stringify(first));
+  assert.equal(fs.readFileSync(path.join(archiveDir, 'decisions.md'), 'utf8'), realDecisions);
+  assert.equal(fs.existsSync(runDir), false);
+  // Simulate the race: a stale caller recreates the run dir with a stub.
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), '- AUTO 00:00:03 — stub entry from a stale caller. Reversibility: n/a.\n');
+  fs.writeFileSync(path.join(runDir, 'events.jsonl'), '{"type":"stub"}\n');
+  return { runDir, archiveDir, realDecisions };
+}
+
+test('archiveRunDir: a recreated run dir colliding on run-state.json refuses before writing anything, on every later pass too (#3198)', () => {
+  const root = makeRepo();
+  const { runDir, archiveDir, realDecisions } = seedRecreatedRun(root, '2026-10-15T184334-record-3119');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', stub: true }));
+  const realState = fs.readFileSync(path.join(archiveDir, 'run-state.json'), 'utf8');
+
+  for (const pass of ['second', 'third']) {
+    const r = archiveRunDir(root, runDir);
+    assert.equal(r.ok, false, `${pass} pass: ${JSON.stringify(r)}`);
+    assert.equal(r.reason, 'archive-destination-exists');
+    assert.equal(r.entry, 'run-state.json');
+    // The real archive is byte-identical — not even the "archiving" marker
+    // touched its run-state.json — and nothing was appended.
+    assert.equal(fs.readFileSync(path.join(archiveDir, 'run-state.json'), 'utf8'), realState, `${pass} pass: real archived run-state.json must be untouched`);
+    assert.equal(fs.readFileSync(path.join(archiveDir, 'decisions.md'), 'utf8'), realDecisions);
+    assert.equal(fs.readFileSync(path.join(archiveDir, 'events.jsonl'), 'utf8'), '{"type":"start"}\n');
+    // The stub is left exactly where the race put it, for a human to resolve.
+    assert.match(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), /stub entry from a stale caller/);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8')).stub, true);
+  }
+});
+
+test('archiveRunDir: a recreated run dir holding only append-only logs appends them onto the real archive, original bytes preserved as a prefix (#3198)', () => {
+  const root = makeRepo();
+  const { runDir, archiveDir, realDecisions } = seedRecreatedRun(root, '2026-10-15T184334-record-3119');
+
+  const second = archiveRunDir(root, runDir);
+  assert.equal(second.ok, true, JSON.stringify(second));
+  const archivedDecisions = fs.readFileSync(path.join(archiveDir, 'decisions.md'), 'utf8');
+  assert.ok(archivedDecisions.startsWith(realDecisions), 'original archived decisions.md content must survive byte-for-byte as a prefix');
+  assert.ok(archivedDecisions.includes('stub entry from a stale caller'), 'the stub entry is appended, not dropped');
+  assert.equal(fs.readFileSync(path.join(archiveDir, 'events.jsonl'), 'utf8'), '{"type":"start"}\n{"type":"stub"}\n');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(archiveDir, 'run-state.json'), 'utf8')).status, 'clean');
+  assert.equal(fs.existsSync(runDir), false);
+});
+
 // #2816 (a): a `work/` directory left behind by a `/flow`/`/build`
 // materialize hard-gate stop — mkdir'd for the header that never landed, so
 // it is both empty AND untracked (there was never anything to `git add`).
@@ -548,53 +611,6 @@ test('archiveRunDir: single-spec run with no work/ (mint or pre-materialize) sti
 // failed on that empty directory (git refuses to mv a path with nothing to
 // stage) and the whole archival was refused with `git-mv-failed`, even
 // though every other entry in the run dir was perfectly archivable.
-// #3198: a second archival pass against a run dir recreated at the same
-// path (the exact race this record's Current State documents — a
-// concurrent reconcile archives the run, then a stale caller holding the
-// pre-archive path recreates it) must never destroy the first pass's real
-// archived content. decisions.md/events.jsonl accumulate (append); every
-// other entry refuses outright.
-test('archiveRunDir: a second pass against a recreated run dir appends decisions.md/events.jsonl and refuses on run-state.json instead of overwriting (#3198)', () => {
-  const root = makeRepo();
-  const runId = '2026-10-15T184334-record-3119';
-  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
-  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
-
-  fs.mkdirSync(runDir, { recursive: true });
-  const realDecisions = '# decisions\n- AUTO 00:00:01 — step one. Reversibility: n/a.\n- AUTO 00:00:02 — step two. Reversibility: n/a.\n';
-  fs.writeFileSync(path.join(runDir, 'decisions.md'), realDecisions);
-  fs.writeFileSync(path.join(runDir, 'events.jsonl'), '{"type":"start"}\n');
-  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
-
-  const first = archiveRunDir(root, runDir);
-  assert.equal(first.ok, true, JSON.stringify(first));
-  assert.equal(fs.readFileSync(path.join(archiveDir, 'decisions.md'), 'utf8'), realDecisions);
-  assert.equal(fs.existsSync(runDir), false);
-
-  // Simulate the race: a stale caller recreates the run dir with a stub.
-  fs.mkdirSync(runDir, { recursive: true });
-  fs.writeFileSync(path.join(runDir, 'decisions.md'), '- AUTO 00:00:03 — stub entry from a stale caller. Reversibility: n/a.\n');
-  fs.writeFileSync(path.join(runDir, 'events.jsonl'), '{"type":"stub"}\n');
-  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', stub: true }));
-
-  const second = archiveRunDir(root, runDir);
-  assert.equal(second.ok, false, JSON.stringify(second));
-  assert.equal(second.reason, 'archive-destination-exists');
-
-  const archivedDecisions = fs.readFileSync(path.join(archiveDir, 'decisions.md'), 'utf8');
-  assert.ok(archivedDecisions.startsWith(realDecisions), 'original archived decisions.md content must survive byte-for-byte as a prefix');
-  assert.ok(archivedDecisions.includes('stub entry from a stale caller'), 'the stub entry is appended, not dropped');
-  const archivedEvents = fs.readFileSync(path.join(archiveDir, 'events.jsonl'), 'utf8');
-  assert.equal(archivedEvents, '{"type":"start"}\n{"type":"stub"}\n');
-
-  // run-state.json is not append-only — the stale stub must never land on
-  // top of (or replace) the real archived one.
-  const archivedState = JSON.parse(fs.readFileSync(path.join(archiveDir, 'run-state.json'), 'utf8'));
-  assert.equal(archivedState.stub, undefined, 'the real archived run-state.json must be untouched');
-  // The refusal leaves the stub run-state.json exactly where the race put it.
-  assert.equal(fs.existsSync(path.join(runDir, 'run-state.json')), true);
-});
-
 test('archiveRunDir: empty untracked work/ (materialize hard-gate-stop leftover) archives cleanly — work absent from movedEntries, no git-mv-failed', () => {
   const root = makeRepo();
   const runId = '2026-09-29T105914-record-2663';

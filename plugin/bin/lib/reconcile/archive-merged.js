@@ -792,7 +792,7 @@ class ArchiveDestinationExistsError extends Error {
 // without touching either path, so the caller can refuse cleanly — unless
 // `allowOverwrite` is set (run-state.json's own interim "archiving" marker,
 // written by this same call before the move loop runs — see
-// `runStateDestIsRealPriorArchive` above), in which case the collision is expected
+// `runStateDestIsRealPriorArchive` in archiveRunDir), in which case the collision is expected
 // and the plain rename proceeds. A real fs failure (permissions, disk full)
 // propagates unchanged — callers already catch that for their own
 // revert/refusal handling.
@@ -807,6 +807,35 @@ function moveArchiveEntry(src, dest, name, { allowOverwrite = false } = {}) {
   }
   fs.renameSync(src, dest);
   return { moved: true };
+}
+
+// #3198 review: the move loops' own collision refusal fires only after the
+// "archiving" marker has already been merged into archiveDir/run-state.json
+// — flipping a real prior archive's terminal status to 'archiving', so the
+// NEXT pass reads it as this run's own retryable marker and overwrites it
+// with the stale stub after all — and after any earlier append-only entry
+// has already been irreversibly appended. Scanning every non-work/ entry
+// (top-level and per spec-{N}/) for a refusing collision before anything
+// is written makes the refusal leave both trees exactly as found. The
+// in-loop checks stay as the backstop for an entry that appears after this
+// scan. Returns the first colliding entry's relative name, or null.
+function findRefusingArchiveCollision(runDir, archiveDir, runStateDestIsRealPriorArchive) {
+  const specDirs = listSpecDirs(runDir);
+  const pairs = [['', runDir, archiveDir]];
+  for (const specName of specDirs) {
+    pairs.push([specName, path.join(runDir, specName), path.join(archiveDir, specName)]);
+  }
+  for (const [prefix, srcDir, destDir] of pairs) {
+    let names;
+    try { names = fs.readdirSync(srcDir); } catch { continue; }
+    for (const name of names) {
+      if (name === 'work' || (prefix === '' && specDirs.includes(name))) continue;
+      if (APPEND_ONLY_ARCHIVE_ENTRIES.has(name)) continue;
+      if (prefix === '' && name === 'run-state.json' && !runStateDestIsRealPriorArchive) continue;
+      if (fs.existsSync(path.join(destDir, name))) return prefix ? path.join(prefix, name) : name;
+    }
+  }
+  return null;
 }
 
 function archiveRunDir(root, runDir) {
@@ -839,6 +868,15 @@ function archiveRunDir(root, runDir) {
     } catch { /* missing or unreadable — treat as no real prior content */ }
   }
   const runStateDestIsRealPriorArchive = !!(priorArchiveRunState && priorArchiveRunState.status !== 'archiving');
+  if (archiveDirPreexisted) {
+    const collision = findRefusingArchiveCollision(runDir, archiveDir, runStateDestIsRealPriorArchive);
+    if (collision) {
+      return refusal('archive-destination-exists', {
+        entry: collision,
+        hint: `archive destination already exists: ${path.join(archiveDir, collision)}`,
+      });
+    }
+  }
   try {
     fs.mkdirSync(archiveDir, { recursive: true });
   } catch {
@@ -1139,6 +1177,10 @@ function archiveRunDir(root, runDir) {
     // would fail ENOTEMPTY; their contents move entry-by-entry in the
     // dedicated spec loop below instead.
     const movedThisPass = [];
+    // An append (moveArchiveEntry's append-only path) unlinks its src — it
+    // cannot be reverted, so a later refusal in this pass is never "fully
+    // reverted" once one has happened.
+    let appendedThisPass = false;
     for (const name of entries.filter((n) => n !== 'work' && !specDirs.includes(n))) {
       const src = path.join(runDir, name);
       if (!fs.existsSync(src)) continue;
@@ -1149,7 +1191,7 @@ function archiveRunDir(root, runDir) {
           allowOverwrite: name === 'run-state.json' && !runStateDestIsRealPriorArchive,
         });
       } catch (err) {
-        const fullyReverted = revertPlainMoves(movedThisPass);
+        const fullyReverted = revertPlainMoves(movedThisPass) && !appendedThisPass;
         if (err instanceof ArchiveDestinationExistsError) {
           const reason = fullyReverted ? 'archive-destination-exists' : 'archive-destination-exists-partial-revert';
           return refuseAfterMarker(reason, { entry: name, hint: err.message });
@@ -1161,6 +1203,7 @@ function archiveRunDir(root, runDir) {
         });
       }
       if (outcome.moved) movedThisPass.push([src, dest]);
+      else appendedThisPass = true;
       movedEntries.push(name);
     }
   }
@@ -1196,6 +1239,8 @@ function archiveRunDir(root, runDir) {
       }
     }
     const specMovedThisPass = [];
+    let specAppendedThisPass = false; // same non-revertible-append rule as the top-level loop
+
     for (const name of specRemaining) {
       const src = path.join(specDir, name);
       if (!fs.existsSync(src)) continue;
@@ -1204,7 +1249,7 @@ function archiveRunDir(root, runDir) {
       try {
         outcome = moveArchiveEntry(src, dest, name);
       } catch (err) {
-        const fullyReverted = revertPlainMoves(specMovedThisPass);
+        const fullyReverted = revertPlainMoves(specMovedThisPass) && !specAppendedThisPass;
         if (err instanceof ArchiveDestinationExistsError) {
           const reason = fullyReverted ? 'archive-destination-exists' : 'archive-destination-exists-partial-revert';
           return refuseAfterMarker(reason, { entry: path.join(specName, name), hint: err.message });
@@ -1216,6 +1261,7 @@ function archiveRunDir(root, runDir) {
         });
       }
       if (outcome.moved) specMovedThisPass.push([src, dest]);
+      else specAppendedThisPass = true;
       movedEntries.push(path.join(specName, name));
     }
     try {
